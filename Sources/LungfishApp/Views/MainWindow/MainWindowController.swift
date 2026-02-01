@@ -13,7 +13,7 @@ import LungfishCore
 public class MainWindowController: NSWindowController {
 
     /// The main split view controller
-    private var splitViewController: MainSplitViewController!
+    public private(set) var mainSplitViewController: MainSplitViewController!
 
     /// Toolbar item identifiers
     private enum ToolbarIdentifier {
@@ -76,8 +76,8 @@ public class MainWindowController: NSWindowController {
         guard let window = window else { return }
 
         // Create the split view controller hierarchy
-        splitViewController = MainSplitViewController()
-        window.contentViewController = splitViewController
+        mainSplitViewController = MainSplitViewController()
+        window.contentViewController = mainSplitViewController
 
         // Configure toolbar
         configureToolbar()
@@ -103,11 +103,11 @@ public class MainWindowController: NSWindowController {
     // MARK: - Panel Toggle Actions
 
     @objc public func toggleSidebar(_ sender: Any?) {
-        splitViewController.toggleSidebar()
+        mainSplitViewController.toggleSidebar()
     }
 
     @objc public func toggleInspector(_ sender: Any?) {
-        splitViewController.toggleInspector()
+        mainSplitViewController.toggleInspector()
     }
 
     // MARK: - Navigation Actions
@@ -121,15 +121,15 @@ public class MainWindowController: NSWindowController {
     }
 
     @objc public func zoomIn(_ sender: Any?) {
-        splitViewController.viewerController?.zoomIn()
+        mainSplitViewController.viewerController?.zoomIn()
     }
 
     @objc public func zoomOut(_ sender: Any?) {
-        splitViewController.viewerController?.zoomOut()
+        mainSplitViewController.viewerController?.zoomOut()
     }
 
     @objc public func zoomToFit(_ sender: Any?) {
-        splitViewController.viewerController?.zoomToFit()
+        mainSplitViewController.viewerController?.zoomToFit()
     }
 }
 

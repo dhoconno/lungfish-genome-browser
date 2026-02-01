@@ -9,6 +9,11 @@ let package = Package(
         .macOS(.v14)  // macOS 14 Sonoma minimum
     ],
     products: [
+        // The main application executable
+        .executable(
+            name: "Lungfish",
+            targets: ["Lungfish"]
+        ),
         // Core library for sequence data models and services
         .library(
             name: "LungfishCore",
@@ -140,6 +145,15 @@ let package = Package(
                 "LungfishUI",
             ],
             path: "Sources/LungfishApp"
+        ),
+
+        // MARK: - Lungfish (Executable)
+        .executableTarget(
+            name: "Lungfish",
+            dependencies: [
+                "LungfishApp",
+            ],
+            path: "Sources/Lungfish"
         ),
     ]
 )

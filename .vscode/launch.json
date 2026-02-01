@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:lungfish-genome-browser}",
+            "name": "Debug Lungfish",
+            "target": "Lungfish",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug Lungfish"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:lungfish-genome-browser}",
+            "name": "Release Lungfish",
+            "target": "Lungfish",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release Lungfish"
+        }
+    ]
+}
