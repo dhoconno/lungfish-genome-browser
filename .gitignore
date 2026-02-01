@@ -1,0 +1,45 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+*.xcscmblueprint
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Build artifacts
+*.o
+*.a
+*.dylib
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# Reference materials (not part of this project)
+igv/
+geneious/
+
+# Test outputs
+*.xcresult/
+coverage/
+
+# Claude/AI session files
+.claude/
