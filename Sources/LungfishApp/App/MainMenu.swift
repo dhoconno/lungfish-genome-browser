@@ -139,6 +139,14 @@ public final class MainMenu {
             keyEquivalent: "o"
         )
 
+        // Open Project Folder
+        let openFolderItem = fileMenu.addItem(
+            withTitle: "Open Project Folder...",
+            action: #selector(AppDelegate.openProjectFolder(_:)),
+            keyEquivalent: "o"
+        )
+        openFolderItem.keyEquivalentModifierMask = [.command, .shift]
+
         // Open Recent submenu
         let recentItem = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
         let recentMenu = NSMenu(title: "Open Recent")

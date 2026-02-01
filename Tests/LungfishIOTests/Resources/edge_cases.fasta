@@ -1,0 +1,21 @@
+>short Single base
+A
+>empty_lines Has empty lines within
+
+ATCG
+
+ATCG
+
+>lowercase All lowercase bases
+atcgatcgatcg
+>mixed_case Mixed case bases
+AtCgAtCgAtCg
+>ambiguous Contains IUPAC ambiguity codes
+ATCGNNNRYSWKMBDHVATCG
+>special_header chr1:100-200|gene=TEST|db_xref=GI:12345
+ATCGATCGATCGATCGATCG
+>varying_lines Has lines of varying length
+ATCG
+ATCGATCGATCGATCGATCG
+AT
+ATCGATCGATCGATCGATCGATCGATCGATCG

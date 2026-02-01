@@ -1,0 +1,14 @@
+##gff-version 3
+##sequence-region chr1 1 10000
+chr1	.	gene	1000	5000	.	+	.	ID=gene001;Name=BRCA1;description=Test%20gene%20with%20encoded%20space
+chr1	.	mRNA	1000	5000	.	+	.	ID=mRNA001;Parent=gene001;Name=BRCA1-201
+chr1	.	exon	1000	1500	.	+	.	ID=exon001;Parent=mRNA001
+chr1	.	exon	2000	2500	.	+	.	ID=exon002;Parent=mRNA001
+chr1	.	exon	3000	5000	.	+	.	ID=exon003;Parent=mRNA001
+chr1	.	CDS	1100	1500	.	+	0	ID=cds001;Parent=mRNA001
+chr1	.	CDS	2000	2500	.	+	2	ID=cds002;Parent=mRNA001
+chr1	.	CDS	3000	4500	.	+	1	ID=cds003;Parent=mRNA001
+chr1	.	gene	6000	8000	.	-	.	ID=gene002;Name=TP53;Note=Reverse%20strand%20gene
+chr1	.	mRNA	6000	8000	.	-	.	ID=mRNA002;Parent=gene002
+chr1	.	exon	6000	6500	.	-	.	ID=exon004;Parent=mRNA002
+chr1	.	exon	7500	8000	.	-	.	ID=exon005;Parent=mRNA002

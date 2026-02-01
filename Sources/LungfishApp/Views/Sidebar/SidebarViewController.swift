@@ -4,6 +4,10 @@
 
 import AppKit
 import LungfishCore
+import os.log
+
+/// Logger for sidebar operations
+private let logger = Logger(subsystem: "com.lungfish.browser", category: "SidebarViewController")
 
 /// Controller for the sidebar panel containing project/file navigation.
 ///
@@ -51,7 +55,7 @@ public class SidebarViewController: NSViewController {
         outlineView.autoresizesOutlineColumn = true
         outlineView.floatsGroupRows = false
         outlineView.rowSizeStyle = .default
-        outlineView.selectionHighlightStyle = .sourceList
+        outlineView.style = .sourceList  // Modern replacement for selectionHighlightStyle
         outlineView.dataSource = self
         outlineView.delegate = self
 
@@ -78,8 +82,9 @@ public class SidebarViewController: NSViewController {
         containerView.addSubview(scrollView)
 
         // Layout constraints
+        // Note: Top margin of 52 accounts for window title bar and traffic light buttons
         NSLayoutConstraint.activate([
-            searchField.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 8),
+            searchField.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 52),
             searchField.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 8),
             searchField.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -8),
 
@@ -105,55 +110,11 @@ public class SidebarViewController: NSViewController {
     // MARK: - Data Loading
 
     private func loadSampleData() {
-        // Create sample hierarchy for demonstration
-        let favoritesGroup = SidebarItem(
-            title: "FAVORITES",
-            type: .group,
-            children: [
-                SidebarItem(title: "Recent Projects", type: .folder, icon: "clock"),
-                SidebarItem(title: "My Sequences", type: .folder, icon: "folder"),
-            ]
-        )
-
-        let projectGroup = SidebarItem(
-            title: "PROJECT",
-            type: .group,
-            children: [
-                SidebarItem(
-                    title: "Reference Sequences",
-                    type: .folder,
-                    icon: "folder",
-                    children: [
-                        SidebarItem(title: "chr1.fa", type: .sequence, icon: "doc.text"),
-                        SidebarItem(title: "chr2.fa", type: .sequence, icon: "doc.text"),
-                    ]
-                ),
-                SidebarItem(
-                    title: "Annotations",
-                    type: .folder,
-                    icon: "folder",
-                    children: [
-                        SidebarItem(title: "genes.gff3", type: .annotation, icon: "list.bullet.rectangle"),
-                    ]
-                ),
-                SidebarItem(
-                    title: "Alignments",
-                    type: .folder,
-                    icon: "folder",
-                    children: [
-                        SidebarItem(title: "reads.bam", type: .alignment, icon: "chart.bar"),
-                    ]
-                ),
-            ]
-        )
-
-        rootItems = [favoritesGroup, projectGroup]
+        // Start with empty sidebar - documents will be added when loaded
+        // The "OPEN DOCUMENTS" group is created automatically when first document is loaded
+        rootItems = []
         outlineView.reloadData()
-
-        // Expand top-level groups
-        for item in rootItems {
-            outlineView.expandItem(item)
-        }
+        logger.info("loadSampleData: Sidebar initialized (empty, waiting for documents)")
     }
 
     // MARK: - Actions
@@ -183,6 +144,190 @@ public class SidebarViewController: NSViewController {
         if row >= 0 {
             outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
             outlineView.scrollRowToVisible(row)
+        }
+    }
+
+    /// Adds a loaded document to the sidebar
+    public func addLoadedDocument(_ document: LoadedDocument) {
+        logger.info("addLoadedDocument: Adding '\(document.name, privacy: .public)' to sidebar")
+
+        // Find or create the "Open Documents" group
+        var openDocsGroup = rootItems.first(where: { $0.title == "OPEN DOCUMENTS" })
+        if openDocsGroup == nil {
+            logger.debug("addLoadedDocument: Creating OPEN DOCUMENTS group")
+            openDocsGroup = SidebarItem(
+                title: "OPEN DOCUMENTS",
+                type: .group,
+                children: []
+            )
+            rootItems.insert(openDocsGroup!, at: 0)
+        }
+
+        // Determine the item type based on document type
+        let itemType: SidebarItemType
+        let icon: String
+        switch document.type {
+        case .fasta, .fastq:
+            itemType = .sequence
+            icon = "doc.text"
+        case .genbank:
+            itemType = .sequence
+            icon = "doc.richtext"
+        case .gff3, .bed:
+            itemType = .annotation
+            icon = "list.bullet.rectangle"
+        case .vcf:
+            itemType = .annotation
+            icon = "chart.bar.xaxis"
+        case .bam:
+            itemType = .alignment
+            icon = "chart.bar"
+        }
+
+        // Check if document already exists in sidebar
+        if openDocsGroup!.children.contains(where: { $0.url == document.url }) {
+            logger.debug("addLoadedDocument: Document already in sidebar")
+            return
+        }
+
+        // Create the sidebar item
+        let item = SidebarItem(
+            title: document.name,
+            type: itemType,
+            icon: icon,
+            children: [],
+            url: document.url
+        )
+
+        openDocsGroup!.children.append(item)
+        logger.info("addLoadedDocument: Added item to sidebar, reloading")
+
+        outlineView.reloadData()
+
+        // Expand the open documents group and select the new item
+        outlineView.expandItem(openDocsGroup)
+        let row = outlineView.row(forItem: item)
+        if row >= 0 {
+            outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        }
+    }
+
+    /// Adds a project folder with all its documents to the sidebar.
+    ///
+    /// - Parameters:
+    ///   - folderURL: The root folder URL
+    ///   - documents: The loaded documents from the folder
+    public func addProjectFolder(_ folderURL: URL, documents: [LoadedDocument]) {
+        logger.info("addProjectFolder: Adding folder '\(folderURL.lastPathComponent, privacy: .public)' with \(documents.count) documents")
+
+        // Create the project folder item
+        let folderItem = SidebarItem(
+            title: folderURL.lastPathComponent,
+            type: .project,
+            icon: "folder.badge.gearshape",
+            children: [],
+            url: folderURL
+        )
+
+        // Build folder hierarchy from document paths
+        var subfolderItems: [String: SidebarItem] = [:]  // Relative path -> item
+
+        for document in documents {
+            // Calculate relative path from folder root to file's parent directory
+            let fileParentPath = document.url.deletingLastPathComponent().path
+            let relativePath = fileParentPath
+                .replacingOccurrences(of: folderURL.path, with: "")
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+
+            // Determine item type based on document type
+            let itemType: SidebarItemType
+            let icon: String
+            switch document.type {
+            case .fasta, .fastq:
+                itemType = .sequence
+                icon = "doc.text"
+            case .genbank:
+                itemType = .sequence
+                icon = "doc.richtext"
+            case .gff3, .bed:
+                itemType = .annotation
+                icon = "list.bullet.rectangle"
+            case .vcf:
+                itemType = .annotation
+                icon = "chart.bar.xaxis"
+            case .bam:
+                itemType = .alignment
+                icon = "chart.bar"
+            }
+
+            // Create document item
+            let docItem = SidebarItem(
+                title: document.name,
+                type: itemType,
+                icon: icon,
+                children: [],
+                url: document.url
+            )
+
+            if relativePath.isEmpty {
+                // File is directly in root folder
+                folderItem.children.append(docItem)
+                logger.debug("addProjectFolder: Added '\(document.name, privacy: .public)' to root")
+            } else {
+                // File is in a subfolder - create subfolder hierarchy if needed
+                if subfolderItems[relativePath] == nil {
+                    // Create subfolder item
+                    let subfolderName = URL(fileURLWithPath: relativePath).lastPathComponent
+                    let subfolderItem = SidebarItem(
+                        title: subfolderName,
+                        type: .folder,
+                        icon: "folder",
+                        children: [],
+                        url: folderURL.appendingPathComponent(relativePath)
+                    )
+                    subfolderItems[relativePath] = subfolderItem
+                    folderItem.children.append(subfolderItem)
+                    logger.debug("addProjectFolder: Created subfolder '\(subfolderName, privacy: .public)'")
+                }
+                subfolderItems[relativePath]?.children.append(docItem)
+                logger.debug("addProjectFolder: Added '\(document.name, privacy: .public)' to subfolder '\(relativePath, privacy: .public)'")
+            }
+        }
+
+        // Sort children alphabetically (folders first, then files)
+        folderItem.children.sort { item1, item2 in
+            if item1.type == .folder && item2.type != .folder {
+                return true
+            } else if item1.type != .folder && item2.type == .folder {
+                return false
+            }
+            return item1.title.localizedCaseInsensitiveCompare(item2.title) == .orderedAscending
+        }
+
+        // Sort subfolder children too
+        for (_, subfolderItem) in subfolderItems {
+            subfolderItem.children.sort { item1, item2 in
+                item1.title.localizedCaseInsensitiveCompare(item2.title) == .orderedAscending
+            }
+        }
+
+        // Add to root items
+        rootItems.append(folderItem)
+
+        logger.info("addProjectFolder: Reloading outline view with \(folderItem.children.count) children")
+        outlineView.reloadData()
+
+        // Expand the folder to show contents
+        outlineView.expandItem(folderItem)
+
+        // Select the first document if any
+        let firstDoc = folderItem.children.first(where: { $0.type != .folder }) ?? folderItem.children.first?.children.first
+        if let firstDoc = firstDoc {
+            let row = outlineView.row(forItem: firstDoc)
+            if row >= 0 {
+                outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                logger.debug("addProjectFolder: Selected first document at row \(row)")
+            }
         }
     }
 }
@@ -294,8 +439,11 @@ extension SidebarViewController: NSOutlineViewDelegate {
         let selectedRow = outlineView.selectedRow
         guard selectedRow >= 0,
               let item = outlineView.item(atRow: selectedRow) as? SidebarItem else {
+            logger.debug("outlineViewSelectionDidChange: No valid selection")
             return
         }
+
+        logger.info("outlineViewSelectionDidChange: Selected '\(item.title, privacy: .public)' type=\(String(describing: item.type)) url=\(item.url?.path ?? "nil", privacy: .public)")
 
         // Notify about selection change
         NotificationCenter.default.post(
@@ -303,6 +451,7 @@ extension SidebarViewController: NSOutlineViewDelegate {
             object: self,
             userInfo: ["item": item]
         )
+        logger.debug("outlineViewSelectionDidChange: Posted notification")
     }
 }
 

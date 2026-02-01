@@ -4,6 +4,10 @@
 
 import AppKit
 import LungfishCore
+import os.log
+
+/// Logger for main split view operations
+private let logger = Logger(subsystem: "com.lungfish.browser", category: "MainSplitViewController")
 
 /// The main split view controller managing sidebar, viewer, and inspector panels.
 ///
@@ -57,10 +61,13 @@ public class MainSplitViewController: NSSplitViewController {
 
     public override func viewDidLoad() {
         super.viewDidLoad()
+        logger.info("viewDidLoad: MainSplitViewController loading")
         configureSplitView()
         configureChildControllers()
         configureKeyboardShortcuts()
+        configureNotifications()
         restorePanelState()
+        logger.info("viewDidLoad: MainSplitViewController setup complete")
     }
 
     // MARK: - Configuration
@@ -120,6 +127,93 @@ public class MainSplitViewController: NSSplitViewController {
     private func configureKeyboardShortcuts() {
         // Keyboard shortcuts are handled by menu items with key equivalents
         // See MainMenu.swift for menu configuration
+    }
+
+    private func configureNotifications() {
+        // Listen for sidebar selection changes
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleSidebarSelectionChanged(_:)),
+            name: .sidebarSelectionChanged,
+            object: nil
+        )
+
+        // Listen for document loaded notifications
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleDocumentLoaded(_:)),
+            name: DocumentManager.documentLoadedNotification,
+            object: nil
+        )
+
+        logger.debug("configureNotifications: Registered for sidebar and document notifications")
+    }
+
+    @objc private func handleSidebarSelectionChanged(_ notification: Notification) {
+        guard let item = notification.userInfo?["item"] as? SidebarItem else {
+            logger.warning("handleSidebarSelectionChanged: No item in notification")
+            return
+        }
+
+        logger.info("handleSidebarSelectionChanged: Selected '\(item.title, privacy: .public)' type=\(String(describing: item.type))")
+
+        // Skip folder/project items - they don't have displayable content
+        if item.type == .folder || item.type == .project || item.type == .group {
+            logger.debug("handleSidebarSelectionChanged: Skipping container item type")
+            return
+        }
+
+        // If the item has a URL, check if already loaded first
+        if let url = item.url {
+            // First check if document is already loaded to avoid re-loading
+            if let existingDocument = DocumentManager.shared.documents.first(where: { $0.url == url }) {
+                logger.info("handleSidebarSelectionChanged: Document already loaded, displaying directly")
+                viewerController.displayDocument(existingDocument)
+                DocumentManager.shared.setActiveDocument(existingDocument)
+                return
+            }
+
+            // Not loaded yet, load it
+            logger.info("handleSidebarSelectionChanged: Loading document from '\(url.path, privacy: .public)'")
+            Task { @MainActor in
+                viewerController.showProgress("Loading \(url.lastPathComponent)...")
+                do {
+                    let document = try await DocumentManager.shared.loadDocument(at: url)
+                    viewerController.hideProgress()
+                    viewerController.displayDocument(document)
+                    logger.info("handleSidebarSelectionChanged: Document loaded and displayed")
+                } catch {
+                    viewerController.hideProgress()
+                    logger.error("handleSidebarSelectionChanged: Failed to load document: \(error.localizedDescription, privacy: .public)")
+                    let alert = NSAlert()
+                    alert.messageText = "Failed to Open File"
+                    alert.informativeText = error.localizedDescription
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                }
+            }
+        } else if item.type == .sequence || item.type == .annotation || item.type == .alignment {
+            // Check if this is a document that's already loaded (by name match)
+            logger.debug("handleSidebarSelectionChanged: Checking for already loaded document matching '\(item.title, privacy: .public)'")
+            if let document = DocumentManager.shared.documents.first(where: { $0.name == item.title }) {
+                logger.info("handleSidebarSelectionChanged: Found matching document by name, displaying")
+                viewerController.displayDocument(document)
+                DocumentManager.shared.setActiveDocument(document)
+            }
+        }
+    }
+
+    @objc private func handleDocumentLoaded(_ notification: Notification) {
+        guard let document = notification.userInfo?["document"] as? LoadedDocument else {
+            logger.warning("handleDocumentLoaded: No document in notification")
+            return
+        }
+
+        logger.info("handleDocumentLoaded: Document '\(document.name, privacy: .public)' was loaded, updating sidebar")
+
+        // Update the sidebar with the new document
+        sidebarController.addLoadedDocument(document)
     }
 
     // MARK: - Panel State

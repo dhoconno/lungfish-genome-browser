@@ -1,0 +1,11 @@
+>seq1 First test sequence
+ATCGATCGATCGATCGATCG
+ATCGATCGATCGATCGATCG
+>seq2 Second test sequence with longer description
+GGGGCCCCGGGGCCCCGGGG
+>seq3
+AAAATTTTAAAATTTTAAAA
+>protein_seq This is a protein sequence
+MKTAYIAKQRQISFVKSHFS
+>rna_seq RNA sequence with uracil
+AUCGAUCGAUCGAUCGAUCG

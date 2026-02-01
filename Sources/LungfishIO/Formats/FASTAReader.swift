@@ -68,8 +68,9 @@ public final class FASTAReader: Sendable {
     /// - Returns: Array of sequences
     /// - Throws: `FASTAError` if parsing fails
     public func readAll(alphabet: SequenceAlphabet? = nil) async throws -> [Sequence] {
+        // Directly parse the file - caller is responsible for running off main actor
         var sequences: [Sequence] = []
-        for try await sequence in self.sequences(alphabet: alphabet) {
+        try await parseFile(alphabet: alphabet) { sequence in
             sequences.append(sequence)
         }
         return sequences
