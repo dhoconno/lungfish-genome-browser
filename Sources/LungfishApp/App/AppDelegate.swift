@@ -7,6 +7,231 @@ import LungfishCore
 import LungfishIO
 import UniformTypeIdentifiers
 
+/// Debug logging to file for troubleshooting
+private func debugLog(_ message: String) {
+    let timestamp = ISO8601DateFormatter().string(from: Date())
+    let threadInfo = Thread.isMainThread ? "main" : "bg"
+    let logMessage = "[\(timestamp)][\(threadInfo)] \(message)\n"
+    print("[\(threadInfo)] \(message)")  // Also print to console
+    if let data = logMessage.data(using: .utf8) {
+        let logURL = URL(fileURLWithPath: "/tmp/lungfish-debug.log")
+        if let fileHandle = try? FileHandle(forWritingTo: logURL) {
+            fileHandle.seekToEndOfFile()
+            fileHandle.write(data)
+            fileHandle.closeFile()
+        }
+    }
+}
+
+/// Schedules a MainActor-isolated block to execute on the main run loop.
+///
+/// This function is critical for Swift concurrency integration with AppKit modal sessions.
+/// During sheet dismissal and other modal transitions, both `Task { }` and `DispatchQueue.main.async`
+/// may be blocked because GCD's main queue serialization can be stalled.
+///
+/// The solution is to use CFRunLoopPerformBlock directly with kCFRunLoopCommonModes,
+/// which bypasses GCD and schedules directly to the run loop.
+///
+/// - Parameter block: The MainActor-isolated block to execute
+private func scheduleOnMainRunLoop(_ block: @escaping @MainActor @Sendable () -> Void) {
+    debugLog("scheduleOnMainRunLoop: Scheduling block via CFRunLoopPerformBlock")
+
+    // Use CFRunLoopPerformBlock directly - this bypasses GCD completely
+    // and schedules the block directly to the main run loop
+    CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) {
+        debugLog("scheduleOnMainRunLoop: CFRunLoopPerformBlock executing")
+        // We're on main thread via CFRunLoop, safe to assume MainActor
+        MainActor.assumeIsolated {
+            debugLog("scheduleOnMainRunLoop: MainActor block executing")
+            block()
+        }
+    }
+    // Wake up the run loop to process the block immediately
+    CFRunLoopWakeUp(CFRunLoopGetMain())
+    debugLog("scheduleOnMainRunLoop: CFRunLoopWakeUp called")
+}
+
+/// Result of loading file data on a background thread.
+/// This struct contains only Sendable data that can be safely passed between threads.
+private struct FileLoadResult: Sendable {
+    let url: URL
+    let type: DocumentType
+    let sequences: [Sequence]
+    let annotations: [SequenceAnnotation]
+    let error: String?
+
+    init(url: URL, type: DocumentType, sequences: [Sequence] = [], annotations: [SequenceAnnotation] = [], error: String? = nil) {
+        self.url = url
+        self.type = type
+        self.sequences = sequences
+        self.annotations = annotations
+        self.error = error
+    }
+}
+
+/// Loads file data synchronously on a background thread, completely avoiding MainActor.
+///
+/// This is critical for loading files during modal transitions when MainActor is blocked.
+/// The function reads and parses the file entirely on a GCD background thread, then calls
+/// the completion handler with the parsed data.
+///
+/// - Parameters:
+///   - url: The file URL to load
+///   - completion: Called on the main run loop with the load result
+private func loadFileInBackground(at url: URL, completion: @escaping @Sendable (FileLoadResult) -> Void) {
+    debugLog("loadFileInBackground: Starting for \(url.path)")
+
+    DispatchQueue.global(qos: .userInitiated).async {
+        debugLog("loadFileInBackground: Background thread starting")
+
+        // Detect document type
+        guard let type = DocumentType.detect(from: url) else {
+            debugLog("loadFileInBackground: Unsupported format \(url.pathExtension)")
+            completion(FileLoadResult(url: url, type: .fasta, error: "Unsupported file format: \(url.pathExtension)"))
+            return
+        }
+
+        debugLog("loadFileInBackground: Detected type \(type.rawValue)")
+
+        do {
+            var sequences: [Sequence] = []
+            var annotations: [SequenceAnnotation] = []
+
+            switch type {
+            case .fasta:
+                debugLog("loadFileInBackground: Reading FASTA synchronously")
+                sequences = try loadFASTASync(from: url)
+                debugLog("loadFileInBackground: FASTA loaded \(sequences.count) sequences")
+
+            case .genbank:
+                debugLog("loadFileInBackground: Reading GenBank synchronously")
+                let records = try loadGenBankSync(from: url)
+                for record in records {
+                    sequences.append(record.sequence)
+                    annotations.append(contentsOf: record.annotations)
+                }
+                debugLog("loadFileInBackground: GenBank loaded \(sequences.count) sequences, \(annotations.count) annotations")
+
+            default:
+                debugLog("loadFileInBackground: Type \(type.rawValue) not yet supported for background loading")
+                completion(FileLoadResult(url: url, type: type, error: "Format not supported for this operation"))
+                return
+            }
+
+            debugLog("loadFileInBackground: Success - sequences=\(sequences.count), annotations=\(annotations.count)")
+            completion(FileLoadResult(url: url, type: type, sequences: sequences, annotations: annotations))
+
+        } catch {
+            debugLog("loadFileInBackground: Error - \(error.localizedDescription)")
+            completion(FileLoadResult(url: url, type: type, error: error.localizedDescription))
+        }
+    }
+}
+
+/// Loads FASTA file synchronously (no async/await, no MainActor).
+private func loadFASTASync(from url: URL) throws -> [Sequence] {
+    let handle = try FileHandle(forReadingFrom: url)
+    defer { try? handle.close() }
+
+    guard let data = try handle.readToEnd() else {
+        return []
+    }
+
+    guard let content = String(data: data, encoding: .utf8) else {
+        throw FASTAError.invalidEncoding
+    }
+
+    var sequences: [Sequence] = []
+    var currentName: String?
+    var currentDescription: String?
+    var currentBases = ""
+
+    for line in content.split(separator: "\n", omittingEmptySubsequences: false) {
+        let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+
+        if trimmedLine.isEmpty {
+            continue
+        }
+
+        if trimmedLine.hasPrefix(">") {
+            // Save previous sequence if exists
+            if let name = currentName, !currentBases.isEmpty {
+                let seq = try Sequence(
+                    name: name,
+                    description: currentDescription,
+                    alphabet: detectAlphabet(currentBases),
+                    bases: currentBases
+                )
+                sequences.append(seq)
+            }
+
+            // Parse new header
+            let headerLine = String(trimmedLine.dropFirst())
+            let parts = headerLine.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+            currentName = String(parts.first ?? "")
+            currentDescription = parts.count > 1 ? String(parts[1]) : nil
+            currentBases = ""
+
+        } else if currentName != nil {
+            currentBases += trimmedLine
+        }
+    }
+
+    // Don't forget the last sequence
+    if let name = currentName, !currentBases.isEmpty {
+        let seq = try Sequence(
+            name: name,
+            description: currentDescription,
+            alphabet: detectAlphabet(currentBases),
+            bases: currentBases
+        )
+        sequences.append(seq)
+    }
+
+    return sequences
+}
+
+/// Detects sequence alphabet from bases string.
+private func detectAlphabet(_ bases: String) -> SequenceAlphabet {
+    let upper = bases.uppercased()
+
+    // Check for protein-specific amino acids
+    let proteinOnly = Set("EFILPQZ")
+    for char in upper {
+        if proteinOnly.contains(char) {
+            return .protein
+        }
+    }
+
+    // Check for U (RNA) vs T (DNA)
+    let hasU = upper.contains("U")
+    let hasT = upper.contains("T")
+
+    if hasU && !hasT {
+        return .rna
+    }
+
+    return .dna
+}
+
+/// Loads GenBank file synchronously (no async/await, no MainActor).
+private func loadGenBankSync(from url: URL) throws -> [GenBankRecord] {
+    let handle = try FileHandle(forReadingFrom: url)
+    defer { try? handle.close() }
+
+    guard let data = try handle.readToEnd() else {
+        return []
+    }
+
+    guard let content = String(data: data, encoding: .utf8) else {
+        throw GenBankError.invalidEncoding
+    }
+
+    // Use the GenBankParser to parse the content synchronously
+    let parser = GenBankParser()
+    return try parser.parseContent(content)
+}
+
 /// Main application delegate handling app lifecycle and global state.
 @MainActor
 public class AppDelegate: NSObject, NSApplicationDelegate,
@@ -833,22 +1058,149 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         // Handle download completion
         browserController.onDownloadComplete = { [weak self] tempFileURL in
-            // Dismiss the sheet first
+            debugLog("onDownloadComplete: Received file \(tempFileURL.path)")
+
+            // Store the URL first, before dismissing the sheet
+            self?.pendingDownloadTempURL = tempFileURL
+            debugLog("onDownloadComplete: Stored pending URL")
+
+            // Dismiss the sheet - the completion handler will process the download
             if let sheet = window.attachedSheet {
+                debugLog("onDownloadComplete: Ending sheet")
                 window.endSheet(sheet)
             }
-
-            // Handle the downloaded file: copy to downloads folder and add to sidebar
-            self?.handleDownloadedFile(at: tempFileURL)
         }
 
         // Present as sheet
         let browserWindow = NSWindow(contentViewController: browserController)
         browserWindow.title = "Search \(source.displayName)"
 
-        window.beginSheet(browserWindow) { _ in
-            // Sheet dismissed
+        window.beginSheet(browserWindow) { [weak self] _ in
+            debugLog("Sheet dismissed callback executing")
+            // Sheet is now fully dismissed - safe to process the download
+            if let tempURL = self?.pendingDownloadTempURL {
+                self?.pendingDownloadTempURL = nil
+                debugLog("Sheet dismissed: Processing pending download \(tempURL.path)")
+                self?.handleDownloadedFileSync(at: tempURL)
+            } else {
+                debugLog("Sheet dismissed: No pending URL")
+            }
         }
+    }
+
+    /// Temporary storage for download URL while sheet is dismissing
+    private var pendingDownloadTempURL: URL?
+
+    /// Synchronous version that handles the file and loads it immediately.
+    ///
+    /// This method is called from the sheet dismissal completion handler. Due to Swift concurrency
+    /// integration issues with AppKit modal sessions, the MainActor may be blocked and unable to
+    /// process async work.
+    ///
+    /// The solution is to:
+    /// 1. Copy the file synchronously (we're already on MainActor)
+    /// 2. Load file data on a GCD background thread (completely avoiding Swift concurrency)
+    /// 3. Create LoadedDocument and update UI via Timer-based scheduling to MainActor
+    private func handleDownloadedFileSync(at tempFileURL: URL) {
+        debugLog("handleDownloadedFileSync: Starting with \(tempFileURL.path)")
+
+        // Determine destination
+        let destinationDirectory: URL
+        if let projectURL = DocumentManager.shared.activeProject?.url {
+            destinationDirectory = projectURL.appendingPathComponent("downloads", isDirectory: true)
+        } else if let workingURL = workingDirectoryURL {
+            destinationDirectory = workingURL.appendingPathComponent("downloads", isDirectory: true)
+        } else {
+            let downloadsURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
+            destinationDirectory = downloadsURL.appendingPathComponent("Lungfish Downloads", isDirectory: true)
+        }
+
+        // Create destination directory
+        do {
+            try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
+        } catch {
+            debugLog("handleDownloadedFileSync: Failed to create directory - \(error)")
+            _ = openDocument(at: tempFileURL)
+            return
+        }
+
+        // Generate unique filename
+        let originalFilename = tempFileURL.lastPathComponent
+        var destinationURL = destinationDirectory.appendingPathComponent(originalFilename)
+        var counter = 1
+        let fileExtension = tempFileURL.pathExtension
+        let baseName = tempFileURL.deletingPathExtension().lastPathComponent
+
+        while FileManager.default.fileExists(atPath: destinationURL.path) {
+            let newFilename = "\(baseName)_\(counter).\(fileExtension)"
+            destinationURL = destinationDirectory.appendingPathComponent(newFilename)
+            counter += 1
+        }
+
+        // Copy file
+        do {
+            try FileManager.default.copyItem(at: tempFileURL, to: destinationURL)
+            debugLog("handleDownloadedFileSync: Copied to \(destinationURL.path)")
+            try? FileManager.default.removeItem(at: tempFileURL)
+        } catch {
+            debugLog("handleDownloadedFileSync: Copy failed - \(error)")
+            _ = openDocument(at: tempFileURL)
+            return
+        }
+
+        // Get UI controllers (we're still on MainActor here)
+        let viewerController = mainWindowController?.mainSplitViewController?.viewerController
+        let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController
+
+        debugLog("handleDownloadedFileSync: viewerController=\(viewerController != nil), sidebarController=\(sidebarController != nil)")
+
+        viewerController?.showProgress("Loading \(destinationURL.lastPathComponent)...")
+
+        debugLog("handleDownloadedFileSync: Starting background file load")
+
+        // Load file data entirely on a background thread using GCD (no Swift concurrency).
+        // This avoids the blocked MainActor issue completely.
+        loadFileInBackground(at: destinationURL) { result in
+            debugLog("handleDownloadedFileSync: Background load completed with result")
+
+            // Now update UI on MainActor using Timer-based scheduling
+            scheduleOnMainRunLoop { [weak viewerController, weak sidebarController] in
+                debugLog("handleDownloadedFileSync: scheduleOnMainRunLoop block executing")
+
+                if let errorMessage = result.error {
+                    debugLog("handleDownloadedFileSync: Error - \(errorMessage)")
+                    viewerController?.hideProgress()
+
+                    let alert = NSAlert()
+                    alert.messageText = "Failed to Load Downloaded File"
+                    alert.informativeText = errorMessage
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                    return
+                }
+
+                debugLog("handleDownloadedFileSync: Creating LoadedDocument with \(result.sequences.count) sequences")
+
+                // Create LoadedDocument on MainActor
+                let document = LoadedDocument(url: result.url, type: result.type)
+                document.sequences = result.sequences
+                document.annotations = result.annotations
+
+                // Register with DocumentManager
+                DocumentManager.shared.registerDocument(document)
+
+                debugLog("handleDownloadedFileSync: Loaded '\(document.name)' with \(document.sequences.count) sequences, \(document.annotations.count) annotations")
+
+                viewerController?.hideProgress()
+                viewerController?.displayDocument(document)
+                sidebarController?.addLoadedDocument(document)
+
+                debugLog("handleDownloadedFileSync: Document displayed and added to sidebar")
+            }
+        }
+
+        debugLog("handleDownloadedFileSync: Background load initiated")
     }
 
     /// Handles a downloaded file by copying it to a persistent location and adding to the sidebar.
@@ -860,6 +1212,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     ///
     /// - Parameter tempFileURL: The URL of the downloaded file in the temp directory
     private func handleDownloadedFile(at tempFileURL: URL) {
+        debugLog("handleDownloadedFile: Starting with \(tempFileURL.path)")
 
         // Determine destination: use project directory, working directory, or Downloads folder
         let destinationDirectory: URL
@@ -901,82 +1254,68 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         // Copy file to persistent location
         do {
             try FileManager.default.copyItem(at: tempFileURL, to: destinationURL)
-            print("Copied downloaded file to: \(destinationURL.path)")
+            debugLog("handleDownloadedFile: Copied file to \(destinationURL.path)")
 
             // Clean up temp file
             try? FileManager.default.removeItem(at: tempFileURL)
         } catch {
-            print("Warning: Could not copy file to destination: \(error.localizedDescription)")
+            debugLog("handleDownloadedFile: Copy failed - \(error.localizedDescription)")
             // Fall back to opening from temp location
             _ = openDocument(at: tempFileURL)
             return
         }
 
-        // Load the document from its new permanent location
-        // Store URL for selector-based callback and schedule with perform selector
-        // This pattern works reliably even after modal sheet dismissal
-        pendingDownloadURL = destinationURL
-        self.perform(#selector(loadPendingDownload), with: nil, afterDelay: 0.5)
+        debugLog("handleDownloadedFile: Scheduling loadDownloadedFile via DispatchQueue")
+
+        // Load the document from its new permanent location using DispatchQueue
+        // which properly supports Swift concurrency Task scheduling
+        // Use strong self capture since we need AppDelegate to stay alive
+        let selfRef = self
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            debugLog("handleDownloadedFile: DispatchQueue block executing")
+            selfRef.loadDownloadedFile(at: destinationURL)
+        }
+        debugLog("handleDownloadedFile: DispatchQueue scheduled")
     }
 
-    /// URL of pending download to load
-    private var pendingDownloadURL: URL?
-
-    /// Loads the pending downloaded file - called via perform selector
-    @objc private func loadPendingDownload() {
-        guard let destinationURL = pendingDownloadURL else { return }
-        pendingDownloadURL = nil
+    /// Loads a downloaded file and displays it in the viewer.
+    ///
+    /// Uses the same async/await pattern that works reliably elsewhere in the app.
+    private func loadDownloadedFile(at url: URL) {
+        debugLog("loadDownloadedFile: Loading \(url.path)")
 
         let viewerController = mainWindowController?.mainSplitViewController?.viewerController
         let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController
 
-        viewerController?.showProgress("Loading \(destinationURL.lastPathComponent)...")
+        debugLog("loadDownloadedFile: viewerController=\(viewerController != nil), sidebarController=\(sidebarController != nil)")
 
-        // Use the same pattern as loadProjectFolderSync
-        loadDownloadedFileAsync(destinationURL) { [weak self] document, error in
-            viewerController?.hideProgress()
+        viewerController?.showProgress("Loading \(url.lastPathComponent)...")
 
-            if let error = error {
+        // Use regular Task - this works because we're called from DispatchQueue.main.asyncAfter
+        // which properly integrates with Swift concurrency
+        Task {
+            debugLog("loadDownloadedFile Task: Starting async load")
+            do {
+                let document = try await DocumentManager.shared.loadDocument(at: url)
+                debugLog("loadDownloadedFile Task: Loaded document '\(document.name)' with \(document.sequences.count) sequences")
+
+                viewerController?.hideProgress()
+                viewerController?.displayDocument(document)
+                sidebarController?.addLoadedDocument(document)
+                debugLog("loadDownloadedFile Task: Document displayed and added to sidebar")
+            } catch {
+                debugLog("loadDownloadedFile Task: Load failed with error: \(error)")
+                viewerController?.hideProgress()
+
                 let alert = NSAlert()
                 alert.messageText = "Failed to Load Downloaded File"
                 alert.informativeText = error.localizedDescription
                 alert.alertStyle = .warning
                 alert.addButton(withTitle: "OK")
                 alert.runModal()
-            } else if let document = document {
-                viewerController?.displayDocument(document)
-                sidebarController?.addLoadedDocument(document)
             }
         }
-    }
-
-    /// Async loading with completion handler for downloaded files
-    private func loadDownloadedFileAsync(_ url: URL, completion: @escaping (LoadedDocument?, Error?) -> Void) {
-        pendingDownloadLoadURL = url
-        pendingDownloadLoadCompletion = completion
-        self.perform(#selector(executeDownloadLoad), with: nil, afterDelay: 0.1)
-    }
-
-    private var pendingDownloadLoadURL: URL?
-    private var pendingDownloadLoadCompletion: ((LoadedDocument?, Error?) -> Void)?
-
-    @objc private func executeDownloadLoad() {
-        guard let url = pendingDownloadLoadURL,
-              let completion = pendingDownloadLoadCompletion else { return }
-
-        pendingDownloadLoadURL = nil
-        pendingDownloadLoadCompletion = nil
-
-        // Use Task.detached to break out of the main actor context
-        // This allows the async work to proceed without blocking
-        Task.detached { @MainActor in
-            do {
-                let document = try await DocumentManager.shared.loadDocument(at: url)
-                completion(document, nil)
-            } catch {
-                completion(nil, error)
-            }
-        }
+        debugLog("loadDownloadedFile: Task created")
     }
 
     @objc func runNextflow(_ sender: Any?) {
@@ -1018,5 +1357,309 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         if let url = URL(string: "https://github.com/dho/lungfish-genome-browser/issues/new") {
             NSWorkspace.shared.open(url)
         }
+    }
+}
+
+// MARK: - GenBankParser for synchronous parsing
+
+/// Simple synchronous parser for GenBank files.
+/// This avoids async/await and MainActor completely.
+private class GenBankParser {
+
+    func parseContent(_ content: String) throws -> [GenBankRecord] {
+        let lines = content.components(separatedBy: .newlines)
+        var records: [GenBankRecord] = []
+        var lineIndex = 0
+
+        while lineIndex < lines.count {
+            // Skip empty lines between records
+            while lineIndex < lines.count && lines[lineIndex].trimmingCharacters(in: .whitespaces).isEmpty {
+                lineIndex += 1
+            }
+
+            if lineIndex >= lines.count {
+                break
+            }
+
+            // Parse a single record
+            let (record, nextIndex) = try parseRecord(lines: lines, startIndex: lineIndex)
+            if let record = record {
+                records.append(record)
+            }
+            lineIndex = nextIndex
+        }
+
+        return records
+    }
+
+    private func parseRecord(lines: [String], startIndex: Int) throws -> (GenBankRecord?, Int) {
+        var lineIndex = startIndex
+        var locusName: String?
+        var locusLength = 0
+        var locusMoleculeType: MoleculeType = .dna
+        var locusTopology: Topology = .linear
+        var locusDivision: String?
+        var locusDate: String?
+        var definition: String?
+        var accession: String?
+        var version: String?
+        var features: [SequenceAnnotation] = []
+        var sequenceBases = ""
+
+        enum Section {
+            case header
+            case features
+            case origin
+        }
+        var currentSection = Section.header
+        var currentFeatureType: String?
+        var currentFeatureLocation: String?
+        var currentQualifiers: [String: String] = [:]
+        var currentQualifierKey: String?
+        var currentQualifierValue: String = ""
+
+        while lineIndex < lines.count {
+            let line = lines[lineIndex]
+
+            // Check for record terminator
+            if line.hasPrefix("//") {
+                // Save any pending feature
+                if let featureType = currentFeatureType,
+                   let location = currentFeatureLocation {
+                    if let annotation = createAnnotation(type: featureType, location: location, qualifiers: currentQualifiers) {
+                        features.append(annotation)
+                    }
+                }
+                lineIndex += 1
+                break
+            }
+
+            switch currentSection {
+            case .header:
+                if line.hasPrefix("LOCUS") {
+                    let parsed = parseLocusLine(line)
+                    locusName = parsed.name
+                    locusLength = parsed.length
+                    locusMoleculeType = parsed.moleculeType
+                    locusTopology = parsed.topology
+                    locusDivision = parsed.division
+                    locusDate = parsed.date
+                } else if line.hasPrefix("DEFINITION") {
+                    definition = String(line.dropFirst(12)).trimmingCharacters(in: .whitespaces)
+                } else if line.hasPrefix("ACCESSION") {
+                    accession = String(line.dropFirst(12)).trimmingCharacters(in: .whitespaces)
+                } else if line.hasPrefix("VERSION") {
+                    version = String(line.dropFirst(12)).trimmingCharacters(in: .whitespaces)
+                } else if line.hasPrefix("FEATURES") {
+                    currentSection = .features
+                } else if line.hasPrefix("ORIGIN") {
+                    currentSection = .origin
+                }
+
+            case .features:
+                if line.hasPrefix("ORIGIN") {
+                    // Save any pending feature
+                    if let featureType = currentFeatureType,
+                       let location = currentFeatureLocation {
+                        if let annotation = createAnnotation(type: featureType, location: location, qualifiers: currentQualifiers) {
+                            features.append(annotation)
+                        }
+                    }
+                    currentSection = .origin
+                } else if line.count >= 21 && !line.hasPrefix(" ") {
+                    // New section - shouldn't happen but handle it
+                    break
+                } else if line.count >= 21 {
+                    let featureKey = String(line.prefix(21)).trimmingCharacters(in: .whitespaces)
+                    let rest = line.count > 21 ? String(line.dropFirst(21)) : ""
+
+                    if !featureKey.isEmpty && !featureKey.hasPrefix("/") {
+                        // Save previous feature
+                        if let featureType = currentFeatureType,
+                           let location = currentFeatureLocation {
+                            if let annotation = createAnnotation(type: featureType, location: location, qualifiers: currentQualifiers) {
+                                features.append(annotation)
+                            }
+                        }
+
+                        // Start new feature
+                        currentFeatureType = featureKey
+                        currentFeatureLocation = rest.trimmingCharacters(in: .whitespaces)
+                        currentQualifiers = [:]
+                        currentQualifierKey = nil
+                        currentQualifierValue = ""
+                    } else if featureKey.isEmpty || featureKey.hasPrefix("/") {
+                        // Continuation or qualifier
+                        let trimmed = rest.trimmingCharacters(in: .whitespaces)
+
+                        if trimmed.hasPrefix("/") {
+                            // Save previous qualifier
+                            if let key = currentQualifierKey {
+                                currentQualifiers[key] = currentQualifierValue.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                            }
+
+                            // Parse new qualifier
+                            let qualLine = String(trimmed.dropFirst())
+                            if let eqIndex = qualLine.firstIndex(of: "=") {
+                                currentQualifierKey = String(qualLine[..<eqIndex])
+                                currentQualifierValue = String(qualLine[qualLine.index(after: eqIndex)...])
+                            } else {
+                                currentQualifierKey = qualLine
+                                currentQualifierValue = "true"
+                            }
+                        } else if currentQualifierKey != nil {
+                            // Continuation of qualifier value
+                            currentQualifierValue += trimmed
+                        } else if currentFeatureLocation != nil {
+                            // Continuation of location
+                            currentFeatureLocation! += trimmed
+                        }
+                    }
+                }
+
+            case .origin:
+                // Parse sequence lines
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if !trimmed.isEmpty && !trimmed.hasPrefix("//") {
+                    // Remove line numbers and spaces
+                    let bases = trimmed.filter { $0.isLetter }
+                    sequenceBases += bases
+                }
+            }
+
+            lineIndex += 1
+        }
+
+        // Create the record
+        guard let name = locusName else {
+            return (nil, lineIndex)
+        }
+
+        // Create LocusInfo using the proper LungfishIO types
+        let locusInfo = LocusInfo(
+            name: name,
+            length: locusLength,
+            moleculeType: locusMoleculeType,
+            topology: locusTopology,
+            division: locusDivision,
+            date: locusDate
+        )
+
+        // Create the sequence
+        let sequence = try Sequence(
+            name: name,
+            description: definition,
+            alphabet: locusMoleculeType.alphabet,
+            bases: sequenceBases
+        )
+
+        // Create the record using the proper GenBankRecord initializer
+        let record = GenBankRecord(
+            sequence: sequence,
+            annotations: features,
+            locus: locusInfo,
+            definition: definition,
+            accession: accession,
+            version: version
+        )
+
+        return (record, lineIndex)
+    }
+
+    private func parseLocusLine(_ line: String) -> (name: String, length: Int, moleculeType: MoleculeType, topology: Topology, division: String?, date: String?) {
+        let parts = line.split(separator: " ", omittingEmptySubsequences: true)
+        guard parts.count >= 3 else {
+            return ("unknown", 0, .dna, .linear, nil, nil)
+        }
+
+        let name = String(parts[1])
+        var length = 0
+        var moleculeType: MoleculeType = .dna
+        var topology: Topology = .linear
+        var division: String?
+        var date: String?
+
+        for (index, part) in parts.enumerated() {
+            let partStr = String(part)
+            if partStr == "bp" && index > 0 {
+                length = Int(parts[index - 1]) ?? 0
+            } else if let molType = MoleculeType(rawValue: partStr.uppercased()) {
+                moleculeType = molType
+            } else if let molType = MoleculeType(rawValue: partStr) {
+                moleculeType = molType
+            } else if partStr.lowercased() == "circular" {
+                topology = .circular
+            } else if partStr.lowercased() == "linear" {
+                topology = .linear
+            }
+        }
+
+        // Get division and date from end
+        if parts.count >= 2 {
+            let lastPart = String(parts.last!)
+            if lastPart.contains("-") {
+                date = lastPart
+                if parts.count >= 3 {
+                    let secondLast = String(parts[parts.count - 2])
+                    // Division codes are typically 3 uppercase letters
+                    if secondLast.count == 3 && secondLast.uppercased() == secondLast {
+                        division = secondLast
+                    }
+                }
+            }
+        }
+
+        return (name, length, moleculeType, topology, division, date)
+    }
+
+    private func createAnnotation(type: String, location: String, qualifiers: [String: String]) -> SequenceAnnotation? {
+        // Parse location to get start and end
+        let (start, end, strand) = parseLocation(location)
+        guard start >= 0 && end >= start else { return nil }
+
+        let name = qualifiers["gene"] ?? qualifiers["product"] ?? qualifiers["label"] ?? type
+        let annotationType = AnnotationType(rawValue: type.lowercased()) ?? .region
+
+        return SequenceAnnotation(
+            type: annotationType,
+            name: name,
+            intervals: [AnnotationInterval(start: start, end: end)],
+            strand: strand,
+            qualifiers: qualifiers.mapValues { AnnotationQualifier($0) }
+        )
+    }
+
+    private func parseLocation(_ location: String) -> (start: Int, end: Int, strand: Strand) {
+        var loc = location
+        var strand: Strand = .forward
+
+        // Handle complement
+        if loc.hasPrefix("complement(") {
+            strand = .reverse
+            loc = String(loc.dropFirst(11).dropLast())
+        }
+
+        // Handle join - just take first range for simplicity
+        if loc.hasPrefix("join(") {
+            loc = String(loc.dropFirst(5).dropLast())
+            if let firstRange = loc.split(separator: ",").first {
+                loc = String(firstRange)
+            }
+        }
+
+        // Parse range
+        let parts = loc.replacingOccurrences(of: "<", with: "")
+                      .replacingOccurrences(of: ">", with: "")
+                      .split(separator: ".")
+
+        if parts.count >= 2 {
+            let start = Int(parts[0]) ?? 0
+            let end = Int(parts.last!) ?? 0
+            return (start - 1, end, strand)  // Convert to 0-based
+        } else if let single = Int(loc.replacingOccurrences(of: "<", with: "").replacingOccurrences(of: ">", with: "")) {
+            return (single - 1, single, strand)
+        }
+
+        return (0, 0, strand)
     }
 }
