@@ -559,6 +559,12 @@ public final class MainMenu {
             keyEquivalent: ""
         )
 
+        toolsMenu.addItem(
+            withTitle: "Search SRA (FASTQ)...",
+            action: #selector(ToolsMenuActions.searchSRA(_:)),
+            keyEquivalent: ""
+        )
+
         toolsMenu.addItem(.separator())
 
         // Workflows
@@ -718,6 +724,7 @@ public final class MainMenu {
     func alignSequences(_ sender: Any?)
     func searchNCBI(_ sender: Any?)
     func searchENA(_ sender: Any?)
+    func searchSRA(_ sender: Any?)
     func runNextflow(_ sender: Any?)
     func runSnakemake(_ sender: Any?)
     func openWorkflowBuilder(_ sender: Any?)

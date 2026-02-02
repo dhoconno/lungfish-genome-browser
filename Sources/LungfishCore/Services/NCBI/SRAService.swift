@@ -1,0 +1,586 @@
+// SRAService.swift - NCBI Sequence Read Archive integration
+// Copyright (c) 2024 Lungfish Contributors
+// SPDX-License-Identifier: MIT
+//
+// Owner: NCBI Integration Lead (Role 12)
+
+import Foundation
+import os.log
+
+private let logger = Logger(subsystem: "com.lungfish.core", category: "SRAService")
+
+// MARK: - SRA Service
+
+/// Service for accessing NCBI Sequence Read Archive (SRA).
+///
+/// This service provides search and download capabilities for SRA datasets.
+/// Downloads require the SRA Toolkit to be installed (prefetch + fasterq-dump).
+///
+/// ## Usage
+/// ```swift
+/// let service = SRAService()
+///
+/// // Search for SRA runs
+/// let results = try await service.search(term: "SARS-CoV-2 Illumina")
+///
+/// // Download FASTQ files
+/// let files = try await service.downloadFASTQ(accession: "SRR11140748")
+/// ```
+public actor SRAService {
+
+    // MARK: - Properties
+
+    private let ncbiService: NCBIService
+    private let httpClient: HTTPClient
+
+    /// Path to SRA Toolkit binaries (prefetch, fasterq-dump)
+    private var sraToolkitPath: String?
+
+    // MARK: - Initialization
+
+    /// Creates a new SRA service.
+    ///
+    /// - Parameters:
+    ///   - ncbiService: NCBI service for E-utilities access
+    ///   - httpClient: HTTP client for direct API calls
+    public init(
+        ncbiService: NCBIService = NCBIService(),
+        httpClient: HTTPClient = URLSessionHTTPClient()
+    ) {
+        self.ncbiService = ncbiService
+        self.httpClient = httpClient
+        self.sraToolkitPath = Self.findSRAToolkitSync()
+    }
+
+    // MARK: - Search
+
+    /// Searches SRA for datasets matching the query.
+    ///
+    /// - Parameter query: Search query
+    /// - Returns: Search results with SRA run information
+    public func search(_ query: SearchQuery) async throws -> SRASearchResults {
+        // Use NCBI ESearch with SRA database
+        let ids = try await ncbiService.esearch(
+            database: .sra,
+            term: query.term,
+            retmax: query.limit,
+            retstart: query.offset
+        )
+
+        guard !ids.isEmpty else {
+            return SRASearchResults(totalCount: 0, runs: [])
+        }
+
+        // Get run info via EFetch
+        let runs = try await fetchRunInfo(ids: ids)
+
+        return SRASearchResults(
+            totalCount: ids.count,
+            runs: runs,
+            hasMore: runs.count == query.limit
+        )
+    }
+
+    /// Fetches detailed run information for SRA IDs.
+    private func fetchRunInfo(ids: [String]) async throws -> [SRARunInfo] {
+        // Use NCBI EFetch to get run info
+        let url = URL(string: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi")!
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "db", value: "sra"),
+            URLQueryItem(name: "id", value: ids.joined(separator: ",")),
+            URLQueryItem(name: "rettype", value: "runinfo"),
+            URLQueryItem(name: "retmode", value: "csv")
+        ]
+
+        var request = URLRequest(url: components.url!)
+        request.setValue("Lungfish Genome Browser", forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 30
+
+        let (data, response) = try await httpClient.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw SRAError.fetchFailed("Failed to fetch run info")
+        }
+
+        guard let content = String(data: data, encoding: .utf8) else {
+            throw SRAError.parseError("Invalid encoding")
+        }
+
+        return parseRunInfoCSV(content)
+    }
+
+    /// Parses CSV run info from NCBI.
+    ///
+    /// NCBI efetch returns CSV without headers. The known column order is:
+    /// Run, ReleaseDate, LoadDate, spots, bases, spots_with_mates, avgLength, size_MB,
+    /// AssemblyName, download_path, Experiment, LibraryName, LibraryStrategy, LibrarySelection,
+    /// LibrarySource, LibraryLayout, InsertSize, InsertDev, Platform, Model, SRAStudy, BioProject,
+    /// Study_Pubmed_id, ProjectID, Sample, BioSample, SampleType, TaxID, ScientificName, SampleName, ...
+    private func parseRunInfoCSV(_ csv: String) -> [SRARunInfo] {
+        let lines = csv.components(separatedBy: "\n")
+        guard !lines.isEmpty else { return [] }
+
+        // Check if first line looks like a header (starts with "Run,")
+        let firstLine = lines[0]
+        let hasHeader = firstLine.hasPrefix("Run,")
+
+        // Column indices (0-based) for headerless CSV
+        // These are based on NCBI's fixed output format
+        let runIdx = 0
+        let releaseDateIdx = 1
+        let spotsIdx = 3
+        let basesIdx = 4
+        let avgLengthIdx = 6
+        let sizeMBIdx = 7
+        let experimentIdx = 10
+        let libraryStrategyIdx = 12
+        let librarySourceIdx = 14
+        let libraryLayoutIdx = 15
+        let platformIdx = 18
+        let modelIdx = 19
+        let studyIdx = 20
+        let bioprojectIdx = 21
+        let sampleIdx = 24
+        let biosampleIdx = 25
+        let taxIdIdx = 27
+        let scientificNameIdx = 28
+
+        var runs: [SRARunInfo] = []
+
+        // If there's a header, skip it; otherwise process all lines
+        let dataLines = hasHeader ? Array(lines.dropFirst()) : lines
+
+        for line in dataLines where !line.isEmpty {
+            let fields = parseCSVLine(line)
+            guard fields.count > runIdx, !fields[runIdx].isEmpty else { continue }
+
+            let run = SRARunInfo(
+                accession: fields[safe: runIdx] ?? "",
+                experiment: fields[safe: experimentIdx],
+                sample: fields[safe: sampleIdx],
+                study: fields[safe: studyIdx],
+                bioproject: fields[safe: bioprojectIdx],
+                biosample: fields[safe: biosampleIdx],
+                organism: fields[safe: scientificNameIdx],
+                platform: fields[safe: platformIdx],
+                libraryStrategy: fields[safe: libraryStrategyIdx],
+                librarySource: fields[safe: librarySourceIdx],
+                libraryLayout: fields[safe: libraryLayoutIdx],
+                spots: Int(fields[safe: spotsIdx] ?? ""),
+                bases: Int(fields[safe: basesIdx] ?? ""),
+                avgLength: Int(fields[safe: avgLengthIdx] ?? ""),
+                size: Int(fields[safe: sizeMBIdx] ?? ""),
+                releaseDate: parseDate(fields[safe: releaseDateIdx])
+            )
+
+            if !run.accession.isEmpty {
+                runs.append(run)
+            }
+        }
+
+        return runs
+    }
+
+    /// Parses a CSV line handling quoted fields.
+    private func parseCSVLine(_ line: String) -> [String] {
+        var fields: [String] = []
+        var current = ""
+        var inQuotes = false
+
+        for char in line {
+            if char == "\"" {
+                inQuotes.toggle()
+            } else if char == "," && !inQuotes {
+                fields.append(current)
+                current = ""
+            } else {
+                current.append(char)
+            }
+        }
+        fields.append(current)
+
+        return fields
+    }
+
+    private func parseDate(_ dateStr: String?) -> Date? {
+        guard let str = dateStr, !str.isEmpty else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter.date(from: str)
+    }
+
+    // MARK: - Download
+
+    /// Downloads FASTQ files for an SRA run.
+    ///
+    /// Requires SRA Toolkit (prefetch + fasterq-dump) to be installed.
+    ///
+    /// - Parameters:
+    ///   - accession: SRA run accession (e.g., SRR11140748)
+    ///   - outputDir: Directory for output files (defaults to temp)
+    ///   - progress: Optional progress callback (0.0-1.0)
+    /// - Returns: URLs to downloaded FASTQ files
+    public func downloadFASTQ(
+        accession: String,
+        outputDir: URL? = nil,
+        progress: ((Double) -> Void)? = nil
+    ) async throws -> [URL] {
+        guard let toolkitPath = sraToolkitPath else {
+            throw SRAError.toolkitNotFound
+        }
+
+        let outputDirectory = outputDir ?? FileManager.default.temporaryDirectory
+            .appendingPathComponent("sra_downloads")
+
+        // Create output directory
+        try FileManager.default.createDirectory(
+            at: outputDirectory,
+            withIntermediateDirectories: true
+        )
+
+        logger.info("Downloading SRA run \(accession, privacy: .public) to \(outputDirectory.path, privacy: .public)")
+
+        // Step 1: Prefetch the SRA file
+        progress?(0.1)
+        let prefetchPath = (toolkitPath as NSString).appendingPathComponent("prefetch")
+        let prefetchResult = try await runCommand(
+            prefetchPath,
+            arguments: [accession, "-O", outputDirectory.path]
+        )
+
+        if prefetchResult.exitCode != 0 {
+            logger.error("prefetch failed: \(prefetchResult.stderr, privacy: .public)")
+            throw SRAError.downloadFailed(prefetchResult.stderr)
+        }
+
+        progress?(0.5)
+
+        // Step 2: Convert to FASTQ with fasterq-dump
+        let fasterqPath = (toolkitPath as NSString).appendingPathComponent("fasterq-dump")
+        let sraFile = outputDirectory
+            .appendingPathComponent(accession)
+            .appendingPathComponent("\(accession).sra")
+
+        let fasterqResult = try await runCommand(
+            fasterqPath,
+            arguments: [
+                sraFile.path,
+                "-O", outputDirectory.path,
+                "--split-files",  // Split paired reads
+                "--threads", "4"
+            ]
+        )
+
+        if fasterqResult.exitCode != 0 {
+            logger.error("fasterq-dump failed: \(fasterqResult.stderr, privacy: .public)")
+            throw SRAError.conversionFailed(fasterqResult.stderr)
+        }
+
+        progress?(0.9)
+
+        // Find the output FASTQ files
+        let files = try FileManager.default.contentsOfDirectory(at: outputDirectory, includingPropertiesForKeys: nil)
+        let fastqFiles = files.filter { $0.pathExtension == "fastq" || $0.lastPathComponent.contains(accession) }
+
+        progress?(1.0)
+
+        logger.info("Downloaded \(fastqFiles.count, privacy: .public) FASTQ files for \(accession, privacy: .public)")
+
+        return fastqFiles
+    }
+
+    /// Downloads FASTQ via ENA (alternative to SRA Toolkit).
+    ///
+    /// This method downloads directly from ENA's FTP/HTTP servers,
+    /// which doesn't require the SRA Toolkit.
+    ///
+    /// - Parameters:
+    ///   - accession: SRA/ENA run accession
+    ///   - outputDir: Output directory
+    ///   - progress: Progress callback
+    /// - Returns: URLs to downloaded files
+    public func downloadFASTQFromENA(
+        accession: String,
+        outputDir: URL? = nil,
+        progress: ((Double) -> Void)? = nil
+    ) async throws -> [URL] {
+        let outputDirectory = outputDir ?? FileManager.default.temporaryDirectory
+            .appendingPathComponent("sra_downloads")
+
+        try FileManager.default.createDirectory(
+            at: outputDirectory,
+            withIntermediateDirectories: true
+        )
+
+        // Construct ENA FTP URL
+        // Format: ftp://ftp.sra.ebi.ac.uk/vol1/fastq/SRR111/048/SRR11140748/SRR11140748_1.fastq.gz
+        let prefix = String(accession.prefix(6))
+        let suffix = accession.count > 9 ? "/0" + String(accession.suffix(2)) : ""
+
+        let baseURL = "https://ftp.sra.ebi.ac.uk/vol1/fastq/\(prefix)\(suffix)/\(accession)"
+
+        var downloadedFiles: [URL] = []
+
+        // Try to download paired-end files first
+        for suffix in ["_1.fastq.gz", "_2.fastq.gz", ".fastq.gz"] {
+            let fileURL = URL(string: "\(baseURL)/\(accession)\(suffix)")!
+            let localPath = outputDirectory.appendingPathComponent("\(accession)\(suffix)")
+
+            do {
+                logger.info("Attempting to download from ENA: \(fileURL.absoluteString, privacy: .public)")
+
+                var request = URLRequest(url: fileURL)
+                request.setValue("Lungfish Genome Browser", forHTTPHeaderField: "User-Agent")
+
+                let (data, response) = try await httpClient.data(for: request)
+
+                guard let httpResponse = response as? HTTPURLResponse,
+                      (200...299).contains(httpResponse.statusCode) else {
+                    continue  // Try next suffix
+                }
+
+                try data.write(to: localPath)
+                downloadedFiles.append(localPath)
+
+                logger.info("Downloaded: \(localPath.lastPathComponent, privacy: .public)")
+            } catch {
+                // File might not exist with this suffix, try next
+                continue
+            }
+        }
+
+        if downloadedFiles.isEmpty {
+            throw SRAError.downloadFailed("Could not download FASTQ files from ENA for \(accession)")
+        }
+
+        progress?(1.0)
+
+        return downloadedFiles
+    }
+
+    // MARK: - SRA Toolkit Detection
+
+    /// Finds the SRA Toolkit installation path (nonisolated for init use).
+    private static func findSRAToolkitSync() -> String? {
+        // Common installation paths
+        let searchPaths = [
+            "/usr/local/bin",
+            "/opt/homebrew/bin",
+            "~/sratoolkit/bin",
+            "/usr/bin",
+            "/Applications/sratoolkit.app/Contents/MacOS/bin"
+        ].map { ($0 as NSString).expandingTildeInPath }
+
+        for path in searchPaths {
+            let prefetchPath = (path as NSString).appendingPathComponent("prefetch")
+            if FileManager.default.isExecutableFile(atPath: prefetchPath) {
+                logger.info("Found SRA Toolkit at: \(path, privacy: .public)")
+                return path
+            }
+        }
+
+        // Try to find via which command
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+        process.arguments = ["prefetch"]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !output.isEmpty {
+                let binPath = (output as NSString).deletingLastPathComponent
+                logger.info("Found SRA Toolkit via which: \(binPath, privacy: .public)")
+                return binPath
+            }
+        } catch {
+            logger.debug("Could not find SRA Toolkit via which")
+        }
+
+        logger.warning("SRA Toolkit not found")
+        return nil
+    }
+
+    /// Checks if SRA Toolkit is available.
+    public var isSRAToolkitAvailable: Bool {
+        sraToolkitPath != nil
+    }
+
+    // MARK: - Process Execution
+
+    private struct CommandResult {
+        let stdout: String
+        let stderr: String
+        let exitCode: Int32
+    }
+
+    private func runCommand(_ path: String, arguments: [String]) async throws -> CommandResult {
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global().async {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: path)
+                process.arguments = arguments
+
+                let stdoutPipe = Pipe()
+                let stderrPipe = Pipe()
+                process.standardOutput = stdoutPipe
+                process.standardError = stderrPipe
+
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+
+                    let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                    let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+
+                    let result = CommandResult(
+                        stdout: String(data: stdoutData, encoding: .utf8) ?? "",
+                        stderr: String(data: stderrData, encoding: .utf8) ?? "",
+                        exitCode: process.terminationStatus
+                    )
+
+                    continuation.resume(returning: result)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - SRA Search Results
+
+/// Results from an SRA search.
+public struct SRASearchResults: Sendable {
+    /// Total count of matching runs
+    public let totalCount: Int
+
+    /// SRA run information
+    public let runs: [SRARunInfo]
+
+    /// Whether more results are available
+    public let hasMore: Bool
+
+    public init(totalCount: Int, runs: [SRARunInfo], hasMore: Bool = false) {
+        self.totalCount = totalCount
+        self.runs = runs
+        self.hasMore = hasMore
+    }
+}
+
+// MARK: - SRA Run Info
+
+/// Information about an SRA run.
+public struct SRARunInfo: Sendable, Identifiable, Equatable {
+    public var id: String { accession }
+
+    /// Run accession (SRR...)
+    public let accession: String
+
+    /// Experiment accession (SRX...)
+    public let experiment: String?
+
+    /// Sample accession (SRS...)
+    public let sample: String?
+
+    /// Study accession (SRP...)
+    public let study: String?
+
+    /// BioProject accession
+    public let bioproject: String?
+
+    /// BioSample accession
+    public let biosample: String?
+
+    /// Organism name
+    public let organism: String?
+
+    /// Sequencing platform (ILLUMINA, PACBIO, etc.)
+    public let platform: String?
+
+    /// Library strategy (WGS, RNA-Seq, AMPLICON, etc.)
+    public let libraryStrategy: String?
+
+    /// Library source (GENOMIC, TRANSCRIPTOMIC, etc.)
+    public let librarySource: String?
+
+    /// Library layout (SINGLE, PAIRED)
+    public let libraryLayout: String?
+
+    /// Number of spots (reads)
+    public let spots: Int?
+
+    /// Total bases
+    public let bases: Int?
+
+    /// Average read length
+    public let avgLength: Int?
+
+    /// Size in MB
+    public let size: Int?
+
+    /// Release date
+    public let releaseDate: Date?
+
+    /// Formatted size string
+    public var sizeString: String {
+        guard let mb = size else { return "Unknown" }
+        if mb >= 1000 {
+            return String(format: "%.1f GB", Double(mb) / 1000.0)
+        }
+        return "\(mb) MB"
+    }
+
+    /// Formatted spots string
+    public var spotsString: String {
+        guard let spots = spots else { return "Unknown" }
+        if spots >= 1_000_000 {
+            return String(format: "%.1fM reads", Double(spots) / 1_000_000.0)
+        } else if spots >= 1000 {
+            return String(format: "%.1fK reads", Double(spots) / 1000.0)
+        }
+        return "\(spots) reads"
+    }
+}
+
+// MARK: - SRA Errors
+
+/// Errors from SRA operations.
+public enum SRAError: Error, LocalizedError {
+    case toolkitNotFound
+    case downloadFailed(String)
+    case conversionFailed(String)
+    case fetchFailed(String)
+    case parseError(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .toolkitNotFound:
+            return "SRA Toolkit not found. Install with: brew install sratoolkit"
+        case .downloadFailed(let message):
+            return "Download failed: \(message)"
+        case .conversionFailed(let message):
+            return "FASTQ conversion failed: \(message)"
+        case .fetchFailed(let message):
+            return "Failed to fetch SRA info: \(message)"
+        case .parseError(let message):
+            return "Parse error: \(message)"
+        }
+    }
+}
+
+// MARK: - Array Extension
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        guard index >= 0 && index < count else { return nil }
+        return self[index]
+    }
+}

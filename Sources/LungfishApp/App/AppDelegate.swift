@@ -712,6 +712,38 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         showDatabaseBrowser(source: .ena)
     }
 
+    @objc func searchSRA(_ sender: Any?) {
+        showSRABrowser()
+    }
+
+    /// Shows the SRA browser for downloading FASTQ data.
+    private func showSRABrowser() {
+        guard let window = mainWindowController?.window else { return }
+
+        let browserController = SRABrowserViewController()
+
+        // Handle download completion
+        browserController.onDownloadComplete = { [weak self] fileURLs in
+            // Dismiss the sheet first
+            if let sheet = window.attachedSheet {
+                window.endSheet(sheet)
+            }
+
+            // Load the first downloaded file into the viewer
+            if let firstURL = fileURLs.first {
+                _ = self?.openDocument(at: firstURL)
+            }
+        }
+
+        // Present as sheet
+        let browserWindow = NSWindow(contentViewController: browserController)
+        browserWindow.title = "Search NCBI SRA"
+
+        window.beginSheet(browserWindow) { _ in
+            // Sheet dismissed
+        }
+    }
+
     /// Shows the database browser for the specified source.
     private func showDatabaseBrowser(source: DatabaseSource) {
         guard let window = mainWindowController?.window else { return }
