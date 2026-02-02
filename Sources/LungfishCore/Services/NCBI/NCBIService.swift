@@ -139,6 +139,65 @@ public actor NCBIService: DatabaseService {
         return try parseGenBankRecord(content, uid: uid)
     }
 
+    /// Fetches raw GenBank format data for an accession.
+    ///
+    /// This method returns the complete GenBank file content without parsing,
+    /// preserving all annotations, features, and metadata in the original format.
+    ///
+    /// - Parameter accession: The accession number to fetch
+    /// - Returns: A tuple containing the raw GenBank content and the resolved accession
+    /// - Throws: `DatabaseServiceError` if the fetch fails
+    public func fetchRawGenBank(accession: String) async throws -> (content: String, accession: String) {
+        // First search to get the UID
+        let ids = try await esearch(
+            database: .nucleotide,
+            term: accession,
+            retmax: 1
+        )
+
+        guard let uid = ids.first else {
+            throw DatabaseServiceError.notFound(accession: accession)
+        }
+
+        // Fetch the GenBank record
+        let data = try await efetch(
+            database: .nucleotide,
+            ids: [uid],
+            format: .genbank
+        )
+
+        // Convert to string
+        guard let content = String(data: data, encoding: .utf8) else {
+            throw DatabaseServiceError.parseError(message: "Invalid GenBank data encoding")
+        }
+
+        // Extract the accession from the GenBank content for accurate filename
+        let resolvedAccession = extractAccession(from: content) ?? accession
+
+        return (content: content, accession: resolvedAccession)
+    }
+
+    /// Extracts the accession number from GenBank file content.
+    private func extractAccession(from content: String) -> String? {
+        let lines = content.components(separatedBy: "\n")
+        for line in lines {
+            if line.hasPrefix("ACCESSION") {
+                let parts = line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+                if parts.count > 1 {
+                    return parts[1]
+                }
+            }
+            if line.hasPrefix("VERSION") {
+                let parts = line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+                if parts.count > 1 {
+                    // VERSION line contains accession.version (e.g., NC_002549.1)
+                    return parts[1]
+                }
+            }
+        }
+        return nil
+    }
+
     public nonisolated func fetchBatch(accessions: [String]) async throws -> AsyncThrowingStream<DatabaseRecord, Error> {
         AsyncThrowingStream { continuation in
             Task {
@@ -292,22 +351,32 @@ public actor NCBIService: DatabaseService {
     }
 
     private func parseGenBankRecord(_ content: String, uid: String) throws -> DatabaseRecord {
-        // Basic GenBank parsing
+        // Basic GenBank parsing - extracts key metadata and sequence
+        // Note: For full annotation preservation, use fetchRawGenBank() and save directly
         var accession = uid
         var version: String?
         var title = ""
         var organism: String?
         var sequence = ""
         var metadata: [String: String] = [:]
+        var annotations: [SequenceAnnotation] = []
 
         let lines = content.components(separatedBy: "\n")
         var inSequence = false
+        var inFeatures = false
+        var currentFeature: (type: String, location: String, qualifiers: [String: String])?
+        var currentQualifierKey: String?
+        var currentQualifierValue: String = ""
 
         for line in lines {
             if line.hasPrefix("LOCUS") {
                 let parts = line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
                 if parts.count > 1 {
                     accession = parts[1]
+                }
+                // Extract molecule type if available
+                if parts.count > 3 {
+                    metadata["molecule_type"] = parts[3]
                 }
             } else if line.hasPrefix("ACCESSION") {
                 let parts = line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
@@ -323,14 +392,54 @@ public actor NCBIService: DatabaseService {
                 title = String(line.dropFirst(12)).trimmingCharacters(in: .whitespaces)
             } else if line.hasPrefix("  ORGANISM") {
                 organism = String(line.dropFirst(12)).trimmingCharacters(in: .whitespaces)
+            } else if line.hasPrefix("KEYWORDS") {
+                let keywords = String(line.dropFirst(12)).trimmingCharacters(in: .whitespaces)
+                if keywords != "." {
+                    metadata["keywords"] = keywords
+                }
+            } else if line.hasPrefix("SOURCE") {
+                metadata["source"] = String(line.dropFirst(12)).trimmingCharacters(in: .whitespaces)
+            } else if line.hasPrefix("FEATURES") {
+                inFeatures = true
             } else if line.hasPrefix("ORIGIN") {
+                // Finish any pending feature
+                if let feature = currentFeature {
+                    if let annotation = createAnnotation(from: feature) {
+                        annotations.append(annotation)
+                    }
+                }
+                inFeatures = false
                 inSequence = true
             } else if line.hasPrefix("//") {
                 inSequence = false
+                inFeatures = false
             } else if inSequence {
                 // Parse sequence lines (numbered with spaces)
                 let seqPart = line.components(separatedBy: .whitespaces).dropFirst().joined()
                 sequence += seqPart.uppercased()
+            } else if inFeatures {
+                // Parse feature table entries
+                if let featureInfo = parseFeatureLine(line) {
+                    // Save previous feature
+                    if let feature = currentFeature {
+                        if let annotation = createAnnotation(from: feature) {
+                            annotations.append(annotation)
+                        }
+                    }
+                    currentFeature = featureInfo
+                    currentQualifierKey = nil
+                } else if let (key, value) = parseQualifierLine(line) {
+                    currentQualifierKey = key
+                    currentQualifierValue = value
+                    currentFeature?.qualifiers[key] = value
+                } else if line.hasPrefix("                    ") && currentQualifierKey != nil {
+                    // Continuation of qualifier value
+                    let continuation = line.trimmingCharacters(in: .whitespaces)
+                    currentQualifierValue += " " + continuation
+                    if let key = currentQualifierKey {
+                        currentFeature?.qualifiers[key] = currentQualifierValue
+                    }
+                }
             }
         }
 
@@ -341,9 +450,163 @@ public actor NCBIService: DatabaseService {
             title: title,
             organism: organism,
             sequence: sequence,
+            annotations: annotations,
             metadata: metadata,
             source: .ncbi
         )
+    }
+
+    /// Parses a feature line from the FEATURES section.
+    /// Feature lines start at column 6 with a feature type, followed by location.
+    private func parseFeatureLine(_ line: String) -> (type: String, location: String, qualifiers: [String: String])? {
+        // Feature lines have the format: "     feature_type     location"
+        // They start with exactly 5 spaces, then the feature type
+        guard line.hasPrefix("     ") && !line.hasPrefix("      ") else {
+            return nil
+        }
+
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let parts = trimmed.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        guard parts.count >= 2 else { return nil }
+
+        let featureType = parts[0]
+        let location = parts.dropFirst().joined(separator: "")
+
+        return (type: featureType, location: location, qualifiers: [:])
+    }
+
+    /// Parses a qualifier line from within a feature.
+    /// Qualifier lines start at column 22 with /key="value" or /key=value
+    private func parseQualifierLine(_ line: String) -> (String, String)? {
+        guard line.hasPrefix("                     /") else {
+            return nil
+        }
+
+        let content = String(line.dropFirst(21)).trimmingCharacters(in: .whitespaces)
+        guard content.hasPrefix("/") else { return nil }
+
+        let withoutSlash = String(content.dropFirst())
+        if let equalsIndex = withoutSlash.firstIndex(of: "=") {
+            let key = String(withoutSlash[..<equalsIndex])
+            var value = String(withoutSlash[withoutSlash.index(after: equalsIndex)...])
+            // Remove surrounding quotes if present
+            if value.hasPrefix("\"") && value.hasSuffix("\"") && value.count > 1 {
+                value = String(value.dropFirst().dropLast())
+            }
+            return (key, value)
+        } else {
+            // Flag qualifier without value (e.g., /pseudo)
+            return (withoutSlash, "true")
+        }
+    }
+
+    /// Creates a SequenceAnnotation from parsed feature data.
+    private func createAnnotation(from feature: (type: String, location: String, qualifiers: [String: String])) -> SequenceAnnotation? {
+        // Parse location to get start and end positions
+        guard let (start, end, strand) = parseLocation(feature.location) else {
+            return nil
+        }
+
+        // Map GenBank feature types to our annotation types
+        let annotationType: AnnotationType
+        switch feature.type.lowercased() {
+        case "gene":
+            annotationType = .gene
+        case "cds":
+            annotationType = .cds
+        case "mrna":
+            annotationType = .mRNA
+        case "trna", "rrna":
+            annotationType = .transcript
+        case "exon":
+            annotationType = .exon
+        case "intron":
+            annotationType = .intron
+        case "promoter":
+            annotationType = .promoter
+        case "misc_feature":
+            annotationType = .misc_feature
+        case "source":
+            annotationType = .source
+        case "variation":
+            annotationType = .variation
+        default:
+            annotationType = .misc_feature
+        }
+
+        // Get the name/label from qualifiers
+        let name = feature.qualifiers["gene"]
+            ?? feature.qualifiers["product"]
+            ?? feature.qualifiers["label"]
+            ?? feature.qualifiers["note"]
+            ?? feature.type
+
+        // Convert qualifiers to AnnotationQualifier format
+        var convertedQualifiers: [String: AnnotationQualifier] = [:]
+        for (key, value) in feature.qualifiers {
+            convertedQualifiers[key] = AnnotationQualifier(value)
+        }
+
+        return SequenceAnnotation(
+            type: annotationType,
+            name: name,
+            start: start,
+            end: end,
+            strand: strand,
+            qualifiers: convertedQualifiers
+        )
+    }
+
+    /// Parses a GenBank location string to extract start, end, and strand.
+    private func parseLocation(_ location: String) -> (start: Int, end: Int, strand: Strand)? {
+        var loc = location
+        var strand: Strand = .forward
+
+        // Check for complement
+        if loc.hasPrefix("complement(") && loc.hasSuffix(")") {
+            strand = .reverse
+            loc = String(loc.dropFirst(11).dropLast())
+        }
+
+        // Handle join() - take the outer bounds
+        if loc.hasPrefix("join(") && loc.hasSuffix(")") {
+            loc = String(loc.dropFirst(5).dropLast())
+            // Get first start and last end from joined locations
+            let parts = loc.components(separatedBy: ",")
+            if let first = parts.first, let last = parts.last {
+                if let firstRange = parseSimpleRange(first),
+                   let lastRange = parseSimpleRange(last) {
+                    return (start: firstRange.start, end: lastRange.end, strand: strand)
+                }
+            }
+        }
+
+        // Simple range: start..end
+        if let range = parseSimpleRange(loc) {
+            return (start: range.start, end: range.end, strand: strand)
+        }
+
+        return nil
+    }
+
+    /// Parses a simple range like "123..456" or "<123..>456"
+    private func parseSimpleRange(_ range: String) -> (start: Int, end: Int)? {
+        let cleaned = range.replacingOccurrences(of: "<", with: "")
+            .replacingOccurrences(of: ">", with: "")
+            .trimmingCharacters(in: .whitespaces)
+
+        let parts = cleaned.components(separatedBy: "..")
+        guard parts.count == 2,
+              let start = Int(parts[0]),
+              let end = Int(parts[1]) else {
+            // Try single position
+            if let pos = Int(cleaned) {
+                return (start: pos, end: pos)
+            }
+            return nil
+        }
+
+        return (start: start, end: end)
     }
 }
 

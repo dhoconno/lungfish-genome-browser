@@ -12,6 +12,21 @@ import os.log
 /// Logger for database browser operations
 private let logger = Logger(subsystem: "com.lungfish.browser", category: "DatabaseBrowser")
 
+/// Executes a MainActor-isolated block on the main thread in a way that works during modal sessions.
+/// Uses Timer with commonModes run loop mode to ensure execution during modal sheet display.
+private func performOnMainRunLoop(_ block: @escaping @MainActor @Sendable () -> Void) {
+    // Create a timer that fires immediately and runs in common modes (works during modals)
+    let timer = Timer(timeInterval: 0, repeats: false) { _ in
+        // Timer callback runs on main thread but not in MainActor context
+        // We use assumeIsolated since Timer callbacks on main thread are MainActor-safe
+        MainActor.assumeIsolated {
+            block()
+        }
+    }
+    // Add to run loop with common modes so it fires during modal sessions
+    RunLoop.main.add(timer, forMode: .common)
+}
+
 /// Controller for the database browser panel.
 ///
 /// Provides search interface for NCBI and ENA databases with download capability.
@@ -295,7 +310,10 @@ public class DatabaseBrowserViewModel: ObservableObject {
 
     /// Initiates a search operation.
     ///
-    /// Uses a Task with explicit @MainActor to ensure proper actor isolation.
+    /// Uses Task.detached to run the async search on a background executor,
+    /// allowing the search to proceed even when presented in a modal sheet.
+    /// This is necessary because Task {} inherits MainActor isolation and
+    /// may not execute properly during modal sheet sessions.
     func performSearch() {
         guard isSearchTextValid else {
             errorMessage = "Please enter a search term"
@@ -310,10 +328,94 @@ public class DatabaseBrowserViewModel: ObservableObject {
         errorMessage = nil
         results = []
 
-        // Start new search task with explicit MainActor context
-        currentSearchTask = Task { @MainActor [weak self] in
-            guard let self = self else { return }
-            await self.executeSearch()
+        logger.info("performSearch: Starting search task")
+
+        // Capture values we need for the search (value types are safe to capture)
+        let searchTerm = buildSearchTerm()
+        let query = SearchQuery(
+            term: searchTerm,
+            organism: organismFilter.isEmpty ? nil : organismFilter,
+            location: locationFilter.isEmpty ? nil : locationFilter,
+            minLength: Int(minLength),
+            maxLength: Int(maxLength),
+            limit: 50
+        )
+        let currentSource = source
+
+        // Capture services as they are actors (safe to use across isolation boundaries)
+        let ncbi = ncbiService
+        let ena = enaService
+
+
+        // Use Task.detached to break out of MainActor context.
+        // This is critical when running in a modal sheet - regular Task {}
+        // inherits MainActor isolation and may not execute due to the modal
+        // run loop blocking task scheduling on MainActor.
+        currentSearchTask = Task.detached { [weak self] in
+            logger.info("performSearch: Task running, source=\(currentSource.displayName, privacy: .public)")
+
+            do {
+                try Task.checkCancellation()
+
+                // Update UI using performOnMainRunLoop for modal sheet compatibility
+                performOnMainRunLoop { [weak self] in
+                    guard let self = self else { return }
+                    self.objectWillChange.send()
+                    self.searchPhase = .searching
+                }
+
+                let searchResults: SearchResults
+
+                switch currentSource {
+                case .ncbi:
+                    performOnMainRunLoop { [weak self] in
+                        guard let self = self else { return }
+                        self.objectWillChange.send()
+                        self.searchPhase = .loadingDetails
+                    }
+                    searchResults = try await ncbi.search(query)
+                case .ena:
+                    performOnMainRunLoop { [weak self] in
+                        guard let self = self else { return }
+                        self.objectWillChange.send()
+                        self.searchPhase = .loadingDetails
+                    }
+                    searchResults = try await ena.search(query)
+                default:
+                    throw DatabaseServiceError.invalidQuery(reason: "Unsupported database: \(currentSource)")
+                }
+
+                try Task.checkCancellation()
+
+                // Update UI with results via RunLoop for modal compatibility
+                performOnMainRunLoop { [weak self] in
+                    guard let self = self else { return }
+                    self.objectWillChange.send()
+                    self.results = searchResults.records
+                    self.searchPhase = .complete(count: searchResults.records.count)
+                }
+
+            } catch is CancellationError {
+                logger.info("Search cancelled")
+                performOnMainRunLoop { [weak self] in
+                    guard let self = self else { return }
+                    self.objectWillChange.send()
+                    self.searchPhase = .idle
+                }
+            } catch {
+                let errorMsg = error.localizedDescription
+                logger.error("Search failed: \(errorMsg, privacy: .public)")
+                performOnMainRunLoop { [weak self] in
+                    guard let self = self else { return }
+                    self.objectWillChange.send()
+                    self.errorMessage = "Search failed: \(errorMsg)"
+                    self.searchPhase = .failed(errorMsg)
+                }
+            }
+
+            performOnMainRunLoop { [weak self] in
+                self?.currentSearchTask = nil
+            }
         }
     }
 
@@ -333,72 +435,12 @@ public class DatabaseBrowserViewModel: ObservableObject {
         }
     }
 
-    /// Executes the actual search operation.
-    private func executeSearch() async {
-        let searchTerm = buildSearchTerm()
-        logger.info("Starting search for: \(searchTerm, privacy: .public)")
-
-        do {
-            // Check for cancellation
-            try Task.checkCancellation()
-
-            // Update phase to searching
-            searchPhase = .searching
-
-            let query = SearchQuery(
-                term: searchTerm,
-                organism: organismFilter.isEmpty ? nil : organismFilter,
-                location: locationFilter.isEmpty ? nil : locationFilter,
-                minLength: Int(minLength),
-                maxLength: Int(maxLength),
-                limit: 50
-            )
-
-            // Check for cancellation before network call
-            try Task.checkCancellation()
-
-            let searchResults: SearchResults
-
-            switch source {
-            case .ncbi:
-                // Update phase to loading details (NCBI does esearch + esummary)
-                searchPhase = .loadingDetails
-                searchResults = try await ncbiService.search(query)
-            case .ena:
-                searchPhase = .loadingDetails
-                searchResults = try await enaService.search(query)
-            default:
-                throw DatabaseServiceError.invalidQuery(reason: "Unsupported database: \(source)")
-            }
-
-            // Check for cancellation after network call
-            try Task.checkCancellation()
-
-            results = searchResults.records
-            searchPhase = .complete(count: results.count)
-            logger.info("Search completed: \(self.results.count, privacy: .public) results")
-
-        } catch is CancellationError {
-            // Search was cancelled, don't show error
-            logger.info("Search cancelled")
-            searchPhase = .idle
-        } catch {
-            let errorMsg = error.localizedDescription
-            errorMessage = "Search failed: \(errorMsg)"
-            searchPhase = .failed(errorMsg)
-            logger.error("Search failed: \(errorMsg, privacy: .public)")
-        }
-
-        currentSearchTask = nil
-    }
-
-    /// Public async search method.
-    func search() async {
-        await executeSearch()
-    }
-
     /// Initiates a download operation for the selected record.
+    ///
+    /// For NCBI downloads, this fetches the raw GenBank format file preserving
+    /// all annotations, features, and metadata. The file is saved with a .gb extension.
     func performDownload() {
+
         guard let record = selectedRecord else {
             errorMessage = "No record selected"
             return
@@ -409,10 +451,116 @@ public class DatabaseBrowserViewModel: ObservableObject {
         errorMessage = nil
         _statusMessage = "Downloading \(record.accession)..."
 
-        // Use Task with explicit MainActor context
-        Task { @MainActor [weak self] in
-            guard let self = self else { return }
-            await self.executeDownload(record: record)
+        // Capture services and values for use in detached task
+        let ncbi = ncbiService
+        let ena = enaService
+        let currentSource = source
+        let accession = record.accession
+
+
+        // Use Task.detached to ensure download runs even in modal context
+        // All network work happens in this detached context, with UI updates via performOnMainRunLoop
+        Task.detached { [weak self] in
+
+            do {
+                // Update UI: connecting
+                performOnMainRunLoop { [weak self] in
+                    self?.objectWillChange.send()
+                    self?.downloadProgress = 0.1
+                    self?._statusMessage = "Connecting to \(currentSource.displayName)..."
+                }
+
+
+                // Update UI: fetching
+                performOnMainRunLoop { [weak self] in
+                    self?.objectWillChange.send()
+                    self?.downloadProgress = 0.2
+                    self?._statusMessage = "Fetching \(accession)..."
+                }
+
+                let fileURL: URL
+
+                switch currentSource {
+                case .ncbi:
+                    // Fetch raw GenBank format to preserve all annotations
+                    let (genBankContent, resolvedAccession) = try await ncbi.fetchRawGenBank(accession: accession)
+
+                    // Update UI: saving
+                    performOnMainRunLoop { [weak self] in
+                        self?.objectWillChange.send()
+                        self?.downloadProgress = 0.7
+                        self?._statusMessage = "Saving \(resolvedAccession)..."
+                    }
+
+                    // Save raw GenBank content directly with .gb extension
+                    let tempDir = FileManager.default.temporaryDirectory
+                    let filename = "\(resolvedAccession).gb"
+                    fileURL = tempDir.appendingPathComponent(filename)
+
+                    try genBankContent.write(to: fileURL, atomically: true, encoding: .utf8)
+
+                case .ena:
+                    // ENA: fetch and save as FASTA (ENA returns FASTA by default)
+                    let dbRecord = try await ena.fetch(accession: accession)
+
+                    // Update UI: saving
+                    performOnMainRunLoop { [weak self] in
+                        self?.objectWillChange.send()
+                        self?.downloadProgress = 0.7
+                        self?._statusMessage = "Saving \(accession)..."
+                    }
+
+                    // Save to temporary file as FASTA
+                    let tempDir = FileManager.default.temporaryDirectory
+                    let filename = "\(dbRecord.accession).fasta"
+                    fileURL = tempDir.appendingPathComponent(filename)
+
+                    var fastaContent = ">\(dbRecord.accession)"
+                    if !dbRecord.title.isEmpty {
+                        fastaContent += " \(dbRecord.title)"
+                    }
+                    fastaContent += "\n"
+
+                    // Format sequence in 80-character lines
+                    let sequence = dbRecord.sequence
+                    var index = sequence.startIndex
+                    while index < sequence.endIndex {
+                        let endIndex = sequence.index(index, offsetBy: 80, limitedBy: sequence.endIndex) ?? sequence.endIndex
+                        fastaContent += String(sequence[index..<endIndex]) + "\n"
+                        index = endIndex
+                    }
+
+                    try fastaContent.write(to: fileURL, atomically: true, encoding: .utf8)
+
+                default:
+                    throw DatabaseServiceError.invalidQuery(reason: "Unsupported database: \(currentSource)")
+                }
+
+                // Update UI: complete
+                performOnMainRunLoop { [weak self] in
+                    self?.objectWillChange.send()
+                    self?.downloadProgress = 1.0
+                    self?._statusMessage = "Download complete: \(accession)"
+                }
+
+                // Notify completion
+                performOnMainRunLoop { [weak self] in
+                    guard let self = self else { return }
+                    self.objectWillChange.send()
+                    self.isDownloading = false
+                    self.onDownloadComplete?(fileURL)
+                }
+
+            } catch {
+                let errorMsg = error.localizedDescription
+                performOnMainRunLoop { [weak self] in
+                    guard let self = self else { return }
+                    self.objectWillChange.send()
+                    self.errorMessage = "Download failed: \(errorMsg)"
+                    self._statusMessage = nil
+                    self.isDownloading = false
+                }
+            }
         }
     }
 
@@ -433,50 +581,98 @@ public class DatabaseBrowserViewModel: ObservableObject {
         errorMessage = nil
         _statusMessage = "Downloading \(record.accession)..."
 
-        await executeDownload(record: record)
+        await executeDownload(record: record, ncbi: ncbiService, ena: enaService, source: source)
     }
 
     /// Executes the actual download operation.
-    private func executeDownload(record: SearchResultRecord) async {
-        do {
-            let dbRecord: DatabaseRecord
+    /// - Parameters:
+    ///   - record: The record to download
+    ///   - ncbi: The NCBI service actor
+    ///   - ena: The ENA service actor
+    ///   - source: The database source
+    private func executeDownload(record: SearchResultRecord, ncbi: NCBIService, ena: ENAService, source: DatabaseSource) async {
 
-            downloadProgress = 0.1
-            _statusMessage = "Connecting to \(source.displayName)..."
+        do {
+            performOnMainRunLoop { [weak self] in
+                self?.objectWillChange.send()
+                self?.downloadProgress = 0.1
+                self?._statusMessage = "Connecting to \(source.displayName)..."
+            }
+
+            let tempURL: URL
 
             switch source {
             case .ncbi:
-                downloadProgress = 0.2
-                _statusMessage = "Fetching \(record.accession)..."
-                dbRecord = try await ncbiService.fetch(accession: record.accession)
+                performOnMainRunLoop { [weak self] in
+                    self?.objectWillChange.send()
+                    self?.downloadProgress = 0.2
+                    self?._statusMessage = "Fetching \(record.accession)..."
+                }
+
+                // Fetch raw GenBank format to preserve all annotations
+                let (genBankContent, resolvedAccession) = try await ncbi.fetchRawGenBank(accession: record.accession)
+
+                performOnMainRunLoop { [weak self] in
+                    self?.objectWillChange.send()
+                    self?.downloadProgress = 0.7
+                    self?._statusMessage = "Saving \(resolvedAccession)..."
+                }
+
+                // Save raw GenBank content directly with .gb extension
+                let tempDir = FileManager.default.temporaryDirectory
+                let filename = "\(resolvedAccession).gb"
+                tempURL = tempDir.appendingPathComponent(filename)
+
+                try genBankContent.write(to: tempURL, atomically: true, encoding: .utf8)
+
             case .ena:
-                downloadProgress = 0.2
-                _statusMessage = "Fetching \(record.accession)..."
-                dbRecord = try await enaService.fetch(accession: record.accession)
+                performOnMainRunLoop { [weak self] in
+                    self?.objectWillChange.send()
+                    self?.downloadProgress = 0.2
+                    self?._statusMessage = "Fetching \(record.accession)..."
+                }
+                let dbRecord = try await ena.fetch(accession: record.accession)
+
+                performOnMainRunLoop { [weak self] in
+                    self?.objectWillChange.send()
+                    self?.downloadProgress = 0.7
+                    self?._statusMessage = "Saving \(record.accession)..."
+                }
+
+                // Save to temporary file as FASTA
+                tempURL = try saveToTemporaryFile(record: dbRecord)
+
             default:
                 throw DatabaseServiceError.invalidQuery(reason: "Unsupported database: \(source)")
             }
 
-            downloadProgress = 0.7
-            _statusMessage = "Saving \(record.accession)..."
 
-            // Save to temporary file
-            let tempURL = try saveToTemporaryFile(record: dbRecord)
-
-            downloadProgress = 1.0
-            _statusMessage = "Download complete: \(record.accession)"
+            performOnMainRunLoop { [weak self] in
+                self?.objectWillChange.send()
+                self?.downloadProgress = 1.0
+                self?._statusMessage = "Download complete: \(record.accession)"
+            }
             logger.info("Downloaded \(record.accession, privacy: .public) to \(tempURL.path, privacy: .public)")
 
-            // Notify completion
-            onDownloadComplete?(tempURL)
+            // Notify completion via performOnMainRunLoop
+            performOnMainRunLoop { [weak self] in
+                guard let self = self else { return }
+                self.objectWillChange.send()
+                self.isDownloading = false
+                self.onDownloadComplete?(tempURL)
+            }
 
         } catch {
-            errorMessage = "Download failed: \(error.localizedDescription)"
+            let errorMsg = error.localizedDescription
+            performOnMainRunLoop { [weak self] in
+                guard let self = self else { return }
+                self.objectWillChange.send()
+                self.errorMessage = "Download failed: \(errorMsg)"
+                self._statusMessage = nil
+                self.isDownloading = false
+            }
             logger.error("Download failed: \(error.localizedDescription, privacy: .public)")
-            _statusMessage = nil
         }
-
-        isDownloading = false
     }
 
     // MARK: - Private Methods
@@ -855,6 +1051,10 @@ public struct DatabaseBrowserView: View {
         List(viewModel.results, selection: $viewModel.selectedRecord) { record in
             SearchResultRow(record: record)
                 .tag(record)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    viewModel.selectedRecord = record
+                }
         }
         .listStyle(.inset)
     }

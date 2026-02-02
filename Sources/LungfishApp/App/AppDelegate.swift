@@ -729,9 +729,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 window.endSheet(sheet)
             }
 
-            // Load the first downloaded file into the viewer
+            // Load the first downloaded file into the viewer and sidebar
             if let firstURL = fileURLs.first {
-                _ = self?.openDocument(at: firstURL)
+                self?.handleDownloadedFile(at: firstURL)
             }
         }
 
@@ -750,15 +750,15 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         let browserController = DatabaseBrowserViewController(source: source)
 
-        // Handle download completion
-        browserController.onDownloadComplete = { [weak self] fileURL in
+        // Handle download completion - this is the key fix
+        browserController.onDownloadComplete = { [weak self] tempFileURL in
             // Dismiss the sheet first
             if let sheet = window.attachedSheet {
                 window.endSheet(sheet)
             }
 
-            // Load the downloaded file into the viewer
-            _ = self?.openDocument(at: fileURL)
+            // Handle the downloaded file: copy to downloads folder and add to sidebar
+            self?.handleDownloadedFile(at: tempFileURL)
         }
 
         // Present as sheet
@@ -767,6 +767,99 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         window.beginSheet(browserWindow) { _ in
             // Sheet dismissed
+        }
+    }
+
+    /// Handles a downloaded file by copying it to a persistent location and adding to the sidebar.
+    ///
+    /// This method:
+    /// 1. Copies the file from temp directory to user's Downloads folder (or project directory if available)
+    /// 2. Loads the document via DocumentManager (which posts notification to update sidebar)
+    /// 3. Displays the document in the viewer
+    ///
+    /// - Parameter tempFileURL: The URL of the downloaded file in the temp directory
+    private func handleDownloadedFile(at tempFileURL: URL) {
+        let viewerController = mainWindowController?.mainSplitViewController?.viewerController
+        let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController
+
+        // Determine destination: use project directory if available, otherwise Downloads folder
+        let destinationDirectory: URL
+        if let projectURL = DocumentManager.shared.activeProject?.url {
+            // Save to project's "downloads" subdirectory
+            destinationDirectory = projectURL.appendingPathComponent("downloads", isDirectory: true)
+        } else {
+            // Fall back to user's Downloads folder with a Lungfish subdirectory
+            let downloadsURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
+            destinationDirectory = downloadsURL.appendingPathComponent("Lungfish Downloads", isDirectory: true)
+        }
+
+        // Create destination directory if needed
+        do {
+            try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
+        } catch {
+            print("Warning: Could not create destination directory: \(error.localizedDescription)")
+            // Fall back to opening from temp location
+            _ = openDocument(at: tempFileURL)
+            return
+        }
+
+        // Generate unique filename if file already exists
+        let originalFilename = tempFileURL.lastPathComponent
+        var destinationURL = destinationDirectory.appendingPathComponent(originalFilename)
+        var counter = 1
+        let fileExtension = tempFileURL.pathExtension
+        let baseName = tempFileURL.deletingPathExtension().lastPathComponent
+
+        while FileManager.default.fileExists(atPath: destinationURL.path) {
+            let newFilename = "\(baseName)_\(counter).\(fileExtension)"
+            destinationURL = destinationDirectory.appendingPathComponent(newFilename)
+            counter += 1
+        }
+
+        // Copy file to persistent location
+        do {
+            try FileManager.default.copyItem(at: tempFileURL, to: destinationURL)
+            print("Copied downloaded file to: \(destinationURL.path)")
+
+            // Clean up temp file
+            try? FileManager.default.removeItem(at: tempFileURL)
+        } catch {
+            print("Warning: Could not copy file to destination: \(error.localizedDescription)")
+            // Fall back to opening from temp location
+            _ = openDocument(at: tempFileURL)
+            return
+        }
+
+        // Load the document from its new permanent location
+        Task { @MainActor in
+            viewerController?.showProgress("Loading \(destinationURL.lastPathComponent)...")
+
+            do {
+                // Load document - this will post documentLoadedNotification
+                // which MainSplitViewController listens for to update the sidebar
+                let document = try await DocumentManager.shared.loadDocument(at: destinationURL)
+                print("Loaded downloaded document: \(document.name) with \(document.sequences.count) sequences")
+
+                viewerController?.hideProgress()
+
+                // Display in viewer
+                viewerController?.displayDocument(document)
+
+                // Also explicitly add to sidebar as "DOWNLOADS" group for clarity
+                // The notification handler will add it to "OPEN DOCUMENTS" but we want
+                // to ensure visibility even if that doesn't trigger properly
+                sidebarController?.addLoadedDocument(document)
+
+            } catch {
+                viewerController?.hideProgress()
+
+                let alert = NSAlert()
+                alert.messageText = "Failed to Load Downloaded File"
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            }
         }
     }
 
