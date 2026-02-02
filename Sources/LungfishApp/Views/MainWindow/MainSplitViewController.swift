@@ -9,6 +9,7 @@ import os.log
 /// Logger for main split view operations
 private let logger = Logger(subsystem: "com.lungfish.browser", category: "MainSplitViewController")
 
+
 /// The main split view controller managing sidebar, viewer, and inspector panels.
 ///
 /// Layout:
@@ -70,6 +71,7 @@ public class MainSplitViewController: NSSplitViewController {
         logger.info("viewDidLoad: MainSplitViewController setup complete")
     }
 
+
     // MARK: - Configuration
 
     private func configureSplitView() {
@@ -88,6 +90,7 @@ public class MainSplitViewController: NSSplitViewController {
         sidebarController = SidebarViewController()
         viewerController = ViewerViewController()
         inspectorController = InspectorViewController()
+        logger.info("configureChildControllers: Created all three view controllers")
 
         // Create split view items with appropriate behaviors
 
@@ -106,22 +109,25 @@ public class MainSplitViewController: NSSplitViewController {
         viewerItem.minimumThickness = viewerMinWidth
         viewerItem.holdingPriority = .defaultLow
 
-        // Inspector: collapsible, inspector behavior
-        inspectorItem = NSSplitViewItem(inspectorWithViewController: inspectorController)
+        // Inspector: collapsible, using regular viewController instead of inspector
+        // (inspectorWithViewController has issues with layout)
+        inspectorItem = NSSplitViewItem(viewController: inspectorController)
         inspectorItem.canCollapse = true
         inspectorItem.minimumThickness = inspectorMinWidth
         inspectorItem.maximumThickness = inspectorMaxWidth
         inspectorItem.preferredThicknessFraction = 0.2
         inspectorItem.holdingPriority = .defaultLow + 1
-        inspectorItem.collapseBehavior = .preferResizingSplitViewWithFixedSiblings
+        inspectorItem.collapseBehavior = .default
 
         // Add items in order: sidebar, viewer, inspector
         addSplitViewItem(sidebarItem)
         addSplitViewItem(viewerItem)
         addSplitViewItem(inspectorItem)
+        logger.info("configureChildControllers: Added all three split view items, count=\(self.splitViewItems.count)")
 
         // Inspector starts collapsed by default
         inspectorItem.isCollapsed = true
+        logger.info("configureChildControllers: Inspector initial state isCollapsed=\(self.inspectorItem.isCollapsed)")
     }
 
     private func configureKeyboardShortcuts() {
@@ -255,13 +261,38 @@ public class MainSplitViewController: NSSplitViewController {
 
     /// Toggles the inspector visibility with animation.
     public func toggleInspector() {
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.2
-            context.allowsImplicitAnimation = true
-            inspectorItem.animator().isCollapsed.toggle()
-        } completionHandler: { [weak self] in
-            Task { @MainActor in
+        logger.info("toggleInspector: isCollapsed=\(self.inspectorItem.isCollapsed)")
+
+        let shouldExpand = self.inspectorItem.isCollapsed
+
+        if shouldExpand {
+            // Expanding: set isCollapsed to false and manually position the divider
+            // to ensure proper layout
+            self.inspectorItem.isCollapsed = false
+            let inspectorWidth = inspectorDefaultWidth
+            let totalWidth = splitView.frame.width
+            let targetPosition = totalWidth - inspectorWidth
+
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.25
+                context.allowsImplicitAnimation = true
+                self.splitView.animator().setPosition(targetPosition, ofDividerAt: 1)
+            } completionHandler: { [weak self] in
                 self?.savePanelState()
+                logger.info("toggleInspector: expand complete")
+            }
+        } else {
+            // Collapsing: animate to edge then set collapsed
+            let totalWidth = splitView.frame.width
+
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.2
+                context.allowsImplicitAnimation = true
+                self.splitView.animator().setPosition(totalWidth, ofDividerAt: 1)
+            } completionHandler: { [weak self] in
+                self?.inspectorItem.isCollapsed = true
+                self?.savePanelState()
+                logger.info("toggleInspector: collapse complete")
             }
         }
     }
@@ -317,7 +348,7 @@ public class MainSplitViewController: NSSplitViewController {
     }
 
     public override func splitViewDidResizeSubviews(_ notification: Notification) {
-        // Could update toolbar tracking separators here if needed
+        // Placeholder for future toolbar tracking separator updates if needed
     }
 }
 

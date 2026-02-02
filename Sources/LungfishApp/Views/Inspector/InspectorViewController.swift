@@ -4,13 +4,21 @@
 
 import AppKit
 import SwiftUI
+import Combine
 import LungfishCore
+import os.log
+
+/// Logger for inspector operations
+private let logger = Logger(subsystem: "com.lungfish.browser", category: "InspectorViewController")
 
 /// Controller for the inspector panel showing selection details.
 ///
 /// Uses SwiftUI via NSHostingView for modern, declarative UI.
+/// Integrates with the annotation system to display and edit selected annotations.
 @MainActor
 public class InspectorViewController: NSViewController {
+
+    // MARK: - Properties
 
     /// The SwiftUI hosting view
     private var hostingView: NSHostingView<InspectorView>!
@@ -18,31 +26,239 @@ public class InspectorViewController: NSViewController {
     /// View model for the inspector
     private var viewModel = InspectorViewModel()
 
+    /// Cancellables for Combine subscriptions
+    private var cancellables = Set<AnyCancellable>()
+
+    // MARK: - Lifecycle
+
     public override func loadView() {
         let inspectorView = InspectorView(viewModel: viewModel)
         hostingView = NSHostingView(rootView: inspectorView)
-        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        // Give an initial frame so split view has something to work with
+        hostingView.frame = NSRect(x: 0, y: 0, width: 280, height: 500)
         self.view = hostingView
     }
 
     public override func viewDidLoad() {
         super.viewDidLoad()
+        setupNotificationObservers()
+        setupViewModelCallbacks()
+    }
 
-        // Listen for selection changes
+    // MARK: - Setup
+
+    /// Sets up notification observers for annotation and appearance changes.
+    private func setupNotificationObservers() {
+        // Listen for sidebar selection changes
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(selectionDidChange(_:)),
             name: .sidebarSelectionChanged,
             object: nil
         )
+
+        // Listen for annotation selection from viewer
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAnnotationSelected(_:)),
+            name: .annotationSelected,
+            object: nil
+        )
     }
 
+    /// Sets up callbacks for view model section changes.
+    private func setupViewModelCallbacks() {
+        // Selection section callbacks
+        viewModel.selectionSectionViewModel.onAnnotationUpdated = { [weak self] annotation in
+            self?.handleAnnotationUpdatedFromInspector(annotation)
+        }
+
+        viewModel.selectionSectionViewModel.onAnnotationDeleted = { [weak self] annotationID in
+            self?.handleAnnotationDeletedFromInspector(annotationID)
+        }
+
+        // Appearance section callbacks
+        viewModel.appearanceSectionViewModel.onSettingsChanged = { [weak self] in
+            self?.handleAppearanceChanged()
+        }
+
+        // Quality section callbacks
+        viewModel.qualitySectionViewModel.onOverlayToggleChanged = { [weak self] enabled in
+            self?.handleQualityOverlayToggled(enabled)
+        }
+    }
+
+    // MARK: - Notification Handlers
+
+    /// Handles sidebar selection changes to update inspector properties.
     @objc private func selectionDidChange(_ notification: Notification) {
-        // Update inspector content based on selection
         if let item = notification.userInfo?["item"] as? SidebarItem {
             viewModel.selectedItem = item.title
             viewModel.selectedType = item.type.description
         }
+    }
+
+    /// Handles annotation selection from the viewer.
+    ///
+    /// Updates the selection section with the newly selected annotation.
+    /// Passing nil in userInfo clears the selection.
+    @objc private func handleAnnotationSelected(_ notification: Notification) {
+        if let annotation = notification.userInfo?[NotificationUserInfoKey.annotation] as? SequenceAnnotation {
+            viewModel.selectedAnnotation = annotation
+            viewModel.selectionSectionViewModel.select(annotation: annotation)
+        } else {
+            // Deselection - clear the annotation
+            viewModel.selectedAnnotation = nil
+            viewModel.selectionSectionViewModel.select(annotation: nil)
+        }
+    }
+
+    // MARK: - Annotation Editing Handlers
+
+    /// Handles annotation updates from the SelectionSection.
+    ///
+    /// Posts an `annotationUpdated` notification so the viewer and document
+    /// can respond to the changes.
+    private func handleAnnotationUpdatedFromInspector(_ annotation: SequenceAnnotation) {
+        viewModel.selectedAnnotation = annotation
+
+        NotificationCenter.default.post(
+            name: .annotationUpdated,
+            object: self,
+            userInfo: [
+                NotificationUserInfoKey.annotation: annotation,
+                NotificationUserInfoKey.changeSource: "inspector"
+            ]
+        )
+    }
+
+    /// Handles annotation deletion from the SelectionSection.
+    ///
+    /// Posts an `annotationDeleted` notification and clears the selection.
+    private func handleAnnotationDeletedFromInspector(_ annotationID: UUID) {
+        // Get the annotation before clearing
+        let deletedAnnotation = viewModel.selectedAnnotation
+
+        // Clear selection
+        viewModel.selectedAnnotation = nil
+
+        // Post deletion notification
+        if let annotation = deletedAnnotation {
+            NotificationCenter.default.post(
+                name: .annotationDeleted,
+                object: self,
+                userInfo: [
+                    NotificationUserInfoKey.annotation: annotation,
+                    NotificationUserInfoKey.changeSource: "inspector"
+                ]
+            )
+        }
+    }
+
+    // MARK: - Appearance Handlers
+
+    /// Handles appearance setting changes.
+    ///
+    /// Saves the appearance settings and posts an `appearanceChanged` notification
+    /// so the viewer can update its rendering.
+    private func handleAppearanceChanged() {
+        logger.info("handleAppearanceChanged: Appearance change detected")
+
+        // Build and save appearance settings
+        var appearance = viewModel.appearance
+
+        // Update base colors from view model
+        let colorA = viewModel.appearanceSectionViewModel.colorA
+        let colorT = viewModel.appearanceSectionViewModel.colorT
+        let colorG = viewModel.appearanceSectionViewModel.colorG
+        let colorC = viewModel.appearanceSectionViewModel.colorC
+        let colorN = viewModel.appearanceSectionViewModel.colorN
+
+        let hexA = hexString(from: colorA)
+        let hexT = hexString(from: colorT)
+        let hexG = hexString(from: colorG)
+        let hexC = hexString(from: colorC)
+        let hexN = hexString(from: colorN)
+
+        logger.info("handleAppearanceChanged: A=\(hexA, privacy: .public) T=\(hexT, privacy: .public) G=\(hexG, privacy: .public) C=\(hexC, privacy: .public) N=\(hexN, privacy: .public)")
+
+        appearance.baseColors = [
+            "A": hexA,
+            "T": hexT,
+            "G": hexG,
+            "C": hexC,
+            "N": hexN,
+            "U": hexT  // Uracil uses same color as Thymine
+        ]
+
+        appearance.trackHeight = CGFloat(viewModel.appearanceSectionViewModel.trackHeight)
+        logger.info("handleAppearanceChanged: Track height = \(appearance.trackHeight, privacy: .public)")
+
+        // Save and update view model
+        appearance.save()
+        viewModel.appearance = appearance
+        logger.info("handleAppearanceChanged: Saved appearance settings")
+
+        // Notify viewers to redraw
+        NotificationCenter.default.post(
+            name: .appearanceChanged,
+            object: self,
+            userInfo: nil
+        )
+        logger.info("handleAppearanceChanged: Posted appearanceChanged notification")
+    }
+
+    /// Handles quality overlay toggle changes.
+    ///
+    /// Updates appearance settings and posts notification.
+    private func handleQualityOverlayToggled(_ enabled: Bool) {
+        var appearance = viewModel.appearance
+        appearance.showQualityOverlay = enabled
+        appearance.save()
+        viewModel.appearance = appearance
+
+        NotificationCenter.default.post(
+            name: .appearanceChanged,
+            object: self,
+            userInfo: nil
+        )
+    }
+
+    // MARK: - Public API
+
+    /// Updates the quality section with new quality data.
+    ///
+    /// Call this when loading a file to update quality statistics display.
+    ///
+    /// - Parameters:
+    ///   - hasData: Whether the loaded file has quality data (true for FASTQ)
+    ///   - statistics: Quality statistics if available
+    public func updateQualityData(hasData: Bool, statistics: QualityStatistics?) {
+        viewModel.hasQualityData = hasData
+        viewModel.qualityStats = statistics
+        viewModel.qualitySectionViewModel.update(hasData: hasData, statistics: statistics)
+    }
+
+    // MARK: - Helper Methods
+
+    /// Converts a SwiftUI Color to a hex string.
+    ///
+    /// Uses NSColor conversion to properly resolve the color components,
+    /// as SwiftUI Color's cgColor property can return nil for some colors.
+    private func hexString(from color: Color) -> String {
+        // Convert SwiftUI Color to NSColor for reliable component access
+        let nsColor = NSColor(color)
+
+        // Convert to sRGB color space for consistent color representation
+        guard let rgbColor = nsColor.usingColorSpace(.sRGB) else {
+            return "#808080"
+        }
+
+        let red = Int(round(rgbColor.redComponent * 255))
+        let green = Int(round(rgbColor.greenComponent * 255))
+        let blue = Int(round(rgbColor.blueComponent * 255))
+
+        return String(format: "#%02X%02X%02X", red, green, blue)
     }
 
     deinit {
@@ -52,69 +268,129 @@ public class InspectorViewController: NSViewController {
 
 // MARK: - InspectorViewModel
 
-/// View model for the inspector panel
+/// View model for the inspector panel.
+///
+/// Aggregates state for all inspector sections and coordinates
+/// between section view models.
 @MainActor
 public class InspectorViewModel: ObservableObject {
+    // MARK: - Sidebar Selection State
+
+    /// Currently selected sidebar item name
     @Published var selectedItem: String?
+
+    /// Currently selected sidebar item type description
     @Published var selectedType: String?
+
+    /// Properties key-value pairs for display
     @Published var properties: [(String, String)] = []
+
+    /// Statistics key-value pairs for display
     @Published var statistics: [(String, String)] = []
+
+    // MARK: - Annotation Selection State
+
+    /// The currently selected annotation, if any
+    @Published var selectedAnnotation: SequenceAnnotation?
+
+    // MARK: - Appearance State
+
+    /// Current appearance settings
+    @Published var appearance: SequenceAppearance = .load()
+
+    // MARK: - Quality State
+
+    /// Whether quality data is available for the current file
+    @Published var hasQualityData: Bool = false
+
+    /// Quality statistics for the current file
+    @Published var qualityStats: QualityStatistics?
+
+    // MARK: - Section View Models
+
+    /// View model for the selection section
+    let selectionSectionViewModel = SelectionSectionViewModel()
+
+    /// View model for the appearance section
+    let appearanceSectionViewModel = AppearanceSectionViewModel()
+
+    /// View model for the quality section
+    let qualitySectionViewModel = QualitySectionViewModel()
+
+    // MARK: - Initialization
+
+    init() {
+        // Initialize appearance section from saved settings
+        syncAppearanceToSectionViewModel()
+    }
+
+    /// Syncs the main appearance settings to the appearance section view model.
+    private func syncAppearanceToSectionViewModel() {
+        // Convert hex colors to SwiftUI Colors
+        if let hexA = appearance.baseColors["A"] {
+            appearanceSectionViewModel.colorA = color(from: hexA)
+        }
+        if let hexT = appearance.baseColors["T"] {
+            appearanceSectionViewModel.colorT = color(from: hexT)
+        }
+        if let hexG = appearance.baseColors["G"] {
+            appearanceSectionViewModel.colorG = color(from: hexG)
+        }
+        if let hexC = appearance.baseColors["C"] {
+            appearanceSectionViewModel.colorC = color(from: hexC)
+        }
+        if let hexN = appearance.baseColors["N"] {
+            appearanceSectionViewModel.colorN = color(from: hexN)
+        }
+        appearanceSectionViewModel.trackHeight = Double(appearance.trackHeight)
+    }
+
+    /// Converts a hex string to a SwiftUI Color.
+    private func color(from hexString: String) -> Color {
+        var hex = hexString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if hex.hasPrefix("#") {
+            hex = String(hex.dropFirst())
+        }
+
+        guard hex.count == 6,
+              let hexValue = UInt32(hex, radix: 16) else {
+            return .gray
+        }
+
+        let red = Double((hexValue >> 16) & 0xFF) / 255.0
+        let green = Double((hexValue >> 8) & 0xFF) / 255.0
+        let blue = Double(hexValue & 0xFF) / 255.0
+
+        return Color(red: red, green: green, blue: blue)
+    }
 }
 
 // MARK: - InspectorView (SwiftUI)
 
-/// SwiftUI view for the inspector panel content
+/// SwiftUI view for the inspector panel content.
+///
+/// Displays three main sections:
+/// - Selection: Shows and edits the currently selected annotation
+/// - Appearance: Configures base colors and track height
+/// - Quality: Shows quality statistics and overlay toggle
 public struct InspectorView: View {
     @ObservedObject var viewModel: InspectorViewModel
 
     public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                // Selection Info Section
-                InspectorSection(title: "Selection") {
-                    if let item = viewModel.selectedItem {
-                        LabeledContent("Name", value: item)
-                        if let type = viewModel.selectedType {
-                            LabeledContent("Type", value: type)
-                        }
-                    } else {
-                        Text("No selection")
-                            .foregroundStyle(.secondary)
-                            .font(.callout)
-                    }
-                }
+            VStack(alignment: .leading, spacing: 12) {
+                // Selection Section - shows selected annotation details
+                SelectionSection(viewModel: viewModel.selectionSectionViewModel)
 
-                // Properties Section (placeholder)
-                InspectorSection(title: "Properties") {
-                    Text("Select an item to view properties")
-                        .foregroundStyle(.secondary)
-                        .font(.callout)
-                }
+                Divider()
 
-                // Statistics Section (placeholder)
-                InspectorSection(title: "Statistics") {
-                    Text("Select a sequence to view statistics")
-                        .foregroundStyle(.secondary)
-                        .font(.callout)
-                }
+                // Appearance Section - base colors, track height
+                AppearanceSection(viewModel: viewModel.appearanceSectionViewModel)
 
-                // Actions Section
-                InspectorSection(title: "Actions") {
-                    Button(action: {}) {
-                        Label("Export Selection", systemImage: "square.and.arrow.up")
-                    }
-                    .buttonStyle(.borderless)
+                Divider()
 
-                    Button(action: {}) {
-                        Label("Copy Sequence", systemImage: "doc.on.doc")
-                    }
-                    .buttonStyle(.borderless)
-
-                    Button(action: {}) {
-                        Label("Find in Sequence", systemImage: "magnifyingglass")
-                    }
-                    .buttonStyle(.borderless)
-                }
+                // Quality Section - quality stats and toggle
+                QualitySection(viewModel: viewModel.qualitySectionViewModel)
 
                 Spacer()
             }
@@ -122,42 +398,6 @@ public struct InspectorView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .controlBackgroundColor))
-    }
-}
-
-// MARK: - InspectorSection
-
-/// A collapsible section in the inspector
-public struct InspectorSection<Content: View>: View {
-    let title: String
-    @ViewBuilder let content: Content
-    @State private var isExpanded = true
-
-    public var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button(action: { withAnimation { isExpanded.toggle() } }) {
-                HStack {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Text(title)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-
-                    Spacer()
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if isExpanded {
-                VStack(alignment: .leading, spacing: 6) {
-                    content
-                }
-                .padding(.leading, 16)
-            }
-        }
     }
 }
 
@@ -186,8 +426,31 @@ struct InspectorView_Previews: PreviewProvider {
         viewModel.selectedItem = "chr1.fa"
         viewModel.selectedType = "Sequence"
 
+        // Set up sample annotation
+        viewModel.selectionSectionViewModel.select(annotation: SequenceAnnotation(
+            type: .gene,
+            name: "BRCA1",
+            start: 1000,
+            end: 5000,
+            strand: .forward,
+            note: "Breast cancer susceptibility gene"
+        ))
+
+        // Set up sample quality data
+        viewModel.qualitySectionViewModel.update(
+            hasData: true,
+            statistics: QualityStatistics(
+                meanQuality: 32.5,
+                q20Percentage: 95.2,
+                q30Percentage: 87.8,
+                totalBases: 1_234_567,
+                minQuality: 2,
+                maxQuality: 40
+            )
+        )
+
         return InspectorView(viewModel: viewModel)
-            .frame(width: 280, height: 500)
+            .frame(width: 280, height: 800)
     }
 }
 #endif

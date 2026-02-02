@@ -45,6 +45,18 @@ public struct Sequence: Identifiable, Hashable, Sendable {
     /// Whether the sequence is circular
     public var isCircular: Bool = false
 
+    /// Quality scores for each base (optional, typically from FASTQ files).
+    ///
+    /// Each value represents a Phred quality score (0-93), where:
+    /// - Q10: 10% error rate (1 in 10 wrong)
+    /// - Q20: 1% error rate (1 in 100 wrong)
+    /// - Q30: 0.1% error rate (1 in 1000 wrong)
+    /// - Q40: 0.01% error rate (1 in 10000 wrong)
+    ///
+    /// This property is `nil` for sequences loaded from formats that don't
+    /// include quality information (e.g., FASTA, GenBank).
+    public var qualityScores: [UInt8]?
+
     /// Creates a new sequence from a string of bases.
     ///
     /// - Parameters:
@@ -53,19 +65,22 @@ public struct Sequence: Identifiable, Hashable, Sendable {
     ///   - description: Optional description
     ///   - alphabet: The sequence alphabet
     ///   - bases: String of bases/residues
+    ///   - qualityScores: Optional quality scores for each base (from FASTQ)
     /// - Throws: `SequenceError.invalidCharacter` if bases contain invalid characters
     public init(
         id: UUID = UUID(),
         name: String,
         description: String? = nil,
         alphabet: SequenceAlphabet,
-        bases: String
+        bases: String,
+        qualityScores: [UInt8]? = nil
     ) throws {
         self.id = id
         self.name = name
         self.description = description
         self.alphabet = alphabet
         self.storage = try SequenceStorage(bases: bases, alphabet: alphabet)
+        self.qualityScores = qualityScores
     }
 
     /// Creates a new sequence from raw storage (internal use).
@@ -74,13 +89,15 @@ public struct Sequence: Identifiable, Hashable, Sendable {
         name: String,
         description: String? = nil,
         alphabet: SequenceAlphabet,
-        storage: SequenceStorage
+        storage: SequenceStorage,
+        qualityScores: [UInt8]? = nil
     ) {
         self.id = id
         self.name = name
         self.description = description
         self.alphabet = alphabet
         self.storage = storage
+        self.qualityScores = qualityScores
     }
 
     /// Access a subsequence by range
@@ -107,7 +124,8 @@ public struct Sequence: Identifiable, Hashable, Sendable {
             name: "\(name)_complement",
             description: description,
             alphabet: alphabet,
-            storage: complementedStorage
+            storage: complementedStorage,
+            qualityScores: qualityScores
         )
     }
 
@@ -115,24 +133,41 @@ public struct Sequence: Identifiable, Hashable, Sendable {
     public func reverseComplement() -> Sequence? {
         guard alphabet.supportsComplement else { return nil }
         guard let rcStorage = storage.reverseComplement(using: alphabet) else { return nil }
+        // Reverse quality scores along with the sequence
+        let reversedQuality = qualityScores?.reversed().map { $0 }
         return Sequence(
             id: UUID(),
             name: "\(name)_rc",
             description: description,
             alphabet: alphabet,
-            storage: rcStorage
+            storage: rcStorage,
+            qualityScores: reversedQuality.map { Array($0) }
         )
     }
 
     /// Returns a subsequence as a new Sequence object
     public func subsequence(region: GenomicRegion) -> Sequence {
         let subStorage = storage.subsequence(startIndex: region.start, length: region.length)
+        // Extract quality scores for the subsequence region if available
+        let subQuality: [UInt8]?
+        if let quality = qualityScores {
+            let start = max(0, region.start)
+            let end = min(quality.count, region.end)
+            if start < end {
+                subQuality = Array(quality[start..<end])
+            } else {
+                subQuality = nil
+            }
+        } else {
+            subQuality = nil
+        }
         return Sequence(
             id: UUID(),
             name: "\(name):\(region.start)-\(region.end)",
             description: nil,
             alphabet: alphabet,
-            storage: subStorage
+            storage: subStorage,
+            qualityScores: subQuality
         )
     }
 

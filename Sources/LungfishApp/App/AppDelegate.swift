@@ -500,7 +500,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     // MARK: - ViewMenuActions
 
     @objc func toggleSidebar(_ sender: Any?) {
-        mainWindowController?.mainSplitViewController?.toggleSidebar(nil)
+        mainWindowController?.mainSplitViewController?.toggleSidebar()
     }
 
     @objc func toggleInspector(_ sender: Any?) {
@@ -529,6 +529,20 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
     @objc func setDisplayModeExpanded(_ sender: Any?) {
         // TODO: Implement display mode change
+    }
+
+    // MARK: - Menu Validation
+
+    public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        // Update Inspector menu item title based on state
+        if menuItem.tag == 1001 {
+            if let isInspectorVisible = mainWindowController?.mainSplitViewController?.isInspectorVisible {
+                menuItem.title = isInspectorVisible ? "Hide Inspector" : "Show Inspector"
+            }
+            return true
+        }
+
+        return true
     }
 
     // MARK: - SequenceMenuActions
@@ -565,7 +579,95 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     }
 
     @objc func addAnnotation(_ sender: Any?) {
-        // TODO: Implement add annotation
+        // Get the current selection from the viewer
+        guard let viewerController = mainWindowController?.mainSplitViewController?.viewerController else {
+            showAlert(title: "No Viewer", message: "No sequence viewer available.")
+            return
+        }
+
+        // Access the viewer view to get selection range
+        guard let selectionRange = viewerController.viewerView?.selectionRange else {
+            showAlert(title: "No Selection", message: "Please select a region of the sequence first.")
+            return
+        }
+
+        // Show the annotation dialog
+        let alert = NSAlert()
+        alert.messageText = "Add Annotation"
+        alert.informativeText = "Add an annotation for the selected region (\(selectionRange.lowerBound + 1)-\(selectionRange.upperBound))"
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Cancel")
+
+        // Create accessory view with form fields
+        let accessoryView = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 120))
+
+        // Name field
+        let nameLabel = NSTextField(labelWithString: "Name:")
+        nameLabel.frame = NSRect(x: 0, y: 90, width: 60, height: 20)
+        accessoryView.addSubview(nameLabel)
+
+        let nameField = NSTextField(frame: NSRect(x: 70, y: 88, width: 220, height: 24))
+        nameField.placeholderString = "Annotation name"
+        accessoryView.addSubview(nameField)
+
+        // Type popup
+        let typeLabel = NSTextField(labelWithString: "Type:")
+        typeLabel.frame = NSRect(x: 0, y: 55, width: 60, height: 20)
+        accessoryView.addSubview(typeLabel)
+
+        let typePopup = NSPopUpButton(frame: NSRect(x: 70, y: 53, width: 220, height: 24))
+        typePopup.addItems(withTitles: [
+            "gene", "CDS", "exon", "mRNA", "region", "misc_feature",
+            "promoter", "primer", "restriction_site"
+        ])
+        accessoryView.addSubview(typePopup)
+
+        // Strand popup
+        let strandLabel = NSTextField(labelWithString: "Strand:")
+        strandLabel.frame = NSRect(x: 0, y: 20, width: 60, height: 20)
+        accessoryView.addSubview(strandLabel)
+
+        let strandPopup = NSPopUpButton(frame: NSRect(x: 70, y: 18, width: 100, height: 24))
+        strandPopup.addItems(withTitles: ["+", "-", "none"])
+        accessoryView.addSubview(strandPopup)
+
+        alert.accessoryView = accessoryView
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            let name = nameField.stringValue.isEmpty ? "New Annotation" : nameField.stringValue
+            let typeString = typePopup.selectedItem?.title ?? "region"
+            let strandString = strandPopup.selectedItem?.title ?? "none"
+
+            // Create the annotation
+            let annotationType = AnnotationType(rawValue: typeString) ?? .region
+            let strand: Strand = strandString == "+" ? .forward : (strandString == "-" ? .reverse : .unknown)
+
+            let annotation = SequenceAnnotation(
+                type: annotationType,
+                name: name,
+                intervals: [AnnotationInterval(start: selectionRange.lowerBound, end: selectionRange.upperBound)],
+                strand: strand
+            )
+
+            // Add to the current document
+            if let document = DocumentManager.shared.activeDocument {
+                document.annotations.append(annotation)
+
+                // Refresh the viewer to show the new annotation
+                viewerController.displayDocument(document)
+
+                print("Added annotation: \(name) (\(typeString)) at \(selectionRange)")
+            }
+        }
+    }
+
+    private func showAlert(title: String, message: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     @objc func findORFs(_ sender: Any?) {

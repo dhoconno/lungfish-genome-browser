@@ -361,11 +361,13 @@ public final class MainMenu {
         ).keyEquivalentModifierMask = [.command, .control]
 
         // Inspector toggle
-        viewMenu.addItem(
+        let inspectorItem = viewMenu.addItem(
             withTitle: "Toggle Inspector",
             action: #selector(ViewMenuActions.toggleInspector(_:)),
             keyEquivalent: "i"
-        ).keyEquivalentModifierMask = [.command, .option]
+        )
+        inspectorItem.keyEquivalentModifierMask = [.command, .option]
+        inspectorItem.tag = 1001  // Tag to identify this menu item for validation
 
         viewMenu.addItem(.separator())
 

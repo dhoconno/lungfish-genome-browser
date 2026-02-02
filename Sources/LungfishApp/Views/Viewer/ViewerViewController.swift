@@ -61,16 +61,16 @@ public class ViewerViewController: NSViewController {
     // MARK: - UI Components
 
     /// The custom view for rendering sequences and tracks
-    private var viewerView: SequenceViewerView!
+    public private(set) var viewerView: SequenceViewerView!
 
     /// Header view for track labels
     private var headerView: TrackHeaderView!
 
     /// Coordinate ruler at the top
-    private var rulerView: CoordinateRulerView!
+    public private(set) var rulerView: CoordinateRulerView!
 
     /// Status bar at the bottom
-    private var statusBar: ViewerStatusBar!
+    public private(set) var statusBar: ViewerStatusBar!
 
     /// Progress indicator overlay
     private var progressOverlay: ProgressOverlayView!
@@ -84,8 +84,8 @@ public class ViewerViewController: NSViewController {
     public private(set) var currentDocument: LoadedDocument?
 
     /// Track height constant
-    private let sequenceTrackY: CGFloat = 8
-    private let sequenceTrackHeight: CGFloat = 24
+    private let sequenceTrackY: CGFloat = 20
+    private let sequenceTrackHeight: CGFloat = 40
 
     // MARK: - Lifecycle
 
@@ -236,7 +236,8 @@ public class ViewerViewController: NSViewController {
                 chromosome: firstSequence.name,
                 start: 0,
                 end: Double(min(length, 10000)),  // Start zoomed in
-                pixelWidth: max(1, Int(viewerView.bounds.width))
+                pixelWidth: max(1, Int(viewerView.bounds.width)),
+                sequenceLength: length
             )
             logger.debug("displayDocument: Created referenceFrame start=0 end=\(min(length, 10000)) width=\(Int(self.viewerView.bounds.width))")
 
@@ -299,22 +300,29 @@ public class ViewerViewController: NSViewController {
 
     /// Navigates to a specific genomic region
     public func navigate(to region: GenomicRegion) {
+        let seqLength = viewerView.sequence?.length ?? Int.max
         referenceFrame = ReferenceFrame(
             chromosome: region.chromosome,
             start: Double(region.start),
             end: Double(region.end),
-            pixelWidth: Int(view.bounds.width)
+            pixelWidth: Int(view.bounds.width),
+            sequenceLength: seqLength
         )
         viewerView.setNeedsDisplay(viewerView.bounds)
         rulerView.setNeedsDisplay(rulerView.bounds)
         updateStatusBar()
     }
 
-    private func updateStatusBar() {
+    public func updateStatusBar() {
         guard let frame = referenceFrame else { return }
+        // Preserve selection info if we have one from the viewer
+        let selectionInfo = viewerView.selectionRange.map { range in
+            let length = range.upperBound - range.lowerBound
+            return "\(range.lowerBound + 1)-\(range.upperBound) (\(length.formatted()) bp)"
+        }
         statusBar.update(
             position: "\(frame.chromosome):\(Int(frame.start))-\(Int(frame.end))",
-            selection: nil,
+            selection: selectionInfo,
             scale: frame.scale
         )
     }
@@ -458,12 +466,42 @@ public class SequenceViewerView: NSView {
     /// Whether drag is active (for highlighting)
     private var isDragActive = false
 
+    /// Current appearance settings for sequence visualization
+    private var sequenceAppearance: SequenceAppearance = .load()
+
+    // MARK: - Selection State
+
+    /// Current selection range in base coordinates (nil if no selection)
+    public private(set) var selectionRange: Range<Int>?
+
+    /// Mouse drag start position for selection
+    private var selectionStartBase: Int?
+
+    /// Whether we're currently dragging to select
+    private var isSelecting = false
+
+    /// Currently selected annotation (nil if no annotation selected)
+    private var selectedAnnotation: SequenceAnnotation?
+
     /// Track positioning (shared with header)
-    var trackY: CGFloat = 8
-    var trackHeight: CGFloat = 24
+    var trackY: CGFloat = 20
+    var trackHeight: CGFloat = 40
 
     /// Whether to show complement strand
     var showComplementStrand: Bool = false
+
+    // MARK: - Annotation Track Layout Constants
+
+    /// Y offset where annotation track starts (below sequence track)
+    private var annotationTrackY: CGFloat {
+        trackY + trackHeight + 30
+    }
+
+    /// Height of each annotation box
+    private let annotationHeight: CGFloat = 16
+
+    /// Vertical spacing between annotation rows
+    private let annotationRowSpacing: CGFloat = 2
 
     // MARK: - Zoom Thresholds (bp/pixel)
 
@@ -473,16 +511,62 @@ public class SequenceViewerView: NSView {
     /// Below this threshold: show colored bars (between letters and density)
     private let showBarsThreshold: Double = 100.0
 
+    // MARK: - Quality Score Colors
+
+    /// Quality score color thresholds for overlay rendering.
+    /// Maps Phred quality scores to colors indicating confidence levels.
+    private enum QualityColors {
+        /// Q < 10: Dark red - very low quality (>10% error rate)
+        static let veryLow = NSColor(calibratedRed: 0.8, green: 0.0, blue: 0.0, alpha: 0.5)
+
+        /// Q 10-19: Red - low quality (1-10% error rate)
+        static let low = NSColor(calibratedRed: 1.0, green: 0.0, blue: 0.0, alpha: 0.5)
+
+        /// Q 20-29: Orange - medium quality (0.1-1% error rate)
+        static let medium = NSColor(calibratedRed: 1.0, green: 0.65, blue: 0.0, alpha: 0.5)
+
+        /// Q 30-39: Light green - good quality (0.01-0.1% error rate)
+        static let good = NSColor(calibratedRed: 0.56, green: 0.93, blue: 0.56, alpha: 0.5)
+
+        /// Q >= 40: Green - high quality (<0.01% error rate)
+        static let high = NSColor(calibratedRed: 0.0, green: 0.67, blue: 0.0, alpha: 0.5)
+
+        /// Returns the appropriate color for a given quality score.
+        ///
+        /// - Parameter score: Phred quality score (0-93)
+        /// - Returns: Color indicating the quality level
+        static func color(forScore score: UInt8) -> NSColor {
+            switch score {
+            case 0..<10:
+                return veryLow
+            case 10..<20:
+                return low
+            case 20..<30:
+                return medium
+            case 30..<40:
+                return good
+            default:
+                return high
+            }
+        }
+    }
+
     // MARK: - Initialization
 
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setupDragAndDrop()
+        setupAppearanceObserver()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         setupDragAndDrop()
+        setupAppearanceObserver()
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     private func setupDragAndDrop() {
@@ -490,6 +574,24 @@ public class SequenceViewerView: NSView {
         logger.info("SequenceViewerView.setupDragAndDrop: Registering for file URL drag type")
         registerForDraggedTypes([.fileURL])
         logger.info("SequenceViewerView.setupDragAndDrop: Registration complete")
+    }
+
+    /// Sets up observer for appearance change notifications.
+    private func setupAppearanceObserver() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppearanceChanged(_:)),
+            name: .appearanceChanged,
+            object: nil
+        )
+        logger.debug("SequenceViewerView: Appearance change observer registered")
+    }
+
+    /// Handles appearance change notifications by reloading settings and redrawing.
+    @objc private func handleAppearanceChanged(_ notification: Notification) {
+        sequenceAppearance = .load()
+        needsDisplay = true
+        logger.info("SequenceViewerView: Appearance changed, triggering redraw")
     }
 
     // MARK: - Data Setters
@@ -505,6 +607,11 @@ public class SequenceViewerView: NSView {
     func setAnnotations(_ annots: [SequenceAnnotation]) {
         logger.info("SequenceViewerView.setAnnotations: Setting \(annots.count) annotations")
         self.annotations = annots
+        // Clear selection if the selected annotation is no longer in the list
+        if let selected = selectedAnnotation,
+           !annots.contains(where: { $0.id == selected.id }) {
+            selectedAnnotation = nil
+        }
         setNeedsDisplay(bounds)
         logger.debug("SequenceViewerView.setAnnotations: Requested display refresh")
     }
@@ -590,8 +697,240 @@ public class SequenceViewerView: NSView {
             drawOverviewSequence(seq, frame: frame, context: context)
         }
 
+        // Draw selection highlight
+        drawSelectionHighlight(frame: frame, context: context)
+
+        // Draw annotations if present
+        if !annotations.isEmpty {
+            drawAnnotations(frame: frame, context: context)
+        }
+
         // Draw sequence info header
         drawSequenceInfo(seq, frame: frame, context: context)
+    }
+
+    /// Draws the selection highlight overlay
+    private func drawSelectionHighlight(frame: ReferenceFrame, context: CGContext) {
+        guard let range = selectionRange else { return }
+
+        let visibleBases = frame.end - frame.start
+        let pixelsPerBase = bounds.width / CGFloat(max(1, visibleBases))
+
+        // Calculate screen coordinates for selection
+        let startX = CGFloat(range.lowerBound - Int(frame.start)) * pixelsPerBase
+        let endX = CGFloat(range.upperBound - Int(frame.start)) * pixelsPerBase
+        let selectionRect = CGRect(
+            x: max(0, startX),
+            y: trackY,
+            width: min(bounds.width - startX, endX - startX),
+            height: trackHeight
+        )
+
+        // Draw selection highlight with blue tint
+        context.saveGState()
+        context.setFillColor(NSColor.selectedTextBackgroundColor.withAlphaComponent(0.4).cgColor)
+        context.fill(selectionRect)
+
+        // Draw selection border
+        context.setStrokeColor(NSColor.selectedTextBackgroundColor.cgColor)
+        context.setLineWidth(2)
+        context.stroke(selectionRect)
+        context.restoreGState()
+    }
+
+    /// Draws annotation features below the sequence track
+    private func drawAnnotations(frame: ReferenceFrame, context: CGContext) {
+        let visibleBases = frame.end - frame.start
+        let pixelsPerBase = bounds.width / CGFloat(max(1, visibleBases))
+
+        // Standard annotation colors by type
+        let typeColors: [AnnotationType: NSColor] = [
+            .gene: NSColor(calibratedRed: 0.2, green: 0.6, blue: 0.2, alpha: 1.0),
+            .cds: NSColor(calibratedRed: 0.2, green: 0.4, blue: 0.8, alpha: 1.0),
+            .exon: NSColor(calibratedRed: 0.6, green: 0.3, blue: 0.8, alpha: 1.0),
+            .mRNA: NSColor(calibratedRed: 0.8, green: 0.4, blue: 0.2, alpha: 1.0),
+            .transcript: NSColor(calibratedRed: 0.7, green: 0.5, blue: 0.3, alpha: 1.0),
+            .misc_feature: NSColor(calibratedRed: 0.5, green: 0.5, blue: 0.5, alpha: 1.0),
+            .region: NSColor(calibratedRed: 0.4, green: 0.7, blue: 0.7, alpha: 1.0),
+            .primer: NSColor(calibratedRed: 0.2, green: 0.8, blue: 0.2, alpha: 1.0),
+            .restrictionSite: NSColor(calibratedRed: 0.8, green: 0.2, blue: 0.2, alpha: 1.0),
+        ]
+
+        let visibleStart = Int(frame.start)
+        let visibleEnd = Int(frame.end)
+
+        // Track row assignments to avoid overlaps
+        var rowEndPositions: [CGFloat] = []
+
+        for annotation in annotations {
+            // Get the first interval (simplified - could handle discontinuous features)
+            guard let interval = annotation.intervals.first else { continue }
+
+            // Check if annotation is visible
+            if interval.end < visibleStart || interval.start > visibleEnd {
+                continue
+            }
+
+            // Calculate screen coordinates
+            let startX = CGFloat(interval.start - visibleStart) * pixelsPerBase
+            let endX = CGFloat(interval.end - visibleStart) * pixelsPerBase
+            let width = max(2, endX - startX)
+
+            // Find a row that doesn't overlap
+            var row = 0
+            for (i, endPos) in rowEndPositions.enumerated() {
+                if startX >= endPos + 2 {
+                    row = i
+                    break
+                }
+                row = i + 1
+            }
+
+            // Extend rows array if needed
+            while rowEndPositions.count <= row {
+                rowEndPositions.append(0)
+            }
+            rowEndPositions[row] = startX + width
+
+            let y = annotationTrackY + CGFloat(row) * (annotationHeight + annotationRowSpacing)
+
+            // Get color for this annotation type
+            let color = typeColors[annotation.type] ?? NSColor.gray
+
+            // Draw annotation box
+            let annotRect = CGRect(x: startX, y: y, width: width, height: annotationHeight)
+            context.setFillColor(color.cgColor)
+            context.fill(annotRect)
+
+            // Draw border
+            context.setStrokeColor(color.withAlphaComponent(0.8).cgColor)
+            context.setLineWidth(1)
+            context.stroke(annotRect)
+
+            // Draw selection highlight if this annotation is selected
+            if let selected = selectedAnnotation, selected.id == annotation.id {
+                drawAnnotationSelectionHighlight(rect: annotRect, context: context)
+            }
+
+            // Draw label if space permits
+            if width > 30 {
+                let label = annotation.name
+                let labelAttributes: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 9, weight: .medium),
+                    .foregroundColor: NSColor.white,
+                ]
+                let labelSize = (label as NSString).size(withAttributes: labelAttributes)
+
+                if labelSize.width < width - 4 {
+                    let labelX = startX + (width - labelSize.width) / 2
+                    let labelY = y + (annotationHeight - labelSize.height) / 2
+                    (label as NSString).draw(at: CGPoint(x: labelX, y: labelY), withAttributes: labelAttributes)
+                }
+            }
+
+            // Draw strand direction indicator
+            if annotation.strand == .forward || annotation.strand == .reverse {
+                let arrowSize: CGFloat = 6
+                context.setFillColor(NSColor.white.cgColor)
+
+                if annotation.strand == .forward {
+                    // Arrow pointing right
+                    let arrowX = min(startX + width - arrowSize - 2, bounds.width - arrowSize)
+                    let arrowY = y + annotationHeight / 2
+                    context.move(to: CGPoint(x: arrowX, y: arrowY - arrowSize/2))
+                    context.addLine(to: CGPoint(x: arrowX + arrowSize, y: arrowY))
+                    context.addLine(to: CGPoint(x: arrowX, y: arrowY + arrowSize/2))
+                    context.closePath()
+                    context.fillPath()
+                } else {
+                    // Arrow pointing left
+                    let arrowX = max(startX + 2, 0)
+                    let arrowY = y + annotationHeight / 2
+                    context.move(to: CGPoint(x: arrowX + arrowSize, y: arrowY - arrowSize/2))
+                    context.addLine(to: CGPoint(x: arrowX, y: arrowY))
+                    context.addLine(to: CGPoint(x: arrowX + arrowSize, y: arrowY + arrowSize/2))
+                    context.closePath()
+                    context.fillPath()
+                }
+            }
+        }
+    }
+
+    /// Draws a dashed selection highlight around the selected annotation
+    private func drawAnnotationSelectionHighlight(rect: CGRect, context: CGContext) {
+        context.saveGState()
+
+        // Use system selection color
+        let selectionColor = NSColor.selectedContentBackgroundColor
+
+        // Draw a slightly expanded rect with dashed border
+        let expandedRect = rect.insetBy(dx: -2, dy: -2)
+
+        // Set up dashed line pattern
+        context.setStrokeColor(selectionColor.cgColor)
+        context.setLineWidth(2)
+        context.setLineDash(phase: 0, lengths: [4, 2])
+
+        // Draw the dashed rectangle
+        context.stroke(expandedRect)
+
+        // Also draw a semi-transparent fill to emphasize selection
+        context.setFillColor(selectionColor.withAlphaComponent(0.2).cgColor)
+        context.fill(expandedRect)
+
+        context.restoreGState()
+    }
+
+    /// Draws quality score overlay behind bases when enabled.
+    ///
+    /// This method renders semi-transparent colored rectangles behind each base
+    /// to indicate the quality/confidence of the sequencing at that position.
+    /// Quality scores are typically from FASTQ files.
+    ///
+    /// - Parameters:
+    ///   - context: The graphics context to draw into
+    ///   - sequence: The sequence containing quality scores
+    ///   - frame: The current reference frame for coordinate mapping
+    ///   - rect: The rectangle area to draw within
+    private func drawQualityOverlay(
+        context: CGContext,
+        sequence: Sequence,
+        frame: ReferenceFrame,
+        rect: CGRect
+    ) {
+        // Only draw if quality overlay is enabled and quality scores exist
+        guard sequenceAppearance.showQualityOverlay,
+              let qualityScores = sequence.qualityScores else {
+            return
+        }
+
+        let startBase = max(0, Int(frame.start))
+        let endBase = min(sequence.length, Int(frame.end) + 1)
+
+        // Ensure we have quality scores for the visible range
+        guard startBase < qualityScores.count else { return }
+
+        let visibleBases = frame.end - frame.start
+        let pixelsPerBase = bounds.width / CGFloat(max(1, visibleBases))
+
+        context.saveGState()
+
+        // Draw quality overlay for each visible base
+        for i in startBase..<min(endBase, qualityScores.count) {
+            let x = CGFloat(i - startBase) * pixelsPerBase
+            let qualityScore = qualityScores[i]
+            let qualityColor = QualityColors.color(forScore: qualityScore)
+
+            context.setFillColor(qualityColor.cgColor)
+            context.fill(CGRect(
+                x: x,
+                y: rect.origin.y,
+                width: max(1, pixelsPerBase - 0.5),
+                height: rect.height
+            ))
+        }
+
+        context.restoreGState()
     }
 
     private func drawBaseLevelSequence(_ seq: Sequence, frame: ReferenceFrame, context: CGContext) {
@@ -606,12 +945,16 @@ public class SequenceViewerView: NSView {
         let showLetters = pixelsPerBase >= 8 && fontSize >= 6
         let font = NSFont.monospacedSystemFont(ofSize: max(6, fontSize), weight: .bold)
 
+        // Draw quality overlay BEFORE the base colors so it appears behind
+        let trackRect = CGRect(x: 0, y: trackY, width: bounds.width, height: trackHeight)
+        drawQualityOverlay(context: context, sequence: seq, frame: frame, rect: trackRect)
+
         for i in startBase..<endBase {
             let x = CGFloat(i - startBase) * pixelsPerBase
             let baseChar = seq[i]
 
-            // Draw background color using IGV standard colors
-            let color = BaseColors.color(for: baseChar)
+            // Draw background color using appearance settings
+            let color = sequenceAppearance.color(forBase: baseChar)
             context.setFillColor(color.cgColor)
             context.fill(CGRect(x: x, y: trackY, width: max(1, pixelsPerBase - 0.5), height: trackHeight))
 
@@ -637,6 +980,10 @@ public class SequenceViewerView: NSView {
         let visibleBases = frame.end - frame.start
         let pixelsPerBase = bounds.width / CGFloat(max(1, visibleBases))
 
+        // Draw quality overlay BEFORE the base colors so it appears behind
+        let trackRect = CGRect(x: 0, y: trackY, width: bounds.width, height: trackHeight)
+        drawQualityOverlay(context: context, sequence: seq, frame: frame, rect: trackRect)
+
         // Aggregate bases into bins for colored bar display
         let basesPerBin = max(1, Int(frame.scale))
 
@@ -652,7 +999,9 @@ public class SequenceViewerView: NSView {
                 counts[base, default: 0] += 1
             }
             let dominantBase = counts.max(by: { $0.value < $1.value })?.key ?? "N"
-            let color = BaseColors.color(for: dominantBase)
+
+            // Use appearance settings for color
+            let color = sequenceAppearance.color(forBase: dominantBase)
 
             context.setFillColor(color.cgColor)
             context.fill(CGRect(x: x, y: trackY, width: max(1, width), height: trackHeight))
@@ -741,13 +1090,98 @@ public class SequenceViewerView: NSView {
 
     private func drawSequenceInfo(_ seq: Sequence, frame: ReferenceFrame, context: CGContext) {
         // Draw info below the sequence track
-        let info = "\(seq.name) | \(seq.length.formatted()) bp | \(seq.alphabet)"
+        var info = "\(seq.name) | \(seq.length.formatted()) bp | \(seq.alphabet)"
+
+        // Add quality overlay indicator if enabled
+        if sequenceAppearance.showQualityOverlay && seq.qualityScores != nil {
+            info += " | Quality overlay enabled"
+        }
+
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 11, weight: .regular),
             .foregroundColor: NSColor.secondaryLabelColor,
         ]
         let infoY = trackY + trackHeight + 8
         (info as NSString).draw(at: CGPoint(x: 4, y: infoY), withAttributes: attributes)
+    }
+
+    // MARK: - Annotation Hit-Testing
+
+    /// Finds the annotation at the given point, if any.
+    ///
+    /// - Parameter point: The point in view coordinates to test.
+    /// - Returns: The annotation at that point, or nil if no annotation is at the point.
+    private func annotationAtPoint(_ point: NSPoint) -> SequenceAnnotation? {
+        guard let frame = viewController?.referenceFrame else { return nil }
+
+        let visibleBases = frame.end - frame.start
+        let pixelsPerBase = bounds.width / CGFloat(max(1, visibleBases))
+        let visibleStart = Int(frame.start)
+        let visibleEnd = Int(frame.end)
+
+        // Track row assignments to find correct Y positions (must match drawAnnotations logic)
+        var rowEndPositions: [CGFloat] = []
+
+        for annotation in annotations {
+            guard let interval = annotation.intervals.first else { continue }
+
+            // Check if annotation is visible
+            if interval.end < visibleStart || interval.start > visibleEnd {
+                continue
+            }
+
+            // Calculate screen coordinates (same as in drawAnnotations)
+            let startX = CGFloat(interval.start - visibleStart) * pixelsPerBase
+            let endX = CGFloat(interval.end - visibleStart) * pixelsPerBase
+            let width = max(2, endX - startX)
+
+            // Find row assignment (same logic as drawAnnotations)
+            var row = 0
+            for (i, endPos) in rowEndPositions.enumerated() {
+                if startX >= endPos + 2 {
+                    row = i
+                    break
+                }
+                row = i + 1
+            }
+
+            while rowEndPositions.count <= row {
+                rowEndPositions.append(0)
+            }
+            rowEndPositions[row] = startX + width
+
+            let y = annotationTrackY + CGFloat(row) * (annotationHeight + annotationRowSpacing)
+
+            // Create bounding rect for this annotation
+            let annotRect = CGRect(x: startX, y: y, width: width, height: annotationHeight)
+
+            // Check if point is within this annotation's rect
+            if annotRect.contains(point) {
+                return annotation
+            }
+        }
+
+        return nil
+    }
+
+    /// Posts a notification that an annotation was selected.
+    private func postAnnotationSelectedNotification(_ annotation: SequenceAnnotation?) {
+        if let annotation = annotation {
+            NotificationCenter.default.post(
+                name: .annotationSelected,
+                object: self,
+                userInfo: [NotificationUserInfoKey.annotation: annotation]
+            )
+            logger.info("Posted annotationSelected notification for '\(annotation.name, privacy: .public)'")
+        } else {
+            // Post notification with nil to indicate deselection
+            NotificationCenter.default.post(
+                name: .annotationSelected,
+                object: self,
+                userInfo: nil
+            )
+            logger.info("Posted annotationSelected notification (deselection)")
+        }
     }
 
     // MARK: - Drag and Drop
@@ -850,20 +1284,459 @@ public class SequenceViewerView: NSView {
 
     public override func keyDown(with event: NSEvent) {
         switch event.keyCode {
-        case 123: // Left arrow
-            viewController?.referenceFrame?.start -= 100
-            viewController?.referenceFrame?.end -= 100
+        case 123: // Left arrow - pan left (use bounded pan)
+            viewController?.referenceFrame?.pan(by: -100)
             setNeedsDisplay(bounds)
-        case 124: // Right arrow
-            viewController?.referenceFrame?.start += 100
-            viewController?.referenceFrame?.end += 100
+            viewController?.rulerView.setNeedsDisplay(viewController?.rulerView.bounds ?? .zero)
+            viewController?.updateStatusBar()
+        case 124: // Right arrow - pan right (use bounded pan)
+            viewController?.referenceFrame?.pan(by: 100)
             setNeedsDisplay(bounds)
+            viewController?.rulerView.setNeedsDisplay(viewController?.rulerView.bounds ?? .zero)
+            viewController?.updateStatusBar()
         case 126: // Up arrow
             viewController?.zoomIn()
         case 125: // Down arrow
             viewController?.zoomOut()
+        case 8: // 'C' key - copy selection
+            if event.modifierFlags.contains(.command) {
+                copySelectionToClipboard()
+            } else {
+                super.keyDown(with: event)
+            }
+        case 0: // 'A' key - select all
+            if event.modifierFlags.contains(.command) {
+                selectAll()
+            } else {
+                super.keyDown(with: event)
+            }
+        case 53: // Escape - clear selection
+            clearSelection()
+            // Also clear annotation selection
+            if selectedAnnotation != nil {
+                selectedAnnotation = nil
+                postAnnotationSelectedNotification(nil)
+                setNeedsDisplay(bounds)
+            }
         default:
             super.keyDown(with: event)
+        }
+    }
+
+    // MARK: - Mouse Selection
+
+    public override func mouseDown(with event: NSEvent) {
+        guard let frame = viewController?.referenceFrame else { return }
+
+        let location = convert(event.locationInWindow, from: nil)
+
+        // First, check if the click is on an annotation
+        if let annotation = annotationAtPoint(location) {
+            // Select the annotation
+            selectedAnnotation = annotation
+            postAnnotationSelectedNotification(annotation)
+
+            // Clear any sequence selection when selecting an annotation
+            selectionRange = nil
+            selectionStartBase = nil
+            isSelecting = false
+
+            setNeedsDisplay(bounds)
+            updateSelectionStatus()
+            return
+        }
+
+        // If click is in the annotation track area but not on an annotation, deselect
+        if location.y >= annotationTrackY && selectedAnnotation != nil {
+            selectedAnnotation = nil
+            postAnnotationSelectedNotification(nil)
+            setNeedsDisplay(bounds)
+        }
+
+        // Continue with existing region selection behavior for sequence track
+        let basePosition = basePositionAt(x: location.x, frame: frame)
+
+        // Start selection
+        selectionStartBase = basePosition
+        selectionRange = basePosition..<(basePosition + 1)
+        isSelecting = true
+
+        setNeedsDisplay(bounds)
+        updateSelectionStatus()
+    }
+
+    public override func mouseDragged(with event: NSEvent) {
+        guard isSelecting,
+              let startBase = selectionStartBase,
+              let frame = viewController?.referenceFrame else { return }
+
+        let location = convert(event.locationInWindow, from: nil)
+        let currentBase = basePositionAt(x: location.x, frame: frame)
+
+        // Update selection range
+        let minBase = min(startBase, currentBase)
+        let maxBase = max(startBase, currentBase) + 1
+        selectionRange = minBase..<maxBase
+
+        setNeedsDisplay(bounds)
+        updateSelectionStatus()
+    }
+
+    public override func mouseUp(with event: NSEvent) {
+        isSelecting = false
+        // Keep the selection visible
+    }
+
+    // MARK: - Right-Click Context Menu
+
+    /// Handles right-click/control-click to show contextual menu
+    public override func rightMouseDown(with event: NSEvent) {
+        let location = convert(event.locationInWindow, from: nil)
+
+        // Check if right-clicking on an annotation
+        if let annotation = annotationAtPoint(location) {
+            // Select the annotation if not already selected
+            if selectedAnnotation?.id != annotation.id {
+                selectedAnnotation = annotation
+                postAnnotationSelectedNotification(annotation)
+                setNeedsDisplay(bounds)
+            }
+            // Show annotation context menu
+            showAnnotationContextMenu(for: annotation, at: event)
+            return
+        }
+
+        // Check if right-clicking on a selection
+        if selectionRange != nil {
+            showSelectionContextMenu(at: event)
+            return
+        }
+
+        // No selection - show general context menu
+        showGeneralContextMenu(at: event)
+    }
+
+    /// Creates and shows context menu for annotation
+    private func showAnnotationContextMenu(for annotation: SequenceAnnotation, at event: NSEvent) {
+        let menu = NSMenu(title: "Annotation")
+
+        // Edit annotation
+        let editItem = NSMenuItem(title: "Edit Annotation...", action: #selector(editAnnotationAction(_:)), keyEquivalent: "")
+        editItem.target = self
+        editItem.representedObject = annotation
+        menu.addItem(editItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // Copy annotation name
+        let copyNameItem = NSMenuItem(title: "Copy Name", action: #selector(copyAnnotationName(_:)), keyEquivalent: "")
+        copyNameItem.target = self
+        copyNameItem.representedObject = annotation
+        menu.addItem(copyNameItem)
+
+        // Copy annotation sequence
+        let copySeqItem = NSMenuItem(title: "Copy Sequence", action: #selector(copyAnnotationSequence(_:)), keyEquivalent: "")
+        copySeqItem.target = self
+        copySeqItem.representedObject = annotation
+        menu.addItem(copySeqItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // Delete annotation
+        let deleteItem = NSMenuItem(title: "Delete Annotation", action: #selector(deleteAnnotationAction(_:)), keyEquivalent: "")
+        deleteItem.target = self
+        deleteItem.representedObject = annotation
+        menu.addItem(deleteItem)
+
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    /// Creates and shows context menu for sequence selection
+    private func showSelectionContextMenu(at event: NSEvent) {
+        let menu = NSMenu(title: "Selection")
+
+        // Copy selection
+        let copyItem = NSMenuItem(title: "Copy Selection", action: #selector(copySelectionAction(_:)), keyEquivalent: "c")
+        copyItem.target = self
+        menu.addItem(copyItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // Create annotation from selection
+        let annotateItem = NSMenuItem(title: "Create Annotation from Selection...", action: #selector(createAnnotationFromSelection(_:)), keyEquivalent: "")
+        annotateItem.target = self
+        menu.addItem(annotateItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // Get complement
+        let complementItem = NSMenuItem(title: "Copy Complement", action: #selector(copyComplementAction(_:)), keyEquivalent: "")
+        complementItem.target = self
+        menu.addItem(complementItem)
+
+        // Get reverse complement
+        let revCompItem = NSMenuItem(title: "Copy Reverse Complement", action: #selector(copyReverseComplementAction(_:)), keyEquivalent: "")
+        revCompItem.target = self
+        menu.addItem(revCompItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // Zoom to selection
+        let zoomItem = NSMenuItem(title: "Zoom to Selection", action: #selector(zoomToSelectionAction(_:)), keyEquivalent: "")
+        zoomItem.target = self
+        menu.addItem(zoomItem)
+
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    /// Creates and shows general context menu (no selection)
+    private func showGeneralContextMenu(at event: NSEvent) {
+        let menu = NSMenu(title: "Sequence")
+
+        // Select All
+        let selectAllItem = NSMenuItem(title: "Select All", action: #selector(selectAllAction(_:)), keyEquivalent: "a")
+        selectAllItem.target = self
+        menu.addItem(selectAllItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // Zoom to Fit
+        let zoomFitItem = NSMenuItem(title: "Zoom to Fit", action: #selector(zoomToFitAction(_:)), keyEquivalent: "")
+        zoomFitItem.target = self
+        menu.addItem(zoomFitItem)
+
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    // MARK: - Context Menu Actions
+
+    @objc private func copySelectionAction(_ sender: Any?) {
+        copySelectionToClipboard()
+    }
+
+    @objc private func selectAllAction(_ sender: Any?) {
+        selectAll()
+    }
+
+    @objc private func zoomToFitAction(_ sender: Any?) {
+        viewController?.zoomToFit()
+    }
+
+    @objc private func zoomToSelectionAction(_ sender: Any?) {
+        guard let range = selectionRange,
+              let frame = viewController?.referenceFrame else { return }
+        frame.start = Double(range.lowerBound)
+        frame.end = Double(range.upperBound)
+        setNeedsDisplay(bounds)
+        viewController?.rulerView.setNeedsDisplay(viewController?.rulerView.bounds ?? .zero)
+        viewController?.updateStatusBar()
+    }
+
+    @objc private func createAnnotationFromSelection(_ sender: Any?) {
+        guard let range = selectionRange else { return }
+        // Post notification for AppDelegate to handle with dialog
+        NotificationCenter.default.post(
+            name: NSNotification.Name("createAnnotationFromSelection"),
+            object: self,
+            userInfo: ["range": range]
+        )
+    }
+
+    @objc private func copyComplementAction(_ sender: Any?) {
+        guard let seq = sequence,
+              let range = selectionRange else {
+            NSSound.beep()
+            return
+        }
+
+        let start = max(0, range.lowerBound)
+        let end = min(seq.length, range.upperBound)
+        let selectedBases = seq[start..<end]
+
+        // Compute complement
+        let complement = selectedBases.map { base -> Character in
+            switch base.uppercased() {
+            case "A": return "T"
+            case "T": return "A"
+            case "G": return "C"
+            case "C": return "G"
+            default: return base
+            }
+        }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(String(complement), forType: .string)
+        logger.info("Copied \(end - start) bases (complement) to clipboard")
+    }
+
+    @objc private func copyReverseComplementAction(_ sender: Any?) {
+        guard let seq = sequence,
+              let range = selectionRange else {
+            NSSound.beep()
+            return
+        }
+
+        let start = max(0, range.lowerBound)
+        let end = min(seq.length, range.upperBound)
+        let selectedBases = seq[start..<end]
+
+        // Compute reverse complement
+        let reverseComplement = selectedBases.reversed().map { base -> Character in
+            switch base.uppercased() {
+            case "A": return "T"
+            case "T": return "A"
+            case "G": return "C"
+            case "C": return "G"
+            default: return base
+            }
+        }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(String(reverseComplement), forType: .string)
+        logger.info("Copied \(end - start) bases (reverse complement) to clipboard")
+    }
+
+    @objc private func editAnnotationAction(_ sender: NSMenuItem?) {
+        guard let annotation = sender?.representedObject as? SequenceAnnotation else { return }
+        // Select the annotation - the inspector will show edit controls
+        selectedAnnotation = annotation
+        postAnnotationSelectedNotification(annotation)
+        setNeedsDisplay(bounds)
+        // Open the inspector if not already visible
+        NotificationCenter.default.post(
+            name: NSNotification.Name("showInspector"),
+            object: self,
+            userInfo: nil
+        )
+    }
+
+    @objc private func copyAnnotationName(_ sender: NSMenuItem?) {
+        guard let annotation = sender?.representedObject as? SequenceAnnotation else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(annotation.name, forType: .string)
+        logger.info("Copied annotation name '\(annotation.name)' to clipboard")
+    }
+
+    @objc private func copyAnnotationSequence(_ sender: NSMenuItem?) {
+        guard let annotation = sender?.representedObject as? SequenceAnnotation,
+              let seq = sequence,
+              let interval = annotation.intervals.first else { return }
+
+        let start = max(0, interval.start)
+        let end = min(seq.length, interval.end)
+        let annotationBases = seq[start..<end]
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(annotationBases, forType: .string)
+        logger.info("Copied \(end - start) bases from annotation '\(annotation.name)' to clipboard")
+    }
+
+    @objc private func deleteAnnotationAction(_ sender: NSMenuItem?) {
+        guard let annotation = sender?.representedObject as? SequenceAnnotation else { return }
+        // Post deletion notification
+        NotificationCenter.default.post(
+            name: .annotationDeleted,
+            object: self,
+            userInfo: [NotificationUserInfoKey.annotation: annotation]
+        )
+        // Clear selection if it was the selected annotation
+        if selectedAnnotation?.id == annotation.id {
+            selectedAnnotation = nil
+            postAnnotationSelectedNotification(nil)
+        }
+        setNeedsDisplay(bounds)
+    }
+
+    /// Scroll wheel for zooming and panning
+    public override func scrollWheel(with event: NSEvent) {
+        guard let frame = viewController?.referenceFrame else { return }
+
+        if event.modifierFlags.contains(.command) || event.modifierFlags.contains(.option) {
+            // Zoom with Cmd+scroll or Option+scroll
+            if event.scrollingDeltaY > 0 {
+                viewController?.zoomIn()
+            } else if event.scrollingDeltaY < 0 {
+                viewController?.zoomOut()
+            }
+        } else {
+            // Pan with scroll (use bounded pan method)
+            let panAmount = Double(event.scrollingDeltaX) * frame.scale * 2
+            frame.pan(by: -panAmount)
+            setNeedsDisplay(bounds)
+            viewController?.rulerView.setNeedsDisplay(viewController?.rulerView.bounds ?? .zero)
+            viewController?.updateStatusBar()
+        }
+    }
+
+    // MARK: - Selection Helpers
+
+    /// Converts screen X coordinate to base position
+    private func basePositionAt(x: CGFloat, frame: ReferenceFrame) -> Int {
+        guard let seq = sequence else { return 0 }
+        let visibleBases = frame.end - frame.start
+        let basesPerPixel = visibleBases / Double(bounds.width)
+        let baseOffset = Double(x) * basesPerPixel
+        let basePosition = Int(frame.start + baseOffset)
+        return max(0, min(seq.length - 1, basePosition))
+    }
+
+    /// Selects the entire sequence
+    public func selectAll() {
+        guard let seq = sequence else { return }
+        selectionRange = 0..<seq.length
+        setNeedsDisplay(bounds)
+        updateSelectionStatus()
+    }
+
+    /// Clears the current selection
+    public func clearSelection() {
+        selectionRange = nil
+        selectionStartBase = nil
+        setNeedsDisplay(bounds)
+        updateSelectionStatus()
+    }
+
+    /// Copies the selected sequence to the clipboard
+    public func copySelectionToClipboard() {
+        guard let seq = sequence,
+              let range = selectionRange else {
+            NSSound.beep()
+            return
+        }
+
+        // Extract the selected bases
+        let start = max(0, range.lowerBound)
+        let end = min(seq.length, range.upperBound)
+        let selectedBases = seq[start..<end]
+
+        // Copy to clipboard
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(selectedBases, forType: .string)
+
+        logger.info("Copied \(end - start) bases to clipboard")
+    }
+
+    /// Updates the status bar with selection info
+    private func updateSelectionStatus() {
+        if let range = selectionRange {
+            let length = range.upperBound - range.lowerBound
+            let selectionText = "\(range.lowerBound + 1)-\(range.upperBound) (\(length.formatted()) bp)"
+            viewController?.statusBar.update(
+                position: viewController?.statusBar.positionLabel.stringValue,
+                selection: selectionText,
+                scale: viewController?.referenceFrame?.scale ?? 1.0
+            )
+        } else {
+            viewController?.statusBar.update(
+                position: viewController?.statusBar.positionLabel.stringValue,
+                selection: nil,
+                scale: viewController?.referenceFrame?.scale ?? 1.0
+            )
         }
     }
 }
@@ -1054,8 +1927,8 @@ public class CoordinateRulerView: NSView {
 /// Status bar showing current position and selection info.
 public class ViewerStatusBar: NSView {
 
-    private var positionLabel: NSTextField!
-    private var selectionLabel: NSTextField!
+    public private(set) var positionLabel: NSTextField!
+    public private(set) var selectionLabel: NSTextField!
     private var scaleLabel: NSTextField!
 
     public override init(frame frameRect: NSRect) {
@@ -1152,16 +2025,20 @@ public class ReferenceFrame {
     /// Width of the view in pixels
     public var pixelWidth: Int
 
+    /// Maximum sequence length (for bounds checking)
+    public var sequenceLength: Int
+
     /// Base pairs per pixel
     public var scale: Double {
         (end - start) / Double(max(1, pixelWidth))
     }
 
-    public init(chromosome: String, start: Double, end: Double, pixelWidth: Int) {
+    public init(chromosome: String, start: Double, end: Double, pixelWidth: Int, sequenceLength: Int = Int.max) {
         self.chromosome = chromosome
         self.start = start
         self.end = end
         self.pixelWidth = max(1, pixelWidth)
+        self.sequenceLength = sequenceLength
     }
 
     /// Converts a screen X coordinate to genomic position
@@ -1174,19 +2051,52 @@ public class ReferenceFrame {
         CGFloat((genomicPos - start) / scale)
     }
 
-    /// Zooms in by the specified factor
+    /// Pans by the specified amount in base pairs, respecting sequence bounds.
+    public func pan(by deltaBP: Double) {
+        let windowLength = end - start
+        var newStart = start + deltaBP
+        var newEnd = end + deltaBP
+
+        // Clamp to bounds: don't go before 0 or past sequence length
+        if newStart < 0 {
+            newStart = 0
+            newEnd = windowLength
+        }
+        if newEnd > Double(sequenceLength) {
+            newEnd = Double(sequenceLength)
+            newStart = max(0, newEnd - windowLength)
+        }
+
+        start = newStart
+        end = newEnd
+    }
+
+    /// Zooms in by the specified factor, respecting sequence bounds.
     public func zoomIn(factor: Double) {
         let center = (start + end) / 2
         let halfWidth = (end - start) / (2 * factor)
         start = max(0, center - halfWidth)
-        end = center + halfWidth
+        end = min(Double(sequenceLength), center + halfWidth)
     }
 
-    /// Zooms out by the specified factor
+    /// Zooms out by the specified factor, respecting sequence bounds.
     public func zoomOut(factor: Double) {
         let center = (start + end) / 2
         let halfWidth = (end - start) * factor / 2
-        start = max(0, center - halfWidth)
-        end = center + halfWidth
+        var newStart = center - halfWidth
+        var newEnd = center + halfWidth
+
+        // Clamp to bounds
+        if newStart < 0 {
+            newStart = 0
+            newEnd = min(Double(sequenceLength), newStart + halfWidth * 2)
+        }
+        if newEnd > Double(sequenceLength) {
+            newEnd = Double(sequenceLength)
+            newStart = max(0, newEnd - halfWidth * 2)
+        }
+
+        start = newStart
+        end = newEnd
     }
 }

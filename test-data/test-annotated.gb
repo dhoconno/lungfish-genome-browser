@@ -1,0 +1,38 @@
+LOCUS       TEST_SEQ              500 bp    DNA     linear   UNK 01-FEB-2026
+DEFINITION  Test sequence with annotations for viewer testing
+ACCESSION   TEST001
+VERSION     TEST001.1
+FEATURES             Location/Qualifiers
+     gene            1..150
+                     /gene="testGene1"
+                     /product="Test protein 1"
+     CDS             10..120
+                     /gene="testGene1"
+                     /codon_start=1
+                     /product="Test protein 1"
+     gene            200..400
+                     /gene="testGene2"
+                     /product="Test protein 2"
+     CDS             220..380
+                     /gene="testGene2"
+                     /codon_start=1
+                     /product="Test protein 2"
+     exon            220..280
+                     /gene="testGene2"
+                     /number=1
+     exon            320..380
+                     /gene="testGene2"
+                     /number=2
+     misc_feature    450..490
+                     /note="Regulatory region"
+ORIGIN
+        1 atgcgatcga tcgatcgatc gatcgatcga tcgatcgatc gatcgatcga tcgatcgatc
+       61 gatcgatcga tcgatcgatc gatcgatcga tcgatcgatc gatcgatcga tcgatcgatc
+      121 gatcgatcga tcgatcgatc gatcgatcga tcgatcgatc gatcgatcga tcgatcgatc
+      181 gatcgatcga tcgatcgatc gatcgatcga tcgatcgatc gatcgatcga tcgatcgatc
+      241 gatcgatcga tcgatcgatc gatcgatcga tcgatcgatc gatcgatcga tcgatcgatc
+      301 gatcgatcga tcgatcgatc gatcgatcga tcgatcgatc gatcgatcga tcgatcgatc
+      361 gatcgatcga tcgatcgatc gatcgatcga tcgatcgatc gatcgatcga tcgatcgatc
+      421 gatcgatcga tcgatcgatc gatcgatcga tcgatcgatc gatcgatcga tcgatcgatc
+      481 gatcgatcga tcgatcgatc
+//

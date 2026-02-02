@@ -313,8 +313,8 @@ public class DocumentManager: ObservableObject {
                 logger.info("loadDocument: Loading FASTQ...")
                 try await loadFASTQ(into: document)
             case .genbank:
-                logger.warning("loadDocument: GenBank not yet supported")
-                throw DocumentLoadError.unsupportedFormat("GenBank support coming soon")
+                logger.info("loadDocument: Loading GenBank...")
+                try await loadGenBank(into: document)
             case .gff3:
                 logger.info("loadDocument: Loading GFF3...")
                 try await loadGFF3(into: document)
@@ -496,12 +496,17 @@ public class DocumentManager: ObservableObject {
         logger.info("loadFASTQ: Starting to read records...")
 
         for try await record in reader.records(from: document.url) {
-            // Convert FASTQRecord to Sequence
+            // Extract raw quality scores from the QualityScore struct
+            // QualityScore conforms to RandomAccessCollection, allowing iteration over UInt8 values
+            let qualityValues = Array(record.quality)
+
+            // Convert FASTQRecord to Sequence, preserving quality scores
             let sequence = try Sequence(
                 name: record.identifier,
                 description: record.description,
                 alphabet: .dna,
-                bases: record.sequence
+                bases: record.sequence,
+                qualityScores: qualityValues
             )
             sequences.append(sequence)
 
@@ -517,7 +522,7 @@ public class DocumentManager: ObservableObject {
             }
         }
 
-        logger.info("loadFASTQ: Read \(sequences.count) sequences total")
+        logger.info("loadFASTQ: Read \(sequences.count) sequences total with quality scores preserved")
         document.sequences = sequences
     }
 
@@ -549,6 +554,30 @@ public class DocumentManager: ObservableObject {
 
         logger.info("loadVCF: Read \(variants.count) variants")
         document.annotations = variants.map { $0.toAnnotation() }
+    }
+
+    private func loadGenBank(into document: LoadedDocument) async throws {
+        logger.info("loadGenBank: Creating GenBankReader for \(document.url.path, privacy: .public)")
+
+        let reader = try GenBankReader(url: document.url)
+        let records = try await reader.readAll()
+
+        logger.info("loadGenBank: Read \(records.count) records")
+
+        // Extract sequences and annotations from all records
+        var sequences: [Sequence] = []
+        var annotations: [SequenceAnnotation] = []
+
+        for record in records {
+            sequences.append(record.sequence)
+            annotations.append(contentsOf: record.annotations)
+            logger.debug("loadGenBank: Record '\(record.locus.name, privacy: .public)' with \(record.annotations.count) annotations")
+        }
+
+        document.sequences = sequences
+        document.annotations = annotations
+
+        logger.info("loadGenBank: Total \(sequences.count) sequences, \(annotations.count) annotations")
     }
 }
 
