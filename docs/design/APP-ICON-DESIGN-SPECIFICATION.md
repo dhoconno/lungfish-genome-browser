@@ -18,13 +18,13 @@ This document provides a comprehensive design specification for adapting the Lun
 ### 2.1 Logo Elements (Based on Description)
 - **Primary Shape:** Stylized lungfish/fish silhouette
 - **Container:** Circular boundary
-- **Accent Element:** Small gear/cog detail (representing software/tool nature)
+- **Eye Detail:** Virus outline in the lungfish's eye (corona-style with spike proteins)
 - **Color Scheme:** Teal/turquoise gradient
 
 ### 2.2 Semantic Meaning
 - **Lungfish:** Named after the Australian lungfish, one of the oldest living vertebrates with a remarkably large genome (~43 Gb)
 - **Circular Container:** Represents completeness, genomic circularity (bacterial chromosomes, plasmids)
-- **Gear Element:** Signifies the computational/tool nature of the software
+- **Virus Eye:** Signifies the software's focus on genomic/viral research and analysis
 
 ---
 
@@ -92,11 +92,11 @@ The current teal/turquoise should be refined for optimal screen display and acce
 | **Background Light** | `#E8F4F6` | 232, 244, 246 | Light mode background |
 | **Background Neutral** | `#2E4A5A` | 46, 74, 90 | Standard icon background |
 
-#### Accent Colors (for gear element and details)
+#### Accent Colors (for eye detail and highlights)
 | Name | Hex | RGB | Usage |
 |------|-----|-----|-------|
-| **Gear Silver Light** | `#D4E1E8` | 212, 225, 232 | Light mode gear |
-| **Gear Silver Dark** | `#8BA3B0` | 139, 163, 176 | Dark mode gear |
+| **Eye White** | `#FFFFFF` | 255, 255, 255 | Eye background |
+| **Virus Outline** | `#007A8C` | 0, 122, 140 | Virus outline in eye (dark teal) |
 | **Highlight White** | `#FFFFFF` | 255, 255, 255 | Specular highlights |
 
 ### 4.2 Color Accessibility
@@ -143,10 +143,10 @@ The AppIcon.appiconset requires the following sizes:
 
 | Size Range | Optimization |
 |------------|--------------|
-| **16-32px** | Remove gear detail, simplify fish to solid silhouette, increase stroke weight |
-| **64-128px** | Simplify gear to basic shape, maintain fish detail |
-| **256-512px** | Full detail with gradients and subtle textures |
-| **1024px** | Maximum detail, subtle noise texture, precise gradient work |
+| **16-32px** | Remove virus eye detail, simplify fish to solid silhouette, increase stroke weight |
+| **64-128px** | Show simplified virus outline in eye, maintain fish detail |
+| **256-512px** | Full virus detail with spikes, gradients and subtle textures |
+| **1024px** | Maximum detail, full virus with spike proteins, precise gradient work |
 
 ---
 
@@ -160,14 +160,14 @@ macOS supports appearance-aware app icons. The icon should adapt to system appea
 - **Background:** Subtle light gradient (`#E8F4F6` to `#D4E8EC`)
 - **Circular Container:** Teal gradient with white inner glow
 - **Fish Silhouette:** Dark teal (`#007A8C`) for contrast
-- **Gear Element:** Silver with subtle metallic sheen
+- **Eye:** White background with dark teal virus outline
 - **Shadow:** Soft drop shadow (10% black, 4px blur, 2px offset)
 
 ### 6.3 Dark Mode Design
 - **Background:** Deep blue-gray gradient (`#1A2F3A` to `#2E4A5A`)
 - **Circular Container:** Brighter teal gradient for pop
 - **Fish Silhouette:** Light teal (`#4DD9E6`) or white outline variant
-- **Gear Element:** Lighter silver (`#D4E1E8`)
+- **Eye:** White background with virus outline
 - **Shadow:** Reduced shadow opacity (5% black)
 - **Glow:** Subtle outer glow on circular container (teal, 20% opacity)
 
@@ -531,11 +531,12 @@ ORIGINAL LOGO                    ADAPTED APP ICON
 |                  |            |    [squircle mask]   |
 |    +--------+    |            |  +----------------+  |
 |    |  FISH  |    |   ===>     |  |  [background]  |  |
-|    | (gear) |    |            |  |   +--------+   |  |
+|    |  (eye) |    |            |  |   +--------+   |  |
 |    +--------+    |            |  |   |  FISH  |   |  |
-|     [circle]     |            |  |   | (gear) |   |  |
-|                  |            |  |   +--------+   |  |
-+------------------+            |  |    [circle]    |  |
+|     [circle]     |            |  |   | [virus |   |  |
+|                  |            |  |   |  eye]  |   |  |
++------------------+            |  |   +--------+   |  |
+                                |  |    [circle]    |  |
                                 |  |   [shadow]     |  |
                                 |  +----------------+  |
                                 +----------------------+
@@ -543,7 +544,7 @@ ORIGINAL LOGO                    ADAPTED APP ICON
 Key Changes:
 1. Circle becomes badge element, not container
 2. Background fills squircle canvas
-3. Subtle shadow adds depth
+3. Virus outline in eye adds scientific context
 4. Gradient refined for icon use
 ```
 

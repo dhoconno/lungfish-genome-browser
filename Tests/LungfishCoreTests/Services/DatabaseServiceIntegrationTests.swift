@@ -123,9 +123,76 @@ final class DatabaseServiceIntegrationTests: XCTestCase {
         // Don't assert - toolkit may or may not be installed
     }
 
+    // MARK: - Raw GenBank Download Tests
+
+    func testNCBIFetchRawGenBankPreservesAnnotations() async throws {
+        // Wait to avoid rate limiting from previous tests
+        try await Task.sleep(nanoseconds: 500_000_000)
+
+        let service = NCBIService()
+
+        // Fetch HIV-1 reference genome as raw GenBank
+        let result = try await service.fetchRawGenBank(accession: "NC_001802")
+
+        // Verify raw content is preserved with all sections
+        XCTAssertTrue(result.content.contains("LOCUS"), "Should contain LOCUS line")
+        XCTAssertTrue(result.content.contains("FEATURES"), "Should contain FEATURES section")
+        XCTAssertTrue(result.content.contains("ORIGIN"), "Should contain ORIGIN section")
+        XCTAssertTrue(result.content.contains("//"), "Should contain terminator")
+
+        // Verify annotations are preserved (HIV-1 has many genes)
+        XCTAssertTrue(result.content.contains("/gene="), "Should contain gene annotations")
+        XCTAssertTrue(result.content.contains("CDS"), "Should contain CDS features")
+
+        // Verify accession is correctly extracted
+        XCTAssertFalse(result.accession.isEmpty, "Accession should not be empty")
+        print("Raw GenBank accession: \(result.accession)")
+        print("Content length: \(result.content.count) characters")
+
+        // Count features to verify richness
+        let featureCount = result.content.components(separatedBy: "     gene").count - 1
+        print("Approximate gene count: \(featureCount)")
+        XCTAssertGreaterThan(featureCount, 0, "Should have gene features")
+    }
+
+    func testDownloadGenBankToFile() async throws {
+        // Wait to avoid rate limiting
+        try await Task.sleep(nanoseconds: 500_000_000)
+
+        let service = NCBIService()
+
+        // Fetch a small well-known sequence
+        let result = try await service.fetchRawGenBank(accession: "NC_001802")
+
+        // Save to temporary file
+        let tempDir = FileManager.default.temporaryDirectory
+        let filename = "\(result.accession).gb"
+        let fileURL = tempDir.appendingPathComponent(filename)
+
+        try result.content.write(to: fileURL, atomically: true, encoding: .utf8)
+
+        // Verify file exists
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
+
+        // Read back and verify structure
+        let readContent = try String(contentsOf: fileURL, encoding: .utf8)
+        XCTAssertTrue(readContent.hasPrefix("LOCUS"), "File should start with LOCUS")
+        XCTAssertTrue(readContent.contains("FEATURES"), "File should contain FEATURES")
+        XCTAssertTrue(readContent.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("//"), "File should end with //")
+
+        print("Downloaded GenBank to: \(fileURL.path)")
+        print("File size: \(readContent.count) bytes")
+
+        // Clean up
+        try? FileManager.default.removeItem(at: fileURL)
+    }
+
     // MARK: - Download to File Tests
 
     func testDownloadToTemporaryFile() async throws {
+        // Wait to avoid rate limiting from previous tests
+        try await Task.sleep(nanoseconds: 1_000_000_000)  // 1 second
+
         let service = NCBIService()
 
         // Fetch a small sequence

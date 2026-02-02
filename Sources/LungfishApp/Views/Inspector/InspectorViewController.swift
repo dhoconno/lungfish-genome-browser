@@ -153,22 +153,25 @@ public class InspectorViewController: NSViewController {
             return
         }
 
+        // First check if document is already loaded (avoid reloading)
+        if let existingDocument = DocumentManager.shared.documents.first(where: { $0.url == url }) {
+            logger.info("loadAndDisplayDocument: Using already-loaded document \(existingDocument.name, privacy: .public)")
+            viewerController.displayDocument(existingDocument)
+            return
+        }
+
         viewerController.showProgress("Loading \(url.lastPathComponent)...")
 
-        Task.detached {
+        // Use regular Task (not detached) since we're on MainActor and DocumentManager is @MainActor
+        Task {
             do {
                 let document = try await DocumentManager.shared.loadDocument(at: url)
-
-                await MainActor.run {
-                    viewerController.hideProgress()
-                    viewerController.displayDocument(document)
-                    logger.info("loadAndDisplayDocument: Displayed \(document.name, privacy: .public)")
-                }
+                viewerController.hideProgress()
+                viewerController.displayDocument(document)
+                logger.info("loadAndDisplayDocument: Displayed \(document.name, privacy: .public)")
             } catch {
-                await MainActor.run {
-                    viewerController.hideProgress()
-                    logger.error("loadAndDisplayDocument: Failed to load \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
-                }
+                viewerController.hideProgress()
+                logger.error("loadAndDisplayDocument: Failed to load \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
     }

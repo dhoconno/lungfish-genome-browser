@@ -253,4 +253,73 @@ final class NCBIServiceTests: XCTestCase {
         XCTAssertEqual(NCBIFormat.genbankWithParts.rettype, "gb")
         XCTAssertEqual(NCBIFormat.xml.rettype, "native")
     }
+
+    // MARK: - FetchRawGenBank Tests
+
+    func testFetchRawGenBankReturnsContent() async throws {
+        // Register the search to find the UID
+        await mockClient.registerNCBISearch(ids: ["12345"])
+
+        // Register the GenBank fetch with full content including features
+        let gbContent = """
+        LOCUS       NC_002549              18959 bp    RNA     linear   VRL 01-JAN-2024
+        DEFINITION  Zaire ebolavirus, complete genome.
+        ACCESSION   NC_002549
+        VERSION     NC_002549.1
+        KEYWORDS    RefSeq.
+        SOURCE      Zaire ebolavirus
+          ORGANISM  Zaire ebolavirus
+                    Viruses; Riboviria; Orthornavirae; Negarnaviricota;
+                    Haploviricotina; Monjiviricetes; Mononegavirales;
+                    Filoviridae; Ebolavirus.
+        FEATURES             Location/Qualifiers
+             source          1..18959
+                             /organism="Zaire ebolavirus"
+                             /mol_type="genomic RNA"
+             gene            470..2689
+                             /gene="NP"
+                             /locus_tag="EBOV_gp1"
+             CDS             470..2689
+                             /gene="NP"
+                             /locus_tag="EBOV_gp1"
+                             /product="nucleoprotein"
+                             /protein_id="YP_054878.1"
+        ORIGIN
+                1 atggatgact ctcgagaagt acttgtagat gg
+        //
+        """
+        await mockClient.register(pattern: "efetch.fcgi", response: .text(gbContent))
+
+        let result = try await service.fetchRawGenBank(accession: "NC_002549.1")
+
+        // Verify raw content is preserved
+        XCTAssertTrue(result.content.contains("LOCUS"))
+        XCTAssertTrue(result.content.contains("FEATURES"))
+        XCTAssertTrue(result.content.contains("gene            470..2689"))
+        XCTAssertTrue(result.content.contains("/gene=\"NP\""))
+        XCTAssertTrue(result.content.contains("CDS             470..2689"))
+        XCTAssertTrue(result.content.contains("/product=\"nucleoprotein\""))
+        XCTAssertTrue(result.content.contains("ORIGIN"))
+        XCTAssertTrue(result.content.contains("//"))
+
+        // Verify accession is extracted (uses VERSION line which includes version number)
+        XCTAssertTrue(result.accession == "NC_002549.1" || result.accession == "NC_002549",
+                      "Accession should be extracted from GenBank content")
+    }
+
+    func testFetchRawGenBankNotFound() async throws {
+        // Register empty search results
+        await mockClient.registerNCBISearch(ids: [])
+
+        do {
+            _ = try await service.fetchRawGenBank(accession: "NONEXISTENT")
+            XCTFail("Should have thrown notFound error")
+        } catch let error as DatabaseServiceError {
+            if case .notFound = error {
+                // Expected
+            } else {
+                XCTFail("Expected notFound, got \(error)")
+            }
+        }
+    }
 }

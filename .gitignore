@@ -26,6 +26,10 @@ DerivedData/
 *.o
 *.a
 *.dylib
+build/
+
+# Test data (local only)
+test-data/
 
 # IDE
 .idea/
