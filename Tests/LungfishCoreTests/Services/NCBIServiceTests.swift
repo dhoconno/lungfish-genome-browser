@@ -322,4 +322,168 @@ final class NCBIServiceTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - NCBISearchType Tests
+
+    func testNCBISearchTypeHasAllCases() {
+        let allCases = NCBISearchType.allCases
+        XCTAssertEqual(allCases.count, 3)
+        XCTAssertTrue(allCases.contains(.nucleotide))
+        XCTAssertTrue(allCases.contains(.genome))
+        XCTAssertTrue(allCases.contains(.virus))
+    }
+
+    func testNCBISearchTypeDisplayNames() {
+        XCTAssertEqual(NCBISearchType.nucleotide.displayName, "GenBank (Nucleotide)")
+        XCTAssertEqual(NCBISearchType.genome.displayName, "Genome (Assembly)")
+        XCTAssertEqual(NCBISearchType.virus.displayName, "Virus")
+    }
+
+    func testNCBISearchTypeIcons() {
+        XCTAssertFalse(NCBISearchType.nucleotide.icon.isEmpty)
+        XCTAssertFalse(NCBISearchType.genome.icon.isEmpty)
+        XCTAssertFalse(NCBISearchType.virus.icon.isEmpty)
+    }
+
+    func testNCBISearchTypeHelpText() {
+        for searchType in NCBISearchType.allCases {
+            XCTAssertFalse(searchType.helpText.isEmpty, "\(searchType) should have help text")
+        }
+    }
+
+    // MARK: - Download Format Tests
+
+    func testNCBIFormatDownloadFormats() {
+        let formats = NCBIFormat.downloadFormats
+        XCTAssertEqual(formats.count, 2)
+        XCTAssertTrue(formats.contains(.genbank))
+        XCTAssertTrue(formats.contains(.fasta))
+    }
+
+    func testNCBIFormatFileExtensions() {
+        XCTAssertEqual(NCBIFormat.fasta.fileExtension, "fasta")
+        XCTAssertEqual(NCBIFormat.genbank.fileExtension, "gb")
+        XCTAssertEqual(NCBIFormat.genbankWithParts.fileExtension, "gb")
+        XCTAssertEqual(NCBIFormat.xml.fileExtension, "xml")
+    }
+
+    func testNCBIFormatDisplayNames() {
+        XCTAssertEqual(NCBIFormat.fasta.displayName, "FASTA")
+        XCTAssertEqual(NCBIFormat.genbank.displayName, "GenBank")
+    }
+
+    // MARK: - Database Supports EFetch Tests
+
+    func testDatabaseSupportsEfetch() {
+        // Nucleotide and protein support efetch
+        XCTAssertTrue(NCBIDatabase.nucleotide.supportsEfetch)
+        XCTAssertTrue(NCBIDatabase.protein.supportsEfetch)
+        XCTAssertTrue(NCBIDatabase.gene.supportsEfetch)
+
+        // Genome and assembly don't support efetch directly
+        XCTAssertFalse(NCBIDatabase.genome.supportsEfetch)
+        XCTAssertFalse(NCBIDatabase.assembly.supportsEfetch)
+    }
+
+    func testVirusTaxonomyFilter() {
+        let filter = NCBIDatabase.virusTaxonomyFilter
+        XCTAssertTrue(filter.contains("txid10239"))
+        XCTAssertTrue(filter.contains("Organism"))
+    }
+
+    // MARK: - FetchRawFASTA Tests
+
+    func testFetchRawFASTAReturnsContent() async throws {
+        // Register the search to find the UID
+        await mockClient.registerNCBISearch(ids: ["12345"])
+
+        // Register the FASTA fetch
+        let fastaContent = """
+        >NC_001422.1 Escherichia phage phiX174 sensu lato, complete genome
+        GAGTTTTATCGCTTCCATGACGCAGAAGTTAACACTTTCGGATATTTCTGATGAGTCGAAAAATTATCTT
+        GATAAAGCAGGAATTACTACTGCTTGTTTACGAATTAAATCGAAGTGGACTGCTGGCGGAAAATGAGAAA
+        """
+        await mockClient.register(pattern: "efetch.fcgi", response: .text(fastaContent))
+
+        let result = try await service.fetchRawFASTA(accession: "NC_001422.1")
+
+        // Verify raw content is preserved
+        XCTAssertTrue(result.content.contains(">NC_001422.1"))
+        XCTAssertTrue(result.content.contains("GAGTTTTATCGCTTCCATGACGCAGAAGTTAACACTTTCGGATATTTCTGATGAGTCGAAAAATTATCTT"))
+
+        // Verify accession is extracted from header
+        XCTAssertEqual(result.accession, "NC_001422.1")
+    }
+
+    func testFetchRawFASTANotFound() async throws {
+        // Register empty search results
+        await mockClient.registerNCBISearch(ids: [])
+
+        do {
+            _ = try await service.fetchRawFASTA(accession: "NONEXISTENT")
+            XCTFail("Should have thrown notFound error")
+        } catch let error as DatabaseServiceError {
+            if case .notFound = error {
+                // Expected
+            } else {
+                XCTFail("Expected notFound, got \(error)")
+            }
+        }
+    }
+
+    // MARK: - ESearch With Count Tests
+
+    func testESearchWithCountReturnsTotalCount() async throws {
+        // Register search response with count (JSON format, matching esearchWithCount implementation)
+        let jsonResponse: [String: Any] = [
+            "esearchresult": [
+                "count": "12345",
+                "retmax": "100",
+                "retstart": "0",
+                "idlist": ["111", "222", "333"]
+            ]
+        ]
+        await mockClient.register(pattern: "esearch.fcgi", response: .json(jsonResponse))
+
+        let result = try await service.esearchWithCount(
+            database: .nucleotide,
+            term: "SARS-CoV-2",
+            retmax: 100
+        )
+
+        XCTAssertEqual(result.ids.count, 3)
+        XCTAssertEqual(result.ids, ["111", "222", "333"])
+        XCTAssertEqual(result.totalCount, 12345)
+        XCTAssertEqual(result.retmax, 100)
+        XCTAssertEqual(result.retstart, 0)
+    }
+
+    // MARK: - SearchVirus Tests
+
+    func testSearchVirusAddsViralTaxonomyFilter() async throws {
+        await mockClient.registerNCBISearch(ids: ["111"])
+
+        _ = try await service.searchVirus(term: "SARS-CoV-2", retmax: 10)
+
+        let requests = await mockClient.requests
+        XCTAssertEqual(requests.count, 1)
+
+        let url = requests[0].url!.absoluteString
+        // The search term should include the viral taxonomy filter
+        XCTAssertTrue(url.contains("txid10239") || url.contains("10239"),
+                      "Search should include viral taxonomy filter")
+    }
+
+    // MARK: - Database Enum Extended Tests
+
+    func testDatabaseEnumIncludesGenomeAndAssembly() {
+        let allCases = NCBIDatabase.allCases
+        XCTAssertTrue(allCases.contains(.genome))
+        XCTAssertTrue(allCases.contains(.assembly))
+    }
+
+    func testDatabaseDisplayNames() {
+        XCTAssertEqual(NCBIDatabase.genome.displayName, "Genome")
+        XCTAssertEqual(NCBIDatabase.assembly.displayName, "Assembly")
+    }
 }

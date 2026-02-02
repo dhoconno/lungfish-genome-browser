@@ -10,19 +10,24 @@ import Foundation
 
 /// Service for accessing the European Nucleotide Archive.
 ///
-/// This service provides programmatic access to ENA's sequence data
-/// via the Portal API and Browser API.
+/// This service provides programmatic access to ENA's sequence and read data
+/// via the Portal API and Browser API. It is particularly useful for:
+/// - Searching for SRA/read data with direct FASTQ download URLs
+/// - Downloading FASTQ files without SRA toolkit conversion
 ///
 /// ## Usage
 /// ```swift
 /// let service = ENAService()
 ///
-/// // Search for sequences
-/// let query = SearchQuery(term: "Ebola", organism: "Ebolavirus")
-/// let results = try await service.search(query)
+/// // Search for SRA reads
+/// let results = try await service.searchReads(term: "SARS-CoV-2")
 ///
-/// // Fetch a sequence
-/// let record = try await service.fetch(accession: "MN908947")
+/// // Get FASTQ download URLs
+/// for read in results.records {
+///     if let urls = read.fastqURLs {
+///         print("FASTQ: \(urls)")
+///     }
+/// }
 /// ```
 ///
 /// ## Rate Limiting
@@ -195,6 +200,102 @@ public actor ENAService: DatabaseService {
         return xml
     }
 
+    // MARK: - SRA/Read Data Methods
+
+    /// Searches for SRA read run data with FASTQ download URLs.
+    ///
+    /// This is the primary method for finding sequencing read data that can be
+    /// downloaded directly as FASTQ files without needing the SRA toolkit.
+    ///
+    /// - Parameters:
+    ///   - term: Search term (accession, study ID, or description)
+    ///   - limit: Maximum results to return
+    ///   - offset: Starting offset for pagination
+    /// - Returns: Search results with FASTQ URLs included
+    public func searchReads(term: String, limit: Int = 100, offset: Int = 0) async throws -> [ENAReadRecord] {
+        var components = URLComponents(url: portalURL.appendingPathComponent("filereport"), resolvingAgainstBaseURL: false)!
+
+        // Use filereport endpoint for faster, cached access with FASTQ URLs
+        components.queryItems = [
+            URLQueryItem(name: "accession", value: term),
+            URLQueryItem(name: "result", value: "read_run"),
+            URLQueryItem(name: "fields", value: "run_accession,experiment_accession,sample_accession,study_accession,experiment_title,library_layout,library_source,library_strategy,instrument_platform,base_count,read_count,fastq_ftp,fastq_bytes,fastq_md5,first_public"),
+            URLQueryItem(name: "format", value: "json"),
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "offset", value: String(offset))
+        ]
+
+        let data = try await makeRequest(url: components.url!)
+
+        // Handle empty response (no results)
+        if data.isEmpty {
+            return []
+        }
+
+        // Try to decode as array, handle potential empty array
+        do {
+            return try JSONDecoder().decode([ENAReadRecord].self, from: data)
+        } catch {
+            // Check if it's an error response
+            if let errorText = String(data: data, encoding: .utf8),
+               errorText.contains("No results") || errorText.contains("error") {
+                return []
+            }
+            throw DatabaseServiceError.parseError(message: "Failed to parse read data: \(error.localizedDescription)")
+        }
+    }
+
+    /// Searches for read runs by study/project accession.
+    ///
+    /// - Parameters:
+    ///   - study: Study accession (PRJNA*, PRJEB*, SRP*, ERP*)
+    ///   - limit: Maximum results
+    /// - Returns: Array of read records
+    public func searchReadsByStudy(study: String, limit: Int = 100) async throws -> [ENAReadRecord] {
+        var components = URLComponents(url: portalURL.appendingPathComponent("filereport"), resolvingAgainstBaseURL: false)!
+
+        components.queryItems = [
+            URLQueryItem(name: "accession", value: study),
+            URLQueryItem(name: "result", value: "read_run"),
+            URLQueryItem(name: "fields", value: "run_accession,experiment_accession,sample_accession,study_accession,experiment_title,library_layout,library_source,library_strategy,instrument_platform,base_count,read_count,fastq_ftp,fastq_bytes,fastq_md5,first_public"),
+            URLQueryItem(name: "format", value: "json"),
+            URLQueryItem(name: "limit", value: String(limit))
+        ]
+
+        let data = try await makeRequest(url: components.url!)
+
+        if data.isEmpty {
+            return []
+        }
+
+        do {
+            return try JSONDecoder().decode([ENAReadRecord].self, from: data)
+        } catch {
+            if let errorText = String(data: data, encoding: .utf8),
+               errorText.contains("No results") {
+                return []
+            }
+            throw DatabaseServiceError.parseError(message: "Failed to parse read data: \(error.localizedDescription)")
+        }
+    }
+
+    /// Gets the direct HTTP URLs for FASTQ download.
+    ///
+    /// ENA provides FTP URLs by default; this converts them to HTTP for easier download.
+    ///
+    /// - Parameter record: The read record containing FTP paths
+    /// - Returns: HTTP URLs for FASTQ files
+    public func fastqHTTPURLs(for record: ENAReadRecord) -> [URL] {
+        guard let ftpPaths = record.fastqFTP else { return [] }
+
+        return ftpPaths.components(separatedBy: ";").compactMap { ftpPath in
+            // Convert FTP path to HTTP URL
+            // ftp.sra.ebi.ac.uk/vol1/fastq/... -> http://ftp.sra.ebi.ac.uk/vol1/fastq/...
+            let httpPath = "http://\(ftpPath)"
+            return URL(string: httpPath)
+        }
+    }
+
     // MARK: - Private Methods
 
     private func makeRequest(url: URL) async throws -> Data {
@@ -286,6 +387,117 @@ struct ENASearchRecord: Codable {
             firstPublic = formatter.date(from: dateStr)
         } else {
             firstPublic = nil
+        }
+    }
+}
+
+// MARK: - ENA Read Record
+
+/// A record from ENA Portal API for read/SRA data with FASTQ URLs.
+public struct ENAReadRecord: Codable, Sendable {
+    public let runAccession: String
+    public let experimentAccession: String?
+    public let sampleAccession: String?
+    public let studyAccession: String?
+    public let experimentTitle: String?
+    public let libraryLayout: String?  // SINGLE or PAIRED
+    public let librarySource: String?  // GENOMIC, TRANSCRIPTOMIC, etc.
+    public let libraryStrategy: String?  // WGS, RNA-Seq, etc.
+    public let instrumentPlatform: String?  // ILLUMINA, etc.
+    public let baseCount: Int?
+    public let readCount: Int?
+    public let fastqFTP: String?  // Semicolon-separated FTP paths
+    public let fastqBytes: String?  // Semicolon-separated file sizes
+    public let fastqMD5: String?  // Semicolon-separated MD5 checksums
+    public let firstPublic: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case runAccession = "run_accession"
+        case experimentAccession = "experiment_accession"
+        case sampleAccession = "sample_accession"
+        case studyAccession = "study_accession"
+        case experimentTitle = "experiment_title"
+        case libraryLayout = "library_layout"
+        case librarySource = "library_source"
+        case libraryStrategy = "library_strategy"
+        case instrumentPlatform = "instrument_platform"
+        case baseCount = "base_count"
+        case readCount = "read_count"
+        case fastqFTP = "fastq_ftp"
+        case fastqBytes = "fastq_bytes"
+        case fastqMD5 = "fastq_md5"
+        case firstPublic = "first_public"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        runAccession = try container.decode(String.self, forKey: .runAccession)
+        experimentAccession = try container.decodeIfPresent(String.self, forKey: .experimentAccession)
+        sampleAccession = try container.decodeIfPresent(String.self, forKey: .sampleAccession)
+        studyAccession = try container.decodeIfPresent(String.self, forKey: .studyAccession)
+        experimentTitle = try container.decodeIfPresent(String.self, forKey: .experimentTitle)
+        libraryLayout = try container.decodeIfPresent(String.self, forKey: .libraryLayout)
+        librarySource = try container.decodeIfPresent(String.self, forKey: .librarySource)
+        libraryStrategy = try container.decodeIfPresent(String.self, forKey: .libraryStrategy)
+        instrumentPlatform = try container.decodeIfPresent(String.self, forKey: .instrumentPlatform)
+        fastqFTP = try container.decodeIfPresent(String.self, forKey: .fastqFTP)
+        fastqBytes = try container.decodeIfPresent(String.self, forKey: .fastqBytes)
+        fastqMD5 = try container.decodeIfPresent(String.self, forKey: .fastqMD5)
+
+        // Handle base_count as either Int or String
+        if let countInt = try? container.decodeIfPresent(Int.self, forKey: .baseCount) {
+            baseCount = countInt
+        } else if let countStr = try? container.decodeIfPresent(String.self, forKey: .baseCount) {
+            baseCount = Int(countStr)
+        } else {
+            baseCount = nil
+        }
+
+        // Handle read_count as either Int or String
+        if let countInt = try? container.decodeIfPresent(Int.self, forKey: .readCount) {
+            readCount = countInt
+        } else if let countStr = try? container.decodeIfPresent(String.self, forKey: .readCount) {
+            readCount = Int(countStr)
+        } else {
+            readCount = nil
+        }
+
+        // Parse date
+        if let dateStr = try container.decodeIfPresent(String.self, forKey: .firstPublic) {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd"
+            firstPublic = formatter.date(from: dateStr)
+        } else {
+            firstPublic = nil
+        }
+    }
+
+    /// Whether this is paired-end sequencing data.
+    public var isPaired: Bool {
+        libraryLayout?.uppercased() == "PAIRED"
+    }
+
+    /// Total file size in bytes (sum of all FASTQ files).
+    public var totalFileSizeBytes: Int? {
+        guard let bytesStr = fastqBytes else { return nil }
+        let sizes = bytesStr.components(separatedBy: ";").compactMap { Int($0) }
+        return sizes.isEmpty ? nil : sizes.reduce(0, +)
+    }
+
+    /// Formatted total file size (e.g., "125.3 MB").
+    public var formattedFileSize: String? {
+        guard let bytes = totalFileSizeBytes else { return nil }
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: Int64(bytes))
+    }
+
+    /// HTTP URLs for FASTQ download (converted from FTP).
+    public var fastqHTTPURLs: [URL] {
+        guard let ftpPaths = fastqFTP else { return [] }
+        return ftpPaths.components(separatedBy: ";").compactMap { ftpPath in
+            let httpPath = "http://\(ftpPath)"
+            return URL(string: httpPath)
         }
     }
 }

@@ -1014,40 +1014,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         showDatabaseBrowser(source: .ncbi)
     }
 
-    @objc func searchENA(_ sender: Any?) {
-        showDatabaseBrowser(source: .ena)
-    }
-
     @objc func searchSRA(_ sender: Any?) {
-        showSRABrowser()
-    }
-
-    /// Shows the SRA browser for downloading FASTQ data.
-    private func showSRABrowser() {
-        guard let window = mainWindowController?.window else { return }
-
-        let browserController = SRABrowserViewController()
-
-        // Handle download completion
-        browserController.onDownloadComplete = { [weak self] fileURLs in
-            // Dismiss the sheet first
-            if let sheet = window.attachedSheet {
-                window.endSheet(sheet)
-            }
-
-            // Load the first downloaded file into the viewer and sidebar
-            if let firstURL = fileURLs.first {
-                self?.handleDownloadedFile(at: firstURL)
-            }
-        }
-
-        // Present as sheet
-        let browserWindow = NSWindow(contentViewController: browserController)
-        browserWindow.title = "Search NCBI SRA"
-
-        window.beginSheet(browserWindow) { _ in
-            // Sheet dismissed
-        }
+        // Use ENA service for SRA/FASTQ downloads
+        showDatabaseBrowser(source: .ena)
     }
 
     /// Shows the database browser for the specified source.
@@ -1056,7 +1025,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         let browserController = DatabaseBrowserViewController(source: source)
 
-        // Handle download completion
+        // Handle single download completion (legacy callback)
         browserController.onDownloadComplete = { [weak self] tempFileURL in
             debugLog("onDownloadComplete: Received file \(tempFileURL.path)")
 
@@ -1071,25 +1040,52 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             }
         }
 
+        // Handle multiple downloads completion (batch download)
+        browserController.onMultipleDownloadsComplete = { [weak self] tempFileURLs in
+            debugLog("onMultipleDownloadsComplete: Received \(tempFileURLs.count) files")
+
+            // Store the URLs first, before dismissing the sheet
+            self?.pendingDownloadTempURLs = tempFileURLs
+            debugLog("onMultipleDownloadsComplete: Stored \(tempFileURLs.count) pending URLs")
+
+            // Dismiss the sheet - the completion handler will process the downloads
+            if let sheet = window.attachedSheet {
+                debugLog("onMultipleDownloadsComplete: Ending sheet")
+                window.endSheet(sheet)
+            }
+        }
+
         // Present as sheet
         let browserWindow = NSWindow(contentViewController: browserController)
         browserWindow.title = "Search \(source.displayName)"
 
         window.beginSheet(browserWindow) { [weak self] _ in
             debugLog("Sheet dismissed callback executing")
-            // Sheet is now fully dismissed - safe to process the download
-            if let tempURL = self?.pendingDownloadTempURL {
+            // Sheet is now fully dismissed - safe to process the downloads
+
+            // Check for multiple downloads first
+            if let tempURLs = self?.pendingDownloadTempURLs, !tempURLs.isEmpty {
+                self?.pendingDownloadTempURLs = nil
+                debugLog("Sheet dismissed: Processing \(tempURLs.count) pending downloads")
+                for tempURL in tempURLs {
+                    self?.handleDownloadedFileSync(at: tempURL)
+                }
+            } else if let tempURL = self?.pendingDownloadTempURL {
+                // Fall back to single download
                 self?.pendingDownloadTempURL = nil
                 debugLog("Sheet dismissed: Processing pending download \(tempURL.path)")
                 self?.handleDownloadedFileSync(at: tempURL)
             } else {
-                debugLog("Sheet dismissed: No pending URL")
+                debugLog("Sheet dismissed: No pending URLs")
             }
         }
     }
 
     /// Temporary storage for download URL while sheet is dismissing
     private var pendingDownloadTempURL: URL?
+
+    /// Temporary storage for multiple download URLs while sheet is dismissing
+    private var pendingDownloadTempURLs: [URL]?
 
     /// Synchronous version that handles the file and loads it immediately.
     ///
@@ -1194,7 +1190,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
                 viewerController?.hideProgress()
                 viewerController?.displayDocument(document)
-                sidebarController?.addLoadedDocument(document)
+
+                // Get the project URL to place the document in the correct downloads folder
+                let projectURL = DocumentManager.shared.activeProject?.url ?? AppDelegate.shared?.getWorkingDirectoryURL()
+                sidebarController?.addDownloadedDocument(document, projectURL: projectURL)
 
                 debugLog("handleDownloadedFileSync: Document displayed and added to sidebar")
             }

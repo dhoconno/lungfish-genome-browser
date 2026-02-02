@@ -47,6 +47,9 @@ public class DatabaseBrowserViewController: NSViewController {
     /// Completion handler called when a download completes
     public var onDownloadComplete: ((URL) -> Void)?
 
+    /// Completion handler called when multiple downloads complete (batch)
+    public var onMultipleDownloadsComplete: (([URL]) -> Void)?
+
     /// Completion handler called when user cancels
     public var onCancel: (() -> Void)?
 
@@ -69,9 +72,14 @@ public class DatabaseBrowserViewController: NSViewController {
     public override func loadView() {
         viewModel = DatabaseBrowserViewModel(source: databaseSource)
 
-        // Set up download completion callback
+        // Set up download completion callback (single file)
         viewModel.onDownloadComplete = { [weak self] url in
             self?.onDownloadComplete?(url)
+        }
+
+        // Set up multiple downloads completion callback (batch)
+        viewModel.onMultipleDownloadsComplete = { [weak self] urls in
+            self?.onMultipleDownloadsComplete?(urls)
         }
 
         // Set up cancel callback
@@ -188,6 +196,12 @@ public class DatabaseBrowserViewModel: ObservableObject {
     /// The database source
     let source: DatabaseSource
 
+    /// NCBI search type (GenBank, Genome, Virus)
+    @Published var ncbiSearchType: NCBISearchType = .nucleotide
+
+    /// Download format for NCBI (GenBank or FASTA)
+    @Published var downloadFormat: NCBIFormat = .genbank
+
     /// Search query text
     @Published var searchText = ""
 
@@ -209,11 +223,34 @@ public class DatabaseBrowserViewModel: ObservableObject {
     /// Maximum sequence length filter
     @Published var maxLength: String = ""
 
-    /// Search results
+    /// Search results from the API
     @Published var results: [SearchResultRecord] = []
 
-    /// Currently selected record
+    /// Local filter text for filtering displayed results without re-querying the API
+    @Published var localFilterText: String = ""
+
+    /// Filtered results based on localFilterText (computed property)
+    var filteredResults: [SearchResultRecord] {
+        guard !localFilterText.isEmpty else { return results }
+        let filter = localFilterText.lowercased()
+        return results.filter { record in
+            record.accession.lowercased().contains(filter) ||
+            record.title.lowercased().contains(filter) ||
+            (record.organism?.lowercased().contains(filter) ?? false)
+        }
+    }
+
+    /// Total count of results from the database (may be larger than results.count)
+    @Published var totalResultCount: Int = 0
+
+    /// Whether there are more results available to load
+    @Published var hasMoreResults: Bool = false
+
+    /// Currently selected record (for single selection compatibility)
     @Published var selectedRecord: SearchResultRecord?
+
+    /// Set of selected records (for multi-select)
+    @Published var selectedRecords: Set<SearchResultRecord> = []
 
     /// Current search phase (for progress tracking)
     @Published var searchPhase: SearchPhase = .idle
@@ -272,10 +309,23 @@ public class DatabaseBrowserViewModel: ObservableObject {
         activeFilterCount > 0
     }
 
+    /// Whether we're searching NCBI (as opposed to ENA/SRA)
+    var isNCBISearch: Bool {
+        source == .ncbi
+    }
+
+    /// Whether we're searching SRA for FASTQ data
+    var isSRASearch: Bool {
+        source == .ena  // ENA is used for SRA/FASTQ downloads
+    }
+
     // MARK: - Callbacks
 
-    /// Called when a download completes with the file URL
+    /// Called when a download completes with the file URL (single file)
     var onDownloadComplete: ((URL) -> Void)?
+
+    /// Called when multiple downloads complete (for batch downloads)
+    var onMultipleDownloadsComplete: (([URL]) -> Void)?
 
     /// Called when user cancels
     var onCancel: (() -> Void)?
@@ -338,9 +388,10 @@ public class DatabaseBrowserViewModel: ObservableObject {
             location: locationFilter.isEmpty ? nil : locationFilter,
             minLength: Int(minLength),
             maxLength: Int(maxLength),
-            limit: 50
+            limit: 200  // Increased from 50 to show more results
         )
         let currentSource = source
+        let searchType = ncbiSearchType
 
         // Capture services as they are actors (safe to use across isolation boundaries)
         let ncbi = ncbiService
@@ -352,7 +403,7 @@ public class DatabaseBrowserViewModel: ObservableObject {
         // inherits MainActor isolation and may not execute due to the modal
         // run loop blocking task scheduling on MainActor.
         currentSearchTask = Task.detached { [weak self] in
-            logger.info("performSearch: Task running, source=\(currentSource.displayName, privacy: .public)")
+            logger.info("performSearch: Task running, source=\(currentSource.displayName, privacy: .public), searchType=\(searchType.rawValue, privacy: .public)")
 
             do {
                 try Task.checkCancellation()
@@ -373,7 +424,94 @@ public class DatabaseBrowserViewModel: ObservableObject {
                         self.objectWillChange.send()
                         self.searchPhase = .loadingDetails
                     }
-                    searchResults = try await ncbi.search(query)
+
+                    // Use the appropriate search method based on search type
+                    switch searchType {
+                    case .nucleotide:
+                        searchResults = try await ncbi.search(query)
+
+                    case .virus:
+                        // Use viral taxonomy filter
+                        let virusResult = try await ncbi.searchVirus(
+                            term: query.term,
+                            retmax: query.limit,
+                            retstart: query.offset
+                        )
+
+                        // Get summaries for the results
+                        guard !virusResult.ids.isEmpty else {
+                            let empty = SearchResults(totalCount: virusResult.totalCount, records: [], hasMore: false)
+                            performOnMainRunLoop { [weak self] in
+                                self?.objectWillChange.send()
+                                self?.results = []
+                                self?.totalResultCount = virusResult.totalCount
+                                self?.hasMoreResults = false
+                                self?.searchPhase = .complete(count: 0)
+                            }
+                            return
+                        }
+
+                        let summaries = try await ncbi.esummary(database: .nucleotide, ids: virusResult.ids)
+                        let records = summaries.map { summary in
+                            SearchResultRecord(
+                                id: summary.uid,
+                                accession: summary.accessionVersion ?? summary.uid,
+                                title: summary.title ?? "Unknown",
+                                organism: summary.organism,
+                                length: summary.length,
+                                date: summary.createDate,
+                                source: .ncbi
+                            )
+                        }
+                        let hasMore = virusResult.totalCount > (query.offset + records.count)
+                        searchResults = SearchResults(
+                            totalCount: virusResult.totalCount,
+                            records: records,
+                            hasMore: hasMore,
+                            nextCursor: hasMore ? String(query.offset + records.count) : nil
+                        )
+
+                    case .genome:
+                        // Search assemblies
+                        let genomeResult = try await ncbi.searchGenome(
+                            term: query.term,
+                            retmax: query.limit,
+                            retstart: query.offset
+                        )
+
+                        guard !genomeResult.ids.isEmpty else {
+                            let empty = SearchResults(totalCount: genomeResult.totalCount, records: [], hasMore: false)
+                            performOnMainRunLoop { [weak self] in
+                                self?.objectWillChange.send()
+                                self?.results = []
+                                self?.totalResultCount = genomeResult.totalCount
+                                self?.hasMoreResults = false
+                                self?.searchPhase = .complete(count: 0)
+                            }
+                            return
+                        }
+
+                        let assemblySummaries = try await ncbi.assemblyEsummary(ids: genomeResult.ids)
+                        let records = assemblySummaries.map { summary in
+                            SearchResultRecord(
+                                id: summary.uid,
+                                accession: summary.assemblyAccession ?? summary.uid,
+                                title: summary.assemblyName ?? "Assembly",
+                                organism: summary.organism ?? summary.speciesName,
+                                length: summary.contigN50,  // Use N50 as a proxy for size
+                                date: nil,
+                                source: .ncbi
+                            )
+                        }
+                        let hasMore = genomeResult.totalCount > (query.offset + records.count)
+                        searchResults = SearchResults(
+                            totalCount: genomeResult.totalCount,
+                            records: records,
+                            hasMore: hasMore,
+                            nextCursor: hasMore ? String(query.offset + records.count) : nil
+                        )
+                    }
+
                 case .ena:
                     performOnMainRunLoop { [weak self] in
                         guard let self = self else { return }
@@ -381,6 +519,7 @@ public class DatabaseBrowserViewModel: ObservableObject {
                         self.searchPhase = .loadingDetails
                     }
                     searchResults = try await ena.search(query)
+
                 default:
                     throw DatabaseServiceError.invalidQuery(reason: "Unsupported database: \(currentSource)")
                 }
@@ -392,6 +531,8 @@ public class DatabaseBrowserViewModel: ObservableObject {
                     guard let self = self else { return }
                     self.objectWillChange.send()
                     self.results = searchResults.records
+                    self.totalResultCount = searchResults.totalCount
+                    self.hasMoreResults = searchResults.hasMore
                     self.searchPhase = .complete(count: searchResults.records.count)
                 }
 
@@ -584,6 +725,126 @@ public class DatabaseBrowserViewModel: ObservableObject {
         await executeDownload(record: record, ncbi: ncbiService, ena: enaService, source: source)
     }
 
+    /// Downloads all selected records (batch download).
+    ///
+    /// This downloads each selected record sequentially, updating progress as each completes.
+    func performBatchDownload() {
+        // Get records to download - use multi-select if available, otherwise single selection
+        let recordsToDownload: [SearchResultRecord]
+        if !selectedRecords.isEmpty {
+            recordsToDownload = Array(selectedRecords)
+        } else if let single = selectedRecord {
+            recordsToDownload = [single]
+        } else {
+            errorMessage = "No records selected"
+            return
+        }
+
+        isDownloading = true
+        downloadProgress = 0
+        errorMessage = nil
+
+        let totalCount = recordsToDownload.count
+        _statusMessage = "Downloading \(totalCount) file\(totalCount == 1 ? "" : "s")..."
+
+        // Capture services and values for detached task
+        let ncbi = ncbiService
+        let ena = enaService
+        let currentSource = source
+        let format = downloadFormat
+        let searchType = ncbiSearchType
+
+        Task.detached { [weak self] in
+            var downloadedURLs: [URL] = []
+            var failedCount = 0
+
+            for (index, record) in recordsToDownload.enumerated() {
+                // Update progress
+                let progressFraction = Double(index) / Double(totalCount)
+                performOnMainRunLoop { [weak self] in
+                    self?.objectWillChange.send()
+                    self?.downloadProgress = progressFraction
+                    self?._statusMessage = "Downloading \(record.accession) (\(index + 1)/\(totalCount))..."
+                }
+
+                do {
+                    let fileURL: URL
+
+                    switch currentSource {
+                    case .ncbi:
+                        // Download in the user's selected format
+                        if format == .fasta {
+                            let (fastaContent, resolvedAccession) = try await ncbi.fetchRawFASTA(accession: record.accession)
+                            let tempDir = FileManager.default.temporaryDirectory
+                            let filename = "\(resolvedAccession).fasta"
+                            fileURL = tempDir.appendingPathComponent(filename)
+                            try fastaContent.write(to: fileURL, atomically: true, encoding: .utf8)
+                        } else {
+                            // Default to GenBank format
+                            let (genBankContent, resolvedAccession) = try await ncbi.fetchRawGenBank(accession: record.accession)
+                            let tempDir = FileManager.default.temporaryDirectory
+                            let filename = "\(resolvedAccession).gb"
+                            fileURL = tempDir.appendingPathComponent(filename)
+                            try genBankContent.write(to: fileURL, atomically: true, encoding: .utf8)
+                        }
+
+                    case .ena:
+                        let dbRecord = try await ena.fetch(accession: record.accession)
+                        let tempDir = FileManager.default.temporaryDirectory
+                        let filename = "\(dbRecord.accession).fasta"
+                        fileURL = tempDir.appendingPathComponent(filename)
+
+                        var fastaContent = ">\(dbRecord.accession)"
+                        if !dbRecord.title.isEmpty {
+                            fastaContent += " \(dbRecord.title)"
+                        }
+                        fastaContent += "\n"
+                        let sequence = dbRecord.sequence
+                        var idx = sequence.startIndex
+                        while idx < sequence.endIndex {
+                            let endIdx = sequence.index(idx, offsetBy: 80, limitedBy: sequence.endIndex) ?? sequence.endIndex
+                            fastaContent += String(sequence[idx..<endIdx]) + "\n"
+                            idx = endIdx
+                        }
+                        try fastaContent.write(to: fileURL, atomically: true, encoding: .utf8)
+
+                    default:
+                        throw DatabaseServiceError.invalidQuery(reason: "Unsupported database")
+                    }
+
+                    downloadedURLs.append(fileURL)
+                    logger.info("Downloaded \(record.accession, privacy: .public)")
+
+                } catch {
+                    logger.error("Failed to download \(record.accession, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    failedCount += 1
+                }
+            }
+
+            // Complete
+            performOnMainRunLoop { [weak self] in
+                guard let self = self else { return }
+                self.objectWillChange.send()
+                self.downloadProgress = 1.0
+                self.isDownloading = false
+
+                if failedCount > 0 {
+                    self._statusMessage = "Downloaded \(downloadedURLs.count) files (\(failedCount) failed)"
+                } else {
+                    self._statusMessage = "Downloaded \(downloadedURLs.count) file\(downloadedURLs.count == 1 ? "" : "s")"
+                }
+
+                // Notify completion with all downloaded URLs
+                if let multiCallback = self.onMultipleDownloadsComplete {
+                    multiCallback(downloadedURLs)
+                } else if let singleCallback = self.onDownloadComplete, let firstURL = downloadedURLs.first {
+                    // Fall back to single callback for first file
+                    singleCallback(firstURL)
+                }
+            }
+        }
+    }
+
     /// Executes the actual download operation.
     /// - Parameters:
     ///   - record: The record to download
@@ -740,21 +1001,63 @@ public struct DatabaseBrowserView: View {
     // MARK: - Sections
 
     private var headerSection: some View {
-        HStack {
-            Image(systemName: databaseIcon)
-                .font(.title2)
-                .foregroundColor(.accentColor)
+        VStack(spacing: 8) {
+            HStack {
+                Image(systemName: databaseIcon)
+                    .font(.title2)
+                    .foregroundColor(.accentColor)
 
-            Text(viewModel.source.displayName)
-                .font(.headline)
+                Text(viewModel.source.displayName)
+                    .font(.headline)
 
-            Spacer()
+                Spacer()
 
-            // Show result count in header (when complete and not searching)
-            if case .complete(let count) = viewModel.searchPhase, !viewModel.isSearching {
-                Label("\(count) result\(count == 1 ? "" : "s")", systemImage: "doc.text")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                // Show result count in header (when complete and not searching)
+                if case .complete(let count) = viewModel.searchPhase, !viewModel.isSearching {
+                    Label("\(count) result\(count == 1 ? "" : "s")", systemImage: "doc.text")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            // NCBI-specific controls: database selector and format picker
+            if viewModel.isNCBISearch {
+                HStack(spacing: 16) {
+                    // Database type selector
+                    HStack(spacing: 8) {
+                        Text("Database:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        Picker("", selection: $viewModel.ncbiSearchType) {
+                            ForEach(NCBISearchType.allCases) { type in
+                                Label(type.displayName, systemImage: type.icon)
+                                    .tag(type)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 180)
+                        .help(viewModel.ncbiSearchType.helpText)
+                    }
+
+                    Spacer()
+
+                    // Download format selector
+                    HStack(spacing: 8) {
+                        Text("Format:")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        Picker("", selection: $viewModel.downloadFormat) {
+                            ForEach(NCBIFormat.downloadFormats) { format in
+                                Text(format.displayName).tag(format)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 150)
+                        .help("Choose download format: GenBank (with annotations) or FASTA (sequence only)")
+                    }
+                }
             }
         }
         .padding()
@@ -762,6 +1065,9 @@ public struct DatabaseBrowserView: View {
     }
 
     private var databaseIcon: String {
+        if viewModel.isNCBISearch {
+            return viewModel.ncbiSearchType.icon
+        }
         switch viewModel.source {
         case .ncbi:
             return "building.columns"
@@ -769,6 +1075,18 @@ public struct DatabaseBrowserView: View {
             return "globe.europe.africa"
         default:
             return "magnifyingglass"
+        }
+    }
+
+    /// Button title that changes based on selection count
+    private var downloadButtonTitle: String {
+        let count = viewModel.selectedRecords.count
+        if count == 0 {
+            return "Download Selected"
+        } else if count == 1 {
+            return "Download Selected"
+        } else {
+            return "Download \(count) Selected"
         }
     }
 
@@ -1023,9 +1341,117 @@ public struct DatabaseBrowserView: View {
             if viewModel.results.isEmpty && !viewModel.isSearching {
                 emptyStateView
             } else {
+                // Selection toolbar
+                if !viewModel.results.isEmpty {
+                    resultsToolbar
+                }
                 resultsList
             }
         }
+    }
+
+    /// Maximum number of downloads allowed at once (to be respectful of NCBI servers)
+    private let maxDownloadLimit = 50
+
+    private var resultsToolbar: some View {
+        VStack(spacing: 6) {
+            // Local filter field for narrowing results without re-querying
+            HStack(spacing: 8) {
+                Image(systemName: "line.3.horizontal.decrease.circle")
+                    .foregroundColor(.secondary)
+
+                TextField("Filter results locally...", text: $viewModel.localFilterText)
+                    .textFieldStyle(.plain)
+                    .font(.caption)
+
+                if !viewModel.localFilterText.isEmpty {
+                    Button {
+                        viewModel.localFilterText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Clear filter")
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color(nsColor: .textBackgroundColor))
+            .cornerRadius(6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+            )
+
+            HStack(spacing: 8) {
+                // Select all / Deselect all toggle (for filtered results)
+                Button {
+                    let displayedResults = viewModel.filteredResults
+                    let allDisplayedSelected = displayedResults.allSatisfy { viewModel.selectedRecords.contains($0) }
+                    if allDisplayedSelected {
+                        // Deselect all displayed
+                        for record in displayedResults {
+                            viewModel.selectedRecords.remove(record)
+                        }
+                    } else {
+                        // Select all displayed
+                        viewModel.selectedRecords.formUnion(displayedResults)
+                    }
+                } label: {
+                    let displayedResults = viewModel.filteredResults
+                    let allDisplayedSelected = !displayedResults.isEmpty && displayedResults.allSatisfy { viewModel.selectedRecords.contains($0) }
+                    HStack(spacing: 4) {
+                        Image(systemName: allDisplayedSelected ? "checkmark.circle.fill" : "circle")
+                        Text(allDisplayedSelected ? "Deselect All" : "Select All")
+                    }
+                    .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.accentColor)
+                .disabled(viewModel.filteredResults.isEmpty)
+
+                Spacer()
+
+                // Selection count and total results info
+                if !viewModel.selectedRecords.isEmpty {
+                    Text("\(viewModel.selectedRecords.count) selected")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                // Show filter status
+                if !viewModel.localFilterText.isEmpty {
+                    Text("Showing \(viewModel.filteredResults.count) of \(viewModel.results.count)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else if viewModel.hasMoreResults {
+                    // Show that there are more results in the database
+                    Text("Showing \(viewModel.results.count) of \(viewModel.totalResultCount) total")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    Text("\(viewModel.results.count) results")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            // Warning when too many selected for download
+            if viewModel.selectedRecords.count > maxDownloadLimit {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    Text("To be respectful of NCBI servers, please select no more than \(maxDownloadLimit) records at a time.")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+                .padding(.top, 2)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
     }
 
     private var emptyStateView: some View {
@@ -1048,15 +1474,27 @@ public struct DatabaseBrowserView: View {
     }
 
     private var resultsList: some View {
-        List(viewModel.results, selection: $viewModel.selectedRecord) { record in
-            SearchResultRow(record: record)
-                .tag(record)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    viewModel.selectedRecord = record
+        List(viewModel.filteredResults, selection: $viewModel.selectedRecords) { record in
+            SearchResultRowWithCheckbox(
+                record: record,
+                isSelected: viewModel.selectedRecords.contains(record),
+                onToggle: {
+                    if viewModel.selectedRecords.contains(record) {
+                        viewModel.selectedRecords.remove(record)
+                    } else {
+                        viewModel.selectedRecords.insert(record)
+                    }
                 }
+            )
+            .tag(record)
+            .contentShape(Rectangle())
         }
-        .listStyle(.inset)
+        .listStyle(.plain)
+        .environment(\.defaultMinListRowHeight, 60)
+        .onChange(of: viewModel.selectedRecords) { _, newSelection in
+            // Keep single selection in sync for compatibility
+            viewModel.selectedRecord = newSelection.first
+        }
     }
 
     private var footerSection: some View {
@@ -1107,11 +1545,26 @@ public struct DatabaseBrowserView: View {
                         .lineLimit(1)
                 }
 
-                Button("Download Selected") {
-                    viewModel.performDownload()
+                // Show selection count when multiple items selected
+                if viewModel.selectedRecords.count > 1 {
+                    Text("\(viewModel.selectedRecords.count) selected")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Button(downloadButtonTitle) {
+                    viewModel.performBatchDownload()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(viewModel.selectedRecord == nil || viewModel.isDownloading || viewModel.isSearching)
+                .disabled(
+                    viewModel.selectedRecords.isEmpty ||
+                    viewModel.selectedRecords.count > maxDownloadLimit ||
+                    viewModel.isDownloading ||
+                    viewModel.isSearching
+                )
+                .help(viewModel.selectedRecords.count > maxDownloadLimit
+                    ? "Select \(maxDownloadLimit) or fewer records to download"
+                    : "Download selected records")
             }
             .padding()
         }
@@ -1148,6 +1601,7 @@ public struct DatabaseBrowserView: View {
 /// A single row in the search results list.
 struct SearchResultRow: View {
     let record: SearchResultRecord
+    var isSelected: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -1203,6 +1657,85 @@ struct SearchResultRow: View {
     }
 }
 
+// MARK: - SearchResultRowWithCheckbox
+
+/// A search result row with a checkbox for explicit selection.
+/// This enables easy multi-select including discontiguous selection.
+struct SearchResultRowWithCheckbox: View {
+    let record: SearchResultRecord
+    var isSelected: Bool
+    var onToggle: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Checkbox for selection
+            Button(action: onToggle) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.title2)
+                    .foregroundColor(isSelected ? .accentColor : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help(isSelected ? "Deselect this record" : "Select this record")
+
+            // Record details
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(record.accession)
+                        .font(.headline.monospaced())
+
+                    Spacer()
+
+                    if let length = record.length {
+                        Text(formatLength(length))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                Text(record.title)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+
+                HStack {
+                    if let organism = record.organism {
+                        Label(organism, systemImage: "leaf")
+                            .font(.caption)
+                            .foregroundColor(.green)
+                    }
+
+                    if let date = record.date {
+                        Label(formatDate(date), systemImage: "calendar")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onToggle()
+        }
+    }
+
+    private func formatLength(_ length: Int) -> String {
+        if length >= 1_000_000 {
+            return String(format: "%.1f Mb", Double(length) / 1_000_000)
+        } else if length >= 1_000 {
+            return String(format: "%.1f kb", Double(length) / 1_000)
+        } else {
+            return "\(length) bp"
+        }
+    }
+
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        return formatter.string(from: date)
+    }
+}
+
 // MARK: - DatabaseSource Extension
 
 extension DatabaseSource {
@@ -1210,9 +1743,9 @@ extension DatabaseSource {
     public var displayName: String {
         switch self {
         case .ncbi:
-            return "NCBI Nucleotide"
+            return "NCBI Search"
         case .ena:
-            return "European Nucleotide Archive"
+            return "SRA (FASTQ Downloads)"
         case .ddbj:
             return "DNA Data Bank of Japan"
         case .pathoplexus:

@@ -546,21 +546,16 @@ public final class MainMenu {
 
         toolsMenu.addItem(.separator())
 
-        // Database access
+        // Database access - Unified NCBI search
         toolsMenu.addItem(
             withTitle: "Search NCBI...",
             action: #selector(ToolsMenuActions.searchNCBI(_:)),
             keyEquivalent: ""
         )
 
+        // SRA/FASTQ download via ENA
         toolsMenu.addItem(
-            withTitle: "Search ENA...",
-            action: #selector(ToolsMenuActions.searchENA(_:)),
-            keyEquivalent: ""
-        )
-
-        toolsMenu.addItem(
-            withTitle: "Search SRA (FASTQ)...",
+            withTitle: "Download SRA (FASTQ)...",
             action: #selector(ToolsMenuActions.searchSRA(_:)),
             keyEquivalent: ""
         )
@@ -723,7 +718,6 @@ public final class MainMenu {
     func inSilicoPCR(_ sender: Any?)
     func alignSequences(_ sender: Any?)
     func searchNCBI(_ sender: Any?)
-    func searchENA(_ sender: Any?)
     func searchSRA(_ sender: Any?)
     func runNextflow(_ sender: Any?)
     func runSnakemake(_ sender: Any?)

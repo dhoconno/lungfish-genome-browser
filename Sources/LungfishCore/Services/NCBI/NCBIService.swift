@@ -78,19 +78,26 @@ public actor NCBIService: DatabaseService {
 
         let term = terms.joined(separator: " AND ")
 
-        let ids = try await esearch(
+        // Use esearchWithCount to get actual total count from NCBI
+        let searchResult = try await esearchWithCount(
             database: .nucleotide,
             term: term,
             retmax: query.limit,
             retstart: query.offset
         )
 
-        guard !ids.isEmpty else {
-            return .empty
+        guard !searchResult.ids.isEmpty else {
+            // Return empty but with the total count (may be 0)
+            return SearchResults(
+                totalCount: searchResult.totalCount,
+                records: [],
+                hasMore: false,
+                nextCursor: nil
+            )
         }
 
         // Get summaries for the results
-        let summaries = try await esummary(database: .nucleotide, ids: ids)
+        let summaries = try await esummary(database: .nucleotide, ids: searchResult.ids)
 
         let records = summaries.map { summary in
             SearchResultRecord(
@@ -104,11 +111,14 @@ public actor NCBIService: DatabaseService {
             )
         }
 
+        // Use actual total count from NCBI, not just the returned count
+        let hasMore = searchResult.totalCount > (query.offset + records.count)
+
         return SearchResults(
-            totalCount: ids.count,  // Note: ESearch can return total count separately
+            totalCount: searchResult.totalCount,
             records: records,
-            hasMore: records.count == query.limit,
-            nextCursor: String(query.offset + records.count)
+            hasMore: hasMore,
+            nextCursor: hasMore ? String(query.offset + records.count) : nil
         )
     }
 
@@ -198,6 +208,130 @@ public actor NCBIService: DatabaseService {
         return nil
     }
 
+    /// Fetches raw FASTA format data for an accession.
+    ///
+    /// This method returns the complete FASTA file content.
+    ///
+    /// - Parameter accession: The accession number to fetch
+    /// - Returns: A tuple containing the raw FASTA content and the resolved accession
+    /// - Throws: `DatabaseServiceError` if the fetch fails
+    public func fetchRawFASTA(accession: String) async throws -> (content: String, accession: String) {
+        // First search to get the UID
+        let ids = try await esearch(
+            database: .nucleotide,
+            term: accession,
+            retmax: 1
+        )
+
+        guard let uid = ids.first else {
+            throw DatabaseServiceError.notFound(accession: accession)
+        }
+
+        // Fetch the FASTA record
+        let data = try await efetch(
+            database: .nucleotide,
+            ids: [uid],
+            format: .fasta
+        )
+
+        // Convert to string
+        guard let content = String(data: data, encoding: .utf8) else {
+            throw DatabaseServiceError.parseError(message: "Invalid FASTA data encoding")
+        }
+
+        // Extract the accession from FASTA header (first line after >)
+        let resolvedAccession = extractAccessionFromFASTA(content) ?? accession
+
+        return (content: content, accession: resolvedAccession)
+    }
+
+    /// Extracts the accession from a FASTA header line.
+    private func extractAccessionFromFASTA(_ content: String) -> String? {
+        guard let firstLine = content.components(separatedBy: "\n").first,
+              firstLine.hasPrefix(">") else {
+            return nil
+        }
+        // Header format is typically: >accession.version description
+        let header = String(firstLine.dropFirst())
+        let parts = header.components(separatedBy: .whitespaces)
+        return parts.first
+    }
+
+    /// Searches the nucleotide database with a viral taxonomy filter.
+    ///
+    /// This is equivalent to searching NCBI Virus but uses the nuccore database
+    /// with taxonomy filtering for viruses (txid10239).
+    ///
+    /// - Parameters:
+    ///   - term: The search term
+    ///   - retmax: Maximum number of results
+    ///   - retstart: Starting offset for pagination
+    /// - Returns: Search result with IDs and total count
+    public func searchVirus(
+        term: String,
+        retmax: Int = 20,
+        retstart: Int = 0
+    ) async throws -> ESearchSearchResult {
+        // Add viral taxonomy filter to the search term
+        let virusTerm = "(\(term)) AND \(NCBIDatabase.virusTaxonomyFilter)"
+        return try await esearchWithCount(
+            database: .nucleotide,
+            term: virusTerm,
+            retmax: retmax,
+            retstart: retstart
+        )
+    }
+
+    /// Searches the genome/assembly database.
+    ///
+    /// Note: The NCBI Genome database doesn't support direct efetch.
+    /// Results should be linked to nuccore for sequence retrieval.
+    ///
+    /// - Parameters:
+    ///   - term: The search term
+    ///   - retmax: Maximum number of results
+    ///   - retstart: Starting offset for pagination
+    /// - Returns: Search result with IDs and total count
+    public func searchGenome(
+        term: String,
+        retmax: Int = 20,
+        retstart: Int = 0
+    ) async throws -> ESearchSearchResult {
+        // Search the assembly database for genome assemblies
+        return try await esearchWithCount(
+            database: .assembly,
+            term: term,
+            retmax: retmax,
+            retstart: retstart
+        )
+    }
+
+    /// Gets assembly summary information for assembly UIDs.
+    ///
+    /// - Parameter ids: Assembly UIDs from search
+    /// - Returns: Array of assembly summaries
+    public func assemblyEsummary(ids: [String]) async throws -> [NCBIAssemblySummary] {
+        var components = URLComponents(url: baseURL.appendingPathComponent("esummary.fcgi"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "db", value: "assembly"),
+            URLQueryItem(name: "id", value: ids.joined(separator: ",")),
+            URLQueryItem(name: "retmode", value: "json")
+        ]
+
+        if let apiKey = apiKey {
+            components.queryItems?.append(URLQueryItem(name: "api_key", value: apiKey))
+        }
+
+        let data = try await makeRequest(url: components.url!)
+
+        // Parse assembly-specific response
+        let response = try JSONDecoder().decode(AssemblyESummaryResponse.self, from: data)
+
+        return ids.compactMap { id in
+            response.result?[id]
+        }
+    }
+
     public nonisolated func fetchBatch(accessions: [String]) async throws -> AsyncThrowingStream<DatabaseRecord, Error> {
         AsyncThrowingStream { continuation in
             Task {
@@ -216,6 +350,14 @@ public actor NCBIService: DatabaseService {
 
     // MARK: - E-utilities Methods
 
+    /// Result of an NCBI esearch, including total count for pagination
+    public struct ESearchSearchResult {
+        public let ids: [String]
+        public let totalCount: Int
+        public let retmax: Int
+        public let retstart: Int
+    }
+
     /// Searches an NCBI database and returns matching UIDs.
     ///
     /// - Parameters:
@@ -230,6 +372,24 @@ public actor NCBIService: DatabaseService {
         retmax: Int = 20,
         retstart: Int = 0
     ) async throws -> [String] {
+        let result = try await esearchWithCount(database: database, term: term, retmax: retmax, retstart: retstart)
+        return result.ids
+    }
+
+    /// Searches an NCBI database and returns matching UIDs with total count.
+    ///
+    /// - Parameters:
+    ///   - database: The database to search
+    ///   - term: The search term
+    ///   - retmax: Maximum number of results
+    ///   - retstart: Starting offset for pagination
+    /// - Returns: Search result with IDs and total count
+    public func esearchWithCount(
+        database: NCBIDatabase,
+        term: String,
+        retmax: Int = 20,
+        retstart: Int = 0
+    ) async throws -> ESearchSearchResult {
         var components = URLComponents(url: baseURL.appendingPathComponent("esearch.fcgi"), resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "db", value: database.rawValue),
@@ -252,7 +412,15 @@ public actor NCBIService: DatabaseService {
             throw DatabaseServiceError.invalidQuery(reason: "Term not found: \(error)")
         }
 
-        return response.esearchresult?.idlist ?? []
+        let ids = response.esearchresult?.idlist ?? []
+        let totalCount = Int(response.esearchresult?.count ?? "0") ?? 0
+
+        return ESearchSearchResult(
+            ids: ids,
+            totalCount: totalCount,
+            retmax: retmax,
+            retstart: retstart
+        )
     }
 
     /// Fetches records from an NCBI database.
@@ -615,6 +783,8 @@ public actor NCBIService: DatabaseService {
 /// NCBI databases available through E-utilities.
 public enum NCBIDatabase: String, Sendable, CaseIterable {
     case nucleotide
+    case genome
+    case assembly
     case protein
     case gene
     case sra
@@ -628,6 +798,8 @@ public enum NCBIDatabase: String, Sendable, CaseIterable {
     public var displayName: String {
         switch self {
         case .nucleotide: return "Nucleotide (GenBank)"
+        case .genome: return "Genome"
+        case .assembly: return "Assembly"
         case .protein: return "Protein"
         case .gene: return "Gene"
         case .sra: return "SRA (Sequence Read Archive)"
@@ -638,16 +810,50 @@ public enum NCBIDatabase: String, Sendable, CaseIterable {
         case .pmc: return "PubMed Central"
         }
     }
+
+    /// Whether this database supports direct efetch for sequence data.
+    public var supportsEfetch: Bool {
+        switch self {
+        case .nucleotide, .protein, .gene:
+            return true
+        case .genome, .assembly:
+            // Genome and Assembly databases don't support direct efetch;
+            // sequences must be fetched via linked nuccore records
+            return false
+        default:
+            return false
+        }
+    }
+
+    /// The taxonomy filter to use when searching for viral sequences in nuccore.
+    /// NCBI Virus uses taxid 10239 (Viruses)
+    public static var virusTaxonomyFilter: String {
+        "txid10239[Organism:exp]"
+    }
 }
 
 // MARK: - NCBI Format
 
 /// Output formats for NCBI EFetch.
-public enum NCBIFormat: Sendable {
-    case fasta
-    case genbank
-    case genbankWithParts
-    case xml
+public enum NCBIFormat: String, Sendable, CaseIterable, Identifiable {
+    case fasta = "FASTA"
+    case genbank = "GenBank"
+    case genbankWithParts = "GenBank (with parts)"
+    case xml = "XML"
+
+    public var id: String { rawValue }
+
+    /// Display name for UI
+    public var displayName: String { rawValue }
+
+    /// File extension for saved files
+    public var fileExtension: String {
+        switch self {
+        case .fasta: return "fasta"
+        case .genbank, .genbankWithParts: return "gb"
+        case .xml: return "xml"
+        }
+    }
 
     var rettype: String {
         switch self {
@@ -662,6 +868,11 @@ public enum NCBIFormat: Sendable {
         case .xml: return "xml"
         default: return "text"
         }
+    }
+
+    /// Formats available for user selection in UI
+    public static var downloadFormats: [NCBIFormat] {
+        [.genbank, .fasta]
     }
 }
 
@@ -765,6 +976,140 @@ public struct NCBIDocumentSummary: Codable, Sendable {
             createDate = formatter.date(from: dateStr)
         } else {
             createDate = nil
+        }
+    }
+}
+
+// MARK: - Assembly Summary Response
+
+struct AssemblyESummaryResponse: Codable {
+    let result: [String: NCBIAssemblySummary]?
+
+    private enum CodingKeys: String, CodingKey {
+        case result
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        // The result is nested inside the "result" key
+        let resultContainer = try container.nestedContainer(keyedBy: DynamicCodingKey.self, forKey: .result)
+        var result: [String: NCBIAssemblySummary] = [:]
+
+        for key in resultContainer.allKeys {
+            // Skip the "uids" array
+            if key.stringValue == "uids" { continue }
+            if let summary = try? resultContainer.decode(NCBIAssemblySummary.self, forKey: key) {
+                result[key.stringValue] = summary
+            }
+        }
+
+        self.result = result.isEmpty ? nil : result
+    }
+}
+
+/// Assembly summary from NCBI ESummary for assembly database.
+public struct NCBIAssemblySummary: Codable, Sendable {
+    public let uid: String
+    public let assemblyAccession: String?
+    public let assemblyName: String?
+    public let organism: String?
+    public let taxid: Int?
+    public let speciesName: String?
+    public let ftpPathRefSeq: String?
+    public let ftpPathGenBank: String?
+    public let submitter: String?
+    public let coverage: String?
+    public let contigN50: Int?
+    public let scaffoldN50: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case uid
+        case assemblyAccession = "assemblyaccession"
+        case assemblyName = "assemblyname"
+        case organism
+        case taxid
+        case speciesName = "speciesname"
+        case ftpPathRefSeq = "ftppath_refseq"
+        case ftpPathGenBank = "ftppath_genbank"
+        case submitter
+        case coverage
+        case contigN50 = "contig_n50"
+        case scaffoldN50 = "scaffold_n50"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        uid = try container.decode(String.self, forKey: .uid)
+        assemblyAccession = try container.decodeIfPresent(String.self, forKey: .assemblyAccession)
+        assemblyName = try container.decodeIfPresent(String.self, forKey: .assemblyName)
+        organism = try container.decodeIfPresent(String.self, forKey: .organism)
+        speciesName = try container.decodeIfPresent(String.self, forKey: .speciesName)
+        ftpPathRefSeq = try container.decodeIfPresent(String.self, forKey: .ftpPathRefSeq)
+        ftpPathGenBank = try container.decodeIfPresent(String.self, forKey: .ftpPathGenBank)
+        submitter = try container.decodeIfPresent(String.self, forKey: .submitter)
+        coverage = try container.decodeIfPresent(String.self, forKey: .coverage)
+
+        // Handle taxid as either Int or String
+        if let taxidInt = try? container.decodeIfPresent(Int.self, forKey: .taxid) {
+            taxid = taxidInt
+        } else if let taxidStr = try? container.decodeIfPresent(String.self, forKey: .taxid) {
+            taxid = Int(taxidStr)
+        } else {
+            taxid = nil
+        }
+
+        // Handle contig_n50 as either Int or String
+        if let n50Int = try? container.decodeIfPresent(Int.self, forKey: .contigN50) {
+            contigN50 = n50Int
+        } else if let n50Str = try? container.decodeIfPresent(String.self, forKey: .contigN50) {
+            contigN50 = Int(n50Str)
+        } else {
+            contigN50 = nil
+        }
+
+        // Handle scaffold_n50 as either Int or String
+        if let scaffoldInt = try? container.decodeIfPresent(Int.self, forKey: .scaffoldN50) {
+            scaffoldN50 = scaffoldInt
+        } else if let scaffoldStr = try? container.decodeIfPresent(String.self, forKey: .scaffoldN50) {
+            scaffoldN50 = Int(scaffoldStr)
+        } else {
+            scaffoldN50 = nil
+        }
+    }
+}
+
+// MARK: - NCBI Search Type
+
+/// The type of NCBI search to perform.
+public enum NCBISearchType: String, CaseIterable, Identifiable, Sendable {
+    case nucleotide = "GenBank (Nucleotide)"
+    case genome = "Genome (Assembly)"
+    case virus = "Virus"
+
+    public var id: String { rawValue }
+
+    /// Human-readable display name
+    public var displayName: String { rawValue }
+
+    /// Icon for the search type
+    public var icon: String {
+        switch self {
+        case .nucleotide: return "doc.text"
+        case .genome: return "circle.hexagongrid"
+        case .virus: return "allergens"
+        }
+    }
+
+    /// Help text explaining this search type
+    public var helpText: String {
+        switch self {
+        case .nucleotide:
+            return "Search GenBank nucleotide sequences including genes, plasmids, and genomes"
+        case .genome:
+            return "Search complete genome assemblies from RefSeq and GenBank"
+        case .virus:
+            return "Search viral sequences from NCBI Virus database"
         }
     }
 }
