@@ -61,7 +61,7 @@ extension ViewerViewController {
         referenceFrame?.sequenceLength = maxLength
 
         viewerView.setNeedsDisplay(viewerView.bounds)
-        rulerView.setNeedsDisplay(rulerView.bounds)
+        enhancedRulerView.setNeedsDisplay(enhancedRulerView.bounds)
         updateStatusBar()
     }
 

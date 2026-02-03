@@ -841,6 +841,18 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         // TODO: Implement display mode change
     }
 
+    @objc func toggleNucleotideMode(_ sender: Any?) {
+        guard let viewerController = mainWindowController?.mainSplitViewController?.viewerController else {
+            return
+        }
+
+        // Toggle the RNA mode
+        viewerController.isRNAMode.toggle()
+
+        // Trigger redraw
+        viewerController.viewerView.needsDisplay = true
+    }
+
     // MARK: - Menu Validation
 
     public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
@@ -848,6 +860,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         if menuItem.tag == 1001 {
             if let isInspectorVisible = mainWindowController?.mainSplitViewController?.isInspectorVisible {
                 menuItem.title = isInspectorVisible ? "Hide Inspector" : "Show Inspector"
+            }
+            return true
+        }
+
+        // Update DNA/RNA mode menu item state
+        if menuItem.tag == 1002 {
+            if let isRNAMode = mainWindowController?.mainSplitViewController?.viewerController?.isRNAMode {
+                menuItem.state = isRNAMode ? .on : .off
             }
             return true
         }

@@ -238,13 +238,8 @@ extension SequenceViewerView {
             )
         }
 
-        // Draw sequence label in track
-        drawSequenceLabel(
-            name: seq.name,
-            context: context,
-            rect: sequenceRect,
-            isReference: stackedInfo.isReference
-        )
+        // Note: Sequence labels are now displayed in TrackHeaderView on the left side,
+        // so we no longer draw them inside the track to avoid redundancy.
 
         // Draw length indicator for shorter sequences
         if !stackedInfo.isReference {
@@ -737,11 +732,15 @@ extension SequenceViewerView {
                     .font: font,
                     .foregroundColor: NSColor.white
                 ]
-                let str = String(baseChar).uppercased()
-                let strSize = (str as NSString).size(withAttributes: attributes)
+                // Convert T to U if in RNA mode
+                var displayBase = String(baseChar).uppercased()
+                if isRNAMode && displayBase == "T" {
+                    displayBase = "U"
+                }
+                let strSize = (displayBase as NSString).size(withAttributes: attributes)
                 let strX = x + (pixelsPerBase - strSize.width) / 2
                 let strY = drawRect.minY + (drawRect.height - strSize.height) / 2
-                (str as NSString).draw(at: CGPoint(x: strX, y: strY), withAttributes: attributes)
+                (displayBase as NSString).draw(at: CGPoint(x: strX, y: strY), withAttributes: attributes)
             }
         }
     }

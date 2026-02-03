@@ -423,6 +423,17 @@ public final class MainMenu {
 
         viewMenu.addItem(.separator())
 
+        // DNA/RNA mode toggle
+        let nucleotideModeItem = viewMenu.addItem(
+            withTitle: "Show as RNA (U instead of T)",
+            action: #selector(ViewMenuActions.toggleNucleotideMode(_:)),
+            keyEquivalent: "u"
+        )
+        nucleotideModeItem.keyEquivalentModifierMask = [.command, .shift]
+        nucleotideModeItem.tag = 1002  // Tag for validation/state
+
+        viewMenu.addItem(.separator())
+
         // Enter Full Screen
         let fullScreenItem = viewMenu.addItem(
             withTitle: "Enter Full Screen",
@@ -701,6 +712,7 @@ public final class MainMenu {
     func setDisplayModeCollapsed(_ sender: Any?)
     func setDisplayModeSquished(_ sender: Any?)
     func setDisplayModeExpanded(_ sender: Any?)
+    func toggleNucleotideMode(_ sender: Any?)
 }
 
 /// Sequence menu action handlers.

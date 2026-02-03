@@ -66,8 +66,8 @@ public class ViewerViewController: NSViewController {
     /// Header view for track labels
     private var headerView: TrackHeaderView!
 
-    /// Coordinate ruler at the top
-    public private(set) var rulerView: CoordinateRulerView!
+    /// Enhanced coordinate ruler at the top with mini-map and navigation
+    public private(set) var enhancedRulerView: EnhancedCoordinateRulerView!
 
     /// Status bar at the bottom
     public private(set) var statusBar: ViewerStatusBar!
@@ -104,6 +104,17 @@ public class ViewerViewController: NSViewController {
     /// Text filter for annotations (empty string means no filter)
     private var annotationFilterText: String = ""
 
+    // MARK: - Nucleotide Display Mode
+
+    /// Whether to display sequences as RNA (U instead of T).
+    /// When true, thymine (T) bases are displayed as uracil (U).
+    public var isRNAMode: Bool = false {
+        didSet {
+            // Propagate to viewer view
+            viewerView?.isRNAMode = isRNAMode
+        }
+    }
+
     // MARK: - Lifecycle
 
     public override func loadView() {
@@ -111,16 +122,19 @@ public class ViewerViewController: NSViewController {
         containerView.translatesAutoresizingMaskIntoConstraints = false
         containerView.wantsLayer = true
 
-        // Create ruler view
-        rulerView = CoordinateRulerView()
-        rulerView.translatesAutoresizingMaskIntoConstraints = false
-        containerView.addSubview(rulerView)
+        // Create enhanced ruler view with mini-map and navigation
+        enhancedRulerView = EnhancedCoordinateRulerView()
+        enhancedRulerView.translatesAutoresizingMaskIntoConstraints = false
+        enhancedRulerView.delegate = self
+        containerView.addSubview(enhancedRulerView)
 
-        // Create track header view
+        // Create track header view - sync with SequenceStackLayout values
         headerView = TrackHeaderView()
         headerView.translatesAutoresizingMaskIntoConstraints = false
-        headerView.trackY = sequenceTrackY
-        headerView.trackHeight = sequenceTrackHeight
+        headerView.trackY = SequenceStackLayout.defaultTrackHeight  // Use same startY as layout (20)
+        headerView.trackHeight = SequenceStackLayout.defaultTrackHeight
+        headerView.trackSpacing = SequenceStackLayout.trackSpacing
+        headerView.delegate = self
         containerView.addSubview(headerView)
 
         // Create main viewer view
@@ -144,24 +158,24 @@ public class ViewerViewController: NSViewController {
 
         // Layout
         let headerWidth: CGFloat = 100
-        let rulerHeight: CGFloat = 28
+        let rulerHeight: CGFloat = EnhancedCoordinateRulerView.recommendedHeight  // 56px with info bar, mini-map, ruler
         let statusHeight: CGFloat = 24
 
         NSLayoutConstraint.activate([
-            // Ruler spans full width above content
-            rulerView.topAnchor.constraint(equalTo: containerView.topAnchor),
-            rulerView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: headerWidth),
-            rulerView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-            rulerView.heightAnchor.constraint(equalToConstant: rulerHeight),
+            // Enhanced ruler spans full width above content
+            enhancedRulerView.topAnchor.constraint(equalTo: containerView.topAnchor),
+            enhancedRulerView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: headerWidth),
+            enhancedRulerView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            enhancedRulerView.heightAnchor.constraint(equalToConstant: rulerHeight),
 
             // Header on the left
-            headerView.topAnchor.constraint(equalTo: rulerView.bottomAnchor),
+            headerView.topAnchor.constraint(equalTo: enhancedRulerView.bottomAnchor),
             headerView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
             headerView.widthAnchor.constraint(equalToConstant: headerWidth),
             headerView.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
 
             // Viewer fills the main area
-            viewerView.topAnchor.constraint(equalTo: rulerView.bottomAnchor),
+            viewerView.topAnchor.constraint(equalTo: enhancedRulerView.bottomAnchor),
             viewerView.leadingAnchor.constraint(equalTo: headerView.trailingAnchor),
             viewerView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
             viewerView.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
@@ -173,7 +187,7 @@ public class ViewerViewController: NSViewController {
             statusBar.heightAnchor.constraint(equalToConstant: statusHeight),
 
             // Progress overlay covers the viewer area
-            progressOverlay.topAnchor.constraint(equalTo: rulerView.bottomAnchor),
+            progressOverlay.topAnchor.constraint(equalTo: enhancedRulerView.bottomAnchor),
             progressOverlay.leadingAnchor.constraint(equalTo: headerView.trailingAnchor),
             progressOverlay.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
             progressOverlay.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
@@ -396,7 +410,7 @@ public class ViewerViewController: NSViewController {
             logger.debug("displayDocument: Set track names: \(trackNames, privacy: .public)")
 
             // Update ruler
-            rulerView.referenceFrame = referenceFrame
+            enhancedRulerView.referenceFrame = referenceFrame
             logger.debug("displayDocument: Updated ruler reference frame")
         } else {
             logger.warning("displayDocument: No sequences in document!")
@@ -405,7 +419,7 @@ public class ViewerViewController: NSViewController {
         // Trigger immediate redraw
         logger.info("displayDocument: Triggering redraw of all views...")
         viewerView.needsDisplay = true
-        rulerView.needsDisplay = true
+        enhancedRulerView.needsDisplay = true
         headerView.needsDisplay = true
         updateStatusBar()
 
@@ -419,7 +433,7 @@ public class ViewerViewController: NSViewController {
             }
 
             self.viewerView.needsDisplay = true
-            self.rulerView.needsDisplay = true
+            self.enhancedRulerView.needsDisplay = true
             self.headerView.needsDisplay = true
         }
 
@@ -485,34 +499,42 @@ public class ViewerViewController: NSViewController {
         // Pass all sequences to the viewer using multi-sequence support
         viewerView.setSequences(allSequences)
         viewerView.setAnnotations(allAnnotations)
-        
-        // Update header with all sequence names
-        var trackNames = allSequences.map { $0.name }
-        if !allAnnotations.isEmpty {
-            trackNames.append("Annotations")
+
+        // Update header with stacked sequence info for precise alignment
+        if let stackedSeqs = viewerView.multiSequenceState?.stackedSequences, !stackedSeqs.isEmpty {
+            headerView.setStackedSequences(stackedSeqs)
+            logger.debug("displayDocuments: Set \(stackedSeqs.count) stacked sequence entries in header")
+        } else {
+            // Fallback to simple track names
+            let trackNames = allSequences.map { $0.name }
+            headerView.setTrackNames(trackNames)
+            logger.debug("displayDocuments: Set \(trackNames.count) track names (fallback)")
         }
-        headerView.setTrackNames(trackNames)
-        logger.debug("displayDocuments: Set \(trackNames.count) track names")
-        
+
         // Update ruler
-        rulerView.referenceFrame = referenceFrame
-        
+        enhancedRulerView.referenceFrame = referenceFrame
+
         // Trigger redraw
         viewerView.needsDisplay = true
-        rulerView.needsDisplay = true
+        enhancedRulerView.needsDisplay = true
         headerView.needsDisplay = true
         updateStatusBar()
-        
-        // Schedule delayed redraw for layout timing
+
+        // Schedule delayed redraw for layout timing and header sync
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             guard let self = self else { return }
-            
+
             if let frame = self.referenceFrame, self.viewerView.bounds.width > 0 {
                 frame.pixelWidth = Int(self.viewerView.bounds.width)
             }
-            
+
+            // Re-sync header with updated stacked sequences
+            if let stackedSeqs = self.viewerView.multiSequenceState?.stackedSequences, !stackedSeqs.isEmpty {
+                self.headerView.setStackedSequences(stackedSeqs)
+            }
+
             self.viewerView.needsDisplay = true
-            self.rulerView.needsDisplay = true
+            self.enhancedRulerView.needsDisplay = true
             self.headerView.needsDisplay = true
         }
         
@@ -525,7 +547,7 @@ public class ViewerViewController: NSViewController {
     public func zoomIn() {
         referenceFrame?.zoomIn(factor: 2.0)
         viewerView.setNeedsDisplay(viewerView.bounds)
-        rulerView.setNeedsDisplay(rulerView.bounds)
+        enhancedRulerView.setNeedsDisplay(enhancedRulerView.bounds)
         updateStatusBar()
     }
 
@@ -533,7 +555,7 @@ public class ViewerViewController: NSViewController {
     public func zoomOut() {
         referenceFrame?.zoomOut(factor: 2.0)
         viewerView.setNeedsDisplay(viewerView.bounds)
-        rulerView.setNeedsDisplay(rulerView.bounds)
+        enhancedRulerView.setNeedsDisplay(enhancedRulerView.bounds)
         updateStatusBar()
     }
 
@@ -543,7 +565,7 @@ public class ViewerViewController: NSViewController {
         referenceFrame?.start = 0
         referenceFrame?.end = Double(sequence.length)
         viewerView.setNeedsDisplay(viewerView.bounds)
-        rulerView.setNeedsDisplay(rulerView.bounds)
+        enhancedRulerView.setNeedsDisplay(enhancedRulerView.bounds)
         updateStatusBar()
     }
 
@@ -571,7 +593,7 @@ public class ViewerViewController: NSViewController {
         frame.end = newEnd
         
         viewerView.setNeedsDisplay(viewerView.bounds)
-        rulerView.setNeedsDisplay(rulerView.bounds)
+        enhancedRulerView.setNeedsDisplay(enhancedRulerView.bounds)
         updateStatusBar()
     }
 
@@ -586,7 +608,7 @@ public class ViewerViewController: NSViewController {
             sequenceLength: seqLength
         )
         viewerView.setNeedsDisplay(viewerView.bounds)
-        rulerView.setNeedsDisplay(rulerView.bounds)
+        enhancedRulerView.setNeedsDisplay(enhancedRulerView.bounds)
         updateStatusBar()
     }
 
@@ -831,6 +853,9 @@ public class SequenceViewerView: NSView {
 
     /// Whether to show complement strand
     var showComplementStrand: Bool = false
+
+    /// Whether to display as RNA (U instead of T)
+    var isRNAMode: Bool = false
 
     // MARK: - Annotation Track Layout Constants
 
@@ -1388,11 +1413,15 @@ public class SequenceViewerView: NSView {
                     .font: font,
                     .foregroundColor: NSColor.white,
                 ]
-                let str = String(baseChar).uppercased()
-                let strSize = (str as NSString).size(withAttributes: attributes)
+                // Convert T to U if in RNA mode
+                var displayBase = String(baseChar).uppercased()
+                if isRNAMode && displayBase == "T" {
+                    displayBase = "U"
+                }
+                let strSize = (displayBase as NSString).size(withAttributes: attributes)
                 let strX = x + (pixelsPerBase - strSize.width) / 2
                 let strY = trackY + (trackHeight - strSize.height) / 2
-                (str as NSString).draw(at: CGPoint(x: strX, y: strY), withAttributes: attributes)
+                (displayBase as NSString).draw(at: CGPoint(x: strX, y: strY), withAttributes: attributes)
             }
         }
     }
@@ -1792,12 +1821,12 @@ public class SequenceViewerView: NSView {
         case 123: // Left arrow - pan left (use bounded pan)
             viewController?.referenceFrame?.pan(by: -100)
             setNeedsDisplay(bounds)
-            viewController?.rulerView.setNeedsDisplay(viewController?.rulerView.bounds ?? .zero)
+            viewController?.enhancedRulerView.setNeedsDisplay(viewController?.enhancedRulerView.bounds ?? .zero)
             viewController?.updateStatusBar()
         case 124: // Right arrow - pan right (use bounded pan)
             viewController?.referenceFrame?.pan(by: 100)
             setNeedsDisplay(bounds)
-            viewController?.rulerView.setNeedsDisplay(viewController?.rulerView.bounds ?? .zero)
+            viewController?.enhancedRulerView.setNeedsDisplay(viewController?.enhancedRulerView.bounds ?? .zero)
             viewController?.updateStatusBar()
         case 126: // Up arrow
             viewController?.zoomIn()
@@ -2033,7 +2062,7 @@ public class SequenceViewerView: NSView {
         frame.start = Double(range.lowerBound)
         frame.end = Double(range.upperBound)
         setNeedsDisplay(bounds)
-        viewController?.rulerView.setNeedsDisplay(viewController?.rulerView.bounds ?? .zero)
+        viewController?.enhancedRulerView.setNeedsDisplay(viewController?.enhancedRulerView.bounds ?? .zero)
         viewController?.updateStatusBar()
     }
 
@@ -2172,7 +2201,7 @@ public class SequenceViewerView: NSView {
             let panAmount = Double(event.scrollingDeltaX) * frame.scale * 2
             frame.pan(by: -panAmount)
             setNeedsDisplay(bounds)
-            viewController?.rulerView.setNeedsDisplay(viewController?.rulerView.bounds ?? .zero)
+            viewController?.enhancedRulerView.setNeedsDisplay(viewController?.enhancedRulerView.bounds ?? .zero)
             viewController?.updateStatusBar()
         }
     }
@@ -2246,22 +2275,99 @@ public class SequenceViewerView: NSView {
     }
 }
 
+// MARK: - TrackHeaderViewDelegate
+
+/// Delegate protocol for TrackHeaderView interactions.
+@MainActor
+public protocol TrackHeaderViewDelegate: AnyObject {
+    /// Called when the user clicks the disclosure triangle to toggle annotation visibility.
+    func trackHeaderView(_ headerView: TrackHeaderView, didToggleAnnotationsForTrackAt index: Int)
+}
+
 // MARK: - TrackHeaderView
 
-/// View for displaying track labels and controls.
+/// View for displaying track labels and annotation expand/collapse controls.
+///
+/// Layout must match the SequenceStackLayout values used by multi-sequence rendering:
+/// - startY: Starting Y offset (default: 20)
+/// - trackHeight: Height of each sequence track (default: 28)
+/// - trackSpacing: Gap between tracks (default: 4)
+///
+/// Features:
+/// - Disclosure triangles for sequences with annotations
+/// - Click-to-expand/collapse annotation tracks
+/// - Visual feedback for expanded/collapsed state
 public class TrackHeaderView: NSView {
 
     private var trackNames: [String] = []
 
-    /// Track positioning (should match viewer)
-    var trackY: CGFloat = 8
-    var trackHeight: CGFloat = 24
+    /// Stacked sequence info for precise alignment with viewer
+    private var stackedSequences: [StackedSequenceInfo] = []
+
+    /// Track positioning (should match SequenceStackLayout values)
+    var trackY: CGFloat = SequenceStackLayout.defaultTrackHeight  // startY for first track
+    var trackHeight: CGFloat = SequenceStackLayout.defaultTrackHeight
+    var trackSpacing: CGFloat = SequenceStackLayout.trackSpacing
+
+    /// Delegate for handling user interactions
+    weak var delegate: TrackHeaderViewDelegate?
+
+    /// Tracking area for mouse events
+    private var trackingArea: NSTrackingArea?
+
+    /// Currently hovered track index
+    private var hoveredTrackIndex: Int?
+
+    /// Size of disclosure triangle
+    private let disclosureSize: CGFloat = 10
 
     public override var isFlipped: Bool { true }
 
+    public override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setupView()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupView()
+    }
+
+    private func setupView() {
+        wantsLayer = true
+    }
+
     func setTrackNames(_ names: [String]) {
         self.trackNames = names
+        self.stackedSequences = []
         setNeedsDisplay(bounds)
+    }
+
+    /// Sets the stacked sequences for precise Y alignment.
+    /// When set, uses the actual yOffset from each sequence info.
+    func setStackedSequences(_ sequences: [StackedSequenceInfo]) {
+        self.stackedSequences = sequences
+        self.trackNames = sequences.map { $0.sequence.name }
+        setNeedsDisplay(bounds)
+    }
+
+    public override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+
+        if let existingArea = trackingArea {
+            removeTrackingArea(existingArea)
+        }
+
+        trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeInActiveApp],
+            owner: self,
+            userInfo: nil
+        )
+
+        if let area = trackingArea {
+            addTrackingArea(area)
+        }
     }
 
     public override func draw(_ dirtyRect: NSRect) {
@@ -2293,18 +2399,121 @@ public class TrackHeaderView: NSView {
             ]
 
             for (index, label) in trackNames.enumerated() {
-                // Calculate Y to center label in track row
-                let rowY = trackY + CGFloat(index) * (trackHeight + 40)  // 40px gap between tracks
-                let labelSize = (label as NSString).size(withAttributes: attributes)
-                let labelY = rowY + (trackHeight - labelSize.height) / 2
-
-                // Truncate long names
-                let maxWidth = bounds.width - 16
-                let truncatedLabel = truncateLabel(label, maxWidth: maxWidth, attributes: attributes)
-
-                (truncatedLabel as NSString).draw(at: CGPoint(x: 8, y: labelY), withAttributes: attributes)
+                drawTrackRow(index: index, label: label, attributes: attributes, context: context)
             }
         }
+    }
+
+    /// Draws a single track row with label and disclosure triangle.
+    private func drawTrackRow(index: Int, label: String, attributes: [NSAttributedString.Key: Any], context: CGContext) {
+        // Calculate Y position - use stacked sequence info if available
+        let rowY: CGFloat
+        let hasAnnotations: Bool
+        let annotationsExpanded: Bool
+
+        if index < stackedSequences.count {
+            // Use actual offset from multi-sequence layout
+            rowY = stackedSequences[index].yOffset
+            hasAnnotations = !stackedSequences[index].annotations.isEmpty
+            annotationsExpanded = stackedSequences[index].showAnnotations
+        } else {
+            // Fallback to simple calculation matching SequenceStackLayout
+            rowY = trackY + CGFloat(index) * (trackHeight + trackSpacing)
+            hasAnnotations = false
+            annotationsExpanded = false
+        }
+
+        let labelSize = (label as NSString).size(withAttributes: attributes)
+        let labelY = rowY + (trackHeight - labelSize.height) / 2
+
+        // Left margin for label (leave space for disclosure triangle if needed)
+        var labelX: CGFloat = 8
+
+        // Draw disclosure triangle if this track has annotations
+        if hasAnnotations {
+            let triangleX: CGFloat = 4
+            let triangleY = rowY + (trackHeight - disclosureSize) / 2
+
+            drawDisclosureTriangle(
+                at: CGPoint(x: triangleX, y: triangleY),
+                expanded: annotationsExpanded,
+                hovered: hoveredTrackIndex == index,
+                context: context
+            )
+
+            labelX = 4 + disclosureSize + 4  // triangle + spacing
+        }
+
+        // Truncate long names
+        let maxWidth = bounds.width - labelX - 8
+        let truncatedLabel = truncateLabel(label, maxWidth: maxWidth, attributes: attributes)
+
+        (truncatedLabel as NSString).draw(at: CGPoint(x: labelX, y: labelY), withAttributes: attributes)
+
+        // Draw annotation count badge if collapsed but has annotations
+        if hasAnnotations && !annotationsExpanded && index < stackedSequences.count {
+            let count = stackedSequences[index].annotations.count
+            drawAnnotationBadge(count: count, y: rowY + trackHeight - 4, context: context)
+        }
+    }
+
+    /// Draws a disclosure triangle (pointing right when collapsed, down when expanded).
+    private func drawDisclosureTriangle(at point: CGPoint, expanded: Bool, hovered: Bool, context: CGContext) {
+        context.saveGState()
+
+        let color = hovered ? NSColor.controlAccentColor : NSColor.secondaryLabelColor
+        context.setFillColor(color.cgColor)
+
+        context.translateBy(x: point.x + disclosureSize / 2, y: point.y + disclosureSize / 2)
+
+        if expanded {
+            // Pointing down (expanded)
+            context.move(to: CGPoint(x: -4, y: -2))
+            context.addLine(to: CGPoint(x: 4, y: -2))
+            context.addLine(to: CGPoint(x: 0, y: 3))
+        } else {
+            // Pointing right (collapsed)
+            context.move(to: CGPoint(x: -2, y: -4))
+            context.addLine(to: CGPoint(x: 3, y: 0))
+            context.addLine(to: CGPoint(x: -2, y: 4))
+        }
+
+        context.closePath()
+        context.fillPath()
+
+        context.restoreGState()
+    }
+
+    /// Draws a small badge showing annotation count.
+    private func drawAnnotationBadge(count: Int, y: CGFloat, context: CGContext) {
+        let badgeFont = NSFont.systemFont(ofSize: 8, weight: .medium)
+        let badgeText = "\(count)"
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: badgeFont,
+            .foregroundColor: NSColor.white
+        ]
+
+        let size = (badgeText as NSString).size(withAttributes: attributes)
+        let badgeWidth = max(size.width + 6, 14)
+        let badgeHeight: CGFloat = 12
+
+        let badgeRect = CGRect(
+            x: bounds.width - badgeWidth - 4,
+            y: y - badgeHeight + 2,
+            width: badgeWidth,
+            height: badgeHeight
+        )
+
+        // Badge background
+        context.setFillColor(NSColor.tertiaryLabelColor.cgColor)
+        let path = CGPath(roundedRect: badgeRect, cornerWidth: 6, cornerHeight: 6, transform: nil)
+        context.addPath(path)
+        context.fillPath()
+
+        // Badge text
+        let textX = badgeRect.midX - size.width / 2
+        let textY = badgeRect.minY + (badgeHeight - size.height) / 2
+        (badgeText as NSString).draw(at: CGPoint(x: textX, y: textY), withAttributes: attributes)
     }
 
     private func truncateLabel(_ label: String, maxWidth: CGFloat, attributes: [NSAttributedString.Key: Any]) -> String {
@@ -2323,6 +2532,79 @@ public class TrackHeaderView: NSView {
             }
         }
         return "..."
+    }
+
+    // MARK: - Mouse Event Handling
+
+    public override func mouseDown(with event: NSEvent) {
+        let location = convert(event.locationInWindow, from: nil)
+
+        // Find which track was clicked
+        if let index = trackIndex(at: location) {
+            // Check if click was on disclosure triangle area
+            if index < stackedSequences.count && !stackedSequences[index].annotations.isEmpty {
+                let rowY = stackedSequences[index].yOffset
+                let triangleRect = CGRect(x: 0, y: rowY, width: 20, height: trackHeight)
+
+                if triangleRect.contains(location) {
+                    delegate?.trackHeaderView(self, didToggleAnnotationsForTrackAt: index)
+                    return
+                }
+            }
+        }
+
+        super.mouseDown(with: event)
+    }
+
+    public override func mouseMoved(with event: NSEvent) {
+        let location = convert(event.locationInWindow, from: nil)
+        let newHoveredIndex = trackIndex(at: location)
+
+        if newHoveredIndex != hoveredTrackIndex {
+            hoveredTrackIndex = newHoveredIndex
+            needsDisplay = true
+        }
+
+        // Update cursor based on hover state
+        if let index = newHoveredIndex,
+           index < stackedSequences.count,
+           !stackedSequences[index].annotations.isEmpty {
+            let rowY = stackedSequences[index].yOffset
+            let triangleRect = CGRect(x: 0, y: rowY, width: 20, height: trackHeight)
+            if triangleRect.contains(location) {
+                NSCursor.pointingHand.set()
+            } else {
+                NSCursor.arrow.set()
+            }
+        } else {
+            NSCursor.arrow.set()
+        }
+    }
+
+    public override func mouseExited(with event: NSEvent) {
+        hoveredTrackIndex = nil
+        NSCursor.arrow.set()
+        needsDisplay = true
+    }
+
+    /// Returns the track index at the given Y coordinate, or nil if outside tracks.
+    private func trackIndex(at point: CGPoint) -> Int? {
+        if !stackedSequences.isEmpty {
+            for (index, info) in stackedSequences.enumerated() {
+                if point.y >= info.yOffset && point.y < info.yOffset + info.height {
+                    return index
+                }
+            }
+        } else {
+            // Fallback for simple track names
+            for index in 0..<trackNames.count {
+                let rowY = trackY + CGFloat(index) * (trackHeight + trackSpacing)
+                if point.y >= rowY && point.y < rowY + trackHeight {
+                    return index
+                }
+            }
+        }
+        return nil
     }
 }
 

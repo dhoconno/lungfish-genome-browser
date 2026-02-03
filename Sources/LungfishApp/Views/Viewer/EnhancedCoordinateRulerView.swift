@@ -6,6 +6,7 @@
 // Reference: IGV's RulerTrack.java, Ensembl genome browser navigation
 
 import AppKit
+import LungfishCore
 import os.log
 
 /// Logger for ruler operations
@@ -898,5 +899,40 @@ extension ViewerViewController: EnhancedCoordinateRulerDelegate {
         viewerView.setNeedsDisplay(viewerView.bounds)
         ruler.needsDisplay = true
         updateStatusBar()
+    }
+}
+
+// MARK: - TrackHeaderViewDelegate Integration
+
+/// Extension to integrate TrackHeaderView with ViewerViewController.
+///
+/// Handles user interactions with track header controls, including
+/// toggling annotation visibility for individual sequences.
+extension ViewerViewController: TrackHeaderViewDelegate {
+
+    public func trackHeaderView(_ headerView: TrackHeaderView, didToggleAnnotationsForTrackAt index: Int) {
+        guard let state = viewerView.multiSequenceState else { return }
+
+        // Toggle annotation visibility for this sequence
+        state.toggleAnnotationVisibility(at: index)
+
+        // Update header with new stacked sequence state
+        headerView.setStackedSequences(state.stackedSequences)
+
+        // Trigger redraw
+        viewerView.needsDisplay = true
+        headerView.needsDisplay = true
+
+        rulerLogger.info("TrackHeaderViewDelegate: Toggled annotations for track \(index)")
+
+        // Post notification for other observers
+        NotificationCenter.default.post(
+            name: .annotationVisibilityChanged,
+            object: self,
+            userInfo: [
+                NotificationUserInfoKey.activeSequenceIndex: index,
+                NotificationUserInfoKey.annotationVisible: state.stackedSequences[index].showAnnotations
+            ]
+        )
     }
 }
