@@ -12,6 +12,9 @@ final class DatabaseServiceIntegrationTests: XCTestCase {
     // MARK: - NCBI Tests
 
     func testNCBISearch() async throws {
+        // Wait to avoid rate limiting from other tests in the suite
+        try await Task.sleep(nanoseconds: 500_000_000)  // 0.5 seconds
+
         let service = NCBIService()
 
         // Search for a well-known sequence
