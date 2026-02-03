@@ -87,6 +87,23 @@ public class ViewerViewController: NSViewController {
     private let sequenceTrackY: CGFloat = 20
     private let sequenceTrackHeight: CGFloat = 40
 
+    // MARK: - Annotation Display Settings
+
+    /// Whether to show annotations in the viewer
+    private var showAnnotations: Bool = true
+
+    /// Height of each annotation box in pixels
+    private var annotationDisplayHeight: CGFloat = 16
+
+    /// Vertical spacing between annotation rows
+    private var annotationDisplaySpacing: CGFloat = 2
+
+    /// Set of annotation types to display (nil means show all)
+    private var visibleAnnotationTypes: Set<AnnotationType>?
+
+    /// Text filter for annotations (empty string means no filter)
+    private var annotationFilterText: String = ""
+
     // MARK: - Lifecycle
 
     public override func loadView() {
@@ -185,7 +202,15 @@ public class ViewerViewController: NSViewController {
 
         // Set up accessibility
         setupAccessibility()
+
+        // Set up notification observers for annotation settings
+        setupAnnotationNotificationObservers()
+
         logger.info("viewDidLoad: Setup complete")
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     public override func viewDidLayout() {
@@ -209,6 +234,109 @@ public class ViewerViewController: NSViewController {
         viewerView.setAccessibilityLabel("Sequence display area")
         viewerView.setAccessibilityIdentifier("sequence-viewer")
     }
+
+    // MARK: - Annotation Notification Observers
+
+    /// Sets up observers for annotation-related notifications from the inspector.
+    private func setupAnnotationNotificationObservers() {
+        // Observer for annotation display settings (visibility, height, spacing)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAnnotationSettingsChanged(_:)),
+            name: .annotationSettingsChanged,
+            object: nil
+        )
+        logger.debug("ViewerViewController: Registered annotationSettingsChanged observer")
+
+        // Observer for annotation filter settings (type filter, text filter)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAnnotationFilterChanged(_:)),
+            name: .annotationFilterChanged,
+            object: nil
+        )
+        logger.debug("ViewerViewController: Registered annotationFilterChanged observer")
+    }
+
+    /// Handles annotation settings change notifications.
+    ///
+    /// Updates annotation display properties (visibility, height, spacing) and triggers a redraw.
+    ///
+    /// - Parameter notification: The notification containing userInfo with settings values.
+    @objc private func handleAnnotationSettingsChanged(_ notification: Notification) {
+        guard let userInfo = notification.userInfo else {
+            logger.warning("handleAnnotationSettingsChanged: No userInfo in notification")
+            return
+        }
+
+        logger.info("handleAnnotationSettingsChanged: Received annotation settings update")
+
+        // Extract and apply showAnnotations setting
+        if let show = userInfo["showAnnotations"] as? Bool {
+            showAnnotations = show
+            viewerView.showAnnotations = show
+            logger.debug("handleAnnotationSettingsChanged: showAnnotations = \(show)")
+        }
+
+        // Extract and apply annotationHeight setting
+        if let height = userInfo["annotationHeight"] as? CGFloat {
+            annotationDisplayHeight = height
+            viewerView.annotationHeight = height
+            logger.debug("handleAnnotationSettingsChanged: annotationHeight = \(height)")
+        } else if let height = userInfo["annotationHeight"] as? Double {
+            annotationDisplayHeight = CGFloat(height)
+            viewerView.annotationHeight = CGFloat(height)
+            logger.debug("handleAnnotationSettingsChanged: annotationHeight = \(height)")
+        }
+
+        // Extract and apply annotationSpacing setting
+        if let spacing = userInfo["annotationSpacing"] as? CGFloat {
+            annotationDisplaySpacing = spacing
+            viewerView.annotationRowSpacing = spacing
+            logger.debug("handleAnnotationSettingsChanged: annotationSpacing = \(spacing)")
+        } else if let spacing = userInfo["annotationSpacing"] as? Double {
+            annotationDisplaySpacing = CGFloat(spacing)
+            viewerView.annotationRowSpacing = CGFloat(spacing)
+            logger.debug("handleAnnotationSettingsChanged: annotationSpacing = \(spacing)")
+        }
+
+        // Trigger redraw
+        viewerView.needsDisplay = true
+        logger.info("handleAnnotationSettingsChanged: Triggered viewer redraw")
+    }
+
+    /// Handles annotation filter change notifications.
+    ///
+    /// Updates annotation filtering (by type and text) and triggers a redraw.
+    ///
+    /// - Parameter notification: The notification containing userInfo with filter values.
+    @objc private func handleAnnotationFilterChanged(_ notification: Notification) {
+        guard let userInfo = notification.userInfo else {
+            logger.warning("handleAnnotationFilterChanged: No userInfo in notification")
+            return
+        }
+
+        logger.info("handleAnnotationFilterChanged: Received annotation filter update")
+
+        // Extract and apply visibleTypes filter
+        if let types = userInfo["visibleTypes"] as? Set<AnnotationType> {
+            visibleAnnotationTypes = types
+            viewerView.visibleAnnotationTypes = types
+            logger.debug("handleAnnotationFilterChanged: visibleTypes = \(types.count) types")
+        }
+
+        // Extract and apply filterText
+        if let text = userInfo["filterText"] as? String {
+            annotationFilterText = text
+            viewerView.annotationFilterText = text
+            logger.debug("handleAnnotationFilterChanged: filterText = '\(text)'")
+        }
+
+        // Trigger redraw
+        viewerView.needsDisplay = true
+        logger.info("handleAnnotationFilterChanged: Triggered viewer redraw")
+    }
+
 
     // MARK: - Progress Indicator
 
@@ -711,21 +839,34 @@ public class SequenceViewerView: NSView {
         trackY + trackHeight + 30
     }
 
-    /// Height of each annotation box
-    private let annotationHeight: CGFloat = 16
+    /// Whether to show annotations (controlled by inspector)
+    var showAnnotations: Bool = true
 
-    /// Vertical spacing between annotation rows
-    private let annotationRowSpacing: CGFloat = 2
+    /// Height of each annotation box (configurable via inspector)
+    var annotationHeight: CGFloat = 16
+
+    /// Vertical spacing between annotation rows (configurable via inspector)
+    var annotationRowSpacing: CGFloat = 2
+
+    /// Set of annotation types to display (nil means show all)
+    var visibleAnnotationTypes: Set<AnnotationType>?
+
+    /// Text filter for annotations (empty string means no filter)
+    var annotationFilterText: String = ""
 
     // MARK: - Zoom Thresholds (bp/pixel)
+    //
+    // Rendering modes based on zoom level:
+    // - BASE_MODE: < 10 bp/pixel - Individual colored bases with letters
+    // - BLOCK_MODE: 10-500 bp/pixel - Colored blocks showing dominant base
+    // - LINE_MODE: > 500 bp/pixel - Simple gray horizontal line
 
-    /// Below this threshold: show individual base letters
+    /// Below this threshold: show individual base letters with colors
+    /// At this zoom level, bases are large enough to read
     private let showLettersThreshold: Double = 10.0
 
-    /// Below this threshold: show colored bars (between letters and density)
-    private let showBarsThreshold: Double = 100.0
-
-    /// Above this threshold: show simple line (very zoomed out)
+    /// Above this threshold: switch from colored blocks to simple line
+    /// Beyond this zoom level, colored blocks become uninformative visual noise
     private let showLineThreshold: Double = 500.0
 
     // MARK: - Quality Score Colors
@@ -922,25 +1063,26 @@ public class SequenceViewerView: NSView {
         let scale = frame.scale  // bp/pixel
 
         // Decide rendering mode based on zoom level (scale = bp/pixel)
+        // Three modes: BASE_MODE (< 10), BLOCK_MODE (10-500), LINE_MODE (> 500)
         if scale < showLettersThreshold {
-            // High zoom: show individual bases with letters
+            // High zoom (< 10 bp/pixel): show individual bases with letters
+            // Colors: A=Green, T=Red, C=Blue, G=Orange, N=Gray
             drawBaseLevelSequence(seq, frame: frame, context: context)
-        } else if scale < showBarsThreshold {
-            // Medium zoom: show colored bars without letters
-            drawBlockLevelSequence(seq, frame: frame, context: context)
         } else if scale < showLineThreshold {
-            // Low zoom: show GC content / density overview
-            drawOverviewSequence(seq, frame: frame, context: context)
+            // Medium zoom (10-500 bp/pixel): show colored blocks for dominant base
+            // Each block represents multiple bases, colored by the most common base
+            drawBlockLevelSequence(seq, frame: frame, context: context)
         } else {
-            // Very low zoom: show simple line representation
+            // Low zoom (> 500 bp/pixel): show simple gray line
+            // At this zoom level, colored blocks are uninformative visual noise
             drawLineSequence(seq, frame: frame, context: context)
         }
 
         // Draw selection highlight
         drawSelectionHighlight(frame: frame, context: context)
 
-        // Draw annotations if present
-        if !annotations.isEmpty {
+        // Draw annotations if present and enabled
+        if showAnnotations && !annotations.isEmpty {
             drawAnnotations(frame: frame, context: context)
         }
 
@@ -977,6 +1119,29 @@ public class SequenceViewerView: NSView {
         context.restoreGState()
     }
 
+
+    /// Returns the filtered annotations based on current filter settings.
+    private func filteredAnnotations() -> [SequenceAnnotation] {
+        var result = annotations
+
+        // Filter by type if visibleAnnotationTypes is set
+        if let visibleTypes = visibleAnnotationTypes {
+            result = result.filter { visibleTypes.contains($0.type) }
+        }
+
+        // Filter by text if filterText is not empty
+        if !annotationFilterText.isEmpty {
+            let lowercaseFilter = annotationFilterText.lowercased()
+            result = result.filter { annotation in
+                annotation.name.lowercased().contains(lowercaseFilter) ||
+                annotation.type.rawValue.lowercased().contains(lowercaseFilter) ||
+                (annotation.note?.lowercased().contains(lowercaseFilter) ?? false)
+            }
+        }
+
+        return result
+    }
+
     /// Draws annotation features below the sequence track
     private func drawAnnotations(frame: ReferenceFrame, context: CGContext) {
         let visibleBases = frame.end - frame.start
@@ -1001,7 +1166,10 @@ public class SequenceViewerView: NSView {
         // Track row assignments to avoid overlaps
         var rowEndPositions: [CGFloat] = []
 
-        for annotation in annotations {
+        // Use filtered annotations
+        let displayAnnotations = filteredAnnotations()
+
+        for annotation in displayAnnotations {
             // Get the first interval (simplified - could handle discontinuous features)
             guard let interval = annotation.intervals.first else { continue }
 
@@ -1439,7 +1607,10 @@ public class SequenceViewerView: NSView {
         // Track row assignments to find correct Y positions (must match drawAnnotations logic)
         var rowEndPositions: [CGFloat] = []
 
-        for annotation in annotations {
+        // Use filtered annotations for hit testing
+        let displayAnnotations = filteredAnnotations()
+
+        for annotation in displayAnnotations {
             guard let interval = annotation.intervals.first else { continue }
 
             // Check if annotation is visible
@@ -2138,14 +2309,50 @@ public class TrackHeaderView: NSView {
     }
 }
 
+
 // MARK: - CoordinateRulerView
 
-/// View for displaying genomic coordinate ruler.
+/// Enhanced coordinate ruler view inspired by IGV and Geneious.
+///
+/// Features:
+/// - Dynamic tick intervals based on zoom level using 1-2-5-10 rule
+/// - Major ticks (10px) with labels, minor ticks (4px) without labels
+/// - Formatted labels (1K, 10K, 1M, etc.) centered above major ticks
+/// - Chromosome/sequence name displayed on left side
+/// - Current visible range display
 public class CoordinateRulerView: NSView {
 
+    // MARK: - Properties
+
+    /// The reference frame providing coordinate mapping
     var referenceFrame: ReferenceFrame?
 
+    // MARK: - Layout Constants
+
+    /// Height of major tick marks in pixels
+    private let majorTickHeight: CGFloat = 10
+
+    /// Height of minor tick marks in pixels
+    private let minorTickHeight: CGFloat = 4
+
+    /// Left margin for chromosome name label
+    private let leftMargin: CGFloat = 8
+
+    /// Font for coordinate labels
+    private var labelFont: NSFont {
+        NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+    }
+
+    /// Font for chromosome name
+    private var chromosomeFont: NSFont {
+        NSFont.systemFont(ofSize: 10, weight: .medium)
+    }
+
+    // MARK: - View Properties
+
     public override var isFlipped: Bool { true }
+
+    // MARK: - Drawing
 
     public override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
@@ -2165,77 +2372,314 @@ public class CoordinateRulerView: NSView {
 
         // Draw ruler with coordinates
         if let frame = referenceFrame {
-            drawRuler(frame: frame, context: context)
+            drawEnhancedRuler(frame: frame, context: context)
         } else {
             drawPlaceholderRuler(context: context)
         }
     }
 
-    private func drawRuler(frame: ReferenceFrame, context: CGContext) {
+    // MARK: - Enhanced Ruler Drawing
+
+    /// Draws the enhanced ruler with dynamic tick intervals and formatted labels.
+    private func drawEnhancedRuler(frame: ReferenceFrame, context: CGContext) {
         let visibleRange = frame.end - frame.start
         guard visibleRange > 0 else { return }
 
         let pixelsPerBase = bounds.width / CGFloat(visibleRange)
 
-        // Calculate tick interval based on zoom
-        let tickInterval: Double
-        if visibleRange < 100 {
-            tickInterval = 10
-        } else if visibleRange < 1000 {
-            tickInterval = 100
-        } else if visibleRange < 10000 {
-            tickInterval = 1000
+        // Calculate tick intervals using 1-2-5-10 rule
+        let (majorInterval, minorInterval) = calculateTickIntervals(visibleRange: visibleRange)
+
+        // Draw chromosome name and visible range on left
+        drawChromosomeLabel(frame: frame, context: context)
+
+        // Draw minor ticks first (so major ticks draw over them if needed)
+        drawMinorTicks(
+            frame: frame,
+            context: context,
+            interval: minorInterval,
+            majorInterval: majorInterval,
+            pixelsPerBase: pixelsPerBase
+        )
+
+        // Draw major ticks with labels
+        drawMajorTicks(
+            frame: frame,
+            context: context,
+            interval: majorInterval,
+            pixelsPerBase: pixelsPerBase
+        )
+    }
+
+    /// Calculates major and minor tick intervals based on visible range using 1-2-5-10 rule.
+    ///
+    /// The 1-2-5-10 rule creates visually pleasing intervals by using multiples of
+    /// 1, 2, and 5 at each order of magnitude (e.g., 1, 2, 5, 10, 20, 50, 100...).
+    ///
+    /// - Parameter visibleRange: The number of base pairs currently visible
+    /// - Returns: Tuple of (majorInterval, minorInterval) in base pairs
+    private func calculateTickIntervals(visibleRange: Double) -> (major: Double, minor: Double) {
+        // Target approximately 5-10 major ticks on screen for readability
+        let targetMajorTicks = 7.0
+        let idealInterval = visibleRange / targetMajorTicks
+
+        // Find the order of magnitude
+        let magnitude = pow(10, floor(log10(idealInterval)))
+
+        // Determine the multiplier using 1-2-5-10 rule
+        let normalized = idealInterval / magnitude
+        let multiplier: Double
+        if normalized < 1.5 {
+            multiplier = 1
+        } else if normalized < 3.5 {
+            multiplier = 2
+        } else if normalized < 7.5 {
+            multiplier = 5
         } else {
-            tickInterval = 10000
+            multiplier = 10
         }
 
-        let font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        let majorInterval = magnitude * multiplier
+
+        // Minor interval is 1/10th or 1/5th of major, depending on multiplier
+        let minorInterval: Double
+        switch multiplier {
+        case 1, 2:
+            minorInterval = majorInterval / 10
+        case 5:
+            minorInterval = majorInterval / 5
+        default:
+            minorInterval = majorInterval / 10
+        }
+
+        // Apply the specific rules from requirements for edge cases
+        let effectiveMajor: Double
+        let effectiveMinor: Double
+
+        if visibleRange < 100 {
+            // < 100 bp visible: every 10 bp with minor ticks at 1 bp
+            effectiveMajor = 10
+            effectiveMinor = 1
+        } else if visibleRange < 1000 {
+            // 100-1000 bp: every 100 bp with minor at 10 bp
+            effectiveMajor = 100
+            effectiveMinor = 10
+        } else if visibleRange < 10000 {
+            // 1K-10K bp: every 1K with minor at 100 bp
+            effectiveMajor = 1000
+            effectiveMinor = 100
+        } else if visibleRange < 100000 {
+            // 10K-100K bp: every 10K with minor at 1K
+            effectiveMajor = 10000
+            effectiveMinor = 1000
+        } else {
+            // > 100K bp: every 100K with minor at 10K
+            effectiveMajor = 100000
+            effectiveMinor = 10000
+        }
+
+        // Use the more appropriate of calculated vs. requirement-based intervals
+        // Prefer the calculated interval if it provides better granularity
+        if majorInterval > 0 && majorInterval < effectiveMajor && visibleRange >= 100 {
+            return (majorInterval, minorInterval)
+        }
+
+        return (effectiveMajor, effectiveMinor)
+    }
+
+    /// Draws minor tick marks (without labels).
+    private func drawMinorTicks(
+        frame: ReferenceFrame,
+        context: CGContext,
+        interval: Double,
+        majorInterval: Double,
+        pixelsPerBase: CGFloat
+    ) {
+        guard interval > 0 else { return }
+
+        // Calculate minimum pixel spacing to avoid overlapping ticks
+        let minPixelSpacing: CGFloat = 3
+        let pixelInterval = CGFloat(interval) * pixelsPerBase
+        guard pixelInterval >= minPixelSpacing else { return }
+
+        context.saveGState()
+        context.setStrokeColor(NSColor.quaternaryLabelColor.cgColor)
+        context.setLineWidth(0.5)
+
+        var pos = (frame.start / interval).rounded(.up) * interval
+        while pos < frame.end {
+            // Skip positions that are major tick positions
+            let isMajorTick = majorInterval > 0 && abs(pos.truncatingRemainder(dividingBy: majorInterval)) < 0.001
+            if !isMajorTick {
+                let x = CGFloat((pos - frame.start)) * pixelsPerBase
+
+                // Draw minor tick at bottom
+                context.move(to: CGPoint(x: x, y: bounds.maxY - minorTickHeight))
+                context.addLine(to: CGPoint(x: x, y: bounds.maxY))
+                context.strokePath()
+            }
+
+            pos += interval
+        }
+
+        context.restoreGState()
+    }
+
+    /// Draws major tick marks with centered labels.
+    private func drawMajorTicks(
+        frame: ReferenceFrame,
+        context: CGContext,
+        interval: Double,
+        pixelsPerBase: CGFloat
+    ) {
+        guard interval > 0 else { return }
+
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: font,
+            .font: labelFont,
             .foregroundColor: NSColor.secondaryLabelColor,
         ]
 
+        context.saveGState()
         context.setStrokeColor(NSColor.tertiaryLabelColor.cgColor)
+        context.setLineWidth(1)
 
-        var pos = (frame.start / tickInterval).rounded(.up) * tickInterval
+        // Track label positions to avoid overlap
+        var lastLabelEndX: CGFloat = -100
+
+        var pos = (frame.start / interval).rounded(.up) * interval
         while pos < frame.end {
-            let x = CGFloat((pos - frame.start) * Double(pixelsPerBase))
+            let x = CGFloat((pos - frame.start)) * pixelsPerBase
 
-            // Draw tick
-            context.move(to: CGPoint(x: x, y: bounds.maxY - 6))
+            // Draw major tick at bottom
+            context.move(to: CGPoint(x: x, y: bounds.maxY - majorTickHeight))
             context.addLine(to: CGPoint(x: x, y: bounds.maxY))
             context.strokePath()
 
-            // Draw label
+            // Draw label centered above tick
             let label = formatPosition(Int(pos))
             let labelSize = (label as NSString).size(withAttributes: attributes)
-            if x - labelSize.width / 2 > 0 && x + labelSize.width / 2 < bounds.width {
-                (label as NSString).draw(at: CGPoint(x: x - labelSize.width / 2, y: 6), withAttributes: attributes)
+            let labelX = x - labelSize.width / 2
+
+            // Only draw label if it fits and doesn't overlap with previous label
+            let labelPadding: CGFloat = 4
+            if labelX > lastLabelEndX + labelPadding &&
+               labelX >= 0 &&
+               labelX + labelSize.width <= bounds.width {
+                // Position label above the tick, leaving room for tick marks
+                let labelY = bounds.maxY - majorTickHeight - labelSize.height - 2
+                (label as NSString).draw(at: CGPoint(x: labelX, y: labelY), withAttributes: attributes)
+                lastLabelEndX = labelX + labelSize.width
             }
 
-            pos += tickInterval
+            pos += interval
         }
+
+        context.restoreGState()
     }
 
-    private func drawPlaceholderRuler(context: CGContext) {
-        let tickInterval: CGFloat = 100
-        context.setStrokeColor(NSColor.tertiaryLabelColor.cgColor)
+    /// Draws chromosome name and visible range on the left side of the ruler.
+    private func drawChromosomeLabel(frame: ReferenceFrame, context: CGContext) {
+        // Build the range string: "chr1:1,000-10,000"
+        let startFormatted = formatPositionWithCommas(Int(frame.start))
+        let endFormatted = formatPositionWithCommas(Int(frame.end))
+        let rangeString = "\(frame.chromosome):\(startFormatted)-\(endFormatted)"
 
-        for x in stride(from: CGFloat(0), to: bounds.width, by: tickInterval) {
-            context.move(to: CGPoint(x: x, y: bounds.maxY - 6))
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: chromosomeFont,
+            .foregroundColor: NSColor.labelColor,
+        ]
+
+        let labelSize = (rangeString as NSString).size(withAttributes: attributes)
+
+        // Position in top-left area of ruler
+        let labelY = (bounds.height - majorTickHeight - labelSize.height) / 2
+        let labelRect = CGRect(
+            x: leftMargin,
+            y: max(2, labelY),
+            width: min(labelSize.width, bounds.width / 3),
+            height: labelSize.height
+        )
+
+        // Draw background for visibility
+        context.saveGState()
+        context.setFillColor(NSColor.windowBackgroundColor.withAlphaComponent(0.9).cgColor)
+        context.fill(labelRect.insetBy(dx: -2, dy: -1))
+        context.restoreGState()
+
+        // Draw the text (truncated if necessary)
+        (rangeString as NSString).draw(in: labelRect, withAttributes: attributes)
+    }
+
+    /// Draws placeholder ruler when no reference frame is set.
+    private func drawPlaceholderRuler(context: CGContext) {
+        context.setStrokeColor(NSColor.tertiaryLabelColor.cgColor)
+        context.setLineWidth(0.5)
+
+        // Draw evenly spaced minor ticks
+        let tickSpacing: CGFloat = 50
+        for x in stride(from: CGFloat(0), to: bounds.width, by: tickSpacing) {
+            context.move(to: CGPoint(x: x, y: bounds.maxY - minorTickHeight))
             context.addLine(to: CGPoint(x: x, y: bounds.maxY))
             context.strokePath()
         }
+
+        // Draw a centered message
+        let message = "No sequence loaded"
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10),
+            .foregroundColor: NSColor.tertiaryLabelColor,
+        ]
+        let size = (message as NSString).size(withAttributes: attributes)
+        let x = (bounds.width - size.width) / 2
+        let y = (bounds.height - majorTickHeight - size.height) / 2
+        (message as NSString).draw(at: CGPoint(x: x, y: max(2, y)), withAttributes: attributes)
     }
 
+    // MARK: - Position Formatting
+
+    /// Formats a genomic position with appropriate suffix (K, M, G).
+    ///
+    /// - Parameter pos: Position in base pairs
+    /// - Returns: Formatted string (e.g., "1.5M", "10K", "500")
     private func formatPosition(_ pos: Int) -> String {
-        if pos >= 1_000_000 {
-            return String(format: "%.1fM", Double(pos) / 1_000_000)
-        } else if pos >= 1_000 {
-            return String(format: "%.1fK", Double(pos) / 1_000)
+        let absPos = abs(pos)
+
+        if absPos >= 1_000_000_000 {
+            // Gigabases
+            let value = Double(pos) / 1_000_000_000
+            if value.truncatingRemainder(dividingBy: 1) == 0 {
+                return String(format: "%.0fG", value)
+            }
+            return String(format: "%.1fG", value)
+        } else if absPos >= 1_000_000 {
+            // Megabases
+            let value = Double(pos) / 1_000_000
+            if value.truncatingRemainder(dividingBy: 1) == 0 {
+                return String(format: "%.0fM", value)
+            }
+            return String(format: "%.1fM", value)
+        } else if absPos >= 1_000 {
+            // Kilobases
+            let value = Double(pos) / 1_000
+            if value.truncatingRemainder(dividingBy: 1) == 0 {
+                return String(format: "%.0fK", value)
+            }
+            return String(format: "%.1fK", value)
         } else {
+            // Base pairs
             return "\(pos)"
         }
+    }
+
+    /// Formats a position with comma separators for the range display.
+    ///
+    /// - Parameter pos: Position in base pairs
+    /// - Returns: Formatted string with comma separators (e.g., "1,234,567")
+    private func formatPositionWithCommas(_ pos: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.groupingSeparator = ","
+        return formatter.string(from: NSNumber(value: pos)) ?? "\(pos)"
     }
 }
 

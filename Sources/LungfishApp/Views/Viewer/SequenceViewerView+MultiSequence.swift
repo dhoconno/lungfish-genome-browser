@@ -2,7 +2,9 @@
 // Copyright (c) 2024 Lungfish Contributors
 // SPDX-License-Identifier: MIT
 //
-// Extends SequenceViewerView to render multiple stacked sequences.
+// Extends SequenceViewerView to render multiple stacked sequences with per-sequence
+// annotation tracks. Each sequence displays its annotations immediately below it,
+// with visibility controllable globally or per-sequence.
 
 import AppKit
 import LungfishCore
@@ -14,13 +16,73 @@ private let renderLogger = Logger(subsystem: "com.lungfish.browser", category: "
 // MARK: - Zoom Threshold Constants for Multi-Sequence
 
 /// Zoom thresholds for multi-sequence rendering (bp/pixel)
-private enum MultiSequenceZoomThresholds {
-    /// Below this: show individual base letters
-    static let showLetters: Double = 10.0
-    /// Below this: show colored bars
-    static let showBars: Double = 100.0
-    /// Above this: show simple line representation
-    static let showLine: Double = 500.0
+///
+/// These thresholds define the rendering mode based on zoom level:
+/// - BASE_MODE: < 10 bp/pixel - Individual colored bases with letters
+/// - BLOCK_MODE: 10-500 bp/pixel - Colored blocks showing dominant base in region
+/// - LINE_MODE: > 500 bp/pixel - Simple gray horizontal line
+private enum SequenceZoomThresholds {
+    /// Below this threshold: show individual base letters with colors
+    /// At this zoom level, bases are large enough to read
+    static let baseMode: Double = 10.0
+
+    /// Above this threshold: switch from colored blocks to simple line
+    /// Beyond this zoom level, colored blocks become uninformative noise
+    static let lineMode: Double = 500.0
+}
+
+// MARK: - Rendering Mode
+
+/// Describes the current rendering mode based on zoom level
+private enum SequenceRenderingMode {
+    /// Individual bases with colored backgrounds and letter labels
+    /// Used when zoom < 10 bp/pixel
+    case bases
+
+    /// Colored blocks showing dominant base in each pixel region
+    /// Used when zoom is 10-500 bp/pixel
+    case blocks
+
+    /// Simple gray horizontal line showing sequence extent
+    /// Used when zoom > 500 bp/pixel
+    case line
+
+    /// Determines the rendering mode for a given bases-per-pixel scale
+    static func forScale(_ basesPerPixel: Double) -> SequenceRenderingMode {
+        if basesPerPixel < SequenceZoomThresholds.baseMode {
+            return .bases
+        } else if basesPerPixel < SequenceZoomThresholds.lineMode {
+            return .blocks
+        } else {
+            return .line
+        }
+    }
+}
+
+// MARK: - Annotation Track Constants
+
+/// Layout constants for annotation tracks within sequence stacks
+private enum AnnotationTrackLayout {
+    /// Gap between sequence and annotation track
+    static let sequenceAnnotationGap: CGFloat = 4
+
+    /// Height of each annotation row
+    static let annotationRowHeight: CGFloat = 16
+
+    /// Spacing between annotation rows
+    static let rowSpacing: CGFloat = 2
+
+    /// Left margin for annotation track label
+    static let labelLeftMargin: CGFloat = 6
+
+    /// Font size for annotation track label
+    static let labelFontSize: CGFloat = 8
+
+    /// Minimum feature width in pixels
+    static let minimumFeatureWidth: CGFloat = 2
+
+    /// Gap between features for row assignment (in base pairs)
+    static let featureGapBp: Int = 2
 }
 
 // MARK: - SequenceViewerView Multi-Sequence Extension
@@ -29,11 +91,16 @@ extension SequenceViewerView {
 
     // MARK: - Multi-Sequence Drawing
 
-    /// Draws multiple stacked sequences.
+    /// Draws multiple stacked sequences with per-sequence annotation tracks.
     ///
     /// This method renders each sequence in its own track row, with the reference
     /// sequence (longest or first) at the top and additional sequences below.
-    /// Each sequence's annotations are drawn directly beneath it.
+    /// Each sequence's annotations are drawn directly beneath it, forming a
+    /// visual unit of sequence + annotations.
+    ///
+    /// Annotation visibility can be controlled:
+    /// - Globally via `MultiSequenceState.globalShowAnnotations`
+    /// - Per-sequence via `StackedSequenceInfo.showAnnotations`
     ///
     /// - Parameters:
     ///   - sequences: Array of stacked sequence info objects
@@ -45,6 +112,9 @@ extension SequenceViewerView {
         context: CGContext
     ) {
         renderLogger.debug("drawStackedSequences: Drawing \(sequences.count) sequences")
+
+        // Get global annotation visibility setting
+        let globalShowAnnotations = multiSequenceState?.globalShowAnnotations ?? true
 
         for stackedInfo in sequences {
             // Calculate track rect for this sequence (full height including annotations)
@@ -65,7 +135,8 @@ extension SequenceViewerView {
                 stackedInfo: stackedInfo,
                 frame: frame,
                 context: context,
-                rect: trackRect
+                rect: trackRect,
+                globalShowAnnotations: globalShowAnnotations
             )
         }
     }
@@ -73,18 +144,26 @@ extension SequenceViewerView {
     /// Draws a single sequence track at the specified position.
     ///
     /// The track includes the sequence visualization at the top and any
-    /// associated annotations directly below it.
+    /// associated annotations directly below it. Annotations are only shown
+    /// if both global and per-sequence visibility flags are enabled.
+    ///
+    /// Rendering mode is determined by zoom level:
+    /// - BASE_MODE (< 10 bp/pixel): Individual colored bases with letters
+    /// - BLOCK_MODE (10-500 bp/pixel): Colored blocks for dominant base
+    /// - LINE_MODE (> 500 bp/pixel): Simple gray horizontal line
     ///
     /// - Parameters:
     ///   - stackedInfo: Information about this stacked sequence
     ///   - frame: Reference frame for coordinate mapping
     ///   - context: Graphics context for drawing
     ///   - rect: Rectangle to draw within (full track height)
+    ///   - globalShowAnnotations: Global annotation visibility setting
     private func drawSequenceTrack(
         stackedInfo: StackedSequenceInfo,
         frame: ReferenceFrame,
         context: CGContext,
-        rect: CGRect
+        rect: CGRect,
+        globalShowAnnotations: Bool
     ) {
         let seq = stackedInfo.sequence
         let scale = frame.scale  // bp/pixel
@@ -96,6 +175,9 @@ extension SequenceViewerView {
             width: rect.width,
             height: stackedInfo.sequenceHeight
         )
+
+        // Draw track separator for visual grouping
+        drawTrackSeparator(context: context, rect: rect, isActive: stackedInfo.isActive)
 
         // Draw active indicator if this track is selected
         if stackedInfo.isActive {
@@ -122,8 +204,11 @@ extension SequenceViewerView {
         }
 
         // Determine rendering mode based on zoom level
-        if scale < MultiSequenceZoomThresholds.showLetters {
-            // High zoom: show individual bases with letters
+        let renderMode = SequenceRenderingMode.forScale(scale)
+
+        switch renderMode {
+        case .bases:
+            // High zoom (< 10 bp/pixel): show individual bases with letters
             drawBaseLevelSequenceInTrack(
                 seq: seq,
                 frame: frame,
@@ -131,8 +216,9 @@ extension SequenceViewerView {
                 rect: sequenceRect,
                 alignmentOffset: stackedInfo.alignmentOffset
             )
-        } else if scale < MultiSequenceZoomThresholds.showBars {
-            // Medium zoom: show colored bars without letters
+
+        case .blocks:
+            // Medium zoom (10-500 bp/pixel): show colored blocks
             drawBlockLevelSequenceInTrack(
                 seq: seq,
                 frame: frame,
@@ -140,17 +226,9 @@ extension SequenceViewerView {
                 rect: sequenceRect,
                 alignmentOffset: stackedInfo.alignmentOffset
             )
-        } else if scale < MultiSequenceZoomThresholds.showLine {
-            // Low zoom: show GC content / density
-            drawOverviewSequenceInTrack(
-                seq: seq,
-                frame: frame,
-                context: context,
-                rect: sequenceRect,
-                alignmentOffset: stackedInfo.alignmentOffset
-            )
-        } else {
-            // Very low zoom: show simple line representation
+
+        case .line:
+            // Low zoom (> 500 bp/pixel): show simple gray line
             drawLineSequenceInTrack(
                 seq: seq,
                 frame: frame,
@@ -179,17 +257,161 @@ extension SequenceViewerView {
             )
         }
 
+        // Determine if annotations should be shown for this track
+        let shouldShowAnnotations = globalShowAnnotations && stackedInfo.showAnnotations
+
         // Draw annotations for this sequence directly below the sequence track
-        if !stackedInfo.annotations.isEmpty {
-            let annotationStartY = stackedInfo.sequenceHeight + 4  // Small gap after sequence
+        if shouldShowAnnotations && !stackedInfo.annotations.isEmpty {
+            let annotationStartY = stackedInfo.sequenceHeight + AnnotationTrackLayout.sequenceAnnotationGap
+
+            // Draw annotation track label
+            drawAnnotationTrackLabel(
+                context: context,
+                trackRect: rect,
+                annotationStartY: annotationStartY,
+                sequenceName: seq.name,
+                annotationCount: stackedInfo.annotations.count
+            )
+
+            // Draw the annotations
             drawTrackAnnotations(
                 stackedInfo.annotations,
                 frame: frame,
                 context: context,
                 trackRect: rect,
-                annotationStartY: annotationStartY
+                annotationStartY: annotationStartY,
+                sequenceName: seq.name
+            )
+        } else if !stackedInfo.annotations.isEmpty && !shouldShowAnnotations {
+            // Draw collapsed annotation indicator
+            drawCollapsedAnnotationIndicator(
+                context: context,
+                rect: rect,
+                sequenceHeight: stackedInfo.sequenceHeight,
+                annotationCount: stackedInfo.annotations.count
             )
         }
+    }
+
+    // MARK: - Track Separator Drawing
+
+    /// Draws a subtle separator line between sequence tracks for visual grouping.
+    private func drawTrackSeparator(context: CGContext, rect: CGRect, isActive: Bool) {
+        context.saveGState()
+
+        // Draw subtle bottom border
+        let separatorY = rect.maxY - 1
+        context.setStrokeColor(NSColor.separatorColor.withAlphaComponent(0.3).cgColor)
+        context.setLineWidth(1)
+        context.move(to: CGPoint(x: 0, y: separatorY))
+        context.addLine(to: CGPoint(x: rect.width, y: separatorY))
+        context.strokePath()
+
+        context.restoreGState()
+    }
+
+    // MARK: - Annotation Track Label Drawing
+
+    /// Draws the label for an annotation track.
+    ///
+    /// The label appears at the left side of the annotation area and shows
+    /// "Annotations" or the count of annotations for the sequence.
+    ///
+    /// - Parameters:
+    ///   - context: Graphics context for drawing
+    ///   - trackRect: The full track rectangle
+    ///   - annotationStartY: Y offset where annotations start within track
+    ///   - sequenceName: Name of the parent sequence
+    ///   - annotationCount: Number of annotations in this track
+    private func drawAnnotationTrackLabel(
+        context: CGContext,
+        trackRect: CGRect,
+        annotationStartY: CGFloat,
+        sequenceName: String,
+        annotationCount: Int
+    ) {
+        let labelFont = NSFont.systemFont(ofSize: AnnotationTrackLayout.labelFontSize, weight: .medium)
+        let labelText = "Annotations (\(annotationCount))"
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: labelFont,
+            .foregroundColor: NSColor.tertiaryLabelColor
+        ]
+
+        let size = (labelText as NSString).size(withAttributes: attributes)
+
+        // Position label at top-left of annotation area
+        let labelX = AnnotationTrackLayout.labelLeftMargin
+        let labelY = trackRect.minY + annotationStartY
+
+        // Draw background pill for readability
+        let pillRect = CGRect(
+            x: labelX - 2,
+            y: labelY - 1,
+            width: size.width + 4,
+            height: size.height + 2
+        )
+
+        context.saveGState()
+        context.setFillColor(NSColor.textBackgroundColor.withAlphaComponent(0.7).cgColor)
+        let pillPath = NSBezierPath(roundedRect: pillRect, xRadius: 2, yRadius: 2)
+        pillPath.fill()
+        context.restoreGState()
+
+        (labelText as NSString).draw(at: CGPoint(x: labelX, y: labelY), withAttributes: attributes)
+    }
+
+    // MARK: - Collapsed Annotation Indicator
+
+    /// Draws an indicator showing that annotations are collapsed/hidden.
+    ///
+    /// This provides visual feedback that annotations exist but are not shown,
+    /// allowing users to expand them if needed.
+    ///
+    /// - Parameters:
+    ///   - context: Graphics context for drawing
+    ///   - rect: The full track rectangle
+    ///   - sequenceHeight: Height of the sequence portion
+    ///   - annotationCount: Number of hidden annotations
+    private func drawCollapsedAnnotationIndicator(
+        context: CGContext,
+        rect: CGRect,
+        sequenceHeight: CGFloat,
+        annotationCount: Int
+    ) {
+        let indicatorY = rect.minY + sequenceHeight + 2
+        let labelFont = NSFont.systemFont(ofSize: 7, weight: .regular)
+        let labelText = "\(annotationCount) annotations (hidden)"
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: labelFont,
+            .foregroundColor: NSColor.quaternaryLabelColor
+        ]
+
+        let size = (labelText as NSString).size(withAttributes: attributes)
+        let labelX = AnnotationTrackLayout.labelLeftMargin
+
+        // Draw indicator as small italicized text
+        (labelText as NSString).draw(
+            at: CGPoint(x: labelX, y: indicatorY),
+            withAttributes: attributes
+        )
+
+        // Draw small expand chevron
+        context.saveGState()
+        context.setStrokeColor(NSColor.quaternaryLabelColor.cgColor)
+        context.setLineWidth(1)
+
+        let chevronX = labelX + size.width + 4
+        let chevronY = indicatorY + size.height / 2
+        let chevronSize: CGFloat = 4
+
+        context.move(to: CGPoint(x: chevronX, y: chevronY - chevronSize / 2))
+        context.addLine(to: CGPoint(x: chevronX + chevronSize / 2, y: chevronY))
+        context.addLine(to: CGPoint(x: chevronX, y: chevronY + chevronSize / 2))
+        context.strokePath()
+
+        context.restoreGState()
     }
 
     // MARK: - Annotation Drawing for Multi-Sequence
@@ -198,6 +420,7 @@ extension SequenceViewerView {
     ///
     /// Annotations are rendered directly below their parent sequence,
     /// grouped by the sequence they belong to rather than in a single combined track.
+    /// Each annotation is filtered to only show features that match the sequence name.
     ///
     /// - Parameters:
     ///   - annotations: The annotations to draw
@@ -205,19 +428,21 @@ extension SequenceViewerView {
     ///   - context: Graphics context for drawing
     ///   - trackRect: The full track rectangle (for clipping)
     ///   - annotationStartY: Y offset within the track where annotations start
+    ///   - sequenceName: Name of the parent sequence for filtering
     private func drawTrackAnnotations(
         _ annotations: [SequenceAnnotation],
         frame: ReferenceFrame,
         context: CGContext,
         trackRect: CGRect,
-        annotationStartY: CGFloat
+        annotationStartY: CGFloat,
+        sequenceName: String
     ) {
         let visibleBases = frame.end - frame.start
         let pixelsPerBase = bounds.width / CGFloat(max(1, visibleBases))
 
-        // Annotation layout constants
-        let annotationRowHeight: CGFloat = 16
-        let rowSpacing: CGFloat = 2
+        // Leave space for the annotation label at the top
+        let labelHeight: CGFloat = 12
+        let drawStartY = annotationStartY + labelHeight
 
         // Standard annotation colors by type
         let typeColors: [AnnotationType: NSColor] = [
@@ -238,7 +463,12 @@ extension SequenceViewerView {
         // Track row assignments to avoid overlaps
         var rowEndPositions: [CGFloat] = []
 
-        for annotation in annotations {
+        // Filter annotations to only those belonging to this sequence
+        let sequenceAnnotations = annotations.filter { annotation in
+            annotation.belongsToSequence(named: sequenceName)
+        }
+
+        for annotation in sequenceAnnotations {
             // Get the first interval (simplified - could handle discontinuous features)
             guard let interval = annotation.intervals.first else { continue }
 
@@ -250,7 +480,7 @@ extension SequenceViewerView {
             // Calculate screen coordinates
             let startX = CGFloat(interval.start - visibleStart) * pixelsPerBase
             let endX = CGFloat(interval.end - visibleStart) * pixelsPerBase
-            let width = max(2, endX - startX)
+            let width = max(AnnotationTrackLayout.minimumFeatureWidth, endX - startX)
 
             // Find a row that doesn't overlap
             var row = 0
@@ -269,13 +499,20 @@ extension SequenceViewerView {
             rowEndPositions[row] = startX + width
 
             // Calculate Y position relative to track
-            let y = trackRect.minY + annotationStartY + CGFloat(row) * (annotationRowHeight + rowSpacing)
+            let y = trackRect.minY + drawStartY + CGFloat(row) * (
+                AnnotationTrackLayout.annotationRowHeight + AnnotationTrackLayout.rowSpacing
+            )
 
             // Get color for this annotation type
             let color = typeColors[annotation.type] ?? NSColor.gray
 
             // Draw annotation box
-            let annotRect = CGRect(x: startX, y: y, width: width, height: annotationRowHeight)
+            let annotRect = CGRect(
+                x: startX,
+                y: y,
+                width: width,
+                height: AnnotationTrackLayout.annotationRowHeight
+            )
             context.setFillColor(color.cgColor)
             context.fill(annotRect)
 
@@ -295,7 +532,7 @@ extension SequenceViewerView {
 
                 if labelSize.width < width - 4 {
                     let labelX = startX + (width - labelSize.width) / 2
-                    let labelY = y + (annotationRowHeight - labelSize.height) / 2
+                    let labelY = y + (AnnotationTrackLayout.annotationRowHeight - labelSize.height) / 2
                     (label as NSString).draw(at: CGPoint(x: labelX, y: labelY), withAttributes: labelAttributes)
                 }
             }
@@ -308,7 +545,7 @@ extension SequenceViewerView {
                 if annotation.strand == .forward {
                     // Arrow pointing right
                     let arrowX = min(startX + width - arrowSize - 2, bounds.width - arrowSize)
-                    let arrowY = y + annotationRowHeight / 2
+                    let arrowY = y + AnnotationTrackLayout.annotationRowHeight / 2
                     context.move(to: CGPoint(x: arrowX, y: arrowY - arrowSize/2))
                     context.addLine(to: CGPoint(x: arrowX + arrowSize, y: arrowY))
                     context.addLine(to: CGPoint(x: arrowX, y: arrowY + arrowSize/2))
@@ -317,7 +554,7 @@ extension SequenceViewerView {
                 } else {
                     // Arrow pointing left
                     let arrowX = max(startX + 2, 0)
-                    let arrowY = y + annotationRowHeight / 2
+                    let arrowY = y + AnnotationTrackLayout.annotationRowHeight / 2
                     context.move(to: CGPoint(x: arrowX + arrowSize, y: arrowY - arrowSize/2))
                     context.addLine(to: CGPoint(x: arrowX, y: arrowY))
                     context.addLine(to: CGPoint(x: arrowX + arrowSize, y: arrowY + arrowSize/2))
@@ -439,7 +676,24 @@ extension SequenceViewerView {
 
     // MARK: - Sequence Rendering at Different Zoom Levels
 
-    /// Draws base-level sequence in a track (high zoom).
+    /// Draws base-level sequence in a track (high zoom, < 10 bp/pixel).
+    ///
+    /// At this zoom level, individual bases are large enough to be readable.
+    /// Each base is drawn as a colored rectangle with its letter label.
+    ///
+    /// Colors follow IGV convention:
+    /// - A = Green
+    /// - T = Red
+    /// - C = Blue
+    /// - G = Orange/Yellow
+    /// - N = Gray
+    ///
+    /// - Parameters:
+    ///   - seq: The sequence to draw
+    ///   - frame: Reference frame for coordinate mapping
+    ///   - context: Graphics context for drawing
+    ///   - rect: Rectangle to draw within
+    ///   - alignmentOffset: Position offset for sequence alignment
     private func drawBaseLevelSequenceInTrack(
         seq: Sequence,
         frame: ReferenceFrame,
@@ -492,7 +746,24 @@ extension SequenceViewerView {
         }
     }
 
-    /// Draws block-level sequence in a track (medium zoom).
+    /// Draws block-level sequence in a track (medium zoom, 10-500 bp/pixel).
+    ///
+    /// At this zoom level, multiple bases are aggregated into colored blocks.
+    /// Each block shows the dominant base color for that region.
+    ///
+    /// Colors follow IGV convention:
+    /// - A = Green
+    /// - T = Red
+    /// - C = Blue
+    /// - G = Orange/Yellow
+    /// - N = Gray
+    ///
+    /// - Parameters:
+    ///   - seq: The sequence to draw
+    ///   - frame: Reference frame for coordinate mapping
+    ///   - context: Graphics context for drawing
+    ///   - rect: Rectangle to draw within
+    ///   - alignmentOffset: Position offset for sequence alignment
     private func drawBlockLevelSequenceInTrack(
         seq: Sequence,
         frame: ReferenceFrame,
@@ -517,7 +788,7 @@ extension SequenceViewerView {
             let x = CGFloat(genomicStart - Int(frame.start)) * pixelsPerBase
             let width = CGFloat(binEnd - binStart) * pixelsPerBase
 
-            // Find dominant base
+            // Find dominant base in this bin
             var counts: [Character: Int] = ["A": 0, "T": 0, "C": 0, "G": 0, "N": 0]
             for i in binStart..<binEnd {
                 let base = Character(seq[i].uppercased())
@@ -531,59 +802,14 @@ extension SequenceViewerView {
         }
     }
 
-    /// Draws overview sequence in a track (low zoom - GC content).
-    private func drawOverviewSequenceInTrack(
-        seq: Sequence,
-        frame: ReferenceFrame,
-        context: CGContext,
-        rect: CGRect,
-        alignmentOffset: Int
-    ) {
-        let visibleStart = max(0, Int(frame.start) - alignmentOffset)
-        let visibleEnd = min(seq.length, Int(frame.end) - alignmentOffset + 1)
-
-        guard visibleStart < visibleEnd else { return }
-
-        let visibleBases = frame.end - frame.start
-        let pixelsPerBase = bounds.width / CGFloat(max(1, visibleBases))
-        let binSize = max(1, Int(frame.scale * 2))
-
-        let drawRect = rect.insetBy(dx: 0, dy: 2)
-
-        // GC content colors
-        let lowGCColor = NSColor(calibratedRed: 0.2, green: 0.4, blue: 0.8, alpha: 1.0)
-        let highGCColor = NSColor(calibratedRed: 0.8, green: 0.2, blue: 0.2, alpha: 1.0)
-
-        for binStart in stride(from: visibleStart, to: visibleEnd, by: binSize) {
-            let binEnd = min(binStart + binSize, visibleEnd)
-            let genomicStart = binStart + alignmentOffset
-            let x = CGFloat(genomicStart - Int(frame.start)) * pixelsPerBase
-            let width = CGFloat(binEnd - binStart) * pixelsPerBase
-
-            // Calculate GC content
-            var gcCount = 0
-            var totalCount = 0
-            for i in binStart..<binEnd {
-                let base = seq[i].uppercased().first ?? "N"
-                if base == "G" || base == "C" {
-                    gcCount += 1
-                }
-                totalCount += 1
-            }
-            let gcContent = totalCount > 0 ? CGFloat(gcCount) / CGFloat(totalCount) : 0.5
-
-            // Interpolate color
-            let color = interpolateColorForTrack(from: lowGCColor, to: highGCColor, factor: gcContent)
-            context.setFillColor(color.cgColor)
-            context.fill(CGRect(x: x, y: drawRect.minY, width: max(1, width), height: drawRect.height))
-        }
-    }
-
-    /// Draws a simple line representation for very zoomed out view.
+    /// Draws a simple line representation for very zoomed out view (> 500 bp/pixel).
     ///
-    /// When zoomed out beyond the line threshold, individual bases and GC content
-    /// become meaningless visual noise. This method draws a clean, simple line to
-    /// represent the sequence extent without visual clutter.
+    /// When zoomed out beyond 500 bp/pixel, individual bases and colored blocks
+    /// become uninformative visual noise. This method draws a clean, simple gray
+    /// line to represent the sequence extent without visual clutter.
+    ///
+    /// This addresses user feedback that "rainbow of colors" at low zoom is not
+    /// informative and should be replaced with a simple line representation.
     ///
     /// - Parameters:
     ///   - seq: The sequence to draw
@@ -644,19 +870,6 @@ extension SequenceViewerView {
 
         context.restoreGState()
     }
-
-    /// Interpolates between two colors.
-    private func interpolateColorForTrack(from: NSColor, to: NSColor, factor: CGFloat) -> NSColor {
-        let f = max(0, min(1, factor))
-        let fromComponents = from.cgColor.components ?? [0, 0, 0, 1]
-        let toComponents = to.cgColor.components ?? [0, 0, 0, 1]
-
-        let r = fromComponents[0] + (toComponents[0] - fromComponents[0]) * f
-        let g = fromComponents[1] + (toComponents[1] - fromComponents[1]) * f
-        let b = fromComponents[2] + (toComponents[2] - fromComponents[2]) * f
-
-        return NSColor(calibratedRed: r, green: g, blue: b, alpha: 1.0)
-    }
 }
 
 // MARK: - Hit Testing for Multi-Sequence
@@ -692,5 +905,60 @@ extension SequenceViewerView {
         // Adjust for alignment offset and clamp to sequence bounds
         let seqPosition = genomicPosition - stackedInfo.alignmentOffset
         return max(0, min(stackedInfo.sequence.length - 1, seqPosition))
+    }
+
+    /// Checks if a point is within the annotation area of a sequence track.
+    ///
+    /// - Parameters:
+    ///   - point: Point in view coordinates
+    ///   - stackedInfo: The stacked sequence info
+    /// - Returns: True if the point is within the annotation area
+    internal func isPointInAnnotationArea(
+        _ point: NSPoint,
+        forSequence stackedInfo: StackedSequenceInfo
+    ) -> Bool {
+        let annotationStartY = stackedInfo.yOffset + stackedInfo.sequenceHeight
+        let annotationEndY = stackedInfo.yOffset + stackedInfo.height
+
+        return point.y >= annotationStartY && point.y < annotationEndY
+    }
+
+    /// Returns the annotation at the given point, if any.
+    ///
+    /// - Parameters:
+    ///   - point: Point in view coordinates
+    ///   - stackedInfo: The stacked sequence info
+    ///   - frame: Reference frame for coordinate mapping
+    /// - Returns: The annotation at that point, or nil
+    internal func annotationAtPoint(
+        _ point: NSPoint,
+        forSequence stackedInfo: StackedSequenceInfo,
+        frame: ReferenceFrame
+    ) -> SequenceAnnotation? {
+        guard isPointInAnnotationArea(point, forSequence: stackedInfo) else {
+            return nil
+        }
+
+        let globalShowAnnotations = multiSequenceState?.globalShowAnnotations ?? true
+        guard globalShowAnnotations && stackedInfo.showAnnotations else {
+            return nil
+        }
+
+        let visibleBases = frame.end - frame.start
+        let basesPerPixel = visibleBases / Double(bounds.width)
+        let clickedPosition = Int(frame.start + Double(point.x) * basesPerPixel)
+
+        // Find annotation at this position
+        for annotation in stackedInfo.annotations {
+            guard annotation.belongsToSequence(named: stackedInfo.sequence.name) else {
+                continue
+            }
+
+            if annotation.overlaps(start: clickedPosition, end: clickedPosition + 1) {
+                return annotation
+            }
+        }
+
+        return nil
     }
 }

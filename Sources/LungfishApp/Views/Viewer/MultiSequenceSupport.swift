@@ -4,6 +4,7 @@
 //
 // Extends SequenceViewerView to support displaying multiple sequences stacked vertically,
 // such as FASTQ reads, multi-FASTA files, or multiple selected sequences.
+// Each sequence can have its own annotation track displayed immediately below it.
 
 import AppKit
 import LungfishCore
@@ -17,7 +18,15 @@ private let multiSeqLogger = Logger(subsystem: "com.lungfish.browser", category:
 /// Information about a single sequence in the stacked display.
 ///
 /// Contains layout information, selection state, and associated annotations
-/// for each sequence track.
+/// for each sequence track. Annotations are displayed immediately below
+/// their parent sequence, forming a visual unit.
+///
+/// ## Annotation Visibility
+/// Annotation visibility is controlled by two flags:
+/// - `showAnnotations`: Per-sequence visibility (default: false - collapsed)
+/// - `MultiSequenceState.globalShowAnnotations`: Global override
+///
+/// Annotations are only displayed when both flags are true.
 public struct StackedSequenceInfo: Identifiable {
     /// Unique identifier for this stacked sequence
     public let id: UUID
@@ -34,12 +43,22 @@ public struct StackedSequenceInfo: Identifiable {
     /// Height of the sequence portion of this track
     public var sequenceHeight: CGFloat
 
-    /// Height of the annotation portion of this track
+    /// Height of the annotation portion of this track (when visible)
     public var annotationHeight: CGFloat
+
+    /// Height used when annotations are collapsed (just shows indicator)
+    public static let collapsedAnnotationHeight: CGFloat = 12
 
     /// Total height of this track including sequence and annotations
     public var height: CGFloat {
-        sequenceHeight + annotationHeight
+        if showAnnotations && !annotations.isEmpty {
+            return sequenceHeight + annotationHeight
+        } else if !annotations.isEmpty {
+            // Show minimal height for collapsed indicator
+            return sequenceHeight + StackedSequenceInfo.collapsedAnnotationHeight
+        } else {
+            return sequenceHeight
+        }
     }
 
     /// Whether this sequence is the reference (longest/first)
@@ -54,6 +73,11 @@ public struct StackedSequenceInfo: Identifiable {
     /// Annotations that belong to this sequence
     public var annotations: [SequenceAnnotation]
 
+    /// Whether to show annotations for this sequence (per-sequence visibility).
+    /// Default is false (collapsed) per user feedback.
+    /// Annotations are only shown if both this flag and the global flag are true.
+    public var showAnnotations: Bool
+
     public init(
         sequence: Sequence,
         trackIndex: Int,
@@ -63,7 +87,8 @@ public struct StackedSequenceInfo: Identifiable {
         isReference: Bool = false,
         isActive: Bool = false,
         alignmentOffset: Int = 0,
-        annotations: [SequenceAnnotation] = []
+        annotations: [SequenceAnnotation] = [],
+        showAnnotations: Bool = false
     ) {
         self.id = sequence.id
         self.sequence = sequence
@@ -75,6 +100,7 @@ public struct StackedSequenceInfo: Identifiable {
         self.isActive = isActive
         self.alignmentOffset = alignmentOffset
         self.annotations = annotations
+        self.showAnnotations = showAnnotations
     }
 }
 
@@ -100,6 +126,9 @@ public struct SequenceStackLayout {
 
     /// Height of the track label area
     public static let labelHeight: CGFloat = 16
+
+    /// Height for the annotation track label
+    public static let annotationLabelHeight: CGFloat = 12
 
     /// Total height for a single track including spacing (without annotations)
     public static var totalTrackHeight: CGFloat {
@@ -150,7 +179,10 @@ public struct SequenceStackLayout {
     /// Calculates the annotation track height based on number of annotation rows needed.
     public func annotationHeight(forRowCount rowCount: Int) -> CGFloat {
         guard rowCount > 0 else { return 0 }
-        return CGFloat(rowCount) * (annotationRowHeight + SequenceStackLayout.annotationRowSpacing) + spacing
+        // Include label height + rows + spacing
+        return SequenceStackLayout.annotationLabelHeight +
+               CGFloat(rowCount) * (annotationRowHeight + SequenceStackLayout.annotationRowSpacing) +
+               spacing
     }
 
     /// Returns the track index at the given Y coordinate, or nil if outside tracks.
@@ -183,7 +215,8 @@ public struct SequenceStackLayout {
 /// Manages state for multi-sequence display.
 ///
 /// Tracks which sequences are loaded, which is active, and handles
-/// selection across multiple sequences.
+/// selection across multiple sequences. Also manages annotation visibility
+/// both globally and per-sequence.
 @MainActor
 public class MultiSequenceState: ObservableObject {
 
@@ -195,6 +228,11 @@ public class MultiSequenceState: ObservableObject {
 
     /// Index of the currently active sequence
     @Published public var activeSequenceIndex: Int = 0
+
+    /// Global annotation visibility toggle.
+    /// When false, all annotations are hidden regardless of per-sequence settings.
+    /// When true, per-sequence settings are respected.
+    @Published public var globalShowAnnotations: Bool = true
 
     /// All annotations (used to associate with sequences)
     private var allAnnotations: [SequenceAnnotation] = []
@@ -276,6 +314,11 @@ public class MultiSequenceState: ObservableObject {
 
     /// Rebuilds the stacked sequence info array with proper layout calculations.
     private func rebuildStackedSequences(sequences: [Sequence]) {
+        // Preserve existing showAnnotations state for each sequence
+        let existingShowAnnotations = Dictionary(
+            uniqueKeysWithValues: stackedSequences.map { ($0.sequence.id, $0.showAnnotations) }
+        )
+
         var currentY = layout.startY
         var newStackedSequences: [StackedSequenceInfo] = []
 
@@ -289,6 +332,9 @@ public class MultiSequenceState: ObservableObject {
             let annotationRowCount = calculateAnnotationRows(seqAnnotations)
             let annotationHeight = layout.annotationHeight(forRowCount: annotationRowCount)
 
+            // Preserve existing showAnnotations state, default to false (collapsed)
+            let showAnnotations = existingShowAnnotations[seq.id] ?? false
+
             let info = StackedSequenceInfo(
                 sequence: seq,
                 trackIndex: index,
@@ -296,13 +342,14 @@ public class MultiSequenceState: ObservableObject {
                 sequenceHeight: layout.trackHeight,
                 annotationHeight: annotationHeight,
                 isReference: seq.id == referenceSequence?.id,
-                isActive: index == 0,
+                isActive: index == activeSequenceIndex,
                 alignmentOffset: 0,
-                annotations: seqAnnotations
+                annotations: seqAnnotations,
+                showAnnotations: showAnnotations
             )
             newStackedSequences.append(info)
 
-            // Move to next track position
+            // Move to next track position (accounting for current track's full height)
             currentY += info.height + layout.spacing
         }
 
@@ -413,6 +460,73 @@ public class MultiSequenceState: ObservableObject {
         multiSeqLogger.debug("updateTrackHeight: Set track height to \(height)")
     }
 
+    // MARK: - Annotation Visibility Controls
+
+    /// Toggles annotation visibility for a specific sequence.
+    ///
+    /// - Parameter index: Index of the sequence to toggle
+    public func toggleAnnotationVisibility(at index: Int) {
+        guard index >= 0 && index < stackedSequences.count else { return }
+
+        stackedSequences[index].showAnnotations.toggle()
+
+        // Recalculate Y offsets for all sequences after this one
+        recalculateYOffsets()
+
+        let seqName = stackedSequences[index].sequence.name
+        let visible = stackedSequences[index].showAnnotations
+        multiSeqLogger.debug("toggleAnnotationVisibility: '\(seqName, privacy: .public)' annotations now \(visible ? "visible" : "hidden")")
+    }
+
+    /// Sets annotation visibility for a specific sequence.
+    ///
+    /// - Parameters:
+    ///   - visible: Whether annotations should be visible
+    ///   - index: Index of the sequence
+    public func setAnnotationVisibility(_ visible: Bool, at index: Int) {
+        guard index >= 0 && index < stackedSequences.count else { return }
+
+        if stackedSequences[index].showAnnotations != visible {
+            stackedSequences[index].showAnnotations = visible
+            recalculateYOffsets()
+        }
+    }
+
+    /// Shows annotations for all sequences.
+    public func showAllAnnotations() {
+        for index in 0..<stackedSequences.count {
+            stackedSequences[index].showAnnotations = true
+        }
+        recalculateYOffsets()
+        multiSeqLogger.debug("showAllAnnotations: All sequence annotations now visible")
+    }
+
+    /// Hides annotations for all sequences.
+    public func hideAllAnnotations() {
+        for index in 0..<stackedSequences.count {
+            stackedSequences[index].showAnnotations = false
+        }
+        recalculateYOffsets()
+        multiSeqLogger.debug("hideAllAnnotations: All sequence annotations now hidden")
+    }
+
+    /// Toggles global annotation visibility.
+    /// When global is off, all annotations are hidden regardless of per-sequence settings.
+    public func toggleGlobalAnnotationVisibility() {
+        globalShowAnnotations.toggle()
+        multiSeqLogger.debug("toggleGlobalAnnotationVisibility: Global annotations now \(self.globalShowAnnotations ? "enabled" : "disabled")")
+    }
+
+    /// Recalculates Y offsets for all sequences based on their current visibility states.
+    private func recalculateYOffsets() {
+        var currentY = layout.startY
+
+        for index in 0..<stackedSequences.count {
+            stackedSequences[index].yOffset = currentY
+            currentY += stackedSequences[index].height + layout.spacing
+        }
+    }
+
     /// Clears all sequences.
     public func clear() {
         stackedSequences = []
@@ -448,6 +562,9 @@ public extension Notification.Name {
 
     /// Posted when sequences are added or removed from the stack
     static let sequenceStackChanged = Notification.Name("com.lungfish.sequenceStackChanged")
+
+    /// Posted when annotation visibility changes for any sequence
+    static let annotationVisibilityChanged = Notification.Name("com.lungfish.annotationVisibilityChanged")
 }
 
 // MARK: - NotificationUserInfoKey Extensions
@@ -458,4 +575,7 @@ public extension NotificationUserInfoKey {
 
     /// Key for the stacked sequence info in notifications
     static let stackedSequenceInfo = "stackedSequenceInfo"
+
+    /// Key for annotation visibility state in notifications
+    static let annotationVisible = "annotationVisible"
 }
