@@ -373,12 +373,10 @@ public actor SnakemakeRunner: WorkflowRunner {
 
     /// Gets container arguments based on available runtime.
     private func getContainerArguments() async -> [String]? {
-        // Check for Apptainer first (preferred on Apple Silicon for Snakemake)
-        if let apptainer = await ContainerRuntimeFactory.createRuntime(type: .apptainer) {
-            return apptainer.snakemakeArguments
-        }
-        if let docker = await ContainerRuntimeFactory.createRuntime(type: .docker) {
-            return docker.snakemakeArguments
+        // Use the preferred container runtime (Apple Containerization or Docker)
+        if let runtime = await ContainerRuntimeFactory.createRuntime() {
+            let runtimeType = await runtime.runtimeType
+            return runtimeType.snakemakeArguments
         }
         return nil
     }

@@ -112,9 +112,9 @@ public class MainSplitViewController: NSSplitViewController {
         viewerItem.minimumThickness = viewerMinWidth
         viewerItem.holdingPriority = .defaultLow
 
-        // Inspector: collapsible, using regular viewController instead of inspector
-        // (inspectorWithViewController has issues with layout)
-        inspectorItem = NSSplitViewItem(viewController: inspectorController)
+        // Inspector: collapsible, using inspectorWithViewController for macOS 26 Liquid Glass support
+        // This provides proper system-standard inspector behavior including translucent materials
+        inspectorItem = NSSplitViewItem(inspectorWithViewController: inspectorController)
         inspectorItem.canCollapse = true
         inspectorItem.minimumThickness = inspectorMinWidth
         inspectorItem.maximumThickness = inspectorMaxWidth

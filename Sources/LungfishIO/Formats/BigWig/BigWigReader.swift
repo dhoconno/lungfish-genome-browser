@@ -338,10 +338,10 @@ public actor BigWigReader {
             throw BigWigError.invalidFormat(reason: "Invalid B+ tree magic")
         }
 
-        let blockSize = treeHeader.withUnsafeBytes { $0.load(fromByteOffset: 4, as: UInt32.self) }
+        _ = treeHeader.withUnsafeBytes { $0.load(fromByteOffset: 4, as: UInt32.self) }  // blockSize - reserved
         let keySize = treeHeader.withUnsafeBytes { $0.load(fromByteOffset: 8, as: UInt32.self) }
         let valSize = treeHeader.withUnsafeBytes { $0.load(fromByteOffset: 12, as: UInt32.self) }
-        let itemCount = treeHeader.withUnsafeBytes { $0.load(fromByteOffset: 16, as: UInt64.self) }
+        _ = treeHeader.withUnsafeBytes { $0.load(fromByteOffset: 16, as: UInt64.self) }  // itemCount - reserved
 
         var chromosomes: [String: BigWigChromosome] = [:]
         var idToName: [UInt32: String] = [:]
@@ -426,7 +426,7 @@ public actor BigWigReader {
         if let dataHeader = try fileHandle.read(upToCount: 24) {
             let dataChromId = dataHeader.withUnsafeBytes { $0.load(fromByteOffset: 0, as: UInt32.self) }
             let dataStart = dataHeader.withUnsafeBytes { $0.load(fromByteOffset: 4, as: UInt32.self) }
-            let dataEnd = dataHeader.withUnsafeBytes { $0.load(fromByteOffset: 8, as: UInt32.self) }
+            _ = dataHeader.withUnsafeBytes { $0.load(fromByteOffset: 8, as: UInt32.self) }  // dataEnd - reserved
             let itemStep = dataHeader.withUnsafeBytes { $0.load(fromByteOffset: 12, as: UInt32.self) }
             let itemSpan = dataHeader.withUnsafeBytes { $0.load(fromByteOffset: 16, as: UInt32.self) }
             let dataType = dataHeader[20]
@@ -454,7 +454,7 @@ public actor BigWigReader {
                     }
 
                 case 2: // variableStep
-                    var pos = dataStart
+                    _ = dataStart  // pos tracking not needed for current implementation
                     for _ in 0..<itemCount {
                         if let item = try fileHandle.read(upToCount: 8) {
                             let itemStart = item.withUnsafeBytes { $0.load(fromByteOffset: 0, as: UInt32.self) }

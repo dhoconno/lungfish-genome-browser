@@ -66,6 +66,28 @@ public enum ContainerRuntimeType: String, Sendable, CaseIterable, Codable {
             return OperatingSystemVersion(majorVersion: 12, minorVersion: 0, patchVersion: 0)
         }
     }
+
+    /// Returns the Nextflow profile name for this runtime.
+    ///
+    /// This is used with `-profile` when running Nextflow pipelines.
+    public var nextflowProfile: String {
+        switch self {
+        case .appleContainerization:
+            return "docker"  // Apple Containerization is Docker-compatible for Nextflow
+        case .docker:
+            return "docker"
+        }
+    }
+
+    /// Returns command-line arguments for Snakemake to use this runtime.
+    public var snakemakeArguments: [String] {
+        switch self {
+        case .appleContainerization:
+            return ["--use-docker"]  // Apple Containerization is Docker-compatible
+        case .docker:
+            return ["--use-docker"]
+        }
+    }
 }
 
 // MARK: - ContainerRuntimeProtocol

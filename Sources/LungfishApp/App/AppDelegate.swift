@@ -326,6 +326,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         mainWindowController = MainWindowController()
         mainWindowController?.showWindow(nil)
 
+        // Activate the app to ensure menu bar switches properly
+        NSApp.activate(ignoringOtherApps: true)
+
         // Close welcome window if open
         welcomeWindowController?.close()
         welcomeWindowController = nil
@@ -340,6 +343,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         // Create and show the main window without a project
         mainWindowController = MainWindowController()
         mainWindowController?.showWindow(nil)
+
+        // Activate the app to ensure menu bar switches properly
+        NSApp.activate(ignoringOtherApps: true)
 
         // Close welcome window if open
         welcomeWindowController?.close()
@@ -481,6 +487,15 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             mainWindowController?.showWindow(nil)
         }
         return true
+    }
+
+    public func applicationDidBecomeActive(_ notification: Notification) {
+        // Ensure the main window is key and the menu bar is properly updated
+        // This fixes the issue where the menu bar doesn't switch to the app's menu
+        // when returning from another application
+        if let mainWindow = mainWindowController?.window, mainWindow.isVisible {
+            mainWindow.makeKeyAndOrderFront(nil)
+        }
     }
 
     // MARK: - File Handling

@@ -314,7 +314,8 @@ public actor NextflowRunner: WorkflowRunner {
     /// Gets container arguments based on available runtime.
     private func getContainerArguments() async -> [String]? {
         if let runtime = await ContainerRuntimeFactory.createRuntime() {
-            return ["-profile", runtime.nextflowProfile]
+            let runtimeType = await runtime.runtimeType
+            return ["-profile", runtimeType.nextflowProfile]
         }
         return nil
     }
@@ -383,12 +384,14 @@ public actor NextflowRunner: WorkflowRunner {
     }
 }
 
-// MARK: - ContainerRuntimeFactory
+// MARK: - ContainerRuntimeFactory (Nextflow-specific)
 
-/// Factory for creating container runtimes.
+/// Factory for creating container runtimes for Nextflow workflows.
 ///
 /// Provides convenience methods for detecting and selecting container
-/// runtimes for workflow execution.
+/// runtimes for Nextflow workflow execution.
+///
+/// - Note: This is a Nextflow-specific wrapper around `NewContainerRuntimeFactory`.
 public enum ContainerRuntimeFactory {
 
     private static let logger = Logger(
@@ -398,40 +401,19 @@ public enum ContainerRuntimeFactory {
 
     /// Creates the preferred container runtime for the current system.
     ///
-    /// On macOS, prefers Docker if available and running.
-    /// On Linux/HPC, prefers Apptainer/Singularity.
+    /// On macOS 26+, prefers Apple Containerization if available.
+    /// Falls back to Docker if Apple Containerization is unavailable.
     ///
     /// - Returns: The detected runtime, or nil if none available
-    public static func createRuntime() async -> ContainerRuntime? {
-        logger.info("Detecting container runtime")
+    public static func createRuntime() async -> (any ContainerRuntimeProtocol)? {
+        logger.info("Detecting container runtime for Nextflow")
 
-        #if os(macOS)
-        // On macOS, Docker is preferred for desktop use
-        let runtimes = await ContainerRuntime.detect()
-
-        if let docker = runtimes.first(where: { $0.type == .docker && $0.isRunning }) {
-            logger.info("Using Docker container runtime")
-            return docker
+        // Use the new factory with automatic selection
+        if let runtime = await NewContainerRuntimeFactory.createRuntime() {
+            let displayName = await runtime.displayName
+            logger.info("Using \(displayName) container runtime")
+            return runtime
         }
-
-        if let apptainer = runtimes.first(where: { $0.type == .apptainer }) {
-            logger.info("Using Apptainer container runtime")
-            return apptainer
-        }
-        #else
-        // On Linux/HPC, Apptainer is preferred (rootless)
-        let runtimes = await ContainerRuntime.detect()
-
-        if let apptainer = runtimes.first(where: { $0.type == .apptainer }) {
-            logger.info("Using Apptainer container runtime")
-            return apptainer
-        }
-
-        if let docker = runtimes.first(where: { $0.type == .docker && $0.isRunning }) {
-            logger.info("Using Docker container runtime")
-            return docker
-        }
-        #endif
 
         logger.warning("No container runtime detected")
         return nil
@@ -441,10 +423,15 @@ public enum ContainerRuntimeFactory {
     ///
     /// - Parameter type: The type of runtime to create
     /// - Returns: The detected runtime, or nil if not available
-    public static func createRuntime(type: RuntimeType) async -> ContainerRuntime? {
+    public static func createRuntime(type: ContainerRuntimeType) async -> (any ContainerRuntimeProtocol)? {
         logger.info("Looking for \(type.displayName) runtime")
 
-        let runtimes = await ContainerRuntime.detect()
-        return runtimes.first { $0.type == type }
+        let runtimes = await NewContainerRuntimeFactory.availableRuntimes()
+        for runtime in runtimes {
+            if await runtime.runtimeType == type {
+                return runtime
+            }
+        }
+        return nil
     }
 }

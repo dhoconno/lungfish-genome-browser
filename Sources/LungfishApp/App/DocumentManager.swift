@@ -38,7 +38,7 @@ public class LoadedDocument: ObservableObject, Identifiable {
 }
 
 /// Types of documents the app can handle.
-public enum DocumentType: String, CaseIterable {
+public enum DocumentType: String, CaseIterable, Sendable {
     case fasta
     case fastq
     case genbank

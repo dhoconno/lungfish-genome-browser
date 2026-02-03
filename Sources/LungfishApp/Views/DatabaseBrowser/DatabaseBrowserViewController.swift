@@ -510,7 +510,6 @@ public class DatabaseBrowserViewModel: ObservableObject {
 
                         // Get summaries for the results
                         guard !virusResult.ids.isEmpty else {
-                            let empty = SearchResults(totalCount: virusResult.totalCount, records: [], hasMore: false)
                             performOnMainRunLoop { [weak self] in
                                 self?.objectWillChange.send()
                                 self?.results = []
@@ -552,7 +551,6 @@ public class DatabaseBrowserViewModel: ObservableObject {
                         logger.info("performSearch: Genome search returned \(genomeResult.totalCount) total, \(genomeResult.ids.count) IDs")
 
                         guard !genomeResult.ids.isEmpty else {
-                            let empty = SearchResults(totalCount: genomeResult.totalCount, records: [], hasMore: false)
                             performOnMainRunLoop { [weak self] in
                                 self?.objectWillChange.send()
                                 self?.results = []
@@ -590,9 +588,28 @@ public class DatabaseBrowserViewModel: ObservableObject {
                         self.objectWillChange.send()
                         self.searchPhase = .loadingDetails
                     }
-                    logger.info("performSearch: Calling ENA search")
-                    searchResults = try await ena.search(query)
-                    logger.info("performSearch: ENA returned \(searchResults.totalCount) total, \(searchResults.records.count) records")
+                    // Use searchReads() for SRA run data (SRR accessions) instead of search() which is for sequences
+                    logger.info("performSearch: Calling ENA searchReads for SRA data")
+                    let readRecords = try await ena.searchReads(term: query.term, limit: query.limit, offset: query.offset)
+                    // Convert ENAReadRecord to SearchResultRecord
+                    let records = readRecords.map { record -> SearchResultRecord in
+                        SearchResultRecord(
+                            id: record.runAccession,
+                            accession: record.runAccession,
+                            title: record.experimentTitle ?? "\(record.runAccession) - \(record.libraryStrategy ?? "Unknown") \(record.libraryLayout ?? "")",
+                            organism: nil,  // ENAReadRecord doesn't have organism
+                            length: record.baseCount,
+                            date: record.firstPublic,
+                            source: .ena
+                        )
+                    }
+                    searchResults = SearchResults(
+                        totalCount: records.count,  // ENA searchReads doesn't return total count
+                        records: records,
+                        hasMore: records.count >= query.limit,
+                        nextCursor: records.count >= query.limit ? String(query.offset + records.count) : nil
+                    )
+                    logger.info("performSearch: ENA searchReads returned \(records.count) SRA runs")
 
                 case .pathoplexus:
                     performOnMainRunLoop { [weak self] in
@@ -755,37 +772,68 @@ public class DatabaseBrowserViewModel: ObservableObject {
                     try genBankContent.write(to: fileURL, atomically: true, encoding: .utf8)
 
                 case .ena:
-                    // ENA: fetch and save as FASTA (ENA returns FASTA by default)
-                    let dbRecord = try await ena.fetch(accession: accession)
+                    // Check if this is an SRA run accession (SRR, ERR, DRR)
+                    let isSRAAccession = accession.hasPrefix("SRR") || accession.hasPrefix("ERR") || accession.hasPrefix("DRR")
 
-                    // Update UI: saving
-                    performOnMainRunLoop { [weak self] in
-                        self?.objectWillChange.send()
-                        self?.downloadProgress = 0.7
-                        self?._statusMessage = "Saving \(accession)..."
+                    if isSRAAccession {
+                        // Download FASTQ files via ENA
+                        performOnMainRunLoop { [weak self] in
+                            self?.objectWillChange.send()
+                            self?.downloadProgress = 0.3
+                            self?._statusMessage = "Downloading FASTQ for \(accession)..."
+                        }
+
+                        let sraService = SRAService()
+                        let fastqFiles = try await sraService.downloadFASTQFromENA(
+                            accession: accession,
+                            progress: { progress in
+                                performOnMainRunLoop { [weak self] in
+                                    // Scale progress: 0.3 to 0.9 for download
+                                    self?.objectWillChange.send()
+                                    self?.downloadProgress = 0.3 + (progress * 0.6)
+                                }
+                            }
+                        )
+
+                        guard let firstFile = fastqFiles.first else {
+                            throw DatabaseServiceError.parseError(message: "No FASTQ files downloaded for \(accession)")
+                        }
+
+                        fileURL = firstFile
+                        logger.info("Downloaded \(fastqFiles.count) FASTQ file(s) for \(accession)")
+                    } else {
+                        // ENA sequence: fetch and save as FASTA
+                        let dbRecord = try await ena.fetch(accession: accession)
+
+                        // Update UI: saving
+                        performOnMainRunLoop { [weak self] in
+                            self?.objectWillChange.send()
+                            self?.downloadProgress = 0.7
+                            self?._statusMessage = "Saving \(accession)..."
+                        }
+
+                        // Save to temporary file as FASTA
+                        let tempDir = FileManager.default.temporaryDirectory
+                        let filename = "\(dbRecord.accession).fasta"
+                        fileURL = tempDir.appendingPathComponent(filename)
+
+                        var fastaContent = ">\(dbRecord.accession)"
+                        if !dbRecord.title.isEmpty {
+                            fastaContent += " \(dbRecord.title)"
+                        }
+                        fastaContent += "\n"
+
+                        // Format sequence in 80-character lines
+                        let sequence = dbRecord.sequence
+                        var index = sequence.startIndex
+                        while index < sequence.endIndex {
+                            let endIndex = sequence.index(index, offsetBy: 80, limitedBy: sequence.endIndex) ?? sequence.endIndex
+                            fastaContent += String(sequence[index..<endIndex]) + "\n"
+                            index = endIndex
+                        }
+
+                        try fastaContent.write(to: fileURL, atomically: true, encoding: .utf8)
                     }
-
-                    // Save to temporary file as FASTA
-                    let tempDir = FileManager.default.temporaryDirectory
-                    let filename = "\(dbRecord.accession).fasta"
-                    fileURL = tempDir.appendingPathComponent(filename)
-
-                    var fastaContent = ">\(dbRecord.accession)"
-                    if !dbRecord.title.isEmpty {
-                        fastaContent += " \(dbRecord.title)"
-                    }
-                    fastaContent += "\n"
-
-                    // Format sequence in 80-character lines
-                    let sequence = dbRecord.sequence
-                    var index = sequence.startIndex
-                    while index < sequence.endIndex {
-                        let endIndex = sequence.index(index, offsetBy: 80, limitedBy: sequence.endIndex) ?? sequence.endIndex
-                        fastaContent += String(sequence[index..<endIndex]) + "\n"
-                        index = endIndex
-                    }
-
-                    try fastaContent.write(to: fileURL, atomically: true, encoding: .utf8)
 
                 default:
                     throw DatabaseServiceError.invalidQuery(reason: "Unsupported database: \(currentSource)")
@@ -866,7 +914,7 @@ public class DatabaseBrowserViewModel: ObservableObject {
         let ena = enaService
         let currentSource = source
         let format = downloadFormat
-        let searchType = ncbiSearchType
+        _ = ncbiSearchType  // searchType - reserved for future format-specific download logic
 
         Task.detached { [weak self] in
             var downloadedURLs: [URL] = []

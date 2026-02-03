@@ -336,7 +336,7 @@ extension SequenceViewerView {
         savePanel.nameFieldStringValue = "\(seq.name).fasta"
         savePanel.title = "Export Sequence"
 
-        savePanel.begin { [weak self] response in
+        savePanel.begin { response in
             guard response == .OK, let url = savePanel.url else { return }
 
             // Format as FASTA

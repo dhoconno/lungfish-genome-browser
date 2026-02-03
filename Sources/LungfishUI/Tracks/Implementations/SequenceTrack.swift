@@ -338,7 +338,7 @@ public final class SequenceTrack: Track {
 
         // Calculate bar width (1 pixel per bar minimum, aggregate bases as needed)
         let barsPerPixel = max(1, Int(frame.scale))
-        let barWidth: CGFloat = 1.0 / frame.scale * CGFloat(barsPerPixel)
+        _ = 1.0 / frame.scale * CGFloat(barsPerPixel)  // barWidth - computed but not needed
 
         // Rendering area
         let forwardY = showComplementStrand ? rect.minY + 2 : rect.minY + 2
@@ -486,7 +486,7 @@ public final class SequenceTrack: Track {
         let graphics = context.graphics
 
         // Draw gradient
-        let gradientRect = CGRect(x: legendX, y: legendY, width: legendWidth, height: legendHeight)
+        _ = CGRect(x: legendX, y: legendY, width: legendWidth, height: legendHeight)  // gradientRect - reserved for border
         for i in 0..<Int(legendWidth) {
             let factor = CGFloat(i) / legendWidth
             let color = interpolateColor(from: Self.gcLowColor, to: Self.gcHighColor, factor: factor)

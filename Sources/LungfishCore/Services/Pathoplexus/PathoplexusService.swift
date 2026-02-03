@@ -95,7 +95,7 @@ public actor PathoplexusService: DatabaseService {
         }
 
         // Get sequence
-        var sequenceFilters = filters
+        let sequenceFilters = filters
         let sequences = try await fetchUnalignedSequencesRaw(organism: organism, filters: sequenceFilters)
 
         // Parse FASTA
@@ -263,7 +263,7 @@ public actor PathoplexusService: DatabaseService {
         aligned: Bool = false
     ) async throws -> AsyncThrowingStream<FASTARecord, Error> {
         let endpoint = aligned ? "alignedNucleotideSequences" : "unalignedNucleotideSequences"
-        var url = buildLAPISURL(organism: organism, endpoint: endpoint, filters: filters, segment: segment)
+        let url = buildLAPISURL(organism: organism, endpoint: endpoint, filters: filters, segment: segment)
 
         return AsyncThrowingStream { continuation in
             Task {

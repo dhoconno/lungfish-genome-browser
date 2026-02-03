@@ -202,7 +202,6 @@ public final class FASTQReader: Sendable {
                     var lineNumber = 0
                     var currentHeader: String?
                     var currentSequence: String?
-                    var currentSeparator: String?
                     var nonEmptyLineCount = 0
 
                     // Use auto-decompressing lines for gzip support
@@ -239,7 +238,7 @@ public final class FASTQReader: Sendable {
                             guard line.hasPrefix("+") else {
                                 throw FASTQError.invalidSeparator(line: lineNumber, content: line)
                             }
-                            currentSeparator = line
+                            // Separator validated, content not needed
 
                         case 3:
                             // Quality line
@@ -279,7 +278,6 @@ public final class FASTQReader: Sendable {
                             // Reset for next record
                             currentHeader = nil
                             currentSequence = nil
-                            currentSeparator = nil
 
                         default:
                             break

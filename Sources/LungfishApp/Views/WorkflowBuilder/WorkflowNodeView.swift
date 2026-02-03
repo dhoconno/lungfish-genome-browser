@@ -413,7 +413,7 @@ public class WorkflowNodeView: NSView {
         let point = convert(event.locationInWindow, from: nil)
 
         // Check if clicking on a port
-        if let portId = portAtPoint(point) {
+        if portAtPoint(point) != nil {
             // Let the canvas handle port clicks for connection drawing
             super.mouseDown(with: event)
             return

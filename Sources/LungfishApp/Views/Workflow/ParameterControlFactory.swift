@@ -535,12 +535,12 @@ public enum ParameterControlFactory {
 
 // MARK: - Associated Object Keys
 
-private struct AssociatedKeys {
-    static var textField = "textField"
-    static var stepper = "stepper"
-    static var pathControl = "pathControl"
-    static var isDirectory = "isDirectory"
-    static var filePatterns = "filePatterns"
+private enum AssociatedKeys {
+    static var textField: UInt8 = 0
+    static var stepper: UInt8 = 0
+    static var pathControl: UInt8 = 0
+    static var isDirectory: UInt8 = 0
+    static var filePatterns: UInt8 = 0
 }
 
 // MARK: - NSView Associated Object Extension

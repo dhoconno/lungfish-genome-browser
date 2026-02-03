@@ -139,12 +139,12 @@ public actor SRAService {
         let librarySourceIdx = 14
         let libraryLayoutIdx = 15
         let platformIdx = 18
-        let modelIdx = 19
+        _ = 19  // modelIdx - reserved for future use
         let studyIdx = 20
         let bioprojectIdx = 21
         let sampleIdx = 24
         let biosampleIdx = 25
-        let taxIdIdx = 27
+        _ = 27  // taxIdIdx - reserved for future use
         let scientificNameIdx = 28
 
         var runs: [SRARunInfo] = []
