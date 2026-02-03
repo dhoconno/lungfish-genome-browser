@@ -347,19 +347,20 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         welcomeWindowController = nil
     }
 
-    /// Loads project folder contents asynchronously without blocking main thread
+    /// Loads project folder contents asynchronously without blocking main thread.
+    ///
+    /// Note: We intentionally do NOT show a loading spinner during app launch.
+    /// The viewer shows its default placeholder state until content actually loads.
+    /// This follows professional genome browser patterns (IGV, UCSC) and eliminates
+    /// race conditions that caused the spinner to persist indefinitely.
     private func loadProjectFolderAsync(_ url: URL) {
-        let viewerController = mainWindowController?.mainSplitViewController?.viewerController
-        let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController
-
-        viewerController?.showProgress("Loading project folder...")
-
-        // Use Task to handle async work without blocking
         Task { @MainActor [weak self] in
-            do {
-                let documents = try await self?.loadProjectFolderContents(url) ?? []
+            guard let self = self else { return }
+            let viewerController = self.mainWindowController?.mainSplitViewController?.viewerController
+            let sidebarController = self.mainWindowController?.mainSplitViewController?.sidebarController
 
-                viewerController?.hideProgress()
+            do {
+                let documents = try await self.loadProjectFolderContents(url)
 
                 if !documents.isEmpty {
                     sidebarController?.addProjectFolder(url, documents: documents)
@@ -367,10 +368,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     if let firstDoc = documents.first {
                         viewerController?.displayDocument(firstDoc)
                     }
+                } else {
+                    // Empty project - show clear empty state
+                    viewerController?.showNoSequenceSelected()
                 }
             } catch {
-                viewerController?.hideProgress()
-
                 let alert = NSAlert()
                 alert.messageText = "Failed to Load Project"
                 alert.informativeText = error.localizedDescription
@@ -432,17 +434,15 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         return loadedDocuments
     }
 
-    /// Internal method for testing - loads a project folder without dialog
+    /// Internal method for testing - loads a project folder without dialog.
+    ///
+    /// Note: No loading spinner shown - follows same pattern as loadProjectFolderAsync().
     private func loadProjectFolderForTesting(_ url: URL) async {
         let viewerController = mainWindowController?.mainSplitViewController?.viewerController
         let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController
 
-        viewerController?.showProgress("Loading project folder...")
-
         do {
             let documents = try await DocumentManager.shared.loadProjectFolder(at: url)
-
-            viewerController?.hideProgress()
 
             if !documents.isEmpty {
                 sidebarController?.addProjectFolder(url, documents: documents)
@@ -450,9 +450,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 if let firstDoc = documents.first {
                     viewerController?.displayDocument(firstDoc)
                 }
+            } else {
+                // Empty project - show clear empty state
+                viewerController?.showNoSequenceSelected()
             }
         } catch {
-            viewerController?.hideProgress()
+            // Error handling - no spinner to hide
         }
     }
 

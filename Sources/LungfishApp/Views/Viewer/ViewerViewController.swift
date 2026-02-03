@@ -403,6 +403,46 @@ public class ViewerViewController: NSViewController {
         logger.info("clearViewer: Viewer cleared")
     }
 
+    /// Shows the "No sequence selected" state.
+    ///
+    /// Call this when a project is open but has no sequences, or when no sequence is selected.
+    /// This differs from clearViewer() in the message shown - this indicates an active project
+    /// context where the user hasn't selected a sequence yet.
+    public func showNoSequenceSelected() {
+        logger.info("showNoSequenceSelected: Setting empty state with 'No sequence selected'")
+
+        // First ensure any progress overlay is hidden
+        hideProgress()
+
+        // Clear current state
+        currentDocument = nil
+        referenceFrame = nil
+
+        // Clear the viewer view
+        viewerView.clearSequences()
+        viewerView.setAnnotations([])
+
+        // Clear header
+        headerView.setTrackNames([])
+        if let emptyState = viewerView.multiSequenceState {
+            emptyState.clear()
+        }
+        headerView.setStackedSequences([])
+
+        // Clear ruler
+        enhancedRulerView.referenceFrame = nil
+
+        // Update status bar with the specific message
+        statusBar.update(position: "No sequence selected", selection: nil, scale: 1.0)
+
+        // Trigger redraw
+        viewerView.needsDisplay = true
+        enhancedRulerView.needsDisplay = true
+        headerView.needsDisplay = true
+
+        logger.info("showNoSequenceSelected: Empty state set")
+    }
+
     // MARK: - Document Display
 
     /// Displays a loaded document in the viewer.
@@ -874,10 +914,18 @@ public class ViewerViewController: NSViewController {
 // MARK: - ProgressOverlayView
 
 /// A translucent overlay showing a spinner and message during loading.
+///
+/// Includes a safety timeout that auto-hides the overlay after 30 seconds
+/// to prevent indefinitely stuck progress indicators.
 public class ProgressOverlayView: NSView {
 
     private var spinner: NSProgressIndicator!
     private var messageLabel: NSTextField!
+    private var timeoutTimer: Timer?
+
+    /// Default timeout in seconds before auto-hiding the progress overlay.
+    /// This prevents stuck spinners from indefinite operations.
+    private let defaultTimeout: TimeInterval = 30.0
 
     public var message: String = "Loading..." {
         didSet {
@@ -925,12 +973,35 @@ public class ProgressOverlayView: NSView {
         ])
     }
 
-    public func startAnimating() {
+    /// Starts the spinner animation with an optional timeout.
+    ///
+    /// If the overlay isn't hidden before the timeout, it will auto-hide as a safety measure.
+    /// - Parameter timeout: Optional custom timeout. Defaults to 30 seconds.
+    public func startAnimating(timeout: TimeInterval? = nil) {
         spinner.startAnimation(nil)
+
+        // Cancel any existing timeout
+        timeoutTimer?.invalidate()
+
+        // Set new timeout as safety net
+        let timeoutInterval = timeout ?? defaultTimeout
+        timeoutTimer = Timer.scheduledTimer(withTimeInterval: timeoutInterval, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            print("[ProgressOverlayView] Timeout reached after \(timeoutInterval)s, auto-hiding")
+            self.stopAnimating()
+            self.isHidden = true
+        }
     }
 
+    /// Stops the spinner animation and cancels any pending timeout.
     public func stopAnimating() {
         spinner.stopAnimation(nil)
+        timeoutTimer?.invalidate()
+        timeoutTimer = nil
+    }
+
+    deinit {
+        timeoutTimer?.invalidate()
     }
 }
 
@@ -1210,13 +1281,14 @@ public class SequenceViewerView: NSView {
     }
 
     private func drawPlaceholder(context: CGContext) {
-        let message = "Sequence Viewer\n\nDrop files here or use File > Open"
+        let message = "No sequence selected\n\nSelect a sequence from the sidebar\nor drag files here to open"
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.alignment = .center
+        paragraphStyle.lineSpacing = 4
 
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 16),
-            .foregroundColor: NSColor.secondaryLabelColor,
+            .font: NSFont.systemFont(ofSize: 14, weight: .regular),
+            .foregroundColor: NSColor.tertiaryLabelColor,
             .paragraphStyle: paragraphStyle,
         ]
 
