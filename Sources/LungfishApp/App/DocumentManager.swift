@@ -428,15 +428,19 @@ public class DocumentManager: ObservableObject {
             throw DocumentLoadError.accessDenied(folderURL)
         }
 
-        var filesToLoad: [URL] = []
-
-        for case let fileURL as URL in enumerator {
-            // Check if it's a regular file with supported extension
-            if let type = DocumentType.detect(from: fileURL) {
-                logger.debug("loadProjectFolder: Found supported file \(fileURL.lastPathComponent, privacy: .public) (\(type.rawValue, privacy: .public))")
-                filesToLoad.append(fileURL)
+        // Collect files synchronously to avoid async iterator issues
+        // The enumerator's makeIterator() is unavailable in async contexts
+        let filesToLoad: [URL] = {
+            var files: [URL] = []
+            while let fileURL = enumerator.nextObject() as? URL {
+                // Check if it's a regular file with supported extension
+                if let type = DocumentType.detect(from: fileURL) {
+                    logger.debug("loadProjectFolder: Found supported file \(fileURL.lastPathComponent, privacy: .public) (\(type.rawValue, privacy: .public))")
+                    files.append(fileURL)
+                }
             }
-        }
+            return files
+        }()
 
         logger.info("loadProjectFolder: Found \(filesToLoad.count) supported files")
 

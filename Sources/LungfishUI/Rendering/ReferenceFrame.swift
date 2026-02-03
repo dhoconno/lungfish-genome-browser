@@ -375,21 +375,36 @@ public final class ReferenceFrame {
 // MARK: - Equatable
 
 extension ReferenceFrame: Equatable {
-    public static func == (lhs: ReferenceFrame, rhs: ReferenceFrame) -> Bool {
-        lhs.chromosome == rhs.chromosome &&
-        lhs.origin == rhs.origin &&
-        lhs.scale == rhs.scale &&
-        lhs.widthInPixels == rhs.widthInPixels
+    /// Compares two reference frames for equality.
+    ///
+    /// Uses `MainActor.assumeIsolated` because Equatable conformance requires
+    /// a nonisolated static function, but ReferenceFrame is @MainActor isolated.
+    /// This is safe because ReferenceFrame instances can only be accessed from
+    /// the main actor, so any code calling `==` must already be on MainActor.
+    public nonisolated static func == (lhs: ReferenceFrame, rhs: ReferenceFrame) -> Bool {
+        MainActor.assumeIsolated {
+            lhs.chromosome == rhs.chromosome &&
+            lhs.origin == rhs.origin &&
+            lhs.scale == rhs.scale &&
+            lhs.widthInPixels == rhs.widthInPixels
+        }
     }
 }
 
 // MARK: - CustomStringConvertible
 
 extension ReferenceFrame: CustomStringConvertible {
-    public var description: String {
-        let startStr = formatPosition(Int(origin))
-        let endStr = formatPosition(Int(end))
-        return "\(chromosome):\(startStr)-\(endStr) (\(String(format: "%.2f", scale)) bp/px, zoom \(zoom))"
+    /// Returns a description of the reference frame.
+    ///
+    /// Uses `MainActor.assumeIsolated` because `description` is typically called
+    /// from contexts that already have access to the ReferenceFrame, which
+    /// requires MainActor isolation.
+    public nonisolated var description: String {
+        MainActor.assumeIsolated {
+            let startStr = formatPosition(Int(origin))
+            let endStr = formatPosition(Int(end))
+            return "\(chromosome):\(startStr)-\(endStr) (\(String(format: "%.2f", scale)) bp/px, zoom \(zoom))"
+        }
     }
 
     private func formatPosition(_ position: Int) -> String {

@@ -338,25 +338,25 @@ public class MainSplitViewController: NSSplitViewController {
 
         // If we have documents to load, do it asynchronously
         if needsLoading {
-            Task.detached(priority: .userInitiated) {
-                let totalToLoad = placeholderDocuments.count + unregisteredURLs.count
-                await MainActor.run {
-                    self.viewerController.showProgress("Loading \(totalToLoad) documents...")
-                }
+            // Use a regular Task (not detached) to maintain MainActor isolation
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
 
+                let totalToLoad = placeholderDocuments.count + unregisteredURLs.count
+                self.viewerController.showProgress("Loading \(totalToLoad) documents...")
+
+                // Start with already-loaded documents
                 var loadedDocs = fullyLoadedDocuments
 
                 // Load placeholder documents via DocumentLoader
                 for (existingDoc, url, docType) in placeholderDocuments {
                     do {
                         let result = try await DocumentLoader.loadFile(at: url, type: docType)
-                        await MainActor.run {
-                            existingDoc.sequences = result.sequences
-                            existingDoc.annotations = result.annotations
-                            loadedDocs.append(existingDoc)
-                            self.sidebarController.refreshItem(for: url)
-                            logger.debug("handleMultipleItemsSelected: Lazy loaded '\(existingDoc.name, privacy: .public)'")
-                        }
+                        existingDoc.sequences = result.sequences
+                        existingDoc.annotations = result.annotations
+                        loadedDocs.append(existingDoc)
+                        self.sidebarController.refreshItem(for: url)
+                        logger.debug("handleMultipleItemsSelected: Lazy loaded '\(existingDoc.name, privacy: .public)'")
                     } catch {
                         logger.error("handleMultipleItemsSelected: Failed to lazy load \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
                     }
@@ -366,23 +366,19 @@ public class MainSplitViewController: NSSplitViewController {
                 for (url, _) in unregisteredURLs {
                     do {
                         let document = try await DocumentManager.shared.loadDocument(at: url)
-                        await MainActor.run {
-                            loadedDocs.append(document)
-                            logger.debug("handleMultipleItemsSelected: Loaded '\(document.name, privacy: .public)'")
-                        }
+                        loadedDocs.append(document)
+                        logger.debug("handleMultipleItemsSelected: Loaded '\(document.name, privacy: .public)'")
                     } catch {
                         logger.error("handleMultipleItemsSelected: Failed to load \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
                     }
                 }
 
-                await MainActor.run {
-                    self.viewerController.hideProgress()
+                self.viewerController.hideProgress()
 
-                    // Display all documents with multi-sequence stacking
-                    if !loadedDocs.isEmpty {
-                        self.viewerController.displayDocuments(loadedDocs)
-                        logger.info("handleMultipleItemsSelected: Displayed \(loadedDocs.count) documents with multi-sequence stacking")
-                    }
+                // Display all documents with multi-sequence stacking
+                if !loadedDocs.isEmpty {
+                    self.viewerController.displayDocuments(loadedDocs)
+                    logger.info("handleMultipleItemsSelected: Displayed \(loadedDocs.count) documents with multi-sequence stacking")
                 }
             }
         } else if !fullyLoadedDocuments.isEmpty {
@@ -488,8 +484,10 @@ public class MainSplitViewController: NSSplitViewController {
                 context.allowsImplicitAnimation = true
                 self.splitView.animator().setPosition(targetPosition, ofDividerAt: 1)
             } completionHandler: { [weak self] in
-                self?.savePanelState()
-                logger.info("toggleInspector: expand complete")
+                Task { @MainActor in
+                    self?.savePanelState()
+                    logger.info("toggleInspector: expand complete")
+                }
             }
         } else {
             // Collapsing: animate to edge then set collapsed
@@ -500,9 +498,11 @@ public class MainSplitViewController: NSSplitViewController {
                 context.allowsImplicitAnimation = true
                 self.splitView.animator().setPosition(totalWidth, ofDividerAt: 1)
             } completionHandler: { [weak self] in
-                self?.inspectorItem.isCollapsed = true
-                self?.savePanelState()
-                logger.info("toggleInspector: collapse complete")
+                Task { @MainActor in
+                    self?.inspectorItem.isCollapsed = true
+                    self?.savePanelState()
+                    logger.info("toggleInspector: collapse complete")
+                }
             }
         }
     }

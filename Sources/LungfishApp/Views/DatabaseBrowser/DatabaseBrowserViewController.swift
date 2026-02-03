@@ -909,25 +909,26 @@ public class DatabaseBrowserViewModel: ObservableObject {
         let totalCount = recordsToDownload.count
         _statusMessage = "Downloading \(totalCount) file\(totalCount == 1 ? "" : "s")..."
 
-        // Capture services and values for detached task
+        // Capture services and values for task
         let ncbi = ncbiService
         let ena = enaService
         let currentSource = source
         let format = downloadFormat
         _ = ncbiSearchType  // searchType - reserved for future format-specific download logic
 
-        Task.detached { [weak self] in
+        // Use MainActor Task to maintain proper isolation
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+
             var downloadedURLs: [URL] = []
             var failedCount = 0
 
             for (index, record) in recordsToDownload.enumerated() {
                 // Update progress
                 let progressFraction = Double(index) / Double(totalCount)
-                performOnMainRunLoop { [weak self] in
-                    self?.objectWillChange.send()
-                    self?.downloadProgress = progressFraction
-                    self?._statusMessage = "Downloading \(record.accession) (\(index + 1)/\(totalCount))..."
-                }
+                self.objectWillChange.send()
+                self.downloadProgress = progressFraction
+                self._statusMessage = "Downloading \(record.accession) (\(index + 1)/\(totalCount))..."
 
                 do {
                     let fileURL: URL
@@ -984,25 +985,22 @@ public class DatabaseBrowserViewModel: ObservableObject {
             }
 
             // Complete
-            performOnMainRunLoop { [weak self] in
-                guard let self = self else { return }
-                self.objectWillChange.send()
-                self.downloadProgress = 1.0
-                self.isDownloading = false
+            self.objectWillChange.send()
+            self.downloadProgress = 1.0
+            self.isDownloading = false
 
-                if failedCount > 0 {
-                    self._statusMessage = "Downloaded \(downloadedURLs.count) files (\(failedCount) failed)"
-                } else {
-                    self._statusMessage = "Downloaded \(downloadedURLs.count) file\(downloadedURLs.count == 1 ? "" : "s")"
-                }
+            if failedCount > 0 {
+                self._statusMessage = "Downloaded \(downloadedURLs.count) files (\(failedCount) failed)"
+            } else {
+                self._statusMessage = "Downloaded \(downloadedURLs.count) file\(downloadedURLs.count == 1 ? "" : "s")"
+            }
 
-                // Notify completion with all downloaded URLs
-                if let multiCallback = self.onMultipleDownloadsComplete {
-                    multiCallback(downloadedURLs)
-                } else if let singleCallback = self.onDownloadComplete, let firstURL = downloadedURLs.first {
-                    // Fall back to single callback for first file
-                    singleCallback(firstURL)
-                }
+            // Notify completion with all downloaded URLs
+            if let multiCallback = self.onMultipleDownloadsComplete {
+                multiCallback(downloadedURLs)
+            } else if let singleCallback = self.onDownloadComplete, let firstURL = downloadedURLs.first {
+                // Fall back to single callback for first file
+                singleCallback(firstURL)
             }
         }
     }

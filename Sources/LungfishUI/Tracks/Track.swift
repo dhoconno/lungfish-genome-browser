@@ -24,6 +24,7 @@ import LungfishCore
 ///
 /// ## Example Implementation
 /// ```swift
+/// @MainActor
 /// class FeatureTrack: Track {
 ///     func render(context: RenderContext, rect: CGRect) {
 ///         for feature in visibleFeatures {
@@ -38,7 +39,11 @@ import LungfishCore
 ///     }
 /// }
 /// ```
-public protocol Track: AnyObject, Identifiable, Sendable where ID == UUID {
+///
+/// - Note: Tracks are inherently UI-bound and must be accessed on the main actor.
+///   Use `TrackDataSource` (which is `Sendable`) for background data loading.
+@MainActor
+public protocol Track: AnyObject, Identifiable where ID == UUID {
 
     // MARK: - Identity
 

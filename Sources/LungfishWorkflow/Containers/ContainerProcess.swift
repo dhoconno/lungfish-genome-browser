@@ -455,28 +455,31 @@ extension ContainerProcess {
     public func run() async throws -> ProcessOutput {
         try await start()
 
-        var stdoutData = Data()
-        var stderrData = Data()
-
-        // Collect output concurrently
-        async let stdoutTask: () = {
+        // Each async let has its own isolated mutable state - no sharing between closures.
+        // This pattern is Swift 6 concurrency safe because each closure owns its own
+        // mutable `accumulated` variable and returns the final value.
+        async let stdoutResult: Data = {
+            var accumulated = Data()
             for await chunk in self.stdout {
-                stdoutData.append(chunk)
+                accumulated.append(chunk)
             }
+            return accumulated
         }()
 
-        async let stderrTask: () = {
+        async let stderrResult: Data = {
+            var accumulated = Data()
             for await chunk in self.stderr {
-                stderrData.append(chunk)
+                accumulated.append(chunk)
             }
+            return accumulated
         }()
 
-        // Wait for output collection
-        _ = await (stdoutTask, stderrTask)
+        // Wait for output collection to complete
+        let (collectedStdout, collectedStderr) = await (stdoutResult, stderrResult)
 
-        // Wait for process
+        // Wait for process exit
         let exitCode = try await wait()
 
-        return ProcessOutput(stdout: stdoutData, stderr: stderrData, exitCode: exitCode)
+        return ProcessOutput(stdout: collectedStdout, stderr: collectedStderr, exitCode: exitCode)
     }
 }

@@ -198,11 +198,14 @@ public actor WorkflowStateMachine {
     /// History of state transitions.
     private var _transitionHistory: [StateTransition] = []
 
-    /// Stream continuation for broadcasting state changes.
-    private var stateChangeContinuation: AsyncStream<StateTransition>.Continuation?
+    /// Lazy stream state - initialized on first access to stateChanges.
+    private var _streamState: StreamState?
 
-    /// The async stream of state changes.
-    public private(set) var stateChanges: AsyncStream<StateTransition>!
+    /// Internal struct to hold stream and continuation together.
+    private struct StreamState {
+        let stream: AsyncStream<StateTransition>
+        let continuation: AsyncStream<StateTransition>.Continuation
+    }
 
     /// Valid state transitions map.
     private static let validTransitions: [WorkflowStatus: Set<WorkflowStatus>] = [
@@ -222,18 +225,33 @@ public actor WorkflowStateMachine {
     /// - Parameter initialStatus: The initial status (defaults to .pending)
     public init(initialStatus: WorkflowStatus = .pending) {
         self._currentStatus = initialStatus
-        self.stateChanges = AsyncStream { [weak self] continuation in
-            Task { [weak self] in
-                await self?.setStateContinuation(continuation)
-            }
-        }
-
+        // Stream is lazily initialized on first access to stateChanges
         logger.debug("WorkflowStateMachine initialized with status: \(initialStatus.rawValue)")
     }
 
-    /// Sets the state change continuation.
-    private func setStateContinuation(_ continuation: AsyncStream<StateTransition>.Continuation) {
-        self.stateChangeContinuation = continuation
+    /// Ensures the stream is initialized and returns the stream state.
+    private func ensureStreamInitialized() -> StreamState {
+        if let state = _streamState {
+            return state
+        }
+
+        let (stream, continuation) = AsyncStream<StateTransition>.makeStream()
+        let state = StreamState(stream: stream, continuation: continuation)
+        _streamState = state
+        return state
+    }
+
+    /// The async stream of state changes.
+    ///
+    /// Access this property to observe state transitions. The stream is
+    /// lazily initialized on first access.
+    public var stateChanges: AsyncStream<StateTransition> {
+        ensureStreamInitialized().stream
+    }
+
+    /// The continuation for emitting state changes.
+    private var stateChangeContinuation: AsyncStream<StateTransition>.Continuation? {
+        _streamState?.continuation
     }
 
     // MARK: - Public API
@@ -357,8 +375,8 @@ public actor WorkflowStateMachine {
     /// Call this when the workflow is being deallocated to clean up resources.
     public func cancel() {
         logger.debug("Cancelling state change stream")
-        stateChangeContinuation?.finish()
-        stateChangeContinuation = nil
+        _streamState?.continuation.finish()
+        _streamState = nil
     }
 
     // MARK: - Convenience Methods
