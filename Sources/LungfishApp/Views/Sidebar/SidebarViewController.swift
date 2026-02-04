@@ -1781,14 +1781,29 @@ extension SidebarViewController: NSMenuDelegate {
         }
 
         let items = selectedItems()
+        
+        // Check if clicked on empty space (no row)
+        let clickedOnEmptySpace = clickedRow < 0
 
-        guard !items.isEmpty else {
-            // No selection - show minimal menu
+        guard !items.isEmpty || clickedOnEmptySpace else {
+            // No selection and not on empty space - show minimal menu
             let noSelectionItem = NSMenuItem(title: "No Selection", action: nil, keyEquivalent: "")
             noSelectionItem.isEnabled = false
             menu.addItem(noSelectionItem)
             return
         }
+        
+        // If clicked on empty space with a project open, show New Folder option
+        if clickedOnEmptySpace && projectURL != nil {
+            let newFolderItem = NSMenuItem(title: "New Folder", action: #selector(contextMenuNewFolder(_:)), keyEquivalent: "N")
+            newFolderItem.keyEquivalentModifierMask = [.command, .shift]
+            newFolderItem.target = self
+            menu.addItem(newFolderItem)
+            return
+        }
+        
+        // If no items selected (shouldn't happen at this point, but safety check)
+        guard !items.isEmpty else { return }
 
         // Check what types we have selected
         let hasFiles = items.contains { $0.type != .group && $0.type != .project && $0.type != .folder }
@@ -1902,17 +1917,30 @@ extension SidebarViewController: NSMenuDelegate {
     @objc private func contextMenuNewFolder(_ sender: Any?) {
         // Determine where to create the folder
         let parentURL: URL
-        let items = selectedItems()
+        let clickedRow = outlineView.clickedRow
         
-        if let item = items.first, (item.type == .folder || item.type == .project), let url = item.url {
-            // Create inside the selected folder/project
-            parentURL = url
-        } else if let project = projectURL {
-            // Create at project root
-            parentURL = project
+        // If clicked on empty space (row == -1), always create at project root
+        if clickedRow < 0 {
+            if let project = projectURL {
+                parentURL = project
+                logger.info("contextMenuNewFolder: Clicked on empty space, creating at project root")
+            } else {
+                logger.warning("contextMenuNewFolder: No project open")
+                return
+            }
         } else {
-            logger.warning("contextMenuNewFolder: No valid location to create folder")
-            return
+            // Clicked on a specific item - check if it's a folder/project
+            let items = selectedItems()
+            if let item = items.first, (item.type == .folder || item.type == .project), let url = item.url {
+                // Create inside the selected folder/project
+                parentURL = url
+            } else if let project = projectURL {
+                // Selected item is a file - create at project root
+                parentURL = project
+            } else {
+                logger.warning("contextMenuNewFolder: No valid location to create folder")
+                return
+            }
         }
 
         logger.info("contextMenuNewFolder: Creating new folder in '\(parentURL.lastPathComponent, privacy: .public)'")
