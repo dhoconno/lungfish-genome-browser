@@ -356,6 +356,57 @@ public class SidebarViewController: NSViewController {
         }
     }
 
+    /// Selects an item in the sidebar by its file URL.
+    ///
+    /// This method searches the sidebar hierarchy for an item matching the given URL
+    /// and selects it if found. Use this after loading a document to highlight
+    /// the corresponding file in the sidebar.
+    ///
+    /// - Parameter url: The file URL to select
+    /// - Returns: `true` if an item was found and selected, `false` otherwise
+    @discardableResult
+    public func selectItem(forURL url: URL) -> Bool {
+        guard let item = findItem(byURL: url) else {
+            logger.debug("selectItem(forURL:): No item found for \(url.lastPathComponent, privacy: .public)")
+            return false
+        }
+        
+        // Ensure parent items are expanded so the item is visible
+        expandParents(of: item)
+        
+        let row = outlineView.row(forItem: item)
+        if row >= 0 {
+            outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            outlineView.scrollRowToVisible(row)
+            logger.debug("selectItem(forURL:): Selected \(url.lastPathComponent, privacy: .public) at row \(row)")
+            return true
+        }
+        return false
+    }
+
+    /// Expands all parent items of the given item to ensure it's visible.
+    private func expandParents(of item: SidebarItem) {
+        // Find and expand parents by searching from root
+        func findAndExpandParent(in items: [SidebarItem], target: SidebarItem) -> Bool {
+            for parentItem in items {
+                if parentItem.children.contains(where: { $0 === target }) {
+                    // Found the parent - expand it
+                    outlineView.expandItem(parentItem)
+                    return true
+                }
+                // Recurse into children
+                if findAndExpandParent(in: parentItem.children, target: target) {
+                    // Child found deeper - expand this parent too
+                    outlineView.expandItem(parentItem)
+                    return true
+                }
+            }
+            return false
+        }
+        
+        _ = findAndExpandParent(in: rootItems, target: item)
+    }
+
     // MARK: - Filesystem-Backed Model
 
     /// Opens a project folder and displays its contents in the sidebar.

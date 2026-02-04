@@ -351,6 +351,125 @@ public actor NCBIService: DatabaseService {
             response.result?[id]
         }
     }
+    
+    // MARK: - Genome Download Methods
+    
+    /// Information about a genome file available for download.
+    public struct GenomeFileInfo: Sendable {
+        /// The HTTP URL for downloading the file
+        public let url: URL
+        /// The filename
+        public let filename: String
+        /// Estimated file size in bytes (from Content-Length header)
+        public let estimatedSize: Int64?
+        /// The assembly accession
+        public let assemblyAccession: String
+    }
+    
+    /// Gets information about the genomic FASTA file for an assembly.
+    ///
+    /// This method queries the FTP server (via HTTP) to find the genomic FASTA file
+    /// and retrieve its size for progress tracking during download.
+    ///
+    /// - Parameter summary: The assembly summary containing FTP paths
+    /// - Returns: Information about the downloadable genome file
+    /// - Throws: `DatabaseServiceError` if the file cannot be found
+    public func getGenomeFileInfo(for summary: NCBIAssemblySummary) async throws -> GenomeFileInfo {
+        // Get the FTP path - prefer RefSeq, fall back to GenBank
+        guard let ftpPath = summary.ftpPathRefSeq ?? summary.ftpPathGenBank else {
+            throw DatabaseServiceError.notFound(accession: summary.assemblyAccession ?? summary.uid)
+        }
+        
+        // Extract the assembly name from the FTP path (last component)
+        let pathComponents = ftpPath.components(separatedBy: "/")
+        guard let assemblyDirName = pathComponents.last, !assemblyDirName.isEmpty else {
+            throw DatabaseServiceError.parseError(message: "Invalid FTP path structure")
+        }
+        
+        // Construct the genomic FASTA filename
+        // Format: {assembly_name}_genomic.fna.gz
+        let genomicFilename = "\(assemblyDirName)_genomic.fna.gz"
+        
+        // Convert FTP URL to HTTPS URL
+        // ftp://ftp.ncbi.nlm.nih.gov/genomes/... -> https://ftp.ncbi.nlm.nih.gov/genomes/...
+        var httpPath = ftpPath
+        if httpPath.hasPrefix("ftp://") {
+            httpPath = httpPath.replacingOccurrences(of: "ftp://", with: "https://")
+        } else if !httpPath.hasPrefix("https://") && !httpPath.hasPrefix("http://") {
+            httpPath = "https://\(httpPath)"
+        }
+        
+        let fileURLString = "\(httpPath)/\(genomicFilename)"
+        guard let fileURL = URL(string: fileURLString) else {
+            throw DatabaseServiceError.parseError(message: "Invalid genome file URL")
+        }
+        
+        // Get file size using HEAD request
+        var request = URLRequest(url: fileURL)
+        request.httpMethod = "HEAD"
+        
+        let (_, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw DatabaseServiceError.networkError(underlying: "Bad server response")
+        }
+        
+        // Check if file exists
+        guard httpResponse.statusCode == 200 else {
+            throw DatabaseServiceError.notFound(accession: summary.assemblyAccession ?? summary.uid)
+        }
+        
+        // Get file size from Content-Length header
+        let fileSize = httpResponse.expectedContentLength > 0 ? httpResponse.expectedContentLength : nil
+        
+        return GenomeFileInfo(
+            url: fileURL,
+            filename: genomicFilename,
+            estimatedSize: fileSize,
+            assemblyAccession: summary.assemblyAccession ?? summary.uid
+        )
+    }
+    
+    /// Downloads a genome file with progress tracking.
+    ///
+    /// - Parameters:
+    ///   - fileInfo: Information about the file to download
+    ///   - destination: The destination URL for the downloaded file
+    ///   - progressHandler: Called periodically with (bytesDownloaded, totalBytes)
+    /// - Returns: The URL of the downloaded file
+    /// - Throws: `DatabaseServiceError` if the download fails
+    public func downloadGenomeFile(
+        _ fileInfo: GenomeFileInfo,
+        to destination: URL,
+        progressHandler: @escaping @Sendable (Int64, Int64?) -> Void
+    ) async throws -> URL {
+        // Create a download delegate to track progress
+        let delegate = DownloadProgressDelegate(
+            totalBytes: fileInfo.estimatedSize,
+            progressHandler: progressHandler
+        )
+        
+        let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        
+        let request = URLRequest(url: fileInfo.url)
+        
+        let (tempURL, response) = try await session.download(for: request, delegate: delegate)
+        
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            throw DatabaseServiceError.networkError(underlying: "Bad server response")
+        }
+        
+        // Move to destination
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: destination.path) {
+            try fileManager.removeItem(at: destination)
+        }
+        try fileManager.moveItem(at: tempURL, to: destination)
+        
+        return destination
+    }
 
     public nonisolated func fetchBatch(accessions: [String]) async throws -> AsyncThrowingStream<DatabaseRecord, Error> {
         AsyncThrowingStream { continuation in
@@ -1144,5 +1263,38 @@ public enum NCBISearchType: String, CaseIterable, Identifiable, Sendable {
         case .virus:
             return "Search viral sequences from NCBI Virus database"
         }
+    }
+}
+
+// MARK: - Download Progress Delegate
+
+/// A URLSession delegate that tracks download progress.
+final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate, Sendable {
+    private let totalBytes: Int64?
+    private let progressHandler: @Sendable (Int64, Int64?) -> Void
+    
+    init(totalBytes: Int64?, progressHandler: @escaping @Sendable (Int64, Int64?) -> Void) {
+        self.totalBytes = totalBytes
+        self.progressHandler = progressHandler
+    }
+    
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didWriteData bytesWritten: Int64,
+        totalBytesWritten: Int64,
+        totalBytesExpectedToWrite: Int64
+    ) {
+        // Use the expected bytes from the response if available, otherwise use our stored estimate
+        let expectedTotal = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : totalBytes
+        progressHandler(totalBytesWritten, expectedTotal)
+    }
+    
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        // This is handled by the async download call
     }
 }

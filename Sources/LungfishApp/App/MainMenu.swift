@@ -550,6 +550,13 @@ public final class MainMenu {
             keyEquivalent: ""
         )
 
+        // Pathoplexus viral sequences
+        toolsMenu.addItem(
+            withTitle: "Search Pathoplexus...",
+            action: #selector(ToolsMenuActions.searchPathoplexus(_:)),
+            keyEquivalent: ""
+        )
+
         toolsMenu.addItem(.separator())
 
         // Workflows
@@ -707,6 +714,7 @@ public final class MainMenu {
     func alignSequences(_ sender: Any?)
     func searchNCBI(_ sender: Any?)
     func searchSRA(_ sender: Any?)
+    func searchPathoplexus(_ sender: Any?)
     func runNextflow(_ sender: Any?)
     func runSnakemake(_ sender: Any?)
     func openWorkflowBuilder(_ sender: Any?)

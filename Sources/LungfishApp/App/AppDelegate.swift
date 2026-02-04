@@ -1499,6 +1499,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         showDatabaseBrowser(source: .ena)
     }
 
+    @objc func searchPathoplexus(_ sender: Any?) {
+        showDatabaseBrowser(source: .pathoplexus)
+    }
+
     /// Shows the database browser for the specified source.
     private func showDatabaseBrowser(source: DatabaseSource) {
         guard let window = mainWindowController?.window else { return }
@@ -1547,9 +1551,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             if let tempURLs = self?.pendingDownloadTempURLs, !tempURLs.isEmpty {
                 self?.pendingDownloadTempURLs = nil
                 debugLog("Sheet dismissed: Processing \(tempURLs.count) pending downloads")
-                for tempURL in tempURLs {
-                    self?.handleDownloadedFileSync(at: tempURL)
-                }
+                self?.handleMultipleDownloadsSync(tempURLs)
             } else if let tempURL = self?.pendingDownloadTempURL {
                 // Fall back to single download
                 self?.pendingDownloadTempURL = nil
@@ -1580,6 +1582,15 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     private func handleDownloadedFileSync(at tempFileURL: URL) {
         debugLog("handleDownloadedFileSync: Starting with \(tempFileURL.path)")
 
+        // Get UI controllers
+        let activityIndicator = mainWindowController?.mainSplitViewController?.activityIndicator
+        let viewerController = mainWindowController?.mainSplitViewController?.viewerController
+        let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController
+
+        // Show progress in the activity indicator
+        let filename = tempFileURL.lastPathComponent
+        activityIndicator?.show(message: "Importing \(filename)...", style: .indeterminate)
+
         // Determine destination
         let destinationDirectory: URL
         if let projectURL = DocumentManager.shared.activeProject?.url {
@@ -1596,6 +1607,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
         } catch {
             debugLog("handleDownloadedFileSync: Failed to create directory - \(error)")
+            activityIndicator?.hide()
             _ = openDocument(at: tempFileURL)
             return
         }
@@ -1620,17 +1632,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             try? FileManager.default.removeItem(at: tempFileURL)
         } catch {
             debugLog("handleDownloadedFileSync: Copy failed - \(error)")
+            activityIndicator?.hide()
             _ = openDocument(at: tempFileURL)
             return
         }
 
-        // Get UI controllers (we're still on MainActor here)
-        let viewerController = mainWindowController?.mainSplitViewController?.viewerController
-        let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController
-
         debugLog("handleDownloadedFileSync: viewerController=\(viewerController != nil), sidebarController=\(sidebarController != nil)")
 
-        viewerController?.showProgress("Loading \(destinationURL.lastPathComponent)...")
+        activityIndicator?.updateMessage("Loading \(destinationURL.lastPathComponent)...")
 
         debugLog("handleDownloadedFileSync: Starting background file load")
 
@@ -1640,12 +1649,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             debugLog("handleDownloadedFileSync: Background load completed with result")
 
             // Now update UI on MainActor using Timer-based scheduling
-            scheduleOnMainRunLoop { [weak viewerController, weak sidebarController] in
+            scheduleOnMainRunLoop { [weak activityIndicator, weak viewerController, weak sidebarController] in
                 debugLog("handleDownloadedFileSync: scheduleOnMainRunLoop block executing")
 
                 if let errorMessage = result.error {
                     debugLog("handleDownloadedFileSync: Error - \(errorMessage)")
-                    viewerController?.hideProgress()
+                    activityIndicator?.hide()
 
                     let alert = NSAlert()
                     alert.messageText = "Failed to Load Downloaded File"
@@ -1668,18 +1677,138 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
                 debugLog("handleDownloadedFileSync: Loaded '\(document.name)' with \(document.sequences.count) sequences, \(document.annotations.count) annotations")
 
-                viewerController?.hideProgress()
+                activityIndicator?.hide()
                 viewerController?.displayDocument(document)
 
-                // Get the project URL to place the document in the correct downloads folder
-                let projectURL = DocumentManager.shared.activeProject?.url ?? AppDelegate.shared?.getWorkingDirectoryURL()
-                sidebarController?.addDownloadedDocument(document, projectURL: projectURL)
+                // Refresh sidebar from filesystem - FileSystemWatcher should have detected the new file,
+                // but we force a refresh to ensure immediate update
+                sidebarController?.reloadFromFilesystem()
 
-                debugLog("handleDownloadedFileSync: Document displayed and added to sidebar")
+                // Select the downloaded file in the sidebar to highlight what's being viewed
+                sidebarController?.selectItem(forURL: result.url)
+
+                debugLog("handleDownloadedFileSync: Document displayed and sidebar refreshed")
             }
         }
 
         debugLog("handleDownloadedFileSync: Background load initiated")
+    }
+
+    /// Handles multiple downloaded files with better progress tracking.
+    ///
+    /// This method processes multiple downloaded files sequentially, showing overall progress
+    /// in the activity indicator and refreshing the sidebar once at the end.
+    ///
+    /// - Parameter tempFileURLs: Array of URLs of downloaded files in the temp directory
+    private func handleMultipleDownloadsSync(_ tempFileURLs: [URL]) {
+        guard !tempFileURLs.isEmpty else { return }
+
+        debugLog("handleMultipleDownloadsSync: Starting with \(tempFileURLs.count) files")
+
+        // Get UI controllers
+        let activityIndicator = mainWindowController?.mainSplitViewController?.activityIndicator
+        let viewerController = mainWindowController?.mainSplitViewController?.viewerController
+        let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController
+
+        let totalCount = tempFileURLs.count
+        activityIndicator?.show(message: "Importing \(totalCount) file\(totalCount == 1 ? "" : "s")...", style: .indeterminate)
+
+        // Determine destination directory
+        let destinationDirectory: URL
+        if let projectURL = DocumentManager.shared.activeProject?.url {
+            destinationDirectory = projectURL.appendingPathComponent("downloads", isDirectory: true)
+        } else if let workingURL = workingDirectoryURL {
+            destinationDirectory = workingURL.appendingPathComponent("downloads", isDirectory: true)
+        } else {
+            let downloadsURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
+            destinationDirectory = downloadsURL.appendingPathComponent("Lungfish Downloads", isDirectory: true)
+        }
+
+        // Create destination directory
+        do {
+            try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
+        } catch {
+            debugLog("handleMultipleDownloadsSync: Failed to create directory - \(error)")
+            activityIndicator?.hide()
+            return
+        }
+
+        var copiedURLs: [URL] = []
+
+        // Copy all files first
+        for (index, tempURL) in tempFileURLs.enumerated() {
+            let originalFilename = tempURL.lastPathComponent
+            let fileExtension = tempURL.pathExtension
+            var baseName = tempURL.deletingPathExtension().lastPathComponent
+            
+            // Strip the UID suffix from batch downloads (format: "accession_uid.ext" -> "accession.ext")
+            // UIDs are numeric, so we look for _digits at the end of the basename
+            if let underscoreRange = baseName.range(of: "_", options: .backwards) {
+                let potentialUID = String(baseName[underscoreRange.upperBound...])
+                // Check if everything after the underscore is digits (a UID)
+                if !potentialUID.isEmpty && potentialUID.allSatisfy({ $0.isNumber }) {
+                    baseName = String(baseName[..<underscoreRange.lowerBound])
+                    debugLog("handleMultipleDownloadsSync: Stripped UID from filename, using base: \(baseName)")
+                }
+            }
+            
+            let cleanFilename = "\(baseName).\(fileExtension)"
+            activityIndicator?.updateMessage("Copying \(cleanFilename) (\(index + 1)/\(totalCount))...")
+
+            // Generate unique filename if needed
+            var destinationURL = destinationDirectory.appendingPathComponent(cleanFilename)
+            var counter = 1
+
+            while FileManager.default.fileExists(atPath: destinationURL.path) {
+                let newFilename = "\(baseName)_\(counter).\(fileExtension)"
+                destinationURL = destinationDirectory.appendingPathComponent(newFilename)
+                counter += 1
+            }
+
+            // Copy file
+            do {
+                try FileManager.default.copyItem(at: tempURL, to: destinationURL)
+                debugLog("handleMultipleDownloadsSync: Copied \(originalFilename) to \(destinationURL.path)")
+                try? FileManager.default.removeItem(at: tempURL)
+                copiedURLs.append(destinationURL)
+            } catch {
+                debugLog("handleMultipleDownloadsSync: Failed to copy \(originalFilename) - \(error)")
+            }
+        }
+
+        // Now load the first file to display (load others in background)
+        if let firstURL = copiedURLs.first {
+            activityIndicator?.updateMessage("Loading \(firstURL.lastPathComponent)...")
+
+            loadFileInBackground(at: firstURL) { result in
+                scheduleOnMainRunLoop { [weak activityIndicator, weak viewerController, weak sidebarController] in
+                    if result.error == nil {
+                        // Create and display the first document
+                        let document = LoadedDocument(url: result.url, type: result.type)
+                        document.sequences = result.sequences
+                        document.annotations = result.annotations
+                        DocumentManager.shared.registerDocument(document)
+                        viewerController?.displayDocument(document)
+                        debugLog("handleMultipleDownloadsSync: Displayed first document '\(document.name)'")
+                    }
+
+                    activityIndicator?.hide()
+
+                    // Refresh sidebar to show all new files
+                    sidebarController?.reloadFromFilesystem()
+
+                    // Select the first downloaded file in the sidebar to highlight what's being viewed
+                    if result.error == nil {
+                        sidebarController?.selectItem(forURL: result.url)
+                    }
+
+                    debugLog("handleMultipleDownloadsSync: Completed importing \(copiedURLs.count) files")
+                }
+            }
+        } else {
+            activityIndicator?.hide()
+            sidebarController?.reloadFromFilesystem()
+        }
     }
 
     /// Handles a downloaded file by copying it to a persistent location and adding to the sidebar.

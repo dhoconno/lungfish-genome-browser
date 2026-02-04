@@ -27,6 +27,13 @@ private func performOnMainRunLoop(_ block: @escaping @MainActor @Sendable () -> 
     RunLoop.main.add(timer, forMode: .common)
 }
 
+/// Formats a byte count as a human-readable file size string.
+private func formatFileSize(_ bytes: Int64) -> String {
+    let formatter = ByteCountFormatter()
+    formatter.countStyle = .file
+    return formatter.string(fromByteCount: bytes)
+}
+
 /// Controller for the database browser panel.
 ///
 /// Provides search interface for NCBI and ENA databases with download capability.
@@ -890,6 +897,7 @@ public class DatabaseBrowserViewModel: ObservableObject {
     /// Downloads all selected records (batch download).
     ///
     /// This downloads each selected record sequentially, updating progress as each completes.
+    /// Uses Task.detached to ensure downloads work in modal sheet context.
     func performBatchDownload() {
         // Get records to download - use multi-select if available, otherwise single selection
         let recordsToDownload: [SearchResultRecord]
@@ -914,45 +922,128 @@ public class DatabaseBrowserViewModel: ObservableObject {
         let ena = enaService
         let currentSource = source
         let format = downloadFormat
-        _ = ncbiSearchType  // searchType - reserved for future format-specific download logic
+        let searchType = ncbiSearchType
 
-        // Use MainActor Task to maintain proper isolation
-        Task { @MainActor [weak self] in
-            guard let self = self else { return }
+        // Log details about selected records for debugging
+        logger.info("performBatchDownload: Starting download of \(totalCount) record(s)")
+        logger.info("performBatchDownload: selectedRecords.count = \(self.selectedRecords.count)")
+        for (idx, record) in recordsToDownload.enumerated() {
+            logger.info("performBatchDownload: Record[\(idx)] id=\(record.id, privacy: .public) accession=\(record.accession, privacy: .public)")
+        }
 
+        // Use Task.detached to break out of MainActor context.
+        // This is critical when running in a modal sheet - regular Task {}
+        // inherits MainActor isolation and may not execute due to the modal
+        // run loop blocking task scheduling on MainActor.
+        Task.detached { [weak self] in
             var downloadedURLs: [URL] = []
             var failedCount = 0
+            
+            // Create a unique batch directory once for all downloads in this batch
+            // This avoids filename collisions when records have the same accession
+            let batchDir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("lungfish-batch-\(UUID().uuidString)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: batchDir, withIntermediateDirectories: true)
+            logger.info("performBatchDownload: Created batch directory at \(batchDir.path, privacy: .public)")
 
             for (index, record) in recordsToDownload.enumerated() {
-                // Update progress
+                // Update progress via performOnMainRunLoop for modal compatibility
                 let progressFraction = Double(index) / Double(totalCount)
-                self.objectWillChange.send()
-                self.downloadProgress = progressFraction
-                self._statusMessage = "Downloading \(record.accession) (\(index + 1)/\(totalCount))..."
+                performOnMainRunLoop { [weak self] in
+                    guard let self = self else { return }
+                    self.objectWillChange.send()
+                    self.downloadProgress = progressFraction
+                    self._statusMessage = "Downloading \(record.accession) (\(index + 1)/\(totalCount))..."
+                }
 
                 do {
                     let fileURL: URL
 
                     switch currentSource {
                     case .ncbi:
-                        // Download in the user's selected format
-                        if format == .fasta {
+                        // Handle genome downloads differently (large files with progress tracking)
+                        if searchType == .genome {
+                            // For genome downloads, we need to get assembly info first
+                            let assemblySummaries = try await ncbi.assemblyEsummary(ids: [record.id])
+                            guard let summary = assemblySummaries.first else {
+                                throw DatabaseServiceError.notFound(accession: record.accession)
+                            }
+                            
+                            // Get genome file info (URL and size)
+                            let fileInfo = try await ncbi.getGenomeFileInfo(for: summary)
+                            
+                            // Update UI with file size info
+                            let sizeStr = fileInfo.estimatedSize.map { formatFileSize($0) } ?? "unknown size"
+                            performOnMainRunLoop { [weak self] in
+                                self?.objectWillChange.send()
+                                self?._statusMessage = "Downloading \(record.accession) (\(sizeStr))..."
+                            }
+                            
+                            // Download with progress tracking
+                            let filename = "\(fileInfo.assemblyAccession)_\(record.id)_genomic.fna.gz"
+                            let destURL = batchDir.appendingPathComponent(filename)
+                            let totalBytes = fileInfo.estimatedSize
+                            
+                            fileURL = try await ncbi.downloadGenomeFile(fileInfo, to: destURL) { bytesDownloaded, expectedTotal in
+                                let total = expectedTotal ?? totalBytes
+                                let progressFraction: Double
+                                if let total = total, total > 0 {
+                                    progressFraction = Double(bytesDownloaded) / Double(total)
+                                } else {
+                                    progressFraction = 0.5 // Indeterminate
+                                }
+                                let downloadedStr = formatFileSize(bytesDownloaded)
+                                let totalStr = total.map { formatFileSize($0) } ?? "?"
+                                
+                                performOnMainRunLoop { [weak self] in
+                                    self?.objectWillChange.send()
+                                    self?.downloadProgress = progressFraction
+                                    self?._statusMessage = "Downloading \(record.accession): \(downloadedStr) / \(totalStr)"
+                                }
+                            }
+                            logger.info("performBatchDownload: Downloaded genome file \(filename, privacy: .public)")
+                        } else if format == .fasta {
+                            // Standard nucleotide FASTA download
                             let (fastaContent, resolvedAccession) = try await ncbi.fetchRawFASTA(accession: record.accession)
-                            let tempDir = FileManager.default.temporaryDirectory
-                            let filename = "\(resolvedAccession).fasta"
-                            fileURL = tempDir.appendingPathComponent(filename)
+                            // Use record.id to ensure unique filename even if accessions match
+                            let filename = "\(resolvedAccession)_\(record.id).fasta"
+                            fileURL = batchDir.appendingPathComponent(filename)
                             try fastaContent.write(to: fileURL, atomically: true, encoding: .utf8)
+                            logger.info("performBatchDownload: Wrote file \(filename, privacy: .public)")
                         } else {
                             // Default to GenBank format
                             let (genBankContent, resolvedAccession) = try await ncbi.fetchRawGenBank(accession: record.accession)
-                            let tempDir = FileManager.default.temporaryDirectory
-                            let filename = "\(resolvedAccession).gb"
-                            fileURL = tempDir.appendingPathComponent(filename)
+                            // Use record.id to ensure unique filename even if accessions match
+                            let filename = "\(resolvedAccession)_\(record.id).gb"
+                            fileURL = batchDir.appendingPathComponent(filename)
                             try genBankContent.write(to: fileURL, atomically: true, encoding: .utf8)
+                            logger.info("performBatchDownload: Wrote file \(filename, privacy: .public)")
                         }
 
                     case .ena:
                         let dbRecord = try await ena.fetch(accession: record.accession)
+                        let tempDir = FileManager.default.temporaryDirectory
+                        let filename = "\(dbRecord.accession).fasta"
+                        fileURL = tempDir.appendingPathComponent(filename)
+
+                        var fastaContent = ">\(dbRecord.accession)"
+                        if !dbRecord.title.isEmpty {
+                            fastaContent += " \(dbRecord.title)"
+                        }
+                        fastaContent += "\n"
+                        let sequence = dbRecord.sequence
+                        var idx = sequence.startIndex
+                        while idx < sequence.endIndex {
+                            let endIdx = sequence.index(idx, offsetBy: 80, limitedBy: sequence.endIndex) ?? sequence.endIndex
+                            fastaContent += String(sequence[idx..<endIdx]) + "\n"
+                            idx = endIdx
+                        }
+                        try fastaContent.write(to: fileURL, atomically: true, encoding: .utf8)
+
+                    case .pathoplexus:
+                        // Pathoplexus downloads as FASTA
+                        let pathoplexusService = PathoplexusService()
+                        let dbRecord = try await pathoplexusService.fetch(accession: record.accession)
                         let tempDir = FileManager.default.temporaryDirectory
                         let filename = "\(dbRecord.accession).fasta"
                         fileURL = tempDir.appendingPathComponent(filename)
@@ -984,23 +1075,30 @@ public class DatabaseBrowserViewModel: ObservableObject {
                 }
             }
 
-            // Complete
-            self.objectWillChange.send()
-            self.downloadProgress = 1.0
-            self.isDownloading = false
+            // Complete - update UI via performOnMainRunLoop
+            let finalDownloadedURLs = downloadedURLs
+            let finalFailedCount = failedCount
+            performOnMainRunLoop { [weak self] in
+                guard let self = self else { return }
+                self.objectWillChange.send()
+                self.downloadProgress = 1.0
+                self.isDownloading = false
 
-            if failedCount > 0 {
-                self._statusMessage = "Downloaded \(downloadedURLs.count) files (\(failedCount) failed)"
-            } else {
-                self._statusMessage = "Downloaded \(downloadedURLs.count) file\(downloadedURLs.count == 1 ? "" : "s")"
-            }
+                if finalFailedCount > 0 {
+                    self._statusMessage = "Downloaded \(finalDownloadedURLs.count) files (\(finalFailedCount) failed)"
+                } else {
+                    self._statusMessage = "Downloaded \(finalDownloadedURLs.count) file\(finalDownloadedURLs.count == 1 ? "" : "s")"
+                }
 
-            // Notify completion with all downloaded URLs
-            if let multiCallback = self.onMultipleDownloadsComplete {
-                multiCallback(downloadedURLs)
-            } else if let singleCallback = self.onDownloadComplete, let firstURL = downloadedURLs.first {
-                // Fall back to single callback for first file
-                singleCallback(firstURL)
+                logger.info("performBatchDownload: Complete - \(finalDownloadedURLs.count) downloaded, \(finalFailedCount) failed")
+
+                // Notify completion with all downloaded URLs
+                if let multiCallback = self.onMultipleDownloadsComplete {
+                    multiCallback(finalDownloadedURLs)
+                } else if let singleCallback = self.onDownloadComplete, let firstURL = finalDownloadedURLs.first {
+                    // Fall back to single callback for first file
+                    singleCallback(firstURL)
+                }
             }
         }
     }
@@ -1319,17 +1417,26 @@ public struct DatabaseBrowserView: View {
     }
 
     private var searchSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Primary search bar with scope selector
-            primarySearchBar
+        ZStack(alignment: .topLeading) {
+            VStack(alignment: .leading, spacing: 12) {
+                // Primary search bar with scope selector
+                primarySearchBar
 
-            // Scope help text (when not "All Fields")
-            if viewModel.searchScope != .all {
-                searchScopeHelp
+                // Scope help text (when not "All Fields")
+                if viewModel.searchScope != .all {
+                    searchScopeHelp
+                }
+
+                // Advanced search toggle and filters
+                advancedSearchSection
             }
-
-            // Advanced search toggle and filters
-            advancedSearchSection
+            
+            // Autocomplete dropdown - positioned in ZStack to float above other content
+            if !viewModel.autocompleteSuggestions.isEmpty {
+                autocompleteDropdown
+                    .padding(.top, 46)  // Offset below search field
+                    .padding(.leading, 58)  // Align with text field (after scope selector)
+            }
         }
         .padding()
         .animation(.easeInOut(duration: 0.2), value: viewModel.isAdvancedExpanded)
@@ -1414,40 +1521,32 @@ public struct DatabaseBrowserView: View {
                 .disabled(!viewModel.isSearchTextValid)
             }
         }
-        .overlay(alignment: .top) {
-            // Autocomplete suggestions dropdown
-            if !viewModel.autocompleteSuggestions.isEmpty {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(viewModel.autocompleteSuggestions, id: \.self) { suggestion in
-                        Button {
-                            viewModel.searchText = suggestion
-                        } label: {
-                            HStack {
-                                Image(systemName: "clock.arrow.circlepath")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                Text(suggestion)
-                                    .font(.body)
-                                Spacer()
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .background(Color(nsColor: .controlBackgroundColor))
-
-                        if suggestion != viewModel.autocompleteSuggestions.last {
-                            Divider()
-                        }
+    }
+    
+    /// Autocomplete dropdown that floats above other content
+    private var autocompleteDropdown: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(viewModel.autocompleteSuggestions, id: \.self) { suggestion in
+                AutocompleteRow(
+                    suggestion: suggestion,
+                    onSelect: {
+                        viewModel.searchText = suggestion
                     }
+                )
+
+                if suggestion != viewModel.autocompleteSuggestions.last {
+                    Divider()
                 }
-                .background(Color(nsColor: .windowBackgroundColor))
-                .cornerRadius(8)
-                .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
-                .padding(.top, 40)  // Offset below search field
             }
         }
+        .background(Color.white)
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
+        .zIndex(1000)  // Ensure dropdown is above other content
     }
 
     private var searchPlaceholder: String {
@@ -1816,6 +1915,18 @@ public struct DatabaseBrowserView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
+                
+                // Info for genome downloads (files can be large)
+                if viewModel.ncbiSearchType == .genome && !viewModel.selectedRecords.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: "info.circle.fill")
+                            .foregroundColor(.blue)
+                        Text("Large file download")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .help("Genome assemblies can be large (100s of MB to GB). Progress will be shown during download.")
+                }
 
                 Button(downloadButtonTitle) {
                     viewModel.performBatchDownload()
@@ -1998,6 +2109,38 @@ struct SearchResultRowWithCheckbox: View {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         return formatter.string(from: date)
+    }
+}
+
+// MARK: - AutocompleteRow
+
+/// A row in the autocomplete dropdown with hover highlighting.
+struct AutocompleteRow: View {
+    let suggestion: String
+    let onSelect: () -> Void
+    
+    @State private var isHovered = false
+    
+    var body: some View {
+        Button(action: onSelect) {
+            HStack {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text(suggestion)
+                    .font(.body)
+                    .foregroundColor(.primary)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(isHovered ? Color.accentColor.opacity(0.1) : Color.white)
+        .onHover { hovering in
+            isHovered = hovering
+        }
     }
 }
 
