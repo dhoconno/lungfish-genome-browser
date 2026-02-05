@@ -163,6 +163,70 @@ public enum NewContainerRuntimeFactory {
         }
     }
 
+    /// Creates a container runtime with detailed error information.
+    ///
+    /// This is the preferred method when you need to understand why no runtime
+    /// is available and potentially display actionable information to the user.
+    ///
+    /// - Parameter preference: User preference for runtime selection (default: `.automatic`)
+    /// - Returns: A `Result` containing either a runtime or a `ContainerRuntimeError`
+    public static func createRuntimeWithError(
+        preference: Preference = .automatic
+    ) async -> Result<any ContainerRuntimeProtocol, ContainerRuntimeError> {
+
+        logger.info("Creating container runtime with error handling, preference: \(preference.rawValue)")
+
+        switch preference {
+        case .apple:
+            let (runtime, reason) = await tryCreateAppleRuntimeWithReason()
+            if let runtime = runtime {
+                logger.info("Created Apple Containerization runtime (explicit preference)")
+                return .success(runtime)
+            }
+            return .failure(.runtimeNotAvailable(
+                .appleContainerization,
+                reason: reason ?? "Unknown reason"
+            ))
+
+        case .docker:
+            let (runtime, reason) = await createDockerRuntimeWithReason()
+            if let runtime = runtime {
+                logger.info("Created Docker runtime (explicit preference)")
+                return .success(runtime)
+            }
+            return .failure(.runtimeNotAvailable(
+                .docker,
+                reason: reason ?? "Unknown reason"
+            ))
+
+        case .automatic:
+            var reasons: [String] = []
+
+            // Try Apple Containerization first (primary)
+            let (appleRuntime, appleReason) = await tryCreateAppleRuntimeWithReason()
+            if let runtime = appleRuntime {
+                logger.info("Using Apple Containerization runtime (primary)")
+                return .success(runtime)
+            }
+            if let reason = appleReason {
+                reasons.append("Apple Containerization: \(reason)")
+            }
+
+            // Fall back to Docker
+            let (dockerRuntime, dockerReason) = await createDockerRuntimeWithReason()
+            if let runtime = dockerRuntime {
+                logger.info("Using Docker runtime (fallback)")
+                return .success(runtime)
+            }
+            if let reason = dockerReason {
+                reasons.append("Docker: \(reason)")
+            }
+
+            logger.error("No container runtime available")
+            return .failure(.noRuntimeAvailable(reasons: reasons))
+        }
+    }
+
     /// Tries to create an Apple Containerization runtime if available.
     ///
     /// This method handles the availability check internally.
@@ -201,6 +265,49 @@ public enum NewContainerRuntimeFactory {
 
         logger.debug("Docker runtime not available")
         return nil
+    }
+
+    /// Tries to create an Apple Containerization runtime with detailed reason on failure.
+    ///
+    /// - Returns: Tuple of (runtime if successful, reason for failure if unsuccessful)
+    private static func tryCreateAppleRuntimeWithReason() async -> ((any ContainerRuntimeProtocol)?, String?) {
+        // Check macOS version first
+        guard #available(macOS 26, *) else {
+            return (nil, "Requires macOS 26 or later")
+        }
+
+        // Check architecture
+        #if !arch(arm64)
+        return (nil, "Requires Apple Silicon (arm64)")
+        #endif
+
+        do {
+            let runtime = try await AppleContainerRuntime()
+            if await runtime.isAvailable() {
+                return (runtime, nil)
+            }
+            return (nil, "Runtime created but reports unavailable (check container configuration)")
+        } catch {
+            return (nil, "Initialization failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Creates a Docker runtime with detailed reason on failure.
+    ///
+    /// - Returns: Tuple of (runtime if successful, reason for failure if unsuccessful)
+    private static func createDockerRuntimeWithReason() async -> (DockerRuntime?, String?) {
+        // Check if docker CLI is available
+        let dockerFound = await isDockerAvailable()
+        guard dockerFound else {
+            return (nil, "Docker CLI not found in PATH")
+        }
+
+        let runtime = DockerRuntime()
+        if await runtime.isAvailable() {
+            return (runtime, nil)
+        }
+
+        return (nil, "Docker daemon not running or not accessible")
     }
 
     // MARK: - Availability Checks

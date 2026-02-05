@@ -7,29 +7,30 @@ import SwiftUI
 /// View model for the appearance section.
 ///
 /// Manages base colors and track height settings with persistence support.
+@Observable
 @MainActor
-public class AppearanceSectionViewModel: ObservableObject {
+public final class AppearanceSectionViewModel {
     // MARK: - Base Colors
 
     /// Color for Adenine (A) bases
-    @Published public var colorA: Color
+    public var colorA: Color
 
     /// Color for Thymine (T) bases
-    @Published public var colorT: Color
+    public var colorT: Color
 
     /// Color for Guanine (G) bases
-    @Published public var colorG: Color
+    public var colorG: Color
 
     /// Color for Cytosine (C) bases
-    @Published public var colorC: Color
+    public var colorC: Color
 
     /// Color for unknown/ambiguous (N) bases
-    @Published public var colorN: Color
+    public var colorN: Color
 
     // MARK: - Track Settings
 
     /// Track height in points (range: 20-80)
-    @Published public var trackHeight: Double
+    public var trackHeight: Double
 
     /// Callback when settings are changed
     public var onSettingsChanged: (() -> Void)?
@@ -92,7 +93,7 @@ public class AppearanceSectionViewModel: ObservableObject {
 /// Provides color pickers for each nucleotide base and a slider for
 /// adjusting track height. Includes a reset button to restore defaults.
 public struct AppearanceSection: View {
-    @ObservedObject var viewModel: AppearanceSectionViewModel
+    @Bindable var viewModel: AppearanceSectionViewModel
     @State private var isExpanded = true
 
     public init(viewModel: AppearanceSectionViewModel) {

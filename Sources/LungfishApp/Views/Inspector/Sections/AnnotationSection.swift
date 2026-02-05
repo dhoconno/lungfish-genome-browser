@@ -8,8 +8,9 @@ import LungfishCore
 /// View model for the annotation section.
 ///
 /// Manages annotation display settings like height, visibility, and filtering.
+@Observable
 @MainActor
-public class AnnotationSectionViewModel: ObservableObject {
+public final class AnnotationSectionViewModel {
     // MARK: - Default Values
 
     /// Default annotation track height in points
@@ -21,22 +22,22 @@ public class AnnotationSectionViewModel: ObservableObject {
     /// Default visibility setting for annotations
     public static let defaultShowAnnotations: Bool = true
 
-    // MARK: - Published Properties
+    // MARK: - Observable Properties
 
     /// Annotation track height in points
-    @Published public var annotationHeight: Double = defaultAnnotationHeight
+    public var annotationHeight: Double = 16
 
     /// Spacing between annotation rows
-    @Published public var annotationSpacing: Double = defaultAnnotationSpacing
+    public var annotationSpacing: Double = 2
 
     /// Whether to show annotations
-    @Published public var showAnnotations: Bool = defaultShowAnnotations
+    public var showAnnotations: Bool = true
 
     /// Types to show (nil = show all)
-    @Published public var visibleTypes: Set<AnnotationType> = Set(AnnotationType.allCases)
+    public var visibleTypes: Set<AnnotationType> = Set(AnnotationType.allCases)
 
     /// Search filter text
-    @Published public var filterText: String = ""
+    public var filterText: String = ""
 
     /// Callback when settings change
     public var onSettingsChanged: (() -> Void)?
@@ -86,7 +87,7 @@ public class AnnotationSectionViewModel: ObservableObject {
 
 /// SwiftUI view for configuring annotation display and filtering.
 public struct AnnotationSection: View {
-    @ObservedObject var viewModel: AnnotationSectionViewModel
+    @Bindable var viewModel: AnnotationSectionViewModel
     @State private var isExpanded = true
     @State private var showTypeFilter = false
 

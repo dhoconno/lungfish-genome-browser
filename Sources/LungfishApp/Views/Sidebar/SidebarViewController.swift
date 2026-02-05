@@ -4,6 +4,7 @@
 
 import AppKit
 import LungfishCore
+import LungfishIO
 import os.log
 
 /// Logger for sidebar operations
@@ -12,73 +13,6 @@ private let logger = Logger(subsystem: "com.lungfish.browser", category: "Sideba
 /// Pasteboard type for internal sidebar item dragging
 private let sidebarItemPasteboardType = NSPasteboard.PasteboardType("com.lungfish.browser.sidebaritem")
 
-// MARK: - Debug Logging Helper
-
-/// Writes debug info to a file for troubleshooting drag-and-drop
-private func sidebarDebugLog(_ message: String) {
-    let logFile = "/tmp/lungfish_sidebar_debug.log"
-    let timestamp = ISO8601DateFormatter().string(from: Date())
-    let line = "[\(timestamp)] \(message)\n"
-    if let data = line.data(using: .utf8) {
-        if FileManager.default.fileExists(atPath: logFile) {
-            if let handle = FileHandle(forWritingAtPath: logFile) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                handle.closeFile()
-            }
-        } else {
-            FileManager.default.createFile(atPath: logFile, contents: data)
-        }
-    }
-}
-
-// MARK: - Custom Outline View for Drag Debugging
-
-/// Custom NSOutlineView subclass that logs drag-and-drop events for debugging.
-/// This helps identify if drags are reaching the outline view at all.
-@MainActor
-private class DebugOutlineView: NSOutlineView {
-    
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        sidebarDebugLog("DebugOutlineView.draggingEntered called")
-        sidebarDebugLog("  dataSource: \(String(describing: self.dataSource))")
-        sidebarDebugLog("  delegate: \(String(describing: self.delegate))")
-        sidebarDebugLog("  registeredDraggedTypes: \(self.registeredDraggedTypes)")
-        sidebarDebugLog("  numberOfRows: \(self.numberOfRows)")
-        let result = super.draggingEntered(sender)
-        sidebarDebugLog("DebugOutlineView.draggingEntered returning: \(result.rawValue)")
-        return result
-    }
-    
-    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        // Don't log every update to avoid log spam
-        return super.draggingUpdated(sender)
-    }
-    
-    override func draggingExited(_ sender: NSDraggingInfo?) {
-        sidebarDebugLog("DebugOutlineView.draggingExited called")
-        super.draggingExited(sender)
-    }
-    
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        sidebarDebugLog("DebugOutlineView.performDragOperation called")
-        let result = super.performDragOperation(sender)
-        sidebarDebugLog("DebugOutlineView.performDragOperation returning: \(result)")
-        return result
-    }
-    
-    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        sidebarDebugLog("DebugOutlineView.prepareForDragOperation called")
-        let result = super.prepareForDragOperation(sender)
-        sidebarDebugLog("DebugOutlineView.prepareForDragOperation returning: \(result)")
-        return result
-    }
-    
-    override func concludeDragOperation(_ sender: NSDraggingInfo?) {
-        sidebarDebugLog("DebugOutlineView.concludeDragOperation called")
-        super.concludeDragOperation(sender)
-    }
-}
 
 // MARK: - Sidebar Drop Target View
 
@@ -87,100 +21,71 @@ private class DebugOutlineView: NSOutlineView {
 /// (e.g., when dropping onto empty space or when the sidebar is empty).
 @MainActor
 private class SidebarDropTargetView: NSView {
-    
+
     /// Weak reference to the sidebar controller to forward drop events
     weak var sidebarController: SidebarViewController?
-    
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        // Register for file URL drags
         registerForDraggedTypes([.fileURL])
     }
-    
+
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         registerForDraggedTypes([.fileURL])
     }
-    
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        sidebarDebugLog("SidebarDropTargetView.draggingEntered called")
-        
-        // Check if this drag contains file URLs
-        let pasteboard = sender.draggingPasteboard
-        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
-            // Check if at least one URL is a supported file type
-            let hasSupported = urls.contains { url in
-                // Import LungfishCore's DocumentType for type detection
-                let ext = url.pathExtension.lowercased()
-                let supportedExtensions = ["fasta", "fa", "fna", "ffn", "faa", "frn", "fas",
-                                          "fastq", "fq", "gb", "gbk", "genbank", "gff", "gff3",
-                                          "gtf", "bed", "vcf", "bam", "gz"]
-                return supportedExtensions.contains(ext)
-            }
-            
-            if hasSupported {
-                sidebarDebugLog("SidebarDropTargetView.draggingEntered: ACCEPTING - has supported file types")
-                return .copy
-            }
-        }
-        
-        sidebarDebugLog("SidebarDropTargetView.draggingEntered: REJECTING - no supported file types")
-        return []
-    }
-    
-    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        // Same logic as draggingEntered
-        let pasteboard = sender.draggingPasteboard
-        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
-            let hasSupported = urls.contains { url in
-                let ext = url.pathExtension.lowercased()
-                let supportedExtensions = ["fasta", "fa", "fna", "ffn", "faa", "frn", "fas",
-                                          "fastq", "fq", "gb", "gbk", "genbank", "gff", "gff3",
-                                          "gtf", "bed", "vcf", "bam", "gz"]
-                return supportedExtensions.contains(ext)
-            }
-            if hasSupported {
-                return .copy
-            }
-        }
-        return []
-    }
-    
-    override func draggingExited(_ sender: NSDraggingInfo?) {
-        sidebarDebugLog("SidebarDropTargetView.draggingExited called")
-    }
-    
-    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        sidebarDebugLog("SidebarDropTargetView.prepareForDragOperation called")
-        return true
-    }
-    
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        sidebarDebugLog("SidebarDropTargetView.performDragOperation called")
-        
-        let pasteboard = sender.draggingPasteboard
-        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty else {
-            sidebarDebugLog("SidebarDropTargetView.performDragOperation: No URLs found")
+
+    /// Check if the pasteboard contains valid file URLs.
+    ///
+    /// Accepts all files since non-genomics files use QuickLook preview.
+    private func hasValidFiles(in pasteboard: NSPasteboard) -> Bool {
+        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+              !urls.isEmpty else {
             return false
         }
-        
-        sidebarDebugLog("SidebarDropTargetView.performDragOperation: Got \(urls.count) URLs")
-        
+        // Accept any file with a non-empty extension (exclude hidden files)
+        return urls.contains { url in
+            !url.pathExtension.isEmpty
+        }
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        hasValidFiles(in: sender.draggingPasteboard) ? .copy : []
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        hasValidFiles(in: sender.draggingPasteboard) ? .copy : []
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        // No action needed
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        true
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let pasteboard = sender.draggingPasteboard
+        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+              !urls.isEmpty else {
+            return false
+        }
+
         // Post notification for each dropped file
         for url in urls {
-            sidebarDebugLog("SidebarDropTargetView.performDragOperation: Posting notification for '\(url.lastPathComponent)'")
             NotificationCenter.default.post(
                 name: .sidebarFileDropped,
                 object: self.sidebarController,
                 userInfo: ["url": url, "destination": NSNull()]
             )
         }
-        
+
         return true
     }
-    
+
     override func concludeDragOperation(_ sender: NSDraggingInfo?) {
-        sidebarDebugLog("SidebarDropTargetView.concludeDragOperation called")
+        // No action needed
     }
 }
 
@@ -239,8 +144,8 @@ public class SidebarViewController: NSViewController {
         searchField.action = #selector(searchFieldChanged(_:))
         containerView.addSubview(searchField)
 
-        // Create outline view (using custom debug subclass to trace drag events)
-        outlineView = DebugOutlineView()
+        // Create outline view
+        outlineView = NSOutlineView()
         outlineView.headerView = nil  // No header for sidebar
         outlineView.rowHeight = 24
         outlineView.indentationPerLevel = 14
@@ -657,58 +562,22 @@ public class SidebarViewController: NSViewController {
     }
 
     /// Detects the file type and appropriate icon for a URL.
+    ///
+    /// Uses the unified FileTypeUtility from LungfishIO for consistent
+    /// file type detection across the application.
     private func detectFileType(url: URL) -> (SidebarItemType, String) {
-        var ext = url.pathExtension.lowercased()
-
-        // Handle gzip-compressed files
-        if ext == "gz" {
-            ext = url.deletingPathExtension().pathExtension.lowercased()
-        }
-
-        switch ext {
-        // Genomics sequence formats
-        case "fasta", "fa", "fna", "ffn", "faa", "frn", "fas":
-            return (.sequence, "doc.text")
-        case "fastq", "fq":
-            return (.sequence, "doc.text")
-        case "gb", "gbk", "genbank":
-            return (.sequence, "doc.richtext")
-        // Genomics annotation formats
-        case "gff", "gff3", "gtf":
-            return (.annotation, "list.bullet.rectangle")
-        case "bed":
-            return (.annotation, "list.bullet.rectangle")
-        case "vcf":
-            return (.annotation, "chart.bar.xaxis")
-        // Alignment formats
-        case "bam", "sam", "cram":
-            return (.alignment, "chart.bar")
-        // Document formats (QuickLook preview)
-        case "pdf":
-            return (.document, "doc.richtext")
-        case "txt", "text", "md", "markdown", "rtf", "rtfd":
-            return (.document, "doc.plaintext")
-        case "csv", "tsv":
-            return (.document, "tablecells")
-        // Image formats (QuickLook preview)
-        case "png", "jpg", "jpeg", "gif", "tiff", "tif", "bmp", "svg", "heic", "heif", "webp":
-            return (.image, "photo")
-        default:
-            // Unknown file type - still allow import, will use QuickLook
-            return (.unknown, "doc.questionmark")
-        }
+        let fileInfo = FileTypeUtility.detect(url: url)
+        let sidebarType = SidebarItemType(from: fileInfo.category)
+        return (sidebarType, fileInfo.iconName)
     }
 
     /// Checks if a file extension is supported.
-    /// Note: Now allows all file types since non-genomics files use QuickLook preview.
+    ///
+    /// All file types are now supported - genomics files get native viewer,
+    /// other files get QuickLook preview.
     private func isSupportedFileExtension(_ ext: String) -> Bool {
-        // Hidden files are not supported
-        if ext.isEmpty {
-            return false
-        }
-        // All file types are supported - genomics files get native viewer,
-        // other files get QuickLook preview
-        return true
+        // Hidden files (empty extension) are not supported
+        !ext.isEmpty
     }
 
     /// Counts the total number of items in a tree.
@@ -1373,9 +1242,9 @@ extension SidebarViewController: NSOutlineViewDataSource {
         }
     }
 
-    /// Writes debug info to a file for troubleshooting (wrapper for shared helper)
+    /// Logs debug info for drag-and-drop troubleshooting
     private func debugLog(_ message: String) {
-        sidebarDebugLog("SidebarVC: \(message)")
+        logger.debug("SidebarVC: \(message, privacy: .public)")
     }
     
     /// Performs the actual drop operation
@@ -1852,6 +1721,36 @@ public enum SidebarItemType {
             return true
         default:
             return false
+        }
+    }
+
+    /// Creates a sidebar item type from a LungfishIO UICategory.
+    ///
+    /// - Parameter category: The UICategory from format detection
+    init(from category: UICategory) {
+        switch category {
+        case .sequence:
+            self = .sequence
+        case .annotation:
+            self = .annotation
+        case .alignment:
+            self = .alignment
+        case .variant:
+            self = .annotation  // Variants shown as annotations
+        case .coverage:
+            self = .coverage
+        case .index:
+            self = .unknown  // Index files shown as unknown
+        case .document:
+            self = .document
+        case .image:
+            self = .image
+        case .compressed:
+            self = .unknown
+        case .referenceBundle:
+            self = .referenceBundle
+        case .unknown:
+            self = .unknown
         }
     }
 }

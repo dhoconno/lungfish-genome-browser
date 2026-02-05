@@ -556,15 +556,9 @@ public class ViewerViewController: NSViewController {
     ///
     /// - Parameter url: The URL of the file to preview
     public func displayQuickLookPreview(url: URL) {
-        // DEBUG: Print to console for immediate visibility in Xcode debugger
-        print("🔍 [PREVIEW DEBUG] displayQuickLookPreview ENTRY")
-        print("🔍 [PREVIEW DEBUG] URL: \(url)")
-        print("🔍 [PREVIEW DEBUG] isFileURL: \(url.isFileURL)")
-        print("🔍 [PREVIEW DEBUG] pathExtension: \(url.pathExtension)")
-        
         logger.info("displayQuickLookPreview: Starting preview for '\(url.lastPathComponent, privacy: .public)'")
-        logger.info("displayQuickLookPreview: Full path: '\(url.path, privacy: .public)'")
-        
+        logger.debug("displayQuickLookPreview: URL scheme=\(url.scheme ?? "nil", privacy: .public) extension=\(url.pathExtension, privacy: .public)")
+
         // Ensure we have a proper file URL
         let fileURL: URL
         if url.isFileURL {
@@ -572,7 +566,7 @@ public class ViewerViewController: NSViewController {
         } else {
             fileURL = URL(fileURLWithPath: url.path)
         }
-        
+
         // Verify file exists and is readable
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: fileURL.path) else {
@@ -580,48 +574,34 @@ public class ViewerViewController: NSViewController {
             showNoSequenceSelected()
             return
         }
-        
+
         guard fileManager.isReadableFile(atPath: fileURL.path) else {
             logger.error("displayQuickLookPreview: File is not readable")
-            print("❌ [PREVIEW DEBUG] File is NOT readable!")
             showNoSequenceSelected()
             return
         }
-        
-        print("✅ [PREVIEW DEBUG] File exists and is readable")
-        print("🔍 [PREVIEW DEBUG] View hierarchy state:")
-        print("   - view.bounds: \(view.bounds)")
-        print("   - view.frame: \(view.frame)")
-        print("   - view.superview: \(String(describing: view.superview))")
-        print("   - view.window: \(String(describing: view.window))")
-        
+
         // Hide the progress overlay first - it may be covering the view area
         hideProgress()
-        print("🔍 [PREVIEW DEBUG] Progress hidden")
-        
+
         // Hide the genomics viewer components including the ruler
         hideGenomicsViewer()
-        print("🔍 [PREVIEW DEBUG] Genomics viewer hidden")
-        
+
         // Remove any existing preview views
         removePreviewViews()
-        print("🔍 [PREVIEW DEBUG] Previous preview views removed")
-        
+
         // Store the URL
         quickLookURL = fileURL
-        
+
         // For PDFs, use PDFKit (more reliable than QLPreviewView for embedded use)
         let ext = fileURL.pathExtension.lowercased()
-        print("🔍 [PREVIEW DEBUG] File extension: '\(ext)'")
-        
+
         if ext == "pdf" {
-            print("📄 [PREVIEW DEBUG] Routing to PDFKit preview...")
             displayPDFPreview(url: fileURL)
             return
         }
-        
+
         // For other files, use QLPreviewView with proper QuickLookItem wrapper
-        print("📋 [PREVIEW DEBUG] Routing to QLPreviewView...")
         displayQLPreview(url: fileURL)
     }
     
@@ -630,40 +610,56 @@ public class ViewerViewController: NSViewController {
     /// PDFKit provides more reliable embedded rendering than QLPreviewView,
     /// especially within NSSplitViewController hierarchies.
     private func displayPDFPreview(url: URL) {
-        print("📄 [PDF DEBUG] displayPDFPreview ENTRY")
-        print("📄 [PDF DEBUG] URL: \(url)")
         logger.info("displayPDFPreview: Loading PDF from '\(url.lastPathComponent, privacy: .public)'")
-        
+        logger.debug("displayPDFPreview: Full URL path: \(url.path, privacy: .public)")
+
+        // Log view hierarchy state BEFORE changes
+        logger.debug("displayPDFPreview: Parent view bounds: \(NSStringFromRect(self.view.bounds), privacy: .public)")
+        logger.debug("displayPDFPreview: Parent view frame: \(NSStringFromRect(self.view.frame), privacy: .public)")
+        logger.debug("displayPDFPreview: Parent wantsLayer: \(self.view.wantsLayer)")
+        logger.debug("displayPDFPreview: Subview count before: \(self.view.subviews.count)")
+        for (index, subview) in self.view.subviews.enumerated() {
+            logger.debug("displayPDFPreview: Subview[\(index)]: \(type(of: subview)) hidden=\(subview.isHidden) frame=\(NSStringFromRect(subview.frame), privacy: .public)")
+        }
+
+        // Load the PDF document FIRST to validate it
         guard let pdfDocument = PDFDocument(url: url) else {
-            logger.error("displayPDFPreview: Failed to create PDFDocument")
-            print("❌ [PDF DEBUG] Failed to create PDFDocument from URL!")
+            logger.error("displayPDFPreview: Failed to create PDFDocument from URL")
             showNoSequenceSelected()
             return
         }
-        
-        print("✅ [PDF DEBUG] PDFDocument created, pageCount: \(pdfDocument.pageCount)")
-        
-        // Create PDF view
+
+        let pageCount = pdfDocument.pageCount
+        logger.info("displayPDFPreview: PDFDocument created with \(pageCount) pages")
+
+        // Log page details
+        for i in 0..<min(pageCount, 3) {
+            if let page = pdfDocument.page(at: i) {
+                let pageBounds = page.bounds(for: .mediaBox)
+                logger.debug("displayPDFPreview: Page[\(i)] mediaBox: \(NSStringFromRect(pageBounds), privacy: .public)")
+            }
+        }
+
+        // Create PDF view - DON'T set wantsLayer, let PDFKit manage its own rendering
         let pdfDisplayView = PDFView()
         pdfDisplayView.translatesAutoresizingMaskIntoConstraints = false
-        
-        // CRITICAL: Enable layer backing for proper rendering in layer-backed view hierarchies
-        pdfDisplayView.wantsLayer = true
-        pdfDisplayView.layer?.backgroundColor = NSColor.white.cgColor
-        
-        // Configure display options
+
+        // Configure display options BEFORE adding to hierarchy
         pdfDisplayView.displayMode = .singlePageContinuous
         pdfDisplayView.displaysAsBook = false
         pdfDisplayView.displayDirection = .vertical
-        pdfDisplayView.backgroundColor = .white  // Use white for PDF content visibility
-        
-        print("📄 [PDF DEBUG] PDFView configured, adding to view hierarchy...")
-        print("📄 [PDF DEBUG] Parent view bounds: \(view.bounds)")
-        print("📄 [PDF DEBUG] Parent view.wantsLayer: \(view.wantsLayer)")
-        
-        // Add to view hierarchy BEFORE setting document
-        view.addSubview(pdfDisplayView)
-        
+        pdfDisplayView.backgroundColor = .white
+        pdfDisplayView.autoScales = true
+
+        // Set document BEFORE adding to view hierarchy
+        // This allows PDFKit to initialize its rendering pipeline with document dimensions
+        pdfDisplayView.document = pdfDocument
+        logger.debug("displayPDFPreview: Document assigned to PDFView")
+
+        // Add to view hierarchy at the TOP of z-order
+        view.addSubview(pdfDisplayView, positioned: .above, relativeTo: nil)
+        logger.debug("displayPDFPreview: PDFView added to hierarchy")
+
         // Position to fill the entire viewer area (excluding status bar)
         NSLayoutConstraint.activate([
             pdfDisplayView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -671,69 +667,91 @@ public class ViewerViewController: NSViewController {
             pdfDisplayView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             pdfDisplayView.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
         ])
-        
-        // Force layout to get valid bounds
+        logger.debug("displayPDFPreview: Constraints activated")
+
+        // Force layout to establish bounds
         view.layoutSubtreeIfNeeded()
-        
-        print("📄 [PDF DEBUG] After layout - PDFView bounds: \(pdfDisplayView.bounds)")
-        print("📄 [PDF DEBUG] After layout - PDFView frame: \(pdfDisplayView.frame)")
-        
-        // Now set the document AFTER the view has valid bounds
-        pdfDisplayView.document = pdfDocument
-        
-        // Set auto-scaling AFTER document is set and view has bounds
-        pdfDisplayView.autoScales = true
-        
-        // Force a scale to fit if autoScales doesn't work immediately
-        if pdfDisplayView.bounds.width > 0 {
-            pdfDisplayView.scaleFactor = pdfDisplayView.scaleFactorForSizeToFit
+
+        // Log bounds AFTER layout
+        logger.debug("displayPDFPreview: PDFView bounds after layout: \(NSStringFromRect(pdfDisplayView.bounds), privacy: .public)")
+        logger.debug("displayPDFPreview: PDFView frame after layout: \(NSStringFromRect(pdfDisplayView.frame), privacy: .public)")
+        logger.debug("displayPDFPreview: PDFView wantsLayer: \(pdfDisplayView.wantsLayer)")
+        logger.debug("displayPDFPreview: PDFView layer: \(String(describing: pdfDisplayView.layer))")
+
+        // Verify document is still attached
+        if let doc = pdfDisplayView.document {
+            logger.debug("displayPDFPreview: Document still attached, pageCount=\(doc.pageCount)")
+        } else {
+            logger.error("displayPDFPreview: Document became nil after layout!")
         }
-        
-        print("📄 [PDF DEBUG] PDFView.isHidden: \(pdfDisplayView.isHidden)")
-        print("📄 [PDF DEBUG] PDFView.alphaValue: \(pdfDisplayView.alphaValue)")
-        print("📄 [PDF DEBUG] PDFView.scaleFactor: \(pdfDisplayView.scaleFactor)")
-        print("📄 [PDF DEBUG] PDFView.scaleFactorForSizeToFit: \(pdfDisplayView.scaleFactorForSizeToFit)")
-        
+
+        // Log scale factors
+        logger.debug("displayPDFPreview: autoScales=\(pdfDisplayView.autoScales)")
+        logger.debug("displayPDFPreview: scaleFactor=\(pdfDisplayView.scaleFactor)")
+        logger.debug("displayPDFPreview: scaleFactorForSizeToFit=\(pdfDisplayView.scaleFactorForSizeToFit)")
+        logger.debug("displayPDFPreview: minScaleFactor=\(pdfDisplayView.minScaleFactor)")
+        logger.debug("displayPDFPreview: maxScaleFactor=\(pdfDisplayView.maxScaleFactor)")
+
+        // If bounds are valid, ensure scale is set properly
+        if pdfDisplayView.bounds.width > 0 && pdfDisplayView.bounds.height > 0 {
+            // Force scale to fit
+            let fitScale = pdfDisplayView.scaleFactorForSizeToFit
+            if fitScale > 0 {
+                pdfDisplayView.scaleFactor = fitScale
+                logger.debug("displayPDFPreview: Applied scaleFactorForSizeToFit=\(fitScale)")
+            }
+        } else {
+            logger.warning("displayPDFPreview: PDFView has zero bounds!")
+        }
+
+        // Go to first page explicitly
+        if let firstPage = pdfDocument.page(at: 0) {
+            pdfDisplayView.go(to: firstPage)
+            logger.debug("displayPDFPreview: Navigated to first page")
+        }
+
         // Force redraw
         pdfDisplayView.needsDisplay = true
         pdfDisplayView.needsLayout = true
-        
+
         pdfView = pdfDisplayView
-        
+
         // Update status bar
-        let pageCount = pdfDocument.pageCount
         statusBar.positionLabel.stringValue = "\(url.lastPathComponent) (\(pageCount) page\(pageCount == 1 ? "" : "s"))"
         statusBar.selectionLabel.stringValue = ""
-        
-        print("✅ [PDF DEBUG] displayPDFPreview COMPLETE - \(pageCount) pages")
-        logger.info("displayPDFPreview: PDF loaded successfully with \(pageCount) pages")
+
+        // Log final view hierarchy state
+        logger.debug("displayPDFPreview: Final subview count: \(self.view.subviews.count)")
+        for (index, subview) in self.view.subviews.enumerated() {
+            let isOnTop = (index == self.view.subviews.count - 1)
+            logger.debug("displayPDFPreview: Final subview[\(index)]: \(type(of: subview)) hidden=\(subview.isHidden) onTop=\(isOnTop)")
+        }
+
+        logger.info("displayPDFPreview: PDF display setup complete for '\(url.lastPathComponent, privacy: .public)'")
     }
     
     /// Displays a file using QLPreviewView with proper QuickLookItem wrapper.
     private func displayQLPreview(url: URL) {
-        print("📋 [QL DEBUG] displayQLPreview ENTRY")
-        print("📋 [QL DEBUG] URL: \(url)")
         logger.info("displayQLPreview: Creating QLPreviewView for '\(url.lastPathComponent, privacy: .public)'")
-        
+        logger.debug("displayQLPreview: Full URL path: \(url.path, privacy: .public)")
+        logger.debug("displayQLPreview: Parent view bounds: \(NSStringFromRect(self.view.bounds), privacy: .public)")
+
         // Create a new QuickLook preview view
         // Use .normal style which works better in embedded contexts
         let previewView = QLPreviewView(frame: view.bounds, style: .normal)
         previewView?.translatesAutoresizingMaskIntoConstraints = false
-        
+
         guard let preview = previewView else {
             logger.error("displayQLPreview: Failed to create QLPreviewView")
-            print("❌ [QL DEBUG] Failed to create QLPreviewView!")
             showNoSequenceSelected()
             return
         }
-        
-        print("✅ [QL DEBUG] QLPreviewView created")
-        print("📋 [QL DEBUG] Parent view bounds before adding: \(view.bounds)")
-        
+
+        logger.debug("displayQLPreview: QLPreviewView created")
+
         // Add to the container view FIRST (before setting constraints or preview item)
         view.addSubview(preview)
-        print("📋 [QL DEBUG] Added to view hierarchy")
-        
+
         // Position to fill the entire viewer area (excluding status bar)
         NSLayoutConstraint.activate([
             preview.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -741,72 +759,62 @@ public class ViewerViewController: NSViewController {
             preview.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             preview.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
         ])
-        print("📋 [QL DEBUG] Constraints activated")
-        
+        logger.debug("displayQLPreview: Constraints activated")
+
         // Force layout before setting the preview item - QLPreviewView needs valid bounds
         view.layoutSubtreeIfNeeded()
-        print("📋 [QL DEBUG] Layout forced")
-        
+
+        logger.debug("displayQLPreview: Preview bounds after layout: \(NSStringFromRect(preview.bounds), privacy: .public)")
+        logger.debug("displayQLPreview: Preview frame after layout: \(NSStringFromRect(preview.frame), privacy: .public)")
+
         // Verify bounds are valid
         guard !preview.bounds.isEmpty else {
             logger.error("displayQLPreview: Preview bounds are empty after layout")
-            print("❌ [QL DEBUG] Preview bounds are EMPTY after layout!")
             preview.removeFromSuperview()
             showNoSequenceSelected()
             return
         }
-        
-        print("📋 [QL DEBUG] Preview bounds: \(preview.bounds)")
-        print("📋 [QL DEBUG] Preview frame: \(preview.frame)")
-        print("📋 [QL DEBUG] Preview.isHidden: \(preview.isHidden)")
-        print("📋 [QL DEBUG] Preview.alphaValue: \(preview.alphaValue)")
-        logger.info("displayQLPreview: Preview bounds: \(NSStringFromRect(preview.bounds), privacy: .public)")
-        
+
         // Create a proper QuickLookItem wrapper - this is critical!
         // Direct URL casting to QLPreviewItem is unreliable and causes infinite spinner
         let quickLookItem = QuickLookItem(url: url)
-        print("📋 [QL DEBUG] QuickLookItem created:")
-        print("   - url: \(quickLookItem.url)")
-        print("   - previewItemURL: \(String(describing: quickLookItem.previewItemURL))")
-        print("   - previewItemTitle: \(String(describing: quickLookItem.previewItemTitle))")
-        
+        logger.debug("displayQLPreview: QuickLookItem created for '\(url.lastPathComponent, privacy: .public)'")
+
         // Set the preview item using the wrapper
-        print("📋 [QL DEBUG] Setting preview.previewItem...")
         preview.previewItem = quickLookItem
-        print("📋 [QL DEBUG] previewItem set")
-        
+
         // Refresh the preview to trigger loading
-        print("📋 [QL DEBUG] Calling refreshPreviewItem()...")
         preview.refreshPreviewItem()
-        print("📋 [QL DEBUG] refreshPreviewItem() called")
-        
+        logger.debug("displayQLPreview: refreshPreviewItem called")
+
         quickLookView = preview
-        
+
         // Update status bar
         statusBar.positionLabel.stringValue = "Previewing: \(url.lastPathComponent)"
         statusBar.selectionLabel.stringValue = ""
-        
-        // Debug: Check view hierarchy after setup
-        print("📋 [QL DEBUG] Final state:")
-        print("   - preview.previewItem: \(String(describing: preview.previewItem))")
-        print("   - preview.superview: \(String(describing: preview.superview))")
-        print("   - preview.subviews.count: \(preview.subviews.count)")
-        for (i, subview) in preview.subviews.enumerated() {
-            print("   - subview[\(i)]: \(type(of: subview)), hidden=\(subview.isHidden), bounds=\(subview.bounds)")
-        }
-        
-        print("✅ [QL DEBUG] displayQLPreview COMPLETE")
+
         logger.info("displayQLPreview: QLPreviewView configured for '\(url.lastPathComponent, privacy: .public)'")
     }
     
     /// Removes any existing preview views (QuickLook or PDF).
     private func removePreviewViews() {
-        quickLookView?.close()
-        quickLookView?.removeFromSuperview()
+        logger.debug("removePreviewViews: Cleaning up existing preview views")
+        logger.debug("removePreviewViews: quickLookView=\(self.quickLookView != nil) pdfView=\(self.pdfView != nil)")
+
+        if let ql = quickLookView {
+            logger.debug("removePreviewViews: Removing QuickLook view from hierarchy")
+            ql.close()
+            ql.removeFromSuperview()
+        }
         quickLookView = nil
-        
-        pdfView?.removeFromSuperview()
+
+        if let pdf = pdfView {
+            logger.debug("removePreviewViews: Removing PDF view from hierarchy")
+            pdf.removeFromSuperview()
+        }
         pdfView = nil
+
+        logger.debug("removePreviewViews: Cleanup complete")
     }
     
     /// Hides the QuickLook/PDF preview and shows the genomics viewer
@@ -824,9 +832,15 @@ public class ViewerViewController: NSViewController {
     
     /// Hides the genomics viewer components (for QuickLook preview)
     private func hideGenomicsViewer() {
+        logger.debug("hideGenomicsViewer: Hiding genomics components")
+        logger.debug("hideGenomicsViewer: viewerView frame before: \(NSStringFromRect(self.viewerView.frame), privacy: .public)")
+
         viewerView.isHidden = true
         headerView.isHidden = true
         enhancedRulerView.isHidden = true
+        progressOverlay.isHidden = true
+
+        logger.debug("hideGenomicsViewer: Components hidden - viewerView=\(self.viewerView.isHidden) headerView=\(self.headerView.isHidden) rulerView=\(self.enhancedRulerView.isHidden)")
     }
     
     /// Shows the genomics viewer components (after QuickLook preview)
@@ -947,29 +961,28 @@ public class ViewerViewController: NSViewController {
     ///
     /// - Parameter bundle: The ReferenceBundle to display
     public func displayReferenceBundle(_ bundle: LungfishIO.ReferenceBundle) async {
-        print("[DEBUG] displayReferenceBundle: Starting to display bundle '\(bundle.name)'")
         logger.info("displayReferenceBundle: Starting to display bundle '\(bundle.name, privacy: .public)'")
-        
+
         // Hide any QuickLook preview
         hideQuickLookPreview()
-        
+
         // Store bundle reference for later use
         currentReferenceBundle = bundle
         currentDocument = nil  // Bundle replaces regular document
-        
+
         // Force layout to ensure valid bounds
         view.layoutSubtreeIfNeeded()
         let effectiveWidth = max(800, Int(viewerView.bounds.width))
-        
+
         // Get the first chromosome to display
         guard let firstChrom = bundle.manifest.genome.chromosomes.first else {
             logger.error("displayReferenceBundle: No chromosomes in bundle")
             return
         }
-        
+
         let chromLength = Int(firstChrom.length)
         logger.info("displayReferenceBundle: First chromosome '\(firstChrom.name, privacy: .public)' length=\(chromLength)")
-        
+
         // Create reference frame for the chromosome
         referenceFrame = ReferenceFrame(
             chromosome: firstChrom.name,
@@ -978,42 +991,38 @@ public class ViewerViewController: NSViewController {
             pixelWidth: effectiveWidth,
             sequenceLength: chromLength
         )
-        
+
         // Set up the viewer with bundle information
         viewerView.setReferenceBundle(bundle)
-        
+
         // Update header with chromosome names
         let trackNames = [firstChrom.name] + bundle.annotationTrackIds.map { "Annotations: \($0)" }
         headerView.setTrackNames(trackNames)
-        
+
         // Update ruler
         enhancedRulerView.referenceFrame = referenceFrame
-        
+
         // Update status bar
         updateStatusBar()
-        
-        print("[DEBUG] displayReferenceBundle: referenceFrame=\(referenceFrame?.chromosome ?? "nil"):\(referenceFrame?.start ?? 0)-\(referenceFrame?.end ?? 0), viewerView.bounds=\(viewerView.bounds.width)x\(viewerView.bounds.height)")
-        
+
         // Trigger redraw
         viewerView.needsDisplay = true
         enhancedRulerView.needsDisplay = true
         headerView.needsDisplay = true
-        
+
         // Schedule delayed redraw for layout timing
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             guard let self = self else { return }
-            
+
             if let frame = self.referenceFrame, self.viewerView.bounds.width > 0 {
                 frame.pixelWidth = Int(self.viewerView.bounds.width)
             }
-            
-            print("[DEBUG] displayReferenceBundle (delayed): triggering redraw, viewerView.bounds=\(self.viewerView.bounds.width)x\(self.viewerView.bounds.height)")
+
             self.viewerView.needsDisplay = true
             self.enhancedRulerView.needsDisplay = true
             self.headerView.needsDisplay = true
         }
-        
-        print("[DEBUG] displayReferenceBundle: Completed displaying bundle")
+
         logger.info("displayReferenceBundle: Completed displaying bundle")
     }
     
@@ -1404,7 +1413,6 @@ public class ProgressOverlayView: NSView {
         let timeoutInterval = timeout ?? defaultTimeout
         timeoutTimer = Timer.scheduledTimer(withTimeInterval: timeoutInterval, repeats: false) { [weak self] _ in
             guard let self = self else { return }
-            print("[ProgressOverlayView] Timeout reached after \(timeoutInterval)s, auto-hiding")
             self.stopAnimating()
             self.isHidden = true
         }
@@ -1670,7 +1678,6 @@ public class SequenceViewerView: NSView {
     ///
     /// - Parameter bundle: The ReferenceBundle to display
     func setReferenceBundle(_ bundle: ReferenceBundle) {
-        print("[DEBUG] SequenceViewerView.setReferenceBundle: Setting bundle '\(bundle.name)'")
         logger.info("SequenceViewerView.setReferenceBundle: Setting bundle '\(bundle.name, privacy: .public)'")
         
         // Store the bundle reference
@@ -1718,7 +1725,6 @@ public class SequenceViewerView: NSView {
 
         guard let context = NSGraphicsContext.current?.cgContext else {
             logger.warning("SequenceViewerView.draw: No graphics context available")
-            print("[DEBUG] SequenceViewerView.draw: No graphics context!")
             return
         }
 
@@ -1742,7 +1748,6 @@ public class SequenceViewerView: NSView {
         let hasBundle = currentReferenceBundle != nil
         let hasFrame = viewController?.referenceFrame != nil
         let hasVC = viewController != nil
-        print("[DEBUG] SequenceViewerView.draw: hasVC=\(hasVC), hasFrame=\(hasFrame), hasBundle=\(hasBundle), bounds=\(self.bounds.width)x\(self.bounds.height)")
         logger.debug("SequenceViewerView.draw: hasVC=\(hasVC), hasFrame=\(hasFrame), hasBundle=\(hasBundle), bounds=\(self.bounds.width)x\(self.bounds.height)")
         
         if let frame = viewController?.referenceFrame {
@@ -1752,8 +1757,7 @@ public class SequenceViewerView: NSView {
                 drawStackedSequences(state.stackedSequences, frame: frame, context: context)
             } else if currentReferenceBundle != nil {
                 // Reference bundle mode: draw from cached bundle data
-                print("[DEBUG] SequenceViewerView.draw: Drawing bundle content for \(frame.chromosome)")
-                logger.info("SequenceViewerView.draw: Drawing bundle content for \(frame.chromosome)")
+                logger.debug("SequenceViewerView.draw: Drawing bundle content for \(frame.chromosome)")
                 drawBundleContent(frame: frame, context: context)
             } else if let seq = sequence {
                 // Single sequence mode
@@ -1779,19 +1783,17 @@ public class SequenceViewerView: NSView {
     /// 3. Redrawing when fetch completes
     private func drawBundleContent(frame: ReferenceFrame, context: CGContext) {
         guard let bundle = currentReferenceBundle else {
-            print("[DEBUG] drawBundleContent: currentReferenceBundle is nil!")
             logger.warning("drawBundleContent: currentReferenceBundle is nil")
             return
         }
-        
+
         // Build the current visible region
         let visibleRegion = GenomicRegion(
             chromosome: frame.chromosome,
             start: Int(frame.start),
             end: Int(frame.end)
         )
-        
-        print("[DEBUG] drawBundleContent: visibleRegion=\(visibleRegion.description), isFetching=\(self.isFetchingBundleData), hasCached=\(self.cachedBundleSequence != nil)")
+
         logger.debug("drawBundleContent: visibleRegion=\(visibleRegion.description), isFetching=\(self.isFetchingBundleData), hasCached=\(self.cachedBundleSequence != nil)")
         
         // Check if there was a fetch error
@@ -1831,13 +1833,12 @@ public class SequenceViewerView: NSView {
     private func fetchBundleData(bundle: ReferenceBundle, region: GenomicRegion) {
         isFetchingBundleData = true
         bundleFetchError = nil  // Clear any previous error
-        
+
         // Get chromosome length to clamp the expanded region
         let chromLength = bundle.chromosomeLength(named: region.chromosome) ?? Int64(region.end + 1000)
-        
-        print("[DEBUG] fetchBundleData: Starting SYNC fetch for \(region.description), chromLength=\(chromLength)")
+
         logger.info("fetchBundleData: Starting SYNC fetch for \(region.description), chromLength=\(chromLength)")
-        
+
         // Expand the region slightly to reduce re-fetching on small pans, but clamp to chromosome bounds
         let expandedStart = max(0, region.start - 1000)
         let expandedEnd = min(Int(chromLength), region.end + 1000)
@@ -1846,43 +1847,37 @@ public class SequenceViewerView: NSView {
             start: expandedStart,
             end: expandedEnd
         )
-        
-        logger.info("fetchBundleData: Expanded region: \(expandedRegion.description)")
-        
+
+        logger.debug("fetchBundleData: Expanded region: \(expandedRegion.description)")
+
         // Use synchronous fetching since Tasks don't execute from notification handlers
         do {
-            print("[DEBUG] fetchBundleData: Calling bundle.fetchSequenceSync for \(expandedRegion.description)")
-            logger.info("fetchBundleData: Calling bundle.fetchSequenceSync...")
-            
             // Fetch sequence data synchronously
             let sequence = try bundle.fetchSequenceSync(region: expandedRegion)
-            print("[DEBUG] fetchBundleData: Got sequence of \(sequence.count) bp")
             logger.info("fetchBundleData: Got sequence of \(sequence.count) bp")
-            
+
             // Skip annotations for now - they still require async BigBed reading
             // TODO: Add synchronous annotation fetching if needed
             let allAnnotations: [SequenceAnnotation] = []
-            
+
             // Update cache
             self.cachedBundleSequence = sequence
             self.cachedSequenceRegion = expandedRegion
             self.cachedBundleAnnotations = allAnnotations
             self.isFetchingBundleData = false
             self.bundleFetchError = nil
-            
+
             // Trigger redraw
             self.needsDisplay = true
-            
-            print("[DEBUG] SequenceViewerView.fetchBundleData: SUCCESS - Fetched \(sequence.count) bp")
+
             logger.info("SequenceViewerView.fetchBundleData: SUCCESS - Fetched \(sequence.count) bp")
-            
+
         } catch {
             let errorMsg = error.localizedDescription
-            print("[DEBUG] SequenceViewerView.fetchBundleData: FAILED - \(errorMsg)")
             logger.error("SequenceViewerView.fetchBundleData: FAILED - \(errorMsg, privacy: .public)")
             self.isFetchingBundleData = false
             self.bundleFetchError = errorMsg
-            
+
             // Trigger redraw to show error
             self.needsDisplay = true
         }

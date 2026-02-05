@@ -259,10 +259,18 @@ extension ContainerRuntimeProtocol {
 /// Errors that can occur during container runtime operations.
 public enum ContainerRuntimeError: Error, LocalizedError, Sendable {
     /// No container runtime is available on this system.
-    case noRuntimeAvailable
+    ///
+    /// The `reasons` array contains explanations for why each runtime was unavailable,
+    /// which can be displayed to users to help them resolve the issue.
+    case noRuntimeAvailable(reasons: [String] = [])
 
     /// The specified runtime is not available.
     case runtimeNotAvailable(ContainerRuntimeType, reason: String)
+
+    /// Runtime initialization failed.
+    ///
+    /// The runtime was detected as available but failed during initialization.
+    case initializationFailed(runtime: ContainerRuntimeType, underlyingError: Error)
 
     /// Failed to check runtime version.
     case versionCheckFailed(ContainerRuntimeType, underlying: Error?)
@@ -299,11 +307,17 @@ public enum ContainerRuntimeError: Error, LocalizedError, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .noRuntimeAvailable:
-            return "No container runtime is available on this system"
+        case .noRuntimeAvailable(let reasons):
+            if reasons.isEmpty {
+                return "No container runtime is available on this system"
+            }
+            return "No container runtime available:\n" + reasons.map { "• \($0)" }.joined(separator: "\n")
 
         case .runtimeNotAvailable(let type, let reason):
             return "\(type.displayName) is not available: \(reason)"
+
+        case .initializationFailed(let runtime, let underlyingError):
+            return "\(runtime.displayName) initialization failed: \(underlyingError.localizedDescription)"
 
         case .versionCheckFailed(let type, _):
             return "Failed to check \(type.displayName) version"
@@ -343,14 +357,26 @@ public enum ContainerRuntimeError: Error, LocalizedError, Sendable {
     public var recoverySuggestion: String? {
         switch self {
         case .noRuntimeAvailable:
-            return "Install Docker Desktop or upgrade to macOS 26 for Apple Containerization"
+            return """
+            To use container features, you can:
+            • Install Docker Desktop from https://docker.com/products/docker-desktop
+            • Upgrade to macOS 26 on Apple Silicon for native container support
+            """
 
         case .runtimeNotAvailable(let type, _):
             switch type {
             case .appleContainerization:
-                return "Ensure you are running macOS 26+ on Apple Silicon"
+                return "Apple Containerization requires macOS 26 or later on Apple Silicon."
             case .docker:
-                return "Install Docker Desktop and ensure the daemon is running"
+                return "Install Docker Desktop and ensure the daemon is running."
+            }
+
+        case .initializationFailed(let runtime, _):
+            switch runtime {
+            case .appleContainerization:
+                return "Try restarting your Mac or checking system logs for container framework errors."
+            case .docker:
+                return "Try restarting Docker Desktop or reinstalling Docker."
             }
 
         case .versionCheckFailed:

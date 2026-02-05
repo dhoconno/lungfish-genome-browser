@@ -46,23 +46,24 @@ public struct QualityStatistics: Sendable {
 /// View model for the quality section.
 ///
 /// Manages quality overlay visibility and quality statistics display.
+@Observable
 @MainActor
-public class QualitySectionViewModel: ObservableObject {
+public final class QualitySectionViewModel {
     // MARK: - Default Values
 
     /// Default setting for quality overlay (disabled by default)
     public static let defaultQualityOverlayEnabled: Bool = false
 
-    // MARK: - Published Properties
+    // MARK: - Observable Properties
 
     /// Whether the quality overlay is enabled
-    @Published public var isQualityOverlayEnabled: Bool = defaultQualityOverlayEnabled
+    public var isQualityOverlayEnabled: Bool = false
 
     /// Whether quality data is available (false for FASTA files)
-    @Published public var hasQualityData: Bool = false
+    public var hasQualityData: Bool = false
 
     /// Quality statistics, if available
-    @Published public var statistics: QualityStatistics?
+    public var statistics: QualityStatistics?
 
     /// Callback when overlay toggle changes
     public var onOverlayToggleChanged: ((Bool) -> Void)?
@@ -101,7 +102,7 @@ public class QualitySectionViewModel: ObservableObject {
 /// Displays quality metrics when FASTQ data is loaded and provides
 /// a toggle to enable/disable quality visualization overlay.
 public struct QualitySection: View {
-    @ObservedObject var viewModel: QualitySectionViewModel
+    @Bindable var viewModel: QualitySectionViewModel
     @State private var isExpanded = true
 
     public init(viewModel: QualitySectionViewModel) {

@@ -40,7 +40,10 @@ public final class FileSystemWatcher {
     /// The callback to invoke when filesystem changes are detected
     private let onChange: @MainActor () -> Void
     
-    /// Timer for periodic content scanning
+    /// Timer for periodic content scanning.
+    ///
+    /// Uses `nonisolated(unsafe)` because Timer isn't Sendable and we need to
+    /// access it in deinit. This is safe because all accesses are on the main thread.
     private nonisolated(unsafe) var scanTimer: Timer?
     
     /// The directory currently being watched
@@ -71,7 +74,6 @@ public final class FileSystemWatcher {
     ///                      Always called on the main thread.
     public init(onChange: @escaping @MainActor () -> Void) {
         self.onChange = onChange
-        print("[FSW] FileSystemWatcher initialized")
         logger.debug("FileSystemWatcher initialized")
     }
     
@@ -99,27 +101,24 @@ public final class FileSystemWatcher {
         
         let path = directory.path
         watchedDirectory = directory
-        
-        print("[FSW] startWatching: Starting to watch '\(path)'")
+
         logger.info("startWatching: Starting to watch '\(path, privacy: .public)'")
-        
+
         // Take initial snapshot
         contentSnapshot = createSnapshot(of: directory)
-        print("[FSW] startWatching: Initial snapshot has \(contentSnapshot?.entries.count ?? 0) entries")
-        
+
         // Start periodic scanning timer
         scanTimer = Timer.scheduledTimer(withTimeInterval: scanInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.scanForChanges()
             }
         }
-        
+
         // Make sure the timer fires even when UI is being interacted with
         if let timer = scanTimer {
             RunLoop.main.add(timer, forMode: .common)
         }
-        
-        print("[FSW] startWatching: Timer started with interval \(scanInterval)s")
+
         logger.info("startWatching: Content scanning started successfully")
     }
     
@@ -135,15 +134,13 @@ public final class FileSystemWatcher {
             return
         }
         
-        print("[FSW] stopWatching: Stopping watcher for '\(watchedDirectory?.path ?? "unknown")'")
         logger.info("stopWatching: Stopping watcher for '\(self.watchedDirectory?.path ?? "unknown", privacy: .public)'")
-        
+
         scanTimer?.invalidate()
         scanTimer = nil
         watchedDirectory = nil
         contentSnapshot = nil
-        
-        print("[FSW] stopWatching: Watcher stopped")
+
         logger.info("stopWatching: Watcher stopped and released")
     }
     
@@ -157,7 +154,6 @@ public final class FileSystemWatcher {
         
         // Compare snapshots
         if let oldSnapshot = contentSnapshot, oldSnapshot != newSnapshot {
-            print("[FSW] scanForChanges: Changes detected!")
             logger.debug("scanForChanges: Directory content changed")
             
             // Update snapshot before triggering callback
@@ -210,22 +206,19 @@ public final class FileSystemWatcher {
     private func triggerChangeCallback() {
         // Debounce: Cancel previous work item and schedule new one
         debounceWorkItem?.cancel()
-        
-        print("[FSW] Scheduling debounced callback in \(debounceInterval)s")
+
+        logger.debug("triggerChangeCallback: Scheduling debounced callback")
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else {
-                print("[FSW] ERROR: self was deallocated before callback could fire!")
                 logger.warning("triggerChangeCallback: self was deallocated before callback could fire")
                 return
             }
-            print("[FSW] Invoking onChange callback NOW")
             logger.info("triggerChangeCallback: Invoking onChange callback")
             self.onChange()
-            print("[FSW] onChange callback completed")
-            logger.info("triggerChangeCallback: onChange callback completed")
+            logger.debug("triggerChangeCallback: onChange callback completed")
         }
         debounceWorkItem = workItem
-        
+
         DispatchQueue.main.asyncAfter(deadline: .now() + debounceInterval, execute: workItem)
     }
 }

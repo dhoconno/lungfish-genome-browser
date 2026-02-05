@@ -79,6 +79,15 @@ public struct FormatDescriptor: Sendable {
     /// Whether we can write/export this format
     public let canWrite: Bool
 
+    /// SF Symbol name for UI display
+    public let iconName: String
+
+    /// Whether this format supports QuickLook preview
+    public let supportsQuickLook: Bool
+
+    /// UI category for sidebar grouping and display
+    public let uiCategory: UICategory
+
     // MARK: - Initialization
 
     /// Creates a format descriptor with all properties.
@@ -98,6 +107,9 @@ public struct FormatDescriptor: Sendable {
     ///   - isBinary: Whether the format is binary
     ///   - canRead: Whether we support reading this format
     ///   - canWrite: Whether we support writing this format
+    ///   - iconName: SF Symbol name for UI display (defaults to category icon)
+    ///   - supportsQuickLook: Whether this format supports QuickLook preview
+    ///   - uiCategory: UI category for sidebar grouping
     public init(
         identifier: FormatIdentifier,
         displayName: String,
@@ -112,7 +124,10 @@ public struct FormatDescriptor: Sendable {
         indexFormat: FormatIdentifier? = nil,
         isBinary: Bool = false,
         canRead: Bool = true,
-        canWrite: Bool = true
+        canWrite: Bool = true,
+        iconName: String? = nil,
+        supportsQuickLook: Bool = false,
+        uiCategory: UICategory = .unknown
     ) {
         self.identifier = identifier
         self.displayName = displayName
@@ -128,6 +143,9 @@ public struct FormatDescriptor: Sendable {
         self.isBinary = isBinary
         self.canRead = canRead
         self.canWrite = canWrite
+        self.iconName = iconName ?? uiCategory.iconName
+        self.supportsQuickLook = supportsQuickLook
+        self.uiCategory = uiCategory
     }
 
     // MARK: - Convenience Methods
@@ -159,6 +177,88 @@ public struct FormatDescriptor: Sendable {
     /// Gets the primary (first) extension for this format
     public var primaryExtension: String {
         extensions.sorted().first ?? identifier.id
+    }
+}
+
+// MARK: - UICategory
+
+/// UI category for format grouping in sidebar and other views.
+public enum UICategory: String, Sendable, CaseIterable, Codable {
+    /// Sequence data (FASTA, FASTQ, GenBank)
+    case sequence
+
+    /// Annotation data (GFF3, GTF, BED)
+    case annotation
+
+    /// Alignment data (BAM, SAM, CRAM)
+    case alignment
+
+    /// Variant data (VCF, BCF)
+    case variant
+
+    /// Coverage/signal data (BigWig, bedGraph)
+    case coverage
+
+    /// Index files (FAI, BAI, TBI)
+    case index
+
+    /// Document files (PDF, text, markdown)
+    case document
+
+    /// Image files (PNG, JPEG, TIFF)
+    case image
+
+    /// Compressed archives
+    case compressed
+
+    /// Reference genome bundles (.lungfishref)
+    case referenceBundle
+
+    /// Unknown or unrecognized format
+    case unknown
+
+    /// Human-readable display name
+    public var displayName: String {
+        switch self {
+        case .sequence: return "Sequence"
+        case .annotation: return "Annotation"
+        case .alignment: return "Alignment"
+        case .variant: return "Variant"
+        case .coverage: return "Coverage"
+        case .index: return "Index"
+        case .document: return "Document"
+        case .image: return "Image"
+        case .compressed: return "Compressed"
+        case .referenceBundle: return "Reference Bundle"
+        case .unknown: return "Other"
+        }
+    }
+
+    /// SF Symbol icon name for this category
+    public var iconName: String {
+        switch self {
+        case .sequence: return "doc.text"
+        case .annotation: return "list.bullet.rectangle"
+        case .alignment: return "chart.bar"
+        case .variant: return "chart.bar.xaxis"
+        case .coverage: return "waveform.path.ecg"
+        case .index: return "doc.badge.gearshape"
+        case .document: return "doc.richtext"
+        case .image: return "photo"
+        case .compressed: return "archivebox"
+        case .referenceBundle: return "cylinder.split.1x2"
+        case .unknown: return "doc.questionmark"
+        }
+    }
+
+    /// Whether files in this category are genomics formats
+    public var isGenomicsCategory: Bool {
+        switch self {
+        case .sequence, .annotation, .alignment, .variant, .coverage, .index, .referenceBundle:
+            return true
+        case .document, .image, .compressed, .unknown:
+            return false
+        }
     }
 }
 

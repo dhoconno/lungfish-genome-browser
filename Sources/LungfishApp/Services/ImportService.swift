@@ -4,58 +4,27 @@
 
 import Foundation
 import AppKit
+import LungfishIO
 import UniformTypeIdentifiers
 import os.log
 
 /// Logger for import operations
 private let logger = Logger(subsystem: "com.lungfish.browser", category: "ImportService")
 
-/// Represents a detected file type with its category
-public enum FileCategory: String, CaseIterable, Sendable {
-    case sequence, annotation, alignment, variant, coverage, index, document, image, compressed, unknown
-    
-    public var displayName: String {
-        switch self {
-        case .sequence: return "Sequence"
-        case .annotation: return "Annotation"
-        case .alignment: return "Alignment"
-        case .variant: return "Variant"
-        case .coverage: return "Coverage"
-        case .index: return "Index"
-        case .document: return "Document"
-        case .image: return "Image"
-        case .compressed: return "Compressed"
-        case .unknown: return "Other"
-        }
-    }
-    
-    public var iconName: String {
-        switch self {
-        case .sequence: return "doc.text"
-        case .annotation: return "list.bullet.rectangle"
-        case .alignment: return "chart.bar"
-        case .variant: return "chart.bar.xaxis"
-        case .coverage: return "waveform.path.ecg"
-        case .index: return "doc.badge.gearshape"
-        case .document: return "doc.richtext"
-        case .image: return "photo"
-        case .compressed: return "archivebox"
-        case .unknown: return "doc"
-        }
-    }
-}
+/// Type alias for backward compatibility - use UICategory from LungfishIO
+public typealias FileCategory = UICategory
 
 /// Detected file format information
 public struct DetectedFormat: Sendable {
-    public let category: FileCategory
+    public let category: UICategory
     public let formatId: String
     public let formatName: String
     public let fileExtension: String
     public let isGenomicsFormat: Bool
     public let supportsQuickLook: Bool
-    
+
     public init(
-        category: FileCategory,
+        category: UICategory,
         formatId: String,
         formatName: String,
         fileExtension: String,
@@ -74,117 +43,87 @@ public struct DetectedFormat: Sendable {
 /// Service for importing files into Lungfish projects
 @MainActor
 public final class ImportService {
-    
+
     // MARK: - Singleton
-    
+
     public static let shared = ImportService()
-    
-    // MARK: - Properties
-    
-    private let formatMap: [String: DetectedFormat]
-    
+
+    // MARK: - Format Name Mapping
+
+    /// Maps format IDs to human-readable names for display
+    private static let formatNames: [String: String] = [
+        // Sequence
+        "fasta": "FASTA", "fa": "FASTA", "fna": "FASTA", "faa": "FASTA",
+        "ffn": "FASTA", "frn": "FASTA", "fas": "FASTA",
+        "fastq": "FASTQ", "fq": "FASTQ",
+        "gb": "GenBank", "gbk": "GenBank", "genbank": "GenBank", "gbff": "GenBank",
+        "embl": "EMBL",
+        // Annotation
+        "gff": "GFF3", "gff3": "GFF3", "gtf": "GTF", "bed": "BED",
+        // Variant
+        "vcf": "VCF", "bcf": "BCF",
+        // Alignment
+        "bam": "BAM", "sam": "SAM", "cram": "CRAM",
+        // Coverage
+        "bw": "BigWig", "bigwig": "BigWig",
+        "bb": "BigBed", "bigbed": "BigBed",
+        "bedgraph": "bedGraph", "bg": "bedGraph",
+        // Index
+        "fai": "FASTA Index", "bai": "BAM Index", "tbi": "Tabix Index",
+        // Document
+        "pdf": "PDF", "txt": "Plain Text", "text": "Plain Text",
+        "md": "Markdown", "markdown": "Markdown",
+        "rtf": "Rich Text", "csv": "CSV", "tsv": "TSV",
+        // Image
+        "png": "PNG", "jpg": "JPEG", "jpeg": "JPEG",
+        "tiff": "TIFF", "tif": "TIFF", "svg": "SVG",
+        // Compressed
+        "gz": "Gzip", "zip": "ZIP Archive"
+    ]
+
     // MARK: - Initialization
-    
-    private init() {
-        var map: [String: DetectedFormat] = [:]
-        
-        // Sequence formats
-        for ext in ["fasta", "fa", "fna", "faa", "ffn", "frn", "fas"] {
-            map[ext] = DetectedFormat(category: .sequence, formatId: "fasta", formatName: "FASTA", fileExtension: ext, isGenomicsFormat: true, supportsQuickLook: false)
-        }
-        for ext in ["fastq", "fq"] {
-            map[ext] = DetectedFormat(category: .sequence, formatId: "fastq", formatName: "FASTQ", fileExtension: ext, isGenomicsFormat: true, supportsQuickLook: false)
-        }
-        for ext in ["gb", "gbk", "genbank", "gbff"] {
-            map[ext] = DetectedFormat(category: .sequence, formatId: "genbank", formatName: "GenBank", fileExtension: ext, isGenomicsFormat: true, supportsQuickLook: false)
-        }
-        map["embl"] = DetectedFormat(category: .sequence, formatId: "embl", formatName: "EMBL", fileExtension: "embl", isGenomicsFormat: true, supportsQuickLook: false)
-        
-        // Annotation formats
-        for ext in ["gff", "gff3"] {
-            map[ext] = DetectedFormat(category: .annotation, formatId: "gff3", formatName: "GFF3", fileExtension: ext, isGenomicsFormat: true, supportsQuickLook: false)
-        }
-        map["gtf"] = DetectedFormat(category: .annotation, formatId: "gtf", formatName: "GTF", fileExtension: "gtf", isGenomicsFormat: true, supportsQuickLook: false)
-        map["bed"] = DetectedFormat(category: .annotation, formatId: "bed", formatName: "BED", fileExtension: "bed", isGenomicsFormat: true, supportsQuickLook: false)
-        
-        // Variant formats
-        map["vcf"] = DetectedFormat(category: .variant, formatId: "vcf", formatName: "VCF", fileExtension: "vcf", isGenomicsFormat: true, supportsQuickLook: false)
-        map["bcf"] = DetectedFormat(category: .variant, formatId: "bcf", formatName: "BCF", fileExtension: "bcf", isGenomicsFormat: true, supportsQuickLook: false)
-        
-        // Alignment formats
-        map["bam"] = DetectedFormat(category: .alignment, formatId: "bam", formatName: "BAM", fileExtension: "bam", isGenomicsFormat: true, supportsQuickLook: false)
-        map["sam"] = DetectedFormat(category: .alignment, formatId: "sam", formatName: "SAM", fileExtension: "sam", isGenomicsFormat: true, supportsQuickLook: false)
-        map["cram"] = DetectedFormat(category: .alignment, formatId: "cram", formatName: "CRAM", fileExtension: "cram", isGenomicsFormat: true, supportsQuickLook: false)
-        
-        // Coverage formats
-        for ext in ["bw", "bigwig"] {
-            map[ext] = DetectedFormat(category: .coverage, formatId: "bigwig", formatName: "BigWig", fileExtension: ext, isGenomicsFormat: true, supportsQuickLook: false)
-        }
-        for ext in ["bb", "bigbed"] {
-            map[ext] = DetectedFormat(category: .coverage, formatId: "bigbed", formatName: "BigBed", fileExtension: ext, isGenomicsFormat: true, supportsQuickLook: false)
-        }
-        map["bedgraph"] = DetectedFormat(category: .coverage, formatId: "bedgraph", formatName: "bedGraph", fileExtension: "bedgraph", isGenomicsFormat: true, supportsQuickLook: false)
-        
-        // Index formats
-        map["fai"] = DetectedFormat(category: .index, formatId: "fai", formatName: "FASTA Index", fileExtension: "fai", isGenomicsFormat: true, supportsQuickLook: false)
-        map["bai"] = DetectedFormat(category: .index, formatId: "bai", formatName: "BAM Index", fileExtension: "bai", isGenomicsFormat: true, supportsQuickLook: false)
-        
-        // Document formats
-        map["pdf"] = DetectedFormat(category: .document, formatId: "pdf", formatName: "PDF", fileExtension: "pdf", isGenomicsFormat: false, supportsQuickLook: true)
-        for ext in ["txt", "text"] {
-            map[ext] = DetectedFormat(category: .document, formatId: "text", formatName: "Plain Text", fileExtension: ext, isGenomicsFormat: false, supportsQuickLook: true)
-        }
-        map["md"] = DetectedFormat(category: .document, formatId: "markdown", formatName: "Markdown", fileExtension: "md", isGenomicsFormat: false, supportsQuickLook: true)
-        map["rtf"] = DetectedFormat(category: .document, formatId: "rtf", formatName: "Rich Text", fileExtension: "rtf", isGenomicsFormat: false, supportsQuickLook: true)
-        map["csv"] = DetectedFormat(category: .document, formatId: "csv", formatName: "CSV", fileExtension: "csv", isGenomicsFormat: false, supportsQuickLook: true)
-        map["tsv"] = DetectedFormat(category: .document, formatId: "tsv", formatName: "TSV", fileExtension: "tsv", isGenomicsFormat: false, supportsQuickLook: true)
-        
-        // Image formats
-        map["png"] = DetectedFormat(category: .image, formatId: "png", formatName: "PNG Image", fileExtension: "png", isGenomicsFormat: false, supportsQuickLook: true)
-        for ext in ["jpg", "jpeg"] {
-            map[ext] = DetectedFormat(category: .image, formatId: "jpeg", formatName: "JPEG Image", fileExtension: ext, isGenomicsFormat: false, supportsQuickLook: true)
-        }
-        map["tiff"] = DetectedFormat(category: .image, formatId: "tiff", formatName: "TIFF Image", fileExtension: "tiff", isGenomicsFormat: false, supportsQuickLook: true)
-        map["svg"] = DetectedFormat(category: .image, formatId: "svg", formatName: "SVG Image", fileExtension: "svg", isGenomicsFormat: false, supportsQuickLook: true)
-        
-        // Compressed formats
-        map["gz"] = DetectedFormat(category: .compressed, formatId: "gzip", formatName: "Gzip Compressed", fileExtension: "gz", isGenomicsFormat: false, supportsQuickLook: false)
-        map["zip"] = DetectedFormat(category: .compressed, formatId: "zip", formatName: "ZIP Archive", fileExtension: "zip", isGenomicsFormat: false, supportsQuickLook: true)
-        
-        self.formatMap = map
-    }
-    
+
+    private init() {}
+
     // MARK: - Format Detection
-    
+
+    /// Detects file format information from a URL.
+    ///
+    /// Uses the unified FileTypeUtility from LungfishIO for consistent
+    /// format detection across the application.
     public func detectFormat(url: URL) -> DetectedFormat {
+        let fileInfo = FileTypeUtility.detect(url: url)
         let ext = url.pathExtension.lowercased()
-        
-        // Handle compound extensions like .fastq.gz
-        if ext == "gz" {
+
+        // Determine format name - check for compressed inner extension
+        let formatName: String
+        let formatId: String
+        let finalExtension: String
+
+        if ext == "gz" || ext == "gzip" {
             let innerExt = url.deletingPathExtension().pathExtension.lowercased()
-            if !innerExt.isEmpty, let innerFormat = formatMap[innerExt] {
-                return DetectedFormat(
-                    category: innerFormat.category,
-                    formatId: innerFormat.formatId,
-                    formatName: innerFormat.formatName + " (compressed)",
-                    fileExtension: "\(innerExt).gz",
-                    isGenomicsFormat: innerFormat.isGenomicsFormat,
-                    supportsQuickLook: false
-                )
+            if !innerExt.isEmpty {
+                formatName = (Self.formatNames[innerExt] ?? innerExt.uppercased()) + " (compressed)"
+                formatId = innerExt
+                finalExtension = "\(innerExt).gz"
+            } else {
+                formatName = "Gzip Compressed"
+                formatId = "gz"
+                finalExtension = ext
             }
+        } else {
+            formatName = Self.formatNames[ext] ?? (ext.isEmpty ? "Unknown" : ext.uppercased())
+            formatId = ext.isEmpty ? "unknown" : ext
+            finalExtension = ext
         }
-        
-        if let format = formatMap[ext] {
-            return format
-        }
-        
+
         return DetectedFormat(
-            category: .unknown,
-            formatId: ext.isEmpty ? "unknown" : ext,
-            formatName: ext.isEmpty ? "Unknown" : ext.uppercased(),
-            fileExtension: ext,
-            isGenomicsFormat: false,
-            supportsQuickLook: true
+            category: fileInfo.category,
+            formatId: formatId,
+            formatName: formatName,
+            fileExtension: finalExtension,
+            isGenomicsFormat: fileInfo.isGenomicsFormat,
+            supportsQuickLook: fileInfo.supportsQuickLook
         )
     }
     
@@ -201,8 +140,8 @@ public final class ImportService {
         for window: NSWindow,
         projectURL: URL
     ) async -> [URL] {
-        print("[ImportService] showImportDialogAndImport: Starting for project at \(projectURL.path)")
-        
+        logger.info("showImportDialogAndImport: Starting for project at '\(projectURL.path, privacy: .public)'")
+
         // Create and configure the open panel
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
@@ -211,30 +150,23 @@ public final class ImportService {
         panel.allowsOtherFileTypes = true
         panel.message = "Select files to import into the project"
         panel.prompt = "Import"
-        
-        print("[ImportService] Showing open panel as sheet...")
-        
+
         // Show the panel as a sheet and wait for response
         let response = await panel.beginSheetModal(for: window)
-        
-        print("[ImportService] Panel response: \(response.rawValue)")
-        
+
         guard response == .OK else {
-            print("[ImportService] User cancelled")
+            logger.debug("showImportDialogAndImport: User cancelled")
             return []
         }
-        
+
         let selectedURLs = panel.urls
         guard !selectedURLs.isEmpty else {
-            print("[ImportService] No files selected")
+            logger.debug("showImportDialogAndImport: No files selected")
             return []
         }
-        
-        print("[ImportService] Selected \(selectedURLs.count) file(s)")
-        for url in selectedURLs {
-            print("[ImportService]   - \(url.lastPathComponent)")
-        }
-        
+
+        logger.info("showImportDialogAndImport: Selected \(selectedURLs.count) file(s)")
+
         // Import the files
         return await importFiles(selectedURLs, to: projectURL, window: window)
     }
@@ -247,15 +179,15 @@ public final class ImportService {
         to projectURL: URL,
         window: NSWindow?
     ) async -> [URL] {
-        print("[ImportService] importFiles: Starting import of \(urls.count) file(s)")
-        
+        logger.info("importFiles: Starting import of \(urls.count) file(s)")
+
         let fileManager = FileManager.default
         var importedURLs: [URL] = []
-        
+
         // Verify project directory exists
         var isDirectory: ObjCBool = false
         guard fileManager.fileExists(atPath: projectURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            print("[ImportService] ERROR: Project directory does not exist: \(projectURL.path)")
+            logger.error("importFiles: Project directory does not exist: '\(projectURL.path, privacy: .public)'")
             return []
         }
         
@@ -290,26 +222,26 @@ public final class ImportService {
                 progressIndicator?.doubleValue = Double(index)
             }
             
-            print("[ImportService] Processing [\(index + 1)/\(urls.count)]: \(sourceURL.lastPathComponent)")
-            
+            logger.debug("importFiles: Processing [\(index + 1)/\(urls.count)]: '\(sourceURL.lastPathComponent, privacy: .public)'")
+
             // Verify source exists and is readable
             guard fileManager.fileExists(atPath: sourceURL.path) else {
-                print("[ImportService] ERROR: Source file does not exist")
+                logger.warning("importFiles: Source file does not exist")
                 continue
             }
             guard fileManager.isReadableFile(atPath: sourceURL.path) else {
-                print("[ImportService] ERROR: Source file is not readable")
+                logger.warning("importFiles: Source file is not readable")
                 continue
             }
-            
+
             let format = detectFormat(url: sourceURL)
-            print("[ImportService] Format: \(format.formatName)")
+            logger.debug("importFiles: Format: \(format.formatName, privacy: .public)")
             
             let destinationURL = projectURL.appendingPathComponent(sourceURL.lastPathComponent)
             
             // Handle duplicates
             if fileManager.fileExists(atPath: destinationURL.path) {
-                print("[ImportService] Duplicate detected")
+                logger.debug("importFiles: Duplicate detected")
                 
                 // Hide progress temporarily for dialog
                 if let pw = progressWindow, let parentWindow = window {
@@ -329,34 +261,34 @@ public final class ImportService {
                         try fileManager.removeItem(at: destinationURL)
                         try fileManager.copyItem(at: sourceURL, to: destinationURL)
                         importedURLs.append(destinationURL)
-                        print("[ImportService] Replaced existing file")
+                        logger.debug("importFiles: Replaced existing file")
                     } catch {
-                        print("[ImportService] ERROR replacing: \(error)")
+                        logger.error("importFiles: Error replacing file - \(error.localizedDescription, privacy: .public)")
                     }
                 case .keepBoth:
                     let uniqueURL = generateUniqueURL(for: sourceURL, in: projectURL)
                     do {
                         try fileManager.copyItem(at: sourceURL, to: uniqueURL)
                         importedURLs.append(uniqueURL)
-                        print("[ImportService] Created copy: \(uniqueURL.lastPathComponent)")
+                        logger.debug("importFiles: Created copy '\(uniqueURL.lastPathComponent, privacy: .public)'")
                     } catch {
-                        print("[ImportService] ERROR copying: \(error)")
+                        logger.error("importFiles: Error copying file - \(error.localizedDescription, privacy: .public)")
                     }
                 case .skip:
-                    print("[ImportService] Skipped duplicate")
+                    logger.debug("importFiles: Skipped duplicate")
                 }
             } else {
                 // No duplicate - copy directly
                 do {
                     try fileManager.copyItem(at: sourceURL, to: destinationURL)
                     importedURLs.append(destinationURL)
-                    print("[ImportService] Copied successfully")
+                    logger.debug("importFiles: Copied successfully")
                 } catch {
-                    print("[ImportService] ERROR copying: \(error)")
+                    logger.error("importFiles: Error copying file - \(error.localizedDescription, privacy: .public)")
                 }
             }
         }
-        
+
         // Dismiss progress window
         if let pw = progressWindow, let parentWindow = window {
             progressIndicator?.doubleValue = Double(urls.count)
@@ -364,8 +296,8 @@ public final class ImportService {
             try? await Task.sleep(for: .milliseconds(300))
             parentWindow.endSheet(pw)
         }
-        
-        print("[ImportService] Import completed: \(importedURLs.count) file(s) imported")
+
+        logger.info("importFiles: Import completed - \(importedURLs.count) file(s) imported")
         return importedURLs
     }
     

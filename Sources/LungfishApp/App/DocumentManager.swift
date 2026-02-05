@@ -16,18 +16,19 @@ private let logger = Logger(subsystem: "com.lungfish.browser", category: "Docume
 // MARK: - Document State
 
 /// Represents a loaded document with its associated data.
+@Observable
 @MainActor
-public class LoadedDocument: ObservableObject, Identifiable {
+public final class LoadedDocument: Identifiable {
     public let id = UUID()
     public let url: URL
     public let name: String
     public let type: DocumentType
 
     /// The loaded sequences
-    @Published public var sequences: [Sequence] = []
+    public var sequences: [Sequence] = []
 
     /// The loaded annotations
-    @Published public var annotations: [SequenceAnnotation] = []
+    public var annotations: [SequenceAnnotation] = []
 
     public init(url: URL, type: DocumentType) {
         self.url = url
@@ -92,20 +93,21 @@ public enum DocumentType: String, CaseIterable, Sendable {
 // MARK: - Document Manager
 
 /// Manages loaded documents and notifies observers of changes.
+@Observable
 @MainActor
-public class DocumentManager: ObservableObject {
+public final class DocumentManager {
 
     /// Shared instance
     public static let shared = DocumentManager()
 
     /// Currently loaded documents
-    @Published public private(set) var documents: [LoadedDocument] = []
+    public private(set) var documents: [LoadedDocument] = []
 
     /// Currently active/selected document
-    @Published public var activeDocument: LoadedDocument?
+    public var activeDocument: LoadedDocument?
 
     /// Currently active Lungfish project (for persistent storage)
-    @Published public private(set) var activeProject: ProjectFile?
+    public private(set) var activeProject: ProjectFile?
 
     /// Notification posted when a document is loaded
     public static let documentLoadedNotification = Notification.Name("DocumentManagerDocumentLoaded")

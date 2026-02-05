@@ -811,42 +811,42 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         loadGenomicsFileInBackground(url: url)
     }
     
-    /// Background loading using GCD + async bridge.
-    ///
-    /// Uses DispatchQueue to start the operation, then bridges to async
-    /// for the actual loading, with CFRunLoopPerformBlock for UI updates.
+    /// Loads a genomics file in the background using structured concurrency.
     private func loadGenomicsFileInBackground(url: URL) {
         logger.info("loadGenomicsFileInBackground: Loading '\(url.lastPathComponent, privacy: .public)'")
+
+        // Guard that controllers are available
+        guard let viewerController = self.viewerController,
+              let sidebarController = self.sidebarController else {
+            logger.warning("loadGenomicsFileInBackground: Controllers not available")
+            return
+        }
+
         viewerController.showProgress("Loading \(url.lastPathComponent)...")
-        
-        // Use a detached task started from GCD to avoid the notification handler context
-        DispatchQueue.global(qos: .userInitiated).async {
-            // Create a new Task in this GCD context - this should work
-            Task {
-                do {
-                    let document = try await DocumentManager.shared.loadDocument(at: url)
-                    
-                    // Update UI on main thread
-                    await MainActor.run { [weak self] in
-                        guard let self = self else { return }
-                        self.viewerController.hideProgress()
-                        self.viewerController.displayDocument(document)
-                        self.sidebarController.refreshItem(for: url)
-                        logger.info("loadGenomicsFileInBackground: Loaded and displayed")
-                    }
-                } catch {
-                    await MainActor.run { [weak self] in
-                        guard let self = self else { return }
-                        self.viewerController.hideProgress()
-                        logger.error("loadGenomicsFileInBackground: Failed - \(error.localizedDescription)")
-                        
-                        let alert = NSAlert()
-                        alert.messageText = "Failed to Open File"
-                        alert.informativeText = error.localizedDescription
-                        alert.alertStyle = .warning
-                        alert.addButton(withTitle: "OK")
-                        alert.runModal()
-                    }
+
+        // Use detached task for background loading without inheriting actor context
+        Task.detached(priority: .userInitiated) {
+            do {
+                let document = try await DocumentManager.shared.loadDocument(at: url)
+
+                // Update UI on main actor
+                await MainActor.run {
+                    viewerController.hideProgress()
+                    viewerController.displayDocument(document)
+                    sidebarController.refreshItem(for: url)
+                    logger.info("loadGenomicsFileInBackground: Loaded and displayed")
+                }
+            } catch {
+                await MainActor.run {
+                    viewerController.hideProgress()
+                    logger.error("loadGenomicsFileInBackground: Failed - \(error.localizedDescription)")
+
+                    let alert = NSAlert()
+                    alert.messageText = "Failed to Open File"
+                    alert.informativeText = error.localizedDescription
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
                 }
             }
         }

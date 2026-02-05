@@ -17,27 +17,30 @@ public enum ColorApplyMode: String, CaseIterable, Identifiable {
 /// View model for the selection section.
 ///
 /// Manages the state of the currently selected annotation for editing.
+@Observable
 @MainActor
-public class SelectionSectionViewModel: ObservableObject {
+public final class SelectionSectionViewModel {
     /// The currently selected annotation, if any
-    @Published public var selectedAnnotation: SequenceAnnotation?
+    public var selectedAnnotation: SequenceAnnotation?
 
     /// Editable name binding
-    @Published public var name: String = ""
+    public var name: String = ""
 
     /// Editable annotation type
-    @Published public var type: AnnotationType = .region
+    public var type: AnnotationType = .region
 
     /// Editable color
-    @Published public var color: Color = .blue
+    public var color: Color = .blue
 
     /// Editable notes
-    @Published public var notes: String = ""
+    public var notes: String = ""
 
     /// Mode for applying color changes
-    @Published public var colorApplyMode: ColorApplyMode = .thisOnly
+    public var colorApplyMode: ColorApplyMode = .thisOnly
 
-    /// Flag to prevent onChange handlers from firing during programmatic updates
+    /// Flag to prevent onChange handlers from firing during programmatic updates.
+    /// Marked with @ObservationIgnored since this flag should not trigger view updates.
+    @ObservationIgnored
     public var isUpdatingFromSelection: Bool = false
 
     /// Callback when annotation is updated
@@ -59,9 +62,7 @@ public class SelectionSectionViewModel: ObservableObject {
         isUpdatingFromSelection = true
         defer { isUpdatingFromSelection = false }
 
-        // Force UI refresh before making changes
-        objectWillChange.send()
-
+        // @Observable automatically tracks property changes, no manual refresh needed
         selectedAnnotation = annotation
         if let annotation = annotation {
             name = annotation.name
@@ -183,7 +184,7 @@ public class SelectionSectionViewModel: ObservableObject {
 /// Displays editable fields for the selected annotation including name, type,
 /// color, and notes. Shows a placeholder message when no annotation is selected.
 public struct SelectionSection: View {
-    @ObservedObject var viewModel: SelectionSectionViewModel
+    @Bindable var viewModel: SelectionSectionViewModel
     @State private var isExpanded = true
     @State private var showDeleteConfirmation = false
 

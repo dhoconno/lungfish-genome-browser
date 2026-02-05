@@ -410,39 +410,40 @@ public class InspectorViewController: NSViewController {
 ///
 /// Aggregates state for all inspector sections and coordinates
 /// between section view models.
+@Observable
 @MainActor
-public class InspectorViewModel: ObservableObject {
+public final class InspectorViewModel {
     // MARK: - Sidebar Selection State
 
     /// Currently selected sidebar item name
-    @Published var selectedItem: String?
+    var selectedItem: String?
 
     /// Currently selected sidebar item type description
-    @Published var selectedType: String?
+    var selectedType: String?
 
     /// Properties key-value pairs for display
-    @Published var properties: [(String, String)] = []
+    var properties: [(String, String)] = []
 
     /// Statistics key-value pairs for display
-    @Published var statistics: [(String, String)] = []
+    var statistics: [(String, String)] = []
 
     // MARK: - Annotation Selection State
 
     /// The currently selected annotation, if any
-    @Published var selectedAnnotation: SequenceAnnotation?
+    var selectedAnnotation: SequenceAnnotation?
 
     // MARK: - Appearance State
 
     /// Current appearance settings
-    @Published var appearance: SequenceAppearance = .load()
+    var appearance: SequenceAppearance = .load()
 
     // MARK: - Quality State
 
     /// Whether quality data is available for the current file
-    @Published var hasQualityData: Bool = false
+    var hasQualityData: Bool = false
 
     /// Quality statistics for the current file
-    @Published var qualityStats: QualityStatistics?
+    var qualityStats: QualityStatistics?
 
     // MARK: - Section View Models
 
@@ -519,7 +520,7 @@ public class InspectorViewModel: ObservableObject {
 /// - Appearance: Configures base colors and track height
 /// - Quality: Shows quality statistics and overlay toggle
 public struct InspectorView: View {
-    @ObservedObject var viewModel: InspectorViewModel
+    var viewModel: InspectorViewModel
 
     public var body: some View {
         ScrollView {

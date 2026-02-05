@@ -250,6 +250,82 @@ extension FormatIdentifier {
         extensions: ["tbi"],
         mimeTypes: ["application/x-tbi"]
     )
+
+    // MARK: Document Formats
+
+    /// PDF document format (.pdf)
+    public static let pdf = FormatIdentifier(
+        "pdf",
+        extensions: ["pdf"],
+        mimeTypes: ["application/pdf"]
+    )
+
+    /// Plain text format (.txt, .text)
+    public static let plainText = FormatIdentifier(
+        "plaintext",
+        extensions: ["txt", "text"],
+        mimeTypes: ["text/plain"]
+    )
+
+    /// Markdown format (.md, .markdown)
+    public static let markdown = FormatIdentifier(
+        "markdown",
+        extensions: ["md", "markdown"],
+        mimeTypes: ["text/markdown"]
+    )
+
+    /// CSV format (.csv)
+    public static let csv = FormatIdentifier(
+        "csv",
+        extensions: ["csv"],
+        mimeTypes: ["text/csv"]
+    )
+
+    /// TSV format (.tsv)
+    public static let tsv = FormatIdentifier(
+        "tsv",
+        extensions: ["tsv"],
+        mimeTypes: ["text/tab-separated-values"]
+    )
+
+    // MARK: Image Formats
+
+    /// PNG image format (.png)
+    public static let png = FormatIdentifier(
+        "png",
+        extensions: ["png"],
+        mimeTypes: ["image/png"]
+    )
+
+    /// JPEG image format (.jpg, .jpeg)
+    public static let jpeg = FormatIdentifier(
+        "jpeg",
+        extensions: ["jpg", "jpeg"],
+        mimeTypes: ["image/jpeg"]
+    )
+
+    /// TIFF image format (.tiff, .tif)
+    public static let tiff = FormatIdentifier(
+        "tiff",
+        extensions: ["tiff", "tif"],
+        mimeTypes: ["image/tiff"]
+    )
+
+    /// SVG image format (.svg)
+    public static let svg = FormatIdentifier(
+        "svg",
+        extensions: ["svg"],
+        mimeTypes: ["image/svg+xml"]
+    )
+
+    // MARK: Bundle Formats
+
+    /// Lungfish reference bundle format (.lungfishref)
+    public static let lungfishRef = FormatIdentifier(
+        "lungfishref",
+        extensions: ["lungfishref"],
+        mimeTypes: ["application/x-lungfishref"]
+    )
 }
 
 // MARK: - CustomStringConvertible

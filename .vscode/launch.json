@@ -8,7 +8,10 @@
             "name": "Debug Lungfish",
             "target": "Lungfish",
             "configuration": "debug",
-            "preLaunchTask": "swift: Build Debug Lungfish"
+            "preLaunchTask": "swift: Build Debug Lungfish",
+            "env": {
+                "OS_ACTIVITY_MODE": "debug"
+            }
         },
         {
             "type": "swift",
@@ -19,6 +22,26 @@
             "target": "Lungfish",
             "configuration": "release",
             "preLaunchTask": "swift: Build Release Lungfish"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:lungfish-genome-browser}",
+            "name": "Debug lungfish-cli",
+            "target": "lungfish-cli",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug lungfish-cli"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:lungfish-genome-browser}",
+            "name": "Release lungfish-cli",
+            "target": "lungfish-cli",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release lungfish-cli"
         }
     ]
 }
