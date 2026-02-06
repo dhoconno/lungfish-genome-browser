@@ -360,6 +360,81 @@ public final class ReferenceBundle: Sendable {
         }
     }
 
+    /// Fetches annotations synchronously from a track for a genomic region.
+    ///
+    /// Uses `SyncBigBedReader` for synchronous file access, suitable for
+    /// AppKit drawing contexts where async/await cannot be used.
+    ///
+    /// - Parameters:
+    ///   - trackId: The annotation track ID
+    ///   - region: The genomic region to query
+    /// - Returns: Array of sequence annotations in the region
+    /// - Throws: `ReferenceBundleError` if annotations cannot be fetched
+    public func getAnnotationsSync(trackId: String, region: GenomicRegion) throws -> [SequenceAnnotation] {
+        guard let trackInfo = annotationTrack(id: trackId) else {
+            throw ReferenceBundleError.trackNotFound(trackId)
+        }
+
+        let trackURL = url.appendingPathComponent(trackInfo.path)
+
+        guard FileManager.default.fileExists(atPath: trackURL.path) else {
+            throw ReferenceBundleError.missingFile(trackInfo.path)
+        }
+
+        do {
+            let reader = try SyncBigBedReader(url: trackURL)
+            let features = try reader.features(region: region)
+
+            let annotations = features.map { feature in
+                let strand: Strand
+                if let strandChar = feature.strand {
+                    switch strandChar {
+                    case "+": strand = .forward
+                    case "-": strand = .reverse
+                    default: strand = .unknown
+                    }
+                } else {
+                    strand = .unknown
+                }
+
+                var color: AnnotationColor?
+                if let rgb = feature.itemRgb {
+                    color = AnnotationColor(
+                        red: Double(rgb.r) / 255.0,
+                        green: Double(rgb.g) / 255.0,
+                        blue: Double(rgb.b) / 255.0
+                    )
+                }
+
+                var qualifiers: [String: AnnotationQualifier] = [:]
+                if let score = feature.score {
+                    qualifiers["score"] = AnnotationQualifier(String(score))
+                }
+                if let extraFields = feature.extraFields {
+                    qualifiers["extra"] = AnnotationQualifier(extraFields)
+                }
+
+                return SequenceAnnotation(
+                    type: .gene,
+                    name: feature.name ?? "unknown",
+                    chromosome: feature.chromosome,
+                    start: feature.start,
+                    end: feature.end,
+                    strand: strand,
+                    qualifiers: qualifiers,
+                    color: color
+                )
+            }
+
+            logger.debug("Fetched \(annotations.count) annotations (sync) from \(trackId) for \(region.description)")
+            return annotations
+
+        } catch {
+            logger.error("Failed to read BigBed annotations (sync): \(error.localizedDescription)")
+            throw ReferenceBundleError.annotationReadFailed(error.localizedDescription)
+        }
+    }
+
     // MARK: - Variant Access
 
     /// Returns available variant track IDs.

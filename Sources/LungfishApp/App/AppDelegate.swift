@@ -747,7 +747,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
     @objc func importFiles(_ sender: Any?) {
         debugLog("importFiles: Menu action triggered")
-        
+
         // Get current project URL
         guard let projectURL = workingDirectoryURL else {
             // No project open - show alert
@@ -759,14 +759,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             alert.runModal()
             return
         }
-        
+
         guard let window = mainWindowController?.window else {
             debugLog("importFiles: No main window available")
             return
         }
-        
+
         debugLog("importFiles: Showing import dialog")
-        
+
         // Show import dialog directly using NSOpenPanel
         // We avoid Task{} here because it doesn't execute reliably from @objc menu actions
         let panel = NSOpenPanel()
@@ -776,61 +776,61 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         panel.allowsOtherFileTypes = true
         panel.message = "Select files to import into the project"
         panel.prompt = "Import"
-        
+
         // Use beginSheetModal with completion handler
         panel.beginSheetModal(for: window) { [weak self] response in
             debugLog("importFiles: Panel response: \(response.rawValue)")
-            
+
             guard response == .OK else {
                 debugLog("importFiles: User cancelled")
                 return
             }
-            
+
             let selectedURLs = panel.urls
             guard !selectedURLs.isEmpty else {
                 debugLog("importFiles: No files selected")
                 return
             }
-            
+
             debugLog("importFiles: Selected \(selectedURLs.count) file(s)")
-            
+
             // Schedule the file copy operation via CFRunLoop to ensure it executes
             // even during modal session transitions
             scheduleOnMainRunLoop {
                 guard let self = self else { return }
                 debugLog("importFiles: Starting file copy operation")
-                
+
                 // Get references to UI components
                 let activityIndicator = self.mainWindowController?.mainSplitViewController?.activityIndicator
                 let sidebarController = self.mainWindowController?.mainSplitViewController?.sidebarController
-                
+
                 // Show progress indicator
                 let fileCount = selectedURLs.count
                 activityIndicator?.show(
                     message: "Importing \(fileCount) file\(fileCount == 1 ? "" : "s")...",
                     style: .indeterminate
                 )
-                
+
                 var importedURLs: [URL] = []
                 var skippedCount = 0
                 var errorCount = 0
-                
+
                 for (index, sourceURL) in selectedURLs.enumerated() {
                     let filename = sourceURL.lastPathComponent
                     let destinationURL = projectURL.appendingPathComponent(filename)
-                    
+
                     // Update progress message
                     activityIndicator?.updateMessage("Importing \(filename) (\(index + 1)/\(fileCount))...")
-                    
+
                     debugLog("importFiles: Copying \(filename) to project")
-                    
+
                     // Check for duplicate
                     if FileManager.default.fileExists(atPath: destinationURL.path) {
                         debugLog("importFiles: File already exists, skipping: \(filename)")
                         skippedCount += 1
                         continue
                     }
-                    
+
                     do {
                         try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
                         importedURLs.append(destinationURL)
@@ -840,14 +840,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                         errorCount += 1
                     }
                 }
-                
+
                 // Hide progress indicator
                 activityIndicator?.hide()
-                
+
                 // Force sidebar refresh immediately (don't wait for FileSystemWatcher)
                 sidebarController?.reloadFromFilesystem()
                 debugLog("importFiles: Triggered sidebar refresh")
-                
+
                 if importedURLs.isEmpty && skippedCount == 0 && errorCount == 0 {
                     debugLog("importFiles: No files imported")
                 } else {
@@ -1510,6 +1510,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         showDatabaseBrowser(source: .pathoplexus)
     }
 
+    @objc func downloadGenomeAssembly(_ sender: Any?) {
+        // TODO: Implement genome assembly download workflow with bundle building
+        showNotImplementedAlert("Genome Assembly Download")
+    }
+
     /// Shows the database browser for the specified source.
     private func showDatabaseBrowser(source: DatabaseSource) {
         guard let window = mainWindowController?.window else { return }
@@ -1747,7 +1752,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             let originalFilename = tempURL.lastPathComponent
             let fileExtension = tempURL.pathExtension
             var baseName = tempURL.deletingPathExtension().lastPathComponent
-            
+
             // Strip the UID suffix from batch downloads (format: "accession_uid.ext" -> "accession.ext")
             // UIDs are numeric, so we look for _digits at the end of the basename
             if let underscoreRange = baseName.range(of: "_", options: .backwards) {
@@ -1758,7 +1763,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     debugLog("handleMultipleDownloadsSync: Stripped UID from filename, using base: \(baseName)")
                 }
             }
-            
+
             let cleanFilename = "\(baseName).\(fileExtension)"
             activityIndicator?.updateMessage("Copying \(cleanFilename) (\(index + 1)/\(totalCount))...")
 
@@ -1916,7 +1921,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
                 viewerController?.hideProgress()
                 viewerController?.displayDocument(document)
-                
+
                 // With filesystem-backed sidebar: if file is inside project, watcher handles refresh
                 // Otherwise add to "Open Documents" section
                 if let projectURL = sidebarController?.currentProjectURL {

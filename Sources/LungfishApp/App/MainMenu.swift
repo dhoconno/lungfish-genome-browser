@@ -557,6 +557,13 @@ public final class MainMenu {
             keyEquivalent: ""
         )
 
+        // Genome assembly download with bundle building
+        toolsMenu.addItem(
+            withTitle: "Download Genome Assembly...",
+            action: #selector(ToolsMenuActions.downloadGenomeAssembly(_:)),
+            keyEquivalent: ""
+        )
+
         toolsMenu.addItem(.separator())
 
         // Workflows
@@ -715,6 +722,7 @@ public final class MainMenu {
     func searchNCBI(_ sender: Any?)
     func searchSRA(_ sender: Any?)
     func searchPathoplexus(_ sender: Any?)
+    func downloadGenomeAssembly(_ sender: Any?)
     func runNextflow(_ sender: Any?)
     func runSnakemake(_ sender: Any?)
     func openWorkflowBuilder(_ sender: Any?)

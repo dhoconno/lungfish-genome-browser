@@ -30,6 +30,13 @@ public final class LoadedDocument: Identifiable {
     /// The loaded annotations
     public var annotations: [SequenceAnnotation] = []
 
+    /// The bundle manifest, populated when type is `.lungfishReferenceBundle`.
+    ///
+    /// Stores the parsed `BundleManifest` from the `.lungfishref` bundle directory,
+    /// providing chromosome information, annotation track metadata, and paths to
+    /// the indexed genome files.
+    public var bundleManifest: BundleManifest?
+
     public init(url: URL, type: DocumentType) {
         self.url = url
         self.name = url.lastPathComponent
@@ -47,7 +54,8 @@ public enum DocumentType: String, CaseIterable, Sendable {
     case bed
     case vcf
     case bam
-    case lungfishProject  // Native .lungfish project format
+    case lungfishProject         // Native .lungfish project format
+    case lungfishReferenceBundle // .lungfishref reference genome bundle
 
     /// File extensions for this document type.
     public var extensions: [String] {
@@ -60,14 +68,17 @@ public enum DocumentType: String, CaseIterable, Sendable {
         case .vcf: return ["vcf"]
         case .bam: return ["bam", "cram", "sam"]
         case .lungfishProject: return ["lungfish"]
+        case .lungfishReferenceBundle: return ["lungfishref"]
         }
     }
 
     /// Whether this is a directory-based format
     public var isDirectoryFormat: Bool {
         switch self {
-        case .lungfishProject: return true
-        default: return false
+        case .lungfishProject, .lungfishReferenceBundle:
+            return true
+        default:
+            return false
         }
     }
 
@@ -76,14 +87,14 @@ public enum DocumentType: String, CaseIterable, Sendable {
     public static func detect(from url: URL) -> DocumentType? {
         var ext = url.pathExtension.lowercased()
         var urlToCheck = url
-        
+
         // Handle gzip-compressed files: strip .gz and check the underlying extension
         if ext == "gz" {
             urlToCheck = url.deletingPathExtension()
             ext = urlToCheck.pathExtension.lowercased()
             logger.debug("DocumentType.detect: Stripped .gz, checking extension='\(ext, privacy: .public)'")
         }
-        
+
         let detected = DocumentType.allCases.first { $0.extensions.contains(ext) }
         logger.debug("DocumentType.detect: extension='\(ext, privacy: .public)' -> \(detected?.rawValue ?? "nil", privacy: .public)")
         return detected
@@ -344,6 +355,9 @@ public final class DocumentManager {
                 logger.info("loadDocument: Opening Lungfish project...")
                 _ = try openProject(at: url)
                 return documents.first ?? document
+            case .lungfishReferenceBundle:
+                logger.info("loadDocument: Loading reference bundle...")
+                try loadReferenceBundle(into: document)
             }
         } catch {
             logger.error("loadDocument: Load failed with error: \(error.localizedDescription, privacy: .public)")
@@ -594,6 +608,32 @@ public final class DocumentManager {
         document.annotations = annotations
 
         logger.info("loadGenBank: Total \(sequences.count) sequences, \(annotations.count) annotations")
+    }
+
+    /// Loads a `.lungfishref` reference bundle into a document.
+    ///
+    /// Reads the bundle manifest and stores the chromosome list. The actual
+    /// sequence and annotation data is fetched on-demand via `BundleDataProvider`
+    /// rather than being loaded entirely into memory.
+    ///
+    /// - Parameter document: The document to populate with bundle data
+    /// - Throws: Error if the manifest cannot be read or decoded
+    private func loadReferenceBundle(into document: LoadedDocument) throws {
+        logger.info("loadReferenceBundle: Loading manifest from \(document.url.path, privacy: .public)")
+
+        let manifest = try BundleManifest.load(from: document.url)
+
+        // Validate manifest
+        let validationErrors = manifest.validate()
+        if !validationErrors.isEmpty {
+            let messages = validationErrors.map { $0.localizedDescription }.joined(separator: "; ")
+            logger.error("loadReferenceBundle: Validation failed: \(messages, privacy: .public)")
+            throw DocumentLoadError.parseError("Bundle validation failed: \(messages)")
+        }
+
+        document.bundleManifest = manifest
+
+        logger.info("loadReferenceBundle: Bundle '\(manifest.name, privacy: .public)' loaded with \(manifest.genome.chromosomes.count) chromosomes, \(manifest.annotations.count) annotation tracks")
     }
 }
 

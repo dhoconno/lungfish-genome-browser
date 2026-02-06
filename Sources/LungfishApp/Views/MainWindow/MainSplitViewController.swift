@@ -121,7 +121,7 @@ public class MainSplitViewController: NSSplitViewController {
         viewerController = ViewerViewController()
         inspectorController = InspectorViewController()
         logger.info("configureChildControllers: Created all three view controllers")
-        
+
         // Set up delegate for direct selection handling (avoids async Task issues)
         sidebarController.selectionDelegate = self
 
@@ -225,7 +225,7 @@ public class MainSplitViewController: NSSplitViewController {
         //
         // DO NOT add document loading code here - it will cause Swift Task execution issues.
         // See SWIFT-CONCURRENCY-APPKIT-MODAL.md for details.
-        
+
         logger.debug("handleSidebarSelectionChanged: Notification received (delegate handles loading)")
     }
 
@@ -347,7 +347,7 @@ public class MainSplitViewController: NSSplitViewController {
                 return
             }
         }
-        
+
         // File is outside project - add to "Open Documents" section (legacy behavior)
         sidebarController.addLoadedDocument(document)
     }
@@ -380,7 +380,7 @@ public class MainSplitViewController: NSSplitViewController {
     @objc private func handleSidebarFileDropped(_ notification: Notification) {
         logger.info("handleSidebarFileDropped: Notification received!")
         logger.info("handleSidebarFileDropped: userInfo = \(String(describing: notification.userInfo))")
-        
+
         guard let url = notification.userInfo?["url"] as? URL else {
             logger.warning("handleSidebarFileDropped: No URL in notification userInfo")
             return
@@ -394,7 +394,7 @@ public class MainSplitViewController: NSSplitViewController {
 
         // Get project URL from either the sidebar (new model) or DocumentManager (legacy)
         let projectURL = sidebarController.currentProjectURL ?? DocumentManager.shared.activeProject?.url
-        
+
         // If we have an active project, copy the file there
         if let projectURL = projectURL {
             // Determine the target directory based on the destination item
@@ -434,7 +434,7 @@ public class MainSplitViewController: NSSplitViewController {
             } else {
                 // File already exists - prompt user for action
                 logger.info("handleSidebarFileDropped: File '\(url.lastPathComponent, privacy: .public)' already exists, prompting user")
-                
+
                 let resolution = showDuplicateFileDialog(filename: url.lastPathComponent)
                 switch resolution {
                 case .replace:
@@ -466,7 +466,7 @@ public class MainSplitViewController: NSSplitViewController {
                 }
             }
         }
-        
+
         // Load the document and display it
         Task { @MainActor in
             viewerController.showProgress("Loading \(urlToLoad.lastPathComponent)...")
@@ -498,13 +498,13 @@ public class MainSplitViewController: NSSplitViewController {
         alert.messageText = "File Already Exists"
         alert.informativeText = "A file named \"\(filename)\" already exists in this location. What would you like to do?"
         alert.alertStyle = .warning
-        
+
         alert.addButton(withTitle: "Replace")    // First button = index 1000
         alert.addButton(withTitle: "Keep Both")  // Second button = index 1001
         alert.addButton(withTitle: "Skip")       // Third button = index 1002
-        
+
         let response = alert.runModal()
-        
+
         switch response {
         case .alertFirstButtonReturn:  // Replace
             return .replace
@@ -521,12 +521,12 @@ public class MainSplitViewController: NSSplitViewController {
         let ext = sourceURL.pathExtension
         var counter = 1
         var newURL = targetDir.appendingPathComponent("\(baseName) 2.\(ext)")
-        
+
         while FileManager.default.fileExists(atPath: newURL.path) {
             counter += 1
             newURL = targetDir.appendingPathComponent("\(baseName) \(counter + 1).\(ext)")
         }
-        
+
         return newURL
     }
 
@@ -680,25 +680,26 @@ extension MainSplitViewController {
 // MARK: - SidebarSelectionDelegate
 
 extension MainSplitViewController: SidebarSelectionDelegate {
-    
+
     public func sidebarDidSelectItem(_ item: SidebarItem?) {
         guard let item = item else {
             logger.info("sidebarDidSelectItem: Selection cleared, clearing viewer")
+            viewerController.clearBundleDisplay()
             viewerController.clearViewer()
             return
         }
-        
+
         displayContent(for: item)
     }
-    
+
     public func sidebarDidSelectItems(_ items: [SidebarItem]) {
         // Filter to displayable items
         let displayableItems = items.filter { item in
             item.type != .folder && item.type != .project && item.type != .group
         }
-        
+
         guard !displayableItems.isEmpty else { return }
-        
+
         if displayableItems.count == 1 {
             displayContent(for: displayableItems[0])
         } else {
@@ -706,33 +707,38 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             handleMultipleItemsSelected(displayableItems)
         }
     }
-    
+
     /// Unified content dispatch - synchronous for reliability.
     ///
     /// This method handles all content display decisions synchronously,
     /// avoiding Swift Task issues that occur when called from notification handlers.
     private func displayContent(for item: SidebarItem) {
         logger.info("displayContent: Selected '\(item.title, privacy: .public)' type=\(String(describing: item.type))")
-        
+
         // Skip non-displayable container types
         guard item.type != .folder && item.type != .project && item.type != .group else {
             logger.debug("displayContent: Skipping container item type")
             return
         }
-        
+
+        // When switching away from a bundle to a non-bundle item, clean up the navigator
+        if item.type != .referenceBundle {
+            viewerController.clearBundleDisplay()
+        }
+
         // QuickLook preview for document, image, unknown types
         if item.type.usesQuickLook, let url = item.url {
             logger.info("displayContent: Using QuickLook preview for '\(item.title, privacy: .public)'")
             viewerController.displayQuickLookPreview(url: url)
             return
         }
-        
+
         // Reference genome bundles (.lungfishref)
         if item.type == .referenceBundle, let url = item.url {
             displayReferenceBundle(at: url)
             return
         }
-        
+
         // Genomics files - check cache first
         if let url = item.url {
             displayGenomicsFile(url: url)
@@ -745,43 +751,21 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             }
         }
     }
-    
-    /// Display reference bundle - fully synchronous loading.
+
+    /// Display reference bundle using the ViewerViewController's bundle display system.
+    ///
+    /// This method delegates to `ViewerViewController.displayBundle(at:)` which handles:
+    /// - Loading and validating the bundle manifest
+    /// - Creating a `BundleDataProvider` for on-demand data access
+    /// - Showing a `ChromosomeNavigatorView` for chromosome selection
+    /// - Setting up the `ReferenceFrame` for the first chromosome
+    /// - Configuring the `SequenceViewerView` for on-demand rendering
     private func displayReferenceBundle(at url: URL) {
         logger.info("displayReferenceBundle: Opening '\(url.lastPathComponent, privacy: .public)'")
-        
+
         do {
-            // Read manifest synchronously
-            let manifestURL = url.appendingPathComponent("manifest.json")
-            let manifestData = try Data(contentsOf: manifestURL)
-            
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            let manifest = try decoder.decode(LungfishIO.BundleManifest.self, from: manifestData)
-            
-            // Create bundle with pre-loaded manifest
-            let bundle = LungfishIO.ReferenceBundle(url: url, manifest: manifest)
-            
-            // Set up viewer
-            viewerController.viewerView.setReferenceBundle(bundle)
-            
-            // Configure reference frame
-            if let firstChrom = manifest.genome.chromosomes.first {
-                let chromLength = Int(firstChrom.length)
-                let effectiveWidth = max(800, Int(viewerController.viewerView.bounds.width))
-                
-                viewerController.referenceFrame = ReferenceFrame(
-                    chromosome: firstChrom.name,
-                    start: 0,
-                    end: Double(min(chromLength, 10000)),
-                    pixelWidth: effectiveWidth,
-                    sequenceLength: chromLength
-                )
-            }
-            
-            viewerController.viewerView.needsDisplay = true
+            try viewerController.displayBundle(at: url)
             logger.info("displayReferenceBundle: Bundle displayed successfully")
-            
         } catch {
             logger.error("displayReferenceBundle: Failed - \(error.localizedDescription, privacy: .public)")
             let alert = NSAlert()
@@ -792,13 +776,13 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             alert.runModal()
         }
     }
-    
+
     /// Display genomics file - cache-first, then load via DocumentManager.
     private func displayGenomicsFile(url: URL) {
         // Check if already loaded
         if let existingDocument = DocumentManager.shared.documents.first(where: { $0.url == url }) {
             let isFullyLoaded = !existingDocument.sequences.isEmpty || !existingDocument.annotations.isEmpty
-            
+
             if isFullyLoaded {
                 logger.info("displayGenomicsFile: Document cached, displaying directly")
                 viewerController.displayDocument(existingDocument)
@@ -806,11 +790,11 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                 return
             }
         }
-        
+
         // Not cached - load via DocumentManager using GCD wrapper
         loadGenomicsFileInBackground(url: url)
     }
-    
+
     /// Loads a genomics file in the background using structured concurrency.
     private func loadGenomicsFileInBackground(url: URL) {
         logger.info("loadGenomicsFileInBackground: Loading '\(url.lastPathComponent, privacy: .public)'")

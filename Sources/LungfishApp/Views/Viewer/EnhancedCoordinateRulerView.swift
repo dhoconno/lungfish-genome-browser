@@ -264,9 +264,27 @@ public class EnhancedCoordinateRulerView: NSView {
         let visibleEnd = Int(frame.end)
         let totalLength = frame.sequenceLength
 
-        // Format range text
+        // Format range text - use exact bp for the visible range
         let rangeText = "\(formatNumber(visibleStart + 1)) - \(formatNumber(visibleEnd)) bp"
-        let totalText = "of \(formatNumber(totalLength)) bp total"
+        // Format total length with appropriate units
+        let totalText: String
+        if totalLength >= 1_000_000 {
+            let mb = Double(totalLength) / 1_000_000
+            if mb == Double(Int(mb)) {
+                totalText = "of \(Int(mb)) Mb total"
+            } else {
+                totalText = "of \(String(format: "%.1f", mb)) Mb total"
+            }
+        } else if totalLength >= 1_000 {
+            let kb = Double(totalLength) / 1_000
+            if kb == Double(Int(kb)) {
+                totalText = "of \(Int(kb)) kb total"
+            } else {
+                totalText = "of \(String(format: "%.1f", kb)) kb total"
+            }
+        } else {
+            totalText = "of \(formatNumber(totalLength)) bp total"
+        }
 
         // Primary font for range
         let primaryFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
@@ -484,7 +502,7 @@ public class EnhancedCoordinateRulerView: NSView {
         ]
 
         // Calculate label dimensions for positioning
-        let sampleLabel = formatPosition(Int(tickInterval))
+        let sampleLabel = formatPosition(Int(tickInterval), tickInterval: tickInterval)
         let sampleSize = (sampleLabel as NSString).size(withAttributes: labelAttributes)
         let labelHeight = sampleSize.height
 
@@ -530,7 +548,7 @@ public class EnhancedCoordinateRulerView: NSView {
                 context.strokePath()
 
                 // Position label
-                let label = formatPosition(Int(majorPos))
+                let label = formatPosition(Int(majorPos), tickInterval: tickInterval)
                 let labelSize = (label as NSString).size(withAttributes: labelAttributes)
                 let labelX = x - labelSize.width / 2
 
@@ -610,24 +628,28 @@ public class EnhancedCoordinateRulerView: NSView {
         return formatter.string(from: NSNumber(value: value)) ?? "\(value)"
     }
 
-    /// Formats a position with appropriate units (bp, K, M)
-    private func formatPosition(_ pos: Int) -> String {
-        if pos >= 1_000_000 {
+    /// Formats a position with appropriate units based on tick interval.
+    ///
+    /// When the tick interval is small (zoomed in), shows exact bp numbers
+    /// with thousands separators. When zoomed out, uses K or Mb suffixes.
+    private func formatPosition(_ pos: Int, tickInterval: Double) -> String {
+        if tickInterval >= 1_000_000 {
+            // Mb scale
             let millions = Double(pos) / 1_000_000
-            // Use integer format if it's a round number
             if millions == Double(Int(millions)) {
-                return "\(Int(millions))M"
+                return "\(Int(millions)) Mb"
             }
-            return String(format: "%.1fM", millions)
-        } else if pos >= 1_000 {
+            return String(format: "%.1f Mb", millions)
+        } else if tickInterval >= 1_000 {
+            // Kb scale
             let thousands = Double(pos) / 1_000
-            // Use integer format if it's a round number
             if thousands == Double(Int(thousands)) {
-                return "\(Int(thousands))K"
+                return "\(Int(thousands)) kb"
             }
-            return String(format: "%.1fK", thousands)
+            return String(format: "%.1f kb", thousands)
         } else {
-            return "\(pos)"
+            // Individual bp - show with comma separators
+            return formatNumber(pos)
         }
     }
 

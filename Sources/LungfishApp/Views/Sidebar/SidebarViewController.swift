@@ -118,7 +118,7 @@ public class SidebarViewController: NSViewController {
     private var fileSystemWatcher: FileSystemWatcher?
 
     // MARK: - Delegate
-    
+
     /// Delegate for selection change callbacks.
     ///
     /// Use this delegate instead of observing `sidebarSelectionChanged` notifications
@@ -284,10 +284,10 @@ public class SidebarViewController: NSViewController {
             logger.debug("selectItem(forURL:): No item found for \(url.lastPathComponent, privacy: .public)")
             return false
         }
-        
+
         // Ensure parent items are expanded so the item is visible
         expandParents(of: item)
-        
+
         let row = outlineView.row(forItem: item)
         if row >= 0 {
             outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
@@ -317,7 +317,7 @@ public class SidebarViewController: NSViewController {
             }
             return false
         }
-        
+
         _ = findAndExpandParent(in: rootItems, target: item)
     }
 
@@ -419,33 +419,33 @@ public class SidebarViewController: NSViewController {
     /// - Returns: Array of SidebarItems representing the project's contents
     private func buildRootItems(from projectURL: URL) -> [SidebarItem] {
         let fileManager = FileManager.default
-        
+
         do {
             let contents = try fileManager.contentsOfDirectory(
                 at: projectURL,
                 includingPropertiesForKeys: [.isDirectoryKey, .isHiddenKey],
                 options: [.skipsHiddenFiles]
             )
-            
+
             // Sort: folders first, then files alphabetically
             let sorted = contents.sorted { url1, url2 in
                 var isDir1: ObjCBool = false
                 var isDir2: ObjCBool = false
                 fileManager.fileExists(atPath: url1.path, isDirectory: &isDir1)
                 fileManager.fileExists(atPath: url2.path, isDirectory: &isDir2)
-                
+
                 if isDir1.boolValue != isDir2.boolValue {
                     return isDir1.boolValue // Directories first
                 }
                 return url1.lastPathComponent.localizedCaseInsensitiveCompare(url2.lastPathComponent) == .orderedAscending
             }
-            
+
             // Build items for each entry
             var items: [SidebarItem] = []
             for childURL in sorted {
                 var childIsDir: ObjCBool = false
                 fileManager.fileExists(atPath: childURL.path, isDirectory: &childIsDir)
-                
+
                 if childIsDir.boolValue {
                     // Include directories
                     let childItem = buildSidebarTree(from: childURL, isRoot: false)
@@ -459,14 +459,14 @@ public class SidebarViewController: NSViewController {
                     }
                 }
             }
-            
+
             return items
         } catch {
             logger.error("buildRootItems: Failed to scan directory: \(error.localizedDescription, privacy: .public)")
             return []
         }
     }
-    
+
     private func buildSidebarTree(from url: URL, isRoot: Bool = false) -> SidebarItem {
         let fileManager = FileManager.default
         let filename = url.lastPathComponent
@@ -668,6 +668,9 @@ public class SidebarViewController: NSViewController {
         case .lungfishProject:
             itemType = .sequence
             icon = "folder.badge.gearshape"
+        case .lungfishReferenceBundle:
+            itemType = .referenceBundle
+            icon = "cylinder.split.1x2"
         }
 
         // Check if document already exists in sidebar
@@ -776,6 +779,9 @@ public class SidebarViewController: NSViewController {
         case .lungfishProject:
             itemType = .sequence
             icon = "folder.badge.gearshape"
+        case .lungfishReferenceBundle:
+            itemType = .referenceBundle
+            icon = "cylinder.split.1x2"
         }
 
         // Check if document already exists in downloads folder
@@ -866,6 +872,9 @@ public class SidebarViewController: NSViewController {
             case .lungfishProject:
                 itemType = .sequence
                 icon = "folder.badge.gearshape"
+            case .lungfishReferenceBundle:
+                itemType = .referenceBundle
+                icon = "cylinder.split.1x2"
             }
 
             // Create document item
@@ -949,7 +958,7 @@ public class SidebarViewController: NSViewController {
     ///   - projectURL: The project folder URL
     public func addFileToProject(_ document: LoadedDocument, projectURL: URL) {
         logger.info("addFileToProject: Adding '\(document.name, privacy: .public)' to project")
-        
+
         // Find the project item in the sidebar
         let normalizedProjectURL = projectURL.standardizedFileURL
         guard let projectItem = rootItems.first(where: {
@@ -959,13 +968,13 @@ public class SidebarViewController: NSViewController {
             addLoadedDocument(document)
             return
         }
-        
+
         // Calculate relative path from project root to file's parent directory
         let fileParentPath = document.url.deletingLastPathComponent().path
         let relativePath = fileParentPath
             .replacingOccurrences(of: projectURL.path, with: "")
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        
+
         // Determine item type based on document type
         let itemType: SidebarItemType
         let icon: String
@@ -988,8 +997,11 @@ public class SidebarViewController: NSViewController {
         case .lungfishProject:
             itemType = .sequence
             icon = "folder.badge.gearshape"
+        case .lungfishReferenceBundle:
+            itemType = .referenceBundle
+            icon = "cylinder.split.1x2"
         }
-        
+
         // Create document item
         let docItem = SidebarItem(
             title: document.name,
@@ -998,7 +1010,7 @@ public class SidebarViewController: NSViewController {
             children: [],
             url: document.url
         )
-        
+
         // Check if document already exists in sidebar
         func documentExists(in items: [SidebarItem]) -> Bool {
             for item in items {
@@ -1011,12 +1023,12 @@ public class SidebarViewController: NSViewController {
             }
             return false
         }
-        
+
         if documentExists(in: projectItem.children) {
             logger.debug("addFileToProject: Document already exists in project sidebar")
             return
         }
-        
+
         if relativePath.isEmpty {
             // File is directly in project root folder
             projectItem.children.append(docItem)
@@ -1027,7 +1039,7 @@ public class SidebarViewController: NSViewController {
             var subfolderItem = projectItem.children.first(where: {
                 $0.type == .folder && $0.title == subfolderName
             })
-            
+
             if subfolderItem == nil {
                 // Create new subfolder
                 subfolderItem = SidebarItem(
@@ -1040,14 +1052,14 @@ public class SidebarViewController: NSViewController {
                 projectItem.children.append(subfolderItem!)
                 logger.info("addFileToProject: Created subfolder '\(subfolderName, privacy: .public)'")
             }
-            
+
             subfolderItem!.children.append(docItem)
             logger.info("addFileToProject: Added '\(document.name, privacy: .public)' to subfolder '\(subfolderName, privacy: .public)'")
-            
+
             // Expand the subfolder
             outlineView.expandItem(subfolderItem)
         }
-        
+
         // Sort children (folders first, then files alphabetically)
         projectItem.children.sort { item1, item2 in
             if item1.type == .folder && item2.type != .folder {
@@ -1057,17 +1069,17 @@ public class SidebarViewController: NSViewController {
             }
             return item1.title.localizedCaseInsensitiveCompare(item2.title) == .orderedAscending
         }
-        
+
         // Reload and select the new item
         outlineView.reloadData()
         outlineView.expandItem(projectItem)
-        
+
         let row = outlineView.row(forItem: docItem)
         if row >= 0 {
             outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
             outlineView.scrollRowToVisible(row)
         }
-        
+
         logger.info("addFileToProject: Sidebar updated successfully")
     }
 
@@ -1184,10 +1196,10 @@ extension SidebarViewController: NSOutlineViewDataSource {
     /// Validates whether a drop is allowed at the proposed location
     public func outlineView(_ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?, proposedChildIndex index: Int) -> NSDragOperation {
         debugLog("validateDrop: ENTERED METHOD")
-        
+
         // Get the destination item
         let destinationItem = item as? SidebarItem
-        
+
         debugLog("validateDrop: Called with destinationItem='\(destinationItem?.title ?? "nil")' type=\(String(describing: destinationItem?.type)) index=\(index)")
 
         // Determine if this is an internal drag
@@ -1218,24 +1230,24 @@ extension SidebarViewController: NSOutlineViewDataSource {
         } else {
             // External file drop - accept anywhere in the sidebar
             debugLog("validateDrop: External file drag detected")
-            
+
             // For external files, retarget to the project root or accept at root level
             // This ensures drops anywhere in the sidebar are accepted
             if let dest = destinationItem {
                 debugLog("validateDrop: External file over '\(dest.title)' type=\(String(describing: dest.type))")
-                
+
                 // If dropping on a specific container, accept there
                 if dest.type == .folder || dest.type == .project || dest.type == .group {
                     debugLog("validateDrop: External file - ACCEPTING into container '\(dest.title)'")
                     return .copy
                 }
-                
+
                 // If dropping on a file item, retarget to its parent container
                 // The drop will still work - we just need to return .copy
                 debugLog("validateDrop: External file over non-container - ACCEPTING (will use project root)")
                 return .copy
             }
-            
+
             // Drop at root level - accept it
             debugLog("validateDrop: External file - ACCEPTING at root level")
             return .copy
@@ -1246,14 +1258,14 @@ extension SidebarViewController: NSOutlineViewDataSource {
     private func debugLog(_ message: String) {
         logger.debug("SidebarVC: \(message, privacy: .public)")
     }
-    
+
     /// Performs the actual drop operation
     public func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
         debugLog("acceptDrop: CALLED!")
         let pasteboard = info.draggingPasteboard
         let destinationItem = item as? SidebarItem
         debugLog("acceptDrop: destinationItem='\(destinationItem?.title ?? "nil")'")
-        
+
         // Log all available pasteboard types
         let types = pasteboard.types ?? []
         debugLog("acceptDrop: Available pasteboard types: \(types.map { $0.rawValue }.joined(separator: ", "))")
@@ -1261,7 +1273,7 @@ extension SidebarViewController: NSOutlineViewDataSource {
         // Check if this is an internal drag
         let hasInternalType = pasteboard.availableType(from: [sidebarItemPasteboardType]) != nil
         debugLog("acceptDrop: hasInternalType=\(hasInternalType)")
-        
+
         if hasInternalType,
            let identifierString = pasteboard.string(forType: sidebarItemPasteboardType) {
             debugLog("acceptDrop: Internal drag detected with identifier='\(identifierString)'")
@@ -1292,7 +1304,7 @@ extension SidebarViewController: NSOutlineViewDataSource {
 
         // External file drop
         debugLog("acceptDrop: Attempting to read file URLs from pasteboard")
-        
+
         // Try reading with NSURL class
         if let fileURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !fileURLs.isEmpty {
             debugLog("acceptDrop: SUCCESS - got \(fileURLs.count) file URLs")
@@ -1311,13 +1323,13 @@ extension SidebarViewController: NSOutlineViewDataSource {
             }
             return true
         }
-        
+
         // Fallback: try reading file URLs directly from pasteboard
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL], !urls.isEmpty {
             logger.info("acceptDrop: Fallback - found \(urls.count) URLs")
             let fileURLs = urls.filter { $0.isFileURL }
             logger.info("acceptDrop: Fallback - \(fileURLs.count) are file URLs")
-            
+
             for url in fileURLs {
                 logger.info("acceptDrop: Fallback posting notification for '\(url.lastPathComponent, privacy: .public)'")
                 NotificationCenter.default.post(
@@ -1330,7 +1342,7 @@ extension SidebarViewController: NSOutlineViewDataSource {
                 return true
             }
         }
-        
+
         debugLog("acceptDrop: FAILED - No file URLs found in pasteboard")
         return false
     }
@@ -1615,10 +1627,10 @@ extension SidebarViewController: NSOutlineViewDelegate {
 
         if items.isEmpty {
             logger.debug("outlineViewSelectionDidChange: Selection cleared")
-            
+
             // Call delegate directly - synchronous, no Task needed
             selectionDelegate?.sidebarDidSelectItem(nil)
-            
+
             // Keep notification for other observers (e.g., InspectorViewController)
             NotificationCenter.default.post(
                 name: .sidebarSelectionChanged,
@@ -1771,7 +1783,7 @@ extension SidebarViewController: NSMenuDelegate {
         }
 
         let items = selectedItems()
-        
+
         // Check if clicked on empty space (no row)
         let clickedOnEmptySpace = clickedRow < 0
 
@@ -1782,7 +1794,7 @@ extension SidebarViewController: NSMenuDelegate {
             menu.addItem(noSelectionItem)
             return
         }
-        
+
         // If clicked on empty space with a project open, show New Folder option
         if clickedOnEmptySpace && projectURL != nil {
             let newFolderItem = NSMenuItem(title: "New Folder", action: #selector(contextMenuNewFolder(_:)), keyEquivalent: "N")
@@ -1791,7 +1803,7 @@ extension SidebarViewController: NSMenuDelegate {
             menu.addItem(newFolderItem)
             return
         }
-        
+
         // If no items selected (shouldn't happen at this point, but safety check)
         guard !items.isEmpty else { return }
 
@@ -1921,11 +1933,11 @@ extension SidebarViewController: NSMenuDelegate {
 
         // Try to load the bundle manifest
         let manifestURL = url.appendingPathComponent("manifest.json")
-        
+
         Task { @MainActor in
             var infoText = "Bundle: \(item.title)\n"
             infoText += "Location: \(url.path)\n\n"
-            
+
             if FileManager.default.fileExists(atPath: manifestURL.path) {
                 do {
                     let data = try Data(contentsOf: manifestURL)
@@ -1943,7 +1955,7 @@ extension SidebarViewController: NSMenuDelegate {
                         if let formatVersion = manifest["formatVersion"] as? String {
                             infoText += "Format Version: \(formatVersion)\n"
                         }
-                        
+
                         // Source info
                         if let source = manifest["source"] as? [String: Any] {
                             infoText += "\nSource:\n"
@@ -1954,7 +1966,7 @@ extension SidebarViewController: NSMenuDelegate {
                                 infoText += "  Assembly: \(assembly)\n"
                             }
                         }
-                        
+
                         // Genome info
                         if let genome = manifest["genome"] as? [String: Any] {
                             infoText += "\nGenome:\n"
@@ -1965,7 +1977,7 @@ extension SidebarViewController: NSMenuDelegate {
                                 infoText += "  Chromosomes: \(chromosomes.count)\n"
                             }
                         }
-                        
+
                         // Track counts
                         if let annotations = manifest["annotations"] as? [[String: Any]] {
                             infoText += "\nAnnotation Tracks: \(annotations.count)\n"
@@ -1984,14 +1996,14 @@ extension SidebarViewController: NSMenuDelegate {
             } else {
                 infoText += "No manifest.json found in bundle.\n"
             }
-            
+
             // Show info alert
             let alert = NSAlert()
             alert.messageText = "Bundle Info"
             alert.informativeText = infoText
             alert.alertStyle = .informational
             alert.addButton(withTitle: "OK")
-            
+
             if let window = self.view.window {
                 alert.beginSheetModal(for: window)
             } else {
@@ -2025,7 +2037,7 @@ extension SidebarViewController: NSMenuDelegate {
         // Determine where to create the folder
         let parentURL: URL
         let clickedRow = outlineView.clickedRow
-        
+
         // If clicked on empty space (row == -1), always create at project root
         if clickedRow < 0 {
             if let project = projectURL {
@@ -2078,7 +2090,7 @@ extension SidebarViewController: NSMenuDelegate {
 
     private func createFolder(named name: String, in parentURL: URL) {
         var folderURL = parentURL.appendingPathComponent(name, isDirectory: true)
-        
+
         // Handle duplicate names
         var counter = 1
         while FileManager.default.fileExists(atPath: folderURL.path) {

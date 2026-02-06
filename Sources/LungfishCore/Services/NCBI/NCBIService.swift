@@ -351,9 +351,9 @@ public actor NCBIService: DatabaseService {
             response.result?[id]
         }
     }
-    
+
     // MARK: - Genome Download Methods
-    
+
     /// Information about a genome file available for download.
     public struct GenomeFileInfo: Sendable {
         /// The HTTP URL for downloading the file
@@ -365,7 +365,7 @@ public actor NCBIService: DatabaseService {
         /// The assembly accession
         public let assemblyAccession: String
     }
-    
+
     /// Gets information about the genomic FASTA file for an assembly.
     ///
     /// This method queries the FTP server (via HTTP) to find the genomic FASTA file
@@ -379,17 +379,17 @@ public actor NCBIService: DatabaseService {
         guard let ftpPath = summary.ftpPathRefSeq ?? summary.ftpPathGenBank else {
             throw DatabaseServiceError.notFound(accession: summary.assemblyAccession ?? summary.uid)
         }
-        
+
         // Extract the assembly name from the FTP path (last component)
         let pathComponents = ftpPath.components(separatedBy: "/")
         guard let assemblyDirName = pathComponents.last, !assemblyDirName.isEmpty else {
             throw DatabaseServiceError.parseError(message: "Invalid FTP path structure")
         }
-        
+
         // Construct the genomic FASTA filename
         // Format: {assembly_name}_genomic.fna.gz
         let genomicFilename = "\(assemblyDirName)_genomic.fna.gz"
-        
+
         // Convert FTP URL to HTTPS URL
         // ftp://ftp.ncbi.nlm.nih.gov/genomes/... -> https://ftp.ncbi.nlm.nih.gov/genomes/...
         var httpPath = ftpPath
@@ -398,30 +398,30 @@ public actor NCBIService: DatabaseService {
         } else if !httpPath.hasPrefix("https://") && !httpPath.hasPrefix("http://") {
             httpPath = "https://\(httpPath)"
         }
-        
+
         let fileURLString = "\(httpPath)/\(genomicFilename)"
         guard let fileURL = URL(string: fileURLString) else {
             throw DatabaseServiceError.parseError(message: "Invalid genome file URL")
         }
-        
+
         // Get file size using HEAD request
         var request = URLRequest(url: fileURL)
         request.httpMethod = "HEAD"
-        
+
         let (_, response) = try await URLSession.shared.data(for: request)
-        
+
         guard let httpResponse = response as? HTTPURLResponse else {
             throw DatabaseServiceError.networkError(underlying: "Bad server response")
         }
-        
+
         // Check if file exists
         guard httpResponse.statusCode == 200 else {
             throw DatabaseServiceError.notFound(accession: summary.assemblyAccession ?? summary.uid)
         }
-        
+
         // Get file size from Content-Length header
         let fileSize = httpResponse.expectedContentLength > 0 ? httpResponse.expectedContentLength : nil
-        
+
         return GenomeFileInfo(
             url: fileURL,
             filename: genomicFilename,
@@ -429,7 +429,81 @@ public actor NCBIService: DatabaseService {
             assemblyAccession: summary.assemblyAccession ?? summary.uid
         )
     }
-    
+
+    /// Gets information about the GFF3 annotation file for an assembly.
+    ///
+    /// This method constructs the GFF3 annotation file URL from the assembly FTP path.
+    /// The URL pattern is `{ftpPath}/{assemblyDirName}_genomic.gff.gz`. Not all assemblies
+    /// have GFF3 annotations available, so this method returns `nil` if the file does not exist.
+    ///
+    /// - Parameter summary: The assembly summary containing FTP paths
+    /// - Returns: Information about the downloadable annotation file, or `nil` if unavailable
+    public func getAnnotationFileInfo(for summary: NCBIAssemblySummary) async throws -> GenomeFileInfo? {
+        // Get the FTP path - prefer RefSeq, fall back to GenBank
+        guard let ftpPath = summary.ftpPathRefSeq ?? summary.ftpPathGenBank else {
+            return nil
+        }
+
+        // Extract the assembly directory name from the FTP path (last component)
+        let pathComponents = ftpPath.components(separatedBy: "/")
+        guard let assemblyDirName = pathComponents.last, !assemblyDirName.isEmpty else {
+            return nil
+        }
+
+        // Construct the GFF3 annotation filename
+        // Format: {assembly_name}_genomic.gff.gz
+        let gffFilename = "\(assemblyDirName)_genomic.gff.gz"
+
+        // Convert FTP URL to HTTPS URL
+        var httpPath = ftpPath
+        if httpPath.hasPrefix("ftp://") {
+            httpPath = httpPath.replacingOccurrences(of: "ftp://", with: "https://")
+        } else if !httpPath.hasPrefix("https://") && !httpPath.hasPrefix("http://") {
+            httpPath = "https://\(httpPath)"
+        }
+
+        let fileURLString = "\(httpPath)/\(gffFilename)"
+        guard let fileURL = URL(string: fileURLString) else {
+            logger.warning("getAnnotationFileInfo: Could not construct URL for \(gffFilename)")
+            return nil
+        }
+
+        // Check if the GFF3 file exists using HEAD request
+        var request = URLRequest(url: fileURL)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 15
+
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                return nil
+            }
+
+            // Return nil if file does not exist (404 or other non-200 status)
+            guard httpResponse.statusCode == 200 else {
+                logger.info("getAnnotationFileInfo: GFF3 not available for \(summary.assemblyAccession ?? summary.uid, privacy: .public) (HTTP \(httpResponse.statusCode))")
+                return nil
+            }
+
+            // Get file size from Content-Length header
+            let fileSize = httpResponse.expectedContentLength > 0 ? httpResponse.expectedContentLength : nil
+
+            logger.info("getAnnotationFileInfo: Found GFF3 for \(summary.assemblyAccession ?? summary.uid, privacy: .public), size=\(fileSize ?? -1)")
+
+            return GenomeFileInfo(
+                url: fileURL,
+                filename: gffFilename,
+                estimatedSize: fileSize,
+                assemblyAccession: summary.assemblyAccession ?? summary.uid
+            )
+        } catch {
+            // Network errors are non-fatal for annotation lookup
+            logger.warning("getAnnotationFileInfo: Failed to check GFF3 availability: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
     /// Downloads a genome file with progress tracking.
     ///
     /// - Parameters:
@@ -448,26 +522,26 @@ public actor NCBIService: DatabaseService {
             totalBytes: fileInfo.estimatedSize,
             progressHandler: progressHandler
         )
-        
+
         let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
         defer { session.invalidateAndCancel() }
-        
+
         let request = URLRequest(url: fileInfo.url)
-        
+
         let (tempURL, response) = try await session.download(for: request, delegate: delegate)
-        
+
         guard let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
             throw DatabaseServiceError.networkError(underlying: "Bad server response")
         }
-        
+
         // Move to destination
         let fileManager = FileManager.default
         if fileManager.fileExists(atPath: destination.path) {
             try fileManager.removeItem(at: destination)
         }
         try fileManager.moveItem(at: tempURL, to: destination)
-        
+
         return destination
     }
 
@@ -1272,12 +1346,12 @@ public enum NCBISearchType: String, CaseIterable, Identifiable, Sendable {
 final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate, Sendable {
     private let totalBytes: Int64?
     private let progressHandler: @Sendable (Int64, Int64?) -> Void
-    
+
     init(totalBytes: Int64?, progressHandler: @escaping @Sendable (Int64, Int64?) -> Void) {
         self.totalBytes = totalBytes
         self.progressHandler = progressHandler
     }
-    
+
     func urlSession(
         _ session: URLSession,
         downloadTask: URLSessionDownloadTask,
@@ -1289,7 +1363,7 @@ final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate, Send
         let expectedTotal = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : totalBytes
         progressHandler(totalBytesWritten, expectedTotal)
     }
-    
+
     func urlSession(
         _ session: URLSession,
         downloadTask: URLSessionDownloadTask,

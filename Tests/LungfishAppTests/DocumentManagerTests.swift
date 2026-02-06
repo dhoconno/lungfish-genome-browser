@@ -195,7 +195,7 @@ final class DocumentManagerTests: XCTestCase {
     func testAllCasesPresent() {
         // Verify we have all expected cases
         let expectedCases: Set<AppDocumentType> = [
-            .fasta, .fastq, .genbank, .gff3, .bed, .vcf, .bam, .lungfishProject
+            .fasta, .fastq, .genbank, .gff3, .bed, .vcf, .bam, .lungfishProject, .lungfishReferenceBundle
         ]
         let actualCases = Set(AppDocumentType.allCases)
         XCTAssertEqual(actualCases, expectedCases, "DocumentType should have exactly the expected cases")

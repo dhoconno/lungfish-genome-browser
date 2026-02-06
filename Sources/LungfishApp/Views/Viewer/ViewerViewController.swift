@@ -92,7 +92,7 @@ public class ViewerViewController: NSViewController {
     public private(set) var viewerView: SequenceViewerView!
 
     /// Header view for track labels
-    private var headerView: TrackHeaderView!
+    var headerView: TrackHeaderView!
 
     /// Enhanced coordinate ruler at the top with mini-map and navigation
     public private(set) var enhancedRulerView: EnhancedCoordinateRulerView!
@@ -1850,31 +1850,34 @@ public class SequenceViewerView: NSView {
 
         logger.debug("fetchBundleData: Expanded region: \(expandedRegion.description)")
 
-        // Use synchronous fetching since Tasks don't execute from notification handlers
+        // Fetch sequence synchronously (fast for indexed bgzip) then annotations async
         do {
-            // Fetch sequence data synchronously
             let sequence = try bundle.fetchSequenceSync(region: expandedRegion)
             logger.info("fetchBundleData: Got sequence of \(sequence.count) bp")
 
-            // Skip annotations for now - they still require async BigBed reading
-            // TODO: Add synchronous annotation fetching if needed
-            let allAnnotations: [SequenceAnnotation] = []
+            // Fetch BigBed annotations synchronously (fast for indexed BigBed files)
+            var allAnnotations: [SequenceAnnotation] = []
+            for trackId in bundle.annotationTrackIds {
+                do {
+                    let annotations = try bundle.getAnnotationsSync(trackId: trackId, region: expandedRegion)
+                    allAnnotations.append(contentsOf: annotations)
+                    logger.info("fetchBundleData: Fetched \(annotations.count) annotations from track '\(trackId, privacy: .public)'")
+                } catch {
+                    logger.warning("fetchBundleData: Annotation fetch failed for '\(trackId, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+                }
+            }
 
-            // Update cache
+            // Update cache with all data at once, then trigger a single redraw
             self.cachedBundleSequence = sequence
             self.cachedSequenceRegion = expandedRegion
             self.cachedBundleAnnotations = allAnnotations
             self.isFetchingBundleData = false
             self.bundleFetchError = nil
-
-            // Trigger redraw
-            self.needsDisplay = true
-
-            logger.info("SequenceViewerView.fetchBundleData: SUCCESS - Fetched \(sequence.count) bp")
+            logger.info("fetchBundleData: SUCCESS - Fetched \(sequence.count) bp and \(allAnnotations.count) annotations")
 
         } catch {
             let errorMsg = error.localizedDescription
-            logger.error("SequenceViewerView.fetchBundleData: FAILED - \(errorMsg, privacy: .public)")
+            logger.error("fetchBundleData: FAILED - \(errorMsg, privacy: .public)")
             self.isFetchingBundleData = false
             self.bundleFetchError = errorMsg
 

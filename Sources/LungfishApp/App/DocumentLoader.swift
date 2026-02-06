@@ -183,6 +183,9 @@ public enum DocumentLoader {
 
         case .lungfishProject:
             throw DocumentLoadError.unsupportedFormat("Use openProject for .lungfish files")
+
+        case .lungfishReferenceBundle:
+            throw DocumentLoadError.unsupportedFormat("Use displayBundle for .lungfishref bundles")
         }
 
         return FileLoadResult(

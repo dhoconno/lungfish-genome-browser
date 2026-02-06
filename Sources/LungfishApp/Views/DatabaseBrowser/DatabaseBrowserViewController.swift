@@ -7,6 +7,7 @@
 import AppKit
 import SwiftUI
 import LungfishCore
+import LungfishWorkflow
 import os.log
 
 /// Logger for database browser operations
@@ -60,6 +61,12 @@ public class DatabaseBrowserViewController: NSViewController {
     /// Completion handler called when user cancels
     public var onCancel: (() -> Void)?
 
+    /// Optional initial NCBI search type to pre-select when the browser opens.
+    ///
+    /// Set this before presenting the controller to open with a specific search type
+    /// (e.g., `.genome` for the "Download Genome Assembly" menu action).
+    public var initialSearchType: NCBISearchType?
+
     // MARK: - Initialization
 
     /// Creates a new database browser for the specified source.
@@ -78,6 +85,11 @@ public class DatabaseBrowserViewController: NSViewController {
 
     public override func loadView() {
         viewModel = DatabaseBrowserViewModel(source: databaseSource)
+
+        // Apply initial search type if specified (e.g., for genome assembly downloads)
+        if let searchType = initialSearchType {
+            viewModel.ncbiSearchType = searchType
+        }
 
         // Set up download completion callback (single file)
         viewModel.onDownloadComplete = { [weak self] url in
@@ -362,6 +374,9 @@ public class DatabaseBrowserViewModel: ObservableObject {
 
     private let ncbiService = NCBIService()
     private let enaService = ENAService()
+
+    /// View model for genome assembly downloads (FASTA + GFF3 + bundle building).
+    private lazy var genomeDownloadViewModel = GenomeDownloadViewModel(ncbiService: ncbiService)
 
     // MARK: - Initialization
 
@@ -924,6 +939,9 @@ public class DatabaseBrowserViewModel: ObservableObject {
         let format = downloadFormat
         let searchType = ncbiSearchType
 
+        // Capture the genome download view model for genome assembly downloads
+        let genomeVM = genomeDownloadViewModel
+
         // Log details about selected records for debugging
         logger.info("performBatchDownload: Starting download of \(totalCount) record(s)")
         logger.info("performBatchDownload: selectedRecords.count = \(self.selectedRecords.count)")
@@ -938,7 +956,7 @@ public class DatabaseBrowserViewModel: ObservableObject {
         Task.detached { [weak self] in
             var downloadedURLs: [URL] = []
             var failedCount = 0
-            
+
             // Create a unique batch directory once for all downloads in this batch
             // This avoids filename collisions when records have the same accession
             let batchDir = FileManager.default.temporaryDirectory
@@ -961,47 +979,29 @@ public class DatabaseBrowserViewModel: ObservableObject {
 
                     switch currentSource {
                     case .ncbi:
-                        // Handle genome downloads differently (large files with progress tracking)
+                        // Handle genome downloads: download FASTA + GFF3 and build .lungfishref bundle
                         if searchType == .genome {
-                            // For genome downloads, we need to get assembly info first
+                            // For genome downloads, get the assembly summary and use
+                            // GenomeDownloadViewModel to download FASTA + GFF3 annotations
+                            // and build a .lungfishref reference bundle.
                             let assemblySummaries = try await ncbi.assemblyEsummary(ids: [record.id])
                             guard let summary = assemblySummaries.first else {
                                 throw DatabaseServiceError.notFound(accession: record.accession)
                             }
-                            
-                            // Get genome file info (URL and size)
-                            let fileInfo = try await ncbi.getGenomeFileInfo(for: summary)
-                            
-                            // Update UI with file size info
-                            let sizeStr = fileInfo.estimatedSize.map { formatFileSize($0) } ?? "unknown size"
+
                             performOnMainRunLoop { [weak self] in
                                 self?.objectWillChange.send()
-                                self?._statusMessage = "Downloading \(record.accession) (\(sizeStr))..."
+                                self?._statusMessage = "Building genome bundle for \(record.accession)..."
                             }
-                            
-                            // Download with progress tracking
-                            let filename = "\(fileInfo.assemblyAccession)_\(record.id)_genomic.fna.gz"
-                            let destURL = batchDir.appendingPathComponent(filename)
-                            let totalBytes = fileInfo.estimatedSize
-                            
-                            fileURL = try await ncbi.downloadGenomeFile(fileInfo, to: destURL) { [weak self] bytesDownloaded, expectedTotal in
-                                let total = expectedTotal ?? totalBytes
-                                let progressFraction: Double
-                                if let total = total, total > 0 {
-                                    progressFraction = Double(bytesDownloaded) / Double(total)
-                                } else {
-                                    progressFraction = 0.5 // Indeterminate
-                                }
-                                let downloadedStr = formatFileSize(bytesDownloaded)
-                                let totalStr = total.map { formatFileSize($0) } ?? "?"
-                                
-                                performOnMainRunLoop {
-                                    self?.objectWillChange.send()
-                                    self?.downloadProgress = progressFraction
-                                    self?._statusMessage = "Downloading \(record.accession): \(downloadedStr) / \(totalStr)"
-                                }
-                            }
-                            logger.info("performBatchDownload: Downloaded genome file \(filename, privacy: .public)")
+
+                            // Invoke the @MainActor GenomeDownloadViewModel
+                            let bundleURL = try await genomeVM.downloadAndBuild(
+                                assembly: summary,
+                                outputDirectory: batchDir
+                            )
+
+                            fileURL = bundleURL
+                            logger.info("performBatchDownload: Built genome bundle at \(bundleURL.path, privacy: .public)")
                         } else if format == .fasta {
                             // Standard nucleotide FASTA download
                             let (fastaContent, resolvedAccession) = try await ncbi.fetchRawFASTA(accession: record.accession)
@@ -1430,7 +1430,7 @@ public struct DatabaseBrowserView: View {
                 // Advanced search toggle and filters
                 advancedSearchSection
             }
-            
+
             // Autocomplete dropdown - positioned in ZStack to float above other content
             if !viewModel.autocompleteSuggestions.isEmpty {
                 autocompleteDropdown
@@ -1522,7 +1522,7 @@ public struct DatabaseBrowserView: View {
             }
         }
     }
-    
+
     /// Autocomplete dropdown that floats above other content
     private var autocompleteDropdown: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1915,7 +1915,7 @@ public struct DatabaseBrowserView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                
+
                 // Info for genome downloads (files can be large)
                 if viewModel.ncbiSearchType == .genome && !viewModel.selectedRecords.isEmpty {
                     HStack(spacing: 4) {
@@ -2118,9 +2118,9 @@ struct SearchResultRowWithCheckbox: View {
 struct AutocompleteRow: View {
     let suggestion: String
     let onSelect: () -> Void
-    
+
     @State private var isHovered = false
-    
+
     var body: some View {
         Button(action: onSelect) {
             HStack {

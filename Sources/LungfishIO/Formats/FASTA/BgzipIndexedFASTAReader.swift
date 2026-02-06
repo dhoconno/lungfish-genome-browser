@@ -335,24 +335,28 @@ public actor BgzipIndexedFASTAReader {
         while currentUncompressedOffset < endOffset {
             // Find the block containing this offset
             guard let (blockEntry, offsetInBlock) = gziIndex.findBlock(for: currentUncompressedOffset) else {
-                throw BgzipError.decompressionFailed("Cannot find block for offset \(currentUncompressedOffset)")
+                break  // No more blocks available
             }
-            
+
             // Read and decompress the block
             let blockData = try readAndDecompressBlock(at: blockEntry.compressedOffset, handle: handle)
-            
+
             // Calculate how much data we need from this block
             let startInBlock = Int(offsetInBlock)
             let availableInBlock = blockData.count - startInBlock
             let neededBytes = Int(endOffset - currentUncompressedOffset)
             let bytesToCopy = min(availableInBlock, neededBytes)
-            
+
             if startInBlock < blockData.count && bytesToCopy > 0 {
                 result.append(blockData.subdata(in: startInBlock..<(startInBlock + bytesToCopy)))
             }
-            
+
             // Move to next block
-            currentUncompressedOffset = blockEntry.uncompressedOffset + UInt64(blockData.count)
+            let nextOffset = blockEntry.uncompressedOffset + UInt64(blockData.count)
+            if nextOffset <= currentUncompressedOffset {
+                break  // No progress - reached end of available data
+            }
+            currentUncompressedOffset = nextOffset
         }
         
         return result
@@ -576,24 +580,28 @@ public final class SyncBgzipFASTAReader: Sendable {
         while currentUncompressedOffset < endOffset {
             // Find the block containing this offset
             guard let (blockEntry, offsetInBlock) = gziIndex.findBlock(for: currentUncompressedOffset) else {
-                throw BgzipError.decompressionFailed("Cannot find block for offset \(currentUncompressedOffset)")
+                break  // No more blocks available
             }
-            
+
             // Read and decompress the block
             let blockData = try readAndDecompressBlock(at: blockEntry.compressedOffset, handle: handle)
-            
+
             // Calculate how much data we need from this block
             let startInBlock = Int(offsetInBlock)
             let availableInBlock = blockData.count - startInBlock
             let neededBytes = Int(endOffset - currentUncompressedOffset)
             let bytesToCopy = min(availableInBlock, neededBytes)
-            
+
             if startInBlock < blockData.count && bytesToCopy > 0 {
                 result.append(blockData.subdata(in: startInBlock..<(startInBlock + bytesToCopy)))
             }
-            
+
             // Move to next block
-            currentUncompressedOffset = blockEntry.uncompressedOffset + UInt64(blockData.count)
+            let nextOffset = blockEntry.uncompressedOffset + UInt64(blockData.count)
+            if nextOffset <= currentUncompressedOffset {
+                break  // No progress - reached end of available data
+            }
+            currentUncompressedOffset = nextOffset
         }
         
         return result
