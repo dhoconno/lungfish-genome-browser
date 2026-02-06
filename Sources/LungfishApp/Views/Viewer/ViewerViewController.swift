@@ -1462,16 +1462,19 @@ public class SequenceViewerView: NSView {
     
     /// Cached sequence data for the current visible region (for bundle mode)
     private var cachedBundleSequence: String?
-    
+
     /// The region for which we have cached sequence data
     private var cachedSequenceRegion: GenomicRegion?
-    
+
     /// Error message from the last failed bundle fetch, if any
     private var bundleFetchError: String?
-    
+
     /// Cached annotations for the current visible region (for bundle mode)
     private var cachedBundleAnnotations: [SequenceAnnotation] = []
-    
+
+    /// The region for which we have cached annotation data
+    private var cachedAnnotationRegion: GenomicRegion?
+
     /// Whether we're currently fetching bundle data
     private var isFetchingBundleData: Bool = false
 
@@ -1702,6 +1705,7 @@ public class SequenceViewerView: NSView {
         self.cachedBundleSequence = nil
         self.cachedSequenceRegion = nil
         self.cachedBundleAnnotations = []
+        self.cachedAnnotationRegion = nil
         self.isFetchingBundleData = false
         self.bundleFetchError = nil
         
@@ -1723,6 +1727,7 @@ public class SequenceViewerView: NSView {
         self.cachedBundleSequence = nil
         self.cachedSequenceRegion = nil
         self.cachedBundleAnnotations = []
+        self.cachedAnnotationRegion = nil
         self.isFetchingBundleData = false
         needsDisplay = true
     }
@@ -1788,119 +1793,124 @@ public class SequenceViewerView: NSView {
     
     /// Draws content from a reference bundle.
     ///
-    /// This method handles the asynchronous nature of bundle data fetching by:
-    /// 1. Drawing cached data if available for the current region
-    /// 2. Triggering an async fetch if data is not cached
-    /// 3. Redrawing when fetch completes
+    /// Sequence and annotations are fetched and cached independently:
+    /// - Annotations are always fetched (BigBed R-tree queries are fast even for full chromosomes)
+    /// - Sequence is only fetched when zoomed in enough to be visible (<500 bp/pixel)
+    ///   because reading 240 MB of bgzip data for a full chromosome is impractical
     private func drawBundleContent(frame: ReferenceFrame, context: CGContext) {
         guard let bundle = currentReferenceBundle else {
             logger.warning("drawBundleContent: currentReferenceBundle is nil")
             return
         }
 
-        // Build the current visible region
         let visibleRegion = GenomicRegion(
             chromosome: frame.chromosome,
             start: Int(frame.start),
             end: Int(frame.end)
         )
+        let scale = frame.scale  // bp/pixel
+        let needsSequence = scale < showLineThreshold  // Only fetch sequence when it would be visible
 
-        logger.debug("drawBundleContent: visibleRegion=\(visibleRegion.description), isFetching=\(self.isFetchingBundleData), hasCached=\(self.cachedBundleSequence != nil)")
-        
-        // Check if there was a fetch error
-        if let errorMessage = bundleFetchError {
-            drawLoadingIndicator(context: context, message: "Error: \(errorMessage)")
-            return
+        // Fetch annotations if needed (always — BigBed queries are fast)
+        let annotationsCovered = cachedAnnotationRegion?.chromosome == visibleRegion.chromosome
+            && (cachedAnnotationRegion?.start ?? Int.max) <= visibleRegion.start
+            && (cachedAnnotationRegion?.end ?? Int.min) >= visibleRegion.end
+
+        if !annotationsCovered && !isFetchingBundleData {
+            fetchAnnotations(bundle: bundle, region: visibleRegion)
         }
-        
-        // If we don't have cached data, fetch synchronously before drawing.
-        // This must happen before the draw check so data is available in the same draw cycle.
-        if cachedBundleSequence == nil
-            || cachedSequenceRegion?.chromosome != visibleRegion.chromosome
-            || (cachedSequenceRegion?.start ?? Int.max) > visibleRegion.start
-            || (cachedSequenceRegion?.end ?? Int.min) < visibleRegion.end {
-            if !isFetchingBundleData {
-                logger.info("drawBundleContent: Starting fetch for \(visibleRegion.description)")
-                fetchBundleData(bundle: bundle, region: visibleRegion)
+
+        // Fetch sequence only when zoomed in enough to see it
+        if needsSequence {
+            let sequenceCovered = cachedBundleSequence != nil
+                && cachedSequenceRegion?.chromosome == visibleRegion.chromosome
+                && (cachedSequenceRegion?.start ?? Int.max) <= visibleRegion.start
+                && (cachedSequenceRegion?.end ?? Int.min) >= visibleRegion.end
+
+            if !sequenceCovered && !isFetchingBundleData {
+                fetchSequence(bundle: bundle, region: visibleRegion)
             }
         }
 
-        // Draw cached data if available, otherwise show loading indicator
-        if let cached = cachedBundleSequence,
-           let cachedRegion = cachedSequenceRegion,
-           cachedRegion.chromosome == visibleRegion.chromosome,
-           cachedRegion.start <= visibleRegion.start,
-           cachedRegion.end >= visibleRegion.end {
-            logger.debug("drawBundleContent: Drawing cached sequence (\(cached.count) bp)")
-            drawBundleSequence(cached, region: cachedRegion, frame: frame, context: context)
-            drawBundleAnnotations(cachedBundleAnnotations, frame: frame, context: context)
+        // Draw sequence (or line placeholder)
+        if needsSequence {
+            if let cached = cachedBundleSequence,
+               let cachedRegion = cachedSequenceRegion,
+               cachedRegion.chromosome == visibleRegion.chromosome,
+               cachedRegion.start <= visibleRegion.start,
+               cachedRegion.end >= visibleRegion.end {
+                drawBundleSequence(cached, region: cachedRegion, frame: frame, context: context)
+            } else {
+                // Sequence is loading — show loading indicator in the sequence area
+                drawSequenceLine(frame: frame, context: context)
+            }
         } else {
-            let message = isFetchingBundleData
-                ? "Loading \(visibleRegion.chromosome):\(visibleRegion.start)-\(visibleRegion.end)..."
-                : "Fetching \(visibleRegion.chromosome):\(visibleRegion.start)-\(visibleRegion.end)..."
-            drawLoadingIndicator(context: context, message: message)
+            drawSequenceLine(frame: frame, context: context)
+        }
+
+        // Draw annotations (independent of sequence)
+        if annotationsCovered {
+            drawBundleAnnotations(cachedBundleAnnotations, frame: frame, context: context)
         }
     }
-    
-    /// Fetches bundle data synchronously and triggers a redraw when complete.
-    ///
-    /// Note: This uses synchronous fetching because Swift Tasks don't execute properly
-    /// when called from notification handlers in this app context.
-    private func fetchBundleData(bundle: ReferenceBundle, region: GenomicRegion) {
-        isFetchingBundleData = true
-        bundleFetchError = nil  // Clear any previous error
 
-        // Get chromosome length to clamp the expanded region
+    /// Fetches annotations for the visible region from BigBed files.
+    /// BigBed R-tree queries are efficient even for full-chromosome regions.
+    private func fetchAnnotations(bundle: ReferenceBundle, region: GenomicRegion) {
         let chromLength = bundle.chromosomeLength(named: region.chromosome) ?? Int64(region.end + 1000)
-
-        logger.info("fetchBundleData: Starting SYNC fetch for \(region.description), chromLength=\(chromLength)")
-
-        // Expand the region slightly to reduce re-fetching on small pans, but clamp to chromosome bounds
         let expandedStart = max(0, region.start - 1000)
         let expandedEnd = min(Int(chromLength), region.end + 1000)
-        let expandedRegion = GenomicRegion(
-            chromosome: region.chromosome,
-            start: expandedStart,
-            end: expandedEnd
-        )
+        let expandedRegion = GenomicRegion(chromosome: region.chromosome, start: expandedStart, end: expandedEnd)
 
-        logger.debug("fetchBundleData: Expanded region: \(expandedRegion.description)")
+        logger.info("fetchAnnotations: Fetching for \(expandedRegion.description)")
 
-        // Fetch sequence synchronously (fast for indexed bgzip) then annotations async
+        var allAnnotations: [SequenceAnnotation] = []
+        for trackId in bundle.annotationTrackIds {
+            do {
+                let annotations = try bundle.getAnnotationsSync(trackId: trackId, region: expandedRegion)
+                allAnnotations.append(contentsOf: annotations)
+                logger.info("fetchAnnotations: Got \(annotations.count) from '\(trackId, privacy: .public)'")
+            } catch {
+                logger.warning("fetchAnnotations: Failed for '\(trackId, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        self.cachedBundleAnnotations = allAnnotations
+        self.cachedAnnotationRegion = expandedRegion
+        logger.info("fetchAnnotations: Cached \(allAnnotations.count) annotations")
+        self.needsDisplay = true
+    }
+
+    /// Fetches sequence data for the visible region from bgzip-compressed FASTA.
+    /// Only called when zoomed in enough to display sequence (<500 bp/pixel).
+    private func fetchSequence(bundle: ReferenceBundle, region: GenomicRegion) {
+        isFetchingBundleData = true
+        bundleFetchError = nil
+
+        let chromLength = bundle.chromosomeLength(named: region.chromosome) ?? Int64(region.end + 1000)
+
+        // Limit fetch to a reasonable size to avoid loading hundreds of MB
+        let maxFetchSize = 500_000  // 500 Kb max per fetch
+        let center = (region.start + region.end) / 2
+        let halfFetch = min(maxFetchSize / 2, (region.end - region.start) / 2 + 5000)
+        let expandedStart = max(0, center - halfFetch)
+        let expandedEnd = min(Int(chromLength), center + halfFetch)
+        let expandedRegion = GenomicRegion(chromosome: region.chromosome, start: expandedStart, end: expandedEnd)
+
+        logger.info("fetchSequence: Fetching \(expandedRegion.description) (\(expandedRegion.length) bp)")
+
         do {
             let sequence = try bundle.fetchSequenceSync(region: expandedRegion)
-            logger.info("fetchBundleData: Got sequence of \(sequence.count) bp")
-
-            // Fetch BigBed annotations synchronously (fast for indexed BigBed files)
-            var allAnnotations: [SequenceAnnotation] = []
-            for trackId in bundle.annotationTrackIds {
-                do {
-                    let annotations = try bundle.getAnnotationsSync(trackId: trackId, region: expandedRegion)
-                    allAnnotations.append(contentsOf: annotations)
-                    logger.info("fetchBundleData: Fetched \(annotations.count) annotations from track '\(trackId, privacy: .public)'")
-                } catch {
-                    logger.warning("fetchBundleData: Annotation fetch failed for '\(trackId, privacy: .public)': \(error.localizedDescription, privacy: .public)")
-                }
-            }
-
-            // Update cache with all data at once, then trigger a single redraw
             self.cachedBundleSequence = sequence
             self.cachedSequenceRegion = expandedRegion
-            self.cachedBundleAnnotations = allAnnotations
             self.isFetchingBundleData = false
             self.bundleFetchError = nil
-            logger.info("fetchBundleData: SUCCESS - Fetched \(sequence.count) bp and \(allAnnotations.count) annotations")
-
-            // Trigger redraw with sequence + annotations
+            logger.info("fetchSequence: Got \(sequence.count) bp")
             self.needsDisplay = true
-
         } catch {
-            let errorMsg = error.localizedDescription
-            logger.error("fetchBundleData: FAILED - \(errorMsg, privacy: .public)")
+            logger.error("fetchSequence: FAILED - \(error.localizedDescription, privacy: .public)")
             self.isFetchingBundleData = false
-            self.bundleFetchError = errorMsg
-
-            // Trigger redraw to show error
+            self.bundleFetchError = error.localizedDescription
             self.needsDisplay = true
         }
     }
