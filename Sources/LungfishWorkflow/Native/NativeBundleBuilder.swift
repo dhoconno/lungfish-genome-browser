@@ -775,20 +775,12 @@ public final class NativeBundleBuilder: ObservableObject {
     private func convertAnnotationToBED(from sourceURL: URL, to outputURL: URL) async throws -> Int {
         let converter = AnnotationConverter()
 
-        // Filter to gene-level features only (like IGV).
-        // Excludes whole-chromosome "region" features, redundant sub-gene features
-        // (mRNA, CDS, exon, UTR) that create ~10x duplication per gene locus,
-        // and structural features (match, match_part) that aren't useful for display.
-        let options = AnnotationConverter.ConversionOptions(
-            featureTypes: ["gene", "pseudogene", "ncRNA_gene", "lnc_RNA", "miRNA",
-                           "rRNA", "tRNA", "snRNA", "snoRNA", "V_gene_segment",
-                           "D_gene_segment", "J_gene_segment", "C_gene_segment"]
-        )
-
+        // Keep all GFF3 feature types in the BigBed. Display-time filtering in the
+        // viewer handles zoom-dependent visibility (density histogram when zoomed out,
+        // size-based deduplication at intermediate zoom, full detail when zoomed in).
         _ = try await converter.convertToBED(
             from: sourceURL,
-            output: outputURL,
-            options: options
+            output: outputURL
         )
 
         guard let content = try? String(contentsOf: outputURL, encoding: .utf8) else {

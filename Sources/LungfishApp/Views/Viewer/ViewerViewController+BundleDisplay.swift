@@ -69,11 +69,11 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
         let chromLength = Int(firstChrom.length)
         bundleLogger.info("displayBundle: Navigating to first chromosome '\(firstChrom.name, privacy: .public)' length=\(chromLength)")
 
-        // Create reference frame
+        // Create reference frame showing the full chromosome
         referenceFrame = ReferenceFrame(
             chromosome: firstChrom.name,
             start: 0,
-            end: Double(min(chromLength, 10000)),
+            end: Double(chromLength),
             pixelWidth: effectiveWidth,
             sequenceLength: chromLength
         )
@@ -251,7 +251,7 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
         referenceFrame = ReferenceFrame(
             chromosome: chromosome.name,
             start: 0,
-            end: Double(min(chromLength, 10000)),
+            end: Double(chromLength),
             pixelWidth: effectiveWidth,
             sequenceLength: chromLength
         )

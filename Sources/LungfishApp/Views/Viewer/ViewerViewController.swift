@@ -2073,12 +2073,47 @@ public class SequenceViewerView: NSView {
 
         guard !finalAnnotations.isEmpty else { return }
 
+        // Smart display-time filtering: exclude whole-chromosome "region" features
+        // and, when not in density mode, skip sub-pixel features to reduce clutter.
+        let visibleSpan = visibleEnd - visibleStart
+        let displayAnnotations: [SequenceAnnotation]
         if scale > annotationDensityThreshold {
-            drawAnnotationDensity(finalAnnotations, frame: frame, context: context)
-        } else if scale > annotationSquishedThreshold {
-            drawAnnotationsSquished(finalAnnotations, frame: frame, context: context)
+            // Density mode: include everything except chromosome-spanning features
+            displayAnnotations = finalAnnotations.filter { annot in
+                (annot.end - annot.start) < Int(Double(visibleSpan) * 0.9)
+            }
         } else {
-            drawAnnotationsExpanded(finalAnnotations, frame: frame, context: context)
+            // Squished/Expanded: exclude chromosome-spanning features and features
+            // smaller than 1 pixel (sub-gene features like individual exons/UTRs
+            // that would be invisible at this zoom level)
+            let minFeatureBp = max(1, Int(scale))  // 1 pixel worth of base pairs
+            displayAnnotations = finalAnnotations.filter { annot in
+                let span = annot.end - annot.start
+                return span >= minFeatureBp && span < Int(Double(visibleSpan) * 0.9)
+            }
+        }
+
+        guard !displayAnnotations.isEmpty else {
+            // Show a hint when all features are filtered out
+            if !finalAnnotations.isEmpty {
+                let font = NSFont.systemFont(ofSize: 10)
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: font,
+                    .foregroundColor: NSColor.secondaryLabelColor,
+                ]
+                let text = "\(finalAnnotations.count) features (zoom in to see details)"
+                let labelRect = CGRect(x: 4, y: annotationTrackY + 2, width: CGFloat(frame.pixelWidth) - 8, height: 14)
+                (text as NSString).draw(in: labelRect, withAttributes: attrs)
+            }
+            return
+        }
+
+        if scale > annotationDensityThreshold {
+            drawAnnotationDensity(displayAnnotations, frame: frame, context: context)
+        } else if scale > annotationSquishedThreshold {
+            drawAnnotationsSquished(displayAnnotations, frame: frame, context: context)
+        } else {
+            drawAnnotationsExpanded(displayAnnotations, frame: frame, context: context)
         }
     }
 
