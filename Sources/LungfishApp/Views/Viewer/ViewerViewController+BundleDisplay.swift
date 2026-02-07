@@ -14,7 +14,7 @@ import os.log
 private let bundleLogger = Logger(subsystem: "com.lungfish.browser", category: "ViewerBundleDisplay")
 
 /// Width of the chromosome navigator drawer.
-private let navigatorWidth: CGFloat = 180
+private let navigatorWidth: CGFloat = 240
 
 // MARK: - ViewerViewController Bundle Display Extension
 
@@ -245,6 +245,9 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
     public func chromosomeNavigator(_ navigator: ChromosomeNavigatorView, didSelectChromosome chromosome: ChromosomeInfo) {
         bundleLogger.info("chromosomeNavigator: Navigating to '\(chromosome.name, privacy: .public)' length=\(chromosome.length)")
 
+        // Clear sequence fetch error for the new chromosome
+        viewerView.clearSequenceFetchError()
+
         let chromLength = Int(chromosome.length)
         let effectiveWidth = max(800, Int(viewerView.bounds.width))
 
@@ -287,6 +290,9 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
     ///   - end: End position (0-based, exclusive)
     public func navigateToChromosomeAndPosition(chromosome: String, chromosomeLength: Int, start: Int, end: Int) {
         bundleLogger.info("navigateToChromosomeAndPosition: \(chromosome, privacy: .public):\(start)-\(end)")
+
+        // Clear sequence fetch error for the new position
+        viewerView.clearSequenceFetchError()
 
         let effectiveWidth = max(800, Int(viewerView.bounds.width))
         let clampedStart = max(0, start)

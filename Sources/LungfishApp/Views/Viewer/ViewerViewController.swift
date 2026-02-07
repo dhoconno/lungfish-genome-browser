@@ -346,7 +346,8 @@ public class ViewerViewController: NSViewController {
             logger.debug("handleAnnotationSettingsChanged: annotationSpacing = \(spacing)")
         }
 
-        // Trigger redraw
+        // Invalidate annotation tile and trigger redraw
+        viewerView.invalidateAnnotationTile()
         viewerView.needsDisplay = true
         logger.info("handleAnnotationSettingsChanged: Triggered viewer redraw")
     }
@@ -378,7 +379,8 @@ public class ViewerViewController: NSViewController {
             logger.debug("handleAnnotationFilterChanged: filterText = '\(text)'")
         }
 
-        // Trigger redraw
+        // Invalidate annotation tile and trigger redraw
+        viewerView.invalidateAnnotationTile()
         viewerView.needsDisplay = true
         logger.info("handleAnnotationFilterChanged: Triggered viewer redraw")
     }
@@ -1469,14 +1471,20 @@ public class SequenceViewerView: NSView {
     /// Error message from the last failed bundle fetch, if any
     private var bundleFetchError: String?
 
+    /// Region of the last failed fetch (to prevent infinite retry for the same region)
+    private var failedFetchRegion: GenomicRegion?
+
     /// Cached annotations for the current visible region (for bundle mode)
     private var cachedBundleAnnotations: [SequenceAnnotation] = []
 
     /// The region for which we have cached annotation data
     private var cachedAnnotationRegion: GenomicRegion?
 
-    /// Whether we're currently fetching bundle data
+    /// Whether we're currently fetching bundle data (sequence)
     private var isFetchingBundleData: Bool = false
+
+    /// Whether we're currently fetching annotation data
+    private var isFetchingAnnotations: Bool = false
 
     /// Whether drag is active (for highlighting)
     private var isDragActive = false
@@ -1517,9 +1525,9 @@ public class SequenceViewerView: NSView {
 
     // MARK: - Annotation Track Layout Constants
 
-    /// Y offset where annotation track starts (below sequence track)
+    /// Y offset where annotation track starts (immediately below sequence track)
     private var annotationTrackY: CGFloat {
-        trackY + trackHeight + 30
+        trackY + trackHeight + 4
     }
 
     /// Whether to show annotations (controlled by inspector)
@@ -1536,6 +1544,85 @@ public class SequenceViewerView: NSView {
 
     /// Text filter for annotations (empty string means no filter)
     var annotationFilterText: String = ""
+
+    // MARK: - Annotation Color Cache
+
+    /// Cached CGColors keyed by AnnotationType to avoid NSColor allocation per-draw.
+    /// Cleared on appearance change (dark mode toggle).
+    private var typeColorCache: [AnnotationType: (fill: CGColor, stroke: CGColor)] = [:]
+
+    /// Returns cached (fill, stroke) CGColor pair for an annotation.
+    /// Uses the annotation's custom color if set, otherwise caches by type.
+    private func cachedColors(for annot: SequenceAnnotation) -> (fill: CGColor, stroke: CGColor) {
+        // Fast path: no custom color → use type-based cache
+        if annot.color == nil, let cached = typeColorCache[annot.type] {
+            return cached
+        }
+        let annotColor = annot.color ?? annot.type.defaultColor
+        let nsColor = NSColor(
+            calibratedRed: CGFloat(annotColor.red),
+            green: CGFloat(annotColor.green),
+            blue: CGFloat(annotColor.blue),
+            alpha: 1.0
+        )
+        let fill = nsColor.withAlphaComponent(0.7).cgColor
+        let stroke = nsColor.cgColor
+        if annot.color == nil {
+            typeColorCache[annot.type] = (fill, stroke)
+        }
+        return (fill, stroke)
+    }
+
+    /// Cached CGColors for density histogram bars keyed by AnnotationType.
+    private var typeDensityColorCache: [AnnotationType: CGColor] = [:]
+
+    /// Returns a cached density-bar CGColor (0.6 alpha) for a given annotation type.
+    private func cachedDensityColor(for type: AnnotationType) -> CGColor {
+        if let cached = typeDensityColorCache[type] { return cached }
+        let typeColor = type.defaultColor
+        let nsColor = NSColor(
+            calibratedRed: CGFloat(typeColor.red),
+            green: CGFloat(typeColor.green),
+            blue: CGFloat(typeColor.blue),
+            alpha: 0.6
+        )
+        let color = nsColor.cgColor
+        typeDensityColorCache[type] = color
+        return color
+    }
+
+    // MARK: - Offscreen Annotation Tile
+
+    /// Pre-rendered annotation tile image for fast pan blitting.
+    private var annotationTile: CGImage?
+
+    /// Genomic start position of the rendered tile.
+    private var tileGenomicStart: Double = 0
+
+    /// Genomic end position of the rendered tile.
+    private var tileGenomicEnd: Double = 0
+
+    /// The bp/pixel scale at which the tile was rendered.
+    private var tileScale: Double = 0
+
+    /// Pixel width of the tile image.
+    private var tileWidth: Int = 0
+
+    /// Pixel height of the tile image.
+    private var tileHeight: Int = 0
+
+    /// The chromosome the tile was rendered for.
+    private var tileChromosome: String = ""
+
+    /// Invalidates the annotation tile, forcing re-render on next draw.
+    func invalidateAnnotationTile() {
+        annotationTile = nil
+    }
+
+    // MARK: - Scroll Coalescing
+
+    /// Timer for coalescing scroll-triggered redraws at 60fps.
+    private var scrollRedrawTimer: Timer?
 
     // MARK: - Zoom Thresholds (bp/pixel)
     //
@@ -1693,30 +1780,37 @@ public class SequenceViewerView: NSView {
     /// - Parameter bundle: The ReferenceBundle to display
     func setReferenceBundle(_ bundle: ReferenceBundle) {
         logger.info("SequenceViewerView.setReferenceBundle: Setting bundle '\(bundle.name, privacy: .public)'")
-        
+
         // Store the bundle reference
         self.currentReferenceBundle = bundle
-        
+
         // Clear any existing sequence/annotations since we'll fetch on-demand
         self.sequence = nil
         self.annotations = []
-        
+
         // Clear cached bundle data
         self.cachedBundleSequence = nil
         self.cachedSequenceRegion = nil
         self.cachedBundleAnnotations = []
         self.cachedAnnotationRegion = nil
         self.isFetchingBundleData = false
+        self.isFetchingAnnotations = false
         self.bundleFetchError = nil
-        
+        self.failedFetchRegion = nil
+
+        // Clear rendering caches
+        typeColorCache.removeAll()
+        typeDensityColorCache.removeAll()
+        invalidateAnnotationTile()
+
         // Clear multi-sequence state if active
         if isMultiSequenceMode {
             clearSequences()
         }
-        
+
         // Request display refresh - drawing will fetch data based on visible region
         needsDisplay = true
-        
+
         logger.info("SequenceViewerView.setReferenceBundle: Bundle set, ready for on-demand fetching")
     }
     
@@ -1729,6 +1823,28 @@ public class SequenceViewerView: NSView {
         self.cachedBundleAnnotations = []
         self.cachedAnnotationRegion = nil
         self.isFetchingBundleData = false
+        self.isFetchingAnnotations = false
+
+        // Clear rendering caches
+        typeColorCache.removeAll()
+        typeDensityColorCache.removeAll()
+        invalidateAnnotationTile()
+
+        needsDisplay = true
+    }
+
+    /// Clears sequence fetch error state, allowing retry for a new region.
+    func clearSequenceFetchError() {
+        bundleFetchError = nil
+        failedFetchRegion = nil
+    }
+
+    public override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        // Dark mode toggle invalidates all cached CGColors
+        typeColorCache.removeAll()
+        typeDensityColorCache.removeAll()
+        invalidateAnnotationTile()
         needsDisplay = true
     }
 
@@ -1811,24 +1927,44 @@ public class SequenceViewerView: NSView {
         let scale = frame.scale  // bp/pixel
         let needsSequence = scale < showLineThreshold  // Only fetch sequence when it would be visible
 
-        // Fetch annotations if needed (always — BigBed queries are fast)
+        // Only fetch and render annotations when zoomed in enough (< 100 Kbp visible).
+        // At wider zoom levels, annotations would be too dense to be useful — similar to
+        // how the sequence is only shown when zoomed in past showLineThreshold.
+        let visibleSpan = visibleRegion.end - visibleRegion.start
+        let showAnnotationThreshold = 100_000  // bp
+        let needsAnnotations = visibleSpan <= showAnnotationThreshold
+
+        // Check if annotation cache covers the visible region
         let annotationsCovered = cachedAnnotationRegion?.chromosome == visibleRegion.chromosome
             && (cachedAnnotationRegion?.start ?? Int.max) <= visibleRegion.start
             && (cachedAnnotationRegion?.end ?? Int.min) >= visibleRegion.end
 
-        if !annotationsCovered && !isFetchingBundleData {
-            fetchAnnotations(bundle: bundle, region: visibleRegion)
+        // Fetch annotations if cache is stale (only when zoomed in enough).
+        // Always fetch asynchronously to avoid blocking the main thread — the sync path
+        // caused hangs when first zooming past the 100Kbp threshold on a chromosome.
+        if needsAnnotations && !annotationsCovered && !isFetchingAnnotations {
+            fetchAnnotationsAsync(bundle: bundle, region: visibleRegion)
         }
 
-        // Fetch sequence only when zoomed in enough to see it
+        // Clear fetch error when user has navigated to a completely different region
+        // (different chromosome or non-overlapping position), allowing retry.
+        if bundleFetchError != nil, let failed = failedFetchRegion {
+            if failed.chromosome != visibleRegion.chromosome
+                || visibleRegion.end < failed.start || visibleRegion.start > failed.end {
+                bundleFetchError = nil
+                failedFetchRegion = nil
+            }
+        }
+
+        // Check if sequence cache covers the visible region
         if needsSequence {
             let sequenceCovered = cachedBundleSequence != nil
                 && cachedSequenceRegion?.chromosome == visibleRegion.chromosome
                 && (cachedSequenceRegion?.start ?? Int.max) <= visibleRegion.start
                 && (cachedSequenceRegion?.end ?? Int.min) >= visibleRegion.end
 
-            if !sequenceCovered && !isFetchingBundleData {
-                fetchSequence(bundle: bundle, region: visibleRegion)
+            if !sequenceCovered && !isFetchingBundleData && bundleFetchError == nil {
+                fetchSequenceAsync(bundle: bundle, region: visibleRegion)
             }
         }
 
@@ -1839,79 +1975,163 @@ public class SequenceViewerView: NSView {
                cachedRegion.chromosome == visibleRegion.chromosome,
                cachedRegion.start <= visibleRegion.start,
                cachedRegion.end >= visibleRegion.end {
+                logger.debug("drawBundleContent: Drawing sequence at scale=\(scale) bp/px, cached=\(cached.count) bp, region=\(cachedRegion.description)")
                 drawBundleSequence(cached, region: cachedRegion, frame: frame, context: context)
+            } else if let fetchError = bundleFetchError {
+                logger.info("drawBundleContent: Sequence fetch failed: \(fetchError)")
+                drawSequenceError(fetchError, frame: frame, context: context)
             } else {
-                // Sequence is loading — show loading indicator in the sequence area
+                let hasCached = cachedBundleSequence != nil
+                let cachedChrom = cachedSequenceRegion?.chromosome ?? "nil"
+                let cachedStart = cachedSequenceRegion?.start ?? -1
+                let cachedEnd = cachedSequenceRegion?.end ?? -1
+                logger.info("drawBundleContent: No sequence cache for visible region. hasCached=\(hasCached), cachedChrom=\(cachedChrom), cachedRange=\(cachedStart)-\(cachedEnd), visibleRange=\(visibleRegion.start)-\(visibleRegion.end), fetching=\(self.isFetchingBundleData)")
                 drawSequenceLine(frame: frame, context: context)
             }
         } else {
             drawSequenceLine(frame: frame, context: context)
         }
 
-        // Draw annotations (independent of sequence)
-        if annotationsCovered {
+        // Draw annotations from cache when zoomed in enough
+        if needsAnnotations,
+           !cachedBundleAnnotations.isEmpty,
+           cachedAnnotationRegion?.chromosome == visibleRegion.chromosome {
             drawBundleAnnotations(cachedBundleAnnotations, frame: frame, context: context)
         }
     }
 
-    /// Fetches annotations for the visible region from BigBed files.
-    /// BigBed R-tree queries are efficient even for full-chromosome regions.
-    private func fetchAnnotations(bundle: ReferenceBundle, region: GenomicRegion) {
+    /// Fetches annotations asynchronously for the visible region from BigBed files.
+    /// Runs BigBed R-tree queries on a background thread to avoid blocking the UI.
+    /// Dedicated queue for annotation I/O to avoid being starved by the search index build.
+    private static let annotationFetchQueue = DispatchQueue(label: "com.lungfish.annotationFetch", qos: .userInteractive)
+
+    private func fetchAnnotationsAsync(bundle: ReferenceBundle, region: GenomicRegion) {
+        isFetchingAnnotations = true
+
         let chromLength = bundle.chromosomeLength(named: region.chromosome) ?? Int64(region.end + 1000)
-        let expandedStart = max(0, region.start - 1000)
-        let expandedEnd = min(Int(chromLength), region.end + 1000)
+        // Pre-fetch 200% extra on each side so panning doesn't invalidate cache.
+        // User can pan 2 full screen-widths before a refetch is needed.
+        let visibleSpan = region.end - region.start
+        let expandAmount = max(50_000, visibleSpan * 2)
+        let expandedStart = max(0, region.start - expandAmount)
+        let expandedEnd = min(Int(chromLength), region.end + expandAmount)
         let expandedRegion = GenomicRegion(chromosome: region.chromosome, start: expandedStart, end: expandedEnd)
+        let trackIds = bundle.annotationTrackIds
 
-        logger.info("fetchAnnotations: Fetching for \(expandedRegion.description)")
+        logger.info("fetchAnnotationsAsync: Fetching \(expandedRegion.description) on background thread")
 
-        var allAnnotations: [SequenceAnnotation] = []
-        for trackId in bundle.annotationTrackIds {
-            do {
-                let annotations = try bundle.getAnnotationsSync(trackId: trackId, region: expandedRegion)
-                allAnnotations.append(contentsOf: annotations)
-                logger.info("fetchAnnotations: Got \(annotations.count) from '\(trackId, privacy: .public)'")
-            } catch {
-                logger.warning("fetchAnnotations: Failed for '\(trackId, privacy: .public)': \(error.localizedDescription, privacy: .public)")
+        Self.annotationFetchQueue.async { [weak self] in
+            // Create readers once per fetch and reuse across the query.
+            // This avoids re-opening FileHandle and re-parsing the BigBed header
+            // and chromosome B+ tree on every call.
+            var readers: [String: SyncBigBedReader] = [:]
+            for trackId in trackIds {
+                guard let trackInfo = bundle.annotationTrack(id: trackId) else { continue }
+                let trackURL = bundle.url.appendingPathComponent(trackInfo.path)
+                if let reader = try? SyncBigBedReader(url: trackURL) {
+                    readers[trackId] = reader
+                }
+            }
+
+            var allAnnotations: [SequenceAnnotation] = []
+            for trackId in trackIds {
+                do {
+                    if let reader = readers[trackId] {
+                        let annotations = try bundle.getAnnotationsSync(reader: reader, region: expandedRegion)
+                        allAnnotations.append(contentsOf: annotations)
+                    } else {
+                        let annotations = try bundle.getAnnotationsSync(trackId: trackId, region: expandedRegion)
+                        allAnnotations.append(contentsOf: annotations)
+                    }
+                } catch {
+                    // Errors logged at the BigBed reader level
+                }
+            }
+
+            let count = allAnnotations.count
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.cachedBundleAnnotations = allAnnotations
+                self.cachedAnnotationRegion = expandedRegion
+                self.isFetchingAnnotations = false
+                self.invalidateAnnotationTile()
+                logger.info("fetchAnnotationsAsync: Cached \(count) annotations")
+                self.needsDisplay = true
             }
         }
-
-        self.cachedBundleAnnotations = allAnnotations
-        self.cachedAnnotationRegion = expandedRegion
-        logger.info("fetchAnnotations: Cached \(allAnnotations.count) annotations")
-        self.needsDisplay = true
     }
 
-    /// Fetches sequence data for the visible region from bgzip-compressed FASTA.
+    /// Fetches annotations synchronously for the initial load.
+    /// Blocks the main thread but ensures annotations appear on the first draw.
+    /// Only used when the cache is completely empty (first chromosome load).
+    /// Fetches sequence data asynchronously from bgzip-compressed FASTA.
+    /// Runs decompression on a background thread to avoid blocking the UI.
     /// Only called when zoomed in enough to display sequence (<500 bp/pixel).
-    private func fetchSequence(bundle: ReferenceBundle, region: GenomicRegion) {
+    /// Dedicated queue for sequence I/O to avoid being starved by annotation scanning
+    /// on the global concurrent queue.
+    private static let sequenceFetchQueue = DispatchQueue(label: "com.lungfish.sequenceFetch", qos: .userInteractive)
+
+    private func fetchSequenceAsync(bundle: ReferenceBundle, region: GenomicRegion) {
         isFetchingBundleData = true
         bundleFetchError = nil
 
         let chromLength = bundle.chromosomeLength(named: region.chromosome) ?? Int64(region.end + 1000)
 
-        // Limit fetch to a reasonable size to avoid loading hundreds of MB
+        // Limit fetch to a reasonable size to avoid loading hundreds of MB.
+        // Always fetch at least 100 Kb to provide buffer for panning.
         let maxFetchSize = 500_000  // 500 Kb max per fetch
         let center = (region.start + region.end) / 2
-        let halfFetch = min(maxFetchSize / 2, (region.end - region.start) / 2 + 5000)
+        let visibleSpan = region.end - region.start
+        let halfFetch = min(maxFetchSize / 2, max(50_000, visibleSpan / 2 + visibleSpan))
         let expandedStart = max(0, center - halfFetch)
         let expandedEnd = min(Int(chromLength), center + halfFetch)
         let expandedRegion = GenomicRegion(chromosome: region.chromosome, start: expandedStart, end: expandedEnd)
 
-        logger.info("fetchSequence: Fetching \(expandedRegion.description) (\(expandedRegion.length) bp)")
+        logger.info("fetchSequenceAsync: Fetching \(expandedRegion.description) (\(expandedRegion.length) bp)")
 
-        do {
-            let sequence = try bundle.fetchSequenceSync(region: expandedRegion)
-            self.cachedBundleSequence = sequence
-            self.cachedSequenceRegion = expandedRegion
-            self.isFetchingBundleData = false
-            self.bundleFetchError = nil
-            logger.info("fetchSequence: Got \(sequence.count) bp")
-            self.needsDisplay = true
-        } catch {
-            logger.error("fetchSequence: FAILED - \(error.localizedDescription, privacy: .public)")
-            self.isFetchingBundleData = false
-            self.bundleFetchError = error.localizedDescription
-            self.needsDisplay = true
+        // Use a dedicated serial queue rather than DispatchQueue.global to prevent
+        // thread starvation when the annotation search index is doing heavy BigBed
+        // scanning on the global concurrent queue.
+        Self.sequenceFetchQueue.async { [weak self] in
+            logger.info("fetchSequenceAsync: Background block started for \(expandedRegion.description), self alive: \(self != nil)")
+            do {
+                let sequence = try bundle.fetchSequenceSync(region: expandedRegion)
+                let count = sequence.count
+                logger.info("fetchSequenceAsync: fetchSequenceSync returned \(count) bp, self alive: \(self != nil)")
+
+                // Unwrap self to a strong reference. Since the view is visible and
+                // owned by ViewerViewController, it should be alive. The strong
+                // reference keeps the view alive through the main queue dispatch,
+                // which is a one-shot closure with no retain cycle risk.
+                guard let viewer = self else {
+                    logger.error("fetchSequenceAsync: CRITICAL - self is nil after successful fetch! \(count) bp of sequence data lost. SequenceViewerView was deallocated during background fetch.")
+                    return
+                }
+
+                DispatchQueue.main.async {
+                    viewer.cachedBundleSequence = sequence
+                    viewer.cachedSequenceRegion = expandedRegion
+                    viewer.isFetchingBundleData = false
+                    viewer.bundleFetchError = nil
+                    viewer.failedFetchRegion = nil
+                    logger.info("fetchSequenceAsync: Cached \(count) bp for \(expandedRegion.description), triggering redraw")
+                    viewer.needsDisplay = true
+                }
+            } catch {
+                let errorDesc = error.localizedDescription
+                logger.error("fetchSequenceAsync: FAILED on background thread - \(errorDesc, privacy: .public)")
+                guard let viewer = self else {
+                    logger.error("fetchSequenceAsync: self is nil when handling error on background thread")
+                    return
+                }
+                DispatchQueue.main.async {
+                    logger.error("fetchSequenceAsync: Error delivered to main thread - \(errorDesc, privacy: .public)")
+                    viewer.failedFetchRegion = expandedRegion
+                    viewer.isFetchingBundleData = false
+                    viewer.bundleFetchError = errorDesc
+                    viewer.needsDisplay = true
+                }
+            }
         }
     }
     
@@ -2019,14 +2239,59 @@ public class SequenceViewerView: NSView {
         let startX = frame.screenPosition(for: frame.start)
         let endX = frame.screenPosition(for: frame.end)
         let centerY = trackY + trackHeight / 2
-        
+
         context.setStrokeColor(NSColor.systemGray.cgColor)
         context.setLineWidth(2)
         context.move(to: CGPoint(x: startX, y: centerY))
         context.addLine(to: CGPoint(x: endX, y: centerY))
         context.strokePath()
+
+        // Show "Fetching sequence..." if we're loading data for this zoom level
+        if isFetchingBundleData && frame.scale < showLineThreshold {
+            let label = "Fetching sequence..." as NSString
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 11),
+                .foregroundColor: NSColor.secondaryLabelColor
+            ]
+            let size = label.size(withAttributes: attributes)
+            let labelRect = CGRect(
+                x: (bounds.width - size.width) / 2,
+                y: trackY + (trackHeight - size.height) / 2,
+                width: size.width,
+                height: size.height
+            )
+            label.draw(in: labelRect, withAttributes: attributes)
+        }
     }
     
+    /// Draws an error message in the sequence track when fetch failed.
+    private func drawSequenceError(_ error: String, frame: ReferenceFrame, context: CGContext) {
+        let startX = frame.screenPosition(for: frame.start)
+        let endX = frame.screenPosition(for: frame.end)
+        let centerY = trackY + trackHeight / 2
+
+        // Draw a red-tinted line
+        context.setStrokeColor(NSColor.systemRed.withAlphaComponent(0.3).cgColor)
+        context.setLineWidth(2)
+        context.move(to: CGPoint(x: startX, y: centerY))
+        context.addLine(to: CGPoint(x: endX, y: centerY))
+        context.strokePath()
+
+        let label = "Sequence error: \(error)" as NSString
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11),
+            .foregroundColor: NSColor.systemRed
+        ]
+        let size = label.size(withAttributes: attributes)
+        let labelRect = CGRect(
+            x: (bounds.width - size.width) / 2,
+            y: trackY + (trackHeight - size.height) / 2,
+            width: size.width,
+            height: size.height
+        )
+        label.draw(in: labelRect, withAttributes: attributes)
+    }
+
     // MARK: - Annotation Rendering Thresholds (inspired by IGV)
     //
     // Three rendering tiers based on zoom level:
@@ -2050,16 +2315,92 @@ public class SequenceViewerView: NSView {
     private let minPixelGap: CGFloat = 2
 
     /// Draws annotations from a bundle using zoom-dependent rendering tiers.
+    ///
+    /// Uses an offscreen tile cache for fast pan blitting. When the user pans within
+    /// tile bounds, this method just blits the pre-rendered tile image with an X offset
+    /// (O(1) per frame). The tile covers 3x the view width so the user can pan a full
+    /// screen-width in each direction before the tile needs re-rendering.
     private func drawBundleAnnotations(_ annotations: [SequenceAnnotation], frame: ReferenceFrame, context: CGContext) {
         guard showAnnotations, !annotations.isEmpty else { return }
 
+        // Clip annotations to the view bounds so they don't render under the track header
+        context.saveGState()
+        context.clip(to: CGRect(x: 0, y: 0, width: CGFloat(frame.pixelWidth), height: bounds.height))
+
         let scale = frame.scale  // bp/pixel
+
+        // Check if the offscreen tile is still valid for this view state
+        let tileValid = annotationTile != nil
+            && abs(tileScale - scale) < 0.001
+            && tileGenomicStart <= frame.start
+            && tileGenomicEnd >= frame.end
+            && tileChromosome == frame.chromosome
+            && tileHeight == Int(bounds.height)
+
+        if tileValid, let tile = annotationTile {
+            // Fast path: blit pre-rendered tile with X offset
+            let offsetX = frame.screenPosition(for: tileGenomicStart)
+            let tileRect = CGRect(
+                x: offsetX,
+                y: 0,
+                width: CGFloat(tileWidth),
+                height: CGFloat(tileHeight)
+            )
+            context.draw(tile, in: tileRect)
+            context.restoreGState()
+            return
+        }
+
+        // Slow path: filter annotations and render (also generates a new tile)
+        let displayAnnotations = filterAnnotationsForDisplay(annotations, frame: frame, context: context)
+
+        guard let displayAnnotations else {
+            context.restoreGState()
+            return
+        }
+
+        // Render annotations to an offscreen tile for future fast blitting
+        renderAnnotationTile(annotations: displayAnnotations, frame: frame)
+
+        // Blit the freshly created tile
+        if let tile = annotationTile {
+            let offsetX = frame.screenPosition(for: tileGenomicStart)
+            let tileRect = CGRect(
+                x: offsetX,
+                y: 0,
+                width: CGFloat(tileWidth),
+                height: CGFloat(tileHeight)
+            )
+            context.draw(tile, in: tileRect)
+        } else {
+            // Fallback: draw directly if tile creation failed
+            renderAnnotationsDirect(displayAnnotations, frame: frame, context: context)
+        }
+
+        context.restoreGState()
+    }
+
+    /// Filters cached annotations for display based on visible region, type/text filters,
+    /// and display-time feature size constraints.
+    ///
+    /// Returns nil if no features pass the filter (draws a hint label if appropriate).
+    private func filterAnnotationsForDisplay(
+        _ annotations: [SequenceAnnotation],
+        frame: ReferenceFrame,
+        context: CGContext
+    ) -> [SequenceAnnotation]? {
+        let scale = frame.scale
         let visibleStart = Int(frame.start)
         let visibleEnd = Int(frame.end)
 
-        // Filter annotations to visible region
+        // For tile rendering, filter against the wider tile region, not just visible
+        let visibleSpan = visibleEnd - visibleStart
+        let tileStart = max(0, Int(frame.start) - visibleSpan)
+        let tileEnd = Int(frame.end) + visibleSpan
+
+        // Filter annotations to tile region (wider than visible for pre-rendering)
         let visibleAnnotations = annotations.filter { annot in
-            annot.end > visibleStart && annot.start < visibleEnd
+            annot.end > tileStart && annot.start < tileEnd
         }
 
         // Apply type filter if set
@@ -2081,22 +2422,17 @@ public class SequenceViewerView: NSView {
             finalAnnotations = filteredAnnotations
         }
 
-        guard !finalAnnotations.isEmpty else { return }
+        guard !finalAnnotations.isEmpty else { return nil }
 
         // Smart display-time filtering: exclude whole-chromosome "region" features
         // and, when not in density mode, skip sub-pixel features to reduce clutter.
-        let visibleSpan = visibleEnd - visibleStart
         let displayAnnotations: [SequenceAnnotation]
         if scale > annotationDensityThreshold {
-            // Density mode: include everything except chromosome-spanning features
             displayAnnotations = finalAnnotations.filter { annot in
                 (annot.end - annot.start) < Int(Double(visibleSpan) * 0.9)
             }
         } else {
-            // Squished/Expanded: exclude chromosome-spanning features and features
-            // smaller than 1 pixel (sub-gene features like individual exons/UTRs
-            // that would be invisible at this zoom level)
-            let minFeatureBp = max(1, Int(scale))  // 1 pixel worth of base pairs
+            let minFeatureBp = max(1, Int(scale))
             displayAnnotations = finalAnnotations.filter { annot in
                 let span = annot.end - annot.start
                 return span >= minFeatureBp && span < Int(Double(visibleSpan) * 0.9)
@@ -2104,7 +2440,6 @@ public class SequenceViewerView: NSView {
         }
 
         guard !displayAnnotations.isEmpty else {
-            // Show a hint when all features are filtered out
             if !finalAnnotations.isEmpty {
                 let font = NSFont.systemFont(ofSize: 10)
                 let attrs: [NSAttributedString.Key: Any] = [
@@ -2115,15 +2450,77 @@ public class SequenceViewerView: NSView {
                 let labelRect = CGRect(x: 4, y: annotationTrackY + 2, width: CGFloat(frame.pixelWidth) - 8, height: 14)
                 (text as NSString).draw(in: labelRect, withAttributes: attrs)
             }
-            return
+            return nil
         }
 
-        if scale > annotationDensityThreshold {
-            drawAnnotationDensity(displayAnnotations, frame: frame, context: context)
+        return displayAnnotations
+    }
+
+    /// Renders annotations to an offscreen CGImage tile covering 3x the visible view width.
+    ///
+    /// The tile can then be blitted with an X offset during subsequent pans, avoiding
+    /// the expensive filtering/packing/drawing pipeline until the user pans past the tile edge.
+    private func renderAnnotationTile(annotations: [SequenceAnnotation], frame: ReferenceFrame) {
+        let viewWidth = frame.pixelWidth
+        let viewHeight = Int(bounds.height)
+        guard viewWidth > 0, viewHeight > 0 else { return }
+
+        let tilePixelWidth = viewWidth * 3
+        let visibleSpan = frame.end - frame.start
+        let tileStartBP = max(0, frame.start - visibleSpan)
+        let tileEndBP = frame.end + visibleSpan
+
+        // Create a temporary ReferenceFrame for the wider tile region
+        let tileFrame = ReferenceFrame(
+            chromosome: frame.chromosome,
+            start: tileStartBP,
+            end: tileEndBP,
+            pixelWidth: tilePixelWidth,
+            sequenceLength: frame.sequenceLength
+        )
+
+        // Create bitmap context for the tile
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let tileContext = CGContext(
+            data: nil,
+            width: tilePixelWidth,
+            height: viewHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        ) else { return }
+
+        // The view is flipped (isFlipped = true), so we need to flip the tile context too
+        tileContext.translateBy(x: 0, y: CGFloat(viewHeight))
+        tileContext.scaleBy(x: 1, y: -1)
+
+        // Render annotations into the tile
+        renderAnnotationsDirect(annotations, frame: tileFrame, context: tileContext)
+
+        // Store tile metadata
+        self.tileGenomicStart = tileStartBP
+        self.tileGenomicEnd = tileEndBP
+        self.tileScale = frame.scale
+        self.tileWidth = tilePixelWidth
+        self.tileHeight = viewHeight
+        self.tileChromosome = frame.chromosome
+        self.annotationTile = tileContext.makeImage()
+    }
+
+    /// Renders annotations directly into a context (used for both tile and fallback rendering).
+    private func renderAnnotationsDirect(_ annotations: [SequenceAnnotation], frame: ReferenceFrame, context: CGContext) {
+        let scale = frame.scale
+        let maxSquishedFeatures = 5_000
+        let useDensityMode = scale > annotationDensityThreshold
+            || (annotations.count > maxSquishedFeatures && scale > annotationSquishedThreshold)
+
+        if useDensityMode {
+            drawAnnotationDensity(annotations, frame: frame, context: context)
         } else if scale > annotationSquishedThreshold {
-            drawAnnotationsSquished(displayAnnotations, frame: frame, context: context)
+            drawAnnotationsSquished(annotations, frame: frame, context: context)
         } else {
-            drawAnnotationsExpanded(displayAnnotations, frame: frame, context: context)
+            drawAnnotationsExpanded(annotations, frame: frame, context: context)
         }
     }
 
@@ -2135,13 +2532,15 @@ public class SequenceViewerView: NSView {
         let binCount = max(1, Int(viewWidth))
         let bpPerBin = (frame.end - frame.start) / Double(binCount)
 
-        // Build density histogram
+        // Build density histogram with per-type tracking
         var bins = [Int](repeating: 0, count: binCount)
+        var binTypeCounts = [[AnnotationType: Int]](repeating: [:], count: binCount)
         for annot in annotations {
             let startBin = max(0, Int((Double(annot.start) - frame.start) / bpPerBin))
             let endBin = min(binCount - 1, Int((Double(annot.end) - frame.start) / bpPerBin))
             for bin in startBin...endBin {
                 bins[bin] += 1
+                binTypeCounts[bin][annot.type, default: 0] += 1
             }
         }
 
@@ -2155,13 +2554,14 @@ public class SequenceViewerView: NSView {
         context.setFillColor(NSColor.controlBackgroundColor.withAlphaComponent(0.3).cgColor)
         context.fill(CGRect(x: 0, y: y, width: viewWidth, height: trackHeight))
 
-        // Draw density bars
-        let barColor = NSColor.systemBlue
+        // Draw density bars colored by dominant annotation type per bin
         for (i, count) in bins.enumerated() {
             guard count > 0 else { continue }
             let barHeight = trackHeight * CGFloat(count) / CGFloat(maxCount)
             let rect = CGRect(x: CGFloat(i), y: y + trackHeight - barHeight, width: 1, height: barHeight)
-            context.setFillColor(barColor.withAlphaComponent(0.6).cgColor)
+            // Color by the most frequent type in this bin (cached CGColor)
+            let dominantType = binTypeCounts[i].max(by: { $0.value < $1.value })?.key ?? .gene
+            context.setFillColor(cachedDensityColor(for: dominantType))
             context.fill(rect)
         }
 
@@ -2192,16 +2592,9 @@ public class SequenceViewerView: NSView {
                 let endX = frame.screenPosition(for: Double(annot.end))
                 let width = max(1, endX - startX)
 
-                let annotColor = annot.color ?? annot.type.defaultColor
-                let color = NSColor(
-                    calibratedRed: CGFloat(annotColor.red),
-                    green: CGFloat(annotColor.green),
-                    blue: CGFloat(annotColor.blue),
-                    alpha: 0.7
-                )
-
+                let colors = cachedColors(for: annot)
                 let rect = CGRect(x: startX, y: y, width: width, height: squishedHeight)
-                context.setFillColor(color.cgColor)
+                context.setFillColor(colors.fill)
                 context.fill(rect)
             }
         }
@@ -2226,21 +2619,15 @@ public class SequenceViewerView: NSView {
                 let endX = frame.screenPosition(for: Double(annot.end))
                 let width = max(3, endX - startX)
 
-                let annotColor = annot.color ?? annot.type.defaultColor
-                let color = NSColor(
-                    calibratedRed: CGFloat(annotColor.red),
-                    green: CGFloat(annotColor.green),
-                    blue: CGFloat(annotColor.blue),
-                    alpha: 1.0
-                )
+                let colors = cachedColors(for: annot)
 
                 // Draw annotation box
                 let rect = CGRect(x: startX, y: y, width: width, height: annotationHeight)
-                context.setFillColor(color.withAlphaComponent(0.7).cgColor)
+                context.setFillColor(colors.fill)
                 context.fill(rect)
 
                 // Draw border
-                context.setStrokeColor(color.cgColor)
+                context.setStrokeColor(colors.stroke)
                 context.setLineWidth(1)
                 context.stroke(rect)
 
@@ -3258,8 +3645,24 @@ public class SequenceViewerView: NSView {
         let location = convert(event.locationInWindow, from: nil)
         let isDoubleClick = event.clickCount == 2
 
-        // Check for annotation click - use multi-sequence aware method if applicable
-        if isMultiSequenceMode, let state = multiSequenceState {
+        // Check for annotation click — bundle mode, multi-sequence mode, or single-sequence mode
+        if currentReferenceBundle != nil {
+            // Bundle mode: use bundle-specific hit testing
+            if let annotation = bundleAnnotationAtPoint(location) {
+                selectedAnnotation = annotation
+                postAnnotationSelectedNotification(annotation)
+                selectionRange = nil
+                selectionStartBase = nil
+                isSelecting = false
+                setNeedsDisplay(bounds)
+                updateSelectionStatus()
+
+                if isDoubleClick {
+                    showAnnotationPopover(for: annotation, at: CGRect(origin: location, size: CGSize(width: 1, height: 1)))
+                }
+                return
+            }
+        } else if isMultiSequenceMode, let state = multiSequenceState {
             // Multi-sequence mode: check each track for annotation click
             for stackedInfo in state.stackedSequences {
                 if let annotation = annotationAtPoint(location, forSequence: stackedInfo, frame: frame) {
@@ -3271,7 +3674,6 @@ public class SequenceViewerView: NSView {
                     setNeedsDisplay(bounds)
                     updateSelectionStatus()
 
-                    // Show popover on double-click
                     if isDoubleClick {
                         let annotRect = annotationRectAtPoint(location, forSequence: stackedInfo, frame: frame)
                         showAnnotationPopover(for: annotation, at: annotRect ?? CGRect(origin: location, size: CGSize(width: 1, height: 1)))
@@ -3290,7 +3692,6 @@ public class SequenceViewerView: NSView {
                 setNeedsDisplay(bounds)
                 updateSelectionStatus()
 
-                // Show popover on double-click
                 if isDoubleClick {
                     let annotRect = annotationRectAtPoint(location)
                     showAnnotationPopover(for: annotation, at: annotRect ?? CGRect(origin: location, size: CGSize(width: 1, height: 1)))
@@ -3632,24 +4033,31 @@ public class SequenceViewerView: NSView {
         setNeedsDisplay(bounds)
     }
 
-    /// Scroll wheel for zooming and panning
+    /// Scroll wheel for zooming and panning.
+    /// Pan events are coalesced at 60fps to avoid redundant redraws.
     public override func scrollWheel(with event: NSEvent) {
         guard let frame = viewController?.referenceFrame else { return }
 
         if event.modifierFlags.contains(.command) || event.modifierFlags.contains(.option) {
-            // Zoom with Cmd+scroll or Option+scroll
+            // Zoom with Cmd+scroll or Option+scroll — invalidate tile and redraw immediately
             if event.scrollingDeltaY > 0 {
                 viewController?.zoomIn()
             } else if event.scrollingDeltaY < 0 {
                 viewController?.zoomOut()
             }
+            invalidateAnnotationTile()
         } else {
-            // Pan with scroll (use bounded pan method)
+            // Pan with scroll — update coordinates immediately, coalesce redraw at 60fps
             let panAmount = Double(event.scrollingDeltaX) * frame.scale * 2
             frame.pan(by: -panAmount)
-            setNeedsDisplay(bounds)
-            viewController?.enhancedRulerView.setNeedsDisplay(viewController?.enhancedRulerView.bounds ?? .zero)
-            viewController?.updateStatusBar()
+
+            scrollRedrawTimer?.invalidate()
+            scrollRedrawTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: false) { [weak self] _ in
+                guard let self else { return }
+                self.setNeedsDisplay(self.bounds)
+                self.viewController?.enhancedRulerView.setNeedsDisplay(self.viewController?.enhancedRulerView.bounds ?? .zero)
+                self.viewController?.updateStatusBar()
+            }
         }
     }
 
@@ -3719,6 +4127,123 @@ public class SequenceViewerView: NSView {
                 scale: viewController?.referenceFrame?.scale ?? 1.0
             )
         }
+    }
+
+    // MARK: - Hover Tooltip (Bundle Mode)
+
+    /// Tracking area for mouse hover detection
+    private var viewerTrackingArea: NSTrackingArea?
+
+    /// Currently hovered annotation (to avoid redundant tooltip updates)
+    private var hoveredAnnotation: SequenceAnnotation?
+
+    public override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = viewerTrackingArea {
+            removeTrackingArea(existing)
+        }
+        viewerTrackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp],
+            owner: self,
+            userInfo: nil
+        )
+        if let area = viewerTrackingArea {
+            addTrackingArea(area)
+        }
+    }
+
+    public override func mouseMoved(with event: NSEvent) {
+        let location = convert(event.locationInWindow, from: nil)
+
+        // Try bundle mode hit-testing first, then single-sequence mode
+        let annotation: SequenceAnnotation?
+        if currentReferenceBundle != nil {
+            annotation = bundleAnnotationAtPoint(location)
+        } else {
+            annotation = annotationAtPoint(location)
+        }
+
+        if let annot = annotation {
+            if hoveredAnnotation?.id != annot.id {
+                hoveredAnnotation = annot
+                // Build tooltip with annotation details
+                let strandStr: String
+                switch annot.strand {
+                case .forward: strandStr = "(+)"
+                case .reverse: strandStr = "(-)"
+                case .unknown: strandStr = ""
+                }
+                let size = annot.end - annot.start
+                let sizeStr = size >= 1_000_000 ? String(format: "%.1f Mb", Double(size) / 1_000_000.0)
+                    : size >= 1_000 ? String(format: "%.1f Kb", Double(size) / 1_000.0)
+                    : "\(size) bp"
+                let coords = "\(annot.chromosome):\(annot.start.formatted())-\(annot.end.formatted())"
+                self.toolTip = "\(annot.name)\n\(annot.type.rawValue) \(strandStr)\n\(coords) (\(sizeStr))"
+            }
+            NSCursor.pointingHand.set()
+        } else {
+            if hoveredAnnotation != nil {
+                hoveredAnnotation = nil
+                self.toolTip = nil
+            }
+            NSCursor.arrow.set()
+        }
+    }
+
+    public override func mouseExited(with event: NSEvent) {
+        hoveredAnnotation = nil
+        self.toolTip = nil
+        NSCursor.arrow.set()
+    }
+
+    /// Hit-tests cached bundle annotations at the given point.
+    ///
+    /// Uses the same coordinate system as `drawBundleAnnotations` — screen positions
+    /// computed via `frame.screenPosition(for:)` and pixel-based row packing.
+    private func bundleAnnotationAtPoint(_ point: NSPoint) -> SequenceAnnotation? {
+        guard let frame = viewController?.referenceFrame else { return nil }
+        let scale = frame.scale
+
+        // Only hit-test in squished and expanded modes (not density histogram)
+        guard scale <= annotationDensityThreshold else { return nil }
+
+        // Get the same display annotations as the drawing code
+        let visibleStart = Int(frame.start)
+        let visibleEnd = Int(frame.end)
+        let visibleAnnotations = cachedBundleAnnotations.filter { annot in
+            annot.end > visibleStart && annot.start < visibleEnd
+        }
+
+        let visibleSpan = visibleEnd - visibleStart
+        let minFeatureBp = max(1, Int(scale))
+        let displayAnnotations = visibleAnnotations.filter { annot in
+            let span = annot.end - annot.start
+            return span >= minFeatureBp && span < Int(Double(visibleSpan) * 0.9)
+        }
+
+        // Run the same packing algorithm
+        let (rows, _) = packAnnotationsPixelBased(displayAnnotations, frame: frame)
+
+        let rowHeight: CGFloat = scale > annotationSquishedThreshold ? 7 : (annotationHeight + annotationRowSpacing)
+
+        for (rowIndex, row) in rows.enumerated() {
+            let rowY = annotationTrackY + CGFloat(rowIndex) * rowHeight
+
+            for annot in row {
+                let startX = frame.screenPosition(for: Double(annot.start))
+                let endX = frame.screenPosition(for: Double(annot.end))
+                let width = max(1, endX - startX)
+                let height: CGFloat = scale > annotationSquishedThreshold ? 6 : annotationHeight
+                let annotRect = CGRect(x: startX, y: rowY, width: width, height: height)
+
+                if annotRect.contains(point) {
+                    return annot
+                }
+            }
+        }
+
+        return nil
     }
 }
 

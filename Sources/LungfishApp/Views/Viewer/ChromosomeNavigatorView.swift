@@ -72,6 +72,11 @@ public class ChromosomeNavigatorView: NSView, NSTableViewDataSource, NSTableView
 
     weak var delegate: ChromosomeNavigatorDelegate?
 
+    /// When true, `tableViewSelectionDidChange` will not call the delegate.
+    /// Used by `selectChromosome(named:)` to update the table selection
+    /// without triggering a full navigation (which would reset the reference frame).
+    private var isSuppressingDelegateCallbacks = false
+
     /// The full (unfiltered, unsorted) chromosome list.
     private var allChromosomes: [ChromosomeInfo] = []
 
@@ -172,7 +177,7 @@ public class ChromosomeNavigatorView: NSView, NSTableViewDataSource, NSTableView
         tableView.headerView = nil
         tableView.dataSource = self
         tableView.delegate = self
-        tableView.rowHeight = 28
+        tableView.rowHeight = 36
         tableView.intercellSpacing = NSSize(width: 0, height: 1)
         tableView.selectionHighlightStyle = .regular
         tableView.allowsMultipleSelection = false
@@ -297,7 +302,7 @@ public class ChromosomeNavigatorView: NSView, NSTableViewDataSource, NSTableView
     }
 
     public func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        28
+        36
     }
 
     public func tableViewSelectionDidChange(_ notification: Notification) {
@@ -306,22 +311,37 @@ public class ChromosomeNavigatorView: NSView, NSTableViewDataSource, NSTableView
 
         selectedChromosomeIndex = row
         let chromosome = displayedChromosomes[row]
-        logger.info("ChromosomeNavigatorView: Selected chromosome '\(chromosome.name, privacy: .public)' at index \(row)")
+
+        // When selection was set programmatically (e.g. navigateToChromosomeAndPosition),
+        // do NOT call the delegate — the caller already set the reference frame and
+        // the delegate would overwrite it with a full-chromosome view.
+        if isSuppressingDelegateCallbacks {
+            logger.info("ChromosomeNavigatorView: Programmatic selection of '\(chromosome.name, privacy: .public)' at index \(row) — delegate suppressed")
+            return
+        }
+
+        logger.info("ChromosomeNavigatorView: User selected chromosome '\(chromosome.name, privacy: .public)' at index \(row)")
         delegate?.chromosomeNavigator(self, didSelectChromosome: chromosome)
     }
 
     // MARK: - Public API
 
     /// Selects a chromosome by name, scrolling it into view.
+    ///
+    /// This is a **programmatic** selection — the delegate callback is suppressed
+    /// so the caller's reference frame is not overwritten.
     @discardableResult
     func selectChromosome(named name: String) -> Bool {
         guard let index = displayedChromosomes.firstIndex(where: { $0.name == name }) else {
             logger.debug("ChromosomeNavigatorView: Chromosome '\(name, privacy: .public)' not found")
             return false
         }
-        // Set directly on tableView to avoid triggering delegate callback
+        // Suppress the delegate so tableViewSelectionDidChange doesn't reset the frame
+        isSuppressingDelegateCallbacks = true
         tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
         tableView.scrollRowToVisible(index)
+        isSuppressingDelegateCallbacks = false
+        logger.info("ChromosomeNavigatorView: Programmatically selected '\(name, privacy: .public)' at index \(index)")
         return true
     }
 }
@@ -345,7 +365,7 @@ private class ChromosomeCellView: NSTableCellView {
     }
 
     private func setupCell() {
-        nameLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        nameLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
         nameLabel.textColor = .labelColor
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -353,18 +373,18 @@ private class ChromosomeCellView: NSTableCellView {
 
         lengthLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
         lengthLabel.textColor = .secondaryLabelColor
-        lengthLabel.alignment = .right
+        lengthLabel.alignment = .left
         lengthLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(lengthLabel)
 
         NSLayoutConstraint.activate([
             nameLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: lengthLabel.leadingAnchor, constant: -4),
+            nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
 
-            lengthLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            lengthLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            lengthLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 60),
+            lengthLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            lengthLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 1),
+            lengthLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
         ])
     }
 
@@ -372,6 +392,13 @@ private class ChromosomeCellView: NSTableCellView {
         nameLabel.stringValue = chromosome.name
         lengthLabel.stringValue = Self.formatLength(chromosome.length)
         setAccessibilityLabel("\(chromosome.name), \(Self.formatLength(chromosome.length))")
+
+        // Build tooltip with full chromosome info
+        var tip = "\(chromosome.name)\n\(Self.formatLength(chromosome.length))"
+        if !chromosome.aliases.isEmpty {
+            tip += "\nAliases: \(chromosome.aliases.joined(separator: ", "))"
+        }
+        self.toolTip = tip
     }
 
     static func formatLength(_ length: Int64) -> String {
