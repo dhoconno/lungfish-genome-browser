@@ -259,14 +259,36 @@ public class ViewerViewController: NSViewController {
         NotificationCenter.default.removeObserver(self)
     }
 
+    /// Work item for coalescing rapid layout changes into a single deferred redraw.
+    /// During animation (e.g., annotation drawer open/close), viewDidLayout is called
+    /// 30+ times. We update pixelWidth immediately for correct rendering, but defer
+    /// the "ensure redraw" trigger until layout settles. This prevents the main thread
+    /// from being monopolized by layout-draw cycles and gives GCD main queue blocks
+    /// (fetch callbacks) a chance to execute.
+    private var layoutSettleWorkItem: DispatchWorkItem?
+
     public override func viewDidLayout() {
         super.viewDidLayout()
 
-        // Update reference frame width when layout completes
+        // Update reference frame width immediately (needed for correct rendering)
         if let frame = referenceFrame, viewerView.bounds.width > 0 {
             frame.pixelWidth = Int(viewerView.bounds.width)
             logger.debug("viewDidLayout: Updated referenceFrame width to \(frame.pixelWidth)")
         }
+
+        // Coalesce rapid layout changes: schedule a deferred redraw that fires
+        // 100ms after the last viewDidLayout call. This ensures that after
+        // animation settles, any pending fetch callbacks that executed during
+        // the animation will have their data rendered.
+        layoutSettleWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            logger.debug("viewDidLayout: Layout settled, triggering deferred redraw")
+            self.viewerView.setNeedsDisplay(self.viewerView.bounds)
+            self.enhancedRulerView.needsDisplay = true
+        }
+        layoutSettleWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: item)
     }
 
     private func setupAccessibility() {
@@ -2158,30 +2180,35 @@ public class SequenceViewerView: NSView {
             let count = allAnnotations.count
             logger.info("fetchAnnotationsAsync: gen=\(thisGeneration), background done, \(count) annotations found, dispatching to MainActor")
 
-            // Use Task { @MainActor in } instead of DispatchQueue.main.async.
-            // In Swift 6.2, DispatchQueue.main.async dispatches a @Sendable closure
-            // that is not @MainActor-isolated. When this closure accesses @MainActor
-            // state, the runtime routes it through the cooperative executor which
-            // AppKit's display cycle doesn't drain — so the closure never executes.
-            Task { @MainActor [weak self] in
-                logger.info("fetchAnnotationsAsync: gen=\(thisGeneration), MainActor Task executing")
-                guard let viewer = self else {
-                    logger.error("fetchAnnotationsAsync: self is nil in MainActor Task, \(count) annotations lost")
-                    return
+            // Use DispatchQueue.main.async + MainActor.assumeIsolated instead of
+            // Task { @MainActor in }. The cooperative executor that drives MainActor
+            // Tasks is not reliably drained during AppKit's layout-draw animation
+            // cycles. GCD main queue blocks ARE processed every run loop iteration
+            // (they're a mach port source), so they execute even during rapid
+            // viewDidLayout/draw cycles. MainActor.assumeIsolated tells the Swift 6.2
+            // compiler we're on the main actor (guaranteed by DispatchQueue.main)
+            // without routing through the cooperative executor.
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    logger.info("fetchAnnotationsAsync: gen=\(thisGeneration), MainActor callback executing")
+                    guard let viewer = self else {
+                        logger.error("fetchAnnotationsAsync: self is nil in MainActor callback, \(count) annotations lost")
+                        return
+                    }
+                    // Check generation counter: discard stale results from superseded fetches
+                    guard thisGeneration == viewer.annotationFetchGeneration else {
+                        logger.info("fetchAnnotationsAsync: Discarding stale result gen=\(thisGeneration) (current=\(viewer.annotationFetchGeneration))")
+                        return
+                    }
+                    let elapsed = viewer.annotationFetchStartTime.map { Date().timeIntervalSince($0) } ?? 0
+                    viewer.cachedBundleAnnotations = allAnnotations
+                    viewer.cachedAnnotationRegion = expandedRegion
+                    viewer.isFetchingAnnotations = false
+                    viewer.annotationFetchStartTime = nil
+                    viewer.invalidateAnnotationTile()
+                    logger.info("fetchAnnotationsAsync: Cached \(count) annotations for \(expandedRegion.description) in \(elapsed, format: .fixed(precision: 3))s, triggering redraw")
+                    viewer.setNeedsDisplay(viewer.bounds)
                 }
-                // Check generation counter: discard stale results from superseded fetches
-                guard thisGeneration == viewer.annotationFetchGeneration else {
-                    logger.info("fetchAnnotationsAsync: Discarding stale result gen=\(thisGeneration) (current=\(viewer.annotationFetchGeneration))")
-                    return
-                }
-                let elapsed = viewer.annotationFetchStartTime.map { Date().timeIntervalSince($0) } ?? 0
-                viewer.cachedBundleAnnotations = allAnnotations
-                viewer.cachedAnnotationRegion = expandedRegion
-                viewer.isFetchingAnnotations = false
-                viewer.annotationFetchStartTime = nil
-                viewer.invalidateAnnotationTile()
-                logger.info("fetchAnnotationsAsync: Cached \(count) annotations for \(expandedRegion.description) in \(elapsed, format: .fixed(precision: 3))s, triggering redraw")
-                viewer.setNeedsDisplay(viewer.bounds)
             }
         }
     }
@@ -2223,23 +2250,25 @@ public class SequenceViewerView: NSView {
             let count = allVariantAnnotations.count
             logger.info("fetchVariantsAsync: gen=\(thisGeneration), background done, \(count) variants found")
 
-            Task { @MainActor [weak self] in
-                logger.info("fetchVariantsAsync: gen=\(thisGeneration), MainActor Task executing")
-                guard let viewer = self else {
-                    logger.error("fetchVariantsAsync: self is nil in MainActor Task, \(count) variants lost")
-                    return
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    logger.info("fetchVariantsAsync: gen=\(thisGeneration), MainActor callback executing")
+                    guard let viewer = self else {
+                        logger.error("fetchVariantsAsync: self is nil in MainActor callback, \(count) variants lost")
+                        return
+                    }
+                    guard thisGeneration == viewer.variantFetchGeneration else {
+                        logger.info("fetchVariantsAsync: Discarding stale result gen=\(thisGeneration) (current=\(viewer.variantFetchGeneration))")
+                        return
+                    }
+                    let elapsed = Date().timeIntervalSince(fetchStart)
+                    viewer.cachedVariantAnnotations = allVariantAnnotations
+                    viewer.cachedVariantRegion = expandedRegion
+                    viewer.isFetchingVariants = false
+                    viewer.invalidateAnnotationTile()
+                    logger.info("fetchVariantsAsync: Cached \(count) variant annotations in \(elapsed, format: .fixed(precision: 3))s")
+                    viewer.setNeedsDisplay(viewer.bounds)
                 }
-                guard thisGeneration == viewer.variantFetchGeneration else {
-                    logger.info("fetchVariantsAsync: Discarding stale result gen=\(thisGeneration) (current=\(viewer.variantFetchGeneration))")
-                    return
-                }
-                let elapsed = Date().timeIntervalSince(fetchStart)
-                viewer.cachedVariantAnnotations = allVariantAnnotations
-                viewer.cachedVariantRegion = expandedRegion
-                viewer.isFetchingVariants = false
-                viewer.invalidateAnnotationTile()
-                logger.info("fetchVariantsAsync: Cached \(count) variant annotations in \(elapsed, format: .fixed(precision: 3))s")
-                viewer.setNeedsDisplay(viewer.bounds)
             }
         }
     }
@@ -2282,46 +2311,50 @@ public class SequenceViewerView: NSView {
                 let count = sequence.count
                 logger.info("fetchSequenceAsync: gen=\(thisGeneration), fetchSequenceSync returned \(count) bp")
 
-                Task { @MainActor [weak self] in
-                    logger.info("fetchSequenceAsync: gen=\(thisGeneration), MainActor Task executing")
-                    guard let viewer = self else {
-                        logger.error("fetchSequenceAsync: CRITICAL - self is nil in MainActor Task! \(count) bp lost.")
-                        return
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        logger.info("fetchSequenceAsync: gen=\(thisGeneration), MainActor callback executing")
+                        guard let viewer = self else {
+                            logger.error("fetchSequenceAsync: CRITICAL - self is nil in MainActor callback! \(count) bp lost.")
+                            return
+                        }
+                        guard thisGeneration == viewer.sequenceFetchGeneration else {
+                            logger.info("fetchSequenceAsync: Discarding stale result gen=\(thisGeneration) (current=\(viewer.sequenceFetchGeneration))")
+                            return
+                        }
+                        let elapsed = viewer.sequenceFetchStartTime.map { Date().timeIntervalSince($0) } ?? 0
+                        viewer.cachedBundleSequence = sequence
+                        viewer.cachedSequenceRegion = expandedRegion
+                        viewer.isFetchingBundleData = false
+                        viewer.sequenceFetchStartTime = nil
+                        viewer.bundleFetchError = nil
+                        viewer.failedFetchRegion = nil
+                        logger.info("fetchSequenceAsync: Cached \(count) bp for \(expandedRegion.description) in \(elapsed, format: .fixed(precision: 3))s, triggering redraw")
+                        viewer.setNeedsDisplay(viewer.bounds)
                     }
-                    guard thisGeneration == viewer.sequenceFetchGeneration else {
-                        logger.info("fetchSequenceAsync: Discarding stale result gen=\(thisGeneration) (current=\(viewer.sequenceFetchGeneration))")
-                        return
-                    }
-                    let elapsed = viewer.sequenceFetchStartTime.map { Date().timeIntervalSince($0) } ?? 0
-                    viewer.cachedBundleSequence = sequence
-                    viewer.cachedSequenceRegion = expandedRegion
-                    viewer.isFetchingBundleData = false
-                    viewer.sequenceFetchStartTime = nil
-                    viewer.bundleFetchError = nil
-                    viewer.failedFetchRegion = nil
-                    logger.info("fetchSequenceAsync: Cached \(count) bp for \(expandedRegion.description) in \(elapsed, format: .fixed(precision: 3))s, triggering redraw")
-                    viewer.setNeedsDisplay(viewer.bounds)
                 }
             } catch {
                 let errorDesc = error.localizedDescription
                 logger.error("fetchSequenceAsync: gen=\(thisGeneration), FAILED - \(errorDesc, privacy: .public)")
 
-                Task { @MainActor [weak self] in
-                    logger.info("fetchSequenceAsync: gen=\(thisGeneration), MainActor Task (error path) executing")
-                    guard let viewer = self else {
-                        logger.error("fetchSequenceAsync: self is nil in MainActor Task (error path)")
-                        return
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        logger.info("fetchSequenceAsync: gen=\(thisGeneration), MainActor callback (error path) executing")
+                        guard let viewer = self else {
+                            logger.error("fetchSequenceAsync: self is nil in MainActor callback (error path)")
+                            return
+                        }
+                        guard thisGeneration == viewer.sequenceFetchGeneration else {
+                            logger.info("fetchSequenceAsync: Discarding stale error gen=\(thisGeneration) (current=\(viewer.sequenceFetchGeneration))")
+                            return
+                        }
+                        logger.error("fetchSequenceAsync: Error delivered to MainActor - \(errorDesc, privacy: .public)")
+                        viewer.failedFetchRegion = expandedRegion
+                        viewer.isFetchingBundleData = false
+                        viewer.sequenceFetchStartTime = nil
+                        viewer.bundleFetchError = errorDesc
+                        viewer.setNeedsDisplay(viewer.bounds)
                     }
-                    guard thisGeneration == viewer.sequenceFetchGeneration else {
-                        logger.info("fetchSequenceAsync: Discarding stale error gen=\(thisGeneration) (current=\(viewer.sequenceFetchGeneration))")
-                        return
-                    }
-                    logger.error("fetchSequenceAsync: Error delivered to MainActor - \(errorDesc, privacy: .public)")
-                    viewer.failedFetchRegion = expandedRegion
-                    viewer.isFetchingBundleData = false
-                    viewer.sequenceFetchStartTime = nil
-                    viewer.bundleFetchError = errorDesc
-                    viewer.setNeedsDisplay(viewer.bounds)
                 }
             }
         }

@@ -237,15 +237,18 @@ public final class AnnotationSearchIndex {
             let count = results.count
             searchLogger.info("AnnotationSearchIndex: Built index with \(count) entries (background thread)")
 
-            // Use Task { @MainActor in } instead of DispatchQueue.main.async.
-            // In Swift 6.2, DispatchQueue.main.async closures dispatched from
-            // non-MainActor contexts may never execute when accessing @MainActor state.
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.entries = results
-                self.isBuilding = false
-                searchLogger.info("AnnotationSearchIndex: Index ready with \(count) entries")
-                self.onBuildComplete?()
+            // Use DispatchQueue.main.async + MainActor.assumeIsolated instead of
+            // Task { @MainActor in }. The cooperative executor that drives MainActor
+            // Tasks is not reliably drained during AppKit's layout-draw animation
+            // cycles. GCD main queue blocks integrate directly with the run loop.
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let index = self else { return }
+                    index.entries = results
+                    index.isBuilding = false
+                    searchLogger.info("AnnotationSearchIndex: Index ready with \(count) entries")
+                    index.onBuildComplete?()
+                }
             }
         }
     }
