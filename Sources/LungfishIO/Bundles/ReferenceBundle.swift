@@ -604,27 +604,81 @@ public final class ReferenceBundle: Sendable {
 
     /// Fetches variants from a track for a genomic region.
     ///
-    /// Uses indexed BCF for efficient random access.
+    /// Queries the SQLite variant database for fast region-based retrieval.
+    /// Falls back to returning empty if no database is available.
     ///
     /// - Parameters:
     ///   - trackId: The variant track ID
     ///   - region: The genomic region to query
     /// - Returns: Array of variants in the region
     /// - Throws: `ReferenceBundleError` if variants cannot be fetched
-    public func getVariants(trackId: String, region: GenomicRegion) async throws -> [BundleVariant] {
+    public func getVariants(trackId: String, region: GenomicRegion) throws -> [BundleVariant] {
         guard let trackInfo = variantTrack(id: trackId) else {
             throw ReferenceBundleError.trackNotFound(trackId)
         }
 
-        let trackURL = url.appendingPathComponent(trackInfo.path)
+        // Try SQLite database first (fast path)
+        if let dbPath = trackInfo.databasePath {
+            let dbURL = url.appendingPathComponent(dbPath)
+            if FileManager.default.fileExists(atPath: dbURL.path) {
+                do {
+                    let variantDB = try VariantDatabase(url: dbURL)
+                    let records = variantDB.query(
+                        chromosome: region.chromosome,
+                        start: region.start,
+                        end: region.end
+                    )
+                    logger.debug("getVariants: \(trackId) returned \(records.count) variants from SQLite for \(region.description)")
+                    return records.map { $0.toBundleVariant() }
+                } catch {
+                    logger.error("getVariants: SQLite query failed for \(trackId): \(error.localizedDescription)")
+                }
+            }
+        }
 
+        // Fallback: check for BCF file
+        let trackURL = url.appendingPathComponent(trackInfo.path)
         guard FileManager.default.fileExists(atPath: trackURL.path) else {
             throw ReferenceBundleError.missingFile(trackInfo.path)
         }
 
-        // TODO: Implement BCF reader for actual variant fetching
-        // For now, return empty array as placeholder
-        logger.debug("getVariants: \(trackId) for \(region.description) - BCF reader not yet implemented")
+        logger.debug("getVariants: \(trackId) for \(region.description) - BCF reader not yet implemented, returning empty")
+        return []
+    }
+
+    /// Fetches variants as SequenceAnnotations for rendering in the annotation pipeline.
+    ///
+    /// This converts variant records into annotations that can be rendered using
+    /// the existing annotation rendering system with type-appropriate colors.
+    ///
+    /// - Parameters:
+    ///   - trackId: The variant track ID
+    ///   - region: The genomic region to query
+    /// - Returns: Array of annotations representing variants in the region
+    /// - Throws: `ReferenceBundleError` if variants cannot be fetched
+    public func getVariantAnnotations(trackId: String, region: GenomicRegion) throws -> [SequenceAnnotation] {
+        guard let trackInfo = variantTrack(id: trackId) else {
+            throw ReferenceBundleError.trackNotFound(trackId)
+        }
+
+        // Try SQLite database (fast path)
+        if let dbPath = trackInfo.databasePath {
+            let dbURL = url.appendingPathComponent(dbPath)
+            if FileManager.default.fileExists(atPath: dbURL.path) {
+                do {
+                    let variantDB = try VariantDatabase(url: dbURL)
+                    let records = variantDB.query(
+                        chromosome: region.chromosome,
+                        start: region.start,
+                        end: region.end
+                    )
+                    logger.debug("getVariantAnnotations: \(trackId) returned \(records.count) variant annotations for \(region.description)")
+                    return records.map { $0.toAnnotation() }
+                } catch {
+                    logger.error("getVariantAnnotations: SQLite query failed for \(trackId): \(error.localizedDescription)")
+                }
+            }
+        }
 
         return []
     }

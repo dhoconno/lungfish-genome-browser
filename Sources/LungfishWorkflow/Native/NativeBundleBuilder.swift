@@ -632,12 +632,24 @@ public final class NativeBundleBuilder: ObservableObject {
 
             let variantCount = try countVariantsInVCF(input.url)
 
+            // Create SQLite variant database from VCF for fast region queries
+            let dbOutputPath = "variants/\(input.id).db"
+            let dbOutputURL = variantsDir.appendingPathComponent("\(input.id).db")
+            var dbRecordCount = 0
+            do {
+                dbRecordCount = try VariantDatabase.createFromVCF(vcfURL: input.url, outputURL: dbOutputURL)
+                logger.info("Created variant database with \(dbRecordCount) records for \(input.name)")
+            } catch {
+                logger.warning("Failed to create variant database for \(input.name): \(error.localizedDescription)")
+            }
+
             let trackInfo = VariantTrackInfo(
                 id: input.id,
                 name: input.name,
                 description: input.description,
                 path: outputPath,
                 indexPath: indexPath,
+                databasePath: dbRecordCount > 0 ? dbOutputPath : nil,
                 variantType: input.variantType,
                 variantCount: variantCount
             )

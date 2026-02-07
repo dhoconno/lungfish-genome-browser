@@ -430,6 +430,10 @@ public struct VariantTrackInfo: Codable, Sendable, Equatable, Identifiable {
     /// Relative path to the CSI index file.
     public let indexPath: String
 
+    /// Relative path to the SQLite variant database (for fast region queries).
+    /// Nil for bundles that only have BCF/CSI without a pre-built database.
+    public let databasePath: String?
+
     /// Type of variants in this track.
     public let variantType: VariantTrackType
 
@@ -449,6 +453,7 @@ public struct VariantTrackInfo: Codable, Sendable, Equatable, Identifiable {
         description: String? = nil,
         path: String,
         indexPath: String,
+        databasePath: String? = nil,
         variantType: VariantTrackType = .mixed,
         variantCount: Int? = nil,
         source: String? = nil,
@@ -459,6 +464,7 @@ public struct VariantTrackInfo: Codable, Sendable, Equatable, Identifiable {
         self.description = description
         self.path = path
         self.indexPath = indexPath
+        self.databasePath = databasePath
         self.variantType = variantType
         self.variantCount = variantCount
         self.source = source
@@ -471,6 +477,7 @@ public struct VariantTrackInfo: Codable, Sendable, Equatable, Identifiable {
         case description
         case path
         case indexPath = "index_path"
+        case databasePath = "database_path"
         case variantType = "variant_type"
         case variantCount = "variant_count"
         case source

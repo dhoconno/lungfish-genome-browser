@@ -1486,6 +1486,15 @@ public class SequenceViewerView: NSView {
     /// Whether we're currently fetching annotation data
     private var isFetchingAnnotations: Bool = false
 
+    /// Cached variant annotations for the current visible region (rendered alongside gene annotations)
+    private var cachedVariantAnnotations: [SequenceAnnotation] = []
+
+    /// The region for which we have cached variant data
+    private var cachedVariantRegion: GenomicRegion?
+
+    /// Whether we're currently fetching variant data
+    private var isFetchingVariants: Bool = false
+
     /// Whether drag is active (for highlighting)
     private var isDragActive = false
 
@@ -1793,8 +1802,11 @@ public class SequenceViewerView: NSView {
         self.cachedSequenceRegion = nil
         self.cachedBundleAnnotations = []
         self.cachedAnnotationRegion = nil
+        self.cachedVariantAnnotations = []
+        self.cachedVariantRegion = nil
         self.isFetchingBundleData = false
         self.isFetchingAnnotations = false
+        self.isFetchingVariants = false
         self.bundleFetchError = nil
         self.failedFetchRegion = nil
 
@@ -1822,8 +1834,11 @@ public class SequenceViewerView: NSView {
         self.cachedSequenceRegion = nil
         self.cachedBundleAnnotations = []
         self.cachedAnnotationRegion = nil
+        self.cachedVariantAnnotations = []
+        self.cachedVariantRegion = nil
         self.isFetchingBundleData = false
         self.isFetchingAnnotations = false
+        self.isFetchingVariants = false
 
         // Clear rendering caches
         typeColorCache.removeAll()
@@ -1992,11 +2007,24 @@ public class SequenceViewerView: NSView {
             drawSequenceLine(frame: frame, context: context)
         }
 
-        // Draw annotations from cache when zoomed in enough
+        // Check if variant cache covers the visible region
+        let variantsCovered = cachedVariantRegion?.chromosome == visibleRegion.chromosome
+            && (cachedVariantRegion?.start ?? Int.max) <= visibleRegion.start
+            && (cachedVariantRegion?.end ?? Int.min) >= visibleRegion.end
+
+        // Fetch variants if cache is stale (only when zoomed in enough for annotations)
+        if needsAnnotations && !variantsCovered && !isFetchingVariants {
+            fetchVariantsAsync(bundle: bundle, region: visibleRegion)
+        }
+
+        // Draw annotations + variants from cache when zoomed in enough
         if needsAnnotations,
-           !cachedBundleAnnotations.isEmpty,
-           cachedAnnotationRegion?.chromosome == visibleRegion.chromosome {
-            drawBundleAnnotations(cachedBundleAnnotations, frame: frame, context: context)
+           cachedAnnotationRegion?.chromosome == visibleRegion.chromosome
+            || cachedVariantRegion?.chromosome == visibleRegion.chromosome {
+            let combined = cachedBundleAnnotations + cachedVariantAnnotations
+            if !combined.isEmpty {
+                drawBundleAnnotations(combined, frame: frame, context: context)
+            }
         }
     }
 
@@ -2057,6 +2085,54 @@ public class SequenceViewerView: NSView {
                 self.invalidateAnnotationTile()
                 logger.info("fetchAnnotationsAsync: Cached \(count) annotations")
                 self.needsDisplay = true
+            }
+        }
+    }
+
+    /// Fetches variant annotations asynchronously from the VariantDatabase.
+    /// Runs SQLite queries on a background thread, converts to SequenceAnnotation,
+    /// and merges with the annotation rendering pipeline.
+    private static let variantFetchQueue = DispatchQueue(label: "com.lungfish.variantFetch", qos: .userInteractive)
+
+    private func fetchVariantsAsync(bundle: ReferenceBundle, region: GenomicRegion) {
+        let variantTrackIds = bundle.variantTrackIds
+        guard !variantTrackIds.isEmpty else { return }
+
+        isFetchingVariants = true
+
+        let chromLength = bundle.chromosomeLength(named: region.chromosome) ?? Int64(region.end + 1000)
+        let visibleSpan = region.end - region.start
+        let expandAmount = max(50_000, visibleSpan * 2)
+        let expandedStart = max(0, region.start - expandAmount)
+        let expandedEnd = min(Int(chromLength), region.end + expandAmount)
+        let expandedRegion = GenomicRegion(chromosome: region.chromosome, start: expandedStart, end: expandedEnd)
+
+        logger.info("fetchVariantsAsync: Fetching variants for \(expandedRegion.description)")
+
+        Self.variantFetchQueue.async { [weak self] in
+            var allVariantAnnotations: [SequenceAnnotation] = []
+            for trackId in variantTrackIds {
+                do {
+                    let annotations = try bundle.getVariantAnnotations(trackId: trackId, region: expandedRegion)
+                    allVariantAnnotations.append(contentsOf: annotations)
+                } catch {
+                    logger.error("fetchVariantsAsync: Failed to fetch variants for track \(trackId): \(error.localizedDescription)")
+                }
+            }
+
+            let count = allVariantAnnotations.count
+            guard let viewer = self else {
+                logger.error("fetchVariantsAsync: self is nil after successful fetch, \(count) variants lost")
+                return
+            }
+
+            DispatchQueue.main.async {
+                viewer.cachedVariantAnnotations = allVariantAnnotations
+                viewer.cachedVariantRegion = expandedRegion
+                viewer.isFetchingVariants = false
+                viewer.invalidateAnnotationTile()
+                logger.info("fetchVariantsAsync: Cached \(count) variant annotations")
+                viewer.needsDisplay = true
             }
         }
     }
