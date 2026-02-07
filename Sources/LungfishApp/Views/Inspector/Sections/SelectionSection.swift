@@ -52,6 +52,9 @@ public final class SelectionSectionViewModel {
     /// Callback when color should be applied to all annotations of a type
     public var onApplyColorToAllOfType: ((AnnotationType, AnnotationColor) -> Void)?
 
+    /// Callback to create a new annotation from current viewer selection.
+    public var onAddAnnotationRequested: (() -> Void)?
+
     public init() {}
 
     /// Updates the view model with a new annotation selection.
@@ -333,7 +336,7 @@ public struct SelectionSection: View {
 
     @ViewBuilder
     private var noSelectionView: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             Image(systemName: "selection.pin.in.out")
                 .font(.largeTitle)
                 .foregroundStyle(.tertiary)
@@ -344,6 +347,15 @@ public struct SelectionSection: View {
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
+
+            Button {
+                viewModel.onAddAnnotationRequested?()
+            } label: {
+                Label("Add Annotation from Selection...", systemImage: "plus.circle")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .padding(.top, 4)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)

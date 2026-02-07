@@ -83,6 +83,9 @@ public class InspectorViewController: NSViewController {
         viewModel.selectionSectionViewModel.onApplyColorToAllOfType = { [weak self] annotationType, color in
             self?.handleApplyColorToAllOfType(annotationType, color: color)
         }
+        viewModel.selectionSectionViewModel.onAddAnnotationRequested = { [weak self] in
+            self?.handleAddAnnotationRequested()
+        }
 
         // Appearance section callbacks
         viewModel.appearanceSectionViewModel.onSettingsChanged = { [weak self] in
@@ -230,6 +233,11 @@ public class InspectorViewController: NSViewController {
                 NotificationUserInfoKey.changeSource: "inspector"
             ]
         )
+    }
+
+    /// Opens add-annotation flow for the current sequence selection.
+    private func handleAddAnnotationRequested() {
+        _ = NSApp.sendAction(#selector(AppDelegate.addAnnotation(_:)), to: nil, from: self)
     }
 
     // MARK: - Appearance Handlers
@@ -459,6 +467,9 @@ public final class InspectorViewModel {
     /// View model for the annotation section
     let annotationSectionViewModel = AnnotationSectionViewModel()
 
+    /// View model for mapped read style section (BAM/CRAM styling placeholder)
+    let readStyleSectionViewModel = ReadStyleSectionViewModel()
+
     // MARK: - Initialization
 
     init() {
@@ -514,11 +525,11 @@ public final class InspectorViewModel {
 
 /// SwiftUI view for the inspector panel content.
 ///
-/// Displays four main sections:
+/// Displays style and editing sections:
 /// - Selection: Shows and edits the currently selected annotation
-/// - Annotations: Configures annotation display and filtering
-/// - Appearance: Configures base colors and track height
-/// - Quality: Shows quality statistics and overlay toggle
+/// - Sequence Style: Configures base colors and sequence track geometry
+/// - Annotation Style: Configures annotation display and type visibility
+/// - Read Style: Placeholder controls for mapped-read appearance
 public struct InspectorView: View {
     var viewModel: InspectorViewModel
 
@@ -530,18 +541,18 @@ public struct InspectorView: View {
 
                 Divider()
 
-                // Annotation Section - annotation display and filtering
-                AnnotationSection(viewModel: viewModel.annotationSectionViewModel)
-
-                Divider()
-
-                // Appearance Section - base colors, track height
+                // Sequence style
                 AppearanceSection(viewModel: viewModel.appearanceSectionViewModel)
 
                 Divider()
 
-                // Quality Section - quality stats and toggle
-                QualitySection(viewModel: viewModel.qualitySectionViewModel)
+                // Annotation style
+                AnnotationSection(viewModel: viewModel.annotationSectionViewModel)
+
+                Divider()
+
+                // Read style (BAM/CRAM placeholder)
+                ReadStyleSection(viewModel: viewModel.readStyleSectionViewModel)
 
                 Spacer()
             }

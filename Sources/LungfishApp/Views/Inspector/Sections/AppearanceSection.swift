@@ -117,7 +117,7 @@ public struct AppearanceSection: View {
             }
             .padding(.top, 8)
         } label: {
-            Label("Appearance", systemImage: "paintpalette")
+            Label("Sequence Style", systemImage: "swatchpalette")
                 .font(.headline)
         }
     }

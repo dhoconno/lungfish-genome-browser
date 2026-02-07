@@ -106,12 +106,12 @@ public struct AnnotationSection: View {
                     Divider()
                         .padding(.vertical, 4)
 
-                    filterSection
+                    typeFilterSection
                 }
             }
             .padding(.top, 8)
         } label: {
-            Label("Annotations", systemImage: "tag")
+            Label("Annotation Style", systemImage: "tag")
                 .font(.headline)
         }
     }
@@ -173,48 +173,20 @@ public struct AnnotationSection: View {
         }
     }
 
-    // MARK: - Filter Section
+    // MARK: - Type Filter Section
 
     @ViewBuilder
-    private var filterSection: some View {
+    private var typeFilterSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Filter")
+            Text("Visible Types")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            // Search field
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                TextField("Search annotations...", text: $viewModel.filterText)
-                    .textFieldStyle(.plain)
-                    .onChange(of: viewModel.filterText) { _, newValue in
-                        viewModel.onFilterChanged?(viewModel.visibleTypes, newValue)
-                    }
-                if !viewModel.filterText.isEmpty {
-                    Button {
-                        viewModel.filterText = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(6)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .cornerRadius(6)
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
-            )
-
-            // Type filter button
             DisclosureGroup(isExpanded: $showTypeFilter) {
                 typeFilterGrid
             } label: {
                 HStack {
-                    Text("Visible Types")
+                    Text("Type Visibility")
                         .font(.callout)
                     Spacer()
                     Text("\(viewModel.visibleTypes.count)/\(AnnotationType.allCases.count)")
@@ -232,14 +204,18 @@ public struct AnnotationSection: View {
         VStack(alignment: .leading, spacing: 6) {
             // Quick actions
             HStack {
-                Button("All") {
+                Button {
                     viewModel.showAllTypes()
+                } label: {
+                    Label("All", systemImage: "eye")
                 }
                 .buttonStyle(.borderless)
                 .font(.caption)
 
-                Button("None") {
+                Button {
                     viewModel.hideAllTypes()
+                } label: {
+                    Label("None", systemImage: "eye.slash")
                 }
                 .buttonStyle(.borderless)
                 .font(.caption)
