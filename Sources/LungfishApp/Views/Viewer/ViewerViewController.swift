@@ -2578,31 +2578,8 @@ public class SequenceViewerView: NSView {
         )
         context.clip(to: annotationClipRect)
 
-        let scale = frame.scale  // bp/pixel
-
-        // Check if the offscreen tile is still valid for this view state
-        let tileValid = annotationTile != nil
-            && abs(tileScale - scale) < 0.001
-            && tileGenomicStart <= frame.start
-            && tileGenomicEnd >= frame.end
-            && tileChromosome == frame.chromosome
-            && tileHeight == Int(bounds.height)
-
-        if tileValid, let tile = annotationTile {
-            // Fast path: blit pre-rendered tile with X offset
-            let offsetX = frame.screenPosition(for: tileGenomicStart)
-            let tileRect = CGRect(
-                x: offsetX,
-                y: 0,
-                width: CGFloat(tileWidth),
-                height: CGFloat(tileHeight)
-            )
-            context.draw(tile, in: tileRect)
-            context.restoreGState()
-            return
-        }
-
-        // Slow path: filter annotations and render (also generates a new tile)
+        // Render directly in view coordinates to keep annotation rows anchored
+        // directly beneath the sequence track.
         let displayAnnotations = filterAnnotationsForDisplay(annotations, frame: frame, context: context)
 
         guard let displayAnnotations else {
@@ -2610,23 +2587,7 @@ public class SequenceViewerView: NSView {
             return
         }
 
-        // Render annotations to an offscreen tile for future fast blitting
-        renderAnnotationTile(annotations: displayAnnotations, frame: frame)
-
-        // Blit the freshly created tile
-        if let tile = annotationTile {
-            let offsetX = frame.screenPosition(for: tileGenomicStart)
-            let tileRect = CGRect(
-                x: offsetX,
-                y: 0,
-                width: CGFloat(tileWidth),
-                height: CGFloat(tileHeight)
-            )
-            context.draw(tile, in: tileRect)
-        } else {
-            // Fallback: draw directly if tile creation failed
-            renderAnnotationsDirect(displayAnnotations, frame: frame, context: context)
-        }
+        renderAnnotationsDirect(displayAnnotations, frame: frame, context: context)
 
         context.restoreGState()
     }
@@ -2644,14 +2605,11 @@ public class SequenceViewerView: NSView {
         let visibleStart = Int(frame.start)
         let visibleEnd = Int(frame.end)
 
-        // For tile rendering, filter against the wider tile region, not just visible
-        let visibleSpan = visibleEnd - visibleStart
-        let tileStart = max(0, Int(frame.start) - visibleSpan)
-        let tileEnd = Int(frame.end) + visibleSpan
-
-        // Filter annotations to tile region (wider than visible for pre-rendering)
+        // Render rows based on the visible interval only so row packing starts
+        // directly beneath the sequence track (no offscreen row inflation).
+        let visibleSpan = max(1, visibleEnd - visibleStart)
         let visibleAnnotations = annotations.filter { annot in
-            annot.end > tileStart && annot.start < tileEnd
+            annot.end > visibleStart && annot.start < visibleEnd
         }
 
         // Apply type filter if set
@@ -2675,18 +2633,22 @@ public class SequenceViewerView: NSView {
 
         guard !finalAnnotations.isEmpty else { return nil }
 
-        // Smart display-time filtering: exclude whole-chromosome "region" features
-        // and, when not in density mode, skip sub-pixel features to reduce clutter.
+        // Display-time filtering:
+        // - keep partially visible features
+        // - skip sub-pixel features in detail modes
+        // - suppress only giant region-container rows that would obscure detail
         let displayAnnotations: [SequenceAnnotation]
         if scale > annotationDensityThreshold {
             displayAnnotations = finalAnnotations.filter { annot in
-                (annot.end - annot.start) < Int(Double(visibleSpan) * 0.9)
+                let span = annot.end - annot.start
+                return annot.type != .region || span < Int(Double(visibleSpan) * 0.98)
             }
         } else {
             let minFeatureBp = max(1, Int(scale))
             displayAnnotations = finalAnnotations.filter { annot in
                 let span = annot.end - annot.start
-                return span >= minFeatureBp && span < Int(Double(visibleSpan) * 0.9)
+                guard span >= minFeatureBp else { return false }
+                return annot.type != .region || span < Int(Double(visibleSpan) * 0.98)
             }
         }
 
@@ -2833,7 +2795,7 @@ public class SequenceViewerView: NSView {
     private func drawAnnotationsSquished(_ annotations: [SequenceAnnotation], frame: ReferenceFrame, context: CGContext) {
         let squishedHeight: CGFloat = 6
         let squishedSpacing: CGFloat = 1
-        let (rows, overflow) = packAnnotationsPixelBased(annotations, frame: frame)
+        let (rows, overflow) = packAnnotationsLayered(annotations, frame: frame)
 
         for (rowIndex, row) in rows.enumerated() {
             let y = annotationTrackY + CGFloat(rowIndex) * (squishedHeight + squishedSpacing)
@@ -2860,7 +2822,7 @@ public class SequenceViewerView: NSView {
 
     /// Draws annotations as full-height boxes with labels and strand indicators.
     private func drawAnnotationsExpanded(_ annotations: [SequenceAnnotation], frame: ReferenceFrame, context: CGContext) {
-        let (rows, overflow) = packAnnotationsPixelBased(annotations, frame: frame)
+        let (rows, overflow) = packAnnotationsLayered(annotations, frame: frame)
         let rowCount = rows.count
 
         for (rowIndex, row) in rows.enumerated() {
@@ -2917,17 +2879,50 @@ public class SequenceViewerView: NSView {
 
     // MARK: - Pixel-Based Row Packing
 
+    /// Packs annotations into layered rows:
+    /// - genome landmarks first (genes/transcripts/etc.)
+    /// - variant-like features (SNP/indel/etc.) beneath landmarks
+    private func packAnnotationsLayered(
+        _ annotations: [SequenceAnnotation],
+        frame: ReferenceFrame
+    ) -> (rows: [[SequenceAnnotation]], overflow: Int) {
+        let landmarks = annotations.filter { !isVariantAnnotationType($0.type) }
+        let variants = annotations.filter { isVariantAnnotationType($0.type) }
+
+        let (landmarkRows, landmarkOverflow) = packAnnotationsPixelBased(landmarks, frame: frame, maxRows: maxAnnotationRows)
+        let remainingRows = max(0, maxAnnotationRows - landmarkRows.count)
+        let (variantRows, variantOverflow) = packAnnotationsPixelBased(variants, frame: frame, maxRows: remainingRows)
+
+        return (landmarkRows + variantRows, landmarkOverflow + variantOverflow)
+    }
+
+    private func isVariantAnnotationType(_ type: AnnotationType) -> Bool {
+        switch type {
+        case .snp, .variation, .insertion, .deletion:
+            return true
+        default:
+            return false
+        }
+    }
+
     /// Packs annotations into rows using pixel-based gap detection.
     /// Returns the packed rows and number of overflow features that couldn't be placed.
     private func packAnnotationsPixelBased(
         _ annotations: [SequenceAnnotation],
-        frame: ReferenceFrame
+        frame: ReferenceFrame,
+        maxRows: Int
     ) -> (rows: [[SequenceAnnotation]], overflow: Int) {
+        let sortedAnnotations = annotations.sorted {
+            if $0.start != $1.start { return $0.start < $1.start }
+            if $0.end != $1.end { return $0.end < $1.end }
+            return $0.name.localizedCompare($1.name) == .orderedAscending
+        }
+
         var rows: [[SequenceAnnotation]] = []
         var rowEndPixels: [CGFloat] = []  // Track rightmost pixel in each row
         var overflow = 0
 
-        for annot in annotations {
+        for annot in sortedAnnotations {
             let startX = frame.screenPosition(for: Double(annot.start))
 
             var placed = false
@@ -2942,7 +2937,7 @@ public class SequenceViewerView: NSView {
             }
 
             if !placed {
-                if rows.count < maxAnnotationRows {
+                if rows.count < maxRows {
                     rows.append([annot])
                     let endX = frame.screenPosition(for: Double(annot.end))
                     rowEndPixels.append(max(endX, startX + 3))
@@ -4403,14 +4398,24 @@ public class SequenceViewerView: NSView {
             removeTrackingArea(existing)
         }
         viewerTrackingArea = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp],
+            rect: .zero,
+            options: [.inVisibleRect, .mouseMoved, .mouseEnteredAndExited, .activeAlways],
             owner: self,
             userInfo: nil
         )
         if let area = viewerTrackingArea {
             addTrackingArea(area)
         }
+    }
+
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.acceptsMouseMovedEvents = true
+        updateTrackingAreas()
+    }
+
+    public override func mouseEntered(with event: NSEvent) {
+        mouseMoved(with: event)
     }
 
     public override func mouseMoved(with event: NSEvent) {
@@ -4477,6 +4482,7 @@ public class SequenceViewerView: NSView {
     private func bundleAnnotationAtPoint(_ point: NSPoint) -> SequenceAnnotation? {
         guard let frame = viewController?.referenceFrame else { return nil }
         let scale = frame.scale
+        guard point.y >= annotationTrackY else { return nil }
 
         // Only hit-test in squished and expanded modes (not density histogram)
         guard scale <= annotationDensityThreshold else { return nil }
@@ -4509,15 +4515,24 @@ public class SequenceViewerView: NSView {
             }
         }
 
-        let visibleSpan = visibleEnd - visibleStart
-        let minFeatureBp = max(1, Int(scale))
-        let displayAnnotations = textFiltered.filter { annot in
-            let span = annot.end - annot.start
-            return span >= minFeatureBp && span < Int(Double(visibleSpan) * 0.9)
+        let visibleSpan = max(1, visibleEnd - visibleStart)
+        let displayAnnotations: [SequenceAnnotation]
+        if scale > annotationDensityThreshold {
+            displayAnnotations = textFiltered.filter { annot in
+                let span = annot.end - annot.start
+                return annot.type != .region || span < Int(Double(visibleSpan) * 0.98)
+            }
+        } else {
+            let minFeatureBp = max(1, Int(scale))
+            displayAnnotations = textFiltered.filter { annot in
+                let span = annot.end - annot.start
+                guard span >= minFeatureBp else { return false }
+                return annot.type != .region || span < Int(Double(visibleSpan) * 0.98)
+            }
         }
 
-        // Run the same packing algorithm
-        let (rows, _) = packAnnotationsPixelBased(displayAnnotations, frame: frame)
+        // Use the same layered packing used by rendering.
+        let (rows, _) = packAnnotationsLayered(displayAnnotations, frame: frame)
 
         let rowHeight: CGFloat = scale > annotationSquishedThreshold ? 7 : (annotationHeight + annotationRowSpacing)
 
