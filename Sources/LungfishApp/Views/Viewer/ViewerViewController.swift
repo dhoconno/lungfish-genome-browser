@@ -2128,6 +2128,17 @@ public class SequenceViewerView: NSView {
     /// Dedicated queue for annotation I/O to avoid being starved by the search index build.
     private static let annotationFetchQueue = DispatchQueue(label: "com.lungfish.annotationFetch", qos: .userInteractive)
 
+    /// Schedules UI state updates on the main run loop common modes.
+    /// This avoids starvation during AppKit tracking/layout-heavy loops.
+    private static func enqueueMainRunLoop(_ block: @escaping () -> Void) {
+        if Thread.isMainThread {
+            block()
+            return
+        }
+        CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue, block)
+        CFRunLoopWakeUp(CFRunLoopGetMain())
+    }
+
     private func fetchAnnotationsAsync(bundle: ReferenceBundle, region: GenomicRegion) {
         annotationFetchGeneration += 1
         let thisGeneration = annotationFetchGeneration
@@ -2178,37 +2189,27 @@ public class SequenceViewerView: NSView {
             }
 
             let count = allAnnotations.count
-            logger.info("fetchAnnotationsAsync: gen=\(thisGeneration), background done, \(count) annotations found, dispatching to MainActor")
+            logger.info("fetchAnnotationsAsync[RUNLOOP_V2]: gen=\(thisGeneration), background done, \(count) annotations found, scheduling main-runloop commit")
 
-            // Use DispatchQueue.main.async + MainActor.assumeIsolated instead of
-            // Task { @MainActor in }. The cooperative executor that drives MainActor
-            // Tasks is not reliably drained during AppKit's layout-draw animation
-            // cycles. GCD main queue blocks ARE processed every run loop iteration
-            // (they're a mach port source), so they execute even during rapid
-            // viewDidLayout/draw cycles. MainActor.assumeIsolated tells the Swift 6.2
-            // compiler we're on the main actor (guaranteed by DispatchQueue.main)
-            // without routing through the cooperative executor.
-            DispatchQueue.main.async { [weak self] in
-                MainActor.assumeIsolated {
-                    logger.info("fetchAnnotationsAsync: gen=\(thisGeneration), MainActor callback executing")
-                    guard let viewer = self else {
-                        logger.error("fetchAnnotationsAsync: self is nil in MainActor callback, \(count) annotations lost")
-                        return
-                    }
-                    // Check generation counter: discard stale results from superseded fetches
-                    guard thisGeneration == viewer.annotationFetchGeneration else {
-                        logger.info("fetchAnnotationsAsync: Discarding stale result gen=\(thisGeneration) (current=\(viewer.annotationFetchGeneration))")
-                        return
-                    }
-                    let elapsed = viewer.annotationFetchStartTime.map { Date().timeIntervalSince($0) } ?? 0
-                    viewer.cachedBundleAnnotations = allAnnotations
-                    viewer.cachedAnnotationRegion = expandedRegion
-                    viewer.isFetchingAnnotations = false
-                    viewer.annotationFetchStartTime = nil
-                    viewer.invalidateAnnotationTile()
-                    logger.info("fetchAnnotationsAsync: Cached \(count) annotations for \(expandedRegion.description) in \(elapsed, format: .fixed(precision: 3))s, triggering redraw")
-                    viewer.setNeedsDisplay(viewer.bounds)
+            Self.enqueueMainRunLoop { [weak self] in
+                logger.info("fetchAnnotationsAsync[RUNLOOP_V2]: gen=\(thisGeneration), main-runloop callback executing")
+                guard let viewer = self else {
+                    logger.error("fetchAnnotationsAsync: self is nil in main-runloop callback, \(count) annotations lost")
+                    return
                 }
+                // Check generation counter: discard stale results from superseded fetches
+                guard thisGeneration == viewer.annotationFetchGeneration else {
+                    logger.info("fetchAnnotationsAsync: Discarding stale result gen=\(thisGeneration) (current=\(viewer.annotationFetchGeneration))")
+                    return
+                }
+                let elapsed = viewer.annotationFetchStartTime.map { Date().timeIntervalSince($0) } ?? 0
+                viewer.cachedBundleAnnotations = allAnnotations
+                viewer.cachedAnnotationRegion = expandedRegion
+                viewer.isFetchingAnnotations = false
+                viewer.annotationFetchStartTime = nil
+                viewer.invalidateAnnotationTile()
+                logger.info("fetchAnnotationsAsync: Cached \(count) annotations for \(expandedRegion.description) in \(elapsed, format: .fixed(precision: 3))s, triggering redraw")
+                viewer.setNeedsDisplay(viewer.bounds)
             }
         }
     }
@@ -2248,27 +2249,25 @@ public class SequenceViewerView: NSView {
             }
 
             let count = allVariantAnnotations.count
-            logger.info("fetchVariantsAsync: gen=\(thisGeneration), background done, \(count) variants found")
+            logger.info("fetchVariantsAsync[RUNLOOP_V2]: gen=\(thisGeneration), background done, \(count) variants found")
 
-            DispatchQueue.main.async { [weak self] in
-                MainActor.assumeIsolated {
-                    logger.info("fetchVariantsAsync: gen=\(thisGeneration), MainActor callback executing")
-                    guard let viewer = self else {
-                        logger.error("fetchVariantsAsync: self is nil in MainActor callback, \(count) variants lost")
-                        return
-                    }
-                    guard thisGeneration == viewer.variantFetchGeneration else {
-                        logger.info("fetchVariantsAsync: Discarding stale result gen=\(thisGeneration) (current=\(viewer.variantFetchGeneration))")
-                        return
-                    }
-                    let elapsed = Date().timeIntervalSince(fetchStart)
-                    viewer.cachedVariantAnnotations = allVariantAnnotations
-                    viewer.cachedVariantRegion = expandedRegion
-                    viewer.isFetchingVariants = false
-                    viewer.invalidateAnnotationTile()
-                    logger.info("fetchVariantsAsync: Cached \(count) variant annotations in \(elapsed, format: .fixed(precision: 3))s")
-                    viewer.setNeedsDisplay(viewer.bounds)
+            Self.enqueueMainRunLoop { [weak self] in
+                logger.info("fetchVariantsAsync[RUNLOOP_V2]: gen=\(thisGeneration), main-runloop callback executing")
+                guard let viewer = self else {
+                    logger.error("fetchVariantsAsync: self is nil in main-runloop callback, \(count) variants lost")
+                    return
                 }
+                guard thisGeneration == viewer.variantFetchGeneration else {
+                    logger.info("fetchVariantsAsync: Discarding stale result gen=\(thisGeneration) (current=\(viewer.variantFetchGeneration))")
+                    return
+                }
+                let elapsed = Date().timeIntervalSince(fetchStart)
+                viewer.cachedVariantAnnotations = allVariantAnnotations
+                viewer.cachedVariantRegion = expandedRegion
+                viewer.isFetchingVariants = false
+                viewer.invalidateAnnotationTile()
+                logger.info("fetchVariantsAsync: Cached \(count) variant annotations in \(elapsed, format: .fixed(precision: 3))s")
+                viewer.setNeedsDisplay(viewer.bounds)
             }
         }
     }
@@ -2311,50 +2310,46 @@ public class SequenceViewerView: NSView {
                 let count = sequence.count
                 logger.info("fetchSequenceAsync: gen=\(thisGeneration), fetchSequenceSync returned \(count) bp")
 
-                DispatchQueue.main.async { [weak self] in
-                    MainActor.assumeIsolated {
-                        logger.info("fetchSequenceAsync: gen=\(thisGeneration), MainActor callback executing")
-                        guard let viewer = self else {
-                            logger.error("fetchSequenceAsync: CRITICAL - self is nil in MainActor callback! \(count) bp lost.")
-                            return
-                        }
-                        guard thisGeneration == viewer.sequenceFetchGeneration else {
-                            logger.info("fetchSequenceAsync: Discarding stale result gen=\(thisGeneration) (current=\(viewer.sequenceFetchGeneration))")
-                            return
-                        }
-                        let elapsed = viewer.sequenceFetchStartTime.map { Date().timeIntervalSince($0) } ?? 0
-                        viewer.cachedBundleSequence = sequence
-                        viewer.cachedSequenceRegion = expandedRegion
-                        viewer.isFetchingBundleData = false
-                        viewer.sequenceFetchStartTime = nil
-                        viewer.bundleFetchError = nil
-                        viewer.failedFetchRegion = nil
-                        logger.info("fetchSequenceAsync: Cached \(count) bp for \(expandedRegion.description) in \(elapsed, format: .fixed(precision: 3))s, triggering redraw")
-                        viewer.setNeedsDisplay(viewer.bounds)
+                Self.enqueueMainRunLoop { [weak self] in
+                    logger.info("fetchSequenceAsync[RUNLOOP_V2]: gen=\(thisGeneration), main-runloop callback executing")
+                    guard let viewer = self else {
+                        logger.error("fetchSequenceAsync: CRITICAL - self is nil in main-runloop callback! \(count) bp lost.")
+                        return
                     }
+                    guard thisGeneration == viewer.sequenceFetchGeneration else {
+                        logger.info("fetchSequenceAsync: Discarding stale result gen=\(thisGeneration) (current=\(viewer.sequenceFetchGeneration))")
+                        return
+                    }
+                    let elapsed = viewer.sequenceFetchStartTime.map { Date().timeIntervalSince($0) } ?? 0
+                    viewer.cachedBundleSequence = sequence
+                    viewer.cachedSequenceRegion = expandedRegion
+                    viewer.isFetchingBundleData = false
+                    viewer.sequenceFetchStartTime = nil
+                    viewer.bundleFetchError = nil
+                    viewer.failedFetchRegion = nil
+                    logger.info("fetchSequenceAsync: Cached \(count) bp for \(expandedRegion.description) in \(elapsed, format: .fixed(precision: 3))s, triggering redraw")
+                    viewer.setNeedsDisplay(viewer.bounds)
                 }
             } catch {
                 let errorDesc = error.localizedDescription
                 logger.error("fetchSequenceAsync: gen=\(thisGeneration), FAILED - \(errorDesc, privacy: .public)")
 
-                DispatchQueue.main.async { [weak self] in
-                    MainActor.assumeIsolated {
-                        logger.info("fetchSequenceAsync: gen=\(thisGeneration), MainActor callback (error path) executing")
-                        guard let viewer = self else {
-                            logger.error("fetchSequenceAsync: self is nil in MainActor callback (error path)")
-                            return
-                        }
-                        guard thisGeneration == viewer.sequenceFetchGeneration else {
-                            logger.info("fetchSequenceAsync: Discarding stale error gen=\(thisGeneration) (current=\(viewer.sequenceFetchGeneration))")
-                            return
-                        }
-                        logger.error("fetchSequenceAsync: Error delivered to MainActor - \(errorDesc, privacy: .public)")
-                        viewer.failedFetchRegion = expandedRegion
-                        viewer.isFetchingBundleData = false
-                        viewer.sequenceFetchStartTime = nil
-                        viewer.bundleFetchError = errorDesc
-                        viewer.setNeedsDisplay(viewer.bounds)
+                Self.enqueueMainRunLoop { [weak self] in
+                    logger.info("fetchSequenceAsync[RUNLOOP_V2]: gen=\(thisGeneration), main-runloop callback (error path) executing")
+                    guard let viewer = self else {
+                        logger.error("fetchSequenceAsync: self is nil in main-runloop callback (error path)")
+                        return
                     }
+                    guard thisGeneration == viewer.sequenceFetchGeneration else {
+                        logger.info("fetchSequenceAsync: Discarding stale error gen=\(thisGeneration) (current=\(viewer.sequenceFetchGeneration))")
+                        return
+                    }
+                    logger.error("fetchSequenceAsync: Error delivered to main thread - \(errorDesc, privacy: .public)")
+                    viewer.failedFetchRegion = expandedRegion
+                    viewer.isFetchingBundleData = false
+                    viewer.sequenceFetchStartTime = nil
+                    viewer.bundleFetchError = errorDesc
+                    viewer.setNeedsDisplay(viewer.bounds)
                 }
             }
         }
