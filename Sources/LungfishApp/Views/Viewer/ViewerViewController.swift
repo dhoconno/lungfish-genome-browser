@@ -2528,11 +2528,36 @@ public class SequenceViewerView: NSView {
     /// Maximum annotation rows before showing "+N more" indicator
     private let maxAnnotationRows: Int = 50
 
-    /// Minimum pixel width for a feature to show a label
-    private let minLabelWidth: CGFloat = 40
+    /// Minimum feature width for expanded labels to avoid visual clutter.
+    private let minExpandedLabelWidth: CGFloat = 72
+
+    /// Do not draw per-feature labels when packed rows exceed this count.
+    private let maxLabeledRows: Int = 12
 
     /// Minimum pixel gap between features in the same row during packing
     private let minPixelGap: CGFloat = 2
+
+    /// Formats annotation labels for rendering (single-line, whitespace-normalized).
+    private func displayLabel(for annotation: SequenceAnnotation) -> String {
+        let collapsed = annotation.name
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\t", with: " ")
+            .replacingOccurrences(of: "  ", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return collapsed.isEmpty ? annotation.type.rawValue : collapsed
+    }
+
+    /// Returns true when this annotation type should render an inline label in expanded mode.
+    private func shouldRenderExpandedLabel(for annotation: SequenceAnnotation, width: CGFloat, rowCount: Int) -> Bool {
+        guard rowCount <= maxLabeledRows, width >= minExpandedLabelWidth else { return false }
+        switch annotation.type {
+        case .gene, .mRNA, .transcript, .cds:
+            return true
+        default:
+            return false
+        }
+    }
 
     /// Draws annotations from a bundle using zoom-dependent rendering tiers.
     ///
@@ -2543,9 +2568,15 @@ public class SequenceViewerView: NSView {
     private func drawBundleAnnotations(_ annotations: [SequenceAnnotation], frame: ReferenceFrame, context: CGContext) {
         guard showAnnotations, !annotations.isEmpty else { return }
 
-        // Clip annotations to the view bounds so they don't render under the track header
+        // Clip strictly to the annotation lane so labels/features never overlap sequence track.
         context.saveGState()
-        context.clip(to: CGRect(x: 0, y: 0, width: CGFloat(frame.pixelWidth), height: bounds.height))
+        let annotationClipRect = CGRect(
+            x: 0,
+            y: annotationTrackY,
+            width: CGFloat(frame.pixelWidth),
+            height: max(0, bounds.height - annotationTrackY)
+        )
+        context.clip(to: annotationClipRect)
 
         let scale = frame.scale  // bp/pixel
 
@@ -2830,6 +2861,7 @@ public class SequenceViewerView: NSView {
     /// Draws annotations as full-height boxes with labels and strand indicators.
     private func drawAnnotationsExpanded(_ annotations: [SequenceAnnotation], frame: ReferenceFrame, context: CGContext) {
         let (rows, overflow) = packAnnotationsPixelBased(annotations, frame: frame)
+        let rowCount = rows.count
 
         for (rowIndex, row) in rows.enumerated() {
             let y = annotationTrackY + CGFloat(rowIndex) * (annotationHeight + annotationRowSpacing)
@@ -2852,14 +2884,22 @@ public class SequenceViewerView: NSView {
                 context.stroke(rect)
 
                 // Draw label if space permits
-                if width > minLabelWidth {
+                if shouldRenderExpandedLabel(for: annot, width: width, rowCount: rowCount) {
+                    let label = displayLabel(for: annot)
+                    let paragraph = NSMutableParagraphStyle()
+                    paragraph.lineBreakMode = .byTruncatingTail
                     let font = NSFont.systemFont(ofSize: 10)
                     let attributes: [NSAttributedString.Key: Any] = [
                         .font: font,
                         .foregroundColor: NSColor.textColor,
+                        .paragraphStyle: paragraph,
                     ]
                     let labelRect = CGRect(x: startX + 2, y: y + 1, width: width - 4, height: annotationHeight - 2)
-                    (annot.name as NSString).draw(in: labelRect, withAttributes: attributes)
+                    (label as NSString).draw(
+                        with: labelRect,
+                        options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                        attributes: attributes
+                    )
                 }
 
                 // Draw strand arrow if feature is wide enough
@@ -4398,14 +4438,26 @@ public class SequenceViewerView: NSView {
                 let sizeStr = size >= 1_000_000 ? String(format: "%.1f Mb", Double(size) / 1_000_000.0)
                     : size >= 1_000 ? String(format: "%.1f Kb", Double(size) / 1_000.0)
                     : "\(size) bp"
-                let coords = "\(annot.chromosome):\(annot.start.formatted())-\(annot.end.formatted())"
-                self.toolTip = "\(annot.name)\n\(annot.type.rawValue) \(strandStr)\n\(coords) (\(sizeStr))"
+                let chromosome = annot.chromosome ?? (viewController?.referenceFrame?.chromosome ?? "unknown")
+                let label = displayLabel(for: annot)
+                let coords = "\(chromosome):\(annot.start.formatted())-\(annot.end.formatted())"
+                self.toolTip = "\(label)\n\(annot.type.rawValue) \(strandStr)\n\(coords) (\(sizeStr))"
+
+                if let controller = viewController {
+                    let hoverSummary = "Hover: \(label) • \(annot.type.rawValue) \(strandStr) • \(coords)"
+                    controller.statusBar.update(
+                        position: controller.statusBar.positionLabel.stringValue,
+                        selection: hoverSummary,
+                        scale: controller.referenceFrame?.scale ?? 1.0
+                    )
+                }
             }
             NSCursor.pointingHand.set()
         } else {
             if hoveredAnnotation != nil {
                 hoveredAnnotation = nil
                 self.toolTip = nil
+                updateSelectionStatus()
             }
             NSCursor.arrow.set()
         }
@@ -4415,6 +4467,7 @@ public class SequenceViewerView: NSView {
         hoveredAnnotation = nil
         self.toolTip = nil
         NSCursor.arrow.set()
+        updateSelectionStatus()
     }
 
     /// Hit-tests cached bundle annotations at the given point.
@@ -4428,16 +4481,37 @@ public class SequenceViewerView: NSView {
         // Only hit-test in squished and expanded modes (not density histogram)
         guard scale <= annotationDensityThreshold else { return nil }
 
-        // Get the same display annotations as the drawing code
+        // Use the same annotation pool rendered in drawBundleContent.
+        let bundlePool = cachedBundleAnnotations + cachedVariantAnnotations
+
+        // Match visible region filtering used by render path.
         let visibleStart = Int(frame.start)
         let visibleEnd = Int(frame.end)
-        let visibleAnnotations = cachedBundleAnnotations.filter { annot in
+        let visibleAnnotations = bundlePool.filter { annot in
             annot.end > visibleStart && annot.start < visibleEnd
+        }
+
+        // Match inspector type/text filters used by rendering.
+        let typeFiltered: [SequenceAnnotation]
+        if let typeFilter = visibleAnnotationTypes {
+            typeFiltered = visibleAnnotations.filter { typeFilter.contains($0.type) }
+        } else {
+            typeFiltered = visibleAnnotations
+        }
+
+        let textFiltered: [SequenceAnnotation]
+        if annotationFilterText.isEmpty {
+            textFiltered = typeFiltered
+        } else {
+            let needle = annotationFilterText.lowercased()
+            textFiltered = typeFiltered.filter { annot in
+                annot.name.lowercased().contains(needle)
+            }
         }
 
         let visibleSpan = visibleEnd - visibleStart
         let minFeatureBp = max(1, Int(scale))
-        let displayAnnotations = visibleAnnotations.filter { annot in
+        let displayAnnotations = textFiltered.filter { annot in
             let span = annot.end - annot.start
             return span >= minFeatureBp && span < Int(Double(visibleSpan) * 0.9)
         }
@@ -4453,7 +4527,7 @@ public class SequenceViewerView: NSView {
             for annot in row {
                 let startX = frame.screenPosition(for: Double(annot.start))
                 let endX = frame.screenPosition(for: Double(annot.end))
-                let width = max(1, endX - startX)
+                let width = max(scale > annotationSquishedThreshold ? 1 : 3, endX - startX)
                 let height: CGFloat = scale > annotationSquishedThreshold ? 6 : annotationHeight
                 let annotRect = CGRect(x: startX, y: rowY, width: width, height: height)
 
