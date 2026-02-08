@@ -81,6 +81,9 @@ public final class AnnotationSearchIndex {
     /// Whether this index is backed by SQLite (vs in-memory).
     public var hasDatabaseBackend: Bool { database != nil }
 
+    /// Provides access to the underlying annotation database for enrichment lookups.
+    public var annotationDatabase: AnnotationDatabase? { database }
+
     /// Number of indexed entries.
     public var entryCount: Int {
         if let db = database {

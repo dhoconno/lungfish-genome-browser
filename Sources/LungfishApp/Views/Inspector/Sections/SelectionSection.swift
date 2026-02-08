@@ -5,6 +5,7 @@
 import SwiftUI
 import AppKit
 import LungfishCore
+import LungfishIO
 
 /// Mode for applying color changes.
 public enum ColorApplyMode: String, CaseIterable, Identifiable {
@@ -55,6 +56,20 @@ public final class SelectionSectionViewModel {
     /// Callback to create a new annotation from current viewer selection.
     public var onAddAnnotationRequested: (() -> Void)?
 
+    // MARK: - Enrichment Fields (read-only, from GFF3 attributes)
+
+    /// Description from GFF3 attributes
+    public var annotationDescription: String?
+
+    /// Gene biotype from GFF3 attributes
+    public var geneBiotype: String?
+
+    /// Gene symbol from GFF3 attributes
+    public var geneSymbol: String?
+
+    /// Database cross-references from GFF3 attributes
+    public var dbxref: String?
+
     public init() {}
 
     /// Updates the view model with a new annotation selection.
@@ -83,6 +98,9 @@ public final class SelectionSectionViewModel {
 
             // Reset apply mode when selecting a new annotation
             colorApplyMode = .thisOnly
+
+            // Extract enrichment from qualifiers["extra"] (GFF3 attributes)
+            extractEnrichment(from: annotation)
         } else {
             // Reset all properties on deselection to prevent stale values
             name = ""
@@ -90,7 +108,39 @@ public final class SelectionSectionViewModel {
             notes = ""
             color = .blue
             colorApplyMode = .thisOnly
+            annotationDescription = nil
+            geneBiotype = nil
+            geneSymbol = nil
+            dbxref = nil
         }
+    }
+
+    /// Extracts GFF3 enrichment data from annotation qualifiers.
+    private func extractEnrichment(from annotation: SequenceAnnotation) {
+        annotationDescription = nil
+        geneBiotype = nil
+        geneSymbol = nil
+        dbxref = nil
+
+        guard let extraStr = annotation.qualifier("extra") else { return }
+
+        // Parse the raw GFF3 attributes from qualifiers["extra"]
+        // Format: may be "type\tkey=val;key=val" (tab-separated with type first)
+        // or just "key=val;key=val"
+        let attrString: String
+        if extraStr.contains("\t") {
+            // First field is feature type, second is attributes
+            let parts = extraStr.split(separator: "\t", maxSplits: 1)
+            attrString = parts.count > 1 ? String(parts[1]) : extraStr
+        } else {
+            attrString = extraStr
+        }
+
+        let parsed = LungfishIO.AnnotationDatabase.parseAttributes(attrString)
+        annotationDescription = parsed["description"]
+        geneBiotype = parsed["gene_biotype"]
+        geneSymbol = parsed["gene"]
+        dbxref = parsed["Dbxref"]
     }
 
     /// Commits current edits to the annotation.
@@ -296,14 +346,61 @@ public struct SelectionSection: View {
                     .padding(.vertical, 4)
 
                 VStack(alignment: .leading, spacing: 4) {
+                    if let chrom = annotation.chromosome {
+                        LabeledContent("Chromosome", value: chrom)
+                    }
                     LabeledContent("Start", value: "\(annotation.start)")
                     LabeledContent("End", value: "\(annotation.end)")
                     LabeledContent("Length", value: "\(annotation.totalLength) bp")
+                    let strandLabel: String = switch annotation.strand {
+                    case .forward: "Forward (+)"
+                    case .reverse: "Reverse (-)"
+                    case .unknown: "Unknown"
+                    }
+                    LabeledContent("Strand", value: strandLabel)
                     if annotation.isDiscontinuous {
                         LabeledContent("Intervals", value: "\(annotation.intervals.count)")
                     }
                 }
                 .font(.callout)
+
+                // GFF3 enrichment details
+                if viewModel.annotationDescription != nil || viewModel.geneBiotype != nil ||
+                   viewModel.geneSymbol != nil || viewModel.dbxref != nil {
+                    Divider()
+                        .padding(.vertical, 4)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let desc = viewModel.annotationDescription {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Description")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                Text(desc)
+                                    .font(.callout)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        if let biotype = viewModel.geneBiotype {
+                            LabeledContent("Biotype", value: biotype)
+                                .font(.callout)
+                        }
+                        if let gene = viewModel.geneSymbol {
+                            LabeledContent("Gene", value: gene)
+                                .font(.callout)
+                        }
+                        if let ref = viewModel.dbxref {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("References")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                Text(ref)
+                                    .font(.callout)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
             }
 
             Divider()

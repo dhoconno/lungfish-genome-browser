@@ -407,6 +407,9 @@ private class ChromosomeCellView: NSTableCellView {
 
         // Build tooltip with full chromosome info
         var tip = "\(chromosome.name)\n\(Self.formatLength(chromosome.length))"
+        if let desc = chromosome.fastaDescription, !desc.isEmpty {
+            tip += "\n\(desc)"
+        }
         if !chromosome.aliases.isEmpty {
             tip += "\nAliases: \(chromosome.aliases.joined(separator: ", "))"
         }

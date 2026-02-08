@@ -19,14 +19,17 @@ public struct AnnotationDatabaseRecord: Sendable {
     public let start: Int
     public let end: Int
     public let strand: String
+    /// GFF3 attributes string (semicolon-delimited key=value pairs), if available.
+    public let attributes: String?
 
-    public init(name: String, type: String, chromosome: String, start: Int, end: Int, strand: String) {
+    public init(name: String, type: String, chromosome: String, start: Int, end: Int, strand: String, attributes: String? = nil) {
         self.name = name
         self.type = type
         self.chromosome = chromosome
         self.start = start
         self.end = end
         self.strand = strand
+        self.attributes = attributes
     }
 }
 
@@ -37,7 +40,7 @@ public struct AnnotationDatabaseRecord: Sendable {
 /// The database is created during bundle building and provides instant search/filter
 /// over annotation names, types, and coordinates without scanning BigBed R-trees.
 ///
-/// Schema:
+/// Schema (v2):
 /// ```sql
 /// CREATE TABLE annotations (
 ///     name TEXT NOT NULL,
@@ -45,7 +48,8 @@ public struct AnnotationDatabaseRecord: Sendable {
 ///     chromosome TEXT NOT NULL,
 ///     start INTEGER NOT NULL,
 ///     end INTEGER NOT NULL,
-///     strand TEXT NOT NULL DEFAULT '.'
+///     strand TEXT NOT NULL DEFAULT '.',
+///     attributes TEXT
 /// );
 /// CREATE INDEX idx_annotations_name ON annotations(name COLLATE NOCASE);
 /// CREATE INDEX idx_annotations_type ON annotations(type);
@@ -55,6 +59,9 @@ public final class AnnotationDatabase: @unchecked Sendable {
 
     private var db: OpaquePointer?
     private let url: URL
+
+    /// Whether the database has the `attributes` column (v2 schema).
+    private let hasAttributesColumn: Bool
 
     /// Opens an existing annotation database for reading.
     ///
@@ -69,13 +76,26 @@ public final class AnnotationDatabase: @unchecked Sendable {
             db = nil
             throw AnnotationDatabaseError.openFailed(msg)
         }
-        dbLogger.info("Opened annotation database: \(url.lastPathComponent)")
+
+        // Detect schema version by checking if `attributes` column exists
+        hasAttributesColumn = AnnotationDatabase.columnExists(db: db, table: "annotations", column: "attributes")
+
+        dbLogger.info("Opened annotation database: \(url.lastPathComponent) (hasAttributes=\(self.hasAttributesColumn))")
     }
 
     deinit {
         if let db {
             sqlite3_close(db)
         }
+    }
+
+    /// Checks if a column exists in a table.
+    private static func columnExists(db: OpaquePointer?, table: String, column: String) -> Bool {
+        guard let db else { return false }
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        let sql = "SELECT \(column) FROM \(table) LIMIT 0"
+        return sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK
     }
 
     /// Returns the total number of annotations in the database.
@@ -201,13 +221,83 @@ public final class AnnotationDatabase: @unchecked Sendable {
         return Int(sqlite3_column_int64(stmt, 0))
     }
 
+    // MARK: - Annotation Lookup
+
+    /// Looks up a single annotation by name, chromosome, and coordinates.
+    ///
+    /// Returns the full record including attributes (if the database has the v2 schema).
+    /// Used for enriching hover tooltips and inspector details with GFF3 metadata.
+    ///
+    /// - Parameters:
+    ///   - name: Annotation name
+    ///   - chromosome: Chromosome name
+    ///   - start: Start coordinate (0-based)
+    ///   - end: End coordinate
+    /// - Returns: The matching record, or nil if not found
+    public func lookupAnnotation(name: String, chromosome: String, start: Int, end: Int) -> AnnotationDatabaseRecord? {
+        guard let db else { return nil }
+
+        let columns = hasAttributesColumn
+            ? "name, type, chromosome, start, end, strand, attributes"
+            : "name, type, chromosome, start, end, strand"
+
+        let sql = "SELECT \(columns) FROM annotations WHERE name = ? AND chromosome = ? AND start = ? AND end = ? LIMIT 1"
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+
+        sqlite3_bind_text(stmt, 1, (name as NSString).utf8String, -1, nil)
+        sqlite3_bind_text(stmt, 2, (chromosome as NSString).utf8String, -1, nil)
+        sqlite3_bind_int64(stmt, 3, Int64(start))
+        sqlite3_bind_int64(stmt, 4, Int64(end))
+
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+
+        let rName = sqlite3_column_text(stmt, 0).map { String(cString: $0) } ?? ""
+        let rType = sqlite3_column_text(stmt, 1).map { String(cString: $0) } ?? ""
+        let rChrom = sqlite3_column_text(stmt, 2).map { String(cString: $0) } ?? ""
+        let rStart = Int(sqlite3_column_int64(stmt, 3))
+        let rEnd = Int(sqlite3_column_int64(stmt, 4))
+        let rStrand = sqlite3_column_text(stmt, 5).map { String(cString: $0) } ?? "."
+        let rAttrs: String? = hasAttributesColumn
+            ? sqlite3_column_text(stmt, 6).map { String(cString: $0) }
+            : nil
+
+        return AnnotationDatabaseRecord(
+            name: rName, type: rType, chromosome: rChrom,
+            start: rStart, end: rEnd, strand: rStrand,
+            attributes: rAttrs
+        )
+    }
+
+    // MARK: - Attribute Parsing
+
+    /// Parses a GFF3-style attributes string into a dictionary.
+    ///
+    /// Format: `key1=value1;key2=value2;key3=value3`
+    /// Values are URL-decoded (percent-encoded spaces, commas, etc.).
+    ///
+    /// - Parameter attrs: Raw attributes string
+    /// - Returns: Dictionary of key-value pairs
+    public static func parseAttributes(_ attrs: String) -> [String: String] {
+        var result: [String: String] = [:]
+        for pair in attrs.split(separator: ";") {
+            let parts = pair.split(separator: "=", maxSplits: 1)
+            guard parts.count == 2 else { continue }
+            let key = String(parts[0])
+            let value = String(parts[1]).removingPercentEncoding ?? String(parts[1])
+            result[key] = value
+        }
+        return result
+    }
+
     // MARK: - Static Creation (for bundle building)
 
     /// Creates a new annotation database from BED file content.
     ///
     /// Parses BED lines (tab-separated) extracting: chromosome (col 0), start (col 1),
-    /// end (col 2), name (col 3), strand (col 5), and feature type (col 12 if present,
-    /// otherwise inferred from name).
+    /// end (col 2), name (col 3), strand (col 5), feature type (col 12 if present),
+    /// and GFF3 attributes (col 13 if present).
     ///
     /// Only gene-level features are indexed (exons, CDS, UTR are excluded).
     ///
@@ -229,7 +319,7 @@ public final class AnnotationDatabase: @unchecked Sendable {
         }
         defer { sqlite3_close(db) }
 
-        // Create schema
+        // Create schema (v2 with attributes column)
         let schema = """
         CREATE TABLE annotations (
             name TEXT NOT NULL,
@@ -237,7 +327,8 @@ public final class AnnotationDatabase: @unchecked Sendable {
             chromosome TEXT NOT NULL,
             start INTEGER NOT NULL,
             end INTEGER NOT NULL,
-            strand TEXT NOT NULL DEFAULT '.'
+            strand TEXT NOT NULL DEFAULT '.',
+            attributes TEXT
         );
         """
         var errMsg: UnsafeMutablePointer<CChar>?
@@ -259,7 +350,7 @@ public final class AnnotationDatabase: @unchecked Sendable {
         // Begin transaction for bulk insert
         sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil)
 
-        let insertSQL = "INSERT INTO annotations (name, type, chromosome, start, end, strand) VALUES (?, ?, ?, ?, ?, ?)"
+        let insertSQL = "INSERT INTO annotations (name, type, chromosome, start, end, strand, attributes) VALUES (?, ?, ?, ?, ?, ?, ?)"
         var insertStmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, insertSQL, -1, &insertStmt, nil) == SQLITE_OK else {
             throw AnnotationDatabaseError.createFailed("Failed to prepare INSERT statement")
@@ -292,6 +383,15 @@ public final class AnnotationDatabase: @unchecked Sendable {
                 type = "gene"
             }
 
+            // Extract GFF3 attributes from column 13 if present
+            let attributes: String?
+            if fields.count > 13 {
+                let attr = String(fields[13])
+                attributes = attr.isEmpty ? nil : attr
+            } else {
+                attributes = nil
+            }
+
             // Only index gene-level features
             guard indexableTypes.contains(type) else { continue }
 
@@ -306,6 +406,11 @@ public final class AnnotationDatabase: @unchecked Sendable {
             sqlite3_bind_int64(insertStmt, 4, Int64(start))
             sqlite3_bind_int64(insertStmt, 5, Int64(end))
             sqlite3_bind_text(insertStmt, 6, (strand as NSString).utf8String, -1, nil)
+            if let attributes {
+                sqlite3_bind_text(insertStmt, 7, (attributes as NSString).utf8String, -1, nil)
+            } else {
+                sqlite3_bind_null(insertStmt, 7)
+            }
 
             if sqlite3_step(insertStmt) != SQLITE_DONE {
                 dbLogger.warning("Failed to insert annotation: \(name)")

@@ -719,6 +719,7 @@ public final class NativeBundleBuilder: ObservableObject {
 
         var chromosomes: [ChromosomeInfo] = []
         var currentChromName: String?
+        var currentChromDescription: String?
         var currentLength: Int64 = 0
         var lineBasesFirst: Int?
         var lineWidthFirst: Int?
@@ -742,13 +743,16 @@ public final class NativeBundleBuilder: ObservableObject {
                         length: currentLength,
                         offset: sequenceStartOffset,
                         lineBases: lineBasesFirst ?? 50,
-                        lineWidth: (lineWidthFirst ?? 50) + 1
+                        lineWidth: (lineWidthFirst ?? 50) + 1,
+                        fastaDescription: currentChromDescription
                     )
                     chromosomes.append(chromInfo)
                 }
 
                 let headerLine = String(line.dropFirst())
-                currentChromName = headerLine.split(separator: " ").first.map(String.init) ?? headerLine
+                let headerParts = headerLine.split(separator: " ", maxSplits: 1)
+                currentChromName = headerParts.first.map(String.init) ?? headerLine
+                currentChromDescription = headerParts.count > 1 ? String(headerParts[1]) : nil
                 currentLength = 0
                 lineBasesFirst = nil
                 lineWidthFirst = nil
@@ -772,7 +776,8 @@ public final class NativeBundleBuilder: ObservableObject {
                 length: currentLength,
                 offset: sequenceStartOffset,
                 lineBases: lineBasesFirst ?? 50,
-                lineWidth: (lineWidthFirst ?? 50) + 1
+                lineWidth: (lineWidthFirst ?? 50) + 1,
+                fastaDescription: currentChromDescription
             )
             chromosomes.append(chromInfo)
         }

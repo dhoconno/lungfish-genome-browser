@@ -288,6 +288,10 @@ public struct ChromosomeInfo: Codable, Sendable, Equatable, Identifiable {
     /// Whether this is the mitochondrial genome.
     public let isMitochondrial: Bool
 
+    /// FASTA header description (text after the first space on the `>` line).
+    /// e.g., for `>NC_041754.1 Macaca mulatta chromosome 1`, this is `"Macaca mulatta chromosome 1"`.
+    public let fastaDescription: String?
+
     /// Creates chromosome information.
     public init(
         name: String,
@@ -297,7 +301,8 @@ public struct ChromosomeInfo: Codable, Sendable, Equatable, Identifiable {
         lineWidth: Int,
         aliases: [String] = [],
         isPrimary: Bool = true,
-        isMitochondrial: Bool = false
+        isMitochondrial: Bool = false,
+        fastaDescription: String? = nil
     ) {
         self.name = name
         self.length = length
@@ -307,6 +312,7 @@ public struct ChromosomeInfo: Codable, Sendable, Equatable, Identifiable {
         self.aliases = aliases
         self.isPrimary = isPrimary
         self.isMitochondrial = isMitochondrial
+        self.fastaDescription = fastaDescription
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -318,6 +324,7 @@ public struct ChromosomeInfo: Codable, Sendable, Equatable, Identifiable {
         case aliases
         case isPrimary = "is_primary"
         case isMitochondrial = "is_mitochondrial"
+        case fastaDescription = "fasta_description"
     }
 }
 

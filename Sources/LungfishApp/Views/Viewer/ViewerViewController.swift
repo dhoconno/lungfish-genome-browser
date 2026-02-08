@@ -4586,7 +4586,48 @@ public class SequenceViewerView: NSView {
                 let chromosome = annot.chromosome ?? (viewController?.referenceFrame?.chromosome ?? "unknown")
                 let label = displayLabel(for: annot)
                 let coords = "\(chromosome):\(annot.start.formatted())-\(annot.end.formatted())"
-                self.toolTip = "\(label)\n\(annot.type.rawValue) \(strandStr)\n\(coords) (\(sizeStr))"
+                var tooltip = "\(label)\n\(annot.type.rawValue) \(strandStr)\n\(coords) (\(sizeStr))"
+
+                // Enrich tooltip with annotation note
+                if let note = annot.note, !note.isEmpty {
+                    tooltip += "\n\(note)"
+                }
+
+                // Enrich from qualifiers["extra"] (raw BED column 13+ data)
+                if let extraStr = annot.qualifier("extra") {
+                    let parsed = LungfishIO.AnnotationDatabase.parseAttributes(extraStr)
+                    if let desc = parsed["description"] {
+                        tooltip += "\n\(desc)"
+                    }
+                    if let biotype = parsed["gene_biotype"] {
+                        tooltip += "\nBiotype: \(biotype)"
+                    }
+                }
+
+                // Enrich from SQLite annotation database (if available)
+                if let db = viewController?.annotationSearchIndex?.annotationDatabase {
+                    let record = db.lookupAnnotation(name: annot.name, chromosome: chromosome, start: annot.start, end: annot.end)
+                    if let attrs = record?.attributes {
+                        let parsed = LungfishIO.AnnotationDatabase.parseAttributes(attrs)
+                        if annot.qualifier("extra") == nil {
+                            // Only add if not already enriched from qualifiers
+                            if let desc = parsed["description"] {
+                                tooltip += "\n\(desc)"
+                            }
+                            if let biotype = parsed["gene_biotype"] {
+                                tooltip += "\nBiotype: \(biotype)"
+                            }
+                        }
+                        if let gene = parsed["gene"] {
+                            tooltip += "\nGene: \(gene)"
+                        }
+                        if let dbxref = parsed["Dbxref"] {
+                            tooltip += "\nRef: \(dbxref)"
+                        }
+                    }
+                }
+
+                self.toolTip = tooltip
 
                 if let controller = viewController {
                     let hoverSummary = "Hover: \(label) • \(annot.type.rawValue) \(strandStr) • \(coords)"
