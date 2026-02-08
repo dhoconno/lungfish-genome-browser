@@ -369,10 +369,8 @@ public class SidebarViewController: NSViewController {
     /// the current state of the filesystem. Called automatically by the
     /// FileSystemWatcher when files change.
     public func reloadFromFilesystem() {
-        print("[SIDEBAR] reloadFromFilesystem CALLED")
         logger.info("reloadFromFilesystem: CALLED - starting filesystem scan")
         guard let projectURL = projectURL else {
-            print("[SIDEBAR] No project URL set")
             logger.debug("reloadFromFilesystem: No project URL set")
             rootItems = []
             outlineView.reloadData()
@@ -400,7 +398,6 @@ public class SidebarViewController: NSViewController {
         restoreSelection(urls: selectedURLs)
 
         let itemCount = rootItems.reduce(0) { $0 + countItems(in: $1) }
-        print("[SIDEBAR] Sidebar updated with \(itemCount) items")
         logger.info("reloadFromFilesystem: Sidebar updated with \(itemCount) items")
     }
 

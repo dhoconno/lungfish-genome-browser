@@ -458,50 +458,6 @@ final class NCBIServiceTests: XCTestCase {
         XCTAssertEqual(result.retstart, 0)
     }
 
-    // MARK: - SearchVirus Tests
-
-    func testSearchVirusAddsViralTaxonomyFilter() async throws {
-        await mockClient.registerNCBISearch(ids: ["111"])
-
-        _ = try await service.searchVirus(term: "SARS-CoV-2", retmax: 10)
-
-        let requests = await mockClient.requests
-        XCTAssertEqual(requests.count, 1)
-
-        let url = requests[0].url!.absoluteString
-        // The search term should include the viral taxonomy filter
-        XCTAssertTrue(url.contains("txid10239") || url.contains("10239"),
-                      "Search should include viral taxonomy filter")
-    }
-
-    func testSearchVirusRefseqOnlyAddsRefseqFilter() async throws {
-        await mockClient.registerNCBISearch(ids: ["222"])
-
-        _ = try await service.searchVirus(term: "influenza", retmax: 10, refseqOnly: true)
-
-        let requests = await mockClient.requests
-        XCTAssertEqual(requests.count, 1)
-
-        let url = requests[0].url!.absoluteString
-        // The search term should include the refseq filter when refseqOnly is true
-        XCTAssertTrue(url.contains("refseq"),
-                      "Search with refseqOnly should include refseq[filter]")
-    }
-
-    func testSearchVirusWithoutRefseqOnlyDoesNotAddRefseqFilter() async throws {
-        await mockClient.registerNCBISearch(ids: ["333"])
-
-        _ = try await service.searchVirus(term: "influenza", retmax: 10, refseqOnly: false)
-
-        let requests = await mockClient.requests
-        XCTAssertEqual(requests.count, 1)
-
-        let url = requests[0].url!.absoluteString
-        // The search term should NOT include the refseq filter when refseqOnly is false
-        XCTAssertFalse(url.contains("refseq"),
-                       "Search without refseqOnly should not include refseq filter")
-    }
-
     // MARK: - Database Enum Extended Tests
 
     func testDatabaseEnumIncludesGenomeAndAssembly() {

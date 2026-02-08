@@ -268,39 +268,6 @@ public actor NCBIService: DatabaseService {
         return parts.first
     }
 
-    /// Searches the nucleotide database with a viral taxonomy filter.
-    ///
-    /// This is equivalent to searching NCBI Virus but uses the nuccore database
-    /// with taxonomy filtering for viruses (txid10239).
-    ///
-    /// - Parameters:
-    ///   - term: The search term
-    ///   - retmax: Maximum number of results
-    ///   - retstart: Starting offset for pagination
-    /// - Returns: Search result with IDs and total count
-    public func searchVirus(
-        term: String,
-        retmax: Int = 20,
-        retstart: Int = 0,
-        refseqOnly: Bool = false
-    ) async throws -> ESearchSearchResult {
-        // Add viral taxonomy filter to the search term
-        var virusTerm = "(\(term)) AND \(NCBIDatabase.virusTaxonomyFilter)"
-
-        // Optionally filter to RefSeq sequences only
-        if refseqOnly {
-            virusTerm += " AND refseq[filter]"
-        }
-
-        logger.info("NCBIService.searchVirus: term='\(virusTerm, privacy: .public)'")
-        return try await esearchWithCount(
-            database: .nucleotide,
-            term: virusTerm,
-            retmax: retmax,
-            retstart: retstart
-        )
-    }
-
     // MARK: - NCBI Datasets v2 Virus Search
 
     /// Searches the NCBI Datasets v2 virus database for a given taxon.
