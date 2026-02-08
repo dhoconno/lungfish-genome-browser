@@ -82,6 +82,9 @@ public class DatabaseBrowserViewController: NSViewController {
     /// Completion handler called when user cancels
     public var onCancel: (() -> Void)?
 
+    /// Called when a download is kicked off (sheet should dismiss immediately).
+    public var onDownloadStarted: (() -> Void)?
+
     /// Optional initial NCBI search type to pre-select when the browser opens.
     ///
     /// Set this before presenting the controller to open with a specific search type
@@ -112,14 +115,15 @@ public class DatabaseBrowserViewController: NSViewController {
             viewModel.ncbiSearchType = searchType
         }
 
-        // Set up download completion callback (single file)
-        viewModel.onDownloadComplete = { [weak self] url in
-            self?.onDownloadComplete?(url)
-        }
+        // Download completion is handled by DownloadCenter.onBundleReady (set by
+        // AppDelegate at startup). The view model's onDownloadComplete and
+        // onMultipleDownloadsComplete are no longer wired — DownloadCenter is
+        // the sole channel for delivering built bundles back to the AppDelegate.
 
-        // Set up multiple downloads completion callback (batch)
-        viewModel.onMultipleDownloadsComplete = { [weak self] urls in
-            self?.onMultipleDownloadsComplete?(urls)
+        // Set up download started callback — dismiss sheet immediately
+        viewModel.onDownloadStarted = { [weak self] in
+            guard let self = self else { return }
+            self.onDownloadStarted?()
         }
 
         // Set up cancel callback
@@ -478,6 +482,9 @@ public class DatabaseBrowserViewModel: ObservableObject {
 
     /// Called when user cancels
     var onCancel: (() -> Void)?
+
+    /// Called when a download is kicked off so the sheet can dismiss immediately.
+    var onDownloadStarted: (() -> Void)?
 
     // MARK: - Services
 
@@ -1164,13 +1171,22 @@ public class DatabaseBrowserViewModel: ObservableObject {
         let genomeVM = genomeDownloadViewModel
         let genBankVM = genBankDownloadViewModel
 
+        // Build a descriptive title including accession(s) for the Downloads popover
+        let accessionList = recordsToDownload.prefix(3).map(\.accession).joined(separator: ", ")
+        let accessionSuffix = totalCount > 3 ? " +\(totalCount - 3) more" : ""
         let downloadTitle: String
         if currentSource == .ncbi && searchType == .nucleotide {
-            downloadTitle = "NCBI GenBank Bundle"
+            downloadTitle = totalCount == 1
+                ? recordsToDownload[0].accession
+                : "GenBank: \(accessionList)\(accessionSuffix)"
         } else if currentSource == .ncbi && searchType == .genome {
-            downloadTitle = "NCBI Genome Bundle"
+            downloadTitle = totalCount == 1
+                ? recordsToDownload[0].accession
+                : "Genome: \(accessionList)\(accessionSuffix)"
         } else {
-            downloadTitle = "\(currentSource.displayName) Download"
+            downloadTitle = totalCount == 1
+                ? recordsToDownload[0].accession
+                : "\(currentSource.displayName): \(accessionList)\(accessionSuffix)"
         }
         let downloadCenterTaskID = DownloadCenter.shared.start(
             title: downloadTitle,
@@ -1184,11 +1200,18 @@ public class DatabaseBrowserViewModel: ObservableObject {
             logger.info("performBatchDownload: Record[\(idx)] id=\(record.id, privacy: .public) accession=\(record.accession, privacy: .public)")
         }
 
+        // Dismiss the sheet immediately so the user can see the main window
+        // while the download progresses in the background via DownloadCenter.
+        // Bundle delivery happens through DownloadCenter.onBundleReady (set by
+        // AppDelegate at startup), eliminating the fragile callback chain through
+        // the sheet controller which gets deallocated on dismissal.
+        onDownloadStarted?()
+
         // Use Task.detached to break out of MainActor context.
         // This is critical when running in a modal sheet - regular Task {}
         // inherits MainActor isolation and may not execute due to the modal
         // run loop blocking task scheduling on MainActor.
-        Task.detached { [weak self] in
+        Task.detached {
             var downloadedURLs: [URL] = []
             var failedCount = 0
 
@@ -1200,13 +1223,11 @@ public class DatabaseBrowserViewModel: ObservableObject {
             logger.info("performBatchDownload: Created batch directory at \(batchDir.path, privacy: .public)")
 
             for (index, record) in recordsToDownload.enumerated() {
-                // Update progress via performOnMainRunLoop for modal compatibility
+                // Update progress via performOnMainRunLoop for modal compatibility.
+                // DownloadCenter update must not be gated on [weak self] since the
+                // view model may already be deallocated after sheet dismissal.
                 let progressFraction = Double(index) / Double(totalCount)
-                performOnMainRunLoop { [weak self] in
-                    guard let self = self else { return }
-                    self.objectWillChange.send()
-                    self.downloadProgress = progressFraction
-                    self._statusMessage = "Downloading \(record.accession) (\(index + 1)/\(totalCount))..."
+                performOnMainRunLoop {
                     DownloadCenter.shared.update(
                         id: downloadCenterTaskID,
                         progress: progressFraction,
@@ -1229,9 +1250,7 @@ public class DatabaseBrowserViewModel: ObservableObject {
                                 throw DatabaseServiceError.notFound(accession: record.accession)
                             }
 
-                            performOnMainRunLoop { [weak self] in
-                                self?.objectWillChange.send()
-                                self?._statusMessage = "Building genome bundle for \(record.accession)..."
+                            performOnMainRunLoop {
                                 DownloadCenter.shared.update(
                                     id: downloadCenterTaskID,
                                     progress: progressFraction,
@@ -1324,38 +1343,31 @@ public class DatabaseBrowserViewModel: ObservableObject {
                 }
             }
 
-            // Complete - update UI via performOnMainRunLoop
+            // Complete - update DownloadCenter with bundle URLs.
+            // DownloadCenter.onBundleReady (set by AppDelegate) handles importing
+            // the bundles into the sidebar. This avoids the fragile callback chain
+            // through the sheet controller which was deallocated on dismissal.
             let finalDownloadedURLs = downloadedURLs
             let finalFailedCount = failedCount
-            performOnMainRunLoop { [weak self] in
-                guard let self = self else { return }
-                self.objectWillChange.send()
-                self.downloadProgress = 1.0
-                self.isDownloading = false
-
+            performOnMainRunLoop {
                 if finalFailedCount > 0 {
-                    self._statusMessage = "Downloaded \(finalDownloadedURLs.count) files (\(finalFailedCount) failed)"
                     DownloadCenter.shared.fail(
                         id: downloadCenterTaskID,
                         detail: "Completed with \(finalFailedCount) failure(s)"
                     )
                 } else {
-                    self._statusMessage = "Downloaded \(finalDownloadedURLs.count) file\(finalDownloadedURLs.count == 1 ? "" : "s")"
+                    let bundleNames = finalDownloadedURLs.map { $0.deletingPathExtension().lastPathComponent }
+                    let detail = totalCount == 1
+                        ? "Bundle ready: \(bundleNames.first ?? "unknown")"
+                        : "Completed \(finalDownloadedURLs.count) bundle(s)"
                     DownloadCenter.shared.complete(
                         id: downloadCenterTaskID,
-                        detail: "Completed \(finalDownloadedURLs.count) download(s)"
+                        detail: detail,
+                        bundleURLs: finalDownloadedURLs
                     )
                 }
 
                 logger.info("performBatchDownload: Complete - \(finalDownloadedURLs.count) downloaded, \(finalFailedCount) failed")
-
-                // Notify completion with all downloaded URLs
-                if let multiCallback = self.onMultipleDownloadsComplete {
-                    multiCallback(finalDownloadedURLs)
-                } else if let singleCallback = self.onDownloadComplete, let firstURL = finalDownloadedURLs.first {
-                    // Fall back to single callback for first file
-                    singleCallback(firstURL)
-                }
             }
         }
     }

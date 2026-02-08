@@ -119,14 +119,16 @@ public class MainSplitViewController: NSSplitViewController {
     }
 
     private func configureActivityIndicator() {
-        // Create and add the activity indicator at the bottom of the view
+        // Floating activity indicator positioned above the bottom of the viewer area.
+        // Uses z-order above split view content to avoid NSSplitView clipping on macOS 26.
         activityIndicator = ActivityIndicatorView()
-        view.addSubview(activityIndicator)
+        view.addSubview(activityIndicator, positioned: .above, relativeTo: nil)
 
         NSLayoutConstraint.activate([
-            activityIndicator.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            activityIndicator.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            activityIndicator.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            activityIndicator.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            activityIndicator.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -40),
+            activityIndicator.widthAnchor.constraint(lessThanOrEqualToConstant: 500),
+            activityIndicator.widthAnchor.constraint(greaterThanOrEqualToConstant: 280),
         ])
 
         logger.info("configureActivityIndicator: Activity indicator configured")

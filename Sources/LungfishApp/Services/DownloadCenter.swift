@@ -21,6 +21,9 @@ public final class DownloadCenter: ObservableObject {
         public var state: State
         public var startedAt: Date
         public var finishedAt: Date?
+        /// File URLs produced by this download (e.g. .lungfishref bundle paths).
+        /// Set when the download completes via ``complete(id:detail:bundleURLs:)``.
+        public var bundleURLs: [URL]
 
         public init(
             id: UUID = UUID(),
@@ -29,7 +32,8 @@ public final class DownloadCenter: ObservableObject {
             progress: Double,
             state: State,
             startedAt: Date = Date(),
-            finishedAt: Date? = nil
+            finishedAt: Date? = nil,
+            bundleURLs: [URL] = []
         ) {
             self.id = id
             self.title = title
@@ -38,12 +42,17 @@ public final class DownloadCenter: ObservableObject {
             self.state = state
             self.startedAt = startedAt
             self.finishedAt = finishedAt
+            self.bundleURLs = bundleURLs
         }
     }
 
     public static let shared = DownloadCenter()
 
     @Published public private(set) var items: [Item] = []
+
+    /// Called when a download completes with bundle URLs that need importing.
+    /// The AppDelegate sets this once at startup to handle bundle import.
+    public var onBundleReady: (([URL]) -> Void)?
 
     public var activeCount: Int {
         items.filter { $0.state == .running }.count
@@ -72,6 +81,25 @@ public final class DownloadCenter: ObservableObject {
         items[index].detail = detail
         items[index].finishedAt = Date()
         trimCompletedItemsIfNeeded()
+    }
+
+    /// Completes a download and delivers bundle URLs to the app for import.
+    ///
+    /// This is the primary mechanism for getting built bundles from background
+    /// download tasks to the AppDelegate for import into the sidebar. It avoids
+    /// fragile callback chains through sheet controllers that get deallocated.
+    public func complete(id: UUID, detail: String, bundleURLs: [URL]) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].state = .completed
+        items[index].progress = 1
+        items[index].detail = detail
+        items[index].bundleURLs = bundleURLs
+        items[index].finishedAt = Date()
+        trimCompletedItemsIfNeeded()
+
+        if !bundleURLs.isEmpty {
+            onBundleReady?(bundleURLs)
+        }
     }
 
     public func fail(id: UUID, detail: String) {

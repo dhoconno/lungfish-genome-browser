@@ -198,4 +198,63 @@ final class DownloadCenterTests: XCTestCase {
         XCTAssertEqual(DownloadCenter.Item.State.completed.rawValue, "completed")
         XCTAssertEqual(DownloadCenter.Item.State.failed.rawValue, "failed")
     }
+
+    // MARK: - Bundle URLs
+
+    func testCompleteWithBundleURLsStoresURLs() {
+        let id = center.start(title: "Test", detail: "Starting...")
+        let urls = [URL(fileURLWithPath: "/tmp/test.lungfishref")]
+
+        center.complete(id: id, detail: "Done!", bundleURLs: urls)
+
+        let item = center.items.first
+        XCTAssertEqual(item?.state, .completed)
+        XCTAssertEqual(item?.bundleURLs.count, 1)
+        XCTAssertEqual(item?.bundleURLs.first?.lastPathComponent, "test.lungfishref")
+    }
+
+    func testCompleteWithBundleURLsFiresOnBundleReady() {
+        var receivedURLs: [URL]?
+        center.onBundleReady = { urls in
+            receivedURLs = urls
+        }
+
+        let id = center.start(title: "Test", detail: "Starting...")
+        let urls = [URL(fileURLWithPath: "/tmp/a.lungfishref"), URL(fileURLWithPath: "/tmp/b.lungfishref")]
+
+        center.complete(id: id, detail: "Done!", bundleURLs: urls)
+
+        XCTAssertEqual(receivedURLs?.count, 2)
+        XCTAssertEqual(receivedURLs?.first?.lastPathComponent, "a.lungfishref")
+    }
+
+    func testCompleteWithEmptyBundleURLsDoesNotFireCallback() {
+        var callbackFired = false
+        center.onBundleReady = { _ in
+            callbackFired = true
+        }
+
+        let id = center.start(title: "Test", detail: "Starting...")
+        center.complete(id: id, detail: "Done!", bundleURLs: [])
+
+        XCTAssertFalse(callbackFired)
+    }
+
+    func testCompleteWithoutBundleURLsDoesNotFireCallback() {
+        var callbackFired = false
+        center.onBundleReady = { _ in
+            callbackFired = true
+        }
+
+        let id = center.start(title: "Test", detail: "Starting...")
+        center.complete(id: id, detail: "Done!")
+
+        XCTAssertFalse(callbackFired)
+    }
+
+    func testStartItemHasEmptyBundleURLs() {
+        let id = center.start(title: "Test", detail: "Starting...")
+        let item = center.items.first { $0.id == id }
+        XCTAssertEqual(item?.bundleURLs, [])
+    }
 }

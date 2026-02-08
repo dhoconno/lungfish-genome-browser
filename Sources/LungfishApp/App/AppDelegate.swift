@@ -273,6 +273,15 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         // Register for system notifications
         registerNotifications()
 
+        // Wire up DownloadCenter to handle bundle import when downloads complete.
+        // This is the primary mechanism for getting built bundles into the sidebar
+        // after background downloads finish. It replaces the fragile callback chain
+        // through sheet controllers that get deallocated on dismissal.
+        DownloadCenter.shared.onBundleReady = { [weak self] bundleURLs in
+            debugLog("DownloadCenter.onBundleReady: Received \(bundleURLs.count) bundle(s)")
+            self?.handleMultipleDownloadsSync(bundleURLs)
+        }
+
         // Check for command-line arguments
         let args = ProcessInfo.processInfo.arguments
 
@@ -1513,32 +1522,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         let browserController = DatabaseBrowserViewController(source: source)
 
-        // Handle single download completion (legacy callback)
-        browserController.onDownloadComplete = { [weak self] tempFileURL in
-            debugLog("onDownloadComplete: Received file \(tempFileURL.path)")
-
-            // Store the URL first, before dismissing the sheet
-            self?.pendingDownloadTempURL = tempFileURL
-            debugLog("onDownloadComplete: Stored pending URL")
-
-            // Dismiss the sheet - the completion handler will process the download
+        // Dismiss the sheet immediately when a download is kicked off.
+        // The download continues in background via DownloadCenter. Bundle
+        // import is handled by DownloadCenter.onBundleReady (set in
+        // applicationDidFinishLaunching), eliminating the fragile callback
+        // chain through the sheet controller.
+        browserController.onDownloadStarted = {
+            debugLog("onDownloadStarted: Dismissing sheet immediately")
             if let sheet = window.attachedSheet {
-                debugLog("onDownloadComplete: Ending sheet")
-                window.endSheet(sheet)
-            }
-        }
-
-        // Handle multiple downloads completion (batch download)
-        browserController.onMultipleDownloadsComplete = { [weak self] tempFileURLs in
-            debugLog("onMultipleDownloadsComplete: Received \(tempFileURLs.count) files")
-
-            // Store the URLs first, before dismissing the sheet
-            self?.pendingDownloadTempURLs = tempFileURLs
-            debugLog("onMultipleDownloadsComplete: Stored \(tempFileURLs.count) pending URLs")
-
-            // Dismiss the sheet - the completion handler will process the downloads
-            if let sheet = window.attachedSheet {
-                debugLog("onMultipleDownloadsComplete: Ending sheet")
                 window.endSheet(sheet)
             }
         }
@@ -1547,23 +1538,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         let browserWindow = NSWindow(contentViewController: browserController)
         browserWindow.title = "Search \(source.displayName)"
 
-        window.beginSheet(browserWindow) { [weak self] _ in
+        window.beginSheet(browserWindow) { _ in
             debugLog("Sheet dismissed callback executing")
-            // Sheet is now fully dismissed - safe to process the downloads
-
-            // Check for multiple downloads first
-            if let tempURLs = self?.pendingDownloadTempURLs, !tempURLs.isEmpty {
-                self?.pendingDownloadTempURLs = nil
-                debugLog("Sheet dismissed: Processing \(tempURLs.count) pending downloads")
-                self?.handleMultipleDownloadsSync(tempURLs)
-            } else if let tempURL = self?.pendingDownloadTempURL {
-                // Fall back to single download
-                self?.pendingDownloadTempURL = nil
-                debugLog("Sheet dismissed: Processing pending download \(tempURL.path)")
-                self?.handleDownloadedFileSync(at: tempURL)
-            } else {
-                debugLog("Sheet dismissed: No pending URLs")
-            }
         }
     }
 
@@ -1754,8 +1730,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             var baseName = tempURL.deletingPathExtension().lastPathComponent
 
             // Strip the UID suffix from batch downloads (format: "accession_uid.ext" -> "accession.ext")
-            // UIDs are numeric, so we look for _digits at the end of the basename
-            if let underscoreRange = baseName.range(of: "_", options: .backwards) {
+            // UIDs are numeric, so we look for _digits at the end of the basename.
+            // Skip for .lungfishref bundles — their filenames are already clean accessions
+            // and accession numbers like NC_045512 contain underscore+digits that would be
+            // incorrectly stripped.
+            if fileExtension != "lungfishref",
+               let underscoreRange = baseName.range(of: "_", options: .backwards) {
                 let potentialUID = String(baseName[underscoreRange.upperBound...])
                 // Check if everything after the underscore is digits (a UID)
                 if !potentialUID.isEmpty && potentialUID.allSatisfy({ $0.isNumber }) {

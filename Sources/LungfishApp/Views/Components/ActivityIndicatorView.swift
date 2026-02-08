@@ -4,10 +4,10 @@
 
 import AppKit
 
-/// A reusable activity indicator view that can show indeterminate or determinate progress.
+/// A floating activity indicator that appears above the bottom of its superview.
 ///
-/// This view displays at the bottom of the window content area (similar to Xcode's activity view)
-/// and can be used for various operations like file imports, downloads, and processing.
+/// Displays as a rounded capsule with a blur background, spinner, and status text.
+/// Positioned as a floating overlay to avoid clipping issues with NSSplitView on macOS 26.
 ///
 /// Usage:
 /// ```swift
@@ -31,12 +31,15 @@ public final class ActivityIndicatorView: NSView {
 
     // MARK: - Properties
 
-    /// Background visual effect view for vibrancy
+    /// Background blur view with rounded corners
     private let backgroundView: NSVisualEffectView = {
         let view = NSVisualEffectView()
         view.blendingMode = .withinWindow
-        view.material = .headerView
+        view.material = .hudWindow
         view.state = .active
+        view.wantsLayer = true
+        view.layer?.cornerRadius = 10
+        view.layer?.masksToBounds = true
         view.translatesAutoresizingMaskIntoConstraints = false
         return view
     }()
@@ -53,8 +56,8 @@ public final class ActivityIndicatorView: NSView {
     /// The message label
     private let messageLabel: NSTextField = {
         let label = NSTextField(labelWithString: "")
-        label.font = NSFont.systemFont(ofSize: 11)
-        label.textColor = .secondaryLabelColor
+        label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        label.textColor = .labelColor
         label.lineBreakMode = .byTruncatingTail
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
@@ -77,12 +80,6 @@ public final class ActivityIndicatorView: NSView {
     /// Whether the indicator is currently visible
     public private(set) var isVisible: Bool = false
 
-    /// Height constraint for animation
-    private var heightConstraint: NSLayoutConstraint?
-
-    /// The standard height when visible
-    private let visibleHeight: CGFloat = 24
-
     // MARK: - Initialization
 
     public override init(frame frameRect: NSRect) {
@@ -97,6 +94,13 @@ public final class ActivityIndicatorView: NSView {
 
     private func setupView() {
         translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        // Drop shadow for floating appearance
+        shadow = NSShadow()
+        layer?.shadowColor = NSColor.black.withAlphaComponent(0.3).cgColor
+        layer?.shadowOffset = CGSize(width: 0, height: -2)
+        layer?.shadowRadius = 8
+        layer?.shadowOpacity = 1
 
         // Add background
         addSubview(backgroundView)
@@ -106,10 +110,6 @@ public final class ActivityIndicatorView: NSView {
         backgroundView.addSubview(messageLabel)
         backgroundView.addSubview(cancelButton)
 
-        // Setup constraints
-        heightConstraint = heightAnchor.constraint(equalToConstant: 0)
-        heightConstraint?.isActive = true
-
         NSLayoutConstraint.activate([
             // Background fills entire view
             backgroundView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -117,19 +117,22 @@ public final class ActivityIndicatorView: NSView {
             backgroundView.topAnchor.constraint(equalTo: topAnchor),
             backgroundView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
+            // Fixed height
+            heightAnchor.constraint(equalToConstant: 36),
+
             // Progress indicator on the left
-            progressIndicator.leadingAnchor.constraint(equalTo: backgroundView.leadingAnchor, constant: 8),
+            progressIndicator.leadingAnchor.constraint(equalTo: backgroundView.leadingAnchor, constant: 12),
             progressIndicator.centerYAnchor.constraint(equalTo: backgroundView.centerYAnchor),
-            progressIndicator.widthAnchor.constraint(equalToConstant: 16),
-            progressIndicator.heightAnchor.constraint(equalToConstant: 16),
+            progressIndicator.widthAnchor.constraint(equalToConstant: 18),
+            progressIndicator.heightAnchor.constraint(equalToConstant: 18),
 
             // Message label after indicator
-            messageLabel.leadingAnchor.constraint(equalTo: progressIndicator.trailingAnchor, constant: 6),
+            messageLabel.leadingAnchor.constraint(equalTo: progressIndicator.trailingAnchor, constant: 8),
             messageLabel.centerYAnchor.constraint(equalTo: backgroundView.centerYAnchor),
             messageLabel.trailingAnchor.constraint(lessThanOrEqualTo: cancelButton.leadingAnchor, constant: -8),
 
             // Cancel button on the right
-            cancelButton.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor, constant: -8),
+            cancelButton.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor, constant: -12),
             cancelButton.centerYAnchor.constraint(equalTo: backgroundView.centerYAnchor),
         ])
 
@@ -137,8 +140,9 @@ public final class ActivityIndicatorView: NSView {
         cancelButton.target = self
         cancelButton.action = #selector(cancelPressed)
 
-        // Initially hidden (zero height)
+        // Initially hidden
         isHidden = true
+        alphaValue = 0
     }
 
     // MARK: - Public API
@@ -171,10 +175,9 @@ public final class ActivityIndicatorView: NSView {
             isHidden = false
 
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.2
+                context.duration = 0.25
                 context.allowsImplicitAnimation = true
-                heightConstraint?.constant = visibleHeight
-                superview?.layoutSubtreeIfNeeded()
+                alphaValue = 1
             }
         }
     }
@@ -201,10 +204,9 @@ public final class ActivityIndicatorView: NSView {
         progressIndicator.stopAnimation(nil)
 
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.2
+            context.duration = 0.25
             context.allowsImplicitAnimation = true
-            heightConstraint?.constant = 0
-            superview?.layoutSubtreeIfNeeded()
+            alphaValue = 0
         }, completionHandler: { [weak self] in
             self?.isHidden = true
             self?.isVisible = false
