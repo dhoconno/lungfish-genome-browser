@@ -308,9 +308,8 @@ struct BundleCreateSubcommand: AsyncParsableCommand {
             print(formatter.info("Creating bundle '\(name)'..."))
         }
 
-        // Use NativeBundleBuilder which uses locally installed bioinformatics tools
-        // (samtools, bcftools, bgzip, etc.) via Homebrew or bundled with the app.
-        // This is more reliable than containers and works on all macOS versions.
+        // Use NativeBundleBuilder which uses bundled bioinformatics tools
+        // (samtools, bcftools, bgzip, etc.) from the app bundle's Resources/Tools.
         let bundleURL: URL
         let builder = await NativeBundleBuilder()
 

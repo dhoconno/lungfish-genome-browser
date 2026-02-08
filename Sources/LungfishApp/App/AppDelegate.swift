@@ -1598,9 +1598,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         // Determine destination
         let destinationDirectory: URL
         if let projectURL = DocumentManager.shared.activeProject?.url {
-            destinationDirectory = projectURL.appendingPathComponent("downloads", isDirectory: true)
+            destinationDirectory = projectURL.appendingPathComponent("Downloads", isDirectory: true)
         } else if let workingURL = workingDirectoryURL {
-            destinationDirectory = workingURL.appendingPathComponent("downloads", isDirectory: true)
+            destinationDirectory = workingURL.appendingPathComponent("Downloads", isDirectory: true)
         } else {
             let downloadsURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
             destinationDirectory = downloadsURL.appendingPathComponent("Lungfish Downloads", isDirectory: true)
@@ -1642,6 +1642,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         }
 
         debugLog("handleDownloadedFileSync: viewerController=\(viewerController != nil), sidebarController=\(sidebarController != nil)")
+
+        // Bundles are directories and should be surfaced directly in the sidebar.
+        if destinationURL.pathExtension.lowercased() == "lungfishref" {
+            activityIndicator?.hide()
+            sidebarController?.reloadFromFilesystem()
+            sidebarController?.selectItem(forURL: destinationURL)
+            return
+        }
 
         activityIndicator?.updateMessage("Loading \(destinationURL.lastPathComponent)...")
 
@@ -1720,9 +1728,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         // Determine destination directory
         let destinationDirectory: URL
         if let projectURL = DocumentManager.shared.activeProject?.url {
-            destinationDirectory = projectURL.appendingPathComponent("downloads", isDirectory: true)
+            destinationDirectory = projectURL.appendingPathComponent("Downloads", isDirectory: true)
         } else if let workingURL = workingDirectoryURL {
-            destinationDirectory = workingURL.appendingPathComponent("downloads", isDirectory: true)
+            destinationDirectory = workingURL.appendingPathComponent("Downloads", isDirectory: true)
         } else {
             let downloadsURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
             destinationDirectory = downloadsURL.appendingPathComponent("Lungfish Downloads", isDirectory: true)
@@ -1782,6 +1790,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         // Now load the first file to display (load others in background)
         if let firstURL = copiedURLs.first {
+            if firstURL.pathExtension.lowercased() == "lungfishref" {
+                activityIndicator?.hide()
+                sidebarController?.reloadFromFilesystem()
+                sidebarController?.selectItem(forURL: firstURL)
+                debugLog("handleMultipleDownloadsSync: Imported \(copiedURLs.count) bundle(s)")
+                return
+            }
+
             activityIndicator?.updateMessage("Loading \(firstURL.lastPathComponent)...")
 
             loadFileInBackground(at: firstURL) { result in
@@ -1830,10 +1846,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         let destinationDirectory: URL
         if let projectURL = DocumentManager.shared.activeProject?.url {
             // Save to project's "downloads" subdirectory
-            destinationDirectory = projectURL.appendingPathComponent("downloads", isDirectory: true)
+            destinationDirectory = projectURL.appendingPathComponent("Downloads", isDirectory: true)
         } else if let workingURL = workingDirectoryURL {
             // Save to working directory's "downloads" subdirectory
-            destinationDirectory = workingURL.appendingPathComponent("downloads", isDirectory: true)
+            destinationDirectory = workingURL.appendingPathComponent("Downloads", isDirectory: true)
         } else {
             // Fall back to user's Downloads folder with a Lungfish subdirectory
             let downloadsURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!

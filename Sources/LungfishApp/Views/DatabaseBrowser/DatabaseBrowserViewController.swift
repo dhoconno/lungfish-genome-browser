@@ -28,6 +28,27 @@ private func performOnMainRunLoop(_ block: @escaping @MainActor @Sendable () -> 
     RunLoop.main.add(timer, forMode: .common)
 }
 
+/// Executes an async MainActor operation through the run loop in common modes.
+///
+/// This avoids modal-sheet scheduling stalls when detached tasks need to invoke
+/// MainActor-isolated async work.
+private func runMainActorAsync<T: Sendable>(
+    _ operation: @escaping @MainActor @Sendable () async throws -> T
+) async throws -> T {
+    try await withCheckedThrowingContinuation { continuation in
+        performOnMainRunLoop {
+            Task { @MainActor in
+                do {
+                    let value = try await operation()
+                    continuation.resume(returning: value)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+}
+
 /// Formats a byte count as a human-readable file size string.
 private func formatFileSize(_ bytes: Int64) -> String {
     let formatter = ByteCountFormatter()
@@ -204,6 +225,69 @@ public enum SearchPhase: Equatable {
     }
 }
 
+// MARK: - Molecule Type Filter
+
+/// Molecule type options for NCBI nucleotide search filtering.
+public enum MoleculeTypeFilter: String, CaseIterable, Identifiable, Sendable {
+    case any = "Any"
+    case genomicDNA = "Genomic DNA"
+    case mRNA = "mRNA"
+    case rRNA = "rRNA"
+    case tRNA = "tRNA"
+    case genomicRNA = "Genomic RNA"
+    case crRNA = "crRNA"
+
+    public var id: String { rawValue }
+
+    /// Entrez field value for [Molecule Type] queries
+    var entrezValue: String? {
+        switch self {
+        case .any: return nil
+        case .genomicDNA: return "genomic DNA"
+        case .mRNA: return "mRNA"
+        case .rRNA: return "rRNA"
+        case .tRNA: return "tRNA"
+        case .genomicRNA: return "genomic RNA"
+        case .crRNA: return "crRNA"
+        }
+    }
+}
+
+// MARK: - Sequence Property Filter
+
+/// Property filters for NCBI nucleotide searches (uses [Properties] field).
+public enum SequencePropertyFilter: String, CaseIterable, Identifiable, Sendable {
+    case hasCDS = "Has CDS"
+    case hasGene = "Has Gene"
+    case hasSource = "Has Source"
+    case hasTRNA = "Has tRNA"
+    case hasRRNA = "Has rRNA"
+
+    public var id: String { rawValue }
+
+    /// Entrez filter term for this property
+    var entrezFilter: String {
+        switch self {
+        case .hasCDS: return "cds[Feature key]"
+        case .hasGene: return "gene[Feature key]"
+        case .hasSource: return "source[Feature key]"
+        case .hasTRNA: return "tRNA[Feature key]"
+        case .hasRRNA: return "rRNA[Feature key]"
+        }
+    }
+
+    /// SF Symbol icon for the property
+    var icon: String {
+        switch self {
+        case .hasCDS: return "chevron.left.forwardslash.chevron.right"
+        case .hasGene: return "dna"
+        case .hasSource: return "leaf"
+        case .hasTRNA: return "arrow.triangle.branch"
+        case .hasRRNA: return "waveform"
+        }
+    }
+}
+
 // MARK: - DatabaseBrowserViewModel
 
 /// View model for the database browser.
@@ -217,9 +301,6 @@ public class DatabaseBrowserViewModel: ObservableObject {
 
     /// NCBI search type (GenBank, Genome, Virus)
     @Published var ncbiSearchType: NCBISearchType = .nucleotide
-
-    /// Download format for NCBI (GenBank or FASTA)
-    @Published var downloadFormat: NCBIFormat = .genbank
 
     /// Search query text
     @Published var searchText = ""
@@ -236,6 +317,15 @@ public class DatabaseBrowserViewModel: ObservableObject {
     /// Optional location filter (advanced)
     @Published var locationFilter = ""
 
+    /// Optional gene name filter (advanced)
+    @Published var geneFilter = ""
+
+    /// Optional author filter (advanced)
+    @Published var authorFilter = ""
+
+    /// Optional journal filter (advanced)
+    @Published var journalFilter = ""
+
     /// Minimum sequence length filter
     @Published var minLength: String = ""
 
@@ -244,6 +334,18 @@ public class DatabaseBrowserViewModel: ObservableObject {
 
     /// Whether to filter to RefSeq sequences only (for Virus search)
     @Published var refseqOnly: Bool = false
+
+    /// Molecule type filter (e.g., "genomic DNA", "mRNA")
+    @Published var moleculeType: MoleculeTypeFilter = .any
+
+    /// Publication date range: start date
+    @Published var pubDateFrom: String = ""
+
+    /// Publication date range: end date
+    @Published var pubDateTo: String = ""
+
+    /// Sequence property filters (Has CDS, Has Gene, etc.)
+    @Published var propertyFilters: Set<SequencePropertyFilter> = []
 
     /// Search results from the API
     @Published var results: [SearchResultRecord] = []
@@ -340,7 +442,14 @@ public class DatabaseBrowserViewModel: ObservableObject {
         var count = 0
         if !organismFilter.isEmpty { count += 1 }
         if !locationFilter.isEmpty { count += 1 }
+        if !geneFilter.isEmpty { count += 1 }
+        if !authorFilter.isEmpty { count += 1 }
+        if !journalFilter.isEmpty { count += 1 }
         if !minLength.isEmpty || !maxLength.isEmpty { count += 1 }
+        if refseqOnly && (ncbiSearchType == .nucleotide || ncbiSearchType == .virus) { count += 1 }
+        if moleculeType != .any { count += 1 }
+        if !pubDateFrom.isEmpty || !pubDateTo.isEmpty { count += 1 }
+        count += propertyFilters.count
         return count
     }
 
@@ -377,6 +486,9 @@ public class DatabaseBrowserViewModel: ObservableObject {
 
     /// View model for genome assembly downloads (FASTA + GFF3 + bundle building).
     private lazy var genomeDownloadViewModel = GenomeDownloadViewModel(ncbiService: ncbiService)
+
+    /// View model for GenBank nucleotide downloads to .lungfishref bundles.
+    private lazy var genBankDownloadViewModel = GenBankBundleDownloadViewModel(ncbiService: ncbiService)
 
     // MARK: - Initialization
 
@@ -426,8 +538,16 @@ public class DatabaseBrowserViewModel: ObservableObject {
     func clearFilters() {
         organismFilter = ""
         locationFilter = ""
+        geneFilter = ""
+        authorFilter = ""
+        journalFilter = ""
         minLength = ""
         maxLength = ""
+        refseqOnly = false
+        moleculeType = .any
+        pubDateFrom = ""
+        pubDateTo = ""
+        propertyFilters = []
     }
 
     /// Cancels the current search operation
@@ -463,14 +583,17 @@ public class DatabaseBrowserViewModel: ObservableObject {
         logger.info("performSearch: Starting search task")
 
         // Capture values we need for the search (value types are safe to capture)
-        let searchTerm = buildSearchTerm()
+        let searchTerm = buildSearchTerm(
+            for: ncbiSearchType,
+            includeRefSeqFilter: refseqOnly
+        )
         logger.info("performSearch: Built search term: '\(searchTerm, privacy: .public)'")
         logger.info("performSearch: Search scope: \(self.searchScope.rawValue, privacy: .public)")
 
         let query = SearchQuery(
             term: searchTerm,
-            organism: organismFilter.isEmpty ? nil : organismFilter,
-            location: locationFilter.isEmpty ? nil : locationFilter,
+            organism: nil,
+            location: nil,
             minLength: Int(minLength),
             maxLength: Int(maxLength),
             limit: 200  // Increased from 50 to show more results
@@ -515,9 +638,45 @@ public class DatabaseBrowserViewModel: ObservableObject {
                     // Use the appropriate search method based on search type
                     switch searchType {
                     case .nucleotide:
-                        logger.info("performSearch: Calling NCBI nucleotide search")
-                        searchResults = try await ncbi.search(query)
-                        logger.info("performSearch: NCBI returned \(searchResults.totalCount) total, \(searchResults.records.count) records")
+                        logger.info("performSearch: Calling NCBI nucleotide search (refseqOnly=\(useRefseqOnly))")
+                        let nucleotideResult = try await ncbi.searchNucleotide(
+                            term: query.term,
+                            retmax: query.limit,
+                            retstart: query.offset,
+                            refseqOnly: useRefseqOnly
+                        )
+                        logger.info("performSearch: Nucleotide search returned \(nucleotideResult.totalCount) total, \(nucleotideResult.ids.count) IDs")
+
+                        guard !nucleotideResult.ids.isEmpty else {
+                            performOnMainRunLoop { [weak self] in
+                                self?.objectWillChange.send()
+                                self?.results = []
+                                self?.totalResultCount = nucleotideResult.totalCount
+                                self?.hasMoreResults = false
+                                self?.searchPhase = .complete(count: 0)
+                            }
+                            return
+                        }
+
+                        let summaries = try await ncbi.esummary(database: .nucleotide, ids: nucleotideResult.ids)
+                        let records = summaries.map { summary in
+                            SearchResultRecord(
+                                id: summary.uid,
+                                accession: summary.accessionVersion ?? summary.uid,
+                                title: summary.title ?? "Unknown",
+                                organism: summary.organism,
+                                length: summary.length,
+                                date: summary.createDate,
+                                source: .ncbi
+                            )
+                        }
+                        let hasMore = nucleotideResult.totalCount > (query.offset + records.count)
+                        searchResults = SearchResults(
+                            totalCount: nucleotideResult.totalCount,
+                            records: records,
+                            hasMore: hasMore,
+                            nextCursor: hasMore ? String(query.offset + records.count) : nil
+                        )
 
                     case .virus:
                         // Use viral taxonomy filter
@@ -696,12 +855,16 @@ public class DatabaseBrowserViewModel: ObservableObject {
     /// When "All Fields" scope is selected, we do NOT add the [All Fields] qualifier
     /// because NCBI's default behavior (no qualifier) actually provides better results
     /// for general searches. The [All Fields] qualifier can be too strict in some cases.
-    private func buildSearchTerm() -> String {
+    private func buildSearchTerm(
+        for searchType: NCBISearchType,
+        includeRefSeqFilter: Bool
+    ) -> String {
         let term = searchText.trimmingCharacters(in: .whitespaces)
 
         // Log the raw input for debugging
         logger.debug("buildSearchTerm: Raw input='\(term, privacy: .public)', scope=\(self.searchScope.rawValue, privacy: .public)")
 
+        let scopedTerm: String
         switch searchScope {
         case .all:
             // For "All Fields" scope, return the term without any qualifier.
@@ -712,21 +875,80 @@ public class DatabaseBrowserViewModel: ObservableObject {
             // If the user's term already contains field qualifiers (e.g., "[Organism]"),
             // we preserve those as-is.
             logger.debug("buildSearchTerm: Using unqualified term for All Fields scope")
-            return term
+            scopedTerm = term
         case .accession:
             // Accession searches work best without a field qualifier
             // NCBI automatically matches accession patterns
             logger.debug("buildSearchTerm: Using unqualified term for Accession scope")
-            return term
+            scopedTerm = term
         case .organism:
             let result = "\(term)[Organism]"
             logger.debug("buildSearchTerm: Built organism query='\(result, privacy: .public)'")
-            return result
+            scopedTerm = result
         case .title:
             let result = "\(term)[Title]"
             logger.debug("buildSearchTerm: Built title query='\(result, privacy: .public)'")
-            return result
+            scopedTerm = result
         }
+
+        var clauses: [String] = [scopedTerm]
+
+        if !organismFilter.isEmpty {
+            clauses.append("\(fieldValue(organismFilter))[Organism]")
+        }
+        if !locationFilter.isEmpty {
+            clauses.append("\(fieldValue(locationFilter))[Location]")
+        }
+        if !geneFilter.isEmpty {
+            clauses.append("\(fieldValue(geneFilter))[Gene]")
+        }
+        if !authorFilter.isEmpty {
+            clauses.append("\(fieldValue(authorFilter))[Author]")
+        }
+        if !journalFilter.isEmpty {
+            clauses.append("\(fieldValue(journalFilter))[Journal]")
+        }
+
+        // Molecule type filter
+        if let molValue = moleculeType.entrezValue {
+            clauses.append("\"\(molValue)\"[Molecule Type]")
+        }
+
+        // Publication date range (YYYY/MM/DD format for Entrez)
+        let dateFrom = pubDateFrom.trimmingCharacters(in: .whitespaces)
+        let dateTo = pubDateTo.trimmingCharacters(in: .whitespaces)
+        if !dateFrom.isEmpty || !dateTo.isEmpty {
+            let lower = dateFrom.isEmpty ? "1900/01/01" : dateFrom
+            let upper = dateTo.isEmpty ? "3000/12/31" : dateTo
+            clauses.append("\(lower):\(upper)[Publication Date]")
+        }
+
+        // Sequence property filters (Feature key)
+        for prop in propertyFilters.sorted(by: { $0.rawValue < $1.rawValue }) {
+            clauses.append(prop.entrezFilter)
+        }
+
+        let minLen = minLength.trimmingCharacters(in: .whitespaces)
+        let maxLen = maxLength.trimmingCharacters(in: .whitespaces)
+        if !minLen.isEmpty || !maxLen.isEmpty {
+            let lower = minLen.isEmpty ? "1" : minLen
+            let upper = maxLen.isEmpty ? "*" : maxLen
+            clauses.append("\(lower):\(upper)[SLEN]")
+        }
+
+        if includeRefSeqFilter && searchType == .nucleotide {
+            clauses.append("refseq[filter]")
+        }
+
+        return clauses.joined(separator: " AND ")
+    }
+
+    private func fieldValue(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.contains(" ") {
+            return "\"\(trimmed)\""
+        }
+        return trimmed
     }
 
     /// Initiates a download operation for the selected record.
@@ -936,11 +1158,24 @@ public class DatabaseBrowserViewModel: ObservableObject {
         let ncbi = ncbiService
         let ena = enaService
         let currentSource = source
-        let format = downloadFormat
         let searchType = ncbiSearchType
 
         // Capture the genome download view model for genome assembly downloads
         let genomeVM = genomeDownloadViewModel
+        let genBankVM = genBankDownloadViewModel
+
+        let downloadTitle: String
+        if currentSource == .ncbi && searchType == .nucleotide {
+            downloadTitle = "NCBI GenBank Bundle"
+        } else if currentSource == .ncbi && searchType == .genome {
+            downloadTitle = "NCBI Genome Bundle"
+        } else {
+            downloadTitle = "\(currentSource.displayName) Download"
+        }
+        let downloadCenterTaskID = DownloadCenter.shared.start(
+            title: downloadTitle,
+            detail: "Preparing \(totalCount) record(s)..."
+        )
 
         // Log details about selected records for debugging
         logger.info("performBatchDownload: Starting download of \(totalCount) record(s)")
@@ -972,6 +1207,11 @@ public class DatabaseBrowserViewModel: ObservableObject {
                     self.objectWillChange.send()
                     self.downloadProgress = progressFraction
                     self._statusMessage = "Downloading \(record.accession) (\(index + 1)/\(totalCount))..."
+                    DownloadCenter.shared.update(
+                        id: downloadCenterTaskID,
+                        progress: progressFraction,
+                        detail: "Downloading \(record.accession) (\(index + 1)/\(totalCount))"
+                    )
                 }
 
                 do {
@@ -992,32 +1232,41 @@ public class DatabaseBrowserViewModel: ObservableObject {
                             performOnMainRunLoop { [weak self] in
                                 self?.objectWillChange.send()
                                 self?._statusMessage = "Building genome bundle for \(record.accession)..."
+                                DownloadCenter.shared.update(
+                                    id: downloadCenterTaskID,
+                                    progress: progressFraction,
+                                    detail: "Building genome bundle for \(record.accession)"
+                                )
                             }
 
                             // Invoke the @MainActor GenomeDownloadViewModel
-                            let bundleURL = try await genomeVM.downloadAndBuild(
-                                assembly: summary,
-                                outputDirectory: batchDir
-                            )
+                            let bundleURL = try await runMainActorAsync {
+                                try await genomeVM.downloadAndBuild(
+                                    assembly: summary,
+                                    outputDirectory: batchDir
+                                )
+                            }
 
                             fileURL = bundleURL
                             logger.info("performBatchDownload: Built genome bundle at \(bundleURL.path, privacy: .public)")
-                        } else if format == .fasta {
-                            // Standard nucleotide FASTA download
-                            let (fastaContent, resolvedAccession) = try await ncbi.fetchRawFASTA(accession: record.accession)
-                            // Use record.id to ensure unique filename even if accessions match
-                            let filename = "\(resolvedAccession)_\(record.id).fasta"
-                            fileURL = batchDir.appendingPathComponent(filename)
-                            try fastaContent.write(to: fileURL, atomically: true, encoding: .utf8)
-                            logger.info("performBatchDownload: Wrote file \(filename, privacy: .public)")
                         } else {
-                            // Default to GenBank format
-                            let (genBankContent, resolvedAccession) = try await ncbi.fetchRawGenBank(accession: record.accession)
-                            // Use record.id to ensure unique filename even if accessions match
-                            let filename = "\(resolvedAccession)_\(record.id).gb"
-                            fileURL = batchDir.appendingPathComponent(filename)
-                            try genBankContent.write(to: fileURL, atomically: true, encoding: .utf8)
-                            logger.info("performBatchDownload: Wrote file \(filename, privacy: .public)")
+                            // Nucleotide and virus downloads always end as .lungfishref bundles.
+                            logger.info("performBatchDownload: Starting GenBank bundle build for \(record.accession, privacy: .public)")
+                            let bundleURL = try await genBankVM.downloadAndBuild(
+                                accession: record.accession,
+                                outputDirectory: batchDir
+                            ) { progress, message in
+                                let overall = (Double(index) + progress) / Double(totalCount)
+                                performOnMainRunLoop {
+                                    DownloadCenter.shared.update(
+                                        id: downloadCenterTaskID,
+                                        progress: overall,
+                                        detail: "\(record.accession): \(message)"
+                                    )
+                                }
+                            }
+                            fileURL = bundleURL
+                            logger.info("performBatchDownload: Built GenBank bundle at \(bundleURL.path, privacy: .public)")
                         }
 
                     case .ena:
@@ -1086,8 +1335,16 @@ public class DatabaseBrowserViewModel: ObservableObject {
 
                 if finalFailedCount > 0 {
                     self._statusMessage = "Downloaded \(finalDownloadedURLs.count) files (\(finalFailedCount) failed)"
+                    DownloadCenter.shared.fail(
+                        id: downloadCenterTaskID,
+                        detail: "Completed with \(finalFailedCount) failure(s)"
+                    )
                 } else {
                     self._statusMessage = "Downloaded \(finalDownloadedURLs.count) file\(finalDownloadedURLs.count == 1 ? "" : "s")"
+                    DownloadCenter.shared.complete(
+                        id: downloadCenterTaskID,
+                        detail: "Completed \(finalDownloadedURLs.count) download(s)"
+                    )
                 }
 
                 logger.info("performBatchDownload: Complete - \(finalDownloadedURLs.count) downloaded, \(finalFailedCount) failed")
@@ -1358,8 +1615,8 @@ public struct DatabaseBrowserView: View {
                         .help(viewModel.ncbiSearchType.helpText)
                     }
 
-                    // RefSeq filter (only for Virus search)
-                    if viewModel.ncbiSearchType == .virus {
+                    // RefSeq filter for GenBank and Virus searches
+                    if viewModel.ncbiSearchType == .virus || viewModel.ncbiSearchType == .nucleotide {
                         Toggle("RefSeq Only", isOn: $viewModel.refseqOnly)
                             .font(.caption)
                             .toggleStyle(.checkbox)
@@ -1367,22 +1624,6 @@ public struct DatabaseBrowserView: View {
                     }
 
                     Spacer()
-
-                    // Download format selector
-                    HStack(spacing: 8) {
-                        Text("Format:")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-
-                        Picker("", selection: $viewModel.downloadFormat) {
-                            ForEach(NCBIFormat.downloadFormats) { format in
-                                Text(format.displayName).tag(format)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: 150)
-                        .help("Choose download format: GenBank (with annotations) or FASTA (sequence only)")
-                    }
                 }
             }
         }
@@ -1661,8 +1902,52 @@ public struct DatabaseBrowserView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            // Length range row
+            // GenBank-specific metadata filters
             HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Gene", systemImage: "dna")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    TextField("e.g., S", text: $viewModel.geneFilter)
+                        .textFieldStyle(.roundedBorder)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Author", systemImage: "person.text.rectangle")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    TextField("e.g., Wu F", text: $viewModel.authorFilter)
+                        .textFieldStyle(.roundedBorder)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Journal", systemImage: "book.closed")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    TextField("e.g., Nature", text: $viewModel.journalFilter)
+                        .textFieldStyle(.roundedBorder)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            // Molecule type and sequence length row
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Molecule Type", systemImage: "testtube.2")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    Picker("", selection: $viewModel.moleculeType) {
+                        ForEach(MoleculeTypeFilter.allCases) { type in
+                            Text(type.rawValue).tag(type)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 140)
+                }
+
                 VStack(alignment: .leading, spacing: 4) {
                     Label("Sequence Length", systemImage: "ruler")
                         .font(.caption)
@@ -1689,8 +1974,58 @@ public struct DatabaseBrowserView: View {
                 Spacer()
             }
 
+            // Publication date range row
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Publication Date", systemImage: "calendar")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    HStack(spacing: 8) {
+                        TextField("YYYY/MM/DD", text: $viewModel.pubDateFrom)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 110)
+
+                        Text("to")
+                            .foregroundColor(.secondary)
+
+                        TextField("YYYY/MM/DD", text: $viewModel.pubDateTo)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 110)
+                    }
+                }
+
+                Spacer()
+            }
+
+            // Sequence properties row
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Sequence Properties", systemImage: "tag")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                HStack(spacing: 12) {
+                    ForEach(SequencePropertyFilter.allCases) { prop in
+                        Toggle(isOn: Binding(
+                            get: { viewModel.propertyFilters.contains(prop) },
+                            set: { selected in
+                                if selected {
+                                    viewModel.propertyFilters.insert(prop)
+                                } else {
+                                    viewModel.propertyFilters.remove(prop)
+                                }
+                            }
+                        )) {
+                            Label(prop.rawValue, systemImage: prop.icon)
+                                .font(.caption)
+                        }
+                        .toggleStyle(.checkbox)
+                    }
+                }
+            }
+
             // Help text
-            Text("Advanced filters are combined with AND logic. Leave empty to ignore a filter.")
+            Text("Advanced filters are combined with AND logic. Use RefSeq Only for curated reference records.")
                 .font(.caption2)
                 .foregroundColor(.secondary)
                 .padding(.top, 4)
@@ -2174,3 +2509,7 @@ extension SearchResultRecord: Hashable {
         hasher.combine(id)
     }
 }
+
+// NOTE: This view model uses detached tasks for modal-sheet compatibility and only
+// mutates actor-isolated state through explicit main-runloop callbacks.
+extension DatabaseBrowserViewModel: @unchecked Sendable {}

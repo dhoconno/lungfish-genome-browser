@@ -703,14 +703,14 @@ public class SidebarViewController: NSViewController {
 
     /// Adds a downloaded document to the Downloads folder within the project hierarchy.
     ///
-    /// This method places downloaded files (like NCBI downloads) into a "downloads" subfolder
+    /// This method places downloaded files (like NCBI downloads) into a "Downloads" subfolder
     /// within the project structure, rather than the "OPEN DOCUMENTS" group.
     ///
     /// - Parameters:
     ///   - document: The loaded document to add
     ///   - projectURL: The project folder URL (if available)
     public func addDownloadedDocument(_ document: LoadedDocument, projectURL: URL?) {
-        logger.info("addDownloadedDocument: Adding '\(document.name, privacy: .public)' to downloads folder")
+        logger.info("addDownloadedDocument: Adding '\(document.name, privacy: .public)' to Downloads folder")
 
         // Try to find an existing project folder in the sidebar
         var targetProjectItem: SidebarItem?
@@ -736,16 +736,16 @@ public class SidebarViewController: NSViewController {
 
         logger.debug("addDownloadedDocument: Found project '\(projectItem.title, privacy: .public)'")
 
-        // Find or create the "downloads" folder within the project
+        // Find or create the "Downloads" folder within the project
         var downloadsFolder = projectItem.children.first(where: {
             $0.title.lowercased() == "downloads" && $0.type == .folder
         })
 
         if downloadsFolder == nil {
-            logger.debug("addDownloadedDocument: Creating downloads folder")
-            let downloadsURL = projectItem.url?.appendingPathComponent("downloads", isDirectory: true)
+            logger.debug("addDownloadedDocument: Creating Downloads folder")
+            let downloadsURL = projectItem.url?.appendingPathComponent("Downloads", isDirectory: true)
             downloadsFolder = SidebarItem(
-                title: "downloads",
+                title: "Downloads",
                 type: .folder,
                 icon: "arrow.down.circle",
                 children: [],
@@ -800,7 +800,7 @@ public class SidebarViewController: NSViewController {
         )
 
         downloadsFolder!.children.append(item)
-        logger.info("addDownloadedDocument: Added '\(document.name, privacy: .public)' to downloads folder, reloading")
+        logger.info("addDownloadedDocument: Added '\(document.name, privacy: .public)' to Downloads folder, reloading")
 
         outlineView.reloadData()
 

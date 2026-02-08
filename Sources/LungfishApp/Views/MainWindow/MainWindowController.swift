@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import Combine
+import SwiftUI
 import LungfishCore
 import LungfishIO
 
@@ -22,6 +24,7 @@ public class MainWindowController: NSWindowController {
         static let toggleInspector = NSToolbarItem.Identifier("ToggleInspector")
         static let toggleChromosomeDrawer = NSToolbarItem.Identifier("ToggleChromosomeDrawer")
         static let toggleAnnotationDrawer = NSToolbarItem.Identifier("ToggleAnnotationDrawer")
+        static let downloads = NSToolbarItem.Identifier("Downloads")
         static let flexibleSpace = NSToolbarItem.Identifier.flexibleSpace
     }
 
@@ -41,6 +44,15 @@ public class MainWindowController: NSWindowController {
 
     /// Flag to suppress combobox delegate callbacks during programmatic updates.
     private var isUpdatingCoordinatesProgrammatically = false
+
+    /// Downloads toolbar button so icon can react to active tasks.
+    private weak var downloadsToolbarButton: NSButton?
+
+    /// Popover anchored from the downloads toolbar button.
+    private var downloadsPopover: NSPopover?
+
+    /// Combine subscriptions for toolbar state bindings.
+    private var cancellables = Set<AnyCancellable>()
 
     // MARK: - Initialization
 
@@ -89,6 +101,7 @@ public class MainWindowController: NSWindowController {
         window.contentViewController = mainSplitViewController
 
         configureToolbar()
+        bindDownloadCenter()
         setupNotificationObservers()
 
         window.delegate = self
@@ -215,6 +228,28 @@ public class MainWindowController: NSWindowController {
         return button
     }
 
+    private func bindDownloadCenter() {
+        DownloadCenter.shared.$items
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.refreshDownloadsToolbarIcon()
+            }
+            .store(in: &cancellables)
+    }
+
+    private func refreshDownloadsToolbarIcon() {
+        guard let button = downloadsToolbarButton else { return }
+        let hasActive = DownloadCenter.shared.activeCount > 0
+        button.image = makeToolbarImage(
+            symbolName: hasActive ? "arrow.down.circle.fill" : "arrow.down.circle",
+            fallbacks: ["tray.and.arrow.down", "arrow.down.circle"],
+            accessibilityLabel: "Downloads"
+        )
+        button.toolTip = hasActive
+            ? "\(DownloadCenter.shared.activeCount) download(s) in progress"
+            : "Show recent downloads"
+    }
+
     // MARK: - Panel Toggle Actions
 
     @objc public func toggleSidebar(_ sender: Any?) {
@@ -269,6 +304,25 @@ public class MainWindowController: NSWindowController {
 
     @objc public func toggleAnnotationDrawer(_ sender: Any?) {
         mainSplitViewController.viewerController?.toggleAnnotationDrawer()
+    }
+
+    @objc public func showDownloadsPopover(_ sender: Any?) {
+        guard let button = downloadsToolbarButton else { return }
+
+        if let popover = downloadsPopover, popover.isShown {
+            popover.performClose(sender)
+            return
+        }
+
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.animates = true
+        popover.contentSize = NSSize(width: 380, height: 260)
+        popover.contentViewController = NSHostingController(
+            rootView: DownloadsPopoverView(center: DownloadCenter.shared)
+        )
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .maxY)
+        downloadsPopover = popover
     }
 
     // MARK: - Navigation Actions
@@ -458,6 +512,23 @@ extension MainWindowController: NSToolbarDelegate {
             item.view = button
             return item
 
+        case ToolbarIdentifier.downloads:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.label = "Downloads"
+            item.paletteLabel = "Downloads"
+            item.toolTip = "Show download activity"
+            let button = makeToolbarButton(
+                symbolName: "arrow.down.circle",
+                fallbacks: ["tray.and.arrow.down", "arrow.down.circle"],
+                accessibilityLabel: "Downloads"
+            )
+            button.target = self
+            button.action = #selector(showDownloadsPopover(_:))
+            item.view = button
+            downloadsToolbarButton = button
+            refreshDownloadsToolbarIcon()
+            return item
+
         default:
             return nil
         }
@@ -466,6 +537,8 @@ extension MainWindowController: NSToolbarDelegate {
     public func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
             ToolbarIdentifier.toggleChromosomeDrawer,
+            ToolbarIdentifier.flexibleSpace,
+            ToolbarIdentifier.downloads,
             ToolbarIdentifier.flexibleSpace,
             ToolbarIdentifier.toggleAnnotationDrawer,
             ToolbarIdentifier.flexibleSpace,
@@ -478,6 +551,7 @@ extension MainWindowController: NSToolbarDelegate {
             ToolbarIdentifier.toggleInspector,
             ToolbarIdentifier.toggleChromosomeDrawer,
             ToolbarIdentifier.toggleAnnotationDrawer,
+            ToolbarIdentifier.downloads,
             ToolbarIdentifier.flexibleSpace,
         ]
     }
@@ -511,6 +585,87 @@ extension MainWindowController: NSComboBoxDelegate {
                 handleCoordinateInput(input)
             }
             return
+        }
+    }
+}
+
+// MARK: - Downloads Popover
+
+private struct DownloadsPopoverView: View {
+    @ObservedObject var center: DownloadCenter
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Downloads")
+                    .font(.headline)
+                Spacer()
+                if center.items.contains(where: { $0.state != .running }) {
+                    Button("Clear Finished") {
+                        center.clearCompleted()
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                }
+            }
+
+            if center.items.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "arrow.down.circle")
+                        .font(.title2)
+                        .foregroundColor(.secondary)
+                    Text("No downloads yet")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(center.items) { item in
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text(item.title)
+                                        .font(.subheadline.weight(.medium))
+                                        .lineLimit(1)
+                                    Spacer()
+                                    Text(statusLabel(for: item.state))
+                                        .font(.caption)
+                                        .foregroundColor(statusColor(for: item.state))
+                                }
+
+                                Text(item.detail)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(2)
+
+                                ProgressView(value: item.progress)
+                                    .progressViewStyle(.linear)
+                            }
+                            .padding(8)
+                            .background(Color(nsColor: .controlBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                        }
+                    }
+                }
+            }
+        }
+        .padding(12)
+    }
+
+    private func statusLabel(for state: DownloadCenter.Item.State) -> String {
+        switch state {
+        case .running: return "In Progress"
+        case .completed: return "Done"
+        case .failed: return "Failed"
+        }
+    }
+
+    private func statusColor(for state: DownloadCenter.Item.State) -> Color {
+        switch state {
+        case .running: return .secondary
+        case .completed: return .green
+        case .failed: return .red
         }
     }
 }

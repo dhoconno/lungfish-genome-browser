@@ -141,7 +141,8 @@ let package = Package(
             ],
             path: "Sources/LungfishWorkflow",
             resources: [
-                .copy("Resources/Containerization")
+                .copy("Resources/Containerization"),
+                .copy("Resources/Tools")
             ]
         ),
         .testTarget(

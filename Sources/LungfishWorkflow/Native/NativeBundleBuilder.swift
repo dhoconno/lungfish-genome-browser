@@ -11,21 +11,15 @@ import LungfishIO
 
 /// Builds `.lungfishref` reference genome bundles using native bioinformatics tools.
 ///
-/// This builder uses locally installed tools (via Homebrew or bundled with the app)
-/// instead of containers. Tools used:
+/// This builder uses bioinformatics tools bundled with the application.
+/// Tools used:
 /// - `bgzip` - FASTA compression (from htslib)
 /// - `samtools faidx` - FASTA indexing
 /// - `bcftools` - VCF to BCF conversion
 /// - `bedToBigBed` - BED to BigBed conversion (UCSC)
 /// - `bedGraphToBigWig` - bedGraph to BigWig conversion (UCSC)
 ///
-/// ## Installation
-///
-/// Install required tools via Homebrew:
-/// ```
-/// brew install samtools bcftools htslib
-/// brew install kent-tools  # For bedToBigBed and bedGraphToBigWig
-/// ```
+/// All tools are included in the app bundle under `Resources/Tools`.
 @MainActor
 public final class NativeBundleBuilder: ObservableObject {
 

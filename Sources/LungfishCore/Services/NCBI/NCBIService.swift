@@ -301,6 +301,33 @@ public actor NCBIService: DatabaseService {
         )
     }
 
+    /// Searches the nucleotide (GenBank) database with optional RefSeq restriction.
+    ///
+    /// - Parameters:
+    ///   - term: The search term
+    ///   - retmax: Maximum number of results
+    ///   - retstart: Starting offset for pagination
+    ///   - refseqOnly: Whether to restrict results to RefSeq records only
+    /// - Returns: Search result with IDs and total count
+    public func searchNucleotide(
+        term: String,
+        retmax: Int = 20,
+        retstart: Int = 0,
+        refseqOnly: Bool = false
+    ) async throws -> ESearchSearchResult {
+        var nucleotideTerm = term
+        if refseqOnly {
+            nucleotideTerm = "(\(nucleotideTerm)) AND refseq[filter]"
+        }
+        logger.info("NCBIService.searchNucleotide: term='\(nucleotideTerm, privacy: .public)'")
+        return try await esearchWithCount(
+            database: .nucleotide,
+            term: nucleotideTerm,
+            retmax: retmax,
+            retstart: retstart
+        )
+    }
+
     /// Searches the genome/assembly database.
     ///
     /// Note: The NCBI Genome database doesn't support direct efetch.

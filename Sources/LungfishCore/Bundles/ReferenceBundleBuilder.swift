@@ -235,6 +235,9 @@ public enum BundleBuildError: Error, LocalizedError, Sendable {
     /// Container runtime not available.
     case containerRuntimeNotAvailable
 
+    /// Required tools are missing.
+    case missingTools([String])
+
     /// Build was cancelled.
     case cancelled
 
@@ -262,6 +265,8 @@ public enum BundleBuildError: Error, LocalizedError, Sendable {
             return "Bundle validation failed:\n" + errors.joined(separator: "\n")
         case .containerRuntimeNotAvailable:
             return "Container runtime is not available. Requires macOS 26+ on Apple Silicon."
+        case .missingTools(let tools):
+            return "Required tools are missing: \(tools.joined(separator: ", "))"
         case .cancelled:
             return "Build was cancelled"
         }
@@ -289,6 +294,8 @@ public enum BundleBuildError: Error, LocalizedError, Sendable {
             return "Review the validation errors and fix any issues."
         case .containerRuntimeNotAvailable:
             return "Update to macOS 26 or later on an Apple Silicon Mac."
+        case .missingTools:
+            return "The app bundle is missing required bioinformatics tools. Please reinstall the application or verify the bundle contents."
         case .cancelled:
             return "Restart the build process if needed."
         }
