@@ -41,8 +41,6 @@ import LungfishCore
 /// // Get annotations
 /// let genes = try await bundle.getAnnotations(trackId: "genes", region: region)
 ///
-/// // Get signal values
-/// let coverage = try await bundle.getSignal(trackId: "coverage", region: region, bins: 100)
 /// ```
 // MARK: - Annotation Type Inference
 
@@ -385,23 +383,6 @@ public final class ReferenceBundle: Sendable {
         }
     }
 
-    /// Fetches sequence data for multiple regions.
-    ///
-    /// More efficient than calling `fetchSequence` multiple times for nearby regions.
-    ///
-    /// - Parameter regions: Array of genomic regions to fetch
-    /// - Returns: Dictionary mapping region descriptions to sequences
-    public func fetchSequences(regions: [GenomicRegion]) async throws -> [String: String] {
-        var results: [String: String] = [:]
-
-        for region in regions {
-            let sequence = try await fetchSequence(region: region)
-            results[region.description] = sequence
-        }
-
-        return results
-    }
-
     // MARK: - Annotation Access
 
     /// Returns available annotation track IDs.
@@ -618,34 +599,6 @@ public final class ReferenceBundle: Sendable {
         manifest.tracks.first { $0.id == id }
     }
 
-    /// Fetches signal values from a track for a genomic region.
-    ///
-    /// Uses BigWig random access for efficient querying. Values are binned
-    /// to the specified resolution.
-    ///
-    /// - Parameters:
-    ///   - trackId: The signal track ID
-    ///   - region: The genomic region to query
-    ///   - bins: Number of bins to divide the region into
-    /// - Returns: Array of signal values (one per bin)
-    /// - Throws: `ReferenceBundleError` if signal cannot be fetched
-    public func getSignal(trackId: String, region: GenomicRegion, bins: Int) async throws -> [Float] {
-        guard let trackInfo = signalTrack(id: trackId) else {
-            throw ReferenceBundleError.trackNotFound(trackId)
-        }
-
-        let trackURL = url.appendingPathComponent(trackInfo.path)
-
-        guard FileManager.default.fileExists(atPath: trackURL.path) else {
-            throw ReferenceBundleError.missingFile(trackInfo.path)
-        }
-
-        // TODO: Use existing BigWigReader for actual signal fetching
-        // For now, return empty array as placeholder
-        logger.debug("getSignal: \(trackId) for \(region.description) bins=\(bins) - BigWig integration pending")
-
-        return []
-    }
 }
 
 // MARK: - BundleVariant

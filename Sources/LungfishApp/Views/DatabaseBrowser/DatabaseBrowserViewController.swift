@@ -28,34 +28,6 @@ private func performOnMainRunLoop(_ block: @escaping @MainActor @Sendable () -> 
     RunLoop.main.add(timer, forMode: .common)
 }
 
-/// Executes an async MainActor operation through the run loop in common modes.
-///
-/// This avoids modal-sheet scheduling stalls when detached tasks need to invoke
-/// MainActor-isolated async work.
-private func runMainActorAsync<T: Sendable>(
-    _ operation: @escaping @MainActor @Sendable () async throws -> T
-) async throws -> T {
-    try await withCheckedThrowingContinuation { continuation in
-        performOnMainRunLoop {
-            Task { @MainActor in
-                do {
-                    let value = try await operation()
-                    continuation.resume(returning: value)
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
-        }
-    }
-}
-
-/// Formats a byte count as a human-readable file size string.
-private func formatFileSize(_ bytes: Int64) -> String {
-    let formatter = ByteCountFormatter()
-    formatter.countStyle = .file
-    return formatter.string(fromByteCount: bytes)
-}
-
 /// Controller for the database browser panel.
 ///
 /// Provides search interface for NCBI and ENA databases with download capability.
@@ -72,12 +44,6 @@ public class DatabaseBrowserViewController: NSViewController {
 
     /// View model for the browser
     private var viewModel: DatabaseBrowserViewModel!
-
-    /// Completion handler called when a download completes
-    public var onDownloadComplete: ((URL) -> Void)?
-
-    /// Completion handler called when multiple downloads complete (batch)
-    public var onMultipleDownloadsComplete: (([URL]) -> Void)?
 
     /// Completion handler called when user cancels
     public var onCancel: (() -> Void)?
@@ -114,11 +80,6 @@ public class DatabaseBrowserViewController: NSViewController {
         if let searchType = initialSearchType {
             viewModel.ncbiSearchType = searchType
         }
-
-        // Download completion is handled by DownloadCenter.onBundleReady (set by
-        // AppDelegate at startup). The view model's onDownloadComplete and
-        // onMultipleDownloadsComplete are no longer wired — DownloadCenter is
-        // the sole channel for delivering built bundles back to the AppDelegate.
 
         // Set up download started callback — dismiss sheet immediately
         viewModel.onDownloadStarted = { [weak self] in
@@ -441,21 +402,10 @@ public class DatabaseBrowserViewModel: ObservableObject {
     /// Download progress (0-1)
     @Published var downloadProgress: Double = 0
 
-    /// Status message (computed from search phase when searching)
+    /// Status message derived from current search phase
     var statusMessage: String? {
-        if searchPhase.isInProgress || searchPhase != .idle {
-            switch searchPhase {
-            case .complete, .failed:
-                return searchPhase.message
-            default:
-                return searchPhase.message
-            }
-        }
-        return _statusMessage
+        searchPhase == .idle ? nil : searchPhase.message
     }
-
-    /// Internal status message for non-search operations
-    @Published private var _statusMessage: String?
 
     /// Current search task (for cancellation support)
     private var currentSearchTask: Task<Void, Never>?
@@ -528,12 +478,6 @@ public class DatabaseBrowserViewModel: ObservableObject {
     }
 
     // MARK: - Callbacks
-
-    /// Called when a download completes with the file URL (single file)
-    var onDownloadComplete: ((URL) -> Void)?
-
-    /// Called when multiple downloads complete (for batch downloads)
-    var onMultipleDownloadsComplete: (([URL]) -> Void)?
 
     /// Called when user cancels
     var onCancel: (() -> Void)?
@@ -1019,186 +963,6 @@ public class DatabaseBrowserViewModel: ObservableObject {
         return trimmed
     }
 
-    /// Initiates a download operation for the selected record.
-    ///
-    /// For NCBI downloads, this fetches the raw GenBank format file preserving
-    /// all annotations, features, and metadata. The file is saved with a .gb extension.
-    func performDownload() {
-
-        guard let record = selectedRecord else {
-            errorMessage = "No record selected"
-            return
-        }
-
-        isDownloading = true
-        downloadProgress = 0
-        errorMessage = nil
-        _statusMessage = "Downloading \(record.accession)..."
-
-        // Capture services and values for use in detached task
-        let ncbi = ncbiService
-        let ena = enaService
-        let currentSource = source
-        let accession = record.accession
-
-
-        // Use Task.detached to ensure download runs even in modal context
-        // All network work happens in this detached context, with UI updates via performOnMainRunLoop
-        Task.detached { [weak self] in
-
-            do {
-                // Update UI: connecting
-                performOnMainRunLoop { [weak self] in
-                    self?.objectWillChange.send()
-                    self?.downloadProgress = 0.1
-                    self?._statusMessage = "Connecting to \(currentSource.displayName)..."
-                }
-
-
-                // Update UI: fetching
-                performOnMainRunLoop { [weak self] in
-                    self?.objectWillChange.send()
-                    self?.downloadProgress = 0.2
-                    self?._statusMessage = "Fetching \(accession)..."
-                }
-
-                let fileURL: URL
-
-                switch currentSource {
-                case .ncbi:
-                    // Fetch raw GenBank format to preserve all annotations
-                    let (genBankContent, resolvedAccession) = try await ncbi.fetchRawGenBank(accession: accession)
-
-                    // Update UI: saving
-                    performOnMainRunLoop { [weak self] in
-                        self?.objectWillChange.send()
-                        self?.downloadProgress = 0.7
-                        self?._statusMessage = "Saving \(resolvedAccession)..."
-                    }
-
-                    // Save raw GenBank content directly with .gb extension
-                    let tempDir = FileManager.default.temporaryDirectory
-                    let filename = "\(resolvedAccession).gb"
-                    fileURL = tempDir.appendingPathComponent(filename)
-
-                    try genBankContent.write(to: fileURL, atomically: true, encoding: .utf8)
-
-                case .ena:
-                    // Check if this is an SRA run accession (SRR, ERR, DRR)
-                    let isSRAAccession = accession.hasPrefix("SRR") || accession.hasPrefix("ERR") || accession.hasPrefix("DRR")
-
-                    if isSRAAccession {
-                        // Download FASTQ files via ENA
-                        performOnMainRunLoop { [weak self] in
-                            self?.objectWillChange.send()
-                            self?.downloadProgress = 0.3
-                            self?._statusMessage = "Downloading FASTQ for \(accession)..."
-                        }
-
-                        let sraService = SRAService()
-                        let fastqFiles = try await sraService.downloadFASTQFromENA(
-                            accession: accession,
-                            progress: { [weak self] progress in
-                                Task { @MainActor [weak self] in
-                                    // Scale progress: 0.3 to 0.9 for download
-                                    self?.objectWillChange.send()
-                                    self?.downloadProgress = 0.3 + (progress * 0.6)
-                                }
-                            }
-                        )
-
-                        guard let firstFile = fastqFiles.first else {
-                            throw DatabaseServiceError.parseError(message: "No FASTQ files downloaded for \(accession)")
-                        }
-
-                        fileURL = firstFile
-                        logger.info("Downloaded \(fastqFiles.count) FASTQ file(s) for \(accession)")
-                    } else {
-                        // ENA sequence: fetch and save as FASTA
-                        let dbRecord = try await ena.fetch(accession: accession)
-
-                        // Update UI: saving
-                        performOnMainRunLoop { [weak self] in
-                            self?.objectWillChange.send()
-                            self?.downloadProgress = 0.7
-                            self?._statusMessage = "Saving \(accession)..."
-                        }
-
-                        // Save to temporary file as FASTA
-                        let tempDir = FileManager.default.temporaryDirectory
-                        let filename = "\(dbRecord.accession).fasta"
-                        fileURL = tempDir.appendingPathComponent(filename)
-
-                        var fastaContent = ">\(dbRecord.accession)"
-                        if !dbRecord.title.isEmpty {
-                            fastaContent += " \(dbRecord.title)"
-                        }
-                        fastaContent += "\n"
-
-                        // Format sequence in 80-character lines
-                        let sequence = dbRecord.sequence
-                        var index = sequence.startIndex
-                        while index < sequence.endIndex {
-                            let endIndex = sequence.index(index, offsetBy: 80, limitedBy: sequence.endIndex) ?? sequence.endIndex
-                            fastaContent += String(sequence[index..<endIndex]) + "\n"
-                            index = endIndex
-                        }
-
-                        try fastaContent.write(to: fileURL, atomically: true, encoding: .utf8)
-                    }
-
-                default:
-                    throw DatabaseServiceError.invalidQuery(reason: "Unsupported database: \(currentSource)")
-                }
-
-                // Update UI: complete
-                performOnMainRunLoop { [weak self] in
-                    self?.objectWillChange.send()
-                    self?.downloadProgress = 1.0
-                    self?._statusMessage = "Download complete: \(accession)"
-                }
-
-                // Notify completion
-                performOnMainRunLoop { [weak self] in
-                    guard let self = self else { return }
-                    self.objectWillChange.send()
-                    self.isDownloading = false
-                    self.onDownloadComplete?(fileURL)
-                }
-
-            } catch {
-                let errorMsg = error.localizedDescription
-                performOnMainRunLoop { [weak self] in
-                    guard let self = self else { return }
-                    self.objectWillChange.send()
-                    self.errorMessage = "Download failed: \(errorMsg)"
-                    self._statusMessage = nil
-                    self.isDownloading = false
-                }
-            }
-        }
-    }
-
-    /// Downloads the selected record.
-    func downloadSelected() async {
-        guard let record = selectedRecord else {
-            errorMessage = "No record selected"
-            return
-        }
-
-        await download(record: record)
-    }
-
-    /// Downloads a specific record.
-    func download(record: SearchResultRecord) async {
-        isDownloading = true
-        downloadProgress = 0
-        errorMessage = nil
-        _statusMessage = "Downloading \(record.accession)..."
-
-        await executeDownload(record: record, ncbi: ncbiService, ena: enaService, source: source)
-    }
-
     /// Downloads all selected records (batch download).
     ///
     /// This downloads each selected record sequentially, updating progress as each completes.
@@ -1220,7 +984,6 @@ public class DatabaseBrowserViewModel: ObservableObject {
         errorMessage = nil
 
         let totalCount = recordsToDownload.count
-        _statusMessage = "Downloading \(totalCount) file\(totalCount == 1 ? "" : "s")..."
 
         // Capture services and values for task
         let ncbi = ncbiService
@@ -1444,129 +1207,6 @@ public class DatabaseBrowserViewModel: ObservableObject {
                 logger.info("performBatchDownload: Complete - \(finalDownloadedURLs.count) downloaded, \(finalFailedCount) failed")
             }
         }
-    }
-
-    /// Executes the actual download operation.
-    /// - Parameters:
-    ///   - record: The record to download
-    ///   - ncbi: The NCBI service actor
-    ///   - ena: The ENA service actor
-    ///   - source: The database source
-    private func executeDownload(record: SearchResultRecord, ncbi: NCBIService, ena: ENAService, source: DatabaseSource) async {
-
-        do {
-            performOnMainRunLoop { [weak self] in
-                self?.objectWillChange.send()
-                self?.downloadProgress = 0.1
-                self?._statusMessage = "Connecting to \(source.displayName)..."
-            }
-
-            let tempURL: URL
-
-            switch source {
-            case .ncbi:
-                performOnMainRunLoop { [weak self] in
-                    self?.objectWillChange.send()
-                    self?.downloadProgress = 0.2
-                    self?._statusMessage = "Fetching \(record.accession)..."
-                }
-
-                // Fetch raw GenBank format to preserve all annotations
-                let (genBankContent, resolvedAccession) = try await ncbi.fetchRawGenBank(accession: record.accession)
-
-                performOnMainRunLoop { [weak self] in
-                    self?.objectWillChange.send()
-                    self?.downloadProgress = 0.7
-                    self?._statusMessage = "Saving \(resolvedAccession)..."
-                }
-
-                // Save raw GenBank content directly with .gb extension
-                let tempDir = FileManager.default.temporaryDirectory
-                let filename = "\(resolvedAccession).gb"
-                tempURL = tempDir.appendingPathComponent(filename)
-
-                try genBankContent.write(to: tempURL, atomically: true, encoding: .utf8)
-
-            case .ena:
-                performOnMainRunLoop { [weak self] in
-                    self?.objectWillChange.send()
-                    self?.downloadProgress = 0.2
-                    self?._statusMessage = "Fetching \(record.accession)..."
-                }
-                let dbRecord = try await ena.fetch(accession: record.accession)
-
-                performOnMainRunLoop { [weak self] in
-                    self?.objectWillChange.send()
-                    self?.downloadProgress = 0.7
-                    self?._statusMessage = "Saving \(record.accession)..."
-                }
-
-                // Save to temporary file as FASTA
-                tempURL = try saveToTemporaryFile(record: dbRecord)
-
-            default:
-                throw DatabaseServiceError.invalidQuery(reason: "Unsupported database: \(source)")
-            }
-
-
-            performOnMainRunLoop { [weak self] in
-                self?.objectWillChange.send()
-                self?.downloadProgress = 1.0
-                self?._statusMessage = "Download complete: \(record.accession)"
-            }
-            logger.info("Downloaded \(record.accession, privacy: .public) to \(tempURL.path, privacy: .public)")
-
-            // Notify completion via performOnMainRunLoop
-            performOnMainRunLoop { [weak self] in
-                guard let self = self else { return }
-                self.objectWillChange.send()
-                self.isDownloading = false
-                self.onDownloadComplete?(tempURL)
-            }
-
-        } catch {
-            let errorMsg = error.localizedDescription
-            performOnMainRunLoop { [weak self] in
-                guard let self = self else { return }
-                self.objectWillChange.send()
-                self.errorMessage = "Download failed: \(errorMsg)"
-                self._statusMessage = nil
-                self.isDownloading = false
-            }
-            logger.error("Download failed: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
-    // MARK: - Private Methods
-
-    private func saveToTemporaryFile(record: DatabaseRecord) throws -> URL {
-        let tempDir = FileManager.default.temporaryDirectory
-        let filename = "\(record.accession).fasta"
-        let fileURL = tempDir.appendingPathComponent(filename)
-
-        // Create FASTA content
-        var fastaContent = ">\(record.accession)"
-        if !record.title.isEmpty {
-            fastaContent += " \(record.title)"
-        }
-        if let organism = record.organism {
-            fastaContent += " [\(organism)]"
-        }
-        fastaContent += "\n"
-
-        // Wrap sequence at 80 characters
-        let sequence = record.sequence
-        let lineLength = 80
-        var index = sequence.startIndex
-        while index < sequence.endIndex {
-            let end = sequence.index(index, offsetBy: lineLength, limitedBy: sequence.endIndex) ?? sequence.endIndex
-            fastaContent += String(sequence[index..<end]) + "\n"
-            index = end
-        }
-
-        try fastaContent.write(to: fileURL, atomically: true, encoding: .utf8)
-
-        return fileURL
     }
 }
 
@@ -2469,109 +2109,6 @@ public struct DatabaseBrowserView: View {
         .padding(.horizontal)
         .padding(.top, 8)
         .padding(.bottom, 4)
-    }
-}
-
-// MARK: - SearchResultRow
-
-/// A single row in the search results list.
-struct SearchResultRow: View {
-    let record: SearchResultRecord
-    var isSelected: Bool = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(record.accession)
-                    .font(.headline.monospaced())
-
-                if let db = record.sourceDatabase {
-                    Text(db)
-                        .font(.caption2.bold())
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(db == "RefSeq" ? Color.blue.opacity(0.15) : Color.gray.opacity(0.15))
-                        .cornerRadius(3)
-                }
-
-                Spacer()
-
-                if let length = record.length {
-                    Text(formatLength(length))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-
-            Text(record.title)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .lineLimit(2)
-
-            HStack {
-                if let organism = record.organism {
-                    Label(organism, systemImage: "leaf")
-                        .font(.caption)
-                        .foregroundColor(.green)
-                }
-
-                if let collectionDate = record.collectionDate {
-                    Label(collectionDate, systemImage: "calendar")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                } else if let date = record.date {
-                    Label(formatDate(date), systemImage: "calendar")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-
-            // Virus-specific metadata row
-            if record.host != nil || record.geoLocation != nil || record.completeness != nil || record.pangolinClassification != nil {
-                HStack(spacing: 10) {
-                    if let host = record.host {
-                        Label(host, systemImage: "person")
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                    }
-                    if let location = record.geoLocation {
-                        Label(location, systemImage: "location")
-                            .font(.caption)
-                            .foregroundColor(.blue)
-                    }
-                    if let completeness = record.completeness {
-                        Text(completeness)
-                            .font(.caption2.bold())
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(completeness == "COMPLETE" ? Color.green.opacity(0.2) : Color.yellow.opacity(0.2))
-                            .cornerRadius(3)
-                    }
-                    if let pangolin = record.pangolinClassification {
-                        Text(pangolin)
-                            .font(.caption.monospaced())
-                            .foregroundColor(.purple)
-                    }
-                }
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    private func formatLength(_ length: Int) -> String {
-        if length >= 1_000_000 {
-            return String(format: "%.1f Mb", Double(length) / 1_000_000)
-        } else if length >= 1_000 {
-            return String(format: "%.1f kb", Double(length) / 1_000)
-        } else {
-            return "\(length) bp"
-        }
-    }
-
-    private func formatDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        return formatter.string(from: date)
     }
 }
 

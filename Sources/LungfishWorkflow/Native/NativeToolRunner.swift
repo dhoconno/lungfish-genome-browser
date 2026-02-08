@@ -641,49 +641,4 @@ extension NativeToolRunner {
         )
     }
     
-    /// Converts bedGraph to BigWig using bedGraphToBigWig.
-    ///
-    /// - Parameters:
-    ///   - bedGraphPath: Path to the input bedGraph file.
-    ///   - chromSizesPath: Path to the chromosome sizes file.
-    ///   - outputPath: Path for the output BigWig file.
-    /// - Returns: Result of the conversion.
-    public func convertBedGraphToBigWig(
-        bedGraphPath: URL,
-        chromSizesPath: URL,
-        outputPath: URL
-    ) async throws -> NativeToolResult {
-        return try await run(
-            .bedGraphToBigWig,
-            arguments: [
-                bedGraphPath.path,
-                chromSizesPath.path,
-                outputPath.path
-            ],
-            workingDirectory: bedGraphPath.deletingLastPathComponent()
-        )
-    }
-    
-    /// Creates a tabix index for a bgzipped file.
-    ///
-    /// - Parameters:
-    ///   - filePath: Path to the bgzipped file.
-    ///   - preset: Tabix preset (gff, bed, sam, vcf).
-    /// - Returns: Result of the indexing.
-    public func tabixIndex(
-        filePath: URL,
-        preset: String? = nil
-    ) async throws -> NativeToolResult {
-        var args = ["-f"]  // Force overwrite
-        if let preset {
-            args.append(contentsOf: ["-p", preset])
-        }
-        args.append(filePath.path)
-        
-        return try await run(
-            .tabix,
-            arguments: args,
-            workingDirectory: filePath.deletingLastPathComponent()
-        )
-    }
 }

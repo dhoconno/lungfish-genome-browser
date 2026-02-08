@@ -54,15 +54,7 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
 
     /// Validates that required native tools are available.
     public func validateTools() async throws {
-        let (valid, missing) = await toolRunner.validateToolsInstallation()
-        if !valid {
-            let essential = missing.filter { $0 == .bgzip || $0 == .samtools }
-            if !essential.isEmpty {
-                let names = essential.map(\.rawValue).joined(separator: ", ")
-                logger.error("validateTools: Essential tools missing: \(names, privacy: .public)")
-                throw BundleBuildError.missingTools(essential.map(\.rawValue))
-            }
-        }
+        try await BundleBuildHelpers.validateTools(using: toolRunner)
     }
 
     // MARK: - Public API
@@ -111,14 +103,14 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
         logger.info("downloadAndBuild: Getting FASTA file info for \(accession, privacy: .public)")
 
         let fastaFileInfo = try await ncbiService.getGenomeFileInfo(for: assembly)
-        let fastaSizeStr = fastaFileInfo.estimatedSize.map { formatBytesHelper($0) } ?? "unknown size"
+        let fastaSizeStr = fastaFileInfo.estimatedSize.map { BundleBuildHelpers.formatBytes($0) } ?? "unknown size"
         logger.info("downloadAndBuild: FASTA file found: \(fastaFileInfo.filename, privacy: .public) (\(fastaSizeStr, privacy: .public))")
 
         // Step 2: Get GFF3 annotation file info (may not exist)
         progressHandler?(0.03, "Checking for GFF3 annotations...")
         let gffFileInfo = try await ncbiService.getAnnotationFileInfo(for: assembly)
         if let gffInfo = gffFileInfo {
-            let gffSizeStr = gffInfo.estimatedSize.map { formatBytesHelper($0) } ?? "unknown size"
+            let gffSizeStr = gffInfo.estimatedSize.map { BundleBuildHelpers.formatBytes($0) } ?? "unknown size"
             logger.info("downloadAndBuild: GFF3 file found: \(gffInfo.filename, privacy: .public) (\(gffSizeStr, privacy: .public))")
         } else {
             logger.info("downloadAndBuild: No GFF3 annotations available for \(accession, privacy: .public)")
@@ -143,8 +135,8 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
                 fraction = 0.5
             }
             let overallProgress = 0.05 + (fraction * 0.40)
-            let downloadedStr = formatBytesHelper(bytesDownloaded)
-            let totalStr = total.map { formatBytesHelper($0) } ?? "?"
+            let downloadedStr = BundleBuildHelpers.formatBytes(bytesDownloaded)
+            let totalStr = total.map { BundleBuildHelpers.formatBytes($0) } ?? "?"
             progressHandler?(overallProgress, "Downloading FASTA: \(downloadedStr) / \(totalStr)")
         }
         logger.info("downloadAndBuild: FASTA download complete")
@@ -171,8 +163,8 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
                         fraction = 0.5
                     }
                     let overallProgress = 0.45 + (fraction * 0.10)
-                    let downloadedStr = formatBytesHelper(bytesDownloaded)
-                    let totalStr = total.map { formatBytesHelper($0) } ?? "?"
+                    let downloadedStr = BundleBuildHelpers.formatBytes(bytesDownloaded)
+                    let totalStr = total.map { BundleBuildHelpers.formatBytes($0) } ?? "?"
                     progressHandler?(overallProgress, "Downloading GFF3: \(downloadedStr) / \(totalStr)")
                 }
                 gffDestination = gffDest
@@ -186,8 +178,8 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
         // Step 5: Build bundle structure
         progressHandler?(0.55, "Creating bundle...")
 
-        let bundleName = sanitizedFilename("\(organismName) - \(assemblyName)")
-        let bundleURL = makeUniqueBundleURL(baseName: bundleName, in: outputDirectory)
+        let bundleName = BundleBuildHelpers.sanitizedFilename("\(organismName) - \(assemblyName)")
+        let bundleURL = BundleBuildHelpers.makeUniqueBundleURL(baseName: bundleName, in: outputDirectory)
         let genomeDir = bundleURL.appendingPathComponent("genome", isDirectory: true)
         let annotationsDir = bundleURL.appendingPathComponent("annotations", isDirectory: true)
         try fileManager.createDirectory(at: genomeDir, withIntermediateDirectories: true)
@@ -237,7 +229,7 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
 
         let faiURL = compressedFASTA.appendingPathExtension("fai")
         let gziURL = compressedFASTA.appendingPathExtension("gzi")
-        let chromosomes = try parseFai(at: faiURL)
+        let chromosomes = try BundleBuildHelpers.parseFai(at: faiURL)
         let totalLength = chromosomes.reduce(Int64(0)) { $0 + $1.length }
         logger.info("downloadAndBuild: Indexed \(chromosomes.count) chromosomes, total \(totalLength) bp")
 
@@ -272,7 +264,7 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
                 )
 
                 // Clip BED coordinates to chromosome boundaries
-                clipBEDCoordinates(bedURL: bedURL, chromosomeSizes: chromosomeSizes)
+                BundleBuildHelpers.clipBEDCoordinates(bedURL: bedURL, chromosomeSizes: chromosomeSizes)
 
                 progressHandler?(0.82, "Creating annotation database...")
 
@@ -282,13 +274,13 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
                 logger.info("downloadAndBuild: Created annotation database with \(dbRecordCount) records")
 
                 // Strip extra columns (13+) for bedToBigBed
-                stripExtraBEDColumns(bedURL: bedURL, keepColumns: 12)
+                BundleBuildHelpers.stripExtraBEDColumns(bedURL: bedURL, keepColumns: 12)
 
                 progressHandler?(0.87, "Converting to BigBed...")
 
                 // Write chrom.sizes for bedToBigBed
                 let chromSizesURL = tempDir.appendingPathComponent("chrom.sizes")
-                try writeChromSizes(chromosomes, to: chromSizesURL)
+                try BundleBuildHelpers.writeChromSizes(chromosomes, to: chromSizesURL)
 
                 let bigBedURL = annotationsDir.appendingPathComponent("ncbi_genes.bb")
                 let hasBedToBigBed = await toolRunner.isToolAvailable(.bedToBigBed)
@@ -382,132 +374,4 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
         logger.info("downloadAndBuild: Pipeline complete. Bundle at \(bundleURL.path, privacy: .public)")
         return bundleURL
     }
-
-    // MARK: - Private Helpers
-
-    private func sanitizedFilename(_ raw: String) -> String {
-        raw
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "/", with: "-")
-            .replacingOccurrences(of: ":", with: "-")
-            .replacingOccurrences(of: " ", with: "_")
-    }
-
-    private func makeUniqueBundleURL(baseName: String, in directory: URL) -> URL {
-        var candidate = directory.appendingPathComponent("\(baseName).lungfishref", isDirectory: true)
-        var counter = 1
-        while FileManager.default.fileExists(atPath: candidate.path) {
-            candidate = directory.appendingPathComponent("\(baseName)_\(counter).lungfishref", isDirectory: true)
-            counter += 1
-        }
-        return candidate
-    }
-
-    private func parseFai(at url: URL) throws -> [ChromosomeInfo] {
-        let content = try String(contentsOf: url, encoding: .utf8)
-        let lines = content.split(whereSeparator: \.isNewline)
-
-        var chromosomes: [ChromosomeInfo] = []
-        for line in lines {
-            let fields = line.split(separator: "\t")
-            guard fields.count >= 5,
-                  let length = Int64(fields[1]),
-                  let offset = Int64(fields[2]),
-                  let lineBases = Int(fields[3]),
-                  let lineWidth = Int(fields[4]) else {
-                continue
-            }
-
-            let name = String(fields[0])
-            let isMito = name.lowercased() == "mt" || name.lowercased() == "chrm" || name.uppercased().contains("MITO")
-            chromosomes.append(
-                ChromosomeInfo(
-                    name: name,
-                    length: length,
-                    offset: offset,
-                    lineBases: lineBases,
-                    lineWidth: lineWidth,
-                    aliases: [],
-                    isPrimary: true,
-                    isMitochondrial: isMito,
-                    fastaDescription: nil
-                )
-            )
-        }
-
-        if chromosomes.isEmpty {
-            throw BundleBuildError.indexingFailed("FASTA index is empty or unreadable")
-        }
-
-        return chromosomes
-    }
-
-    private func writeChromSizes(_ chromosomes: [ChromosomeInfo], to url: URL) throws {
-        let lines = chromosomes.map { "\($0.name)\t\($0.length)" }
-        try lines.joined(separator: "\n").appending("\n").write(to: url, atomically: true, encoding: .utf8)
-    }
-
-    private func clipBEDCoordinates(bedURL: URL, chromosomeSizes: [(String, Int64)]) {
-        let chromSizeMap = Dictionary(uniqueKeysWithValues: chromosomeSizes)
-        guard let content = try? String(contentsOf: bedURL, encoding: .utf8) else { return }
-        let lines = content.components(separatedBy: .newlines)
-
-        var clipped: [String] = []
-        for line in lines {
-            if line.isEmpty || line.hasPrefix("#") {
-                clipped.append(line)
-                continue
-            }
-            var fields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-            guard fields.count >= 3 else {
-                clipped.append(line)
-                continue
-            }
-            let chrom = fields[0]
-            guard let chromSize = chromSizeMap[chrom] else {
-                clipped.append(line)
-                continue
-            }
-            if let start = Int64(fields[1]), start >= chromSize { continue }
-            if let end = Int64(fields[2]), end > chromSize {
-                fields[2] = "\(chromSize)"
-            }
-            if fields.count >= 7 {
-                if let thickEnd = Int64(fields[6]), thickEnd > chromSize {
-                    fields[6] = "\(chromSize)"
-                }
-            }
-            clipped.append(fields.joined(separator: "\t"))
-        }
-
-        try? clipped.joined(separator: "\n").write(to: bedURL, atomically: true, encoding: .utf8)
-    }
-
-    private func stripExtraBEDColumns(bedURL: URL, keepColumns: Int) {
-        guard let content = try? String(contentsOf: bedURL, encoding: .utf8) else { return }
-        let lines = content.components(separatedBy: .newlines)
-
-        var stripped: [String] = []
-        for line in lines {
-            if line.isEmpty || line.hasPrefix("#") {
-                stripped.append(line)
-                continue
-            }
-            let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
-            if fields.count > keepColumns {
-                stripped.append(fields.prefix(keepColumns).joined(separator: "\t"))
-            } else {
-                stripped.append(line)
-            }
-        }
-
-        try? stripped.joined(separator: "\n").write(to: bedURL, atomically: true, encoding: .utf8)
-    }
-}
-
-/// Formats a byte count as a human-readable string (module-level helper for closures).
-private func formatBytesHelper(_ bytes: Int64) -> String {
-    let formatter = ByteCountFormatter()
-    formatter.countStyle = .file
-    return formatter.string(fromByteCount: bytes)
 }

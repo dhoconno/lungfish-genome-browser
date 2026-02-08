@@ -517,9 +517,8 @@ public actor NCBIService: DatabaseService {
             throw DatabaseServiceError.notFound(accession: summary.assemblyAccession ?? summary.uid)
         }
 
-        // Extract the assembly name from the FTP path (last component)
-        let pathComponents = ftpPath.components(separatedBy: "/")
-        guard let assemblyDirName = pathComponents.last, !assemblyDirName.isEmpty else {
+        // Extract the assembly directory name from the FTP path (last component)
+        guard let assemblyDirName = extractAssemblyDirName(from: ftpPath) else {
             throw DatabaseServiceError.parseError(message: "Invalid FTP path structure")
         }
 
@@ -528,13 +527,7 @@ public actor NCBIService: DatabaseService {
         let genomicFilename = "\(assemblyDirName)_genomic.fna.gz"
 
         // Convert FTP URL to HTTPS URL
-        // ftp://ftp.ncbi.nlm.nih.gov/genomes/... -> https://ftp.ncbi.nlm.nih.gov/genomes/...
-        var httpPath = ftpPath
-        if httpPath.hasPrefix("ftp://") {
-            httpPath = httpPath.replacingOccurrences(of: "ftp://", with: "https://")
-        } else if !httpPath.hasPrefix("https://") && !httpPath.hasPrefix("http://") {
-            httpPath = "https://\(httpPath)"
-        }
+        let httpPath = convertFTPToHTTP(ftpPath)
 
         let fileURLString = "\(httpPath)/\(genomicFilename)"
         guard let fileURL = URL(string: fileURLString) else {
@@ -584,8 +577,7 @@ public actor NCBIService: DatabaseService {
         }
 
         // Extract the assembly directory name from the FTP path (last component)
-        let pathComponents = ftpPath.components(separatedBy: "/")
-        guard let assemblyDirName = pathComponents.last, !assemblyDirName.isEmpty else {
+        guard let assemblyDirName = extractAssemblyDirName(from: ftpPath) else {
             return nil
         }
 
@@ -594,12 +586,7 @@ public actor NCBIService: DatabaseService {
         let gffFilename = "\(assemblyDirName)_genomic.gff.gz"
 
         // Convert FTP URL to HTTPS URL
-        var httpPath = ftpPath
-        if httpPath.hasPrefix("ftp://") {
-            httpPath = httpPath.replacingOccurrences(of: "ftp://", with: "https://")
-        } else if !httpPath.hasPrefix("https://") && !httpPath.hasPrefix("http://") {
-            httpPath = "https://\(httpPath)"
-        }
+        let httpPath = convertFTPToHTTP(ftpPath)
 
         let fileURLString = "\(httpPath)/\(gffFilename)"
         guard let fileURL = URL(string: fileURLString) else {
@@ -881,6 +868,32 @@ public actor NCBIService: DatabaseService {
         default:
             throw DatabaseServiceError.invalidResponse(statusCode: httpResponse.statusCode)
         }
+    }
+
+    /// Converts an FTP path to an HTTP(S) path.
+    ///
+    /// - Parameter ftpPath: FTP path (e.g., "ftp://ftp.ncbi.nlm.nih.gov/genomes/...")
+    /// - Returns: HTTP(S) path (e.g., "https://ftp.ncbi.nlm.nih.gov/genomes/...")
+    private func convertFTPToHTTP(_ ftpPath: String) -> String {
+        var httpPath = ftpPath
+        if httpPath.hasPrefix("ftp://") {
+            httpPath = httpPath.replacingOccurrences(of: "ftp://", with: "https://")
+        } else if !httpPath.hasPrefix("https://") && !httpPath.hasPrefix("http://") {
+            httpPath = "https://\(httpPath)"
+        }
+        return httpPath
+    }
+
+    /// Extracts the assembly directory name from an FTP path.
+    ///
+    /// - Parameter ftpPath: FTP path (e.g., "ftp://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/.../GCF_000001405.40_GRCh38.p14")
+    /// - Returns: Assembly directory name (e.g., "GCF_000001405.40_GRCh38.p14"), or `nil` if invalid
+    private func extractAssemblyDirName(from ftpPath: String) -> String? {
+        let pathComponents = ftpPath.components(separatedBy: "/")
+        guard let assemblyDirName = pathComponents.last, !assemblyDirName.isEmpty else {
+            return nil
+        }
+        return assemblyDirName
     }
 
     private func parseGenBankRecord(_ content: String, uid: String) throws -> DatabaseRecord {

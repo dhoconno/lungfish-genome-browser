@@ -95,7 +95,6 @@ public class MainSplitViewController: NSSplitViewController {
         configureSplitView()
         configureChildControllers()
         configureActivityIndicator()
-        configureKeyboardShortcuts()
         configureNotifications()
         restorePanelState()
         logger.info("viewDidLoad: MainSplitViewController setup complete")
@@ -181,11 +180,6 @@ public class MainSplitViewController: NSSplitViewController {
         // Inspector starts visible by default
         inspectorItem.isCollapsed = false
         logger.info("configureChildControllers: Inspector initial state isCollapsed=\(self.inspectorItem.isCollapsed)")
-    }
-
-    private func configureKeyboardShortcuts() {
-        // Keyboard shortcuts are handled by menu items with key equivalents
-        // See MainMenu.swift for menu configuration
     }
 
     private func configureNotifications() {
@@ -788,19 +782,6 @@ public class MainSplitViewController: NSSplitViewController {
             serial: inspectorTransitionSerial,
             source: "splitViewDidResizeSubviews"
         )
-    }
-}
-
-// MARK: - Accessibility
-
-extension MainSplitViewController {
-
-    public func getAccessibilityLabel() -> String {
-        "Main content area"
-    }
-
-    public func getAccessibilityChildren() -> [NSView] {
-        [sidebarController.view, viewerController.view, inspectorController.view]
     }
 }
 

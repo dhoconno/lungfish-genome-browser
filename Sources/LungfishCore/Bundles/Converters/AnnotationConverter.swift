@@ -31,14 +31,6 @@ import os.log
 ///     format: .gff3,
 ///     output: tempBedURL
 /// )
-///
-/// // Full conversion to BigBed (requires container)
-/// let bigBedURL = try await converter.convertToBigBed(
-///     from: gff3URL,
-///     format: .gff3,
-///     chromSizes: chromSizesURL,
-///     output: outputBigBedURL
-/// )
 /// ```
 public final class AnnotationConverter: Sendable {
 
@@ -191,65 +183,6 @@ public final class AnnotationConverter: Sendable {
 
         progress?(1.0, "Conversion complete")
         logger.info("Wrote \(sortedFeatures.count) features to \(outputURL.lastPathComponent)")
-
-        return outputURL
-    }
-
-    /// Converts an annotation file directly to BigBed format.
-    ///
-    /// This requires the bedToBigBed container plugin to be available.
-    /// The conversion pipeline:
-    /// 1. Convert to sorted BED file
-    /// 2. Run bedToBigBed via container
-    ///
-    /// - Parameters:
-    ///   - sourceURL: URL of the source annotation file
-    ///   - format: Input file format (auto-detected if nil)
-    ///   - chromSizesURL: URL to chromosome sizes file
-    ///   - outputURL: URL for the output BigBed file
-    ///   - options: Conversion options
-    ///   - progress: Optional progress callback
-    /// - Returns: URL of the created BigBed file
-    /// - Throws: `AnnotationConversionError` if conversion fails
-    public func convertToBigBed(
-        from sourceURL: URL,
-        format: InputFormat? = nil,
-        chromSizes chromSizesURL: URL,
-        output outputURL: URL,
-        options: ConversionOptions = .default,
-        progress: (@Sendable (Double, String) -> Void)? = nil
-    ) async throws -> URL {
-        // Create temp directory for intermediate files
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("AnnotationConversion-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-
-        defer {
-            try? FileManager.default.removeItem(at: tempDir)
-        }
-
-        // Step 1: Convert to sorted BED
-        let tempBedURL = tempDir.appendingPathComponent("features.bed")
-
-        _ = try await convertToBED(
-            from: sourceURL,
-            format: format,
-            output: tempBedURL,
-            options: options,
-            progress: { p, msg in
-                progress?(p * 0.5, msg) // First half of progress
-            }
-        )
-
-        progress?(0.5, "Running bedToBigBed...")
-
-        // Step 2: Run bedToBigBed via container
-        // This would use ContainerPluginManager - for now we copy the BED file
-        // as a placeholder until container integration is complete
-        try FileManager.default.copyItem(at: tempBedURL, to: outputURL)
-
-        progress?(1.0, "BigBed conversion complete")
-        logger.info("Created BigBed file: \(outputURL.lastPathComponent)")
 
         return outputURL
     }

@@ -96,11 +96,6 @@ public final class NativeBundleBuilder: ObservableObject {
         return MissingToolsInfo(missingTools: missingTools)
     }
 
-    /// Checks all tools and returns their availability status.
-    public func checkAllToolStatus() async -> [NativeTool: Bool] {
-        return await toolRunner.checkAllTools()
-    }
-
     // MARK: - Public API
 
     /// Builds a reference genome bundle using native tools.

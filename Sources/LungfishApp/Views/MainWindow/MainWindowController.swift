@@ -30,9 +30,6 @@ public class MainWindowController: NSWindowController {
 
     // MARK: - Toolbar State
 
-    /// Stored reference to the coordinates combobox for two-way binding.
-    private var coordinateComboBox: NSComboBox?
-
     /// Annotation search index for the current bundle.
     private var annotationSearchIndex: AnnotationSearchIndex?
 
@@ -41,9 +38,6 @@ public class MainWindowController: NSWindowController {
 
     /// Last AppKit event number handled by the inspector toggle action.
     private var lastInspectorToggleEventNumber: Int?
-
-    /// Flag to suppress combobox delegate callbacks during programmatic updates.
-    private var isUpdatingCoordinatesProgrammatically = false
 
     /// Downloads toolbar button so icon can react to active tasks.
     private weak var downloadsToolbarButton: NSButton?
@@ -112,13 +106,6 @@ public class MainWindowController: NSWindowController {
     private func setupNotificationObservers() {
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(handleCoordinatesChanged(_:)),
-            name: .viewerCoordinatesChanged,
-            object: nil
-        )
-
-        NotificationCenter.default.addObserver(
-            self,
             selector: #selector(handleBundleLoaded(_:)),
             name: .bundleDidLoad,
             object: nil
@@ -129,38 +116,11 @@ public class MainWindowController: NSWindowController {
         NotificationCenter.default.removeObserver(self)
     }
 
-    // MARK: - Coordinate Sync
-
-    @objc private func handleCoordinatesChanged(_ notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let chromosome = userInfo[NotificationUserInfoKey.chromosome] as? String,
-              let start = userInfo[NotificationUserInfoKey.start] as? Int,
-              let end = userInfo[NotificationUserInfoKey.end] as? Int else { return }
-
-        isUpdatingCoordinatesProgrammatically = true
-        let formatted = formatCoordinateString(chromosome: chromosome, start: start, end: end)
-        coordinateComboBox?.stringValue = formatted
-        isUpdatingCoordinatesProgrammatically = false
-    }
-
-    private func formatCoordinateString(chromosome: String, start: Int, end: Int) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        let startStr = formatter.string(from: NSNumber(value: start + 1)) ?? "\(start + 1)"
-        let endStr = formatter.string(from: NSNumber(value: end)) ?? "\(end)"
-        return "\(chromosome):\(startStr)-\(endStr)"
-    }
-
-    // MARK: - Bundle Loaded → Index Building & Combobox Population
+    // MARK: - Bundle Loaded → Index Building
 
     @objc private func handleBundleLoaded(_ notification: Notification) {
         guard let userInfo = notification.userInfo,
               let chromosomes = userInfo[NotificationUserInfoKey.chromosomes] as? [ChromosomeInfo] else { return }
-
-        // Populate combobox dropdown with chromosome names
-        let sorted = naturalChromosomeSort(chromosomes)
-        coordinateComboBox?.removeAllItems()
-        coordinateComboBox?.addItems(withObjectValues: sorted.map { $0.name })
 
         // Build annotation search index on background thread
         guard let viewerController = mainSplitViewController?.viewerController,
@@ -327,14 +287,6 @@ public class MainWindowController: NSWindowController {
 
     // MARK: - Navigation Actions
 
-    @objc public func goBack(_ sender: Any?) {
-        // Navigate to previous position in history
-    }
-
-    @objc public func goForward(_ sender: Any?) {
-        // Navigate to next position in history
-    }
-
     @objc public func zoomIn(_ sender: Any?) {
         mainSplitViewController.viewerController?.zoomIn()
     }
@@ -347,114 +299,11 @@ public class MainWindowController: NSWindowController {
         mainSplitViewController.viewerController?.zoomToFit()
     }
 
-    // MARK: - Coordinate Input Handling
-
-    private func handleCoordinateInput(_ input: String) {
-        guard let viewerController = mainSplitViewController?.viewerController else { return }
-
-        // Strip commas from user input (they may copy "chr1:1,000-10,000")
-        let cleaned = input.replacingOccurrences(of: ",", with: "")
-            .trimmingCharacters(in: .whitespaces)
-        guard !cleaned.isEmpty else { return }
-
-        // Check if input is just a chromosome name (no colon)
-        if !cleaned.contains(":") && !cleaned.contains("-") && !cleaned.contains("..") {
-            // Might be a chromosome name from the dropdown
-            if let provider = viewerController.currentBundleDataProvider,
-               let chromInfo = provider.chromosomeInfo(named: cleaned) {
-                viewerController.navigateToChromosomeAndPosition(
-                    chromosome: chromInfo.name,
-                    chromosomeLength: Int(chromInfo.length),
-                    start: 0,
-                    end: min(Int(chromInfo.length), 10000)
-                )
-                return
-            }
-        }
-
-        // Parse coordinate string: chr:start-end, chr:start..end, start-end, position
-        var chromosome: String?
-        var startPosition: Int?
-        var endPosition: Int?
-
-        if cleaned.contains(":") {
-            let colonParts = cleaned.split(separator: ":", maxSplits: 1)
-            guard colonParts.count == 2 else { NSSound.beep(); return }
-            chromosome = String(colonParts[0])
-            parseRange(String(colonParts[1]), start: &startPosition, end: &endPosition)
-        } else {
-            parseRange(cleaned, start: &startPosition, end: &endPosition)
-        }
-
-        guard let start = startPosition else { NSSound.beep(); return }
-
-        // Convert 1-based user input to 0-based
-        let zeroBasedStart = max(0, start - 1)
-        let zeroBasedEnd: Int? = endPosition.map { max(zeroBasedStart + 1, $0) }
-
-        // For bundle mode with chromosome switch
-        if let chrom = chromosome,
-           let provider = viewerController.currentBundleDataProvider,
-           let chromInfo = provider.chromosomeInfo(named: chrom) {
-            let end = zeroBasedEnd ?? min(zeroBasedStart + 10000, Int(chromInfo.length))
-            viewerController.navigateToChromosomeAndPosition(
-                chromosome: chrom,
-                chromosomeLength: Int(chromInfo.length),
-                start: zeroBasedStart,
-                end: end
-            )
-        } else {
-            viewerController.navigateToPosition(
-                chromosome: chromosome,
-                start: zeroBasedStart,
-                end: zeroBasedEnd
-            )
-        }
-    }
-
-    /// Parses "start-end", "start..end", or a single position.
-    private func parseRange(_ input: String, start: inout Int?, end: inout Int?) {
-        if input.contains("..") {
-            let parts = input.split(separator: ".", omittingEmptySubsequences: true)
-            if parts.count == 2 {
-                start = Int(parts[0].trimmingCharacters(in: .whitespaces))
-                end = Int(parts[1].trimmingCharacters(in: .whitespaces))
-            }
-        } else if input.contains("-"), input.first != "-" {
-            if let hyphen = input.lastIndex(of: "-"), hyphen > input.startIndex {
-                let before = String(input[input.startIndex..<hyphen])
-                let after = String(input[input.index(after: hyphen)...])
-                if let s = Int(before.trimmingCharacters(in: .whitespaces)),
-                   let e = Int(after.trimmingCharacters(in: .whitespaces)) {
-                    start = s
-                    end = e
-                } else {
-                    start = Int(input.trimmingCharacters(in: .whitespaces))
-                }
-            }
-        } else {
-            start = Int(input.trimmingCharacters(in: .whitespaces))
-        }
-    }
-
 }
 
 // MARK: - NSWindowDelegate
 
-extension MainWindowController: NSWindowDelegate {
-
-    public func windowWillClose(_ notification: Notification) {
-        // Save window state before closing
-    }
-
-    public func windowDidBecomeMain(_ notification: Notification) {
-        // Update menu state when window becomes main
-    }
-
-    public func windowDidResignMain(_ notification: Notification) {
-        // Handle losing main window status
-    }
-}
+extension MainWindowController: NSWindowDelegate { }
 
 // MARK: - NSToolbarDelegate
 
@@ -554,38 +403,6 @@ extension MainWindowController: NSToolbarDelegate {
             ToolbarIdentifier.downloads,
             ToolbarIdentifier.flexibleSpace,
         ]
-    }
-}
-
-// MARK: - NSComboBoxDelegate
-
-extension MainWindowController: NSComboBoxDelegate {
-
-    /// Called when user presses Return in the coordinate combobox or selects an item.
-    public func comboBoxSelectionDidChange(_ notification: Notification) {
-        guard let comboBox = notification.object as? NSComboBox,
-              comboBox === coordinateComboBox,
-              !isUpdatingCoordinatesProgrammatically else { return }
-
-        let index = comboBox.indexOfSelectedItem
-        guard index >= 0, index < comboBox.numberOfItems else { return }
-
-        if let value = comboBox.itemObjectValue(at: index) as? String {
-            handleCoordinateInput(value)
-        }
-    }
-
-    public func controlTextDidEndEditing(_ obj: Notification) {
-        // Handle Return key in coordinate combobox
-        if let comboBox = obj.object as? NSComboBox,
-           comboBox === coordinateComboBox,
-           !isUpdatingCoordinatesProgrammatically {
-            let input = comboBox.stringValue
-            if !input.isEmpty {
-                handleCoordinateInput(input)
-            }
-            return
-        }
     }
 }
 

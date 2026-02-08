@@ -34,19 +34,7 @@ public final class GenBankBundleDownloadViewModel: @unchecked Sendable {
     ///
     /// - Throws: `BundleBuildError.missingTools` if essential tools are missing.
     public func validateTools() async throws {
-        let (valid, missing) = await toolRunner.validateToolsInstallation()
-        if !valid {
-            let essential = missing.filter { $0 == .bgzip || $0 == .samtools }
-            if !essential.isEmpty {
-                let names = essential.map(\.rawValue).joined(separator: ", ")
-                genBankDownloadLogger.error("validateTools: Essential tools missing: \(names, privacy: .public)")
-                throw BundleBuildError.missingTools(essential.map(\.rawValue))
-            }
-            let optionalMissing = missing.filter { $0 != .bgzip && $0 != .samtools }
-            if !optionalMissing.isEmpty {
-                genBankDownloadLogger.warning("validateTools: Optional tools missing: \(optionalMissing.map(\.rawValue).joined(separator: ", "), privacy: .public)")
-            }
-        }
+        try await BundleBuildHelpers.validateTools(using: toolRunner)
     }
 
     public func downloadAndBuild(
@@ -80,8 +68,8 @@ public final class GenBankBundleDownloadViewModel: @unchecked Sendable {
             throw DatabaseServiceError.parseError(message: "No sequence records found in GenBank response")
         }
 
-        let bundleURL = makeUniqueBundleURL(
-            baseName: sanitizedFilename(resolvedAccession),
+        let bundleURL = BundleBuildHelpers.makeUniqueBundleURL(
+            baseName: BundleBuildHelpers.sanitizedFilename(resolvedAccession),
             in: outputDirectory
         )
         let genomeDir = bundleURL.appendingPathComponent("genome", isDirectory: true)
@@ -113,13 +101,13 @@ public final class GenBankBundleDownloadViewModel: @unchecked Sendable {
         let faiURL = compressedFASTA.appendingPathExtension("fai")
         let gziURL = compressedFASTA.appendingPathExtension("gzi")
 
-        let chromosomes = try parseFai(at: faiURL)
+        let chromosomes = try BundleBuildHelpers.parseFai(at: faiURL)
         let totalLength = chromosomes.reduce(Int64(0)) { $0 + $1.length }
 
         // Build chromosome sizes for annotation coordinate clipping
         let chromosomeSizes = chromosomes.map { ($0.name, $0.length) }
         let chromSizesURL = tempDir.appendingPathComponent("chrom.sizes")
-        try writeChromSizes(chromosomes, to: chromSizesURL)
+        try BundleBuildHelpers.writeChromSizes(chromosomes, to: chromSizesURL)
 
         var annotationTracks: [AnnotationTrackInfo] = []
         if !record.annotations.isEmpty {
@@ -140,7 +128,7 @@ public final class GenBankBundleDownloadViewModel: @unchecked Sendable {
                 )
 
                 // Clip BED coordinates to chromosome boundaries (required for bedToBigBed)
-                clipBEDCoordinates(bedURL: bedURL, chromosomeSizes: chromosomeSizes)
+                BundleBuildHelpers.clipBEDCoordinates(bedURL: bedURL, chromosomeSizes: chromosomeSizes)
 
                 progressHandler?(0.65, "Creating annotation database...")
 
@@ -150,7 +138,7 @@ public final class GenBankBundleDownloadViewModel: @unchecked Sendable {
                 genBankDownloadLogger.info("downloadAndBuild: Created annotation database with \(dbRecordCount) records")
 
                 // Strip extra columns (13+) for bedToBigBed — it only handles standard BED12.
-                stripExtraBEDColumns(bedURL: bedURL, keepColumns: 12)
+                BundleBuildHelpers.stripExtraBEDColumns(bedURL: bedURL, keepColumns: 12)
 
                 progressHandler?(0.72, "Converting to BigBed...")
 
@@ -249,132 +237,5 @@ public final class GenBankBundleDownloadViewModel: @unchecked Sendable {
         progressHandler?(1.0, "Bundle ready: \(bundleURL.lastPathComponent)")
         genBankDownloadLogger.info("downloadAndBuild: Bundle complete at \(bundleURL.path, privacy: .public)")
         return bundleURL
-    }
-
-    // MARK: - Private Helpers
-
-    private func sanitizedFilename(_ raw: String) -> String {
-        raw
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "/", with: "-")
-            .replacingOccurrences(of: ":", with: "-")
-            .replacingOccurrences(of: " ", with: "_")
-    }
-
-    private func makeUniqueBundleURL(baseName: String, in directory: URL) -> URL {
-        var candidate = directory.appendingPathComponent("\(baseName).lungfishref", isDirectory: true)
-        var counter = 1
-        while FileManager.default.fileExists(atPath: candidate.path) {
-            candidate = directory.appendingPathComponent("\(baseName)_\(counter).lungfishref", isDirectory: true)
-            counter += 1
-        }
-        return candidate
-    }
-
-    private func parseFai(at url: URL) throws -> [ChromosomeInfo] {
-        let content = try String(contentsOf: url, encoding: .utf8)
-        let lines = content.split(whereSeparator: \.isNewline)
-
-        var chromosomes: [ChromosomeInfo] = []
-        for line in lines {
-            let fields = line.split(separator: "\t")
-            guard fields.count >= 5,
-                  let length = Int64(fields[1]),
-                  let offset = Int64(fields[2]),
-                  let lineBases = Int(fields[3]),
-                  let lineWidth = Int(fields[4]) else {
-                continue
-            }
-
-            let name = String(fields[0])
-            let isMito = name.lowercased() == "mt" || name.lowercased() == "chrm" || name.uppercased().contains("MITO")
-            chromosomes.append(
-                ChromosomeInfo(
-                    name: name,
-                    length: length,
-                    offset: offset,
-                    lineBases: lineBases,
-                    lineWidth: lineWidth,
-                    aliases: [],
-                    isPrimary: true,
-                    isMitochondrial: isMito,
-                    fastaDescription: nil
-                )
-            )
-        }
-
-        if chromosomes.isEmpty {
-            throw BundleBuildError.indexingFailed("FASTA index is empty or unreadable")
-        }
-
-        return chromosomes
-    }
-
-    private func writeChromSizes(_ chromosomes: [ChromosomeInfo], to url: URL) throws {
-        let lines = chromosomes.map { "\($0.name)\t\($0.length)" }
-        try lines.joined(separator: "\n").appending("\n").write(to: url, atomically: true, encoding: .utf8)
-    }
-
-    /// Clips BED coordinates to chromosome boundaries so bedToBigBed doesn't reject them.
-    private func clipBEDCoordinates(bedURL: URL, chromosomeSizes: [(String, Int64)]) {
-        let chromSizeMap = Dictionary(uniqueKeysWithValues: chromosomeSizes)
-
-        guard let content = try? String(contentsOf: bedURL, encoding: .utf8) else { return }
-        let lines = content.components(separatedBy: .newlines)
-
-        var clipped: [String] = []
-        for line in lines {
-            if line.isEmpty || line.hasPrefix("#") {
-                clipped.append(line)
-                continue
-            }
-            var fields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-            guard fields.count >= 3 else {
-                clipped.append(line)
-                continue
-            }
-
-            let chrom = fields[0]
-            guard let chromSize = chromSizeMap[chrom] else {
-                clipped.append(line)
-                continue
-            }
-
-            if let start = Int64(fields[1]), start >= chromSize { continue }
-            if let end = Int64(fields[2]), end > chromSize {
-                fields[2] = "\(chromSize)"
-            }
-            // Also clip block start/end in BED12 columns 6/7 (thickStart/thickEnd)
-            if fields.count >= 7 {
-                if let thickEnd = Int64(fields[6]), thickEnd > chromSize {
-                    fields[6] = "\(chromSize)"
-                }
-            }
-            clipped.append(fields.joined(separator: "\t"))
-        }
-
-        try? clipped.joined(separator: "\n").write(to: bedURL, atomically: true, encoding: .utf8)
-    }
-
-    /// Strips columns beyond `keepColumns` so bedToBigBed can handle the file.
-    private func stripExtraBEDColumns(bedURL: URL, keepColumns: Int) {
-        guard let content = try? String(contentsOf: bedURL, encoding: .utf8) else { return }
-        let lines = content.components(separatedBy: .newlines)
-
-        var stripped: [String] = []
-        for line in lines {
-            if line.isEmpty || line.hasPrefix("#") {
-                stripped.append(line)
-                continue
-            }
-            let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
-            if fields.count > keepColumns {
-                stripped.append(fields.prefix(keepColumns).joined(separator: "\t"))
-            } else {
-                stripped.append(line)
-            }
-        }
-
-        try? stripped.joined(separator: "\n").write(to: bedURL, atomically: true, encoding: .utf8)
     }
 }

@@ -306,16 +306,6 @@ public enum DatabaseSource: String, Sendable, Codable, CaseIterable {
         }
     }
 
-    /// URL to the database home page.
-    public var homeURL: URL? {
-        switch self {
-        case .ncbi: return URL(string: "https://www.ncbi.nlm.nih.gov/")
-        case .ena: return URL(string: "https://www.ebi.ac.uk/ena/browser/")
-        case .ddbj: return URL(string: "https://www.ddbj.nig.ac.jp/")
-        case .pathoplexus: return URL(string: "https://pathoplexus.org/")
-        case .local: return nil
-        }
-    }
 }
 
 // MARK: - Database Service Error
