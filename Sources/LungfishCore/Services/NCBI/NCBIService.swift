@@ -549,23 +549,25 @@ public actor NCBIService: DatabaseService {
         to destination: URL,
         progressHandler: @escaping @Sendable (Int64, Int64?) -> Void
     ) async throws -> URL {
-        // Create a download delegate to track progress
-        let delegate = DownloadProgressDelegate(
+        // Use continuation-based approach instead of async session.download(for:delegate:)
+        // because the async API doesn't reliably forward didWriteData progress callbacks
+        // to the session delegate.
+        let delegate = ContinuationDownloadDelegate(
             totalBytes: fileInfo.estimatedSize,
             progressHandler: progressHandler
         )
 
         let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
 
         let request = URLRequest(url: fileInfo.url)
 
-        let (tempURL, response) = try await session.download(for: request, delegate: delegate)
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            throw DatabaseServiceError.networkError(underlying: "Bad server response")
+        let tempURL: URL = try await withCheckedThrowingContinuation { continuation in
+            delegate.setContinuation(continuation)
+            let task = session.downloadTask(with: request)
+            task.resume()
         }
+
+        session.invalidateAndCancel()
 
         // Move to destination
         let fileManager = FileManager.default
@@ -1375,13 +1377,22 @@ public enum NCBISearchType: String, CaseIterable, Identifiable, Sendable {
 // MARK: - Download Progress Delegate
 
 /// A URLSession delegate that tracks download progress.
-final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate, Sendable {
+/// URLSession download delegate that bridges to async/await via a continuation.
+///
+/// Using `downloadTask(with:)` + continuation instead of the async `session.download(for:delegate:)`
+/// API because the async API doesn't reliably forward `didWriteData` progress callbacks.
+final class ContinuationDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     private let totalBytes: Int64?
     private let progressHandler: @Sendable (Int64, Int64?) -> Void
+    private var continuation: CheckedContinuation<URL, Error>?
 
     init(totalBytes: Int64?, progressHandler: @escaping @Sendable (Int64, Int64?) -> Void) {
         self.totalBytes = totalBytes
         self.progressHandler = progressHandler
+    }
+
+    func setContinuation(_ continuation: CheckedContinuation<URL, Error>) {
+        self.continuation = continuation
     }
 
     func urlSession(
@@ -1391,7 +1402,6 @@ final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate, Send
         totalBytesWritten: Int64,
         totalBytesExpectedToWrite: Int64
     ) {
-        // Use the expected bytes from the response if available, otherwise use our stored estimate
         let expectedTotal = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : totalBytes
         progressHandler(totalBytesWritten, expectedTotal)
     }
@@ -1401,6 +1411,39 @@ final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate, Send
         downloadTask: URLSessionDownloadTask,
         didFinishDownloadingTo location: URL
     ) {
-        // This is handled by the async download call
+        // Copy to a temp location that survives after the delegate callback returns,
+        // since URLSession deletes the file at `location` after this method returns.
+        let tempCopy = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + "-" + location.lastPathComponent)
+        do {
+            try FileManager.default.copyItem(at: location, to: tempCopy)
+        } catch {
+            continuation?.resume(throwing: error)
+            continuation = nil
+            return
+        }
+
+        guard let response = downloadTask.response as? HTTPURLResponse,
+              response.statusCode == 200 else {
+            continuation?.resume(throwing: DatabaseServiceError.networkError(
+                underlying: "Bad server response: \((downloadTask.response as? HTTPURLResponse)?.statusCode ?? -1)"
+            ))
+            continuation = nil
+            return
+        }
+
+        continuation?.resume(returning: tempCopy)
+        continuation = nil
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: (any Error)?
+    ) {
+        if let error {
+            continuation?.resume(throwing: error)
+            continuation = nil
+        }
     }
 }

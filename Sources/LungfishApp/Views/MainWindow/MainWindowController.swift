@@ -639,8 +639,10 @@ private struct DownloadsPopoverView: View {
                                     .foregroundColor(.secondary)
                                     .lineLimit(2)
 
-                                ProgressView(value: item.progress)
-                                    .progressViewStyle(.linear)
+                                if item.state == .running {
+                                    ProgressView(value: item.progress)
+                                        .progressViewStyle(.linear)
+                                }
                             }
                             .padding(8)
                             .background(Color(nsColor: .controlBackgroundColor))
