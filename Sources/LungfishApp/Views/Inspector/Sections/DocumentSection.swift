@@ -166,7 +166,7 @@ public struct DocumentSection: View {
             }
             .padding(.top, 4)
         } label: {
-            Label("Source", systemImage: "building.columns")
+            Text("Source")
                 .font(.headline)
         }
     }
@@ -251,7 +251,7 @@ public struct DocumentSection: View {
             }
             .padding(.top, 4)
         } label: {
-            Label("Chromosome", systemImage: "chart.bar.doc.horizontal")
+            Text("Chromosome")
                 .font(.headline)
         }
     }

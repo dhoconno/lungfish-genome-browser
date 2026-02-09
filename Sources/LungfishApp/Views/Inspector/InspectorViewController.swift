@@ -288,6 +288,12 @@ public class InspectorViewController: NSViewController {
         logger.info("handleBundleDidLoad: Updating document tab with manifest=\(manifest != nil), bundleURL=\(bundleURL?.lastPathComponent ?? "nil", privacy: .public)")
 
         updateBundleMetadata(manifest: manifest, bundleURL: bundleURL)
+
+        // Auto-select the first chromosome so the Chromosome section is visible immediately
+        if let chromosomes = manifest?.genome.chromosomes, !chromosomes.isEmpty {
+            let sorted = naturalChromosomeSort(chromosomes)
+            updateSelectedChromosome(sorted.first)
+        }
     }
 
     /// Handles requests to show/focus inspector with a specific tab.
@@ -296,10 +302,16 @@ public class InspectorViewController: NSViewController {
     }
 
     /// Handles chromosome inspector requests and updates chromosome details state.
+    ///
+    /// When `switchTab` is true in userInfo (e.g., from context menu "Show in Inspector"),
+    /// the inspector switches to the Document tab. Regular navigation updates chromosome
+    /// details without changing the active tab.
     @objc private func handleChromosomeInspectorRequested(_ notification: Notification) {
         let chromosome = notification.userInfo?[NotificationUserInfoKey.chromosome] as? ChromosomeInfo
         updateSelectedChromosome(chromosome)
-        if chromosome != nil {
+
+        let shouldSwitchTab = notification.userInfo?["switchTab"] as? Bool ?? false
+        if chromosome != nil && shouldSwitchTab {
             viewModel.selectedTab = .document
         }
     }

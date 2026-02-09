@@ -257,6 +257,13 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
         enhancedRulerView.needsDisplay = true
         headerView.needsDisplay = true
 
+        // Update Inspector with the newly selected chromosome (without switching tabs)
+        NotificationCenter.default.post(
+            name: .chromosomeInspectorRequested,
+            object: self,
+            userInfo: [NotificationUserInfoKey.chromosome: chromosome]
+        )
+
         bundleLogger.info("chromosomeNavigator: Navigation to '\(chromosome.name, privacy: .public)' complete")
     }
 
