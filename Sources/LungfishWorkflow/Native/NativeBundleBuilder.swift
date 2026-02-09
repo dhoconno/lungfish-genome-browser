@@ -909,11 +909,13 @@ public final class NativeBundleBuilder: ObservableObject {
                 let blockSizes = intervals.map { "\($0.end - $0.start)" }.joined(separator: ",") + ","
                 let blockStarts = intervals.map { "\($0.start - featureStart)" }.joined(separator: ",") + ","
 
-                // Column 13: real GenBank feature type
-                let featureType = annotation.type.rawValue
+                // Column 13: real GenBank feature type (preserve original key when present)
+                let featureType = annotation.qualifiers[GenBankReader.rawFeatureTypeQualifierKey]?.firstValue
+                    ?? annotation.type.rawValue
 
                 // Column 14: all qualifiers as key=value;key=value
                 let qualifierPairs: [String] = annotation.qualifiers
+                    .filter { $0.key != GenBankReader.rawFeatureTypeQualifierKey }
                     .sorted { $0.key < $1.key }
                     .map { key, qualifier in
                         let joinedValues = qualifier.values.joined(separator: ",")

@@ -45,6 +45,9 @@ import LungfishCore
 /// let allRecords = try await reader.readAll()
 /// ```
 public final class GenBankReader: Sendable {
+    /// Internal qualifier key used to preserve the original GenBank feature key.
+    /// This allows downstream exporters to emit the exact source feature type.
+    public static let rawFeatureTypeQualifierKey = "_lf_raw_feature_type"
     /// The file URL being read
     public let url: URL
 
@@ -363,6 +366,9 @@ public final class GenBankReader: Sendable {
                     qualifierDict[key] = AnnotationQualifier(value ?? "")
                 }
             }
+
+            // Preserve the exact GenBank feature key for downstream serialization.
+            qualifierDict[Self.rawFeatureTypeQualifierKey] = AnnotationQualifier(featureType)
 
             // Determine feature name from qualifiers
             let name = qualifierDict["gene"]?.firstValue

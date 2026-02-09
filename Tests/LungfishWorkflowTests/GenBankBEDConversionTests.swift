@@ -111,6 +111,40 @@ final class GenBankBEDConversionTests: XCTestCase {
         XCTAssertFalse(types.contains("source"), "Source features should be skipped")
     }
 
+    func testGenBankToBEDPreservesRawFeatureTypeForAliasedType() async throws {
+        let gb = """
+        LOCUS       AliasType                300 bp    DNA     linear   SYN 01-JAN-2024
+        DEFINITION  Test aliased feature type preservation.
+        ACCESSION   AT000001
+        VERSION     AT000001.1
+        FEATURES             Location/Qualifiers
+             source          1..300
+                             /organism="Test"
+                             /mol_type="genomic DNA"
+             primer_bind     20..40
+                             /note="PCR primer site"
+        ORIGIN
+                1 atcgatcgat cgatcgatcg atcgatcgat cgatcgatcg atcgatcgat cgatcgatcg
+        //
+        """
+
+        let gbURL = try createTempGenBankFile(content: gb)
+        defer { try? FileManager.default.removeItem(at: gbURL) }
+
+        let bedURL = gbURL.deletingPathExtension().appendingPathExtension("bed")
+        defer { try? FileManager.default.removeItem(at: bedURL) }
+
+        let builder = NativeBundleBuilder()
+        let count = try await builder.convertGenBankToBED(from: gbURL, to: bedURL)
+
+        XCTAssertEqual(count, 1, "Should include only the primer_bind feature")
+        let lines = try parseBEDLines(from: bedURL)
+        XCTAssertEqual(lines.count, 1)
+        XCTAssertEqual(lines[0][12], "primer_bind", "Column 13 should preserve the original GenBank feature key")
+        XCTAssertFalse(lines[0][13].contains(GenBankReader.rawFeatureTypeQualifierKey),
+                       "Internal raw feature type marker must not leak into qualifier serialization")
+    }
+
     // MARK: - Qualifier Preservation Tests
 
     func testGenBankToBEDPreservesQualifiers() async throws {
