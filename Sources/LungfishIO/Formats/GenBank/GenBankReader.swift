@@ -642,29 +642,12 @@ public final class GenBankReader: Sendable {
 
     // MARK: - Feature Type Mapping
 
+    /// Maps a GenBank feature type string to an ``AnnotationType`` using the
+    /// centralized ``AnnotationType.from(rawString:)`` factory method. This
+    /// automatically handles all known types including mat_peptide, sig_peptide,
+    /// transit_peptide, regulatory, ncRNA, misc_binding, and protein_bind.
     private func mapFeatureType(_ typeString: String) -> AnnotationType {
-        switch typeString.lowercased() {
-        case "gene": return .gene
-        case "mrna": return .mRNA
-        case "cds": return .cds
-        case "exon": return .exon
-        case "intron": return .intron
-        case "5'utr", "five_prime_utr": return .utr5
-        case "3'utr", "three_prime_utr": return .utr3
-        case "promoter": return .promoter
-        case "enhancer": return .enhancer
-        case "terminator": return .terminator
-        case "polya_signal": return .polyASignal
-        case "primer_bind": return .primer
-        case "repeat_region": return .repeatRegion
-        case "stem_loop": return .stem_loop
-        case "source": return .source
-        case "misc_feature": return .misc_feature
-        case "variation": return .variation
-        case "gap": return .gap
-        case "region": return .region
-        default: return .misc_feature
-        }
+        return AnnotationType.from(rawString: typeString) ?? .misc_feature
     }
 }
 
