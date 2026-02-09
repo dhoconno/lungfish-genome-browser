@@ -189,7 +189,8 @@ public final class NativeBundleBuilder: ObservableObject {
                     genome: genomeInfo,
                     annotations: annotationInfos,
                     variants: variantInfos,
-                    tracks: signalInfos
+                    tracks: signalInfos,
+                    metadata: configuration.metadata
                 )
 
                 try manifest.save(to: bundleURL)

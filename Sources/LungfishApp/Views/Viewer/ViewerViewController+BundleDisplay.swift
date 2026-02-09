@@ -106,13 +106,14 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
             self.headerView.needsDisplay = true
         }
 
-        // Notify that bundle has been loaded (for annotation search index building, toolbar updates)
+        // Notify that bundle has been loaded (for annotation search index building, toolbar updates, inspector)
         NotificationCenter.default.post(
             name: .bundleDidLoad,
             object: self,
             userInfo: [
                 NotificationUserInfoKey.bundleURL: url,
                 NotificationUserInfoKey.chromosomes: manifest.genome.chromosomes,
+                NotificationUserInfoKey.manifest: manifest,
             ]
         )
 

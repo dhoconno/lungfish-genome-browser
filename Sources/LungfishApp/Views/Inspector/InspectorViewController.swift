@@ -11,6 +11,20 @@ import os.log
 /// Logger for inspector operations
 private let logger = Logger(subsystem: "com.lungfish.browser", category: "InspectorViewController")
 
+// MARK: - InspectorTab
+
+/// Tab selection for the inspector panel's segmented control.
+///
+/// The inspector supports two tabs:
+/// - `document`: Shows bundle-level metadata (organism, assembly, source info, NCBI metadata)
+/// - `selection`: Shows editing controls (annotation selection, appearance, annotation style, read style)
+enum InspectorTab: String, CaseIterable {
+    /// Bundle metadata and source information.
+    case document
+    /// Annotation selection editing and style controls.
+    case selection
+}
+
 /// Controller for the inspector panel showing selection details.
 ///
 /// Uses SwiftUI via NSHostingView for modern, declarative UI.
@@ -94,6 +108,30 @@ public class InspectorViewController: NSViewController {
             self,
             selector: #selector(handleAnnotationSelected(_:)),
             name: .annotationSelected,
+            object: nil
+        )
+
+        // Listen for bundle loads to update Document tab
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleBundleDidLoad(_:)),
+            name: .bundleDidLoad,
+            object: nil
+        )
+
+        // Listen for explicit inspector show requests with tab targeting.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleShowInspectorRequested(_:)),
+            name: .showInspectorRequested,
+            object: nil
+        )
+
+        // Listen for chromosome inspector requests from the navigator context menu.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleChromosomeInspectorRequested(_:)),
+            name: .chromosomeInspectorRequested,
             object: nil
         )
 
@@ -227,11 +265,52 @@ public class InspectorViewController: NSViewController {
         if let annotation = notification.userInfo?[NotificationUserInfoKey.annotation] as? SequenceAnnotation {
             viewModel.selectedAnnotation = annotation
             viewModel.selectionSectionViewModel.select(annotation: annotation)
+            // Auto-switch to Selection tab when an annotation is selected
+            viewModel.selectedTab = .selection
         } else {
             // Deselection - clear the annotation
             viewModel.selectedAnnotation = nil
             viewModel.selectionSectionViewModel.select(annotation: nil)
+            applyInspectorTabSelection(from: notification)
         }
+    }
+
+    /// Handles bundle load notifications to update the Document tab.
+    ///
+    /// Extracts the manifest and bundle URL from the notification's userInfo
+    /// and updates the document section view model.
+    @objc private func handleBundleDidLoad(_ notification: Notification) {
+        guard let userInfo = notification.userInfo else { return }
+
+        let bundleURL = userInfo[NotificationUserInfoKey.bundleURL] as? URL
+        let manifest = userInfo[NotificationUserInfoKey.manifest] as? BundleManifest
+
+        logger.info("handleBundleDidLoad: Updating document tab with manifest=\(manifest != nil), bundleURL=\(bundleURL?.lastPathComponent ?? "nil", privacy: .public)")
+
+        updateBundleMetadata(manifest: manifest, bundleURL: bundleURL)
+    }
+
+    /// Handles requests to show/focus inspector with a specific tab.
+    @objc private func handleShowInspectorRequested(_ notification: Notification) {
+        applyInspectorTabSelection(from: notification)
+    }
+
+    /// Handles chromosome inspector requests and updates chromosome details state.
+    @objc private func handleChromosomeInspectorRequested(_ notification: Notification) {
+        let chromosome = notification.userInfo?[NotificationUserInfoKey.chromosome] as? ChromosomeInfo
+        updateSelectedChromosome(chromosome)
+        if chromosome != nil {
+            viewModel.selectedTab = .document
+        }
+    }
+
+    /// Applies inspector tab selection from notification userInfo if provided.
+    private func applyInspectorTabSelection(from notification: Notification) {
+        guard let tabName = notification.userInfo?[NotificationUserInfoKey.inspectorTab] as? String,
+              let tab = InspectorTab(rawValue: tabName) else {
+            return
+        }
+        viewModel.selectedTab = tab
     }
 
     // MARK: - Annotation Editing Handlers
@@ -402,6 +481,26 @@ public class InspectorViewController: NSViewController {
 
     // MARK: - Public API
 
+    /// Updates the document tab with bundle metadata from a loaded reference bundle.
+    ///
+    /// - Parameters:
+    ///   - manifest: The bundle manifest to display, or nil to clear
+    ///   - bundleURL: The URL of the loaded bundle
+    public func updateBundleMetadata(manifest: BundleManifest?, bundleURL: URL?) {
+        viewModel.documentSectionViewModel.update(manifest: manifest, bundleURL: bundleURL)
+        // Auto-switch to Document tab when a bundle loads
+        if manifest != nil {
+            viewModel.selectedTab = .document
+        }
+    }
+
+    /// Updates the chromosome selection in the Document tab.
+    ///
+    /// - Parameter chromosome: The chromosome to display details for, or nil to clear
+    public func updateSelectedChromosome(_ chromosome: ChromosomeInfo?) {
+        viewModel.documentSectionViewModel.selectChromosome(chromosome)
+    }
+
     /// Updates the quality section with new quality data.
     ///
     /// Call this when loading a file to update quality statistics display.
@@ -444,10 +543,16 @@ public class InspectorViewController: NSViewController {
 /// View model for the inspector panel.
 ///
 /// Aggregates state for all inspector sections and coordinates
-/// between section view models.
+/// between section view models. Supports a tabbed interface with
+/// Document and Selection tabs.
 @Observable
 @MainActor
 public final class InspectorViewModel {
+    // MARK: - Tab State
+
+    /// Currently selected inspector tab.
+    var selectedTab: InspectorTab = .selection
+
     // MARK: - Sidebar Selection State
 
     /// Currently selected sidebar item name
@@ -481,6 +586,9 @@ public final class InspectorViewModel {
     var qualityStats: QualityStatistics?
 
     // MARK: - Section View Models
+
+    /// View model for the document section (bundle metadata)
+    let documentSectionViewModel = DocumentSectionViewModel()
 
     /// View model for the selection section
     let selectionSectionViewModel = SelectionSectionViewModel()
@@ -516,38 +624,60 @@ public final class InspectorViewModel {
 
 /// SwiftUI view for the inspector panel content.
 ///
-/// Displays style and editing sections:
-/// - Selection: Shows and edits the currently selected annotation
-/// - Sequence Style: Configures sequence track geometry
-/// - Annotation Style: Configures annotation display and type visibility
-/// - Read Style: Placeholder controls for mapped-read appearance
+/// Displays a Keynote-style tabbed interface with two tabs:
+/// - **Document**: Bundle metadata, source info, genome summary, extended metadata
+/// - **Selection**: Annotation editing, appearance settings, annotation style, read style
+///
+/// Uses a segmented `Picker` at the top of the panel for tab switching.
 public struct InspectorView: View {
-    var viewModel: InspectorViewModel
+    @Bindable var viewModel: InspectorViewModel
 
     public var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                // Selection Section - shows selected annotation details
-                SelectionSection(viewModel: viewModel.selectionSectionViewModel)
-
-                Divider()
-
-                // Sequence style
-                AppearanceSection(viewModel: viewModel.appearanceSectionViewModel)
-
-                Divider()
-
-                // Annotation style
-                AnnotationSection(viewModel: viewModel.annotationSectionViewModel)
-
-                Divider()
-
-                // Read style (BAM/CRAM placeholder)
-                ReadStyleSection(viewModel: viewModel.readStyleSectionViewModel)
-
-                Spacer()
+        VStack(spacing: 0) {
+            // Tab picker at top
+            Picker("Inspector", selection: $viewModel.selectedTab) {
+                Image(systemName: "doc.text")
+                    .tag(InspectorTab.document)
+                Image(systemName: "cursorarrow.click")
+                    .tag(InspectorTab.selection)
             }
-            .padding()
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+
+            Divider()
+
+            // Tab content
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    switch viewModel.selectedTab {
+                    case .document:
+                        DocumentSection(viewModel: viewModel.documentSectionViewModel)
+
+                    case .selection:
+                        SelectionSection(viewModel: viewModel.selectionSectionViewModel)
+
+                        Divider()
+
+                        // Sequence style
+                        AppearanceSection(viewModel: viewModel.appearanceSectionViewModel)
+
+                        Divider()
+
+                        // Annotation style
+                        AnnotationSection(viewModel: viewModel.annotationSectionViewModel)
+
+                        Divider()
+
+                        // Read style (BAM/CRAM placeholder)
+                        ReadStyleSection(viewModel: viewModel.readStyleSectionViewModel)
+                    }
+
+                    Spacer()
+                }
+                .padding()
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .controlBackgroundColor))
@@ -604,6 +734,37 @@ struct InspectorView_Previews: PreviewProvider {
                 minQuality: 2,
                 maxQuality: 40
             )
+        )
+
+        // Set up sample document metadata
+        viewModel.documentSectionViewModel.update(
+            manifest: BundleManifest(
+                name: "Human Reference Genome",
+                identifier: "org.lungfish.hg38",
+                source: SourceInfo(
+                    organism: "Homo sapiens",
+                    commonName: "Human",
+                    taxonomyId: 9606,
+                    assembly: "GRCh38",
+                    assemblyAccession: "GCF_000001405.40",
+                    database: "NCBI"
+                ),
+                genome: GenomeInfo(
+                    path: "genome/sequence.fa.gz",
+                    indexPath: "genome/sequence.fa.gz.fai",
+                    totalLength: 3_088_286_401,
+                    chromosomes: [
+                        ChromosomeInfo(
+                            name: "chr1",
+                            length: 248_956_422,
+                            offset: 0,
+                            lineBases: 80,
+                            lineWidth: 81
+                        )
+                    ]
+                )
+            ),
+            bundleURL: URL(fileURLWithPath: "/tmp/test.lungfishref")
         )
 
         return InspectorView(viewModel: viewModel)

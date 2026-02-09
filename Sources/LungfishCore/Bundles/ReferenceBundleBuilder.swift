@@ -67,6 +67,13 @@ public struct BuildConfiguration: Sendable {
     /// Whether to compress the FASTA file (default: true).
     public let compressFASTA: Bool
 
+    /// Optional categorized metadata groups for flexible, source-specific metadata storage.
+    ///
+    /// When provided, these groups are written to the bundle manifest and displayed in the Inspector.
+    /// This allows callers (e.g., NCBI download pipelines) to pass through rich metadata
+    /// without requiring schema changes to `BuildConfiguration`.
+    public let metadata: [MetadataGroup]?
+
     /// Creates a new build configuration.
     public init(
         name: String,
@@ -77,7 +84,8 @@ public struct BuildConfiguration: Sendable {
         signalFiles: [SignalInput] = [],
         outputDirectory: URL,
         source: SourceInfo,
-        compressFASTA: Bool = true
+        compressFASTA: Bool = true,
+        metadata: [MetadataGroup]? = nil
     ) {
         self.name = name
         self.identifier = identifier
@@ -88,6 +96,7 @@ public struct BuildConfiguration: Sendable {
         self.outputDirectory = outputDirectory
         self.source = source
         self.compressFASTA = compressFASTA
+        self.metadata = metadata
     }
 }
 
@@ -404,7 +413,8 @@ public final class ReferenceBundleBuilder: ObservableObject {
                     genome: genomeInfo,
                     annotations: annotationInfos,
                     variants: variantInfos,
-                    tracks: signalInfos
+                    tracks: signalInfos,
+                    metadata: configuration.metadata
                 )
 
                 try manifest.save(to: bundleURL)

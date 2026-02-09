@@ -1859,6 +1859,13 @@ extension SidebarViewController: NSMenuDelegate {
             menu.addItem(copyPathItem)
         }
 
+        // Show in Inspector (for reference bundles)
+        if items.count == 1 && hasBundles {
+            let showInInspectorItem = NSMenuItem(title: "Show in Inspector", action: #selector(contextMenuShowInInspector(_:)), keyEquivalent: "")
+            showInInspectorItem.target = self
+            menu.addItem(showInInspectorItem)
+        }
+
         menu.addItem(NSMenuItem.separator())
 
         // Rename (single item only, not groups)
@@ -2028,6 +2035,21 @@ extension SidebarViewController: NSMenuDelegate {
         pasteboard.setString(url.path, forType: .string)
 
         logger.info("contextMenuCopyPath: Copied path '\(url.path, privacy: .public)'")
+    }
+
+    /// Posts a notification to show the selected bundle in the inspector.
+    @objc private func contextMenuShowInInspector(_ sender: Any?) {
+        let items = selectedItems()
+        guard let item = items.first else { return }
+
+        logger.info("contextMenuShowInInspector: Showing '\(item.title, privacy: .public)' in inspector")
+
+        // Post notification to show inspector with Document tab
+        NotificationCenter.default.post(
+            name: .showInspectorRequested,
+            object: self,
+            userInfo: [NotificationUserInfoKey.inspectorTab: "document"]
+        )
     }
 
     @objc private func contextMenuNewFolder(_ sender: Any?) {

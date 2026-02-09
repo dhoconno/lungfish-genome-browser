@@ -1356,6 +1356,9 @@ struct AssemblyESummaryResponse: Codable {
 }
 
 /// Assembly summary from NCBI ESummary for assembly database.
+///
+/// Contains core assembly metadata plus enriched fields for metadata export.
+/// All new fields use `decodeIfPresent` for backward compatibility with older API responses.
 public struct NCBIAssemblySummary: Codable, Sendable {
     public let uid: String
     public let assemblyAccession: String?
@@ -1370,6 +1373,26 @@ public struct NCBIAssemblySummary: Codable, Sendable {
     public let contigN50: Int?
     public let scaffoldN50: Int?
 
+    // Enriched metadata fields from NCBI ESummary
+    /// Assembly status (e.g., "Complete Genome", "Scaffold").
+    public let assemblyStatus: String?
+    /// Assembly level (e.g., "Chromosome", "Scaffold", "Contig").
+    public let assemblyLevel: String?
+    /// RefSeq category (e.g., "representative genome", "reference genome").
+    public let refseqCategory: String?
+    /// BioSample accession (e.g., "SAMN02436634").
+    public let biosampleAccession: String?
+    /// BioProject accession (e.g., "PRJNA168").
+    public let bioprojectAccession: String?
+    /// Total ungapped sequence length in base pairs.
+    public let totalSequenceLength: String?
+    /// Number of chromosomes in the assembly.
+    public let chromosomeCount: String?
+    /// Release type ("Major" or "Patch").
+    public let releaseType: String?
+    /// Organization that submitted the assembly.
+    public let submitterOrganization: String?
+
     enum CodingKeys: String, CodingKey {
         case uid
         case assemblyAccession = "assemblyaccession"
@@ -1383,6 +1406,15 @@ public struct NCBIAssemblySummary: Codable, Sendable {
         case coverage
         case contigN50 = "contig_n50"
         case scaffoldN50 = "scaffold_n50"
+        case assemblyStatus = "assemblystatus"
+        case assemblyLevel = "assemblylevel"
+        case refseqCategory = "refseq_category"
+        case biosampleAccession = "biosampleaccn"
+        case bioprojectAccession = "bioprojectaccn"
+        case totalSequenceLength = "total_length"
+        case chromosomeCount = "chromosome_count"
+        case releaseType = "releasetype"
+        case submitterOrganization = "submitterorganization"
     }
 
     public init(from decoder: Decoder) throws {
@@ -1423,6 +1455,83 @@ public struct NCBIAssemblySummary: Codable, Sendable {
         } else {
             scaffoldN50 = nil
         }
+
+        // Enriched metadata fields (all optional strings)
+        assemblyStatus = try container.decodeIfPresent(String.self, forKey: .assemblyStatus)
+        assemblyLevel = try container.decodeIfPresent(String.self, forKey: .assemblyLevel)
+        refseqCategory = try container.decodeIfPresent(String.self, forKey: .refseqCategory)
+        biosampleAccession = try container.decodeIfPresent(String.self, forKey: .biosampleAccession)
+        bioprojectAccession = try container.decodeIfPresent(String.self, forKey: .bioprojectAccession)
+        totalSequenceLength = try container.decodeIfPresent(String.self, forKey: .totalSequenceLength)
+        chromosomeCount = try container.decodeIfPresent(String.self, forKey: .chromosomeCount)
+        releaseType = try container.decodeIfPresent(String.self, forKey: .releaseType)
+        submitterOrganization = try container.decodeIfPresent(String.self, forKey: .submitterOrganization)
+    }
+}
+
+// MARK: - NCBIAssemblySummary Metadata Conversion
+
+/// Formats a base pair count into a human-readable string (e.g., "56.4 Mb").
+///
+/// Module-level free function to avoid `@MainActor` isolation issues when called
+/// from `@Sendable` contexts.
+private func formatAssemblyBp(_ value: Int) -> String {
+    if value >= 1_000_000_000 {
+        return String(format: "%.1f Gb", Double(value) / 1_000_000_000)
+    }
+    if value >= 1_000_000 {
+        return String(format: "%.1f Mb", Double(value) / 1_000_000)
+    }
+    if value >= 1_000 {
+        return String(format: "%.1f Kb", Double(value) / 1_000)
+    }
+    return "\(value) bp"
+}
+
+extension NCBIAssemblySummary {
+
+    /// Converts the assembly summary into categorized metadata groups for bundle storage.
+    ///
+    /// Groups:
+    /// - **Assembly**: Name, accession, status, level, coverage, N50 statistics, length, chromosome count
+    /// - **Taxonomy**: Organism, species, taxonomy ID
+    /// - **Source**: Submitter, organization, BioSample, BioProject
+    ///
+    /// - Returns: Array of metadata groups with non-nil fields populated.
+    public func toMetadataGroups() -> [MetadataGroup] {
+        var groups: [MetadataGroup] = []
+
+        // Assembly group
+        var assemblyItems: [MetadataItem] = []
+        if let v = assemblyName { assemblyItems.append(MetadataItem(label: "Assembly Name", value: v)) }
+        if let v = assemblyAccession { assemblyItems.append(MetadataItem(label: "Accession", value: v)) }
+        if let v = assemblyStatus { assemblyItems.append(MetadataItem(label: "Status", value: v)) }
+        if let v = assemblyLevel { assemblyItems.append(MetadataItem(label: "Level", value: v)) }
+        if let v = refseqCategory { assemblyItems.append(MetadataItem(label: "RefSeq Category", value: v)) }
+        if let v = releaseType { assemblyItems.append(MetadataItem(label: "Release Type", value: v)) }
+        if let v = coverage { assemblyItems.append(MetadataItem(label: "Coverage", value: "\(v)x")) }
+        if let v = contigN50 { assemblyItems.append(MetadataItem(label: "Contig N50", value: formatAssemblyBp(v))) }
+        if let v = scaffoldN50 { assemblyItems.append(MetadataItem(label: "Scaffold N50", value: formatAssemblyBp(v))) }
+        if let v = totalSequenceLength { assemblyItems.append(MetadataItem(label: "Total Length", value: "\(v) bp")) }
+        if let v = chromosomeCount { assemblyItems.append(MetadataItem(label: "Chromosomes", value: v)) }
+        if !assemblyItems.isEmpty { groups.append(MetadataGroup(name: "Assembly", items: assemblyItems)) }
+
+        // Taxonomy group
+        var taxItems: [MetadataItem] = []
+        if let v = organism { taxItems.append(MetadataItem(label: "Organism", value: v)) }
+        if let v = speciesName, v != organism { taxItems.append(MetadataItem(label: "Species", value: v)) }
+        if let v = taxid { taxItems.append(MetadataItem(label: "Taxonomy ID", value: String(v))) }
+        if !taxItems.isEmpty { groups.append(MetadataGroup(name: "Taxonomy", items: taxItems)) }
+
+        // Source group
+        var sourceItems: [MetadataItem] = []
+        if let v = submitter { sourceItems.append(MetadataItem(label: "Submitter", value: v)) }
+        if let v = submitterOrganization { sourceItems.append(MetadataItem(label: "Organization", value: v)) }
+        if let v = biosampleAccession { sourceItems.append(MetadataItem(label: "BioSample", value: v)) }
+        if let v = bioprojectAccession { sourceItems.append(MetadataItem(label: "BioProject", value: v)) }
+        if !sourceItems.isEmpty { groups.append(MetadataGroup(name: "Source", items: sourceItems)) }
+
+        return groups
     }
 }
 
@@ -1513,6 +1622,68 @@ public struct VirusReport: Codable, Sendable {
         case updateDate = "update_date"
         case biosample, bioprojects
         case purposeOfSampling = "purpose_of_sampling"
+    }
+}
+
+// MARK: - VirusReport Metadata Conversion
+
+extension VirusReport {
+
+    /// Converts the virus report into categorized metadata groups for bundle storage.
+    ///
+    /// Groups:
+    /// - **Virus**: Organism name, pangolin classification, taxonomy ID
+    /// - **Host**: Host organism, host taxonomy ID
+    /// - **Collection**: Isolate name, collection date, geographic location, region, purpose of sampling
+    /// - **Record**: Accession, source database, completeness, sequence length, protein count, release/update dates
+    /// - **Links**: BioSample, BioProject accessions
+    ///
+    /// - Returns: Array of metadata groups with non-nil fields populated.
+    public func toMetadataGroups() -> [MetadataGroup] {
+        var groups: [MetadataGroup] = []
+
+        // Virus group
+        var virusItems: [MetadataItem] = []
+        if let v = virus?.organismName { virusItems.append(MetadataItem(label: "Organism", value: v)) }
+        if let v = virus?.pangolinClassification { virusItems.append(MetadataItem(label: "Pangolin Classification", value: v)) }
+        if let v = virus?.taxId { virusItems.append(MetadataItem(label: "Taxonomy ID", value: String(v))) }
+        if !virusItems.isEmpty { groups.append(MetadataGroup(name: "Virus", items: virusItems)) }
+
+        // Host group
+        var hostItems: [MetadataItem] = []
+        if let v = host?.organismName { hostItems.append(MetadataItem(label: "Host Organism", value: v)) }
+        if let v = host?.taxId { hostItems.append(MetadataItem(label: "Host Taxonomy ID", value: String(v))) }
+        if !hostItems.isEmpty { groups.append(MetadataGroup(name: "Host", items: hostItems)) }
+
+        // Collection group
+        var collectionItems: [MetadataItem] = []
+        if let v = isolate?.name { collectionItems.append(MetadataItem(label: "Isolate", value: v)) }
+        if let v = isolate?.collectionDate { collectionItems.append(MetadataItem(label: "Collection Date", value: v)) }
+        if let v = location?.geographicLocation { collectionItems.append(MetadataItem(label: "Location", value: v)) }
+        if let v = location?.geographicRegion { collectionItems.append(MetadataItem(label: "Geographic Region", value: v)) }
+        if let v = purposeOfSampling { collectionItems.append(MetadataItem(label: "Purpose of Sampling", value: v)) }
+        if !collectionItems.isEmpty { groups.append(MetadataGroup(name: "Collection", items: collectionItems)) }
+
+        // Record group
+        var recordItems: [MetadataItem] = []
+        if let v = accession { recordItems.append(MetadataItem(label: "Accession", value: v)) }
+        if let v = sourceDatabase { recordItems.append(MetadataItem(label: "Source Database", value: v)) }
+        if let v = completeness { recordItems.append(MetadataItem(label: "Completeness", value: v)) }
+        if let v = length { recordItems.append(MetadataItem(label: "Length", value: "\(v) bp")) }
+        if let v = proteinCount { recordItems.append(MetadataItem(label: "Protein Count", value: String(v))) }
+        if let v = releaseDate { recordItems.append(MetadataItem(label: "Release Date", value: v)) }
+        if let v = updateDate { recordItems.append(MetadataItem(label: "Update Date", value: v)) }
+        if !recordItems.isEmpty { groups.append(MetadataGroup(name: "Record", items: recordItems)) }
+
+        // Links group
+        var linkItems: [MetadataItem] = []
+        if let v = biosample { linkItems.append(MetadataItem(label: "BioSample", value: v)) }
+        if let bioprojects, !bioprojects.isEmpty {
+            linkItems.append(MetadataItem(label: "BioProject", value: bioprojects.joined(separator: ", ")))
+        }
+        if !linkItems.isEmpty { groups.append(MetadataGroup(name: "Links", items: linkItems)) }
+
+        return groups
     }
 }
 

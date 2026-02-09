@@ -216,6 +216,9 @@ public final class GenBankBundleDownloadViewModel: @unchecked Sendable {
 
         let bundleIdentifier = "org.ncbi.genbank.\(resolvedAccession.lowercased().replacingOccurrences(of: ".", with: "-"))"
 
+        // Build metadata groups from GenBank record fields
+        let metadataGroups = genBankRecordMetadataGroups(record: record, resolvedAccession: resolvedAccession)
+
         let manifest = BundleManifest(
             name: resolvedAccession,
             identifier: bundleIdentifier,
@@ -224,7 +227,8 @@ public final class GenBankBundleDownloadViewModel: @unchecked Sendable {
             genome: genomeInfo,
             annotations: annotationTracks,
             variants: [],
-            tracks: []
+            tracks: [],
+            metadata: metadataGroups.isEmpty ? nil : metadataGroups
         )
 
         let validationErrors = manifest.validate()
@@ -238,4 +242,72 @@ public final class GenBankBundleDownloadViewModel: @unchecked Sendable {
         genBankDownloadLogger.info("downloadAndBuild: Bundle complete at \(bundleURL.path, privacy: .public)")
         return bundleURL
     }
+}
+
+// MARK: - GenBank Metadata Helpers
+
+/// Builds metadata groups from a GenBank record for storage in the bundle manifest.
+///
+/// Creates two groups:
+/// - **Record**: accession, version, definition, molecule type, topology, division, date
+/// - **Sequence**: length, name, description
+private func genBankRecordMetadataGroups(
+    record: GenBankRecord,
+    resolvedAccession: String
+) -> [MetadataGroup] {
+    var groups: [MetadataGroup] = []
+
+    // Record group
+    var recordItems: [MetadataItem] = []
+
+    if let accession = record.accession {
+        recordItems.append(MetadataItem(label: "Accession", value: accession))
+    }
+    if let version = record.version {
+        recordItems.append(MetadataItem(label: "Version", value: version))
+    }
+    if let definition = record.definition {
+        recordItems.append(MetadataItem(label: "Definition", value: definition))
+    }
+    recordItems.append(MetadataItem(label: "Molecule Type", value: record.locus.moleculeType.rawValue))
+    recordItems.append(MetadataItem(label: "Topology", value: record.locus.topology.rawValue))
+    if let division = record.locus.division {
+        recordItems.append(MetadataItem(label: "Division", value: division))
+    }
+    if let date = record.locus.date {
+        recordItems.append(MetadataItem(label: "Date", value: date))
+    }
+
+    if !recordItems.isEmpty {
+        groups.append(MetadataGroup(name: "Record", items: recordItems))
+    }
+
+    // Sequence group
+    var sequenceItems: [MetadataItem] = []
+
+    sequenceItems.append(MetadataItem(label: "Length", value: formatGenBankBp(record.locus.length)))
+    sequenceItems.append(MetadataItem(label: "Name", value: record.sequence.name))
+    if let desc = record.sequence.description {
+        sequenceItems.append(MetadataItem(label: "Description", value: desc))
+    }
+
+    if !sequenceItems.isEmpty {
+        groups.append(MetadataGroup(name: "Sequence", items: sequenceItems))
+    }
+
+    return groups
+}
+
+/// Formats a base-pair count with appropriate units (bp, Kb, Mb, Gb).
+private func formatGenBankBp(_ value: Int) -> String {
+    if value >= 1_000_000_000 {
+        return String(format: "%.1f Gb", Double(value) / 1_000_000_000)
+    }
+    if value >= 1_000_000 {
+        return String(format: "%.1f Mb", Double(value) / 1_000_000)
+    }
+    if value >= 1_000 {
+        return String(format: "%.1f Kb", Double(value) / 1_000)
+    }
+    return "\(value) bp"
 }

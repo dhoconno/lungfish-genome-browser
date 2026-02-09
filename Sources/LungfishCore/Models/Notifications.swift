@@ -65,8 +65,26 @@ extension Notification.Name {
 
     /// Posted when a reference bundle is loaded into the viewer.
     ///
-    /// Contains userInfo keys: "bundleURL" (URL), "chromosomes" ([ChromosomeInfo])
+    /// Contains userInfo keys: "bundleURL" (URL), "chromosomes" ([ChromosomeInfo]),
+    /// "manifest" (BundleManifest)
     public static let bundleDidLoad = Notification.Name("bundleDidLoad")
+}
+
+// MARK: - Inspector Notifications
+
+extension Notification.Name {
+    /// Posted to request showing and focusing the inspector panel.
+    ///
+    /// The `userInfo` dictionary may contain:
+    /// - `"tab"`: A `String` indicating which inspector tab to switch to
+    ///   (e.g., `"selection"`, `"document"`).
+    public static let showInspectorRequested = Notification.Name("showInspectorRequested")
+
+    /// Posted to request showing a chromosome's details in the inspector.
+    ///
+    /// The `userInfo` dictionary contains:
+    /// - `"chromosome"`: The `ChromosomeInfo` to display in the inspector.
+    public static let chromosomeInspectorRequested = Notification.Name("chromosomeInspectorRequested")
 }
 
 // MARK: - Notification UserInfo Keys
@@ -111,4 +129,10 @@ public enum NotificationUserInfoKey {
 
     /// Key for chromosomes array.
     public static let chromosomes = "chromosomes"
+
+    /// Key for the bundle manifest (BundleManifest).
+    public static let manifest = "manifest"
+
+    /// Key for the inspector tab to switch to (String).
+    public static let inspectorTab = "tab"
 }

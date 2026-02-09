@@ -352,6 +352,9 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
 
         let bundleIdentifier = "org.ncbi.assembly.\(accession.lowercased().replacingOccurrences(of: ".", with: "-"))"
 
+        // Convert assembly summary to metadata groups for rich metadata storage
+        let metadataGroups = assembly.toMetadataGroups()
+
         let manifest = BundleManifest(
             name: "\(organismName) - \(assemblyName)",
             identifier: bundleIdentifier,
@@ -360,7 +363,8 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
             genome: genomeInfo,
             annotations: annotationTracks,
             variants: [],
-            tracks: []
+            tracks: [],
+            metadata: metadataGroups.isEmpty ? nil : metadataGroups
         )
 
         let validationErrors = manifest.validate()

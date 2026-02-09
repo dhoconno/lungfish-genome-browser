@@ -186,6 +186,11 @@ public class ChromosomeNavigatorView: NSView, NSTableViewDataSource, NSTableView
         tableView.target = self
         tableView.doubleAction = #selector(tableViewDoubleClicked(_:))
 
+        // Context menu for right-click actions
+        let contextMenu = NSMenu()
+        contextMenu.delegate = self
+        tableView.menu = contextMenu
+
         // Configure scroll view
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
@@ -288,6 +293,37 @@ public class ChromosomeNavigatorView: NSView, NSTableViewDataSource, NSTableView
         delegate?.chromosomeNavigator(self, didSelectChromosome: chromosome)
     }
 
+    // MARK: - Context Menu Actions
+
+    /// Copies the chromosome name to the pasteboard.
+    @objc private func copyChromosomeName(_ sender: NSMenuItem?) {
+        guard let chromosome = sender?.representedObject as? ChromosomeInfo else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(chromosome.name, forType: .string)
+        logger.info("ChromosomeNavigatorView: Copied chromosome name '\(chromosome.name, privacy: .public)' to clipboard")
+    }
+
+    /// Copies the chromosome length as a formatted string to the pasteboard.
+    @objc private func copyChromosomeLength(_ sender: NSMenuItem?) {
+        guard let chromosome = sender?.representedObject as? ChromosomeInfo else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString("\(chromosome.length)", forType: .string)
+        logger.info("ChromosomeNavigatorView: Copied chromosome length \(chromosome.length) to clipboard")
+    }
+
+    /// Posts a notification to show the chromosome details in the inspector.
+    @objc private func showChromosomeInInspector(_ sender: NSMenuItem?) {
+        guard let chromosome = sender?.representedObject as? ChromosomeInfo else { return }
+        NotificationCenter.default.post(
+            name: .chromosomeInspectorRequested,
+            object: self,
+            userInfo: [NotificationUserInfoKey.chromosome: chromosome]
+        )
+        logger.info("ChromosomeNavigatorView: Show in Inspector requested for '\(chromosome.name, privacy: .public)'")
+    }
+
     // MARK: - NSTableViewDataSource
 
     public func numberOfRows(in tableView: NSTableView) -> Int {
@@ -355,6 +391,44 @@ public class ChromosomeNavigatorView: NSView, NSTableViewDataSource, NSTableView
         isSuppressingDelegateCallbacks = false
         logger.info("ChromosomeNavigatorView: Programmatically selected '\(name, privacy: .public)' at index \(index)")
         return true
+    }
+}
+
+// MARK: - NSMenuDelegate
+
+extension ChromosomeNavigatorView: NSMenuDelegate {
+
+    /// Builds the context menu dynamically based on the clicked row.
+    public func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        let clickedRow = tableView.clickedRow
+        guard clickedRow >= 0, clickedRow < displayedChromosomes.count else {
+            // Right-clicked on empty space - no menu items
+            return
+        }
+
+        let chromosome = displayedChromosomes[clickedRow]
+
+        // Copy Name
+        let copyNameItem = NSMenuItem(title: "Copy Name", action: #selector(copyChromosomeName(_:)), keyEquivalent: "")
+        copyNameItem.target = self
+        copyNameItem.representedObject = chromosome
+        menu.addItem(copyNameItem)
+
+        // Copy Length
+        let copyLengthItem = NSMenuItem(title: "Copy Length", action: #selector(copyChromosomeLength(_:)), keyEquivalent: "")
+        copyLengthItem.target = self
+        copyLengthItem.representedObject = chromosome
+        menu.addItem(copyLengthItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // Show in Inspector
+        let inspectorItem = NSMenuItem(title: "Show in Inspector", action: #selector(showChromosomeInInspector(_:)), keyEquivalent: "")
+        inspectorItem.target = self
+        inspectorItem.representedObject = chromosome
+        menu.addItem(inspectorItem)
     }
 }
 

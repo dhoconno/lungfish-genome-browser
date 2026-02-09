@@ -211,7 +211,7 @@ public class MainSplitViewController: NSSplitViewController {
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleShowInspector(_:)),
-            name: NSNotification.Name("showInspector"),
+            name: .showInspectorRequested,
             object: nil
         )
 
@@ -231,18 +231,34 @@ public class MainSplitViewController: NSSplitViewController {
             object: nil
         )
 
-        logger.info("configureNotifications: Registered for sidebar, document, file drop, bundle, and inspector notifications")
+        // Show inspector with chromosome details when requested from chromosome navigator
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleChromosomeInspectorRequested(_:)),
+            name: .chromosomeInspectorRequested,
+            object: nil
+        )
+
+        logger.info("configureNotifications: Registered for sidebar, document, file drop, bundle, inspector, and chromosome inspector notifications")
         logger.info("configureNotifications: sidebarFileDropped observer registered for name '\(Notification.Name.sidebarFileDropped.rawValue)'")
     }
 
     @objc private func handleShowInspector(_ notification: Notification) {
-        logger.info("handleShowInspector: Showing inspector panel")
-        setInspectorVisible(true, animated: false, source: "notification.showInspector")
+        let tab = notification.userInfo?[NotificationUserInfoKey.inspectorTab] as? String
+        logger.info("handleShowInspector: Showing inspector panel, tab=\(tab ?? "default", privacy: .public)")
+        setInspectorVisible(true, animated: false, source: "notification.showInspectorRequested")
+        // Tab switching is handled by InspectorViewController observing the same notification
     }
 
     @objc private func handleBundleDidLoad(_ notification: Notification) {
         logger.info("handleBundleDidLoad: Bundle loaded, ensuring inspector is visible")
         setInspectorVisible(true, animated: false, source: "notification.bundleDidLoad")
+    }
+
+    @objc private func handleChromosomeInspectorRequested(_ notification: Notification) {
+        logger.info("handleChromosomeInspectorRequested: Showing inspector for chromosome")
+        setInspectorVisible(true, animated: false, source: "notification.chromosomeInspectorRequested")
+        // Chromosome details are handled by InspectorViewController observing the same notification
     }
 
     @objc private func handleSidebarSelectionChanged(_ notification: Notification) {

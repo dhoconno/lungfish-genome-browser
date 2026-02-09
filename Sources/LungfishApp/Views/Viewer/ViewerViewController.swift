@@ -3859,7 +3859,7 @@ public class SequenceViewerView: NSView {
             NotificationCenter.default.post(
                 name: .annotationSelected,
                 object: self,
-                userInfo: nil
+                userInfo: [NotificationUserInfoKey.inspectorTab: "selection"]
             )
             logger.info("Posted annotationSelected notification (deselection)")
         }
@@ -4225,6 +4225,14 @@ public class SequenceViewerView: NSView {
         deleteItem.representedObject = annotation
         menu.addItem(deleteItem)
 
+        menu.addItem(NSMenuItem.separator())
+
+        // Show in Inspector
+        let inspectorItem = NSMenuItem(title: "Show in Inspector", action: #selector(showAnnotationInInspector(_:)), keyEquivalent: "")
+        inspectorItem.target = self
+        inspectorItem.representedObject = annotation
+        menu.addItem(inspectorItem)
+
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
 
@@ -4281,6 +4289,13 @@ public class SequenceViewerView: NSView {
         let zoomFitItem = NSMenuItem(title: "Zoom to Fit", action: #selector(zoomToFitAction(_:)), keyEquivalent: "")
         zoomFitItem.target = self
         menu.addItem(zoomFitItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // Show in Inspector (Document tab)
+        let inspectorItem = NSMenuItem(title: "Show in Inspector", action: #selector(showDocumentInInspector(_:)), keyEquivalent: "")
+        inspectorItem.target = self
+        menu.addItem(inspectorItem)
 
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
@@ -4383,9 +4398,9 @@ public class SequenceViewerView: NSView {
         setNeedsDisplay(bounds)
         // Open the inspector if not already visible
         NotificationCenter.default.post(
-            name: NSNotification.Name("showInspector"),
+            name: .showInspectorRequested,
             object: self,
-            userInfo: nil
+            userInfo: [NotificationUserInfoKey.inspectorTab: "selection"]
         )
     }
 
@@ -4426,6 +4441,33 @@ public class SequenceViewerView: NSView {
             postAnnotationSelectedNotification(nil)
         }
         setNeedsDisplay(bounds)
+    }
+
+    /// Shows the selected annotation in the inspector panel.
+    @objc private func showAnnotationInInspector(_ sender: NSMenuItem?) {
+        guard let annotation = sender?.representedObject as? SequenceAnnotation else { return }
+        // Ensure annotation is selected
+        selectedAnnotation = annotation
+        postAnnotationSelectedNotification(annotation)
+        setNeedsDisplay(bounds)
+        // Request inspector to show with Selection tab
+        NotificationCenter.default.post(
+            name: .showInspectorRequested,
+            object: self,
+            userInfo: [NotificationUserInfoKey.inspectorTab: "selection"]
+        )
+        logger.info("Show in Inspector: annotation '\(annotation.name)'")
+    }
+
+    /// Shows the document info in the inspector panel.
+    @objc private func showDocumentInInspector(_ sender: NSMenuItem?) {
+        // Request inspector to show with Document tab
+        NotificationCenter.default.post(
+            name: .showInspectorRequested,
+            object: self,
+            userInfo: [NotificationUserInfoKey.inspectorTab: "document"]
+        )
+        logger.info("Show in Inspector: document tab")
     }
 
     /// Scroll wheel for zooming and panning.
@@ -4541,7 +4583,7 @@ public class SequenceViewerView: NSView {
             rect: .zero,
             options: [.inVisibleRect, .mouseMoved, .mouseEnteredAndExited, .activeAlways],
             owner: self,
-            userInfo: nil
+            userInfo: [NotificationUserInfoKey.inspectorTab: "selection"]
         )
         if let area = viewerTrackingArea {
             addTrackingArea(area)
@@ -4824,7 +4866,7 @@ public class TrackHeaderView: NSView {
             rect: bounds,
             options: [.mouseEnteredAndExited, .mouseMoved, .activeInActiveApp],
             owner: self,
-            userInfo: nil
+            userInfo: [NotificationUserInfoKey.inspectorTab: "selection"]
         )
 
         if let area = trackingArea {

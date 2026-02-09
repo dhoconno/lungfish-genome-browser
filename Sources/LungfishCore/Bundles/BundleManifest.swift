@@ -92,6 +92,17 @@ public struct BundleManifest: Codable, Sendable, Equatable {
     /// Signal tracks (BigWig) in the bundle.
     public let tracks: [SignalTrackInfo]
 
+    // MARK: - Extended Metadata
+
+    /// Categorized metadata groups for flexible, source-specific metadata storage.
+    ///
+    /// Each group represents a category (e.g., "Assembly", "Taxonomy", "Virus")
+    /// with key-value metadata items. This enables different bundle sources
+    /// (GenBank, Genome, Virus) to store their full metadata without schema changes.
+    ///
+    /// Optional for backward compatibility with existing bundles.
+    public let metadata: [MetadataGroup]?
+
     // MARK: - Initialization
 
     /// Creates a new bundle manifest.
@@ -106,7 +117,8 @@ public struct BundleManifest: Codable, Sendable, Equatable {
         genome: GenomeInfo,
         annotations: [AnnotationTrackInfo] = [],
         variants: [VariantTrackInfo] = [],
-        tracks: [SignalTrackInfo] = []
+        tracks: [SignalTrackInfo] = [],
+        metadata: [MetadataGroup]? = nil
     ) {
         self.formatVersion = formatVersion
         self.name = name
@@ -119,6 +131,7 @@ public struct BundleManifest: Codable, Sendable, Equatable {
         self.annotations = annotations
         self.variants = variants
         self.tracks = tracks
+        self.metadata = metadata
     }
 
     // MARK: - Coding Keys
@@ -135,6 +148,63 @@ public struct BundleManifest: Codable, Sendable, Equatable {
         case annotations
         case variants
         case tracks
+        case metadata
+    }
+}
+
+// MARK: - MetadataGroup
+
+/// A named group of metadata key-value pairs for flexible metadata storage.
+///
+/// Groups organize metadata by category (e.g., "Assembly", "Taxonomy", "Virus").
+/// Each group contains an ordered list of items that are displayed together in the Inspector.
+///
+/// ## Example
+///
+/// ```swift
+/// MetadataGroup(
+///     name: "Assembly",
+///     items: [
+///         MetadataItem(label: "Assembly Level", value: "Chromosome"),
+///         MetadataItem(label: "Coverage", value: "30x"),
+///         MetadataItem(label: "Contig N50", value: "56,413,054 bp")
+///     ]
+/// )
+/// ```
+public struct MetadataGroup: Codable, Sendable, Equatable, Identifiable {
+
+    /// Unique identifier (derived from name).
+    public var id: String { name }
+
+    /// Display name for this group (e.g., "Assembly", "Taxonomy", "Virus").
+    public let name: String
+
+    /// Ordered key-value metadata items in this group.
+    public let items: [MetadataItem]
+
+    /// Creates a metadata group.
+    public init(name: String, items: [MetadataItem]) {
+        self.name = name
+        self.items = items
+    }
+}
+
+/// A single metadata key-value pair within a ``MetadataGroup``.
+public struct MetadataItem: Codable, Sendable, Equatable, Identifiable {
+
+    /// Unique identifier (derived from label).
+    public var id: String { label }
+
+    /// Human-readable label (e.g., "Assembly Level", "Taxonomy ID").
+    public let label: String
+
+    /// The metadata value (e.g., "Chromosome", "9606").
+    public let value: String
+
+    /// Creates a metadata item.
+    public init(label: String, value: String) {
+        self.label = label
+        self.value = value
     }
 }
 
