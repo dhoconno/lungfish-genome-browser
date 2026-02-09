@@ -2217,6 +2217,10 @@ public class SequenceViewerView: NSView {
         let expandedRegion = GenomicRegion(chromosome: region.chromosome, start: expandedStart, end: expandedEnd)
         let trackIds = bundle.annotationTrackIds
 
+        // Capture SQLite annotation database for type enrichment on background thread.
+        // AnnotationDatabase is @unchecked Sendable — safe to use off the main actor.
+        let annotationDB = viewController?.annotationSearchIndex?.annotationDatabase
+
         logger.info("fetchAnnotationsAsync: gen=\(thisGeneration), Fetching \(expandedRegion.description) (\(trackIds.count) tracks) on background thread")
 
         Self.annotationFetchQueue.async { [weak self] in
@@ -2247,6 +2251,47 @@ public class SequenceViewerView: NSView {
                     }
                 } catch {
                     logger.error("fetchAnnotationsAsync: BigBed query failed for track \(trackId) region \(expandedRegion.description): \(error.localizedDescription)")
+                }
+            }
+
+            // Enrich annotation types from SQLite database.
+            // BigBed features may have inferred types (heuristic-based) while the
+            // SQLite database has the real GenBank/GFF3 feature type. Override
+            // inferred types with authoritative database types where available.
+            if let db = annotationDB {
+                // Avoid silent truncation from queryByRegion's default limit in dense regions.
+                let enrichmentLimit = max(10_000, allAnnotations.count * 2)
+                let dbRecords = db.queryByRegion(
+                    chromosome: expandedRegion.chromosome,
+                    start: expandedRegion.start,
+                    end: expandedRegion.end,
+                    limit: enrichmentLimit
+                )
+                if !dbRecords.isEmpty {
+                    // Build lookup: "name|start|end" → type string
+                    var typeLookup: [String: String] = [:]
+                    for record in dbRecords {
+                        let key = "\(record.name)|\(record.start)|\(record.end)"
+                        typeLookup[key] = record.type
+                    }
+                    var enrichedCount = 0
+                    for i in allAnnotations.indices {
+                        let ann = allAnnotations[i]
+                        let firstStart = ann.intervals.first!.start
+                        let lastEnd = ann.intervals.last!.end
+                        let key = "\(ann.name)|\(firstStart)|\(lastEnd)"
+                        if let dbType = typeLookup[key],
+                           let mapped = AnnotationType.from(rawString: dbType),
+                           mapped != ann.type {
+                            allAnnotations[i].type = mapped
+                            // Clear explicit color so it falls back to type.defaultColor
+                            allAnnotations[i].color = nil
+                            enrichedCount += 1
+                        }
+                    }
+                    if enrichedCount > 0 {
+                        logger.info("fetchAnnotationsAsync: Enriched \(enrichedCount)/\(allAnnotations.count) annotation types from SQLite")
+                    }
                 }
             }
 
