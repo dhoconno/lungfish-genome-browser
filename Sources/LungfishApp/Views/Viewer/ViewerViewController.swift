@@ -4697,7 +4697,6 @@ public class SequenceViewerView: NSView {
                     if let attrs = record?.attributes {
                         let parsed = LungfishIO.AnnotationDatabase.parseAttributes(attrs)
                         if annot.qualifier("extra") == nil {
-                            // Only add if not already enriched from qualifiers
                             if let desc = parsed["description"] {
                                 tooltip += "\n\(desc)"
                             }
@@ -4708,7 +4707,11 @@ public class SequenceViewerView: NSView {
                         if let gene = parsed["gene"] {
                             tooltip += "\nGene: \(gene)"
                         }
-                        if let dbxref = parsed["Dbxref"] {
+                        if let product = parsed["product"] {
+                            tooltip += "\nProduct: \(product)"
+                        }
+                        let dbxref = parsed["Dbxref"] ?? parsed["db_xref"]
+                        if let dbxref {
                             tooltip += "\nRef: \(dbxref)"
                         }
                     }
