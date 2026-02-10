@@ -457,6 +457,7 @@ public class ViewerViewController: NSViewController {
         referenceFrame = nil
 
         // Clear the viewer view
+        viewerView.hideTranslation()
         viewerView.clearSequences()
         viewerView.setAnnotations([])
 
@@ -497,6 +498,7 @@ public class ViewerViewController: NSViewController {
         referenceFrame = nil
 
         // Clear the viewer view
+        viewerView.hideTranslation()
         viewerView.clearSequences()
         viewerView.setAnnotations([])
 
@@ -1834,6 +1836,10 @@ public class SequenceViewerView: NSView {
 
     func setSequence(_ seq: Sequence) {
         logger.info("SequenceViewerView.setSequence: Setting sequence '\(seq.name, privacy: .public)' length=\(seq.length)")
+        if sequence?.id != seq.id {
+            // Translation overlays are tied to a specific sequence context.
+            hideTranslation()
+        }
         self.sequence = seq
         logger.info("SequenceViewerView.setSequence: self.sequence is now \(self.sequence == nil ? "nil" : "SET", privacy: .public)")
 

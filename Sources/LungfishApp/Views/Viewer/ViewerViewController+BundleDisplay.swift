@@ -231,6 +231,8 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
 
         // Clear sequence fetch error for the new chromosome
         viewerView.clearSequenceFetchError()
+        // Translation overlays are coordinate/chromosome-specific.
+        viewerView.hideTranslation()
 
         let chromLength = Int(chromosome.length)
         let effectiveWidth = max(800, Int(viewerView.bounds.width))

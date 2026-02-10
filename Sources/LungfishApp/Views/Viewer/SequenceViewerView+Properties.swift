@@ -198,6 +198,7 @@ extension SequenceViewerView {
     /// Clears all sequences.
     public func clearSequences() {
         propLogger.info("clearSequences: Clearing all sequences")
+        hideTranslation()
         multiSequenceState?.clear()
         isMultiSequenceMode = false
         needsDisplay = true
