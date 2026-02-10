@@ -371,7 +371,7 @@ public struct SelectionSection: View {
                 noSelectionView
             }
         } label: {
-            Label("Selection", systemImage: "selection.pin.in.out")
+            Text("Selection")
                 .font(.headline)
         }
     }
