@@ -726,13 +726,24 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
 extension AnnotationTableDrawerView: NSMenuDelegate {
 
+    private static func supportsTranslationMenu(for type: String) -> Bool {
+        let normalized = type.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized == "cds" || normalized == "mat_peptide"
+    }
+
     public func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        let clickedRow = tableView.clickedRow
-        guard clickedRow >= 0, clickedRow < displayedAnnotations.count else { return }
+        let targetRow: Int
+        if tableView.clickedRow >= 0 {
+            targetRow = tableView.clickedRow
+        } else {
+            // Keyboard-invoked context menu (or tests) may not have a clicked row.
+            targetRow = tableView.selectedRow
+        }
+        guard targetRow >= 0, targetRow < displayedAnnotations.count else { return }
 
-        let annotation = displayedAnnotations[clickedRow]
+        let annotation = displayedAnnotations[targetRow]
 
         // Copy Name
         let copyNameItem = NSMenuItem(title: "Copy Name", action: #selector(copyNameAction(_:)), keyEquivalent: "")
@@ -747,8 +758,7 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         menu.addItem(copyCoordsItem)
 
         // Copy Translation (only for CDS-type annotations with translation data)
-        let cdsTypes: Set<String> = ["CDS", "cds", "mat_peptide"]
-        let isCDS = cdsTypes.contains(annotation.type)
+        let isCDS = Self.supportsTranslationMenu(for: annotation.type)
         let translation = isCDS ? lookupTranslation(for: annotation) : nil
 
         if isCDS {

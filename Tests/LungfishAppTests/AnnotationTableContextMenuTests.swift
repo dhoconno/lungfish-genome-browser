@@ -10,7 +10,7 @@ import XCTest
 @MainActor
 final class AnnotationTableContextMenuTests: XCTestCase {
 
-    private var tempDir: URL!
+    private nonisolated(unsafe) var tempDir: URL!
 
     override func setUp() {
         super.setUp()
@@ -159,5 +159,47 @@ final class AnnotationTableContextMenuTests: XCTestCase {
         XCTAssertNotNil(translation)
         // The parsed value should have the %2A decoded to *
         XCTAssertEqual(translation, "MKV*LGPRSE")
+    }
+
+    // MARK: - Context menu behavior
+
+    func testContextMenuUsesSelectedRowWhenNoClickedRow() throws {
+        let drawer = try createDrawerWithDatabase(lines: [
+            "chr1\t100\t500\tgag-cds\t0\t+\t100\t500\t0,0,0\t1\t400\t0\tCDS\ttranslation=MKVLGPRSE"
+        ])
+
+        XCTAssertTrue(drawer.selectAnnotation(named: "gag-cds"))
+
+        let menu = NSMenu()
+        drawer.menuNeedsUpdate(menu)
+
+        let titles = menu.items.map(\.title)
+        XCTAssertTrue(titles.contains("Copy Name"))
+        XCTAssertTrue(titles.contains("Copy Coordinates"))
+        XCTAssertTrue(titles.contains("Copy Translation"))
+    }
+
+    func testContextMenuShowsTranslationForMixedCaseCDSType() throws {
+        let drawer = AnnotationTableDrawerView(frame: NSRect(x: 0, y: 0, width: 800, height: 200))
+        drawer.setAnnotations([
+            AnnotationSearchIndex.SearchResult(
+                name: "test-cds",
+                chromosome: "chr1",
+                start: 0,
+                end: 300,
+                trackId: "annotations",
+                type: "Cds",
+                strand: "+"
+            )
+        ])
+
+        XCTAssertTrue(drawer.selectAnnotation(named: "test-cds"))
+
+        let menu = NSMenu()
+        drawer.menuNeedsUpdate(menu)
+
+        let translationItem = menu.items.first(where: { $0.title == "Copy Translation" })
+        XCTAssertNotNil(translationItem, "Mixed-case CDS type should still offer Copy Translation")
+        XCTAssertFalse(translationItem?.isEnabled ?? true, "Without translation data, item should be present but disabled")
     }
 }
