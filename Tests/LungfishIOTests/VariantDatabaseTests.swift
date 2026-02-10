@@ -586,4 +586,52 @@ final class VariantDatabaseTests: XCTestCase {
 
         XCTAssertEqual(r1, r2)
     }
+
+    // MARK: - queryForTable Tests
+
+    func testQueryForTableAllVariants() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+
+        // No filters — should return all variants up to limit
+        let results = db.queryForTable()
+        XCTAssertEqual(results.count, 7, "Should return all 7 variants with no filters")
+    }
+
+    func testQueryForTableWithNameFilter() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+
+        let results = db.queryForTable(nameFilter: "rs100")
+        XCTAssertTrue(results.count >= 1)
+        XCTAssertTrue(results.allSatisfy { $0.variantID.contains("rs100") })
+    }
+
+    func testQueryForTableWithTypeFilter() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+
+        let snpResults = db.queryForTable(types: ["SNP"])
+        XCTAssertTrue(snpResults.allSatisfy { $0.variantType == "SNP" })
+        XCTAssertTrue(snpResults.count >= 2, "Should have at least 2 SNPs")
+
+        let delResults = db.queryForTable(types: ["DEL"])
+        XCTAssertTrue(delResults.allSatisfy { $0.variantType == "DEL" })
+    }
+
+    func testQueryForTableWithNameAndTypeFilter() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+
+        let results = db.queryForTable(nameFilter: "rs", types: ["SNP"])
+        XCTAssertTrue(results.allSatisfy { $0.variantType == "SNP" })
+        XCTAssertTrue(results.allSatisfy { $0.variantID.contains("rs") })
+    }
+
+    func testQueryCountForTable() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+
+        let totalCount = db.queryCountForTable()
+        XCTAssertEqual(totalCount, 7)
+
+        let snpCount = db.queryCountForTable(types: ["SNP"])
+        XCTAssertTrue(snpCount >= 2)
+        XCTAssertTrue(snpCount < totalCount)
+    }
 }

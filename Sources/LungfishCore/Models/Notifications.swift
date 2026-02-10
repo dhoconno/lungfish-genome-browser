@@ -53,6 +53,12 @@ extension Notification.Name {
     ///
     /// Contains userInfo keys: "visibleTypes" (Set<AnnotationType>), "filterText" (String)
     public static let annotationFilterChanged = Notification.Name("annotationFilterChanged")
+
+    /// Posted when variant filter settings have changed.
+    ///
+    /// Contains userInfo keys: "showVariants" (Bool), "visibleVariantTypes" (Set<String>),
+    /// "variantFilterText" (String)
+    public static let variantFilterChanged = Notification.Name("variantFilterChanged")
 }
 
 // MARK: - Viewer Navigation Notifications
@@ -148,4 +154,13 @@ public enum NotificationUserInfoKey {
 
     /// Key for the reference bundle (ReferenceBundle).
     public static let referenceBundle = "referenceBundle"
+
+    /// Key for variant visibility (Bool).
+    public static let showVariants = "showVariants"
+
+    /// Key for the set of visible variant types (Set<String>).
+    public static let visibleVariantTypes = "visibleVariantTypes"
+
+    /// Key for variant text filter (String).
+    public static let variantFilterText = "variantFilterText"
 }

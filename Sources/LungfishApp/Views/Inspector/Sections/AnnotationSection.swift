@@ -39,6 +39,20 @@ public final class AnnotationSectionViewModel {
     /// Search filter text
     public var filterText: String = ""
 
+    // MARK: - Variant Properties
+
+    /// Whether to show variants
+    public var showVariants: Bool = true
+
+    /// Visible variant types (e.g. "SNP", "INS", "DEL", "MNP", "COMPLEX")
+    public var visibleVariantTypes: Set<String> = ["SNP", "INS", "DEL", "MNP", "COMPLEX", "REF"]
+
+    /// Search filter for variant IDs
+    public var variantFilterText: String = ""
+
+    /// All known variant types (populated when bundle loads)
+    public var availableVariantTypes: [String] = []
+
     /// Callback when settings change
     public var onSettingsChanged: (() -> Void)?
 
@@ -135,8 +149,49 @@ public final class AnnotationSectionViewModel {
         showAnnotations = Self.defaultShowAnnotations
         visibleTypes = Set(AnnotationType.allCases)
         filterText = ""
+        showVariants = true
+        visibleVariantTypes = Set(availableVariantTypes)
+        variantFilterText = ""
         notifySettingsChanged()
         notifyFilterChanged()
+        notifyVariantFilterChanged()
+    }
+
+    // MARK: - Variant Notifications
+
+    /// Notifies listeners that variant filter settings changed.
+    public func notifyVariantFilterChanged() {
+        NotificationCenter.default.post(
+            name: .variantFilterChanged,
+            object: self,
+            userInfo: [
+                NotificationUserInfoKey.showVariants: showVariants,
+                NotificationUserInfoKey.visibleVariantTypes: visibleVariantTypes,
+                NotificationUserInfoKey.variantFilterText: variantFilterText
+            ]
+        )
+    }
+
+    /// Toggles visibility of a variant type
+    public func toggleVariantType(_ type: String) {
+        if visibleVariantTypes.contains(type) {
+            visibleVariantTypes.remove(type)
+        } else {
+            visibleVariantTypes.insert(type)
+        }
+        notifyVariantFilterChanged()
+    }
+
+    /// Shows all variant types
+    public func showAllVariantTypes() {
+        visibleVariantTypes = Set(availableVariantTypes)
+        notifyVariantFilterChanged()
+    }
+
+    /// Hides all variant types
+    public func hideAllVariantTypes() {
+        visibleVariantTypes = []
+        notifyVariantFilterChanged()
     }
 }
 
@@ -164,6 +219,13 @@ public struct AnnotationSection: View {
                         .padding(.vertical, 4)
 
                     typeFilterSection
+                }
+
+                if !viewModel.availableVariantTypes.isEmpty {
+                    Divider()
+                        .padding(.vertical, 4)
+
+                    variantFilterSection
                 }
             }
             .padding(.top, 8)
@@ -252,6 +314,71 @@ public struct AnnotationSection: View {
                 }
             }
         }
+    }
+
+    // MARK: - Variant Filter Section
+
+    @ViewBuilder
+    private var variantFilterSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle(isOn: $viewModel.showVariants) {
+                Text("Show Variants")
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .onChange(of: viewModel.showVariants) { _, _ in
+                viewModel.notifyVariantFilterChanged()
+            }
+
+            if viewModel.showVariants {
+                HStack {
+                    Button {
+                        viewModel.showAllVariantTypes()
+                    } label: {
+                        Label("All", systemImage: "eye")
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+
+                    Button {
+                        viewModel.hideAllVariantTypes()
+                    } label: {
+                        Label("None", systemImage: "eye.slash")
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                }
+
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 70))], spacing: 4) {
+                    ForEach(viewModel.availableVariantTypes, id: \.self) { vtype in
+                        variantTypeChip(vtype)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func variantTypeChip(_ vtype: String) -> some View {
+        let isSelected = viewModel.visibleVariantTypes.contains(vtype)
+
+        Button {
+            viewModel.toggleVariantType(vtype)
+        } label: {
+            Text(vtype)
+                .font(.caption)
+                .lineLimit(1)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(isSelected ? Color.orange.opacity(0.2) : Color(nsColor: .controlBackgroundColor))
+                .foregroundColor(isSelected ? .orange : .primary)
+                .cornerRadius(4)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(isSelected ? Color.orange : Color(nsColor: .separatorColor), lineWidth: 0.5)
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Type Filter Grid

@@ -49,6 +49,11 @@ public class InspectorViewController: NSViewController {
         viewModel.selectionSectionViewModel
     }
 
+    /// Public access to the annotation section view model for wiring variant types.
+    public var annotationSectionViewModel: AnnotationSectionViewModel {
+        viewModel.annotationSectionViewModel
+    }
+
     /// Cancellables for Combine subscriptions
     private var cancellables = Set<AnyCancellable>()
 

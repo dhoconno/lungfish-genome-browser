@@ -578,6 +578,38 @@ public final class ReferenceBundle: Sendable {
         return []
     }
 
+    // MARK: - SQLite Annotation Access
+
+    /// Fetches annotations from the SQLite database for a given track and region.
+    ///
+    /// Uses `AnnotationDatabaseRecord.toAnnotation()` to convert records to
+    /// `SequenceAnnotation` with full BED12 block/interval support.
+    ///
+    /// - Parameters:
+    ///   - trackId: The annotation track ID
+    ///   - region: The genomic region to query
+    ///   - limit: Maximum number of annotations (default 50,000)
+    /// - Returns: Array of annotations in the region
+    /// - Throws: `ReferenceBundleError` if the track is not found or has no database
+    public func getAnnotationsFromDatabase(trackId: String, region: GenomicRegion, limit: Int = 50_000) throws -> [SequenceAnnotation] {
+        guard let trackInfo = annotationTrack(id: trackId) else {
+            throw ReferenceBundleError.trackNotFound(trackId)
+        }
+        guard let dbPath = trackInfo.databasePath else {
+            return []
+        }
+        let dbURL = url.appendingPathComponent(dbPath)
+        let db = try AnnotationDatabase(url: dbURL)
+        let records = db.queryByRegion(
+            chromosome: region.chromosome,
+            start: region.start,
+            end: region.end,
+            limit: limit
+        )
+        logger.debug("getAnnotationsFromDatabase: \(trackId) returned \(records.count) annotations for \(region.description)")
+        return records.map { $0.toAnnotation() }
+    }
+
     // MARK: - Signal Track Access
 
     /// Returns available signal track IDs.

@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: MIT
 
 import XCTest
+import SQLite3
 @testable import LungfishIO
+@testable import LungfishCore
 
 final class AnnotationDatabaseTests: XCTestCase {
 
@@ -501,5 +503,179 @@ final class AnnotationDatabaseTests: XCTestCase {
         XCTAssertEqual(byName["cdsA"]?.strand, "-")
         XCTAssertEqual(byName["regA"]?.type, "regulatory")
         XCTAssertEqual(byName["regA"]?.strand, ".")
+    }
+
+    // MARK: - Tests: v3 Schema (Block Data)
+
+    func testCreateFromBEDWithBlockData() throws {
+        // BED12+2 with multi-block features (e.g., mRNA with 3 exons)
+        let lines = [
+            // mRNA with 3 exons: 100-200, 400-550, 700-900
+            bed14(chrom: "chr1", start: 100, end: 900, name: "mRNA1", strand: "+",
+                  blockCount: 3, blockSizes: "100,150,200,", blockStarts: "0,300,600,",
+                  type: "mRNA", attributes: "gene=BRCA1"),
+            // Single-block gene
+            bed14(chrom: "chr1", start: 1000, end: 2000, name: "gene1", strand: "-",
+                  type: "gene"),
+        ]
+
+        let (db, count) = try createAndOpenDB(lines: lines)
+        XCTAssertEqual(count, 2)
+
+        // Verify v3 schema detected
+        XCTAssertTrue(db.hasBlockColumns, "Database should have v3 block columns")
+
+        let results = db.queryByRegion(chromosome: "chr1", start: 0, end: 3000)
+        XCTAssertEqual(results.count, 2)
+
+        let mRNA = results.first { $0.name == "mRNA1" }
+        XCTAssertNotNil(mRNA)
+        XCTAssertEqual(mRNA?.blockCount, 3)
+        XCTAssertEqual(mRNA?.blockSizes, "100,150,200,")
+        XCTAssertEqual(mRNA?.blockStarts, "0,300,600,")
+
+        let gene = results.first { $0.name == "gene1" }
+        XCTAssertNotNil(gene)
+        XCTAssertEqual(gene?.blockCount, 1)
+    }
+
+    func testToAnnotationMultiInterval() throws {
+        // Create a record with 3 blocks (multi-exon feature)
+        let lines = [
+            bed14(chrom: "chr1", start: 100, end: 900, name: "XM_001234",
+                  strand: "+", blockCount: 3,
+                  blockSizes: "100,150,200,", blockStarts: "0,300,600,",
+                  type: "mRNA", attributes: "gene=BRCA1;product=breast%20cancer"),
+        ]
+
+        let (db, _) = try createAndOpenDB(lines: lines)
+        let results = db.queryByRegion(chromosome: "chr1", start: 0, end: 1000)
+        XCTAssertEqual(results.count, 1)
+
+        let annotation = results[0].toAnnotation()
+        XCTAssertEqual(annotation.type, .mRNA)
+        XCTAssertEqual(annotation.name, "XM_001234")
+        XCTAssertEqual(annotation.chromosome, "chr1")
+        XCTAssertEqual(annotation.strand, .forward)
+        XCTAssertEqual(annotation.intervals.count, 3, "Should have 3 intervals from block data")
+
+        // Verify interval positions: start + blockStart[i], size blockSize[i]
+        XCTAssertEqual(annotation.intervals[0].start, 100)  // 100 + 0
+        XCTAssertEqual(annotation.intervals[0].end, 200)    // 100 + 0 + 100
+        XCTAssertEqual(annotation.intervals[1].start, 400)  // 100 + 300
+        XCTAssertEqual(annotation.intervals[1].end, 550)    // 100 + 300 + 150
+        XCTAssertEqual(annotation.intervals[2].start, 700)  // 100 + 600
+        XCTAssertEqual(annotation.intervals[2].end, 900)    // 100 + 600 + 200
+
+        // Verify qualifiers parsed from attributes
+        XCTAssertEqual(annotation.qualifiers["gene"]?.values.first, "BRCA1")
+        XCTAssertEqual(annotation.qualifiers["product"]?.values.first, "breast cancer")
+    }
+
+    func testToAnnotationSingleInterval() throws {
+        // Single-block feature should produce single interval
+        let lines = [
+            bed14(chrom: "chr2", start: 500, end: 800, name: "geneX",
+                  strand: "-", type: "gene"),
+        ]
+
+        let (db, _) = try createAndOpenDB(lines: lines)
+        let results = db.queryByRegion(chromosome: "chr2", start: 0, end: 1000)
+        XCTAssertEqual(results.count, 1)
+
+        let annotation = results[0].toAnnotation()
+        XCTAssertEqual(annotation.type, .gene)
+        XCTAssertEqual(annotation.name, "geneX")
+        XCTAssertEqual(annotation.strand, .reverse)
+        XCTAssertEqual(annotation.intervals.count, 1)
+        XCTAssertEqual(annotation.intervals[0].start, 500)
+        XCTAssertEqual(annotation.intervals[0].end, 800)
+    }
+
+    func testToAnnotationStrandMapping() throws {
+        let lines = [
+            bed14(chrom: "chr1", start: 100, end: 200, name: "fwd", strand: "+", type: "gene"),
+            bed14(chrom: "chr1", start: 300, end: 400, name: "rev", strand: "-", type: "gene"),
+            bed14(chrom: "chr1", start: 500, end: 600, name: "unk", strand: ".", type: "gene"),
+        ]
+
+        let (db, _) = try createAndOpenDB(lines: lines)
+        let results = db.queryByRegion(chromosome: "chr1", start: 0, end: 1000)
+
+        let byName = Dictionary(uniqueKeysWithValues: results.map { ($0.name, $0.toAnnotation()) })
+        XCTAssertEqual(byName["fwd"]?.strand, .forward)
+        XCTAssertEqual(byName["rev"]?.strand, .reverse)
+        XCTAssertEqual(byName["unk"]?.strand, .unknown)
+    }
+
+    func testV2SchemaGracefulDegradation() throws {
+        // Create a v2 database (without block columns) manually
+        let dbURL = tempDir.appendingPathComponent("v2.db")
+        let bedURL = tempDir.appendingPathComponent("v2.bed")
+        // BED6 (no block data columns)
+        let content = "chr1\t100\t500\tgeneA\t0\t+"
+        try content.write(to: bedURL, atomically: true, encoding: .utf8)
+
+        // Manually create v2 schema (no block_count, block_sizes, block_starts)
+        var dbPtr: OpaquePointer?
+        sqlite3_open(dbURL.path, &dbPtr)
+        let schema = """
+        CREATE TABLE annotations (
+            name TEXT NOT NULL,
+            type TEXT NOT NULL,
+            chromosome TEXT NOT NULL,
+            start INTEGER NOT NULL,
+            end INTEGER NOT NULL,
+            strand TEXT NOT NULL DEFAULT '.',
+            attributes TEXT
+        );
+        INSERT INTO annotations (name, type, chromosome, start, end, strand)
+        VALUES ('geneA', 'gene', 'chr1', 100, 500, '+');
+        CREATE INDEX idx_annotations_region ON annotations(chromosome, start, end);
+        """
+        sqlite3_exec(dbPtr, schema, nil, nil, nil)
+        sqlite3_close(dbPtr)
+
+        // Open with new code — should detect v2 (no block columns)
+        let db = try AnnotationDatabase(url: dbURL)
+        XCTAssertFalse(db.hasBlockColumns, "v2 database should not have block columns")
+
+        let results = db.queryByRegion(chromosome: "chr1", start: 0, end: 1000)
+        XCTAssertEqual(results.count, 1)
+
+        let record = results[0]
+        XCTAssertNil(record.blockCount, "v2 record should have nil blockCount")
+        XCTAssertNil(record.blockSizes, "v2 record should have nil blockSizes")
+        XCTAssertNil(record.blockStarts, "v2 record should have nil blockStarts")
+
+        // toAnnotation should still work — produces single interval
+        let annotation = record.toAnnotation()
+        XCTAssertEqual(annotation.intervals.count, 1)
+        XCTAssertEqual(annotation.intervals[0].start, 100)
+        XCTAssertEqual(annotation.intervals[0].end, 500)
+    }
+
+    func testToAnnotationTypeMapping() throws {
+        // Verify various type strings map to correct AnnotationType
+        // Note: only indexable types are stored in createFromBED (exon, intron excluded)
+        let lines = [
+            bed14(chrom: "chr1", start: 0, end: 100, name: "a", type: "gene"),
+            bed14(chrom: "chr1", start: 100, end: 200, name: "b", type: "mRNA"),
+            bed14(chrom: "chr1", start: 200, end: 300, name: "c", type: "CDS"),
+            bed14(chrom: "chr1", start: 300, end: 400, name: "d", type: "regulatory"),
+            bed14(chrom: "chr1", start: 400, end: 500, name: "e", type: "promoter"),
+            bed14(chrom: "chr1", start: 500, end: 600, name: "f", type: "region"),
+        ]
+
+        let (db, _) = try createAndOpenDB(lines: lines)
+        let results = db.queryByRegion(chromosome: "chr1", start: 0, end: 1000)
+        let byName = Dictionary(uniqueKeysWithValues: results.map { ($0.name, $0.toAnnotation()) })
+
+        XCTAssertEqual(byName["a"]?.type, .gene)
+        XCTAssertEqual(byName["b"]?.type, .mRNA)
+        XCTAssertEqual(byName["c"]?.type, .cds)
+        XCTAssertEqual(byName["d"]?.type, .regulatory)
+        XCTAssertEqual(byName["e"]?.type, .promoter)
+        XCTAssertEqual(byName["f"]?.type, .region)
     }
 }

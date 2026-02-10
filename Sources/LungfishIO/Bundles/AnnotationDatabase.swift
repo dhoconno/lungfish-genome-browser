@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import LungfishCore
 import SQLite3
 import os.log
 
@@ -21,8 +22,14 @@ public struct AnnotationDatabaseRecord: Sendable {
     public let strand: String
     /// GFF3 attributes string (semicolon-delimited key=value pairs), if available.
     public let attributes: String?
+    /// Number of blocks (BED12 column 9). Nil for v2 schema or single-interval features.
+    public let blockCount: Int?
+    /// Comma-separated block sizes (BED12 column 10), e.g. "120,300,200".
+    public let blockSizes: String?
+    /// Comma-separated block starts relative to `start` (BED12 column 11), e.g. "0,500,2000".
+    public let blockStarts: String?
 
-    public init(name: String, type: String, chromosome: String, start: Int, end: Int, strand: String, attributes: String? = nil) {
+    public init(name: String, type: String, chromosome: String, start: Int, end: Int, strand: String, attributes: String? = nil, blockCount: Int? = nil, blockSizes: String? = nil, blockStarts: String? = nil) {
         self.name = name
         self.type = type
         self.chromosome = chromosome
@@ -30,6 +37,71 @@ public struct AnnotationDatabaseRecord: Sendable {
         self.end = end
         self.strand = strand
         self.attributes = attributes
+        self.blockCount = blockCount
+        self.blockSizes = blockSizes
+        self.blockStarts = blockStarts
+    }
+}
+
+// MARK: - AnnotationDatabaseRecord → SequenceAnnotation
+
+extension AnnotationDatabaseRecord {
+    /// Converts this database record to a `SequenceAnnotation` for rendering.
+    ///
+    /// Block data (blockCount/blockSizes/blockStarts) is used to create multi-interval
+    /// annotations for discontinuous features (e.g., mRNA with exons). When block data
+    /// is absent (v2 schema or single-interval features), a single interval is created.
+    public func toAnnotation() -> SequenceAnnotation {
+        let annotationType = AnnotationType.from(rawString: type) ?? .gene
+
+        let strandValue: Strand
+        switch strand {
+        case "+": strandValue = .forward
+        case "-": strandValue = .reverse
+        default: strandValue = .unknown
+        }
+
+        // Build intervals from BED12 block data if available
+        var intervals: [AnnotationInterval]
+        if let bc = blockCount, bc > 1,
+           let sizes = blockSizes, let starts = blockStarts {
+            let sizeArr = sizes.split(separator: ",").compactMap { Int($0) }
+            let startArr = starts.split(separator: ",").compactMap { Int($0) }
+            if sizeArr.count >= bc && startArr.count >= bc {
+                intervals = (0..<bc).map { i in
+                    AnnotationInterval(
+                        start: start + startArr[i],
+                        end: start + startArr[i] + sizeArr[i]
+                    )
+                }
+            } else {
+                intervals = [AnnotationInterval(start: start, end: end)]
+            }
+        } else {
+            intervals = [AnnotationInterval(start: start, end: end)]
+        }
+
+        // Parse qualifiers from GFF3-style attributes
+        var qualifiers: [String: AnnotationQualifier] = [:]
+        if let attrs = attributes {
+            for pair in attrs.split(separator: ";") {
+                let kv = pair.split(separator: "=", maxSplits: 1)
+                if kv.count == 2 {
+                    let key = String(kv[0])
+                    let value = String(kv[1]).removingPercentEncoding ?? String(kv[1])
+                    qualifiers[key] = AnnotationQualifier(value)
+                }
+            }
+        }
+
+        return SequenceAnnotation(
+            type: annotationType,
+            name: name,
+            chromosome: chromosome,
+            intervals: intervals,
+            strand: strandValue,
+            qualifiers: qualifiers
+        )
     }
 }
 
@@ -40,7 +112,7 @@ public struct AnnotationDatabaseRecord: Sendable {
 /// The database is created during bundle building and provides instant search/filter
 /// over annotation names, types, and coordinates without scanning BigBed R-trees.
 ///
-/// Schema (v2):
+/// Schema (v3 — v2 databases without block columns are supported transparently):
 /// ```sql
 /// CREATE TABLE annotations (
 ///     name TEXT NOT NULL,
@@ -49,19 +121,22 @@ public struct AnnotationDatabaseRecord: Sendable {
 ///     start INTEGER NOT NULL,
 ///     end INTEGER NOT NULL,
 ///     strand TEXT NOT NULL DEFAULT '.',
-///     attributes TEXT
+///     attributes TEXT,
+///     block_count INTEGER,
+///     block_sizes TEXT,
+///     block_starts TEXT
 /// );
-/// CREATE INDEX idx_annotations_name ON annotations(name COLLATE NOCASE);
-/// CREATE INDEX idx_annotations_type ON annotations(type);
-/// CREATE INDEX idx_annotations_chrom ON annotations(chromosome);
 /// ```
 public final class AnnotationDatabase: @unchecked Sendable {
 
     private var db: OpaquePointer?
     private let url: URL
 
-    /// Whether the database has the `attributes` column (v2 schema).
+    /// Whether the database has the `attributes` column (v2+ schema).
     private let hasAttributesColumn: Bool
+
+    /// Whether the database has the block columns (v3 schema).
+    public private(set) var hasBlockColumns: Bool
 
     /// Opens an existing annotation database for reading.
     ///
@@ -77,10 +152,11 @@ public final class AnnotationDatabase: @unchecked Sendable {
             throw AnnotationDatabaseError.openFailed(msg)
         }
 
-        // Detect schema version by checking if `attributes` column exists
+        // Detect schema version by checking which columns exist
         hasAttributesColumn = AnnotationDatabase.columnExists(db: db, table: "annotations", column: "attributes")
+        hasBlockColumns = AnnotationDatabase.columnExists(db: db, table: "annotations", column: "block_count")
 
-        dbLogger.info("Opened annotation database: \(url.lastPathComponent) (hasAttributes=\(self.hasAttributesColumn))")
+        dbLogger.info("Opened annotation database: \(url.lastPathComponent) (hasAttributes=\(self.hasAttributesColumn), hasBlocks=\(self.hasBlockColumns))")
     }
 
     deinit {
@@ -237,11 +313,11 @@ public final class AnnotationDatabase: @unchecked Sendable {
     public func lookupAnnotation(name: String, chromosome: String, start: Int, end: Int) -> AnnotationDatabaseRecord? {
         guard let db else { return nil }
 
-        let columns = hasAttributesColumn
-            ? "name, type, chromosome, start, end, strand, attributes"
-            : "name, type, chromosome, start, end, strand"
+        var columnList = "name, type, chromosome, start, end, strand"
+        if hasAttributesColumn { columnList += ", attributes" }
+        if hasBlockColumns { columnList += ", block_count, block_sizes, block_starts" }
 
-        let sql = "SELECT \(columns) FROM annotations WHERE name = ? AND chromosome = ? AND start = ? AND end = ? LIMIT 1"
+        let sql = "SELECT \(columnList) FROM annotations WHERE name = ? AND chromosome = ? AND start = ? AND end = ? LIMIT 1"
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
@@ -259,14 +335,35 @@ public final class AnnotationDatabase: @unchecked Sendable {
         let rStart = Int(sqlite3_column_int64(stmt, 3))
         let rEnd = Int(sqlite3_column_int64(stmt, 4))
         let rStrand = sqlite3_column_text(stmt, 5).map { String(cString: $0) } ?? "."
-        let rAttrs: String? = hasAttributesColumn
-            ? sqlite3_column_text(stmt, 6).map { String(cString: $0) }
-            : nil
+
+        var colIdx: Int32 = 6
+        let rAttrs: String?
+        if hasAttributesColumn {
+            rAttrs = sqlite3_column_text(stmt, colIdx).map { String(cString: $0) }
+            colIdx += 1
+        } else {
+            rAttrs = nil
+        }
+
+        let rBlockCount: Int?
+        let rBlockSizes: String?
+        let rBlockStarts: String?
+        if hasBlockColumns {
+            let bcType = sqlite3_column_type(stmt, colIdx)
+            rBlockCount = bcType != SQLITE_NULL ? Int(sqlite3_column_int64(stmt, colIdx)) : nil
+            rBlockSizes = sqlite3_column_text(stmt, colIdx + 1).map { String(cString: $0) }
+            rBlockStarts = sqlite3_column_text(stmt, colIdx + 2).map { String(cString: $0) }
+        } else {
+            rBlockCount = nil
+            rBlockSizes = nil
+            rBlockStarts = nil
+        }
 
         return AnnotationDatabaseRecord(
             name: rName, type: rType, chromosome: rChrom,
             start: rStart, end: rEnd, strand: rStrand,
-            attributes: rAttrs
+            attributes: rAttrs,
+            blockCount: rBlockCount, blockSizes: rBlockSizes, blockStarts: rBlockStarts
         )
     }
 
@@ -284,12 +381,12 @@ public final class AnnotationDatabase: @unchecked Sendable {
     public func queryByRegion(chromosome: String, start: Int, end: Int, limit: Int = 10000) -> [AnnotationDatabaseRecord] {
         guard let db else { return [] }
 
-        let columns = hasAttributesColumn
-            ? "name, type, chromosome, start, end, strand, attributes"
-            : "name, type, chromosome, start, end, strand"
+        var columnList = "name, type, chromosome, start, end, strand"
+        if hasAttributesColumn { columnList += ", attributes" }
+        if hasBlockColumns { columnList += ", block_count, block_sizes, block_starts" }
 
         let sql = """
-        SELECT \(columns)
+        SELECT \(columnList)
         FROM annotations
         WHERE chromosome = ? AND end > ? AND start < ?
         ORDER BY start ASC, end ASC, name COLLATE NOCASE ASC
@@ -316,14 +413,35 @@ public final class AnnotationDatabase: @unchecked Sendable {
             let rStart = Int(sqlite3_column_int64(stmt, 3))
             let rEnd = Int(sqlite3_column_int64(stmt, 4))
             let rStrand = sqlite3_column_text(stmt, 5).map { String(cString: $0) } ?? "."
-            let rAttrs: String? = hasAttributesColumn
-                ? sqlite3_column_text(stmt, 6).map { String(cString: $0) }
-                : nil
+
+            var colIdx: Int32 = 6
+            let rAttrs: String?
+            if hasAttributesColumn {
+                rAttrs = sqlite3_column_text(stmt, colIdx).map { String(cString: $0) }
+                colIdx += 1
+            } else {
+                rAttrs = nil
+            }
+
+            let rBlockCount: Int?
+            let rBlockSizes: String?
+            let rBlockStarts: String?
+            if hasBlockColumns {
+                let bcType = sqlite3_column_type(stmt, colIdx)
+                rBlockCount = bcType != SQLITE_NULL ? Int(sqlite3_column_int64(stmt, colIdx)) : nil
+                rBlockSizes = sqlite3_column_text(stmt, colIdx + 1).map { String(cString: $0) }
+                rBlockStarts = sqlite3_column_text(stmt, colIdx + 2).map { String(cString: $0) }
+            } else {
+                rBlockCount = nil
+                rBlockSizes = nil
+                rBlockStarts = nil
+            }
 
             results.append(AnnotationDatabaseRecord(
                 name: rName, type: rType, chromosome: rChrom,
                 start: rStart, end: rEnd, strand: rStrand,
-                attributes: rAttrs
+                attributes: rAttrs,
+                blockCount: rBlockCount, blockSizes: rBlockSizes, blockStarts: rBlockStarts
             ))
         }
 
@@ -379,7 +497,7 @@ public final class AnnotationDatabase: @unchecked Sendable {
         }
         defer { sqlite3_close(db) }
 
-        // Create schema (v2 with attributes column)
+        // Create schema (v3 with attributes and block columns)
         let schema = """
         CREATE TABLE annotations (
             name TEXT NOT NULL,
@@ -388,7 +506,10 @@ public final class AnnotationDatabase: @unchecked Sendable {
             start INTEGER NOT NULL,
             end INTEGER NOT NULL,
             strand TEXT NOT NULL DEFAULT '.',
-            attributes TEXT
+            attributes TEXT,
+            block_count INTEGER,
+            block_sizes TEXT,
+            block_starts TEXT
         );
         """
         var errMsg: UnsafeMutablePointer<CChar>?
@@ -420,7 +541,7 @@ public final class AnnotationDatabase: @unchecked Sendable {
         // Begin transaction for bulk insert
         sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil)
 
-        let insertSQL = "INSERT INTO annotations (name, type, chromosome, start, end, strand, attributes) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        let insertSQL = "INSERT INTO annotations (name, type, chromosome, start, end, strand, attributes, block_count, block_sizes, block_starts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         var insertStmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, insertSQL, -1, &insertStmt, nil) == SQLITE_OK else {
             throw AnnotationDatabaseError.createFailed("Failed to prepare INSERT statement")
@@ -444,6 +565,11 @@ public final class AnnotationDatabase: @unchecked Sendable {
             guard !name.isEmpty, name != "unknown" else { continue }
 
             let strand = fields.count > 5 ? String(fields[5]) : "."
+
+            // Extract BED12 block data (columns 9-11, 0-indexed)
+            let blockCount: Int? = fields.count > 9 ? Int(fields[9]) : nil
+            let blockSizes: String? = fields.count > 10 ? String(fields[10]) : nil
+            let blockStarts: String? = fields.count > 11 ? String(fields[11]) : nil
 
             // Extract type from column 12 (0-indexed) if present, otherwise infer
             let type: String
@@ -481,6 +607,21 @@ public final class AnnotationDatabase: @unchecked Sendable {
                 sqlite3_bind_text(insertStmt, 7, (attributes as NSString).utf8String, -1, nil)
             } else {
                 sqlite3_bind_null(insertStmt, 7)
+            }
+            if let blockCount {
+                sqlite3_bind_int64(insertStmt, 8, Int64(blockCount))
+            } else {
+                sqlite3_bind_null(insertStmt, 8)
+            }
+            if let blockSizes {
+                sqlite3_bind_text(insertStmt, 9, (blockSizes as NSString).utf8String, -1, nil)
+            } else {
+                sqlite3_bind_null(insertStmt, 9)
+            }
+            if let blockStarts {
+                sqlite3_bind_text(insertStmt, 10, (blockStarts as NSString).utf8String, -1, nil)
+            } else {
+                sqlite3_bind_null(insertStmt, 10)
             }
 
             if sqlite3_step(insertStmt) != SQLITE_DONE {

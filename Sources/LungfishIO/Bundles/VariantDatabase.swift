@@ -342,6 +342,114 @@ public final class VariantDatabase: @unchecked Sendable {
         return Int(sqlite3_column_int64(stmt, 0))
     }
 
+    /// Queries variants with optional type filter and name filter.
+    ///
+    /// Unlike `searchByID`, this supports unfiltered queries (returns all variants)
+    /// and type-based filtering for the unified annotation table.
+    ///
+    /// - Parameters:
+    ///   - nameFilter: Case-insensitive substring match on variant_id (empty = no name filter)
+    ///   - types: Set of variant type strings to include (empty = all types)
+    ///   - limit: Maximum number of results
+    /// - Returns: Array of matching variant records
+    public func queryForTable(nameFilter: String = "", types: Set<String> = [], limit: Int = 5000) -> [VariantDatabaseRecord] {
+        guard let db else { return [] }
+
+        var sql = "SELECT chromosome, position, end_pos, variant_id, ref, alt, variant_type, quality, filter, info FROM variants"
+        var conditions: [String] = []
+        var bindings: [(Int32, String)] = []
+        var paramIndex: Int32 = 1
+
+        if !nameFilter.isEmpty {
+            conditions.append("variant_id LIKE ?")
+            bindings.append((paramIndex, "%\(nameFilter)%"))
+            paramIndex += 1
+        }
+
+        if !types.isEmpty {
+            let placeholders = types.map { _ in "?" }.joined(separator: ",")
+            conditions.append("variant_type IN (\(placeholders))")
+            for t in types.sorted() {
+                bindings.append((paramIndex, t))
+                paramIndex += 1
+            }
+        }
+
+        if !conditions.isEmpty {
+            sql += " WHERE " + conditions.joined(separator: " AND ")
+        }
+        sql += " ORDER BY chromosome, position LIMIT \(limit)"
+
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+
+        for (idx, value) in bindings {
+            sqlite3_bind_text(stmt, idx, (value as NSString).utf8String, -1, nil)
+        }
+
+        var results: [VariantDatabaseRecord] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let chrom = sqlite3_column_text(stmt, 0).map { String(cString: $0) } ?? ""
+            let pos = Int(sqlite3_column_int64(stmt, 1))
+            let endPos = Int(sqlite3_column_int64(stmt, 2))
+            let vid = sqlite3_column_text(stmt, 3).map { String(cString: $0) } ?? ""
+            let refStr = sqlite3_column_text(stmt, 4).map { String(cString: $0) } ?? ""
+            let altStr = sqlite3_column_text(stmt, 5).map { String(cString: $0) } ?? ""
+            let vtype = sqlite3_column_text(stmt, 6).map { String(cString: $0) } ?? "SNP"
+            let quality: Double? = sqlite3_column_type(stmt, 7) == SQLITE_NULL ? nil : sqlite3_column_double(stmt, 7)
+            let filterStr = sqlite3_column_text(stmt, 8).map { String(cString: $0) }
+            let infoStr = sqlite3_column_text(stmt, 9).map { String(cString: $0) }
+
+            results.append(VariantDatabaseRecord(
+                chromosome: chrom, position: pos, end: endPos, variantID: vid,
+                ref: refStr, alt: altStr, variantType: vtype,
+                quality: quality, filter: filterStr, info: infoStr
+            ))
+        }
+        return results
+    }
+
+    /// Returns variant count matching optional filters.
+    public func queryCountForTable(nameFilter: String = "", types: Set<String> = []) -> Int {
+        guard let db else { return 0 }
+
+        var sql = "SELECT COUNT(*) FROM variants"
+        var conditions: [String] = []
+        var bindings: [(Int32, String)] = []
+        var paramIndex: Int32 = 1
+
+        if !nameFilter.isEmpty {
+            conditions.append("variant_id LIKE ?")
+            bindings.append((paramIndex, "%\(nameFilter)%"))
+            paramIndex += 1
+        }
+
+        if !types.isEmpty {
+            let placeholders = types.map { _ in "?" }.joined(separator: ",")
+            conditions.append("variant_type IN (\(placeholders))")
+            for t in types.sorted() {
+                bindings.append((paramIndex, t))
+                paramIndex += 1
+            }
+        }
+
+        if !conditions.isEmpty {
+            sql += " WHERE " + conditions.joined(separator: " AND ")
+        }
+
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
+
+        for (idx, value) in bindings {
+            sqlite3_bind_text(stmt, idx, (value as NSString).utf8String, -1, nil)
+        }
+
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
+        return Int(sqlite3_column_int64(stmt, 0))
+    }
+
     /// Searches variants by ID (e.g., rsID) with case-insensitive prefix/substring matching.
     ///
     /// - Parameters:

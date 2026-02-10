@@ -331,6 +331,15 @@ public class ViewerViewController: NSViewController {
             object: nil
         )
         logger.debug("ViewerViewController: Registered showCDSTranslationRequested observer")
+
+        // Observer for variant filter changes from inspector
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleVariantFilterChanged(_:)),
+            name: .variantFilterChanged,
+            object: nil
+        )
+        logger.debug("ViewerViewController: Registered variantFilterChanged observer")
     }
 
     /// Handles the toggle of CDS translation display from the inspector.
@@ -428,6 +437,33 @@ public class ViewerViewController: NSViewController {
         viewerView.invalidateAnnotationTile()
         viewerView.needsDisplay = true
         logger.info("handleAnnotationFilterChanged: Triggered viewer redraw")
+    }
+
+    /// Handles variant filter changes from the inspector.
+    @objc private func handleVariantFilterChanged(_ notification: Notification) {
+        guard let userInfo = notification.userInfo else {
+            logger.warning("handleVariantFilterChanged: No userInfo in notification")
+            return
+        }
+
+        logger.info("handleVariantFilterChanged: Received variant filter update")
+
+        if let show = userInfo[NotificationUserInfoKey.showVariants] as? Bool {
+            viewerView.showVariants = show
+            logger.debug("handleVariantFilterChanged: showVariants = \(show)")
+        }
+        if let types = userInfo[NotificationUserInfoKey.visibleVariantTypes] as? Set<String> {
+            viewerView.visibleVariantTypes = types
+            logger.debug("handleVariantFilterChanged: visibleVariantTypes = \(types.count) types")
+        }
+        if let text = userInfo[NotificationUserInfoKey.variantFilterText] as? String {
+            viewerView.variantFilterText = text
+            logger.debug("handleVariantFilterChanged: variantFilterText = '\(text)'")
+        }
+
+        viewerView.invalidateAnnotationTile()
+        viewerView.needsDisplay = true
+        logger.info("handleVariantFilterChanged: Triggered viewer redraw")
     }
 
 
@@ -1657,6 +1693,15 @@ public class SequenceViewerView: NSView {
     /// Text filter for annotations (empty string means no filter)
     var annotationFilterText: String = ""
 
+    /// Whether to show variant annotations (controlled by inspector)
+    var showVariants: Bool = true
+
+    /// Set of variant types to display (nil means show all). Values are VariantType rawValues: "SNP", "INS", "DEL", etc.
+    var visibleVariantTypes: Set<String>?
+
+    /// Text filter for variants (searches variant IDs)
+    var variantFilterText: String = ""
+
     // MARK: - Annotation Color Cache
 
     /// Cached CGColors keyed by AnnotationType to avoid NSColor allocation per-draw.
@@ -2357,9 +2402,27 @@ public class SequenceViewerView: NSView {
         if needsAnnotations,
            cachedAnnotationRegion?.chromosome == visibleRegion.chromosome
             || cachedVariantRegion?.chromosome == visibleRegion.chromosome {
-            let combined = cachedBundleAnnotations + cachedVariantAnnotations
+            // Filter variants by visibility settings before combining
+            let filteredVariants: [SequenceAnnotation]
+            if showVariants {
+                var variants = cachedVariantAnnotations
+                if let typeFilter = visibleVariantTypes, !typeFilter.isEmpty {
+                    variants = variants.filter { ann in
+                        let vtypeStr = ann.qualifiers["variant_type"]?.values.first ?? ""
+                        return typeFilter.contains(vtypeStr)
+                    }
+                }
+                if !variantFilterText.isEmpty {
+                    let lower = variantFilterText.lowercased()
+                    variants = variants.filter { $0.name.lowercased().contains(lower) }
+                }
+                filteredVariants = variants
+            } else {
+                filteredVariants = []
+            }
+            let combined = cachedBundleAnnotations + filteredVariants
             if !combined.isEmpty {
-                logger.debug("drawBundleContent: Drawing \(combined.count) annotations (\(self.cachedBundleAnnotations.count) annot + \(self.cachedVariantAnnotations.count) variant)")
+                logger.debug("drawBundleContent: Drawing \(combined.count) annotations (\(self.cachedBundleAnnotations.count) annot + \(filteredVariants.count) variant)")
                 drawBundleAnnotations(combined, frame: frame, context: context)
             } else {
                 logger.debug("drawBundleContent: No annotations to draw (cache empty for current chromosome)")
@@ -2416,81 +2479,43 @@ public class SequenceViewerView: NSView {
         let expandedRegion = GenomicRegion(chromosome: region.chromosome, start: expandedStart, end: expandedEnd)
         let trackIds = bundle.annotationTrackIds
 
-        // Capture SQLite annotation database for type enrichment on background thread.
-        // AnnotationDatabase is @unchecked Sendable — safe to use off the main actor.
-        let annotationDB = viewController?.annotationSearchIndex?.annotationDatabase
-
         logger.info("fetchAnnotationsAsync: gen=\(thisGeneration), Fetching \(expandedRegion.description) (\(trackIds.count) tracks) on background thread")
 
         Self.annotationFetchQueue.async { [weak self] in
-            // Create readers once per fetch and reuse across the query.
-            // This avoids re-opening FileHandle and re-parsing the BigBed header
-            // and chromosome B+ tree on every call.
-            var readers: [String: SyncBigBedReader] = [:]
+            var allAnnotations: [SequenceAnnotation] = []
+
             for trackId in trackIds {
                 guard let trackInfo = bundle.annotationTrack(id: trackId) else { continue }
-                let trackURL = bundle.url.appendingPathComponent(trackInfo.path)
-                do {
-                    let reader = try SyncBigBedReader(url: trackURL)
-                    readers[trackId] = reader
-                } catch {
-                    logger.error("fetchAnnotationsAsync: Failed to create BigBed reader for \(trackId): \(error.localizedDescription)")
-                }
-            }
 
-            var allAnnotations: [SequenceAnnotation] = []
-            for trackId in trackIds {
-                do {
-                    if let reader = readers[trackId] {
-                        let annotations = try bundle.getAnnotationsSync(reader: reader, region: expandedRegion)
-                        allAnnotations.append(contentsOf: annotations)
-                    } else {
-                        let annotations = try bundle.getAnnotationsSync(trackId: trackId, region: expandedRegion)
-                        allAnnotations.append(contentsOf: annotations)
-                    }
-                } catch {
-                    logger.error("fetchAnnotationsAsync: BigBed query failed for track \(trackId) region \(expandedRegion.description): \(error.localizedDescription)")
-                }
-            }
-
-            // Enrich annotation types from SQLite database.
-            // BigBed features may have inferred types (heuristic-based) while the
-            // SQLite database has the real GenBank/GFF3 feature type. Override
-            // inferred types with authoritative database types where available.
-            if let db = annotationDB {
-                // Avoid silent truncation from queryByRegion's default limit in dense regions.
-                let enrichmentLimit = max(10_000, allAnnotations.count * 2)
-                let dbRecords = db.queryByRegion(
-                    chromosome: expandedRegion.chromosome,
-                    start: expandedRegion.start,
-                    end: expandedRegion.end,
-                    limit: enrichmentLimit
-                )
-                if !dbRecords.isEmpty {
-                    // Build lookup: "name|start|end" → type string
-                    var typeLookup: [String: String] = [:]
-                    for record in dbRecords {
-                        let key = "\(record.name)|\(record.start)|\(record.end)"
-                        typeLookup[key] = record.type
-                    }
-                    var enrichedCount = 0
-                    for i in allAnnotations.indices {
-                        let ann = allAnnotations[i]
-                        let firstStart = ann.intervals.first!.start
-                        let lastEnd = ann.intervals.last!.end
-                        let key = "\(ann.name)|\(firstStart)|\(lastEnd)"
-                        if let dbType = typeLookup[key],
-                           let mapped = AnnotationType.from(rawString: dbType),
-                           mapped != ann.type {
-                            allAnnotations[i].type = mapped
-                            // Clear explicit color so it falls back to type.defaultColor
-                            allAnnotations[i].color = nil
-                            enrichedCount += 1
+                // PRIMARY: SQLite database query (v3 with block data, v2 gracefully degraded)
+                if let dbPath = trackInfo.databasePath {
+                    let dbURL = bundle.url.appendingPathComponent(dbPath)
+                    if FileManager.default.fileExists(atPath: dbURL.path) {
+                        do {
+                            let db = try AnnotationDatabase(url: dbURL)
+                            let records = db.queryByRegion(
+                                chromosome: expandedRegion.chromosome,
+                                start: expandedRegion.start,
+                                end: expandedRegion.end,
+                                limit: 50_000
+                            )
+                            let annotations = records.map { $0.toAnnotation() }
+                            allAnnotations.append(contentsOf: annotations)
+                            logger.info("fetchAnnotationsAsync: SQLite query returned \(annotations.count) annotations for track \(trackId)")
+                            continue  // SQLite succeeded, skip BigBed fallback
+                        } catch {
+                            logger.error("fetchAnnotationsAsync: SQLite query failed for \(trackId): \(error.localizedDescription)")
                         }
                     }
-                    if enrichedCount > 0 {
-                        logger.info("fetchAnnotationsAsync: Enriched \(enrichedCount)/\(allAnnotations.count) annotation types from SQLite")
-                    }
+                }
+
+                // FALLBACK: BigBed for bundles without SQLite database
+                do {
+                    let annotations = try bundle.getAnnotationsSync(trackId: trackId, region: expandedRegion)
+                    allAnnotations.append(contentsOf: annotations)
+                    logger.info("fetchAnnotationsAsync: BigBed fallback returned \(annotations.count) annotations for track \(trackId)")
+                } catch {
+                    logger.error("fetchAnnotationsAsync: BigBed query failed for track \(trackId) region \(expandedRegion.description): \(error.localizedDescription)")
                 }
             }
 

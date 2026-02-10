@@ -80,6 +80,12 @@ public final class AnnotationSearchIndex {
     /// SQLite database handle (preferred mode).
     private var database: AnnotationDatabase?
 
+    /// Variant SQLite database handle (for unified search).
+    private var variantDatabase: VariantDatabase?
+
+    /// Track ID for the variant database.
+    private var variantTrackId: String = ""
+
     /// Track ID associated with the database (for SearchResult compatibility).
     private var databaseTrackId: String = ""
 
@@ -120,12 +126,18 @@ public final class AnnotationSearchIndex {
         return entries
     }
 
-    /// All distinct annotation types in the index.
+    /// All distinct annotation types in the index (includes variant types).
     public var allTypes: [String] {
+        var types: Set<String>
         if let db = database {
-            return db.allTypes()
+            types = Set(db.allTypes())
+        } else {
+            types = Set(entries.map { $0.type })
         }
-        return Array(Set(entries.map { $0.type })).sorted()
+        if let vdb = variantDatabase {
+            types.formUnion(vdb.allTypes())
+        }
+        return types.sorted()
     }
 
     /// Callback invoked on the main thread when index building completes.
@@ -155,11 +167,34 @@ public final class AnnotationSearchIndex {
             isBuilding = false
             let count = database?.totalCount() ?? 0
             searchLogger.info("AnnotationSearchIndex: Opened SQLite database with \(count) annotations")
+
+            // Also open variant databases if available
+            openVariantDatabases(bundle: bundle)
+
             onBuildComplete?()
             return true
         } catch {
             searchLogger.error("AnnotationSearchIndex: Failed to open database: \(error.localizedDescription)")
             return false
+        }
+    }
+
+    /// Opens variant databases from the bundle for unified search.
+    private func openVariantDatabases(bundle: ReferenceBundle) {
+        for vTrackId in bundle.variantTrackIds {
+            guard let trackInfo = bundle.variantTrack(id: vTrackId),
+                  let dbPath = trackInfo.databasePath else { continue }
+            let dbURL = bundle.url.appendingPathComponent(dbPath)
+            guard FileManager.default.fileExists(atPath: dbURL.path) else { continue }
+            do {
+                variantDatabase = try VariantDatabase(url: dbURL)
+                variantTrackId = vTrackId
+                let vcount = variantDatabase?.totalCount() ?? 0
+                searchLogger.info("AnnotationSearchIndex: Opened variant database with \(vcount) variants")
+                break  // Use first available variant database
+            } catch {
+                searchLogger.warning("AnnotationSearchIndex: Failed to open variant database: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -183,6 +218,9 @@ public final class AnnotationSearchIndex {
                 }
             }
         }
+
+        // Also try to open variant databases even in legacy mode
+        openVariantDatabases(bundle: bundle)
 
         // Fallback: scan BigBed files on background thread
         isBuilding = true
@@ -275,9 +313,11 @@ public final class AnnotationSearchIndex {
     public func search(query: String, limit: Int = 20) -> [SearchResult] {
         guard !query.isEmpty else { return [] }
 
+        var results: [SearchResult] = []
+
         if let db = database {
             let records = db.query(nameFilter: query, limit: limit)
-            return records.map { record in
+            results = records.map { record in
                 SearchResult(
                     name: record.name,
                     chromosome: record.chromosome,
@@ -288,26 +328,32 @@ public final class AnnotationSearchIndex {
                     strand: record.strand
                 )
             }
-        }
+        } else {
+            // Legacy in-memory search
+            let lowered = query.lowercased()
 
-        // Legacy in-memory search
-        let lowered = query.lowercased()
-        var results: [SearchResult] = []
+            // Prioritize exact prefix matches, then contains matches
+            for entry in entries {
+                if entry.name.lowercased().hasPrefix(lowered) {
+                    results.append(entry)
+                    if results.count >= limit { return results }
+                }
+            }
 
-        // Prioritize exact prefix matches, then contains matches
-        for entry in entries {
-            if entry.name.lowercased().hasPrefix(lowered) {
-                results.append(entry)
-                if results.count >= limit { return results }
+            for entry in entries {
+                if !entry.name.lowercased().hasPrefix(lowered),
+                   entry.name.lowercased().contains(lowered) {
+                    results.append(entry)
+                    if results.count >= limit { return results }
+                }
             }
         }
 
-        for entry in entries {
-            if !entry.name.lowercased().hasPrefix(lowered),
-               entry.name.lowercased().contains(lowered) {
-                results.append(entry)
-                if results.count >= limit { return results }
-            }
+        // Also search variant database
+        if let vdb = variantDatabase, results.count < limit {
+            let remaining = limit - results.count
+            let variantRecords = vdb.searchByID(idFilter: query, limit: remaining)
+            results.append(contentsOf: variantRecords.map { $0.toSearchResult(trackId: variantTrackId) })
         }
 
         return results
@@ -340,13 +386,84 @@ public final class AnnotationSearchIndex {
     /// Returns the count of annotations matching filters (SQLite mode only).
     public func queryCount(nameFilter: String = "", types: Set<String> = []) -> Int? {
         guard let db = database else { return nil }
-        return db.queryCount(nameFilter: nameFilter, types: types)
+        var count = db.queryCount(nameFilter: nameFilter, types: types)
+
+        // Add variant counts if variant database is available and types match
+        if let vdb = variantDatabase {
+            let variantTypes = Set(vdb.allTypes())
+            let requestedVariantTypes = types.isEmpty ? variantTypes : types.intersection(variantTypes)
+            if !requestedVariantTypes.isEmpty || types.isEmpty {
+                count += vdb.queryCountForTable(nameFilter: nameFilter, types: requestedVariantTypes)
+            }
+        }
+
+        return count
+    }
+
+    /// Queries both annotation and variant databases with unified filters.
+    /// Returns combined results from both databases, with variants appended after annotations.
+    public func queryAll(nameFilter: String = "", types: Set<String> = [], limit: Int = 5000) -> [SearchResult] {
+        var results: [SearchResult] = []
+
+        // Query annotation database
+        if let annotationResults = query(nameFilter: nameFilter, types: types, limit: limit) {
+            results.append(contentsOf: annotationResults)
+        }
+
+        // Query variant database
+        if let vdb = variantDatabase, results.count < limit {
+            let variantTypes = Set(vdb.allTypes())
+            let requestedVariantTypes = types.isEmpty ? variantTypes : types.intersection(variantTypes)
+            if !requestedVariantTypes.isEmpty || types.isEmpty {
+                let remaining = limit - results.count
+                let variantRecords = vdb.queryForTable(
+                    nameFilter: nameFilter,
+                    types: types.isEmpty ? [] : requestedVariantTypes,
+                    limit: remaining
+                )
+                results.append(contentsOf: variantRecords.map { $0.toSearchResult(trackId: variantTrackId) })
+            }
+        }
+
+        return results
+    }
+
+    /// Whether a variant database is available for unified queries.
+    public var hasVariantDatabase: Bool { variantDatabase != nil }
+
+    /// All distinct variant types (separate from annotation types).
+    public var variantTypes: [String] {
+        variantDatabase?.allTypes() ?? []
+    }
+
+    /// Total variant count.
+    public var variantCount: Int {
+        variantDatabase?.totalCount() ?? 0
     }
 
     /// Clears the index.
     public func clear() {
         entries = []
         database = nil
+        variantDatabase = nil
         isBuilding = false
+    }
+}
+
+// MARK: - VariantDatabaseRecord → SearchResult Conversion
+
+extension VariantDatabaseRecord {
+    /// Converts this variant record to an `AnnotationSearchIndex.SearchResult`
+    /// for unified display in the annotation table drawer.
+    public func toSearchResult(trackId: String = "variants") -> AnnotationSearchIndex.SearchResult {
+        AnnotationSearchIndex.SearchResult(
+            name: variantID,
+            chromosome: chromosome,
+            start: position,
+            end: end,
+            trackId: trackId,
+            type: variantType,
+            strand: "."
+        )
     }
 }

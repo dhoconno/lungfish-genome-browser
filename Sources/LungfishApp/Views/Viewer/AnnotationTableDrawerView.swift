@@ -122,7 +122,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         addSubview(headerBar)
 
         // Filter search field
-        filterField.placeholderString = "Filter annotations..."
+        filterField.placeholderString = "Filter annotations & variants..."
         filterField.font = .systemFont(ofSize: 11)
         filterField.controlSize = .small
         filterField.translatesAutoresizingMaskIntoConstraints = false
@@ -343,7 +343,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         isLoading = false
 
         // Get metadata from the index (types, total count) — instant for SQLite
-        totalAnnotationCount = index.entryCount
+        // Includes variant types and counts if variant database is available
+        totalAnnotationCount = index.entryCount + index.variantCount
         availableTypes = index.allTypes
 
         // All types visible by default
@@ -354,7 +355,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
         // Query for initial display
         updateDisplayedAnnotations()
-        drawerLogger.info("AnnotationTableDrawerView: Connected to index with \(self.totalAnnotationCount) annotations, \(self.availableTypes.count) types")
+        drawerLogger.info("AnnotationTableDrawerView: Connected to index with \(self.totalAnnotationCount) annotations+variants, \(self.availableTypes.count) types")
     }
 
     /// Legacy entry point for when no search index is available (fallback).
@@ -436,7 +437,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                 tooManyLabel.stringValue = "\(total) annotations match — use the search field or type filters to narrow to \(max) or fewer"
                 tooManyLabel.isHidden = false
             } else {
-                let results = index.query(nameFilter: filterText, types: typeFilter, limit: Self.maxDisplayCount) ?? []
+                // Use queryAll to include both annotations and variants
+                let results = index.queryAll(nameFilter: filterText, types: typeFilter, limit: Self.maxDisplayCount)
                 displayedAnnotations = results
                 tableView.reloadData()
                 scrollView.isHidden = false
