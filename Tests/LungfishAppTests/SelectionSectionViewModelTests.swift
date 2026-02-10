@@ -342,6 +342,56 @@ final class SelectionSectionViewModelTests: XCTestCase {
         XCTAssertNotNil(translationPair)
         XCTAssertTrue(translationPair!.value.hasSuffix("..."), "Long translation should be truncated")
         XCTAssertLessThanOrEqual(translationPair!.value.count, 84, "Truncated to ~80 chars + '...'")
+
+        // fullTranslation should contain the complete, un-truncated sequence
+        XCTAssertNotNil(vm.fullTranslation, "fullTranslation should be populated")
+        XCTAssertEqual(vm.fullTranslation, longTranslation, "fullTranslation should store the complete sequence")
+    }
+
+    func testFullTranslationClearedOnDeselection() {
+        let vm = SelectionSectionViewModel()
+
+        let annotation = SequenceAnnotation(
+            type: .cds,
+            name: "testCDS",
+            chromosome: "chr1",
+            intervals: [AnnotationInterval(start: 100, end: 700)],
+            strand: .forward,
+            qualifiers: [
+                "extra": AnnotationQualifier("translation=MFVLK")
+            ]
+        )
+        vm.select(annotation: annotation)
+        XCTAssertNotNil(vm.fullTranslation)
+
+        vm.select(annotation: nil)
+        XCTAssertNil(vm.fullTranslation, "fullTranslation should be nil after deselection")
+        XCTAssertFalse(vm.isTranslationVisible, "isTranslationVisible should reset on deselection")
+    }
+
+    func testShortTranslationStoredInFullTranslation() {
+        let vm = SelectionSectionViewModel()
+
+        let shortTranslation = "MFVLK"
+        let annotation = SequenceAnnotation(
+            type: .cds,
+            name: "testCDS",
+            chromosome: "chr1",
+            intervals: [AnnotationInterval(start: 100, end: 700)],
+            strand: .forward,
+            qualifiers: [
+                "extra": AnnotationQualifier("translation=\(shortTranslation)")
+            ]
+        )
+        vm.select(annotation: annotation)
+
+        // Short translations should appear un-truncated in qualifier pairs
+        let translationPair = vm.qualifierPairs.first(where: { $0.key == "Translation" })
+        XCTAssertNotNil(translationPair)
+        XCTAssertEqual(translationPair!.value, shortTranslation)
+
+        // And also be stored in fullTranslation
+        XCTAssertEqual(vm.fullTranslation, shortTranslation)
     }
 
     // MARK: - Qualifier ordering

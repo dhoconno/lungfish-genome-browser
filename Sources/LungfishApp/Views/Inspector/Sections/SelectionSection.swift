@@ -56,6 +56,17 @@ public final class SelectionSectionViewModel {
     /// Callback to create a new annotation from current viewer selection.
     public var onAddAnnotationRequested: (() -> Void)?
 
+    /// Callback to show/compute translation in the viewer for a CDS annotation.
+    public var onShowTranslation: ((SequenceAnnotation) -> Void)?
+
+    /// Whether the translation track is currently visible in the viewer.
+    public var isTranslationVisible: Bool = false
+
+    // MARK: - Translation Fields
+
+    /// Full amino acid translation (not truncated), from GenBank qualifier or computed.
+    public var fullTranslation: String?
+
     // MARK: - Enrichment Fields (read-only, from qualifiers + SQLite)
 
     /// All displayable qualifier key-value pairs.
@@ -116,6 +127,8 @@ public final class SelectionSectionViewModel {
             colorApplyMode = .thisOnly
             qualifierPairs = []
             dbxrefLinks = []
+            fullTranslation = nil
+            isTranslationVisible = false
         }
     }
 
@@ -130,6 +143,7 @@ public final class SelectionSectionViewModel {
     private func extractEnrichment(from annotation: SequenceAnnotation) {
         qualifierPairs = []
         dbxrefLinks = []
+        fullTranslation = nil
 
         var parsed: [String: String] = [:]
 
@@ -186,9 +200,15 @@ public final class SelectionSectionViewModel {
 
         for key in orderedKeys {
             guard let value = parsed[key] else { continue }
-            // Truncate translation (amino acid sequences) to avoid overwhelming the UI
-            if key == "translation" && value.count > 80 {
-                qualifierPairs.append((key: Self.displayKeyName(key), value: String(value.prefix(80)) + "..."))
+            if key == "translation" {
+                // Store full translation separately for the dedicated Translation section
+                fullTranslation = value
+                // Show truncated preview in qualifier list
+                if value.count > 80 {
+                    qualifierPairs.append((key: Self.displayKeyName(key), value: String(value.prefix(80)) + "..."))
+                } else {
+                    qualifierPairs.append((key: Self.displayKeyName(key), value: value))
+                }
             } else {
                 qualifierPairs.append((key: Self.displayKeyName(key), value: value))
             }
@@ -358,6 +378,7 @@ public struct SelectionSection: View {
     @Bindable var viewModel: SelectionSectionViewModel
     @State private var isExpanded = true
     @State private var showDeleteConfirmation = false
+    @State private var isTranslationExpanded = false
 
     public init(viewModel: SelectionSectionViewModel) {
         self.viewModel = viewModel
@@ -541,6 +562,11 @@ public struct SelectionSection: View {
                 }
             }
 
+            // Translation section (for CDS annotations or annotations with stored translations)
+            if viewModel.type == .cds || viewModel.fullTranslation != nil {
+                translationSection
+            }
+
             Divider()
                 .padding(.vertical, 4)
 
@@ -594,6 +620,62 @@ public struct SelectionSection: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
+    }
+
+    // MARK: - Translation Section
+
+    @ViewBuilder
+    private var translationSection: some View {
+        Divider()
+            .padding(.vertical, 4)
+
+        DisclosureGroup("Translation", isExpanded: $isTranslationExpanded) {
+            VStack(alignment: .leading, spacing: 8) {
+                if let translation = viewModel.fullTranslation {
+                    // Full amino acid sequence, scrollable and selectable
+                    ScrollView {
+                        Text(translation)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 120)
+                    .padding(6)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+
+                    // Copy button
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(translation, forType: .string)
+                    } label: {
+                        Label("Copy Translation", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                } else {
+                    // No stored translation — offer to compute from sequence
+                    Text("No stored translation")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                // "Translate in Viewer" toggle
+                if let annotation = viewModel.selectedAnnotation {
+                    Button {
+                        viewModel.onShowTranslation?(annotation)
+                    } label: {
+                        Label(
+                            viewModel.isTranslationVisible ? "Hide in Viewer" : "Show in Viewer",
+                            systemImage: viewModel.isTranslationVisible ? "eye.slash" : "eye"
+                        )
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                }
+            }
+        }
+        .font(.subheadline)
     }
 }
 

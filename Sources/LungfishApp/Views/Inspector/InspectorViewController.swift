@@ -160,6 +160,9 @@ public class InspectorViewController: NSViewController {
         viewModel.selectionSectionViewModel.onAddAnnotationRequested = { [weak self] in
             self?.handleAddAnnotationRequested()
         }
+        viewModel.selectionSectionViewModel.onShowTranslation = { [weak self] annotation in
+            self?.handleShowTranslationRequested(annotation)
+        }
 
         // Appearance section callbacks
         viewModel.appearanceSectionViewModel.onSettingsChanged = { [weak self] in
@@ -383,6 +386,24 @@ public class InspectorViewController: NSViewController {
                 NotificationUserInfoKey.annotationType: annotationType,
                 NotificationUserInfoKey.annotationColor: color,
                 NotificationUserInfoKey.changeSource: "inspector"
+            ]
+        )
+    }
+
+    /// Handles show/hide translation request from the Selection section.
+    ///
+    /// Toggles `isTranslationVisible` and posts a notification so the viewer
+    /// can show or hide the CDS translation track.
+    private func handleShowTranslationRequested(_ annotation: SequenceAnnotation) {
+        let vm = viewModel.selectionSectionViewModel
+        vm.isTranslationVisible.toggle()
+
+        NotificationCenter.default.post(
+            name: .showCDSTranslationRequested,
+            object: self,
+            userInfo: [
+                NotificationUserInfoKey.annotation: annotation,
+                "visible": vm.isTranslationVisible,
             ]
         )
     }

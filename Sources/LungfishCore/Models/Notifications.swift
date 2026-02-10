@@ -85,6 +85,13 @@ extension Notification.Name {
     /// The `userInfo` dictionary contains:
     /// - `"chromosome"`: The `ChromosomeInfo` to display in the inspector.
     public static let chromosomeInspectorRequested = Notification.Name("chromosomeInspectorRequested")
+
+    /// Posted to request showing or hiding the CDS translation track in the viewer.
+    ///
+    /// The `userInfo` dictionary contains:
+    /// - `"annotation"`: The `SequenceAnnotation` (CDS) to translate.
+    /// - `"visible"`: `Bool` indicating whether to show or hide.
+    public static let showCDSTranslationRequested = Notification.Name("showCDSTranslationRequested")
 }
 
 // MARK: - Notification UserInfo Keys
