@@ -604,7 +604,9 @@ extension SequenceViewerView {
             sequenceStart: visibleStart,
             frame: frame,
             context: context,
-            yOffset: yOffset
+            yOffset: yOffset,
+            table: frameTranslationTable,
+            colorScheme: translationColorScheme
         )
     }
 
