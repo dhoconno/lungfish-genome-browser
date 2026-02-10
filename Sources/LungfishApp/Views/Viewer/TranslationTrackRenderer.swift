@@ -71,7 +71,7 @@ enum TranslationTrackRenderer {
             guard overlaps else { continue }
 
             // Skip stop codons if hidden
-            if aaPos.isStop && !showStopCodons { continue }
+            if !shouldRenderStopCodon(isStop: aaPos.isStop, showStopCodons: showStopCodons) { continue }
 
             // Get color for this amino acid
             let rgb = colorScheme.color(for: aaPos.aminoAcid)
@@ -210,7 +210,7 @@ enum TranslationTrackRenderer {
                 }
 
                 // Skip stop codons if hidden
-                if aa == Character("*") && !showStopCodons { continue }
+                if !shouldRenderAminoAcid(aa, showStopCodons: showStopCodons) { continue }
 
                 let x = frame.screenPosition(for: Double(codonGenomicStart))
                 let endX = frame.screenPosition(for: Double(codonGenomicEnd))
@@ -380,5 +380,15 @@ enum TranslationTrackRenderer {
             width: size.width, height: size.height
         )
         label.draw(in: labelRect, withAttributes: attributes)
+    }
+
+    /// Returns true when a CDS amino acid position should be rendered.
+    static func shouldRenderStopCodon(isStop: Bool, showStopCodons: Bool) -> Bool {
+        showStopCodons || !isStop
+    }
+
+    /// Returns true when a frame-translated amino acid should be rendered.
+    static func shouldRenderAminoAcid(_ aminoAcid: Character, showStopCodons: Bool) -> Bool {
+        showStopCodons || aminoAcid != Character("*")
     }
 }

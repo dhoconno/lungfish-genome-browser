@@ -415,6 +415,32 @@ final class ShowStopCodonsTests: XCTestCase {
         XCTAssertTrue(config.frames.isEmpty)
         XCTAssertFalse(config.showStopCodons, "showStopCodons should be preserved even in hide config")
     }
+
+    @MainActor
+    func testRendererPredicateHidesStopCodonForCDS() {
+        XCTAssertFalse(
+            TranslationTrackRenderer.shouldRenderStopCodon(isStop: true, showStopCodons: false)
+        )
+        XCTAssertTrue(
+            TranslationTrackRenderer.shouldRenderStopCodon(isStop: false, showStopCodons: false)
+        )
+        XCTAssertTrue(
+            TranslationTrackRenderer.shouldRenderStopCodon(isStop: true, showStopCodons: true)
+        )
+    }
+
+    @MainActor
+    func testRendererPredicateHidesStopCharacterForFrameTranslation() {
+        XCTAssertFalse(
+            TranslationTrackRenderer.shouldRenderAminoAcid("*", showStopCodons: false)
+        )
+        XCTAssertTrue(
+            TranslationTrackRenderer.shouldRenderAminoAcid("M", showStopCodons: false)
+        )
+        XCTAssertTrue(
+            TranslationTrackRenderer.shouldRenderAminoAcid("*", showStopCodons: true)
+        )
+    }
 }
 
 // MARK: - ReadingFrame Property Tests (Supporting Phase 6)
