@@ -342,7 +342,6 @@ final class ReverseComplementTests: XCTestCase {
 
         let result = try await plugin.transform(input)
 
-        // U -> A in reverse complement
-        XCTAssertEqual(result.sequence, "CGAT")  // Note: U becomes A's complement
+        XCTAssertEqual(result.sequence, "CGAU")
     }
 }

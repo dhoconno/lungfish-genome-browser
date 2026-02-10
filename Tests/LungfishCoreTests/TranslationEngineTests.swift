@@ -136,8 +136,7 @@ final class TranslationEngineTests: XCTestCase {
     }
 
     func testReverseComplementRNA() {
-        // U -> A (complement of U is A in DNA context)
-        XCTAssertEqual(TranslationEngine.reverseComplement("AUCG"), "CGAT")
+        XCTAssertEqual(TranslationEngine.reverseComplement("AUCG"), "CGAU")
     }
 
     func testReverseComplementEmpty() {
@@ -487,6 +486,30 @@ final class TranslationEngineTests: XCTestCase {
         )
 
         XCTAssertNil(result)
+    }
+
+    func testPhaseUsesFirstTranslatedIntervalWhenEarlierExonMissing() {
+        let annotation = SequenceAnnotation(
+            type: .cds,
+            name: "phase_fallback",
+            intervals: [
+                AnnotationInterval(start: 0, end: 3, phase: 2),
+                AnnotationInterval(start: 10, end: 19, phase: 0)
+            ],
+            strand: .forward
+        )
+
+        let result = TranslationEngine.translateCDS(
+            annotation: annotation,
+            sequenceProvider: { start, _ in
+                if start == 0 { return nil }
+                return "ATGGCATAA"
+            }
+        )
+
+        XCTAssertNotNil(result)
+        XCTAssertEqual(result?.phaseOffset, 0)
+        XCTAssertEqual(result?.protein, "MA*")
     }
 
     func testAllStopCodons() {

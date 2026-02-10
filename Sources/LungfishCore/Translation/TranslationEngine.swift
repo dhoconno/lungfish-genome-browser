@@ -57,9 +57,14 @@ public enum TranslationEngine {
     /// Returns the reverse complement of a nucleotide sequence.
     /// Handles IUPAC ambiguity codes and both DNA (T) and RNA (U) bases.
     public static func reverseComplement(_ sequence: String) -> String {
+        let isRNA = sequence.contains { $0 == "U" || $0 == "u" } &&
+            !sequence.contains { $0 == "T" || $0 == "t" }
+
+        let adenineComplementUpper: Character = isRNA ? "U" : "T"
+        let adenineComplementLower: Character = isRNA ? "u" : "t"
         let complementMap: [Character: Character] = [
-            "A": "T", "T": "A", "U": "A", "C": "G", "G": "C",
-            "a": "t", "t": "a", "u": "a", "c": "g", "g": "c",
+            "A": adenineComplementUpper, "T": "A", "U": "A", "C": "G", "G": "C",
+            "a": adenineComplementLower, "t": "a", "u": "a", "c": "g", "g": "c",
             "R": "Y", "Y": "R", "S": "S", "W": "W",
             "K": "M", "M": "K", "B": "V", "V": "B",
             "D": "H", "H": "D", "N": "N",
@@ -116,8 +121,8 @@ public enum TranslationEngine {
             codingSequence = exonSequences.map(\.sequence).joined()
         }
 
-        // Determine phase offset from first interval
-        let phaseOffset = sortedIntervals.first?.phase ?? 0
+        // Determine phase offset from first interval that yielded sequence.
+        let phaseOffset = exonSequences.first?.interval.phase ?? 0
 
         // Build the genomic coordinate map for each nucleotide position in the coding sequence
         let genomicPositions = buildGenomicPositionMap(
