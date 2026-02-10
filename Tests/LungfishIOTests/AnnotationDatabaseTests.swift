@@ -112,12 +112,14 @@ final class AnnotationDatabaseTests: XCTestCase {
 
         let (db, count) = try createAndOpenDB(lines: lines)
 
-        // Only the gene should be indexed (exon, intron, UTR excluded)
-        XCTAssertEqual(count, 1, "Only gene should be indexed, not exon/intron/UTR")
-        XCTAssertEqual(db.totalCount(), 1)
+        // gene and UTRs should be indexed; exon and intron excluded
+        XCTAssertEqual(count, 3, "gene + 5'UTR + 3'UTR should be indexed, not exon/intron")
+        XCTAssertEqual(db.totalCount(), 3)
 
-        let types = db.allTypes()
-        XCTAssertEqual(types, ["gene"])
+        let types = Set(db.allTypes())
+        XCTAssertTrue(types.contains("gene"))
+        XCTAssertTrue(types.contains("5'UTR"))
+        XCTAssertTrue(types.contains("3'UTR"))
         XCTAssertFalse(types.contains("exon"))
         XCTAssertFalse(types.contains("intron"))
     }
@@ -289,7 +291,8 @@ final class AnnotationDatabaseTests: XCTestCase {
     // MARK: - Tests: Deduplication
 
     func testCreateFromBEDDeduplicates() throws {
-        // Same name, chrom, start, end — should be deduplicated
+        // Same name+type+chrom+start+end → deduplicated
+        // Same name+chrom+start+end but different type → both kept
         let lines = [
             bed14(chrom: "chr1", start: 100, end: 500, name: "geneA", type: "gene"),
             bed14(chrom: "chr1", start: 100, end: 500, name: "geneA", type: "gene"),
@@ -298,9 +301,9 @@ final class AnnotationDatabaseTests: XCTestCase {
 
         let (db, count) = try createAndOpenDB(lines: lines)
 
-        // First occurrence wins, duplicates by name|chrom|start|end are skipped
-        XCTAssertEqual(count, 1, "Duplicate entries should be deduplicated")
-        XCTAssertEqual(db.totalCount(), 1)
+        // gene+gene deduplicates (same type), but gene+CDS are distinct
+        XCTAssertEqual(count, 2, "Same name/coords but different types should both be kept")
+        XCTAssertEqual(db.totalCount(), 2)
     }
 
     // MARK: - Tests: Edge Cases
@@ -418,10 +421,12 @@ final class AnnotationDatabaseTests: XCTestCase {
     // MARK: - Tests: Deduplication Details
 
     func testCreateFromBEDDeduplicateFirstWins() throws {
-        // Same name|chrom|start|end but different types — first occurrence should win
+        // Same name+type+chrom+start+end — deduplicates, first occurrence wins
         let lines = [
-            bed14(chrom: "chr1", start: 100, end: 500, name: "feat1", type: "gene"),
-            bed14(chrom: "chr1", start: 100, end: 500, name: "feat1", type: "CDS"),
+            bed14(chrom: "chr1", start: 100, end: 500, name: "feat1", type: "gene",
+                  attributes: "product=first"),
+            bed14(chrom: "chr1", start: 100, end: 500, name: "feat1", type: "gene",
+                  attributes: "product=second"),
         ]
 
         let (db, count) = try createAndOpenDB(lines: lines)
@@ -429,7 +434,9 @@ final class AnnotationDatabaseTests: XCTestCase {
 
         let record = db.lookupAnnotation(name: "feat1", chromosome: "chr1", start: 100, end: 500)
         XCTAssertNotNil(record)
-        XCTAssertEqual(record?.type, "gene", "First occurrence (gene) should win over second (CDS)")
+        XCTAssertEqual(record?.type, "gene")
+        // First occurrence's attributes should be stored
+        XCTAssertTrue(record?.attributes?.contains("first") ?? false, "First occurrence should win")
     }
 
     // MARK: - Tests: BED Column Fallback

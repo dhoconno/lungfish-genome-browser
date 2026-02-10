@@ -1547,8 +1547,9 @@ public class SequenceViewerView: NSView {
     /// Whether we're currently dragging to select
     private var isSelecting = false
 
-    /// Currently selected annotation (nil if no annotation selected)
-    private var selectedAnnotation: SequenceAnnotation?
+    /// Currently selected annotation (nil if no annotation selected).
+    /// Internal so the AnnotationDrawer extension can set it from table selection.
+    var selectedAnnotation: SequenceAnnotation?
 
     /// Popover for annotation details on double-click
     private var annotationPopover: NSPopover?
@@ -3891,7 +3892,8 @@ public class SequenceViewerView: NSView {
     }
 
     /// Posts a notification that an annotation was selected.
-    private func postAnnotationSelectedNotification(_ annotation: SequenceAnnotation?) {
+    /// Internal so the AnnotationDrawer extension can post from table selection.
+    func postAnnotationSelectedNotification(_ annotation: SequenceAnnotation?) {
         if let annotation = annotation {
             NotificationCenter.default.post(
                 name: .annotationSelected,

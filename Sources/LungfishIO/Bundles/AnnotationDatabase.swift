@@ -407,6 +407,8 @@ public final class AnnotationDatabase: @unchecked Sendable {
             "misc_feature", "silencer", "terminator", "polyA_signal",
             // Protein processing
             "CDS", "mat_peptide", "sig_peptide", "transit_peptide",
+            // UTRs
+            "5'UTR", "3'UTR", "five_prime_UTR", "three_prime_UTR",
             // Regulatory & binding
             "regulatory", "ncRNA", "misc_binding", "protein_bind",
             // Structural
@@ -463,8 +465,9 @@ public final class AnnotationDatabase: @unchecked Sendable {
             // Only index gene-level features
             guard indexableTypes.contains(type) else { continue }
 
-            // Deduplicate by name+chrom+start+end
-            let key = "\(name)|\(chrom)|\(start)|\(end)"
+            // Deduplicate by name+type+chrom+start+end (type included so gene and CDS
+            // at the same coordinates are both kept)
+            let key = "\(name)|\(type)|\(chrom)|\(start)|\(end)"
             guard seenKeys.insert(key).inserted else { continue }
 
             sqlite3_reset(insertStmt)
