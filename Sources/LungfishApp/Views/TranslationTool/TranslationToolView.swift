@@ -48,7 +48,7 @@ struct TranslationToolView: View {
     /// Callback invoked when the user clicks Apply.
     var onApply: ((TranslationToolConfiguration) -> Void)?
 
-    /// Callback invoked when the user clicks Cancel or the sheet is dismissed.
+    /// Callback invoked when the user clicks Cancel.
     var onCancel: (() -> Void)?
 
     // MARK: - State

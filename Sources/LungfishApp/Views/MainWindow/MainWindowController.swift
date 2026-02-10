@@ -298,7 +298,7 @@ public class MainWindowController: NSWindowController {
 
         let sheetWindow = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 420, height: 480),
-            styleMask: [.titled, .closable],
+            styleMask: [.titled],
             backing: .buffered,
             defer: false
         )
