@@ -1,0 +1,163 @@
+// AnnotationTableContextMenuTests.swift - Tests for annotation table right-click context menu
+// Copyright (c) 2024 Lungfish Contributors
+// SPDX-License-Identifier: MIT
+
+import XCTest
+@testable import LungfishCore
+@testable import LungfishIO
+@testable import LungfishApp
+
+@MainActor
+final class AnnotationTableContextMenuTests: XCTestCase {
+
+    private var tempDir: URL!
+
+    override func setUp() {
+        super.setUp()
+        tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("annotation_table_ctx_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    }
+
+    override func tearDown() {
+        if let tempDir {
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+        super.tearDown()
+    }
+
+    // MARK: - Helper
+
+    /// Creates a drawer view connected to a SQLite-backed search index containing the given BED12 lines.
+    private func createDrawerWithDatabase(lines: [String]) throws -> AnnotationTableDrawerView {
+        // Create SQLite database from BED12 content
+        let bedContent = lines.joined(separator: "\n")
+        let bedURL = tempDir.appendingPathComponent("annotations.bed")
+        try bedContent.write(to: bedURL, atomically: true, encoding: .utf8)
+        let dbURL = tempDir.appendingPathComponent("annotations.db")
+        try AnnotationDatabase.createFromBED(bedURL: bedURL, outputURL: dbURL)
+
+        // buildFromDatabase needs bundle.url + databasePath to find the file
+        // The DB is at tempDir/annotations.db, so bundle.url = tempDir, databasePath = "annotations.db"
+        let manifest = BundleManifest(
+            formatVersion: "1.0",
+            name: "Test",
+            identifier: "test.bundle",
+            source: SourceInfo(organism: "Test", assembly: "test"),
+            genome: GenomeInfo(
+                path: "seq.fa.gz",
+                indexPath: "seq.fa.gz.fai",
+                totalLength: 1000,
+                chromosomes: []
+            )
+        )
+        let bundle = ReferenceBundle(url: tempDir, manifest: manifest)
+
+        let searchIndex = AnnotationSearchIndex()
+        let success = searchIndex.buildFromDatabase(bundle: bundle, trackId: "annotations", databasePath: "annotations.db")
+        XCTAssertTrue(success, "Database should open successfully")
+
+        let drawer = AnnotationTableDrawerView(frame: NSRect(x: 0, y: 0, width: 800, height: 200))
+        drawer.setSearchIndex(searchIndex)
+        return drawer
+    }
+
+    // MARK: - lookupTranslation Tests
+
+    func testLookupTranslationReturnsCDSTranslation() throws {
+        // BED12+extras: chrom start end name score strand thickStart thickEnd rgb blockCount blockSizes blockStarts type attributes
+        let drawer = try createDrawerWithDatabase(lines: [
+            "chr1\t100\t500\tgag-cds\t0\t+\t100\t500\t0,0,0\t1\t400\t0\tCDS\ttranslation=MKVLGPRSE;product=gag%20protein"
+        ])
+
+        let result = AnnotationSearchIndex.SearchResult(
+            name: "gag-cds",
+            chromosome: "chr1",
+            start: 100,
+            end: 500,
+            trackId: "annotations",
+            type: "CDS",
+            strand: "+"
+        )
+
+        let translation = drawer.lookupTranslation(for: result)
+        XCTAssertEqual(translation, "MKVLGPRSE")
+    }
+
+    func testLookupTranslationReturnsNilForAnnotationWithoutTranslation() throws {
+        let drawer = try createDrawerWithDatabase(lines: [
+            "chr1\t100\t5000\tBRCA1\t0\t+\t100\t5000\t0,0,0\t1\t4900\t0\tgene\tgene=BRCA1;product=BRCA1%20DNA%20repair"
+        ])
+
+        let result = AnnotationSearchIndex.SearchResult(
+            name: "BRCA1",
+            chromosome: "chr1",
+            start: 100,
+            end: 5000,
+            trackId: "annotations",
+            type: "gene",
+            strand: "+"
+        )
+
+        let translation = drawer.lookupTranslation(for: result)
+        XCTAssertNil(translation, "Gene without translation attribute should return nil")
+    }
+
+    func testLookupTranslationReturnsNilWithoutSearchIndex() {
+        let drawer = AnnotationTableDrawerView(frame: NSRect(x: 0, y: 0, width: 800, height: 200))
+
+        let result = AnnotationSearchIndex.SearchResult(
+            name: "test",
+            chromosome: "chr1",
+            start: 0,
+            end: 100,
+            trackId: "track1",
+            type: "CDS",
+            strand: "+"
+        )
+
+        let translation = drawer.lookupTranslation(for: result)
+        XCTAssertNil(translation, "Should return nil when no search index is set")
+    }
+
+    func testLookupTranslationReturnsNilForNonexistentAnnotation() throws {
+        let drawer = try createDrawerWithDatabase(lines: [
+            "chr1\t100\t500\treal-gene\t0\t+\t100\t500\t0,0,0\t1\t400\t0\tCDS\ttranslation=MKVL"
+        ])
+
+        let result = AnnotationSearchIndex.SearchResult(
+            name: "nonexistent",
+            chromosome: "chr1",
+            start: 0,
+            end: 100,
+            trackId: "annotations",
+            type: "CDS",
+            strand: "+"
+        )
+
+        let translation = drawer.lookupTranslation(for: result)
+        XCTAssertNil(translation, "Should return nil for annotation not in database")
+    }
+
+    func testLookupTranslationHandlesURLEncodedValue() throws {
+        // Translation with URL-encoded characters (unusual but possible)
+        let drawer = try createDrawerWithDatabase(lines: [
+            "chr1\t0\t300\ttest-cds\t0\t+\t0\t300\t0,0,0\t1\t300\t0\tCDS\ttranslation=MKV%2ALGPRSE"
+        ])
+
+        let result = AnnotationSearchIndex.SearchResult(
+            name: "test-cds",
+            chromosome: "chr1",
+            start: 0,
+            end: 300,
+            trackId: "annotations",
+            type: "CDS",
+            strand: "+"
+        )
+
+        let translation = drawer.lookupTranslation(for: result)
+        XCTAssertNotNil(translation)
+        // The parsed value should have the %2A decoded to *
+        XCTAssertEqual(translation, "MKV*LGPRSE")
+    }
+}

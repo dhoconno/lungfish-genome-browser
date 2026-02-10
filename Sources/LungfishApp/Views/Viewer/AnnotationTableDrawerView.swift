@@ -4,6 +4,7 @@
 
 import AppKit
 import LungfishCore
+import LungfishIO
 import os.log
 
 /// Logger for annotation drawer operations
@@ -216,6 +217,11 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         tableView.gridStyleMask = .solidVerticalGridLineMask
         tableView.target = self
         tableView.doubleAction = #selector(tableViewDoubleClicked(_:))
+
+        // Context menu (built dynamically via NSMenuDelegate)
+        let contextMenu = NSMenu()
+        contextMenu.delegate = self
+        tableView.menu = contextMenu
 
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
@@ -673,5 +679,89 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
         tableView.scrollRowToVisible(index)
         return true
+    }
+
+    // MARK: - Context Menu Actions
+
+    /// Looks up the translation string for an annotation from the SQLite database.
+    func lookupTranslation(for annotation: AnnotationSearchIndex.SearchResult) -> String? {
+        guard let db = searchIndex?.annotationDatabase else { return nil }
+        guard let record = db.lookupAnnotation(
+            name: annotation.name,
+            chromosome: annotation.chromosome,
+            start: annotation.start,
+            end: annotation.end
+        ) else { return nil }
+        guard let attrs = record.attributes, !attrs.isEmpty else { return nil }
+        let parsed = AnnotationDatabase.parseAttributes(attrs)
+        return parsed["translation"]
+    }
+
+    @objc private func copyTranslationAction(_ sender: NSMenuItem) {
+        guard let annotation = sender.representedObject as? AnnotationSearchIndex.SearchResult else { return }
+        guard let translation = lookupTranslation(for: annotation) else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(translation, forType: .string)
+        drawerLogger.info("AnnotationTableDrawerView: Copied translation for '\(annotation.name, privacy: .public)' (\(translation.count) amino acids)")
+    }
+
+    @objc private func copyNameAction(_ sender: NSMenuItem) {
+        guard let annotation = sender.representedObject as? AnnotationSearchIndex.SearchResult else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(annotation.name, forType: .string)
+    }
+
+    @objc private func copyCoordinatesAction(_ sender: NSMenuItem) {
+        guard let annotation = sender.representedObject as? AnnotationSearchIndex.SearchResult else { return }
+        let coords = "\(annotation.chromosome):\(annotation.start)-\(annotation.end)"
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(coords, forType: .string)
+    }
+}
+
+// MARK: - NSMenuDelegate
+
+extension AnnotationTableDrawerView: NSMenuDelegate {
+
+    public func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        let clickedRow = tableView.clickedRow
+        guard clickedRow >= 0, clickedRow < displayedAnnotations.count else { return }
+
+        let annotation = displayedAnnotations[clickedRow]
+
+        // Copy Name
+        let copyNameItem = NSMenuItem(title: "Copy Name", action: #selector(copyNameAction(_:)), keyEquivalent: "")
+        copyNameItem.target = self
+        copyNameItem.representedObject = annotation
+        menu.addItem(copyNameItem)
+
+        // Copy Coordinates
+        let copyCoordsItem = NSMenuItem(title: "Copy Coordinates", action: #selector(copyCoordinatesAction(_:)), keyEquivalent: "")
+        copyCoordsItem.target = self
+        copyCoordsItem.representedObject = annotation
+        menu.addItem(copyCoordsItem)
+
+        // Copy Translation (only for CDS-type annotations with translation data)
+        let cdsTypes: Set<String> = ["CDS", "cds", "mat_peptide"]
+        let isCDS = cdsTypes.contains(annotation.type)
+        let translation = isCDS ? lookupTranslation(for: annotation) : nil
+
+        if isCDS {
+            menu.addItem(NSMenuItem.separator())
+            let copyTransItem = NSMenuItem(title: "Copy Translation", action: #selector(copyTranslationAction(_:)), keyEquivalent: "")
+            copyTransItem.target = self
+            copyTransItem.representedObject = annotation
+            // Disable if no translation data available
+            if translation == nil {
+                copyTransItem.isEnabled = false
+                copyTransItem.toolTip = "No translation data available for this annotation"
+            }
+            menu.addItem(copyTransItem)
+        }
     }
 }
