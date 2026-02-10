@@ -309,6 +309,7 @@ public class MainWindowController: NSWindowController {
             window.endSheet(sheetWindow)
             guard let viewerView = self?.mainSplitViewController.viewerController?.viewerView else { return }
             viewerView.translationColorScheme = config.colorScheme
+            viewerView.translationShowStopCodons = config.showStopCodons
             if config.frames.isEmpty {
                 viewerView.hideTranslation()
             } else {

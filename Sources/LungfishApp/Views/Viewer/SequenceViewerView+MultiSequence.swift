@@ -606,7 +606,8 @@ extension SequenceViewerView {
             context: context,
             yOffset: yOffset,
             table: frameTranslationTable,
-            colorScheme: translationColorScheme
+            colorScheme: translationColorScheme,
+            showStopCodons: translationShowStopCodons
         )
     }
 

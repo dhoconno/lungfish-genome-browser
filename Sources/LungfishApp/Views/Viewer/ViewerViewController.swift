@@ -1612,6 +1612,9 @@ public class SequenceViewerView: NSView {
     /// Codon table for frame translations.
     var frameTranslationTable: CodonTable = .standard
 
+    /// Whether to render stop codon cells in translation tracks.
+    var translationShowStopCodons: Bool = true
+
     // MARK: - Annotation Track Layout Constants
 
     /// Y offset where annotation track starts (below sequence + optional translation track)
@@ -2299,7 +2302,8 @@ public class SequenceViewerView: NSView {
                     frame: frame,
                     context: context,
                     yOffset: transY,
-                    colorScheme: translationColorScheme
+                    colorScheme: translationColorScheme,
+                    showStopCodons: translationShowStopCodons
                 )
             } else if !frameTranslationFrames.isEmpty, let seq = cachedBundleSequence,
                       let seqRegion = cachedSequenceRegion {
@@ -2311,7 +2315,8 @@ public class SequenceViewerView: NSView {
                     context: context,
                     yOffset: transY,
                     table: frameTranslationTable,
-                    colorScheme: translationColorScheme
+                    colorScheme: translationColorScheme,
+                    showStopCodons: translationShowStopCodons
                 )
             }
         }
@@ -3426,7 +3431,8 @@ public class SequenceViewerView: NSView {
                     frame: frame,
                     context: context,
                     yOffset: transY,
-                    colorScheme: translationColorScheme
+                    colorScheme: translationColorScheme,
+                    showStopCodons: translationShowStopCodons
                 )
             } else if !frameTranslationFrames.isEmpty {
                 // For single-sequence mode, extract the visible portion
@@ -3442,7 +3448,8 @@ public class SequenceViewerView: NSView {
                         context: context,
                         yOffset: transY,
                         table: frameTranslationTable,
-                        colorScheme: translationColorScheme
+                        colorScheme: translationColorScheme,
+                        showStopCodons: translationShowStopCodons
                     )
                 }
             }

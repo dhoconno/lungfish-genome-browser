@@ -341,6 +341,82 @@ final class TranslationToolConfigurationTests: XCTestCase {
     }
 }
 
+// MARK: - ShowStopCodons Behavior Tests
+
+final class ShowStopCodonsTests: XCTestCase {
+
+    func testFrameTranslationProducesStopCharacter() {
+        // Verify that TranslationEngine.translateFrames produces "*" for stop codons,
+        // which is what the renderer checks against for showStopCodons filtering
+        let sequence = "ATGGCATAA"  // ATG GCA TAA -> M A *
+        let results = TranslationEngine.translateFrames([.plus1], sequence: sequence)
+        let protein = results.first?.1 ?? ""
+        XCTAssertTrue(protein.contains("*"), "Frame translation should produce * for stop codons")
+        XCTAssertEqual(protein.last, Character("*"))
+    }
+
+    func testTranslateWithShowStopAsAsteriskTrue() {
+        let protein = TranslationEngine.translate("ATGGCATAA", showStopAsAsterisk: true)
+        XCTAssertEqual(protein, "MA*")
+    }
+
+    func testTranslateWithShowStopAsAsteriskFalse() {
+        let protein = TranslationEngine.translate("ATGGCATAA", showStopAsAsterisk: false)
+        XCTAssertEqual(protein, "MA", "With showStopAsAsterisk=false, stop codon should be omitted")
+    }
+
+    func testCDSTranslationStopPositionFlaggedCorrectly() {
+        let annotation = SequenceAnnotation(
+            type: .cds,
+            name: "test",
+            intervals: [AnnotationInterval(start: 0, end: 9)],
+            strand: .forward
+        )
+
+        let result = TranslationEngine.translateCDS(
+            annotation: annotation,
+            sequenceProvider: { _, _ in "ATGGCATAA" }
+        )
+
+        XCTAssertNotNil(result)
+        let stopPositions = result!.aminoAcidPositions.filter(\.isStop)
+        XCTAssertEqual(stopPositions.count, 1, "Should have exactly one stop codon")
+        XCTAssertEqual(stopPositions.first?.aminoAcid, Character("*"))
+    }
+
+    func testConfigShowStopCodonsDefaultTrue() {
+        let config = TranslationToolConfiguration(
+            frames: [.plus1],
+            codonTable: .standard,
+            colorScheme: .zappo,
+            showStopCodons: true
+        )
+        XCTAssertTrue(config.showStopCodons)
+    }
+
+    func testConfigShowStopCodonsFalse() {
+        let config = TranslationToolConfiguration(
+            frames: [.plus1],
+            codonTable: .standard,
+            colorScheme: .zappo,
+            showStopCodons: false
+        )
+        XCTAssertFalse(config.showStopCodons)
+    }
+
+    func testHideConfigPreservesShowStopCodons() {
+        // When user clicks "Hide Translation", showStopCodons should still be in the config
+        let config = TranslationToolConfiguration(
+            frames: [],
+            codonTable: .standard,
+            colorScheme: .zappo,
+            showStopCodons: false
+        )
+        XCTAssertTrue(config.frames.isEmpty)
+        XCTAssertFalse(config.showStopCodons, "showStopCodons should be preserved even in hide config")
+    }
+}
+
 // MARK: - ReadingFrame Property Tests (Supporting Phase 6)
 
 final class ReadingFramePropertyTests: XCTestCase {

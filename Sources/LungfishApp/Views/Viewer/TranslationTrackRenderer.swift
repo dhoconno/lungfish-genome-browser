@@ -43,7 +43,8 @@ enum TranslationTrackRenderer {
         context: CGContext,
         yOffset: CGFloat,
         trackHeight: CGFloat = subTrackHeight,
-        colorScheme: AminoAcidColorScheme = .zappo
+        colorScheme: AminoAcidColorScheme = .zappo,
+        showStopCodons: Bool = true
     ) {
         let visibleStart = Int(frame.start)
         let visibleEnd = Int(frame.end)
@@ -68,6 +69,9 @@ enum TranslationTrackRenderer {
                 range.start < visibleEnd && range.end > visibleStart
             }
             guard overlaps else { continue }
+
+            // Skip stop codons if hidden
+            if aaPos.isStop && !showStopCodons { continue }
 
             // Get color for this amino acid
             let rgb = colorScheme.color(for: aaPos.aminoAcid)
@@ -156,7 +160,8 @@ enum TranslationTrackRenderer {
         context: CGContext,
         yOffset: CGFloat,
         table: CodonTable = .standard,
-        colorScheme: AminoAcidColorScheme = .zappo
+        colorScheme: AminoAcidColorScheme = .zappo,
+        showStopCodons: Bool = true
     ) {
         let pixelsPerBase = CGFloat(frame.pixelWidth) / CGFloat(max(1, frame.end - frame.start))
         let showLetters = pixelsPerBase >= 8
@@ -203,6 +208,9 @@ enum TranslationTrackRenderer {
                 guard codonGenomicEnd > Int(frame.start) && codonGenomicStart < Int(frame.end) else {
                     continue
                 }
+
+                // Skip stop codons if hidden
+                if aa == Character("*") && !showStopCodons { continue }
 
                 let x = frame.screenPosition(for: Double(codonGenomicStart))
                 let endX = frame.screenPosition(for: Double(codonGenomicEnd))
