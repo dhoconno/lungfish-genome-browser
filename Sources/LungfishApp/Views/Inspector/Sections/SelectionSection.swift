@@ -87,7 +87,37 @@ public final class SelectionSectionViewModel {
         }
     }
 
+    /// Reference bundle for computing CDS translations on-the-fly (bundle mode).
+    @ObservationIgnored
+    public var referenceBundle: ReferenceBundle?
+
     public init() {}
+
+    /// Computes an amino acid translation for the given CDS annotation from the underlying sequence.
+    ///
+    /// Uses the reference bundle's synchronous sequence fetch to extract nucleotides
+    /// for each CDS interval and translates them via `TranslationEngine.translateCDS`.
+    ///
+    /// - Parameter annotation: The CDS/mRNA annotation to translate.
+    /// - Returns: The protein string, or nil if translation fails.
+    public func computeTranslation(for annotation: SequenceAnnotation) -> String? {
+        guard let bundle = referenceBundle else { return nil }
+
+        let sequenceProvider: (Int, Int) -> String? = { start, end in
+            let region = GenomicRegion(
+                chromosome: annotation.chromosome ?? bundle.chromosomeNames.first ?? "",
+                start: start, end: end
+            )
+            return try? bundle.fetchSequenceSync(region: region)
+        }
+
+        guard let result = TranslationEngine.translateCDS(
+            annotation: annotation,
+            sequenceProvider: sequenceProvider
+        ) else { return nil }
+
+        return result.protein
+    }
 
     /// Updates the view model with a new annotation selection.
     ///
@@ -658,8 +688,20 @@ public struct SelectionSection: View {
                     }
                     .buttonStyle(.borderless)
                     .controlSize(.small)
+                } else if viewModel.referenceBundle != nil,
+                          let annotation = viewModel.selectedAnnotation,
+                          (viewModel.type == .cds || viewModel.type == .mRNA) {
+                    // CDS/mRNA without stored translation — offer to compute from bundle sequence
+                    Button {
+                        if let computed = viewModel.computeTranslation(for: annotation) {
+                            viewModel.fullTranslation = computed
+                        }
+                    } label: {
+                        Label("Compute from Sequence", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
                 } else {
-                    // No stored translation — offer to compute from sequence
                     Text("No stored translation")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -668,6 +710,10 @@ public struct SelectionSection: View {
                 // "Translate in Viewer" toggle
                 if let annotation = viewModel.selectedAnnotation {
                     Button {
+                        // Auto-compute translation if not yet available
+                        if viewModel.fullTranslation == nil {
+                            viewModel.fullTranslation = viewModel.computeTranslation(for: annotation)
+                        }
                         viewModel.onShowTranslation?(annotation)
                     } label: {
                         Label(

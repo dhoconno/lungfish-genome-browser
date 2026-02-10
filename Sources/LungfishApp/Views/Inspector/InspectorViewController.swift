@@ -6,6 +6,7 @@ import AppKit
 import SwiftUI
 import Combine
 import LungfishCore
+import LungfishIO
 import os.log
 
 /// Logger for inspector operations
@@ -270,23 +271,12 @@ public class InspectorViewController: NSViewController {
     /// Updates the selection section with the newly selected annotation.
     /// Passing nil in userInfo clears the selection.
     @objc private func handleAnnotationSelected(_ notification: Notification) {
-        let previousSelection = viewModel.selectedAnnotation
         let selectedAnnotation = notification.userInfo?[NotificationUserInfoKey.annotation] as? SequenceAnnotation
-        let selectionChanged = previousSelection?.id != selectedAnnotation?.id
 
-        if selectionChanged,
-           viewModel.selectionSectionViewModel.isTranslationVisible,
-           let previousSelection {
-            viewModel.selectionSectionViewModel.isTranslationVisible = false
-            NotificationCenter.default.post(
-                name: .showCDSTranslationRequested,
-                object: self,
-                userInfo: [
-                    NotificationUserInfoKey.annotation: previousSelection,
-                    "visible": false,
-                ]
-            )
-        }
+        // Translation track persists across annotation selection changes.
+        // The inspector button state resets in SelectionSectionViewModel.select(),
+        // but we do NOT post a hide-translation notification to the viewer.
+        // The user must explicitly hide the translation via the inspector button.
 
         if let annotation = selectedAnnotation {
             viewModel.selectedAnnotation = annotation
@@ -314,6 +304,11 @@ public class InspectorViewController: NSViewController {
         logger.info("handleBundleDidLoad: Updating document tab with manifest=\(manifest != nil), bundleURL=\(bundleURL?.lastPathComponent ?? "nil", privacy: .public)")
 
         updateBundleMetadata(manifest: manifest, bundleURL: bundleURL)
+
+        // Wire reference bundle for on-the-fly CDS translation computation
+        if let bundle = userInfo[NotificationUserInfoKey.referenceBundle] as? ReferenceBundle {
+            viewModel.selectionSectionViewModel.referenceBundle = bundle
+        }
 
         // Auto-select the first chromosome so the Chromosome section is visible immediately
         if let chromosomes = manifest?.genome.chromosomes, !chromosomes.isEmpty {

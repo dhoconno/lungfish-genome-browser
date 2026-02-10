@@ -145,4 +145,7 @@ public enum NotificationUserInfoKey {
 
     /// Key indicating whether chromosome inspector requests should switch to Document tab (Bool).
     public static let switchInspectorTab = "switchTab"
+
+    /// Key for the reference bundle (ReferenceBundle).
+    public static let referenceBundle = "referenceBundle"
 }

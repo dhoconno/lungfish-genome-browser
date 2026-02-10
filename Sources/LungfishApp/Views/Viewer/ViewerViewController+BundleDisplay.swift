@@ -114,6 +114,7 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
                 NotificationUserInfoKey.bundleURL: url,
                 NotificationUserInfoKey.chromosomes: manifest.genome.chromosomes,
                 NotificationUserInfoKey.manifest: manifest,
+                NotificationUserInfoKey.referenceBundle: bundle,
             ]
         )
 
@@ -287,8 +288,11 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
         // Clear sequence fetch error for the new position
         viewerView.clearSequenceFetchError()
 
-        // Hide translation track — CDS translation is annotation-specific and doesn't survive navigation
-        viewerView.hideTranslation()
+        // Only hide translation when navigating to a different chromosome.
+        // Within same chromosome, CDS and frame translations persist at their genomic coordinates.
+        if let currentChrom = referenceFrame?.chromosome, currentChrom != chromosome {
+            viewerView.hideTranslation()
+        }
 
         let effectiveWidth = max(800, Int(viewerView.bounds.width))
         let clampedStart = max(0, start)

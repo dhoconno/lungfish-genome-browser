@@ -345,7 +345,7 @@ public class ViewerViewController: NSViewController {
         if visible {
             viewerView?.showCDSTranslation(for: annotation)
         } else {
-            viewerView?.hideTranslation()
+            viewerView?.hideCDSTranslation()
         }
     }
 
@@ -1617,11 +1617,18 @@ public class SequenceViewerView: NSView {
 
     // MARK: - Annotation Track Layout Constants
 
-    /// Y offset where annotation track starts (below sequence + optional translation track)
+    /// Y offset where annotation track starts (below sequence + optional translation track).
+    ///
+    /// Only reserves space for the translation track when it is actually rendering
+    /// at the current zoom level (scale < showLettersThreshold). At zoom levels where
+    /// translation doesn't render, annotations are placed directly below the sequence.
     private var annotationTrackY: CGFloat {
         var y = trackY + trackHeight + 4
         if showTranslationTrack {
-            y += translationTrackTotalHeight + 4
+            let currentScale = viewController?.referenceFrame?.scale ?? Double.greatestFiniteMagnitude
+            if currentScale < showLettersThreshold {
+                y += translationTrackTotalHeight + 4
+            }
         }
         return y
     }
@@ -2004,6 +2011,21 @@ public class SequenceViewerView: NSView {
         invalidateAnnotationTile()
         setNeedsDisplay(bounds)
         logger.info("hideTranslation: Translation track hidden")
+    }
+
+    /// Hides only the CDS translation, preserving any active frame translation.
+    ///
+    /// Use this when the user explicitly hides a CDS translation from the inspector.
+    /// If frame translation is also active, the translation track remains visible.
+    func hideCDSTranslation() {
+        guard activeTranslationResult != nil else { return }
+        activeTranslationResult = nil
+        if frameTranslationFrames.isEmpty {
+            showTranslationTrack = false
+        }
+        invalidateAnnotationTile()
+        setNeedsDisplay(bounds)
+        logger.info("hideCDSTranslation: CDS translation cleared")
     }
 
     /// Enables multi-frame translation mode for the specified reading frames.

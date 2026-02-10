@@ -137,6 +137,8 @@ public class MainWindowController: NSWindowController {
             viewerController.annotationSearchIndex = self.annotationSearchIndex
             // Wire annotation database to inspector selection view model for qualifier enrichment
             inspectorController?.selectionSectionViewModel.annotationDatabase = self.annotationSearchIndex?.annotationDatabase
+            // Wire reference bundle for on-the-fly CDS translation computation
+            inspectorController?.selectionSectionViewModel.referenceBundle = viewerController.viewerView?.currentReferenceBundle
         }
 
         // Starts background thread I/O — won't block the UI
