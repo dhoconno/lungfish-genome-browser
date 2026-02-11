@@ -1738,6 +1738,26 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         // Copy all files first
         for (index, tempURL) in tempFileURLs.enumerated() {
+            // Skip copy if file is already inside the project directory (e.g. extraction bundles
+            // saved directly to Extractions folder). Just use the URL as-is.
+            let tempPath = tempURL.standardizedFileURL.path
+            let alreadyInProject: Bool
+            if let projectPath = DocumentManager.shared.activeProject?.url.standardizedFileURL.path,
+               tempPath.hasPrefix(projectPath) {
+                alreadyInProject = true
+            } else if let workingPath = workingDirectoryURL?.standardizedFileURL.path,
+                      tempPath.hasPrefix(workingPath) {
+                alreadyInProject = true
+            } else {
+                alreadyInProject = false
+            }
+
+            if alreadyInProject {
+                debugLog("handleMultipleDownloadsSync: \(tempURL.lastPathComponent) already in project, skipping copy")
+                copiedURLs.append(tempURL)
+                continue
+            }
+
             let originalFilename = tempURL.lastPathComponent
             let fileExtension = tempURL.pathExtension
             var baseName = tempURL.deletingPathExtension().lastPathComponent

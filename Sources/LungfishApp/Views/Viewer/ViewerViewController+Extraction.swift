@@ -369,13 +369,8 @@ extension SequenceViewerView {
                             DownloadCenter.shared.complete(
                                 id: itemId,
                                 detail: "Bundle ready",
-                                bundleURLs: []
+                                bundleURLs: [finalBundleURL]
                             )
-                            if let appDelegate = NSApp.delegate as? AppDelegate,
-                               let sidebar = appDelegate.mainWindowController?.mainSplitViewController?.sidebarController {
-                                sidebar.reloadFromFilesystem()
-                                sidebar.selectItem(forURL: finalBundleURL)
-                            }
                         }
                     }
                 } catch {
