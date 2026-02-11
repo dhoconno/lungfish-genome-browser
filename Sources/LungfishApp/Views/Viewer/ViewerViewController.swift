@@ -3249,18 +3249,20 @@ public class SequenceViewerView: NSView {
 
             for annot in row {
                 let colors = cachedColors(for: annot)
+                let startX = frame.screenPosition(for: Double(annot.start))
+                let endX = frame.screenPosition(for: Double(annot.end))
+                let width = max(1, endX - startX)
+                let boundingRect = CGRect(x: startX, y: y, width: width, height: squishedHeight)
 
                 if annot.isDiscontinuous {
                     // Discontiguous: connector line + block rectangles
-                    let fullStartX = frame.screenPosition(for: Double(annot.start))
-                    let fullEndX = frame.screenPosition(for: Double(annot.end))
                     let midY = y + squishedHeight / 2
 
                     // Draw connector line through intron regions
                     context.setStrokeColor(colors.fill)
                     context.setLineWidth(1)
-                    context.move(to: CGPoint(x: fullStartX, y: midY))
-                    context.addLine(to: CGPoint(x: fullEndX, y: midY))
+                    context.move(to: CGPoint(x: startX, y: midY))
+                    context.addLine(to: CGPoint(x: endX, y: midY))
                     context.strokePath()
 
                     // Draw each interval (exon) as a filled block
@@ -3273,12 +3275,13 @@ public class SequenceViewerView: NSView {
                     }
                 } else {
                     // Continuous: single filled rectangle
-                    let startX = frame.screenPosition(for: Double(annot.start))
-                    let endX = frame.screenPosition(for: Double(annot.end))
-                    let width = max(1, endX - startX)
-                    let rect = CGRect(x: startX, y: y, width: width, height: squishedHeight)
                     context.setFillColor(colors.fill)
-                    context.fill(rect)
+                    context.fill(boundingRect)
+                }
+
+                // Draw selection highlight
+                if let selected = selectedAnnotation, selected.id == annot.id {
+                    drawAnnotationSelectionHighlight(rect: boundingRect, context: context)
                 }
             }
         }
@@ -3308,6 +3311,8 @@ public class SequenceViewerView: NSView {
 
                 let colors = cachedColors(for: annot)
 
+                let boundingRect = CGRect(x: startX, y: y, width: width, height: annotationHeight)
+
                 if annot.isDiscontinuous {
                     // Discontiguous: connector line + block rectangles (IGV-style)
                     let midY = y + annotationHeight / 2
@@ -3332,7 +3337,6 @@ public class SequenceViewerView: NSView {
                     }
 
                     // Draw strand arrows on connector if feature is wide enough
-                    let boundingRect = CGRect(x: startX, y: y, width: width, height: annotationHeight)
                     if width > 8 {
                         drawStrandArrow(strand: annot.strand, rect: boundingRect, context: context)
                     }
@@ -3357,14 +3361,13 @@ public class SequenceViewerView: NSView {
                     }
                 } else {
                     // Continuous: single filled rectangle with border
-                    let rect = CGRect(x: startX, y: y, width: width, height: annotationHeight)
                     context.setFillColor(colors.fill)
-                    context.fill(rect)
+                    context.fill(boundingRect)
 
                     // Draw border
                     context.setStrokeColor(colors.stroke)
                     context.setLineWidth(1)
-                    context.stroke(rect)
+                    context.stroke(boundingRect)
 
                     // Draw label if space permits
                     if shouldRenderExpandedLabel(for: annot, width: width, rowCount: rowCount) {
@@ -3387,8 +3390,13 @@ public class SequenceViewerView: NSView {
 
                     // Draw strand arrow if feature is wide enough
                     if width > 8 {
-                        drawStrandArrow(strand: annot.strand, rect: rect, context: context)
+                        drawStrandArrow(strand: annot.strand, rect: boundingRect, context: context)
                     }
+                }
+
+                // Draw selection highlight around the selected annotation
+                if let selected = selectedAnnotation, selected.id == annot.id {
+                    drawAnnotationSelectionHighlight(rect: boundingRect, context: context)
                 }
             }
         }
@@ -3837,27 +3845,23 @@ public class SequenceViewerView: NSView {
         }
     }
 
-    /// Draws a dashed selection highlight around the selected annotation
+    /// Draws a macOS-style selection highlight around the selected annotation.
+    ///
+    /// Uses a solid rounded rectangle stroke with the system accent color,
+    /// following macOS Human Interface Guidelines for content selection.
     private func drawAnnotationSelectionHighlight(rect: CGRect, context: CGContext) {
         context.saveGState()
 
-        // Use system selection color
-        let selectionColor = NSColor.selectedContentBackgroundColor
+        let accentColor = NSColor.controlAccentColor
+        let highlightRect = rect.insetBy(dx: -1.5, dy: -1.5)
+        let cornerRadius: CGFloat = 3
+        let path = CGPath(roundedRect: highlightRect, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
 
-        // Draw a slightly expanded rect with dashed border
-        let expandedRect = rect.insetBy(dx: -2, dy: -2)
-
-        // Set up dashed line pattern
-        context.setStrokeColor(selectionColor.cgColor)
+        // Solid rounded stroke with accent color
+        context.setStrokeColor(accentColor.cgColor)
         context.setLineWidth(2)
-        context.setLineDash(phase: 0, lengths: [4, 2])
-
-        // Draw the dashed rectangle
-        context.stroke(expandedRect)
-
-        // Also draw a semi-transparent fill to emphasize selection
-        context.setFillColor(selectionColor.withAlphaComponent(0.2).cgColor)
-        context.fill(expandedRect)
+        context.addPath(path)
+        context.strokePath()
 
         context.restoreGState()
     }

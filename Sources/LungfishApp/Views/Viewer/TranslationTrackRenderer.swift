@@ -132,6 +132,12 @@ enum TranslationTrackRenderer {
             }
         }
 
+        // Draw dashed connector lines across intron gaps between exon blocks
+        drawIntronConnectors(
+            result: result, frame: frame, context: context,
+            yOffset: yOffset, trackHeight: trackHeight
+        )
+
         // Draw "Translation" label at left edge
         drawTrackLabel("Translation", yOffset: yOffset, trackHeight: trackHeight, context: context)
     }
@@ -267,6 +273,54 @@ enum TranslationTrackRenderer {
     }
 
     // MARK: - Private Helpers
+
+    /// Draws dashed connector lines across intron gaps in a CDS translation track.
+    ///
+    /// Scans consecutive amino acids for genomic discontinuities (where the end of
+    /// one codon's genomic range doesn't abut the start of the next) and draws a
+    /// thin dashed line across each gap.
+    private static func drawIntronConnectors(
+        result: TranslationResult,
+        frame: ReferenceFrame,
+        context: CGContext,
+        yOffset: CGFloat,
+        trackHeight: CGFloat
+    ) {
+        let visibleStart = Int(frame.start)
+        let visibleEnd = Int(frame.end)
+        let centerY = yOffset + trackHeight / 2
+
+        context.saveGState()
+        context.setStrokeColor(NSColor.tertiaryLabelColor.cgColor)
+        context.setLineWidth(1)
+        context.setLineDash(phase: 0, lengths: [3, 3])
+
+        let positions = result.aminoAcidPositions
+        for i in 1..<positions.count {
+            let prev = positions[i - 1]
+            let curr = positions[i]
+            guard let prevLast = prev.genomicRanges.last,
+                  let currFirst = curr.genomicRanges.first else { continue }
+
+            // Detect a genomic gap (intron) between consecutive amino acids
+            let gapStart = min(prevLast.end, currFirst.start)
+            let gapEnd = max(prevLast.end, currFirst.start)
+            guard gapEnd - gapStart > 0 else { continue }
+
+            // Skip gaps entirely outside the visible window
+            guard gapEnd > visibleStart && gapStart < visibleEnd else { continue }
+
+            let x1 = frame.screenPosition(for: Double(gapStart))
+            let x2 = frame.screenPosition(for: Double(gapEnd))
+            guard x2 - x1 > 1 else { continue }
+
+            context.move(to: CGPoint(x: x1, y: centerY))
+            context.addLine(to: CGPoint(x: x2, y: centerY))
+            context.strokePath()
+        }
+
+        context.restoreGState()
+    }
 
     /// Draws a single amino acid letter centered in the given rectangle.
     private static func drawAminoAcidLetter(
