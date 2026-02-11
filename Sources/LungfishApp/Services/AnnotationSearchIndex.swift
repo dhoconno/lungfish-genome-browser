@@ -81,10 +81,7 @@ public final class AnnotationSearchIndex {
     private var database: AnnotationDatabase?
 
     /// Variant SQLite database handle (for unified search).
-    private var variantDatabase: VariantDatabase?
-
-    /// Track ID for the variant database.
-    private var variantTrackId: String = ""
+    private var variantDatabases: [(trackId: String, db: VariantDatabase)] = []
 
     /// Track ID associated with the database (for SearchResult compatibility).
     private var databaseTrackId: String = ""
@@ -134,8 +131,8 @@ public final class AnnotationSearchIndex {
         } else {
             types = Set(entries.map { $0.type })
         }
-        if let vdb = variantDatabase {
-            types.formUnion(vdb.allTypes())
+        for handle in variantDatabases {
+            types.formUnion(handle.db.allTypes())
         }
         return types.sorted()
     }
@@ -181,19 +178,19 @@ public final class AnnotationSearchIndex {
 
     /// Opens variant databases from the bundle for unified search.
     private func openVariantDatabases(bundle: ReferenceBundle) {
+        variantDatabases.removeAll()
         for vTrackId in bundle.variantTrackIds {
             guard let trackInfo = bundle.variantTrack(id: vTrackId),
                   let dbPath = trackInfo.databasePath else { continue }
             let dbURL = bundle.url.appendingPathComponent(dbPath)
             guard FileManager.default.fileExists(atPath: dbURL.path) else { continue }
             do {
-                variantDatabase = try VariantDatabase(url: dbURL)
-                variantTrackId = vTrackId
-                let vcount = variantDatabase?.totalCount() ?? 0
-                searchLogger.info("AnnotationSearchIndex: Opened variant database with \(vcount) variants")
-                break  // Use first available variant database
+                let db = try VariantDatabase(url: dbURL)
+                variantDatabases.append((trackId: vTrackId, db: db))
+                let vcount = db.totalCount()
+                searchLogger.info("AnnotationSearchIndex: Opened variant database '\(vTrackId, privacy: .public)' with \(vcount) variants")
             } catch {
-                searchLogger.warning("AnnotationSearchIndex: Failed to open variant database: \(error.localizedDescription)")
+                searchLogger.warning("AnnotationSearchIndex: Failed to open variant database '\(vTrackId, privacy: .public)': \(error.localizedDescription)")
             }
         }
     }
@@ -350,10 +347,13 @@ public final class AnnotationSearchIndex {
         }
 
         // Also search variant database
-        if let vdb = variantDatabase, results.count < limit {
-            let remaining = limit - results.count
-            let variantRecords = vdb.searchByID(idFilter: query, limit: remaining)
-            results.append(contentsOf: variantRecords.map { $0.toSearchResult(trackId: variantTrackId) })
+        if results.count < limit {
+            for handle in variantDatabases {
+                let remaining = limit - results.count
+                guard remaining > 0 else { break }
+                let variantRecords = handle.db.searchByID(idFilter: query, limit: remaining)
+                results.append(contentsOf: variantRecords.map { $0.toSearchResult(trackId: handle.trackId) })
+            }
         }
 
         return results
@@ -389,11 +389,11 @@ public final class AnnotationSearchIndex {
         var count = db.queryCount(nameFilter: nameFilter, types: types)
 
         // Add variant counts if variant database is available and types match
-        if let vdb = variantDatabase {
-            let variantTypes = Set(vdb.allTypes())
+        for handle in variantDatabases {
+            let variantTypes = Set(handle.db.allTypes())
             let requestedVariantTypes = types.isEmpty ? variantTypes : types.intersection(variantTypes)
             if !requestedVariantTypes.isEmpty || types.isEmpty {
-                count += vdb.queryCountForTable(nameFilter: nameFilter, types: requestedVariantTypes)
+                count += handle.db.queryCountForTable(nameFilter: nameFilter, types: requestedVariantTypes)
             }
         }
 
@@ -411,17 +411,19 @@ public final class AnnotationSearchIndex {
         }
 
         // Query variant database
-        if let vdb = variantDatabase, results.count < limit {
-            let variantTypes = Set(vdb.allTypes())
-            let requestedVariantTypes = types.isEmpty ? variantTypes : types.intersection(variantTypes)
-            if !requestedVariantTypes.isEmpty || types.isEmpty {
+        if results.count < limit {
+            for handle in variantDatabases {
                 let remaining = limit - results.count
-                let variantRecords = vdb.queryForTable(
+                guard remaining > 0 else { break }
+                let variantTypes = Set(handle.db.allTypes())
+                let requestedVariantTypes = types.isEmpty ? variantTypes : types.intersection(variantTypes)
+                guard !requestedVariantTypes.isEmpty || types.isEmpty else { continue }
+                let variantRecords = handle.db.queryForTable(
                     nameFilter: nameFilter,
                     types: types.isEmpty ? [] : requestedVariantTypes,
                     limit: remaining
                 )
-                results.append(contentsOf: variantRecords.map { $0.toSearchResult(trackId: variantTrackId) })
+                results.append(contentsOf: variantRecords.map { $0.toSearchResult(trackId: handle.trackId) })
             }
         }
 
@@ -429,23 +431,27 @@ public final class AnnotationSearchIndex {
     }
 
     /// Whether a variant database is available for unified queries.
-    public var hasVariantDatabase: Bool { variantDatabase != nil }
+    public var hasVariantDatabase: Bool { !variantDatabases.isEmpty }
 
     /// All distinct variant types (separate from annotation types).
     public var variantTypes: [String] {
-        variantDatabase?.allTypes() ?? []
+        var all: Set<String> = []
+        for handle in variantDatabases {
+            all.formUnion(handle.db.allTypes())
+        }
+        return all.sorted()
     }
 
     /// Total variant count.
     public var variantCount: Int {
-        variantDatabase?.totalCount() ?? 0
+        variantDatabases.reduce(0) { $0 + $1.db.totalCount() }
     }
 
     /// Clears the index.
     public func clear() {
         entries = []
         database = nil
-        variantDatabase = nil
+        variantDatabases = []
         isBuilding = false
     }
 }

@@ -141,7 +141,7 @@ public class MainWindowController: NSWindowController {
             inspectorController?.selectionSectionViewModel.referenceBundle = viewerController.viewerView?.currentReferenceBundle
             // Populate variant types in the inspector's annotation section
             if let variantTypes = self.annotationSearchIndex?.variantTypes, !variantTypes.isEmpty {
-                inspectorController?.annotationSectionViewModel.availableVariantTypes = variantTypes
+                inspectorController?.annotationSectionViewModel.setAvailableVariantTypes(variantTypes)
             }
         }
 

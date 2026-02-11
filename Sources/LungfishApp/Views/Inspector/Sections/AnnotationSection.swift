@@ -45,7 +45,7 @@ public final class AnnotationSectionViewModel {
     public var showVariants: Bool = true
 
     /// Visible variant types (e.g. "SNP", "INS", "DEL", "MNP", "COMPLEX")
-    public var visibleVariantTypes: Set<String> = ["SNP", "INS", "DEL", "MNP", "COMPLEX", "REF"]
+    public var visibleVariantTypes: Set<String> = []
 
     /// Search filter for variant IDs
     public var variantFilterText: String = ""
@@ -191,6 +191,23 @@ public final class AnnotationSectionViewModel {
     /// Hides all variant types
     public func hideAllVariantTypes() {
         visibleVariantTypes = []
+        notifyVariantFilterChanged()
+    }
+
+    /// Updates available variant types and initializes visibility for first load.
+    ///
+    /// Keeps existing visibility choices when possible, while ensuring
+    /// newly discovered variant types are visible by default.
+    public func setAvailableVariantTypes(_ types: [String]) {
+        let normalized = types.sorted()
+        let newTypeSet = Set(normalized)
+        availableVariantTypes = normalized
+
+        if visibleVariantTypes.isEmpty {
+            visibleVariantTypes = newTypeSet
+        } else {
+            visibleVariantTypes.formUnion(newTypeSet)
+        }
         notifyVariantFilterChanged()
     }
 }
