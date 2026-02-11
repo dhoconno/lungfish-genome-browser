@@ -489,66 +489,63 @@ public final class NativeBundleBuilder: ObservableObject {
                 progressHandler
             )
 
-            let bigBedOutputPath = "annotations/\(input.id).bb"
-            let bedOutputPath = "annotations/\(input.id).bed"
-            let bigBedOutputURL = annotationsDir.appendingPathComponent("\(input.id).bb")
-
-            // Convert annotation to BED format first
-            let bedURL = annotationsDir.appendingPathComponent("\(input.id).bed")
-            let featureCount = try await convertAnnotationToBED(
-                from: input.url,
-                to: bedURL
-            )
-
-            // Clip BED coordinates to chromosome boundaries for bedToBigBed compatibility
-            try clipBEDCoordinates(bedURL: bedURL, chromosomeSizes: chromosomeSizes)
-
-            // Create SQLite annotation database from the BED file for fast search/filtering
             let dbOutputPath = "annotations/\(input.id).db"
             let dbOutputURL = annotationsDir.appendingPathComponent("\(input.id).db")
-            let dbRecordCount = try AnnotationDatabase.createFromBED(bedURL: bedURL, outputURL: dbOutputURL)
-            logger.info("Created annotation database with \(dbRecordCount) records for \(input.name)")
 
-            // Strip extra columns (13+) for bedToBigBed — it only handles standard BED12.
-            // The SQLite DB was already created above from the full BED with type in col 12.
-            try stripExtraBEDColumns(bedURL: bedURL, keepColumns: 12)
+            // Detect if this is a GFF3/GTF file — go directly to SQLite, no BED/BigBed intermediate
+            var detectionURL = input.url
+            if detectionURL.pathExtension.lowercased() == "gz" {
+                detectionURL = detectionURL.deletingPathExtension()
+            }
+            let ext = detectionURL.pathExtension.lowercased()
+            let isGFF3 = ["gff", "gff3", "gtf"].contains(ext)
 
-            // Try to convert BED to BigBed using native tool
-            let hasBedToBigBed = await toolRunner.isToolAvailable(.bedToBigBed)
-            var usedBigBed = false
+            if isGFF3 {
+                // GFF3/GTF → SQLite directly
+                let dbRecordCount = try await AnnotationDatabase.createFromGFF3(
+                    gffURL: input.url,
+                    outputURL: dbOutputURL,
+                    chromosomeSizes: chromosomeSizes
+                )
+                logger.info("Created GFF3 annotation database with \(dbRecordCount) records for \(input.name)")
 
-            if hasBedToBigBed {
-                let result = try await toolRunner.convertBEDtoBigBed(
-                    bedPath: bedURL,
-                    chromSizesPath: chromSizesURL,
-                    outputPath: bigBedOutputURL
+                let trackInfo = AnnotationTrackInfo(
+                    id: input.id,
+                    name: input.name,
+                    description: input.description,
+                    path: dbOutputPath,
+                    databasePath: dbRecordCount > 0 ? dbOutputPath : nil,
+                    annotationType: input.annotationType,
+                    featureCount: dbRecordCount
+                )
+                annotationInfos.append(trackInfo)
+            } else {
+                // GenBank/BED → BED → SQLite (existing pipeline, no BigBed)
+                let bedURL = annotationsDir.appendingPathComponent("\(input.id).bed")
+                let featureCount = try await convertAnnotationToBED(
+                    from: input.url,
+                    to: bedURL
                 )
 
-                if !result.isSuccess {
-                    logger.warning("bedToBigBed failed for \(input.name): \(result.stderr)")
-                    // Keep BED file as fallback - it's already in the right place
-                } else {
-                    usedBigBed = true
-                    try? FileManager.default.removeItem(at: bedURL)
-                }
-            } else {
-                // No bedToBigBed available, keep as BED
-                logger.info("bedToBigBed not available, keeping BED format for \(input.name)")
+                try clipBEDCoordinates(bedURL: bedURL, chromosomeSizes: chromosomeSizes)
+
+                let dbRecordCount = try AnnotationDatabase.createFromBED(bedURL: bedURL, outputURL: dbOutputURL)
+                logger.info("Created annotation database with \(dbRecordCount) records for \(input.name)")
+
+                // Clean up BED file — no longer needed since we don't create BigBed
+                try? FileManager.default.removeItem(at: bedURL)
+
+                let trackInfo = AnnotationTrackInfo(
+                    id: input.id,
+                    name: input.name,
+                    description: input.description,
+                    path: dbOutputPath,
+                    databasePath: dbRecordCount > 0 ? dbOutputPath : nil,
+                    annotationType: input.annotationType,
+                    featureCount: featureCount
+                )
+                annotationInfos.append(trackInfo)
             }
-
-            // Use the correct path based on which format we actually have
-            let actualPath = usedBigBed ? bigBedOutputPath : bedOutputPath
-
-            let trackInfo = AnnotationTrackInfo(
-                id: input.id,
-                name: input.name,
-                description: input.description,
-                path: actualPath,
-                databasePath: dbRecordCount > 0 ? dbOutputPath : nil,
-                annotationType: input.annotationType,
-                featureCount: featureCount
-            )
-            annotationInfos.append(trackInfo)
         }
 
         try? FileManager.default.removeItem(at: chromSizesURL)

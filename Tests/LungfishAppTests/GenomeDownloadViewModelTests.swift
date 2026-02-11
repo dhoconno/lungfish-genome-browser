@@ -35,20 +35,12 @@ final class GenomeDownloadViewModelTests: XCTestCase {
         XCTAssertNotNil(viewModel)
     }
 
-    func testInitializationWithCustomAnnotationConverter() {
-        let converter = AnnotationConverter()
-        let viewModel = GenomeDownloadViewModel(annotationConverter: converter)
-        XCTAssertNotNil(viewModel)
-    }
-
     func testInitializationWithAllCustomDependencies() {
         let ncbiService = NCBIService()
         let toolRunner = NativeToolRunner.shared
-        let converter = AnnotationConverter()
         let viewModel = GenomeDownloadViewModel(
             ncbiService: ncbiService,
-            toolRunner: toolRunner,
-            annotationConverter: converter
+            toolRunner: toolRunner
         )
         XCTAssertNotNil(viewModel)
     }

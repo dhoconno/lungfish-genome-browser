@@ -177,7 +177,7 @@ public class InspectorViewController: NSViewController {
 
         // Appearance section reset callback - coordinates resetting ALL appearance settings
         viewModel.appearanceSectionViewModel.onResetToDefaults = { [weak self] in
-            self?.handleResetAllAppearanceSettings()
+            self?.resetAllAppearanceSettings()
         }
 
         // Quality section callbacks
@@ -483,7 +483,7 @@ public class InspectorViewController: NSViewController {
     ///
     /// After resetting, it clears persisted settings and posts notifications
     /// so the viewer updates immediately.
-    private func handleResetAllAppearanceSettings() {
+    public func resetAllAppearanceSettings() {
         logger.info("handleResetAllAppearanceSettings: Resetting ALL appearance settings to defaults")
 
         // 1. Reset the appearance section view model (base colors, track height)
@@ -527,6 +527,13 @@ public class InspectorViewController: NSViewController {
                 "visibleTypes": viewModel.annotationSectionViewModel.visibleTypes,
                 "filterText": viewModel.annotationSectionViewModel.filterText
             ]
+        )
+
+        // 6. Reset bundle view state (type color overrides, navigation, etc.)
+        NotificationCenter.default.post(
+            name: .bundleViewStateResetRequested,
+            object: self,
+            userInfo: nil
         )
 
         logger.info("handleResetAllAppearanceSettings: Posted all notifications for viewer update")

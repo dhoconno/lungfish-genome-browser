@@ -642,6 +642,303 @@ public final class AnnotationDatabase: @unchecked Sendable {
         dbLogger.info("Created annotation database with \(insertCount) records at \(outputURL.lastPathComponent)")
         return insertCount
     }
+
+    // MARK: - Static Creation from GFF3
+
+    /// Creates a new annotation database directly from a GFF3 file.
+    ///
+    /// This bypasses the intermediate BED format entirely, parsing GFF3 features
+    /// and inserting them into SQLite with parent-child aggregation for transcript
+    /// block data. Transcript-level features (mRNA, transcript, etc.) collect exon
+    /// children into BED12-style blocks; CDS children define thickStart/thickEnd.
+    ///
+    /// - Parameters:
+    ///   - gffURL: URL to the GFF3 file (must be decompressed)
+    ///   - outputURL: URL for the SQLite database to create
+    ///   - chromosomeSizes: Optional chromosome size map for coordinate clipping
+    /// - Returns: Number of records inserted
+    @discardableResult
+    public static func createFromGFF3(
+        gffURL: URL,
+        outputURL: URL,
+        chromosomeSizes: [(String, Int64)]? = nil
+    ) async throws -> Int {
+        try? FileManager.default.removeItem(at: outputURL)
+
+        var db: OpaquePointer?
+        let rc = sqlite3_open(outputURL.path, &db)
+        guard rc == SQLITE_OK, let db else {
+            let msg = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "Unknown error"
+            sqlite3_close(db)
+            throw AnnotationDatabaseError.createFailed(msg)
+        }
+        defer { sqlite3_close(db) }
+
+        // Create schema (v3)
+        let schema = """
+        CREATE TABLE annotations (
+            name TEXT NOT NULL,
+            type TEXT NOT NULL,
+            chromosome TEXT NOT NULL,
+            start INTEGER NOT NULL,
+            end INTEGER NOT NULL,
+            strand TEXT NOT NULL DEFAULT '.',
+            attributes TEXT,
+            block_count INTEGER,
+            block_sizes TEXT,
+            block_starts TEXT
+        );
+        """
+        var errMsg: UnsafeMutablePointer<CChar>?
+        sqlite3_exec(db, schema, nil, nil, &errMsg)
+        if let errMsg {
+            let msg = String(cString: errMsg)
+            sqlite3_free(errMsg)
+            throw AnnotationDatabaseError.createFailed(msg)
+        }
+
+        let chromSizeMap: [String: Int64]?
+        if let sizes = chromosomeSizes {
+            chromSizeMap = Dictionary(uniqueKeysWithValues: sizes)
+        } else {
+            chromSizeMap = nil
+        }
+
+        // Indexable types (same as createFromBED)
+        let indexableTypes: Set<String> = [
+            "gene", "mRNA", "transcript", "region", "promoter", "enhancer",
+            "primer", "primer_pair", "amplicon", "SNP", "variation",
+            "restriction_site", "repeat_region", "origin_of_replication",
+            "misc_feature", "silencer", "terminator", "polyA_signal",
+            "CDS", "mat_peptide", "sig_peptide", "transit_peptide",
+            "5'UTR", "3'UTR", "five_prime_UTR", "three_prime_UTR",
+            "regulatory", "ncRNA", "misc_binding", "protein_bind",
+            "stem_loop", "primer_bind",
+            // Transcript types (so multi-exon transcripts are indexed)
+            "lnc_RNA", "rRNA", "tRNA", "snRNA", "snoRNA", "miRNA",
+            "primary_transcript", "V_gene_segment", "D_gene_segment",
+            "J_gene_segment", "C_gene_segment",
+        ]
+
+        // Transcript-level types whose children get aggregated into blocks
+        let transcriptTypes: Set<String> = [
+            "mRNA", "transcript", "lnc_RNA", "rRNA", "tRNA", "snRNA", "snoRNA",
+            "miRNA", "ncRNA", "primary_transcript", "V_gene_segment",
+            "D_gene_segment", "J_gene_segment", "C_gene_segment",
+        ]
+        let exonTypes: Set<String> = ["exon"]
+        let cdsTypes: Set<String> = ["CDS"]
+
+        // ── Pass 1: Read all features and build parent-child index ──
+        struct ParsedFeature {
+            let seqid: String
+            let featureType: String
+            let start: Int        // 1-based
+            let end: Int          // 1-based inclusive
+            let strand: String
+            let id: String?
+            let parentID: String?
+            let name: String
+            let attributes: [String: String]
+        }
+
+        var allFeatures: [ParsedFeature] = []
+        var childrenByParent: [String: [Int]] = [:]
+
+        for try await line in gffURL.lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed.hasPrefix("#") {
+                if trimmed.hasPrefix("##FASTA") { break }
+                continue
+            }
+
+            let fields = trimmed.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard fields.count >= 9 else { continue }
+
+            guard let start = Int(fields[3]), let end = Int(fields[4]) else { continue }
+
+            let strand: String
+            switch fields[6] {
+            case "+": strand = "+"
+            case "-": strand = "-"
+            default: strand = "."
+            }
+
+            let attrs = parseGFF3Attributes(fields[8])
+            let name = attrs["Name"] ?? attrs["ID"] ?? fields[2]
+
+            let feature = ParsedFeature(
+                seqid: fields[0],
+                featureType: fields[2],
+                start: start,
+                end: end,
+                strand: strand,
+                id: attrs["ID"],
+                parentID: attrs["Parent"],
+                name: name,
+                attributes: attrs
+            )
+
+            let index = allFeatures.count
+            allFeatures.append(feature)
+
+            if let parentID = attrs["Parent"] {
+                childrenByParent[parentID, default: []].append(index)
+            }
+        }
+
+        dbLogger.info("createFromGFF3: Parsed \(allFeatures.count) features from \(gffURL.lastPathComponent)")
+
+        // ── Pass 2: Build database records with parent-child aggregation ──
+        sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil)
+
+        let insertSQL = "INSERT INTO annotations (name, type, chromosome, start, end, strand, attributes, block_count, block_sizes, block_starts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        var insertStmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, insertSQL, -1, &insertStmt, nil) == SQLITE_OK else {
+            throw AnnotationDatabaseError.createFailed("Failed to prepare INSERT statement")
+        }
+        defer { sqlite3_finalize(insertStmt) }
+
+        var insertCount = 0
+        var seenKeys = Set<String>()
+        var consumedIndices = Set<Int>()
+
+        for (index, feature) in allFeatures.enumerated() {
+            if consumedIndices.contains(index) { continue }
+
+            // Only index selected types
+            guard indexableTypes.contains(feature.featureType) else { continue }
+
+            // Collect key attributes for serialization
+            var attrPairs: [String] = []
+            for (key, value) in feature.attributes.sorted(by: { $0.key < $1.key }) {
+                if key == "ID" || key == "Parent" { continue }
+                let encoded = value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? value
+                attrPairs.append("\(key)=\(encoded)")
+            }
+            let attrString = attrPairs.isEmpty ? nil : attrPairs.joined(separator: ";")
+
+            // Convert from 1-based GFF3 to 0-based BED
+            var chromStart = feature.start - 1
+            var chromEnd = feature.end
+
+            // Clip to chromosome boundaries if sizes available
+            if let chromSize = chromSizeMap?[feature.seqid] {
+                chromStart = max(0, min(chromStart, Int(chromSize)))
+                chromEnd = max(chromStart, min(chromEnd, Int(chromSize)))
+            }
+
+            var blockCount: Int? = nil
+            var blockSizesStr: String? = nil
+            var blockStartsStr: String? = nil
+
+            // Check if this is a transcript-level feature with exon children
+            if transcriptTypes.contains(feature.featureType),
+               let featureID = feature.id,
+               let childIndices = childrenByParent[featureID] {
+
+                var exonIntervals: [(start: Int, end: Int)] = []
+
+                for childIdx in childIndices {
+                    let child = allFeatures[childIdx]
+                    if exonTypes.contains(child.featureType) || cdsTypes.contains(child.featureType) {
+                        if exonTypes.contains(child.featureType) {
+                            exonIntervals.append((start: child.start - 1, end: child.end))
+                        }
+                        consumedIndices.insert(childIdx)
+                    }
+                }
+
+                if exonIntervals.count > 1 {
+                    exonIntervals.sort { $0.start < $1.start }
+
+                    // Clip exon blocks to parent boundaries
+                    var clippedBlocks: [(size: Int, start: Int)] = []
+                    for exon in exonIntervals {
+                        let clippedStart = max(exon.start, chromStart)
+                        let clippedEnd = min(exon.end, chromEnd)
+                        if clippedEnd > clippedStart {
+                            clippedBlocks.append((size: clippedEnd - clippedStart, start: clippedStart - chromStart))
+                        }
+                    }
+
+                    if clippedBlocks.count > 1 {
+                        blockCount = clippedBlocks.count
+                        blockSizesStr = clippedBlocks.map { "\($0.size)" }.joined(separator: ",")
+                        blockStartsStr = clippedBlocks.map { "\($0.start)" }.joined(separator: ",")
+                    }
+                }
+            }
+
+            // Deduplicate
+            let key = "\(feature.name)|\(feature.featureType)|\(feature.seqid)|\(chromStart)|\(chromEnd)"
+            guard seenKeys.insert(key).inserted else { continue }
+
+            // Insert
+            sqlite3_reset(insertStmt)
+            sqlite3_bind_text(insertStmt, 1, (feature.name as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(insertStmt, 2, (feature.featureType as NSString).utf8String, -1, nil)
+            sqlite3_bind_text(insertStmt, 3, (feature.seqid as NSString).utf8String, -1, nil)
+            sqlite3_bind_int64(insertStmt, 4, Int64(chromStart))
+            sqlite3_bind_int64(insertStmt, 5, Int64(chromEnd))
+            sqlite3_bind_text(insertStmt, 6, (feature.strand as NSString).utf8String, -1, nil)
+            if let attrString {
+                sqlite3_bind_text(insertStmt, 7, (attrString as NSString).utf8String, -1, nil)
+            } else {
+                sqlite3_bind_null(insertStmt, 7)
+            }
+            if let blockCount {
+                sqlite3_bind_int64(insertStmt, 8, Int64(blockCount))
+            } else {
+                sqlite3_bind_null(insertStmt, 8)
+            }
+            if let blockSizesStr {
+                sqlite3_bind_text(insertStmt, 9, (blockSizesStr as NSString).utf8String, -1, nil)
+            } else {
+                sqlite3_bind_null(insertStmt, 9)
+            }
+            if let blockStartsStr {
+                sqlite3_bind_text(insertStmt, 10, (blockStartsStr as NSString).utf8String, -1, nil)
+            } else {
+                sqlite3_bind_null(insertStmt, 10)
+            }
+
+            if sqlite3_step(insertStmt) != SQLITE_DONE {
+                dbLogger.warning("Failed to insert annotation: \(feature.name)")
+            }
+            insertCount += 1
+        }
+
+        // Create indexes
+        sqlite3_exec(db, "CREATE INDEX idx_annotations_name ON annotations(name COLLATE NOCASE)", nil, nil, nil)
+        sqlite3_exec(db, "CREATE INDEX idx_annotations_type ON annotations(type)", nil, nil, nil)
+        sqlite3_exec(db, "CREATE INDEX idx_annotations_chrom ON annotations(chromosome)", nil, nil, nil)
+        sqlite3_exec(db, "CREATE INDEX idx_annotations_region ON annotations(chromosome, start, end)", nil, nil, nil)
+
+        sqlite3_exec(db, "COMMIT", nil, nil, nil)
+
+        dbLogger.info("Created GFF3 annotation database with \(insertCount) records at \(outputURL.lastPathComponent)")
+        return insertCount
+    }
+
+    /// Parses GFF3 attributes string into a dictionary.
+    private static func parseGFF3Attributes(_ attributeString: String) -> [String: String] {
+        var attributes: [String: String] = [:]
+        for pair in attributeString.split(separator: ";") {
+            let kv = pair.split(separator: "=", maxSplits: 1)
+            if kv.count == 2 {
+                let key = String(kv[0]).trimmingCharacters(in: .whitespaces)
+                let value = String(kv[1])
+                    .replacingOccurrences(of: "%3B", with: ";")
+                    .replacingOccurrences(of: "%3D", with: "=")
+                    .replacingOccurrences(of: "%26", with: "&")
+                    .replacingOccurrences(of: "%2C", with: ",")
+                    .replacingOccurrences(of: "%25", with: "%")
+                attributes[key] = value
+            }
+        }
+        return attributes
+    }
 }
 
 // MARK: - Errors

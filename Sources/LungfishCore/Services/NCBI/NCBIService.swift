@@ -597,6 +597,99 @@ public actor NCBIService: DatabaseService {
         }
     }
 
+    // MARK: - NCBI Datasets API
+
+    /// Result of downloading via the NCBI Datasets API.
+    /// Contains paths to extracted FASTA and optional GFF3 files.
+    public struct DatasetsDownloadResult: Sendable {
+        /// Path to the extracted genomic FASTA file (.fna)
+        public let fastaURL: URL
+        /// Path to the extracted GFF3 annotation file, if available
+        public let gffURL: URL?
+    }
+
+    /// Downloads genome data via the NCBI Datasets API as a fallback when FTP paths are unavailable.
+    ///
+    /// The Datasets API returns a ZIP archive containing FASTA and optionally GFF3 files.
+    /// This method downloads the ZIP, extracts it, and locates the relevant files.
+    ///
+    /// - Parameters:
+    ///   - accession: Assembly accession (e.g., "GCA_014858485.1")
+    ///   - destination: Directory to extract files into
+    ///   - progressHandler: Called periodically with (bytesDownloaded, totalBytes)
+    /// - Returns: Paths to the extracted FASTA and optional GFF3 files
+    /// - Throws: `DatabaseServiceError` if the download or extraction fails
+    public func downloadViaDatasets(
+        accession: String,
+        destination: URL,
+        progressHandler: @escaping @Sendable (Int64, Int64?) -> Void
+    ) async throws -> DatasetsDownloadResult {
+        // Construct Datasets API URL for FASTA + GFF3
+        let urlString = "https://api.ncbi.nlm.nih.gov/datasets/v2/genome/accession/\(accession)/download?include_annotation_type=GENOME_FASTA,GENOME_GFF"
+        guard let url = URL(string: urlString) else {
+            throw DatabaseServiceError.parseError(message: "Invalid Datasets API URL for \(accession)")
+        }
+
+        logger.info("downloadViaDatasets: Downloading ZIP from Datasets API for \(accession, privacy: .public)")
+
+        // Download the ZIP using continuation-based approach for progress
+        let zipFileInfo = GenomeFileInfo(
+            url: url,
+            filename: "\(accession)_datasets.zip",
+            estimatedSize: nil,
+            assemblyAccession: accession
+        )
+        let zipDestination = destination.appendingPathComponent(zipFileInfo.filename)
+        _ = try await downloadGenomeFile(zipFileInfo, to: zipDestination, progressHandler: progressHandler)
+
+        // Extract the ZIP
+        logger.info("downloadViaDatasets: Extracting ZIP archive")
+        let extractDir = destination.appendingPathComponent("ncbi_dataset_extract", isDirectory: true)
+        try FileManager.default.createDirectory(at: extractDir, withIntermediateDirectories: true)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+        process.arguments = ["-q", "-o", zipDestination.path, "-d", extractDir.path]
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            throw DatabaseServiceError.parseError(message: "Failed to extract Datasets ZIP (exit \(process.terminationStatus))")
+        }
+
+        // Clean up the ZIP file
+        try? FileManager.default.removeItem(at: zipDestination)
+
+        // Locate FASTA file: ncbi_dataset/data/{accession}/*_genomic.fna
+        let dataDir = extractDir.appendingPathComponent("ncbi_dataset/data/\(accession)", isDirectory: true)
+        let fastaURL = try locateFile(in: dataDir, matching: "_genomic.fna")
+            ?? locateFile(in: dataDir, matching: ".fna")
+
+        guard let fastaURL else {
+            throw DatabaseServiceError.parseError(message: "No FASTA file found in Datasets download for \(accession)")
+        }
+        logger.info("downloadViaDatasets: Found FASTA: \(fastaURL.lastPathComponent, privacy: .public)")
+
+        // Locate GFF3 file (optional): ncbi_dataset/data/{accession}/genomic.gff
+        let gffURL = try locateFile(in: dataDir, matching: ".gff")
+            ?? locateFile(in: dataDir, matching: ".gff3")
+        if let gffURL {
+            logger.info("downloadViaDatasets: Found GFF3: \(gffURL.lastPathComponent, privacy: .public)")
+        } else {
+            logger.info("downloadViaDatasets: No GFF3 annotations in download")
+        }
+
+        return DatasetsDownloadResult(fastaURL: fastaURL, gffURL: gffURL)
+    }
+
+    /// Locates a file in a directory whose name contains the given suffix.
+    private func locateFile(in directory: URL, matching suffix: String) throws -> URL? {
+        let contents = try FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil
+        )
+        return contents.first { $0.lastPathComponent.contains(suffix) }
+    }
+
     /// Downloads a genome file with progress tracking.
     ///
     /// - Parameters:
@@ -1424,8 +1517,8 @@ public struct NCBIAssemblySummary: Codable, Sendable {
         assemblyName = try container.decodeIfPresent(String.self, forKey: .assemblyName)
         organism = try container.decodeIfPresent(String.self, forKey: .organism)
         speciesName = try container.decodeIfPresent(String.self, forKey: .speciesName)
-        ftpPathRefSeq = try container.decodeIfPresent(String.self, forKey: .ftpPathRefSeq)
-        ftpPathGenBank = try container.decodeIfPresent(String.self, forKey: .ftpPathGenBank)
+        ftpPathRefSeq = try container.decodeIfPresent(String.self, forKey: .ftpPathRefSeq).flatMap { $0.isEmpty ? nil : $0 }
+        ftpPathGenBank = try container.decodeIfPresent(String.self, forKey: .ftpPathGenBank).flatMap { $0.isEmpty ? nil : $0 }
         submitter = try container.decodeIfPresent(String.self, forKey: .submitter)
         coverage = try container.decodeIfPresent(String.self, forKey: .coverage)
 

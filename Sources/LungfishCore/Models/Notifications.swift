@@ -74,6 +74,12 @@ extension Notification.Name {
     /// Contains userInfo keys: "bundleURL" (URL), "chromosomes" ([ChromosomeInfo]),
     /// "manifest" (BundleManifest)
     public static let bundleDidLoad = Notification.Name("bundleDidLoad")
+
+    /// Posted when the bundle view state should be reset to defaults.
+    ///
+    /// Listeners should clear type color overrides, delete the `.viewstate.json`
+    /// file, and reset the in-memory `BundleViewState` to defaults.
+    public static let bundleViewStateResetRequested = Notification.Name("bundleViewStateResetRequested")
 }
 
 // MARK: - Inspector Notifications

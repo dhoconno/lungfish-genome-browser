@@ -41,6 +41,19 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
         // Create data provider
         let provider = BundleDataProvider(bundleURL: url, manifest: manifest)
         currentBundleDataProvider = provider
+        currentBundleURL = url
+
+        // Load persisted view state (returns defaults if file missing or corrupt)
+        let viewState = BundleViewState.load(from: url)
+        currentBundleViewState = viewState
+        bundleLogger.info("displayBundle: Loaded view state (overrides=\(viewState.typeColorOverrides.count), chrom=\(viewState.lastChromosome ?? "none", privacy: .public))")
+
+        // Apply persisted annotation display settings
+        showAnnotations = viewState.showAnnotations
+        annotationDisplayHeight = CGFloat(viewState.annotationHeight)
+        annotationDisplaySpacing = CGFloat(viewState.annotationSpacing)
+        visibleAnnotationTypes = viewState.visibleAnnotationTypes
+        isRNAMode = viewState.isRNAMode
 
         // Create reference bundle with pre-loaded manifest (synchronous)
         let bundle = ReferenceBundle(url: url, manifest: manifest)
@@ -55,10 +68,24 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
         view.layoutSubtreeIfNeeded()
         let effectiveWidth = max(800, Int(viewerView.bounds.width))
 
-        // Set up the viewer with bundle
+        // Set up the viewer with bundle and apply view state
         viewerView.setReferenceBundle(bundle)
+        viewerView.showAnnotations = viewState.showAnnotations
+        viewerView.annotationHeight = CGFloat(viewState.annotationHeight)
+        viewerView.annotationRowSpacing = CGFloat(viewState.annotationSpacing)
+        viewerView.visibleAnnotationTypes = viewState.visibleAnnotationTypes
+        viewerView.translationColorScheme = viewState.translationColorScheme
+        viewerView.showVariants = viewState.showVariants
+        if let variantTypes = viewState.visibleVariantTypes {
+            viewerView.visibleVariantTypes = variantTypes
+        }
 
-        // Navigate to the first chromosome (in natural sort order)
+        // Apply per-type color overrides
+        if !viewState.typeColorOverrides.isEmpty {
+            viewerView.applyTypeColorOverrides(viewState.typeColorOverrides)
+        }
+
+        // Navigate to saved chromosome/position or first chromosome
         let sortedChroms = naturalChromosomeSort(manifest.genome.chromosomes)
         guard let firstChrom = sortedChroms.first else {
             bundleLogger.error("displayBundle: No chromosomes in bundle")
@@ -66,20 +93,43 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
             return
         }
 
-        let chromLength = Int(firstChrom.length)
-        bundleLogger.info("displayBundle: Navigating to first chromosome '\(firstChrom.name, privacy: .public)' length=\(chromLength)")
+        let targetChrom: ChromosomeInfo
+        if let savedChrom = viewState.lastChromosome,
+           let found = sortedChroms.first(where: { $0.name == savedChrom }) {
+            targetChrom = found
+        } else {
+            targetChrom = firstChrom
+        }
 
-        // Create reference frame showing the full chromosome
+        let chromLength = Int(targetChrom.length)
+        bundleLogger.info("displayBundle: Navigating to chromosome '\(targetChrom.name, privacy: .public)' length=\(chromLength)")
+
+        // Restore zoom/scroll if saved, otherwise show full chromosome
+        let startPos: Double
+        let endPos: Double
+        if let savedOrigin = viewState.lastOrigin, let savedScale = viewState.lastScale,
+           viewState.lastChromosome == targetChrom.name {
+            startPos = max(0, savedOrigin)
+            let span = savedScale * Double(effectiveWidth)
+            endPos = min(Double(chromLength), startPos + span)
+        } else {
+            startPos = 0
+            endPos = Double(chromLength)
+        }
+
         referenceFrame = ReferenceFrame(
-            chromosome: firstChrom.name,
-            start: 0,
-            end: Double(chromLength),
+            chromosome: targetChrom.name,
+            start: startPos,
+            end: endPos,
             pixelWidth: effectiveWidth,
             sequenceLength: chromLength
         )
 
+        // Select the correct chromosome in the navigator
+        chromosomeNavigatorView?.selectChromosome(named: targetChrom.name)
+
         // Update header with track names
-        let trackNames = [firstChrom.name] + manifest.annotations.map { "Annotations: \($0.name)" }
+        let trackNames = [targetChrom.name] + manifest.annotations.map { "Annotations: \($0.name)" }
         headerView.setTrackNames(trackNames)
 
         // Update ruler
@@ -117,6 +167,29 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
                 NotificationUserInfoKey.referenceBundle: bundle,
             ]
         )
+
+        // Sync inspector to restored view state
+        let savedState = viewState
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            MainActor.assumeIsolated {
+                if let splitVC = self.parent as? MainSplitViewController {
+                    let annotVM = splitVC.inspectorController.annotationSectionViewModel
+                    annotVM.showAnnotations = savedState.showAnnotations
+                    annotVM.annotationHeight = savedState.annotationHeight
+                    annotVM.annotationSpacing = savedState.annotationSpacing
+                    if let types = savedState.visibleAnnotationTypes {
+                        annotVM.visibleTypes = types
+                    } else {
+                        annotVM.visibleTypes = Set(AnnotationType.allCases)
+                    }
+                    annotVM.showVariants = savedState.showVariants
+                    if let vtypes = savedState.visibleVariantTypes {
+                        annotVM.visibleVariantTypes = vtypes
+                    }
+                }
+            }
+        }
 
         bundleLogger.info("displayBundle: Bundle displayed successfully with \(manifest.genome.chromosomes.count) chromosomes")
     }
@@ -267,6 +340,9 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
             userInfo: [NotificationUserInfoKey.chromosome: chromosome]
         )
 
+        // Persist navigation state
+        scheduleViewStateSave()
+
         bundleLogger.info("chromosomeNavigator: Navigation to '\(chromosome.name, privacy: .public)' complete")
     }
 
@@ -334,9 +410,17 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
     // MARK: - Bundle State Management
 
     /// Clears all bundle display state, removing the navigator and data provider.
+    ///
+    /// Saves the current view state to the bundle before clearing so that
+    /// settings persist when the user navigates away.
     public func clearBundleDisplay() {
+        // Save view state before clearing
+        saveCurrentViewState()
+
         bundleLogger.info("clearBundleDisplay: Clearing bundle state")
         currentBundleDataProvider = nil
+        currentBundleViewState = nil
+        currentBundleURL = nil
         removeChromosomeNavigator()
     }
 }
@@ -349,6 +433,9 @@ extension ViewerViewController {
     private static var chromosomeNavigatorConstraintsKey: UInt8 = 0
     private static var bundleDataProviderKey: UInt8 = 0
     private static var drawerOpenKey: UInt8 = 0
+    private static var bundleViewStateKey: UInt8 = 0
+    private static var bundleURLKey: UInt8 = 0
+    private static var viewStateSaveWorkItemKey: UInt8 = 0
 
     var chromosomeNavigatorView: ChromosomeNavigatorView? {
         get { objc_getAssociatedObject(self, &Self.chromosomeNavigatorKey) as? ChromosomeNavigatorView }
@@ -368,5 +455,67 @@ extension ViewerViewController {
     var isChromosomeDrawerOpen: Bool {
         get { (objc_getAssociatedObject(self, &Self.drawerOpenKey) as? NSNumber)?.boolValue ?? false }
         set { objc_setAssociatedObject(self, &Self.drawerOpenKey, NSNumber(value: newValue), .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
+    }
+
+    /// The current bundle's persisted view state.
+    public var currentBundleViewState: BundleViewState? {
+        get { objc_getAssociatedObject(self, &Self.bundleViewStateKey) as? BundleViewState }
+        set { objc_setAssociatedObject(self, &Self.bundleViewStateKey, newValue as Any, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
+    }
+
+    /// URL of the currently displayed bundle (needed for save-back).
+    public var currentBundleURL: URL? {
+        get { objc_getAssociatedObject(self, &Self.bundleURLKey) as? URL }
+        set { objc_setAssociatedObject(self, &Self.bundleURLKey, newValue as Any, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
+    }
+
+    /// Debounce work item for saving view state.
+    private var viewStateSaveWorkItem: DispatchWorkItem? {
+        get { objc_getAssociatedObject(self, &Self.viewStateSaveWorkItemKey) as? DispatchWorkItem }
+        set { objc_setAssociatedObject(self, &Self.viewStateSaveWorkItemKey, newValue as Any, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
+    }
+
+    // MARK: - View State Persistence
+
+    /// Schedules a debounced save of the current view state to the bundle directory.
+    ///
+    /// Cancels any pending save and schedules a new one 500ms in the future.
+    /// This prevents writes on every slider tick while still saving promptly after changes stop.
+    public func scheduleViewStateSave() {
+        viewStateSaveWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            MainActor.assumeIsolated {
+                self.saveCurrentViewState()
+            }
+        }
+        viewStateSaveWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: item)
+    }
+
+    /// Captures the current in-memory view state and writes it to the bundle.
+    public func saveCurrentViewState() {
+        guard let bundleURL = currentBundleURL else { return }
+
+        var state = currentBundleViewState ?? .default
+
+        state.annotationHeight = Double(annotationDisplayHeight)
+        state.annotationSpacing = Double(annotationDisplaySpacing)
+        state.showAnnotations = showAnnotations
+        state.visibleAnnotationTypes = visibleAnnotationTypes
+        state.isRNAMode = isRNAMode
+        state.translationColorScheme = viewerView.translationColorScheme
+        state.showVariants = viewerView.showVariants
+        state.visibleVariantTypes = viewerView.visibleVariantTypes
+
+        // Navigation state
+        if let frame = referenceFrame {
+            state.lastChromosome = frame.chromosome
+            state.lastOrigin = frame.start
+            state.lastScale = frame.scale
+        }
+
+        currentBundleViewState = state
+        state.save(to: bundleURL)
     }
 }

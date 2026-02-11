@@ -36,18 +36,15 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
 
     private let ncbiService: NCBIService
     private let toolRunner: NativeToolRunner
-    private let annotationConverter: AnnotationConverter
 
     // MARK: - Initialization
 
     public init(
         ncbiService: NCBIService = NCBIService(),
-        toolRunner: NativeToolRunner = .shared,
-        annotationConverter: AnnotationConverter = AnnotationConverter()
+        toolRunner: NativeToolRunner = .shared
     ) {
         self.ncbiService = ncbiService
         self.toolRunner = toolRunner
-        self.annotationConverter = annotationConverter
     }
 
     // MARK: - Tool Validation
@@ -98,81 +95,112 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
         try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: tempDir) }
 
-        // Step 1: Get FASTA file info
-        progressHandler?(0.02, "Locating genome FASTA...")
-        logger.info("downloadAndBuild: Getting FASTA file info for \(accession, privacy: .public)")
-
-        let fastaFileInfo = try await ncbiService.getGenomeFileInfo(for: assembly)
-        let fastaSizeStr = fastaFileInfo.estimatedSize.map { BundleBuildHelpers.formatBytes($0) } ?? "unknown size"
-        logger.info("downloadAndBuild: FASTA file found: \(fastaFileInfo.filename, privacy: .public) (\(fastaSizeStr, privacy: .public))")
-
-        // Step 2: Get GFF3 annotation file info (may not exist)
-        progressHandler?(0.03, "Checking for GFF3 annotations...")
-        let gffFileInfo = try await ncbiService.getAnnotationFileInfo(for: assembly)
-        if let gffInfo = gffFileInfo {
-            let gffSizeStr = gffInfo.estimatedSize.map { BundleBuildHelpers.formatBytes($0) } ?? "unknown size"
-            logger.info("downloadAndBuild: GFF3 file found: \(gffInfo.filename, privacy: .public) (\(gffSizeStr, privacy: .public))")
-        } else {
-            logger.info("downloadAndBuild: No GFF3 annotations available for \(accession, privacy: .public)")
-        }
-
-        // Step 3: Download FASTA with progress tracking (5%–45%)
-        progressHandler?(0.05, "Downloading FASTA (\(fastaSizeStr))...")
-        logger.info("downloadAndBuild: Downloading FASTA to temp directory")
-
-        let fastaDestination = tempDir.appendingPathComponent(fastaFileInfo.filename)
-        let fastaExpectedBytes = fastaFileInfo.estimatedSize
-
-        _ = try await ncbiService.downloadGenomeFile(
-            fastaFileInfo,
-            to: fastaDestination
-        ) { bytesDownloaded, expectedTotal in
-            let total = expectedTotal ?? fastaExpectedBytes
-            let fraction: Double
-            if let total, total > 0 {
-                fraction = Double(bytesDownloaded) / Double(total)
-            } else {
-                fraction = 0.5
-            }
-            let overallProgress = 0.05 + (fraction * 0.40)
-            let downloadedStr = BundleBuildHelpers.formatBytes(bytesDownloaded)
-            let totalStr = total.map { BundleBuildHelpers.formatBytes($0) } ?? "?"
-            progressHandler?(overallProgress, "Downloading FASTA: \(downloadedStr) / \(totalStr)")
-        }
-        logger.info("downloadAndBuild: FASTA download complete")
-
-        // Step 4: Download GFF3 (45%–55%, optional)
+        // Steps 1–4: Download FASTA + GFF3 (FTP path or Datasets API fallback)
+        var fastaDestination: URL
         var gffDestination: URL?
-        if let gffInfo = gffFileInfo {
-            progressHandler?(0.45, "Downloading GFF3 annotations...")
-            logger.info("downloadAndBuild: Downloading GFF3 to temp directory")
+        var fastaIsGzipped: Bool
 
-            let gffDest = tempDir.appendingPathComponent(gffInfo.filename)
-            let gffExpectedBytes = gffInfo.estimatedSize
+        let hasFTPPath = (assembly.ftpPathRefSeq ?? assembly.ftpPathGenBank) != nil
 
-            do {
-                _ = try await ncbiService.downloadGenomeFile(
-                    gffInfo,
-                    to: gffDest
-                ) { bytesDownloaded, expectedTotal in
-                    let total = expectedTotal ?? gffExpectedBytes
-                    let fraction: Double
-                    if let total, total > 0 {
-                        fraction = Double(bytesDownloaded) / Double(total)
-                    } else {
-                        fraction = 0.5
-                    }
-                    let overallProgress = 0.45 + (fraction * 0.10)
-                    let downloadedStr = BundleBuildHelpers.formatBytes(bytesDownloaded)
-                    let totalStr = total.map { BundleBuildHelpers.formatBytes($0) } ?? "?"
-                    progressHandler?(overallProgress, "Downloading GFF3: \(downloadedStr) / \(totalStr)")
-                }
-                gffDestination = gffDest
-                logger.info("downloadAndBuild: GFF3 download complete")
-            } catch {
-                // GFF3 download failure is non-fatal
-                logger.warning("downloadAndBuild: GFF3 download failed (non-fatal): \(error.localizedDescription)")
+        if hasFTPPath {
+            // --- FTP path available: download individual files ---
+            progressHandler?(0.02, "Locating genome FASTA...")
+            logger.info("downloadAndBuild: Getting FASTA file info for \(accession, privacy: .public)")
+
+            let fastaFileInfo = try await ncbiService.getGenomeFileInfo(for: assembly)
+            let fastaSizeStr = fastaFileInfo.estimatedSize.map { BundleBuildHelpers.formatBytes($0) } ?? "unknown size"
+            logger.info("downloadAndBuild: FASTA file found: \(fastaFileInfo.filename, privacy: .public) (\(fastaSizeStr, privacy: .public))")
+
+            progressHandler?(0.03, "Checking for GFF3 annotations...")
+            let gffFileInfo = try await ncbiService.getAnnotationFileInfo(for: assembly)
+            if let gffInfo = gffFileInfo {
+                let gffSizeStr = gffInfo.estimatedSize.map { BundleBuildHelpers.formatBytes($0) } ?? "unknown size"
+                logger.info("downloadAndBuild: GFF3 file found: \(gffInfo.filename, privacy: .public) (\(gffSizeStr, privacy: .public))")
+            } else {
+                logger.info("downloadAndBuild: No GFF3 annotations available for \(accession, privacy: .public)")
             }
+
+            progressHandler?(0.05, "Downloading FASTA (\(fastaSizeStr))...")
+            logger.info("downloadAndBuild: Downloading FASTA to temp directory")
+
+            fastaDestination = tempDir.appendingPathComponent(fastaFileInfo.filename)
+            let fastaExpectedBytes = fastaFileInfo.estimatedSize
+
+            _ = try await ncbiService.downloadGenomeFile(
+                fastaFileInfo,
+                to: fastaDestination
+            ) { bytesDownloaded, expectedTotal in
+                let total = expectedTotal ?? fastaExpectedBytes
+                let fraction: Double
+                if let total, total > 0 {
+                    fraction = Double(bytesDownloaded) / Double(total)
+                } else {
+                    fraction = 0.5
+                }
+                let overallProgress = 0.05 + (fraction * 0.40)
+                let downloadedStr = BundleBuildHelpers.formatBytes(bytesDownloaded)
+                let totalStr = total.map { BundleBuildHelpers.formatBytes($0) } ?? "?"
+                progressHandler?(overallProgress, "Downloading FASTA: \(downloadedStr) / \(totalStr)")
+            }
+            logger.info("downloadAndBuild: FASTA download complete")
+            fastaIsGzipped = fastaDestination.pathExtension.lowercased() == "gz"
+
+            if let gffInfo = gffFileInfo {
+                progressHandler?(0.45, "Downloading GFF3 annotations...")
+                logger.info("downloadAndBuild: Downloading GFF3 to temp directory")
+
+                let gffDest = tempDir.appendingPathComponent(gffInfo.filename)
+                let gffExpectedBytes = gffInfo.estimatedSize
+
+                do {
+                    _ = try await ncbiService.downloadGenomeFile(
+                        gffInfo,
+                        to: gffDest
+                    ) { bytesDownloaded, expectedTotal in
+                        let total = expectedTotal ?? gffExpectedBytes
+                        let fraction: Double
+                        if let total, total > 0 {
+                            fraction = Double(bytesDownloaded) / Double(total)
+                        } else {
+                            fraction = 0.5
+                        }
+                        let overallProgress = 0.45 + (fraction * 0.10)
+                        let downloadedStr = BundleBuildHelpers.formatBytes(bytesDownloaded)
+                        let totalStr = total.map { BundleBuildHelpers.formatBytes($0) } ?? "?"
+                        progressHandler?(overallProgress, "Downloading GFF3: \(downloadedStr) / \(totalStr)")
+                    }
+                    gffDestination = gffDest
+                    logger.info("downloadAndBuild: GFF3 download complete")
+                } catch {
+                    logger.warning("downloadAndBuild: GFF3 download failed (non-fatal): \(error.localizedDescription)")
+                }
+            }
+        } else {
+            // --- No FTP paths: use NCBI Datasets API (downloads ZIP with FASTA + GFF3) ---
+            logger.info("downloadAndBuild: No FTP paths available, using NCBI Datasets API for \(accession, privacy: .public)")
+            progressHandler?(0.02, "Downloading via NCBI Datasets API...")
+
+            let result = try await ncbiService.downloadViaDatasets(
+                accession: accession,
+                destination: tempDir
+            ) { bytesDownloaded, expectedTotal in
+                let fraction: Double
+                if let total = expectedTotal, total > 0 {
+                    fraction = Double(bytesDownloaded) / Double(total)
+                } else {
+                    fraction = min(Double(bytesDownloaded) / 500_000_000, 0.95)
+                }
+                let overallProgress = 0.02 + (fraction * 0.50)
+                let downloadedStr = BundleBuildHelpers.formatBytes(bytesDownloaded)
+                let totalStr = expectedTotal.map { BundleBuildHelpers.formatBytes($0) } ?? "?"
+                progressHandler?(overallProgress, "Downloading: \(downloadedStr) / \(totalStr)")
+            }
+
+            fastaDestination = result.fastaURL
+            gffDestination = result.gffURL
+            // Datasets API returns uncompressed FASTA
+            fastaIsGzipped = fastaDestination.pathExtension.lowercased() == "gz"
+            logger.info("downloadAndBuild: Datasets API download complete (gzipped=\(fastaIsGzipped))")
         }
 
         // Step 5: Build bundle structure
@@ -185,26 +213,26 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
         try fileManager.createDirectory(at: genomeDir, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: annotationsDir, withIntermediateDirectories: true)
 
-        // Step 6: Decompress downloaded FASTA (.fna.gz → .fna) and re-compress with bgzip
-        // NCBI genome files are standard gzip; we need bgzip format for random access.
-        progressHandler?(0.56, "Decompressing FASTA...")
-        logger.info("downloadAndBuild: Decompressing downloaded FASTA")
-
-        // Decompress the downloaded .fna.gz
-        let decompressResult = try await toolRunner.bgzipDecompress(inputPath: fastaDestination)
-        guard decompressResult.isSuccess else {
-            throw BundleBuildError.compressionFailed("bgzip decompress failed: \(decompressResult.combinedOutput)")
-        }
-
-        // The decompressed file has the .gz extension removed
-        var decompressedFASTA = fastaDestination
-        if decompressedFASTA.pathExtension.lowercased() == "gz" {
-            decompressedFASTA = decompressedFASTA.deletingPathExtension()
-        }
-
-        // Copy decompressed FASTA to bundle
+        // Step 6: Get plain FASTA → re-compress with bgzip for random access
+        // FTP downloads are standard gzip (.fna.gz); Datasets API may be uncompressed (.fna)
         let plainFASTA = genomeDir.appendingPathComponent("sequence.fa")
-        try fileManager.moveItem(at: decompressedFASTA, to: plainFASTA)
+        if fastaIsGzipped {
+            progressHandler?(0.56, "Decompressing FASTA...")
+            logger.info("downloadAndBuild: Decompressing downloaded FASTA")
+
+            let decompressResult = try await toolRunner.bgzipDecompress(inputPath: fastaDestination)
+            guard decompressResult.isSuccess else {
+                throw BundleBuildError.compressionFailed("bgzip decompress failed: \(decompressResult.combinedOutput)")
+            }
+            var decompressedFASTA = fastaDestination
+            if decompressedFASTA.pathExtension.lowercased() == "gz" {
+                decompressedFASTA = decompressedFASTA.deletingPathExtension()
+            }
+            try fileManager.moveItem(at: decompressedFASTA, to: plainFASTA)
+        } else {
+            progressHandler?(0.56, "Preparing FASTA...")
+            try fileManager.moveItem(at: fastaDestination, to: plainFASTA)
+        }
 
         // bgzip compress for random access
         progressHandler?(0.62, "Compressing FASTA (bgzip)...")
@@ -233,13 +261,13 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
         let totalLength = chromosomes.reduce(Int64(0)) { $0 + $1.length }
         logger.info("downloadAndBuild: Indexed \(chromosomes.count) chromosomes, total \(totalLength) bp")
 
-        // Step 8: Process GFF3 annotations (if available)
+        // Step 8: Process GFF3 annotations directly to SQLite (no BigBed intermediate)
         let chromosomeSizes = chromosomes.map { ($0.name, $0.length) }
         var annotationTracks: [AnnotationTrackInfo] = []
 
         if let gffURL = gffDestination {
-            progressHandler?(0.75, "Converting annotations...")
-            logger.info("downloadAndBuild: Converting GFF3 annotations")
+            progressHandler?(0.75, "Building annotation database...")
+            logger.info("downloadAndBuild: Converting GFF3 annotations directly to SQLite")
 
             do {
                 // Decompress GFF3 if gzipped
@@ -253,53 +281,21 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
                     }
                 }
 
-                // GFF3 → BED12
-                let bedURL = tempDir.appendingPathComponent("annotations.bed")
-                let options = AnnotationConverter.ConversionOptions(bedFormat: .bed12)
-                _ = try await annotationConverter.convertToBED(
-                    from: gffInput,
-                    format: .gff3,
-                    output: bedURL,
-                    options: options
-                )
-
-                // Clip BED coordinates to chromosome boundaries
-                BundleBuildHelpers.clipBEDCoordinates(bedURL: bedURL, chromosomeSizes: chromosomeSizes)
-
-                progressHandler?(0.82, "Creating annotation database...")
-
-                // Create SQLite annotation database BEFORE stripping extra columns
+                // GFF3 → SQLite directly (no BED/BigBed intermediate)
                 let dbURL = annotationsDir.appendingPathComponent("ncbi_genes.db")
-                let dbRecordCount = try AnnotationDatabase.createFromBED(bedURL: bedURL, outputURL: dbURL)
-                logger.info("downloadAndBuild: Created annotation database with \(dbRecordCount) records")
-
-                // Strip extra columns (13+) for bedToBigBed
-                BundleBuildHelpers.stripExtraBEDColumns(bedURL: bedURL, keepColumns: 12)
-
-                progressHandler?(0.87, "Converting to BigBed...")
-
-                // Write chrom.sizes for bedToBigBed
-                let chromSizesURL = tempDir.appendingPathComponent("chrom.sizes")
-                try BundleBuildHelpers.writeChromSizes(chromosomes, to: chromSizesURL)
-
-                let bigBedURL = annotationsDir.appendingPathComponent("ncbi_genes.bb")
-                let bigBedResult = try await toolRunner.convertBEDtoBigBed(
-                    bedPath: bedURL,
-                    chromSizesPath: chromSizesURL,
-                    outputPath: bigBedURL
+                let dbRecordCount = try await AnnotationDatabase.createFromGFF3(
+                    gffURL: gffInput,
+                    outputURL: dbURL,
+                    chromosomeSizes: chromosomeSizes
                 )
-                guard bigBedResult.isSuccess else {
-                    throw BundleBuildError.annotationConversionFailed("bedToBigBed", bigBedResult.combinedOutput)
-                }
-
-                let annotationPath = "annotations/ncbi_genes.bb"
+                logger.info("downloadAndBuild: Created annotation database with \(dbRecordCount) records")
 
                 annotationTracks.append(
                     AnnotationTrackInfo(
                         id: "ncbi_genes",
                         name: "Gene Annotations",
                         description: "GFF3 annotations from NCBI for \(assemblyName)",
-                        path: annotationPath,
+                        path: "annotations/ncbi_genes.db",
                         databasePath: dbRecordCount > 0 ? "annotations/ncbi_genes.db" : nil,
                         annotationType: .gene,
                         featureCount: dbRecordCount,

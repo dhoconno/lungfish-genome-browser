@@ -636,6 +636,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         // Update the viewer (handles both document and bundle mode)
         viewerController?.viewerView.applyColorToType(annotationType, color: annotationColor)
+
+        // The applyColorToType method already schedules a view state save via the
+        // viewController reference, so no additional save trigger is needed here.
     }
 
     @objc private func windowWillClose(_ notification: Notification) {
@@ -1101,6 +1104,16 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         // Trigger redraw
         viewerController.viewerView.needsDisplay = true
+
+        // Persist to bundle view state
+        viewerController.scheduleViewStateSave()
+    }
+
+    @objc func resetViewSettingsToDefaults(_ sender: Any?) {
+        guard let splitVC = mainWindowController?.mainSplitViewController else { return }
+
+        // Delegate to the inspector's existing reset (which posts all needed notifications)
+        splitVC.inspectorController.resetAllAppearanceSettings()
     }
 
     // MARK: - Menu Validation

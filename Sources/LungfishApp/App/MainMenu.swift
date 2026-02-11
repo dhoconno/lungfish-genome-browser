@@ -407,6 +407,15 @@ public final class MainMenu {
 
         viewMenu.addItem(.separator())
 
+        // Reset View Settings
+        viewMenu.addItem(
+            withTitle: "Reset View Settings to Defaults",
+            action: #selector(ViewMenuActions.resetViewSettingsToDefaults(_:)),
+            keyEquivalent: ""
+        )
+
+        viewMenu.addItem(.separator())
+
         // Enter Full Screen
         let fullScreenItem = viewMenu.addItem(
             withTitle: "Enter Full Screen",
@@ -696,6 +705,7 @@ public final class MainMenu {
     func setDisplayModeSquished(_ sender: Any?)
     func setDisplayModeExpanded(_ sender: Any?)
     func toggleNucleotideMode(_ sender: Any?)
+    func resetViewSettingsToDefaults(_ sender: Any?)
 }
 
 /// Sequence menu action handlers.

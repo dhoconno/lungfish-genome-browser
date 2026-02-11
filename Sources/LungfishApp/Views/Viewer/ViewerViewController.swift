@@ -130,19 +130,19 @@ public class ViewerViewController: NSViewController {
     // MARK: - Annotation Display Settings
 
     /// Whether to show annotations in the viewer
-    private var showAnnotations: Bool = true
+    var showAnnotations: Bool = true
 
     /// Height of each annotation box in pixels
-    private var annotationDisplayHeight: CGFloat = 16
+    var annotationDisplayHeight: CGFloat = 16
 
     /// Vertical spacing between annotation rows
-    private var annotationDisplaySpacing: CGFloat = 2
+    var annotationDisplaySpacing: CGFloat = 2
 
     /// Set of annotation types to display (nil means show all)
-    private var visibleAnnotationTypes: Set<AnnotationType>?
+    var visibleAnnotationTypes: Set<AnnotationType>?
 
     /// Text filter for annotations (empty string means no filter)
-    private var annotationFilterText: String = ""
+    var annotationFilterText: String = ""
 
     // MARK: - Nucleotide Display Mode
 
@@ -340,6 +340,14 @@ public class ViewerViewController: NSViewController {
             object: nil
         )
         logger.debug("ViewerViewController: Registered variantFilterChanged observer")
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleBundleViewStateResetRequested(_:)),
+            name: .bundleViewStateResetRequested,
+            object: nil
+        )
+        logger.debug("ViewerViewController: Registered bundleViewStateResetRequested observer")
     }
 
     /// Handles the toggle of CDS translation display from the inspector.
@@ -403,6 +411,7 @@ public class ViewerViewController: NSViewController {
         // Invalidate annotation tile and trigger redraw
         viewerView.invalidateAnnotationTile()
         viewerView.needsDisplay = true
+        scheduleViewStateSave()
         logger.info("handleAnnotationSettingsChanged: Triggered viewer redraw")
     }
 
@@ -436,6 +445,7 @@ public class ViewerViewController: NSViewController {
         // Invalidate annotation tile and trigger redraw
         viewerView.invalidateAnnotationTile()
         viewerView.needsDisplay = true
+        scheduleViewStateSave()
         logger.info("handleAnnotationFilterChanged: Triggered viewer redraw")
     }
 
@@ -463,9 +473,39 @@ public class ViewerViewController: NSViewController {
 
         viewerView.invalidateAnnotationTile()
         viewerView.needsDisplay = true
+        scheduleViewStateSave()
         logger.info("handleVariantFilterChanged: Triggered viewer redraw")
     }
 
+    /// Handles request to reset bundle view state to defaults.
+    ///
+    /// Clears type color overrides, deletes the `.viewstate.json` file,
+    /// and resets the in-memory `BundleViewState` to defaults.
+    @objc private func handleBundleViewStateResetRequested(_ notification: Notification) {
+        logger.info("handleBundleViewStateResetRequested: Resetting bundle view state to defaults")
+
+        // Clear type color caches (reverts to default type colors)
+        viewerView.resetTypeColorCaches()
+
+        // Reset in-memory state
+        currentBundleViewState = .default
+
+        // Delete persisted file
+        if let url = currentBundleURL {
+            BundleViewState.delete(from: url)
+            logger.info("handleBundleViewStateResetRequested: Deleted .viewstate.json from bundle")
+        }
+
+        // Reset annotation display settings to defaults
+        showAnnotations = true
+        annotationDisplayHeight = 16
+        annotationDisplaySpacing = 2
+        visibleAnnotationTypes = nil
+        isRNAMode = false
+        viewerView.translationColorScheme = .zappo
+        viewerView.showVariants = true
+        viewerView.visibleVariantTypes = nil
+    }
 
     // MARK: - Progress Indicator
 
@@ -1122,6 +1162,7 @@ public class ViewerViewController: NSViewController {
         viewerView.setNeedsDisplay(viewerView.bounds)
         enhancedRulerView.setNeedsDisplay(enhancedRulerView.bounds)
         updateStatusBar()
+        scheduleViewStateSave()
     }
 
     /// Zooms out from the current view
@@ -1130,6 +1171,7 @@ public class ViewerViewController: NSViewController {
         viewerView.setNeedsDisplay(viewerView.bounds)
         enhancedRulerView.setNeedsDisplay(enhancedRulerView.bounds)
         updateStatusBar()
+        scheduleViewStateSave()
     }
 
     /// Zooms to fit the entire sequence
@@ -1705,8 +1747,9 @@ public class SequenceViewerView: NSView {
     // MARK: - Annotation Color Cache
 
     /// Cached CGColors keyed by AnnotationType to avoid NSColor allocation per-draw.
-    /// Cleared on appearance change (dark mode toggle).
-    private var typeColorCache: [AnnotationType: (fill: CGColor, stroke: CGColor)] = [:]
+    /// Cleared on appearance change (dark mode toggle). Also stores per-type color overrides
+    /// loaded from BundleViewState.
+    var typeColorCache: [AnnotationType: (fill: CGColor, stroke: CGColor)] = [:]
 
     /// Returns cached (fill, stroke) CGColor pair for an annotation.
     /// Uses the annotation's custom color if set, otherwise caches by type.
@@ -1731,7 +1774,7 @@ public class SequenceViewerView: NSView {
     }
 
     /// Cached CGColors for density histogram bars keyed by AnnotationType.
-    private var typeDensityColorCache: [AnnotationType: CGColor] = [:]
+    var typeDensityColorCache: [AnnotationType: CGColor] = [:]
 
     /// Returns a cached density-bar CGColor (0.6 alpha) for a given annotation type.
     private func cachedDensityColor(for type: AnnotationType) -> CGColor {
@@ -1995,6 +2038,49 @@ public class SequenceViewerView: NSView {
             setNeedsDisplay(bounds)
             logger.info("applyColorToType: Updated \(updatedCount) \(type.rawValue) annotations")
         }
+
+        // Propagate to bundle view state for persistence
+        if let vc = viewController {
+            var state = vc.currentBundleViewState ?? .default
+            state.typeColorOverrides[type] = color
+            vc.currentBundleViewState = state
+            vc.scheduleViewStateSave()
+        }
+    }
+
+    /// Applies per-type color overrides from a saved view state.
+    ///
+    /// Pre-populates the type color caches so that annotations of the given types
+    /// render with the override color instead of the default. The color resolution
+    /// order remains: per-annotation color > per-type override > default type color.
+    func applyTypeColorOverrides(_ overrides: [AnnotationType: AnnotationColor]) {
+        typeColorCache.removeAll()
+        typeDensityColorCache.removeAll()
+
+        for (type, color) in overrides {
+            let nsColor = NSColor(
+                calibratedRed: CGFloat(color.red),
+                green: CGFloat(color.green),
+                blue: CGFloat(color.blue),
+                alpha: 1.0
+            )
+            let fill = nsColor.withAlphaComponent(0.7).cgColor
+            let stroke = nsColor.cgColor
+            typeColorCache[type] = (fill, stroke)
+
+            let density = nsColor.withAlphaComponent(0.6).cgColor
+            typeDensityColorCache[type] = density
+        }
+
+        invalidateAnnotationTile()
+    }
+
+    /// Resets all type color caches to empty (causes rebuild from defaults on next draw).
+    func resetTypeColorCaches() {
+        typeColorCache.removeAll()
+        typeDensityColorCache.removeAll()
+        invalidateAnnotationTile()
+        needsDisplay = true
     }
 
     // MARK: - Translation Track Control
@@ -3418,7 +3504,39 @@ public class SequenceViewerView: NSView {
     }
 
     private func drawPlaceholder(context: CGContext) {
-        let message = "No sequence selected\n\nSelect a sequence from the sidebar\nor drag files here to open"
+        // isFlipped=true: Y=0 is top, Y increases downward
+        let centerY = bounds.height / 2
+
+        // Draw SF Symbol icon centered above the text
+        let symbolConfig = NSImage.SymbolConfiguration(pointSize: 48, weight: .thin)
+        if let symbolImage = NSImage(
+            systemSymbolName: "doc.viewfinder",
+            accessibilityDescription: "No file selected"
+        )?.withSymbolConfiguration(symbolConfig) {
+            let imageSize = symbolImage.size
+            let imageRect = NSRect(
+                x: (bounds.width - imageSize.width) / 2,
+                y: centerY - imageSize.height - 8,
+                width: imageSize.width,
+                height: imageSize.height
+            )
+
+            NSGraphicsContext.saveGraphicsState()
+            NSColor.tertiaryLabelColor.set()
+            symbolImage.draw(in: imageRect, from: .zero, operation: .destinationIn, fraction: 1.0)
+            NSGraphicsContext.restoreGraphicsState()
+
+            // Draw tinted version
+            let tintedImage = symbolImage.copy() as! NSImage
+            tintedImage.lockFocus()
+            NSColor.tertiaryLabelColor.withAlphaComponent(0.5).set()
+            NSRect(origin: .zero, size: tintedImage.size).fill(using: .sourceAtop)
+            tintedImage.unlockFocus()
+            tintedImage.draw(in: imageRect, from: .zero, operation: .sourceOver, fraction: 1.0)
+        }
+
+        // Draw text below the icon
+        let message = "Select a file from the sidebar to view"
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.alignment = .center
         paragraphStyle.lineSpacing = 4
@@ -3430,14 +3548,14 @@ public class SequenceViewerView: NSView {
         ]
 
         let size = (message as NSString).size(withAttributes: attributes)
-        let rect = NSRect(
+        let textRect = NSRect(
             x: (bounds.width - size.width) / 2,
-            y: (bounds.height - size.height) / 2,
+            y: centerY + 8,
             width: size.width,
             height: size.height
         )
 
-        (message as NSString).draw(in: rect, withAttributes: attributes)
+        (message as NSString).draw(in: textRect, withAttributes: attributes)
     }
 
     private func drawSequence(_ seq: Sequence, frame: ReferenceFrame, context: CGContext) {
@@ -4840,6 +4958,7 @@ public class SequenceViewerView: NSView {
                 self.setNeedsDisplay(self.bounds)
                 self.viewController?.enhancedRulerView.setNeedsDisplay(self.viewController?.enhancedRulerView.bounds ?? .zero)
                 self.viewController?.updateStatusBar()
+                self.viewController?.scheduleViewStateSave()
             }
         }
     }
