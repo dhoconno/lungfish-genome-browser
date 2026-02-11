@@ -62,7 +62,7 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
     /// Downloads FASTA and GFF3 files for an assembly and builds a `.lungfishref` bundle.
     ///
     /// Pipeline:
-    /// 1. Validate tools (bgzip, samtools)
+    /// 1. Validate tools (bgzip, samtools, bedToBigBed)
     /// 2. Get FASTA + GFF3 file info from NCBI FTP
     /// 3. Download FASTA (compressed .fna.gz) with progress
     /// 4. Download GFF3 (optional, may not exist)
@@ -283,30 +283,16 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
                 try BundleBuildHelpers.writeChromSizes(chromosomes, to: chromSizesURL)
 
                 let bigBedURL = annotationsDir.appendingPathComponent("ncbi_genes.bb")
-                let hasBedToBigBed = await toolRunner.isToolAvailable(.bedToBigBed)
-                var usedBigBed = false
-
-                if hasBedToBigBed {
-                    let bigBedResult = try await toolRunner.convertBEDtoBigBed(
-                        bedPath: bedURL,
-                        chromSizesPath: chromSizesURL,
-                        outputPath: bigBedURL
-                    )
-                    if bigBedResult.isSuccess {
-                        usedBigBed = true
-                    } else {
-                        logger.warning("downloadAndBuild: bedToBigBed failed, keeping BED: \(bigBedResult.combinedOutput, privacy: .public)")
-                    }
+                let bigBedResult = try await toolRunner.convertBEDtoBigBed(
+                    bedPath: bedURL,
+                    chromSizesPath: chromSizesURL,
+                    outputPath: bigBedURL
+                )
+                guard bigBedResult.isSuccess else {
+                    throw BundleBuildError.annotationConversionFailed("bedToBigBed", bigBedResult.combinedOutput)
                 }
 
-                let annotationPath: String
-                if usedBigBed {
-                    annotationPath = "annotations/ncbi_genes.bb"
-                } else {
-                    let fallbackBedURL = annotationsDir.appendingPathComponent("ncbi_genes.bed")
-                    try fileManager.copyItem(at: bedURL, to: fallbackBedURL)
-                    annotationPath = "annotations/ncbi_genes.bed"
-                }
+                let annotationPath = "annotations/ncbi_genes.bb"
 
                 annotationTracks.append(
                     AnnotationTrackInfo(
@@ -322,7 +308,8 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
                     )
                 )
             } catch {
-                logger.warning("downloadAndBuild: Annotation conversion failed (continuing without): \(error.localizedDescription, privacy: .public)")
+                logger.error("downloadAndBuild: Annotation conversion failed: \(error.localizedDescription, privacy: .public)")
+                throw error
             }
         }
 

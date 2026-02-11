@@ -132,13 +132,13 @@ enum BundleBuildHelpers {
         try? stripped.joined(separator: "\n").write(to: bedURL, atomically: true, encoding: .utf8)
     }
 
-    /// Validates that required tools (bgzip, samtools) are available.
+    /// Validates that required tools (bgzip, samtools, bedToBigBed) are available.
     ///
     /// - Throws: `BundleBuildError.missingTools` if essential tools are missing.
     static func validateTools(using toolRunner: NativeToolRunner) async throws {
         let (valid, missing) = await toolRunner.validateToolsInstallation()
         if !valid {
-            let essential = missing.filter { $0 == .bgzip || $0 == .samtools }
+            let essential = missing.filter { $0 == .bgzip || $0 == .samtools || $0 == .bedToBigBed }
             if !essential.isEmpty {
                 throw BundleBuildError.missingTools(essential.map(\.rawValue))
             }

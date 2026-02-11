@@ -137,35 +137,18 @@ public final class GenBankBundleDownloadViewModel: @unchecked Sendable {
                 progressHandler?(0.72, "Converting to BigBed...")
 
                 let bigBedURL = annotationsDir.appendingPathComponent("ncbi_genbank_annotations.bb")
-                let hasBedToBigBed = await toolRunner.isToolAvailable(.bedToBigBed)
-                var usedBigBed = false
+                let bigBedResult = try await toolRunner.convertBEDtoBigBed(
+                    bedPath: bedURL,
+                    chromSizesPath: chromSizesURL,
+                    outputPath: bigBedURL
+                )
 
-                if hasBedToBigBed {
-                    let bigBedResult = try await toolRunner.convertBEDtoBigBed(
-                        bedPath: bedURL,
-                        chromSizesPath: chromSizesURL,
-                        outputPath: bigBedURL
-                    )
-
-                    if bigBedResult.isSuccess {
-                        usedBigBed = true
-                    } else {
-                        genBankDownloadLogger.warning("downloadAndBuild: bedToBigBed failed, keeping BED: \(bigBedResult.combinedOutput, privacy: .public)")
-                    }
-                } else {
-                    genBankDownloadLogger.warning("downloadAndBuild: bedToBigBed unavailable, keeping BED")
+                guard bigBedResult.isSuccess else {
+                    throw BundleBuildError.annotationConversionFailed("bedToBigBed", bigBedResult.combinedOutput)
                 }
 
-                // Use BigBed if available, otherwise copy BED as fallback
-                let annotationPath: String
-                if usedBigBed {
-                    annotationPath = "annotations/ncbi_genbank_annotations.bb"
-                    try? fileManager.removeItem(at: bedURL)
-                } else {
-                    let fallbackBedURL = annotationsDir.appendingPathComponent("ncbi_genbank_annotations.bed")
-                    try fileManager.copyItem(at: bedURL, to: fallbackBedURL)
-                    annotationPath = "annotations/ncbi_genbank_annotations.bed"
-                }
+                let annotationPath = "annotations/ncbi_genbank_annotations.bb"
+                try? fileManager.removeItem(at: bedURL)
 
                 annotationTracks.append(
                     AnnotationTrackInfo(
@@ -181,7 +164,8 @@ public final class GenBankBundleDownloadViewModel: @unchecked Sendable {
                     )
                 )
             } catch {
-                genBankDownloadLogger.warning("downloadAndBuild: Annotation conversion failed (continuing without annotations): \(error.localizedDescription, privacy: .public)")
+                genBankDownloadLogger.error("downloadAndBuild: Annotation conversion failed: \(error.localizedDescription, privacy: .public)")
+                throw error
             }
         }
 
@@ -341,15 +325,11 @@ private func writeGenBankAnnotationsToBED(
 
         let chromosome = annotation.chromosome ?? chromName
         let intervals = annotation.intervals.sorted { $0.start < $1.start }
-        let featureStart = intervals.first?.start ?? 0
-        let featureEnd = intervals.last?.end ?? 0
+        guard !intervals.isEmpty else { continue }
 
         let name = annotation.name
         let score = 0
         let strand = annotation.strand.rawValue
-
-        let thickStart = featureStart
-        let thickEnd = featureEnd
 
         let color = annotation.type.defaultColor
         let r = Int(color.red * 255)
@@ -357,10 +337,31 @@ private func writeGenBankAnnotationsToBED(
         let b = Int(color.blue * 255)
         let itemRgb = "\(r),\(g),\(b)"
 
-        // BED12 block structure for multi-interval (join) features
-        let blockCount = intervals.count
-        let blockSizes = intervals.map { "\($0.end - $0.start)" }.joined(separator: ",") + ","
-        let blockStarts = intervals.map { "\($0.start - featureStart)" }.joined(separator: ",") + ","
+        // BED12 block structure for multi-interval (join) features.
+        // bedToBigBed requires blocks in ascending order without overlap.
+        // GenBank ribosomal frameshift joins (e.g. join(336..1637,1637..4642))
+        // produce overlapping intervals — resolve by nudging the later block forward.
+        var resolvedIntervals = intervals
+        for i in 1..<resolvedIntervals.count {
+            if resolvedIntervals[i].start < resolvedIntervals[i - 1].end {
+                resolvedIntervals[i] = AnnotationInterval(
+                    start: resolvedIntervals[i - 1].end,
+                    end: resolvedIntervals[i].end
+                )
+            }
+        }
+        // Filter out degenerate zero-length blocks that may result from resolution
+        resolvedIntervals = resolvedIntervals.filter { $0.start < $0.end }
+        guard let featureStart = resolvedIntervals.first?.start,
+              let featureEnd = resolvedIntervals.last?.end else {
+            continue
+        }
+        let thickStart = featureStart
+        let thickEnd = featureEnd
+
+        let blockCount = resolvedIntervals.count
+        let blockSizes = resolvedIntervals.map { "\($0.end - $0.start)" }.joined(separator: ",") + ","
+        let blockStarts = resolvedIntervals.map { "\($0.start - featureStart)" }.joined(separator: ",") + ","
 
         // Column 13: real GenBank feature type
         let featureType = annotation.qualifiers[GenBankReader.rawFeatureTypeQualifierKey]?.firstValue

@@ -227,6 +227,52 @@ final class GenBankBEDConversionTests: XCTestCase {
         XCTAssertEqual(blockStarts[0], 0, "First block should start at offset 0")
     }
 
+    func testGenBankToBEDResolvesOverlappingJoinBlocks() async throws {
+        let gb = """
+        LOCUS       Frameshift              5000 bp    DNA     linear   SYN 01-JAN-2024
+        DEFINITION  Test overlapping join blocks.
+        ACCESSION   FS000001
+        VERSION     FS000001.1
+        FEATURES             Location/Qualifiers
+             source          1..5000
+                             /organism="Test"
+                             /mol_type="genomic DNA"
+             CDS             join(336..1637,1637..4642)
+                             /gene="orf1ab"
+        ORIGIN
+                1 atcgatcgat cgatcgatcg atcgatcgat cgatcgatcg atcgatcgat cgatcgatcg
+        //
+        """
+
+        let gbURL = try createTempGenBankFile(content: gb)
+        defer { try? FileManager.default.removeItem(at: gbURL) }
+
+        let bedURL = gbURL.deletingPathExtension().appendingPathExtension("bed")
+        defer { try? FileManager.default.removeItem(at: bedURL) }
+
+        let builder = NativeBundleBuilder()
+        _ = try await builder.convertGenBankToBED(from: gbURL, to: bedURL)
+
+        let lines = try parseBEDLines(from: bedURL)
+        let cdsLines = lines.filter { $0[12] == "CDS" }
+        XCTAssertEqual(cdsLines.count, 1, "Expected one CDS record")
+
+        let cds = cdsLines[0]
+        XCTAssertEqual(cds[9], "2", "CDS should preserve two blocks")
+        XCTAssertEqual(cds[1], "335", "chromStart should be based on first resolved block")
+        XCTAssertEqual(cds[2], "4642", "chromEnd should be based on last resolved block")
+
+        let blockSizes = cds[10].trimmingCharacters(in: CharacterSet(charactersIn: ","))
+            .split(separator: ",")
+            .compactMap { Int($0) }
+        let blockStarts = cds[11].trimmingCharacters(in: CharacterSet(charactersIn: ","))
+            .split(separator: ",")
+            .compactMap { Int($0) }
+
+        XCTAssertEqual(blockSizes, [1302, 3005], "Second block should be trimmed to remove overlap")
+        XCTAssertEqual(blockStarts, [0, 1302], "Second block should start exactly after first block")
+    }
+
     // MARK: - Strand Tests
 
     func testGenBankToBEDHandlesComplementStrand() async throws {

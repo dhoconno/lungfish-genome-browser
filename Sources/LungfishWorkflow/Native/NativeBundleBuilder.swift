@@ -880,8 +880,7 @@ public final class NativeBundleBuilder: ObservableObject {
 
                 let chromosome = annotation.chromosome ?? chromName
                 let intervals = annotation.intervals.sorted { $0.start < $1.start }
-                let featureStart = intervals.first?.start ?? 0
-                let featureEnd = intervals.last?.end ?? 0
+                guard !intervals.isEmpty else { continue }
 
                 // BED columns 1-3: chrom, chromStart, chromEnd
                 // BED column 4: name
@@ -893,10 +892,6 @@ public final class NativeBundleBuilder: ObservableObject {
                 // BED column 6: strand
                 let strand = annotation.strand.rawValue
 
-                // BED columns 7-8: thickStart, thickEnd (same as feature bounds)
-                let thickStart = featureStart
-                let thickEnd = featureEnd
-
                 // BED column 9: itemRgb (use type default color)
                 let color = annotation.type.defaultColor
                 let r = Int(color.red * 255)
@@ -905,9 +900,29 @@ public final class NativeBundleBuilder: ObservableObject {
                 let itemRgb = "\(r),\(g),\(b)"
 
                 // BED columns 10-12: blockCount, blockSizes, blockStarts
-                let blockCount = intervals.count
-                let blockSizes = intervals.map { "\($0.end - $0.start)" }.joined(separator: ",") + ","
-                let blockStarts = intervals.map { "\($0.start - featureStart)" }.joined(separator: ",") + ","
+                // bedToBigBed requires blocks in ascending order without overlap.
+                // GenBank ribosomal frameshift joins can produce overlapping intervals.
+                var resolvedIntervals = intervals
+                for i in 1..<resolvedIntervals.count {
+                    if resolvedIntervals[i].start < resolvedIntervals[i - 1].end {
+                        resolvedIntervals[i] = AnnotationInterval(
+                            start: resolvedIntervals[i - 1].end,
+                            end: resolvedIntervals[i].end
+                        )
+                    }
+                }
+                resolvedIntervals = resolvedIntervals.filter { $0.start < $0.end }
+                guard let featureStart = resolvedIntervals.first?.start,
+                      let featureEnd = resolvedIntervals.last?.end else {
+                    continue
+                }
+                // BED columns 7-8: thickStart, thickEnd (same as feature bounds)
+                let thickStart = featureStart
+                let thickEnd = featureEnd
+
+                let blockCount = resolvedIntervals.count
+                let blockSizes = resolvedIntervals.map { "\($0.end - $0.start)" }.joined(separator: ",") + ","
+                let blockStarts = resolvedIntervals.map { "\($0.start - featureStart)" }.joined(separator: ",") + ","
 
                 // Column 13: real GenBank feature type (preserve original key when present)
                 let featureType = annotation.qualifiers[GenBankReader.rawFeatureTypeQualifierKey]?.firstValue

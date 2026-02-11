@@ -79,7 +79,7 @@ final class GenomeDownloadViewModelTests: XCTestCase {
             // Only missingTools is acceptable here
             switch error {
             case .missingTools(let names):
-                // Expected on machines without bgzip/samtools
+                // Expected on machines missing required native tools
                 XCTAssertFalse(names.isEmpty, "Missing tools list should not be empty")
             default:
                 XCTFail("Unexpected BundleBuildError: \(error)")
