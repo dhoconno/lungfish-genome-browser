@@ -125,7 +125,7 @@ public class ViewerViewController: NSViewController {
 
     /// Track height constant
     private let sequenceTrackY: CGFloat = 20
-    private let sequenceTrackHeight: CGFloat = 40
+    private let sequenceTrackHeight: CGFloat = SequenceAppearance.load().trackHeight
 
     // MARK: - Annotation Display Settings
 

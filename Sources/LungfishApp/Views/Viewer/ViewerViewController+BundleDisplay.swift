@@ -27,6 +27,9 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
     /// - Parameter url: URL of the `.lungfishref` bundle directory
     /// - Throws: Error if the manifest cannot be loaded or the bundle is invalid
     public func displayBundle(at url: URL) throws {
+        // Save current bundle's view state before switching (flushes color overrides, nav state, etc.)
+        saveCurrentViewState()
+
         bundleLogger.info("displayBundle: Opening bundle at '\(url.lastPathComponent, privacy: .public)'")
 
         // Load and validate manifest

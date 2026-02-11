@@ -964,4 +964,182 @@ final class AnnotationDatabaseTests: XCTestCase {
         let (_, count) = try await createAndOpenDBFromGFF3(lines: lines)
         XCTAssertEqual(count, 1, "Only the valid line should be parsed")
     }
+
+    // MARK: - Tests: CDS Merging by Same GFF3 ID
+
+    func testCreateFromGFF3CDSMergedByID() async throws {
+        // 5 CDS lines sharing the same ID=cds-XP_001 should merge into 1 multi-block entry
+        let lines = [
+            "##gff-version 3",
+            gff3Line(seqid: "chr1", type: "gene", start: 1000, end: 6000, strand: "-",
+                     attributes: "ID=gene-GZMB;Name=GZMB;gene=GZMB"),
+            gff3Line(seqid: "chr1", type: "mRNA", start: 1000, end: 6000, strand: "-",
+                     attributes: "ID=rna-XM_001;Parent=gene-GZMB;Name=XM_001;gene=GZMB"),
+            gff3Line(seqid: "chr1", type: "exon", start: 1000, end: 1200, strand: "-",
+                     attributes: "Parent=rna-XM_001"),
+            gff3Line(seqid: "chr1", type: "exon", start: 2000, end: 2200, strand: "-",
+                     attributes: "Parent=rna-XM_001"),
+            gff3Line(seqid: "chr1", type: "exon", start: 3000, end: 3200, strand: "-",
+                     attributes: "Parent=rna-XM_001"),
+            gff3Line(seqid: "chr1", type: "exon", start: 4000, end: 4300, strand: "-",
+                     attributes: "Parent=rna-XM_001"),
+            gff3Line(seqid: "chr1", type: "exon", start: 5500, end: 6000, strand: "-",
+                     attributes: "Parent=rna-XM_001"),
+            // 5 CDS lines, ALL sharing ID=cds-XP_001
+            gff3Line(seqid: "chr1", type: "CDS", start: 1050, end: 1200, strand: "-",
+                     attributes: "ID=cds-XP_001;Parent=rna-XM_001;Name=XP_001;gene=GZMB"),
+            gff3Line(seqid: "chr1", type: "CDS", start: 2000, end: 2148, strand: "-",
+                     attributes: "ID=cds-XP_001;Parent=rna-XM_001;Name=XP_001;gene=GZMB"),
+            gff3Line(seqid: "chr1", type: "CDS", start: 3000, end: 3136, strand: "-",
+                     attributes: "ID=cds-XP_001;Parent=rna-XM_001;Name=XP_001;gene=GZMB"),
+            gff3Line(seqid: "chr1", type: "CDS", start: 4000, end: 4261, strand: "-",
+                     attributes: "ID=cds-XP_001;Parent=rna-XM_001;Name=XP_001;gene=GZMB"),
+            gff3Line(seqid: "chr1", type: "CDS", start: 5500, end: 5644, strand: "-",
+                     attributes: "ID=cds-XP_001;Parent=rna-XM_001;Name=XP_001;gene=GZMB"),
+        ]
+        let (db, count) = try await createAndOpenDBFromGFF3(lines: lines)
+
+        // Should have 3 records: gene, mRNA (with exon blocks), and ONE merged CDS
+        XCTAssertEqual(count, 3, "5 CDS lines with same ID should merge into 1 row")
+
+        let results = db.queryByRegion(chromosome: "chr1", start: 0, end: 10000)
+        let cdsResults = results.filter { $0.type == "CDS" }
+        XCTAssertEqual(cdsResults.count, 1, "Should be exactly one merged CDS record")
+
+        let cds = cdsResults[0]
+        XCTAssertEqual(cds.name, "XP_001")
+        XCTAssertEqual(cds.start, 1049)  // 1050 - 1 (GFF3 1-based → 0-based)
+        XCTAssertEqual(cds.end, 5644)    // max end across all CDS intervals
+        XCTAssertEqual(cds.blockCount, 5, "Should have 5 blocks from 5 CDS intervals")
+
+        // Verify block data reconstructs correctly
+        let annotation = cds.toAnnotation()
+        XCTAssertEqual(annotation.intervals.count, 5, "Should have 5 intervals from merged CDS")
+        XCTAssertEqual(annotation.strand, .reverse)
+
+        // Verify interval positions (sorted by start, 0-based)
+        XCTAssertEqual(annotation.intervals[0].start, 1049)
+        XCTAssertEqual(annotation.intervals[0].end, 1200)
+        XCTAssertEqual(annotation.intervals[1].start, 1999)
+        XCTAssertEqual(annotation.intervals[1].end, 2148)
+        XCTAssertEqual(annotation.intervals[4].start, 5499)
+        XCTAssertEqual(annotation.intervals[4].end, 5644)
+    }
+
+    func testCreateFromGFF3SingleCDSNotMerged() async throws {
+        // Single CDS (unique ID) should NOT trigger merging
+        let lines = [
+            gff3Line(seqid: "chr1", type: "CDS", start: 100, end: 300,
+                     attributes: "ID=cds-single;Name=SingleCDS;gene=TestGene"),
+        ]
+        let (db, count) = try await createAndOpenDBFromGFF3(lines: lines)
+        XCTAssertEqual(count, 1)
+
+        let results = db.queryByRegion(chromosome: "chr1", start: 0, end: 1000)
+        XCTAssertEqual(results.count, 1)
+        let cds = results[0]
+        XCTAssertNil(cds.blockCount, "Single-interval CDS should not have block data")
+    }
+
+    func testCreateFromGFF3CDSWithoutIDNotMerged() async throws {
+        // CDS features without ID attributes should be inserted individually
+        let lines = [
+            gff3Line(seqid: "chr1", type: "mRNA", start: 1000, end: 5000,
+                     attributes: "ID=mrna1;Name=CDSonly"),
+            gff3Line(seqid: "chr1", type: "CDS", start: 1000, end: 1500,
+                     attributes: "Parent=mrna1;gene=TestGene"),
+            gff3Line(seqid: "chr1", type: "CDS", start: 3000, end: 4000,
+                     attributes: "Parent=mrna1;gene=TestGene"),
+        ]
+        let (db, count) = try await createAndOpenDBFromGFF3(lines: lines)
+        // mRNA (1) + 2 individual CDS (no shared ID) = 3
+        XCTAssertEqual(count, 3)
+
+        let cdsResults = db.queryByRegion(chromosome: "chr1", start: 0, end: 10000)
+            .filter { $0.type == "CDS" }
+        XCTAssertEqual(cdsResults.count, 2, "CDS without shared ID should remain separate")
+    }
+
+    // MARK: - Tests: Gene Name Search
+
+    func testCreateFromGFF3GeneNameSearch() async throws {
+        let lines = [
+            "##gff-version 3",
+            gff3Line(seqid: "chr1", type: "gene", start: 1000, end: 6000,
+                     attributes: "ID=gene-GZMB;Name=GZMB;gene=GZMB"),
+            gff3Line(seqid: "chr1", type: "mRNA", start: 1000, end: 6000,
+                     attributes: "ID=rna-XM_001;Parent=gene-GZMB;Name=XM_001;gene=GZMB"),
+            gff3Line(seqid: "chr1", type: "CDS", start: 1050, end: 1200,
+                     attributes: "ID=cds-XP_001;Name=XP_001;gene=GZMB"),
+        ]
+        let (db, _) = try await createAndOpenDBFromGFF3(lines: lines)
+
+        // Search for "GZMB" should find all three features (gene by name, mRNA+CDS by gene_name)
+        let results = db.query(nameFilter: "GZMB")
+        XCTAssertEqual(results.count, 3, "Searching GZMB should find gene + mRNA + CDS via gene_name")
+
+        let types = Set(results.map(\.type))
+        XCTAssertTrue(types.contains("gene"))
+        XCTAssertTrue(types.contains("mRNA"))
+        XCTAssertTrue(types.contains("CDS"))
+    }
+
+    func testQueryCountWithGeneName() async throws {
+        let lines = [
+            gff3Line(seqid: "chr1", type: "gene", start: 100, end: 500,
+                     attributes: "ID=g1;Name=BRCA1;gene=BRCA1"),
+            gff3Line(seqid: "chr1", type: "mRNA", start: 100, end: 500,
+                     attributes: "ID=m1;Parent=g1;Name=XM_999;gene=BRCA1"),
+        ]
+        let (db, _) = try await createAndOpenDBFromGFF3(lines: lines)
+
+        let count = db.queryCount(nameFilter: "BRCA1")
+        XCTAssertEqual(count, 2, "BRCA1 should match gene (by name) and mRNA (by gene_name)")
+    }
+
+    func testCreateFromBEDExtractsGeneName() throws {
+        let lines = [
+            bed14(chrom: "chr1", start: 100, end: 500, name: "XM_001", type: "mRNA",
+                  attributes: "gene=BRCA1;product=mRNA"),
+        ]
+        let (db, _) = try createAndOpenDB(lines: lines)
+
+        // Searching "BRCA1" should find the mRNA by its gene_name
+        let results = db.query(nameFilter: "BRCA1")
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(results.first?.name, "XM_001")
+        XCTAssertEqual(results.first?.geneName, "BRCA1")
+    }
+
+    func testGeneNameColumnDetected() async throws {
+        let lines = [
+            gff3Line(seqid: "chr1", type: "gene", start: 100, end: 500,
+                     attributes: "ID=g1;Name=TestGene;gene=TestGene"),
+        ]
+        let (db, _) = try await createAndOpenDBFromGFF3(lines: lines)
+        XCTAssertTrue(db.hasGeneNameColumn, "New databases should have gene_name column")
+    }
+
+    func testGeneNameNilWhenAbsent() async throws {
+        // Feature without gene= attribute should have nil geneName
+        let lines = [
+            gff3Line(seqid: "chr1", type: "region", start: 1, end: 100000,
+                     attributes: "ID=r1;Name=chromosome1"),
+        ]
+        let (db, _) = try await createAndOpenDBFromGFF3(lines: lines)
+        let results = db.queryByRegion(chromosome: "chr1", start: 0, end: 200000)
+        XCTAssertEqual(results.count, 1)
+        XCTAssertNil(results.first?.geneName, "Region without gene attribute should have nil geneName")
+    }
+
+    func testLookupAnnotationReturnsGeneName() async throws {
+        let lines = [
+            gff3Line(seqid: "chr1", type: "gene", start: 101, end: 500,
+                     attributes: "ID=g1;Name=TestGene;gene=TestGene"),
+        ]
+        let (db, _) = try await createAndOpenDBFromGFF3(lines: lines)
+        let record = db.lookupAnnotation(name: "TestGene", chromosome: "chr1", start: 100, end: 500)
+        XCTAssertNotNil(record)
+        XCTAssertEqual(record?.geneName, "TestGene")
+    }
 }
