@@ -1082,7 +1082,7 @@ public class ViewerViewController: NSViewController {
     ///
     /// This method loads and displays a `.lungfishref` bundle, using the indexed
     /// readers for efficient random access to the compressed genome sequence
-    /// and BigBed annotations.
+    /// and SQLite annotation tracks.
     ///
     /// - Parameter bundle: The ReferenceBundle to display
     public func displayReferenceBundle(_ bundle: LungfishIO.ReferenceBundle) async {
@@ -2333,7 +2333,7 @@ public class SequenceViewerView: NSView {
     /// Draws content from a reference bundle.
     ///
     /// Sequence and annotations are fetched and cached independently:
-    /// - Annotations are always fetched (BigBed R-tree queries are fast even for full chromosomes)
+    /// - Annotations are always fetched for the visible region from SQLite
     /// - Sequence is only fetched when zoomed in enough to be visible (<500 bp/pixel)
     ///   because reading 240 MB of bgzip data for a full chromosome is impractical
     private func drawBundleContent(frame: ReferenceFrame, context: CGContext) {
@@ -2533,8 +2533,8 @@ public class SequenceViewerView: NSView {
         }
     }
 
-    /// Fetches annotations asynchronously for the visible region from BigBed files.
-    /// Runs BigBed R-tree queries on a background thread to avoid blocking the UI.
+    /// Fetches annotations asynchronously for the visible region from SQLite annotation databases.
+    /// Runs database queries on a background thread to avoid blocking the UI.
     /// Dedicated queue for annotation I/O to avoid being starved by the search index build.
     private static let annotationFetchQueue = DispatchQueue(label: "com.lungfish.annotationFetch", qos: .userInteractive)
 
@@ -2573,35 +2573,30 @@ public class SequenceViewerView: NSView {
             for trackId in trackIds {
                 guard let trackInfo = bundle.annotationTrack(id: trackId) else { continue }
 
-                // PRIMARY: SQLite database query (v3 with block data, v2 gracefully degraded)
-                if let dbPath = trackInfo.databasePath {
-                    let dbURL = bundle.url.appendingPathComponent(dbPath)
-                    if FileManager.default.fileExists(atPath: dbURL.path) {
-                        do {
-                            let db = try AnnotationDatabase(url: dbURL)
-                            let records = db.queryByRegion(
-                                chromosome: expandedRegion.chromosome,
-                                start: expandedRegion.start,
-                                end: expandedRegion.end,
-                                limit: 50_000
-                            )
-                            let annotations = records.map { $0.toAnnotation() }
-                            allAnnotations.append(contentsOf: annotations)
-                            logger.info("fetchAnnotationsAsync: SQLite query returned \(annotations.count) annotations for track \(trackId)")
-                            continue  // SQLite succeeded, skip BigBed fallback
-                        } catch {
-                            logger.error("fetchAnnotationsAsync: SQLite query failed for \(trackId): \(error.localizedDescription)")
-                        }
-                    }
+                guard let dbPath = trackInfo.databasePath else {
+                    logger.error("fetchAnnotationsAsync: Annotation track \(trackId) has no databasePath")
+                    continue
                 }
 
-                // FALLBACK: BigBed for bundles without SQLite database
+                let dbURL = bundle.url.appendingPathComponent(dbPath)
+                guard FileManager.default.fileExists(atPath: dbURL.path) else {
+                    logger.error("fetchAnnotationsAsync: Annotation database missing for \(trackId) at \(dbPath)")
+                    continue
+                }
+
                 do {
-                    let annotations = try bundle.getAnnotationsSync(trackId: trackId, region: expandedRegion)
+                    let db = try AnnotationDatabase(url: dbURL)
+                    let records = db.queryByRegion(
+                        chromosome: expandedRegion.chromosome,
+                        start: expandedRegion.start,
+                        end: expandedRegion.end,
+                        limit: 50_000
+                    )
+                    let annotations = records.map { $0.toAnnotation() }
                     allAnnotations.append(contentsOf: annotations)
-                    logger.info("fetchAnnotationsAsync: BigBed fallback returned \(annotations.count) annotations for track \(trackId)")
+                    logger.info("fetchAnnotationsAsync: SQLite query returned \(annotations.count) annotations for track \(trackId)")
                 } catch {
-                    logger.error("fetchAnnotationsAsync: BigBed query failed for track \(trackId) region \(expandedRegion.description): \(error.localizedDescription)")
+                    logger.error("fetchAnnotationsAsync: SQLite query failed for \(trackId): \(error.localizedDescription)")
                 }
             }
 
@@ -2718,7 +2713,7 @@ public class SequenceViewerView: NSView {
         logger.info("fetchSequenceAsync: gen=\(thisGeneration), Fetching \(expandedRegion.description) (\(expandedRegion.length) bp)")
 
         // Use a dedicated serial queue rather than DispatchQueue.global to prevent
-        // thread starvation when the annotation search index is doing heavy BigBed
+        // thread starvation when the annotation search index is doing heavy annotation I/O
         // scanning on the global concurrent queue.
         Self.sequenceFetchQueue.async { [weak self] in
             logger.info("fetchSequenceAsync: gen=\(thisGeneration), background block started, self alive: \(self != nil)")

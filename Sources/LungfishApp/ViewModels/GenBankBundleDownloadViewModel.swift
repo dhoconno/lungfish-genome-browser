@@ -103,8 +103,6 @@ public final class GenBankBundleDownloadViewModel: @unchecked Sendable {
 
         // Build chromosome sizes for annotation coordinate clipping
         let chromosomeSizes = chromosomes.map { ($0.name, $0.length) }
-        let chromSizesURL = tempDir.appendingPathComponent("chrom.sizes")
-        try BundleBuildHelpers.writeChromSizes(chromosomes, to: chromSizesURL)
 
         var annotationTracks: [AnnotationTrackInfo] = []
         if !record.annotations.isEmpty {
@@ -121,33 +119,15 @@ public final class GenBankBundleDownloadViewModel: @unchecked Sendable {
                     to: bedURL
                 )
 
-                // Clip BED coordinates to chromosome boundaries (required for bedToBigBed)
+                // Clip BED coordinates to chromosome boundaries.
                 BundleBuildHelpers.clipBEDCoordinates(bedURL: bedURL, chromosomeSizes: chromosomeSizes)
 
                 progressHandler?(0.65, "Creating annotation database...")
 
-                // Create SQLite annotation database BEFORE stripping extra columns
+                // Create SQLite annotation database directly from BED12+.
                 let dbURL = annotationsDir.appendingPathComponent("ncbi_genbank_annotations.db")
                 let dbRecordCount = try AnnotationDatabase.createFromBED(bedURL: bedURL, outputURL: dbURL)
                 genBankDownloadLogger.info("downloadAndBuild: Created annotation database with \(dbRecordCount) records")
-
-                // Strip extra columns (13+) for bedToBigBed — it only handles standard BED12.
-                BundleBuildHelpers.stripExtraBEDColumns(bedURL: bedURL, keepColumns: 12)
-
-                progressHandler?(0.72, "Converting to BigBed...")
-
-                let bigBedURL = annotationsDir.appendingPathComponent("ncbi_genbank_annotations.bb")
-                let bigBedResult = try await toolRunner.convertBEDtoBigBed(
-                    bedPath: bedURL,
-                    chromSizesPath: chromSizesURL,
-                    outputPath: bigBedURL
-                )
-
-                guard bigBedResult.isSuccess else {
-                    throw BundleBuildError.annotationConversionFailed("bedToBigBed", bigBedResult.combinedOutput)
-                }
-
-                let annotationPath = "annotations/ncbi_genbank_annotations.bb"
                 try? fileManager.removeItem(at: bedURL)
 
                 annotationTracks.append(
@@ -155,10 +135,10 @@ public final class GenBankBundleDownloadViewModel: @unchecked Sendable {
                         id: "ncbi_genbank_annotations",
                         name: "NCBI GenBank Annotations",
                         description: "Converted from GenBank FEATURES",
-                        path: annotationPath,
+                        path: "annotations/ncbi_genbank_annotations.db",
                         databasePath: dbRecordCount > 0 ? "annotations/ncbi_genbank_annotations.db" : nil,
                         annotationType: .gene,
-                        featureCount: record.annotations.count,
+                        featureCount: dbRecordCount,
                         source: "NCBI",
                         version: nil
                     )
@@ -299,7 +279,7 @@ private func formatGenBankBp(_ value: Int) -> String {
 /// (join) features. Column 13 holds the GenBank feature type and column 14 holds
 /// all qualifiers as percent-encoded `key=value;key=value` pairs.
 ///
-/// Source features are excluded (they span the entire sequence).
+/// All input features are emitted, including top-level `source` spans.
 private func writeGenBankAnnotationsToBED(
     annotations: [SequenceAnnotation],
     chromName: String,
@@ -318,11 +298,6 @@ private func writeGenBankAnnotationsToBED(
     allowedCharacters.remove(charactersIn: ";=\t\n%")
 
     for annotation in annotations {
-        // Skip source features — they span the entire sequence
-        if annotation.type == .source {
-            continue
-        }
-
         let chromosome = annotation.chromosome ?? chromName
         let intervals = annotation.intervals.sorted { $0.start < $1.start }
         guard !intervals.isEmpty else { continue }
@@ -338,7 +313,7 @@ private func writeGenBankAnnotationsToBED(
         let itemRgb = "\(r),\(g),\(b)"
 
         // BED12 block structure for multi-interval (join) features.
-        // bedToBigBed requires blocks in ascending order without overlap.
+        // Blocks must be in ascending order without overlap.
         // GenBank ribosomal frameshift joins (e.g. join(336..1637,1637..4642))
         // produce overlapping intervals — resolve by nudging the later block forward.
         var resolvedIntervals = intervals

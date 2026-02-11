@@ -72,7 +72,7 @@ enum BundleBuildHelpers {
         try lines.joined(separator: "\n").appending("\n").write(to: url, atomically: true, encoding: .utf8)
     }
 
-    /// Clips BED coordinates to chromosome boundaries so bedToBigBed doesn't reject them.
+    /// Clips BED coordinates to chromosome boundaries.
     static func clipBEDCoordinates(bedURL: URL, chromosomeSizes: [(String, Int64)]) {
         let chromSizeMap = Dictionary(uniqueKeysWithValues: chromosomeSizes)
         guard let content = try? String(contentsOf: bedURL, encoding: .utf8) else { return }
@@ -110,7 +110,7 @@ enum BundleBuildHelpers {
         try? clipped.joined(separator: "\n").write(to: bedURL, atomically: true, encoding: .utf8)
     }
 
-    /// Strips columns beyond `keepColumns` so bedToBigBed can handle the file.
+    /// Strips columns beyond `keepColumns`.
     static func stripExtraBEDColumns(bedURL: URL, keepColumns: Int) {
         guard let content = try? String(contentsOf: bedURL, encoding: .utf8) else { return }
         let lines = content.components(separatedBy: .newlines)
@@ -132,13 +132,13 @@ enum BundleBuildHelpers {
         try? stripped.joined(separator: "\n").write(to: bedURL, atomically: true, encoding: .utf8)
     }
 
-    /// Validates that required tools (bgzip, samtools, bedToBigBed) are available.
+    /// Validates that required tools (bgzip, samtools) are available.
     ///
     /// - Throws: `BundleBuildError.missingTools` if essential tools are missing.
     static func validateTools(using toolRunner: NativeToolRunner) async throws {
         let (valid, missing) = await toolRunner.validateToolsInstallation()
         if !valid {
-            let essential = missing.filter { $0 == .bgzip || $0 == .samtools || $0 == .bedToBigBed }
+            let essential = missing.filter { $0 == .bgzip || $0 == .samtools }
             if !essential.isEmpty {
                 throw BundleBuildError.missingTools(essential.map(\.rawValue))
             }

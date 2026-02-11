@@ -59,13 +59,13 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
     /// Downloads FASTA and GFF3 files for an assembly and builds a `.lungfishref` bundle.
     ///
     /// Pipeline:
-    /// 1. Validate tools (bgzip, samtools, bedToBigBed)
+    /// 1. Validate tools (bgzip, samtools)
     /// 2. Get FASTA + GFF3 file info from NCBI FTP
     /// 3. Download FASTA (compressed .fna.gz) with progress
     /// 4. Download GFF3 (optional, may not exist)
     /// 5. Decompress FASTA (bgzip -d), re-compress with bgzip for random access
     /// 6. Index FASTA (samtools faidx)
-    /// 7. Convert GFF3 → BED12 → SQLite DB → BigBed
+    /// 7. Convert GFF3 directly to SQLite annotation DB
     /// 8. Write manifest.json
     ///
     /// - Parameters:

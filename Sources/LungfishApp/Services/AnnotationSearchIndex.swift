@@ -10,39 +10,11 @@ import os.log
 /// Logger for annotation search operations
 private let searchLogger = Logger(subsystem: "com.lungfish.browser", category: "AnnotationSearch")
 
-/// Annotation types to include in the search index table.
-/// Sub-gene features (exons, introns, UTR) are excluded because they balloon the count
-/// from ~30K gene-level features to ~3M rows, making the table unusable.
-private let indexableTypes: Set<String> = [
-    "gene", "mRNA", "transcript", "region", "promoter", "enhancer",
-    "primer", "primer_pair", "amplicon", "SNP", "variation",
-    "restriction_site", "repeat_region", "origin_of_replication",
-    "misc_feature", "silencer", "terminator", "polyA_signal",
-    // Protein processing
-    "CDS", "mat_peptide", "sig_peptide", "transit_peptide",
-    // Regulatory & binding
-    "regulatory", "ncRNA", "misc_binding", "protein_bind",
-    // Structural
-    "stem_loop",
-    // GenBank raw key aliases
-    "primer_bind",
-]
-
 // MARK: - AnnotationSearchIndex
 
 /// Annotation index that provides fast text search and filtering.
 ///
-/// Two modes of operation:
-/// 1. **SQLite mode** (preferred): When the bundle contains a `.db` file, queries
-///    go directly to SQLite. The table drawer gets results instantly — no background
-///    scanning or in-memory arrays required.
-/// 2. **Legacy mode** (fallback): For older bundles without a database, scans all
-///    BigBed annotation tracks across all chromosomes on a background thread and
-///    builds an in-memory index.
-///
-/// Only gene-level features (genes, mRNA, transcripts, etc.) are indexed.
-/// Sub-gene features like exons, introns, and UTRs are excluded to keep the table
-/// responsive with ~30K entries instead of ~3M.
+/// Search is backed by SQLite annotation/variant databases in the bundle.
 @MainActor
 public final class AnnotationSearchIndex {
 
@@ -74,7 +46,7 @@ public final class AnnotationSearchIndex {
 
     // MARK: - Properties
 
-    /// In-memory entries (legacy mode only).
+    /// In-memory entries used when SQLite mode is unavailable.
     private var entries: [SearchResult] = []
 
     /// SQLite database handle (preferred mode).
@@ -195,108 +167,33 @@ public final class AnnotationSearchIndex {
         }
     }
 
-    // MARK: - Legacy BigBed Scanning Mode
+    // MARK: - Index Build
 
-    /// Builds the index by scanning all annotation tracks across all chromosomes.
+    /// Builds the index from a bundle annotation database.
     ///
-    /// The heavy BigBed I/O runs on a background thread to avoid blocking the UI.
-    /// Only selected feature types are indexed (exons, introns, UTR are excluded).
+    /// Bundles are expected to provide SQLite annotation tracks.
     ///
     /// - Parameters:
     ///   - bundle: The reference bundle containing annotation tracks
     ///   - chromosomes: The chromosome list to scan
     public func buildIndex(bundle: ReferenceBundle, chromosomes: [ChromosomeInfo]) {
-        // Check if any track has a SQLite database — use that instead
+        _ = chromosomes
+
         for trackId in bundle.annotationTrackIds {
             if let trackInfo = bundle.annotationTrack(id: trackId),
                let dbPath = trackInfo.databasePath {
                 if buildFromDatabase(bundle: bundle, trackId: trackId, databasePath: dbPath) {
-                    return  // SQLite mode — skip BigBed scanning
+                    return
                 }
             }
         }
 
-        // Also try to open variant databases even in legacy mode
+        // Open variant databases even if there are no annotation databases.
         openVariantDatabases(bundle: bundle)
-
-        // Fallback: scan BigBed files on background thread
-        isBuilding = true
-        searchLogger.info("AnnotationSearchIndex: Building index from BigBed for \(chromosomes.count) chromosomes, \(bundle.annotationTrackIds.count) tracks")
-
-        let trackIds = bundle.annotationTrackIds
-
-        // Use .utility QoS so this heavy I/O doesn't starve the viewer's
-        // dedicated sequence and annotation fetch queues.
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            var results: [SearchResult] = []
-            var seenNames = Set<String>()
-
-            for trackId in trackIds {
-                for (chromIndex, chrom) in chromosomes.enumerated() {
-                    searchLogger.info("AnnotationSearchIndex: Scanning \(chromIndex + 1)/\(chromosomes.count): \(chrom.name, privacy: .public)")
-                    let region = GenomicRegion(
-                        chromosome: chrom.name,
-                        start: 0,
-                        end: Int(chrom.length)
-                    )
-                    do {
-                        let annotations = try bundle.getAnnotationsSync(trackId: trackId, region: region)
-                        for ann in annotations {
-                            // Filter to gene-level features only
-                            let typeStr = ann.type.rawValue
-                            guard indexableTypes.contains(typeStr) else { continue }
-
-                            let name = ann.name
-                            guard !name.isEmpty, name != "unknown" else { continue }
-
-                            let interval = ann.intervals.first!
-                            let lastInterval = ann.intervals.last!
-                            let key = "\(name)|\(chrom.name)|\(interval.start)|\(lastInterval.end)"
-
-                            if seenNames.insert(key).inserted {
-                                let strandStr: String
-                                switch ann.strand {
-                                case .forward: strandStr = "+"
-                                case .reverse: strandStr = "-"
-                                case .unknown: strandStr = "."
-                                }
-                                results.append(SearchResult(
-                                    name: name,
-                                    chromosome: chrom.name,
-                                    start: interval.start,
-                                    end: lastInterval.end,
-                                    trackId: trackId,
-                                    type: typeStr,
-                                    strand: strandStr
-                                ))
-                            }
-                        }
-                    } catch {
-                        searchLogger.debug("AnnotationSearchIndex: Skipping \(trackId)/\(chrom.name, privacy: .public): \(error.localizedDescription)")
-                    }
-                }
-            }
-
-            // Sort results alphabetically
-            results.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-
-            let count = results.count
-            searchLogger.info("AnnotationSearchIndex: Built index with \(count) entries (background thread)")
-
-            // Use DispatchQueue.main.async + MainActor.assumeIsolated instead of
-            // Task { @MainActor in }. The cooperative executor that drives MainActor
-            // Tasks is not reliably drained during AppKit's layout-draw animation
-            // cycles. GCD main queue blocks integrate directly with the run loop.
-            DispatchQueue.main.async { [weak self] in
-                MainActor.assumeIsolated {
-                    guard let index = self else { return }
-                    index.entries = results
-                    index.isBuilding = false
-                    searchLogger.info("AnnotationSearchIndex: Index ready with \(count) entries")
-                    index.onBuildComplete?()
-                }
-            }
-        }
+        entries = []
+        isBuilding = false
+        searchLogger.warning("AnnotationSearchIndex: No annotation SQLite database found; annotation search will be empty")
+        onBuildComplete?()
     }
 
     /// Searches the index for annotations matching the query.
@@ -360,7 +257,7 @@ public final class AnnotationSearchIndex {
     }
 
     /// Queries the index with both name and type filters.
-    /// Only available in SQLite mode — returns nil for legacy mode.
+    /// Only available in SQLite mode — returns nil when no annotation database is open.
     ///
     /// - Parameters:
     ///   - nameFilter: Case-insensitive substring match on name

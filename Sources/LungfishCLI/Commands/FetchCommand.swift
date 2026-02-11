@@ -848,7 +848,7 @@ struct GenomeSubcommand: AsyncParsableCommand {
 
             The bundle contains:
             - Compressed, indexed FASTA (bgzip + samtools faidx)
-            - BigBed annotations (converted from GFF3)
+            - SQLite annotation database (converted from GFF3)
             - Manifest with metadata
 
             Examples:

@@ -477,8 +477,6 @@ public final class AnnotationDatabase: @unchecked Sendable {
     /// end (col 2), name (col 3), strand (col 5), feature type (col 12 if present),
     /// and GFF3 attributes (col 13 if present).
     ///
-    /// Only selected feature types are indexed (exons, introns, UTR are excluded).
-    ///
     /// - Parameters:
     ///   - bedURL: URL to the BED file
     ///   - outputURL: URL for the SQLite database to create
@@ -520,28 +518,6 @@ public final class AnnotationDatabase: @unchecked Sendable {
             throw AnnotationDatabaseError.createFailed(msg)
         }
 
-        // Indexable types (gene-level only, matching AnnotationSearchIndex)
-        let indexableTypes: Set<String> = [
-            "gene", "mRNA", "transcript", "region", "promoter", "enhancer",
-            "primer", "primer_pair", "amplicon", "SNP", "variation",
-            "restriction_site", "repeat_region", "origin_of_replication",
-            "misc_feature", "silencer", "terminator", "polyA_signal",
-            // Protein processing
-            "CDS", "mat_peptide", "sig_peptide", "transit_peptide",
-            // UTRs
-            "5'UTR", "3'UTR", "five_prime_UTR", "three_prime_UTR",
-            // Regulatory & binding
-            "regulatory", "ncRNA", "misc_binding", "protein_bind",
-            // Structural
-            "stem_loop",
-            // GenBank raw key aliases
-            "primer_bind",
-            // GFF3 transcript types (keep in sync with createFromGFF3)
-            "lnc_RNA", "rRNA", "tRNA", "snRNA", "snoRNA", "miRNA",
-            "primary_transcript", "V_gene_segment", "D_gene_segment",
-            "J_gene_segment", "C_gene_segment",
-        ]
-
         // Begin transaction for bulk insert
         sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil)
 
@@ -554,7 +530,6 @@ public final class AnnotationDatabase: @unchecked Sendable {
 
         let content = try String(contentsOf: bedURL, encoding: .utf8)
         var insertCount = 0
-        var seenKeys = Set<String>()
 
         for line in content.split(separator: "\n") {
             guard !line.hasPrefix("#") else { continue }
@@ -564,10 +539,6 @@ public final class AnnotationDatabase: @unchecked Sendable {
             let chrom = String(fields[0])
             let start = Int(fields[1]) ?? 0
             let end = Int(fields[2]) ?? 0
-            let name = String(fields[3])
-
-            guard !name.isEmpty, name != "unknown" else { continue }
-
             let strand = fields.count > 5 ? String(fields[5]) : "."
 
             // Extract BED12 block data (columns 9-11, 0-indexed)
@@ -583,6 +554,14 @@ public final class AnnotationDatabase: @unchecked Sendable {
                 type = "gene"
             }
 
+            let rawName = String(fields[3])
+            let name: String
+            if rawName.isEmpty {
+                name = "\(type):\(chrom):\(start)-\(end)"
+            } else {
+                name = rawName
+            }
+
             // Extract GFF3 attributes from column 13 if present
             let attributes: String?
             if fields.count > 13 {
@@ -591,14 +570,6 @@ public final class AnnotationDatabase: @unchecked Sendable {
             } else {
                 attributes = nil
             }
-
-            // Only index gene-level features
-            guard indexableTypes.contains(type) else { continue }
-
-            // Deduplicate by name+type+chrom+start+end (type included so gene and CDS
-            // at the same coordinates are both kept)
-            let key = "\(name)|\(type)|\(chrom)|\(start)|\(end)"
-            guard seenKeys.insert(key).inserted else { continue }
 
             sqlite3_reset(insertStmt)
             sqlite3_bind_text(insertStmt, 1, (name as NSString).utf8String, -1, nil)

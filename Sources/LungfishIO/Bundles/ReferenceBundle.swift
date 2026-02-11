@@ -19,7 +19,7 @@ import LungfishCore
 /// Reference bundles are directories with the `.lungfishref` extension containing:
 /// - `manifest.json` - Bundle metadata and track definitions
 /// - `genome/` - bgzip-compressed FASTA with .fai and .gzi indices
-/// - `annotations/` - BigBed annotation files
+/// - `annotations/` - SQLite annotation databases
 /// - `variants/` - Indexed BCF variant files
 /// - `tracks/` - BigWig signal tracks
 ///
@@ -42,124 +42,6 @@ import LungfishCore
 /// let genes = try await bundle.getAnnotations(trackId: "genes", region: region)
 ///
 /// ```
-// MARK: - Annotation Type Inference
-
-/// Infers annotation type from BigBed feature name and metadata.
-///
-/// Since GFF3 feature types are lost during BED conversion, this uses NCBI naming
-/// conventions and size heuristics to infer the most likely type.
-///
-/// Priority:
-/// 1. Explicit type in extra fields column 13 (future bundles)
-/// 2. NCBI accession prefix patterns (XM_, NM_, XR_, NR_, LOC, etc.)
-/// 3. GFF3-derived name patterns (gene-, rna-, cds-, exon-, id-)
-/// 4. Size heuristic fallback
-private func inferAnnotationType(name: String, featureSize: Int, extraFields: String?) -> AnnotationType {
-    // 1. Check extra fields for explicit type (column 13 in future bundles)
-    if let extra = extraFields {
-        let parts = extra.split(separator: "\t")
-        // Column 13 (index 0 in extra fields after the standard 12) = feature type
-        if let typeStr = parts.first,
-           let mapped = AnnotationType.from(rawString: String(typeStr)) {
-            return mapped
-        }
-    }
-
-    // 2. NCBI accession prefix patterns
-    let upper = name.uppercased()
-    if upper.hasPrefix("XM_") || upper.hasPrefix("NM_") {
-        return .mRNA
-    }
-    if upper.hasPrefix("XR_") || upper.hasPrefix("NR_") {
-        return .transcript
-    }
-    if upper.hasPrefix("LOC") {
-        // LOC followed by digits = predicted gene
-        let afterLOC = name.dropFirst(3)
-        if afterLOC.first?.isNumber == true {
-            return .gene
-        }
-    }
-    if upper.hasPrefix("MIR") || upper.hasPrefix("SNORD") || upper.hasPrefix("SNORA") || upper.hasPrefix("TRNA") {
-        return .transcript
-    }
-
-    // 3. GFF3-derived name patterns (e.g., gene-LOC123, rna-XM_456, cds-XM_789)
-    let lower = name.lowercased()
-    if lower.hasPrefix("gene-") { return .gene }
-    if lower.hasPrefix("rna-") || lower.hasPrefix("mrna-") { return .mRNA }
-    if lower.hasPrefix("cds-") { return .cds }
-    if lower.hasPrefix("exon-") { return .exon }
-    if lower.hasPrefix("id-") { return .region }
-
-    // 4. Size heuristic fallback
-    if featureSize < 300 { return .exon }
-    if featureSize > 100_000 { return .region }
-
-    return .gene
-}
-
-/// Converts a BigBedFeature into a SequenceAnnotation, preserving block data as intervals.
-private func bigBedFeatureToAnnotation(_ feature: BigBedFeature) -> SequenceAnnotation {
-    let strand: Strand
-    if let strandChar = feature.strand {
-        switch strandChar {
-        case "+": strand = .forward
-        case "-": strand = .reverse
-        default: strand = .unknown
-        }
-    } else {
-        strand = .unknown
-    }
-
-    var color: AnnotationColor?
-    if let rgb = feature.itemRgb {
-        color = AnnotationColor(
-            red: Double(rgb.r) / 255.0,
-            green: Double(rgb.g) / 255.0,
-            blue: Double(rgb.b) / 255.0
-        )
-    }
-
-    var qualifiers: [String: AnnotationQualifier] = [:]
-    if let score = feature.score {
-        qualifiers["score"] = AnnotationQualifier(String(score))
-    }
-    if let extraFields = feature.extraFields {
-        qualifiers["extra"] = AnnotationQualifier(extraFields)
-    }
-
-    let featureName = feature.name ?? "unknown"
-    let featureSize = feature.end - feature.start
-    let annotationType = inferAnnotationType(
-        name: featureName, featureSize: featureSize, extraFields: feature.extraFields
-    )
-
-    // Build intervals from block data if available (BED12 multi-part features)
-    var intervals: [AnnotationInterval]
-    if let blockCount = feature.blockCount, blockCount > 1,
-       let blockSizes = feature.blockSizes, blockSizes.count == blockCount,
-       let blockStarts = feature.blockStarts, blockStarts.count == blockCount {
-        intervals = (0..<blockCount).map { i in
-            let start = feature.start + blockStarts[i]
-            let end = start + blockSizes[i]
-            return AnnotationInterval(start: start, end: end)
-        }
-    } else {
-        intervals = [AnnotationInterval(start: feature.start, end: feature.end)]
-    }
-
-    return SequenceAnnotation(
-        type: annotationType,
-        name: featureName,
-        chromosome: feature.chromosome,
-        intervals: intervals,
-        strand: strand,
-        qualifiers: qualifiers,
-        color: color
-    )
-}
-
 public final class ReferenceBundle: Sendable {
 
     // MARK: - Properties
@@ -388,7 +270,7 @@ public final class ReferenceBundle: Sendable {
 
     /// Fetches annotations from a track for a genomic region.
     ///
-    /// Uses BigBed random access for efficient querying.
+    /// Uses SQLite annotation database queries for efficient region lookups.
     ///
     /// - Parameters:
     ///   - trackId: The annotation track ID
@@ -396,37 +278,13 @@ public final class ReferenceBundle: Sendable {
     /// - Returns: Array of sequence annotations in the region
     /// - Throws: `ReferenceBundleError` if annotations cannot be fetched
     public func getAnnotations(trackId: String, region: GenomicRegion) async throws -> [SequenceAnnotation] {
-        guard let trackInfo = annotationTrack(id: trackId) else {
-            throw ReferenceBundleError.trackNotFound(trackId)
-        }
-
-        let trackURL = url.appendingPathComponent(trackInfo.path)
-
-        guard FileManager.default.fileExists(atPath: trackURL.path) else {
-            throw ReferenceBundleError.missingFile(trackInfo.path)
-        }
-
-        // Use BigBed reader for efficient random access to annotations
-        do {
-            let reader = try await BigBedReader(url: trackURL)
-            let features = try await reader.features(region: region)
-            
-            // Convert BigBedFeature to SequenceAnnotation (preserving block intervals)
-            let annotations = features.map { bigBedFeatureToAnnotation($0) }
-            
-            logger.debug("Fetched \(annotations.count) annotations from \(trackId) for \(region.description)")
-            return annotations
-            
-        } catch {
-            logger.error("Failed to read BigBed annotations: \(error.localizedDescription)")
-            throw ReferenceBundleError.annotationReadFailed(error.localizedDescription)
-        }
+        try getAnnotationsFromDatabase(trackId: trackId, region: region)
     }
 
     /// Fetches annotations synchronously from a track for a genomic region.
     ///
-    /// Uses `SyncBigBedReader` for synchronous file access, suitable for
-    /// AppKit drawing contexts where async/await cannot be used.
+    /// Uses SQLite annotation database queries for AppKit drawing contexts where
+    /// async/await cannot be used.
     ///
     /// - Parameters:
     ///   - trackId: The annotation track ID
@@ -434,55 +292,7 @@ public final class ReferenceBundle: Sendable {
     /// - Returns: Array of sequence annotations in the region
     /// - Throws: `ReferenceBundleError` if annotations cannot be fetched
     public func getAnnotationsSync(trackId: String, region: GenomicRegion) throws -> [SequenceAnnotation] {
-        guard let trackInfo = annotationTrack(id: trackId) else {
-            throw ReferenceBundleError.trackNotFound(trackId)
-        }
-
-        let trackURL = url.appendingPathComponent(trackInfo.path)
-
-        guard FileManager.default.fileExists(atPath: trackURL.path) else {
-            throw ReferenceBundleError.missingFile(trackInfo.path)
-        }
-
-        do {
-            let reader = try SyncBigBedReader(url: trackURL)
-            let features = try reader.features(region: region)
-
-            let annotations = features.map { bigBedFeatureToAnnotation($0) }
-
-            logger.debug("Fetched \(annotations.count) annotations (sync) from \(trackId) for \(region.description)")
-            return annotations
-
-        } catch {
-            logger.error("Failed to read BigBed annotations (sync): \(error.localizedDescription)")
-            throw ReferenceBundleError.annotationReadFailed(error.localizedDescription)
-        }
-    }
-
-    /// Fetches annotations using a pre-created reader (avoids re-opening FileHandle and re-parsing header).
-    ///
-    /// This overload is for callers that cache `SyncBigBedReader` instances for reuse across
-    /// multiple queries, which avoids the overhead of re-opening the file and re-parsing the
-    /// BigBed header and chromosome B+ tree on every call.
-    ///
-    /// - Parameters:
-    ///   - reader: A pre-created `SyncBigBedReader` for the annotation track
-    ///   - region: The genomic region to query
-    /// - Returns: Array of sequence annotations in the region
-    /// - Throws: `ReferenceBundleError` if annotations cannot be fetched
-    public func getAnnotationsSync(reader: SyncBigBedReader, region: GenomicRegion) throws -> [SequenceAnnotation] {
-        do {
-            let features = try reader.features(region: region)
-
-            let annotations = features.map { bigBedFeatureToAnnotation($0) }
-
-            logger.debug("Fetched \(annotations.count) annotations (sync, cached reader) for \(region.description)")
-            return annotations
-
-        } catch {
-            logger.error("Failed to read BigBed annotations (sync, cached reader): \(error.localizedDescription)")
-            throw ReferenceBundleError.annotationReadFailed(error.localizedDescription)
-        }
+        try getAnnotationsFromDatabase(trackId: trackId, region: region)
     }
 
     // MARK: - Variant Access

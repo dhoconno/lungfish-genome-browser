@@ -102,7 +102,7 @@ final class AnnotationDatabaseTests: XCTestCase {
         XCTAssertTrue(types.contains("primer_bind"))
     }
 
-    func testCreateFromBEDExcludesExonAndIntron() throws {
+    func testCreateFromBEDIncludesExonAndIntron() throws {
         let lines = [
             bed14(chrom: "chr1", start: 100, end: 500, name: "geneA", type: "gene"),
             bed14(chrom: "chr1", start: 150, end: 250, name: "exon1", type: "exon"),
@@ -114,16 +114,15 @@ final class AnnotationDatabaseTests: XCTestCase {
 
         let (db, count) = try createAndOpenDB(lines: lines)
 
-        // gene and UTRs should be indexed; exon and intron excluded
-        XCTAssertEqual(count, 3, "gene + 5'UTR + 3'UTR should be indexed, not exon/intron")
-        XCTAssertEqual(db.totalCount(), 3)
+        XCTAssertEqual(count, 6, "All feature rows should be stored, including exon/intron")
+        XCTAssertEqual(db.totalCount(), 6)
 
         let types = Set(db.allTypes())
         XCTAssertTrue(types.contains("gene"))
         XCTAssertTrue(types.contains("5'UTR"))
         XCTAssertTrue(types.contains("3'UTR"))
-        XCTAssertFalse(types.contains("exon"))
-        XCTAssertFalse(types.contains("intron"))
+        XCTAssertTrue(types.contains("exon"))
+        XCTAssertTrue(types.contains("intron"))
     }
 
     // MARK: - Tests: queryByRegion
@@ -290,11 +289,9 @@ final class AnnotationDatabaseTests: XCTestCase {
         XCTAssertTrue(types.contains("promoter"))
     }
 
-    // MARK: - Tests: Deduplication
+    // MARK: - Tests: Duplicate Preservation
 
-    func testCreateFromBEDDeduplicates() throws {
-        // Same name+type+chrom+start+end → deduplicated
-        // Same name+chrom+start+end but different type → both kept
+    func testCreateFromBEDPreservesDuplicateRows() throws {
         let lines = [
             bed14(chrom: "chr1", start: 100, end: 500, name: "geneA", type: "gene"),
             bed14(chrom: "chr1", start: 100, end: 500, name: "geneA", type: "gene"),
@@ -303,14 +300,13 @@ final class AnnotationDatabaseTests: XCTestCase {
 
         let (db, count) = try createAndOpenDB(lines: lines)
 
-        // gene+gene deduplicates (same type), but gene+CDS are distinct
-        XCTAssertEqual(count, 2, "Same name/coords but different types should both be kept")
-        XCTAssertEqual(db.totalCount(), 2)
+        XCTAssertEqual(count, 3, "Input duplicates should be preserved in SQLite")
+        XCTAssertEqual(db.totalCount(), 3)
     }
 
     // MARK: - Tests: Edge Cases
 
-    func testCreateFromBEDSkipsEmptyAndUnknownNames() throws {
+    func testCreateFromBEDIncludesUnknownAndSynthesizesEmptyName() throws {
         let lines = [
             bed14(chrom: "chr1", start: 100, end: 500, name: "geneA", type: "gene"),
             bed14(chrom: "chr1", start: 600, end: 900, name: "", type: "gene"),
@@ -319,8 +315,12 @@ final class AnnotationDatabaseTests: XCTestCase {
 
         let (db, count) = try createAndOpenDB(lines: lines)
 
-        XCTAssertEqual(count, 1, "Empty and 'unknown' names should be skipped")
-        XCTAssertEqual(db.totalCount(), 1)
+        XCTAssertEqual(count, 3, "All rows should be stored")
+        XCTAssertEqual(db.totalCount(), 3)
+        let names = Set(db.queryByRegion(chromosome: "chr1", start: 0, end: 2000).map(\.name))
+        XCTAssertTrue(names.contains("geneA"))
+        XCTAssertTrue(names.contains("unknown"))
+        XCTAssertTrue(names.contains("gene:chr1:600-900"), "Empty names should be synthesized")
     }
 
     func testCreateFromBEDSkipsCommentsAndShortLines() throws {
@@ -420,10 +420,10 @@ final class AnnotationDatabaseTests: XCTestCase {
         }
     }
 
-    // MARK: - Tests: Deduplication Details
+    // MARK: - Tests: Duplicate Row Semantics
 
-    func testCreateFromBEDDeduplicateFirstWins() throws {
-        // Same name+type+chrom+start+end — deduplicates, first occurrence wins
+    func testCreateFromBEDPreservesDuplicateAttributesRows() throws {
+        // Same name+type+chrom+start+end should preserve both rows.
         let lines = [
             bed14(chrom: "chr1", start: 100, end: 500, name: "feat1", type: "gene",
                   attributes: "product=first"),
@@ -432,13 +432,14 @@ final class AnnotationDatabaseTests: XCTestCase {
         ]
 
         let (db, count) = try createAndOpenDB(lines: lines)
-        XCTAssertEqual(count, 1)
+        XCTAssertEqual(count, 2)
 
-        let record = db.lookupAnnotation(name: "feat1", chromosome: "chr1", start: 100, end: 500)
-        XCTAssertNotNil(record)
-        XCTAssertEqual(record?.type, "gene")
-        // First occurrence's attributes should be stored
-        XCTAssertTrue(record?.attributes?.contains("first") ?? false, "First occurrence should win")
+        let records = db.queryByRegion(chromosome: "chr1", start: 0, end: 1000)
+            .filter { $0.name == "feat1" }
+        XCTAssertEqual(records.count, 2)
+        let attrs = Set(records.compactMap(\.attributes))
+        XCTAssertTrue(attrs.contains("product=first"))
+        XCTAssertTrue(attrs.contains("product=second"))
     }
 
     // MARK: - Tests: BED Column Fallback
@@ -657,7 +658,7 @@ final class AnnotationDatabaseTests: XCTestCase {
 
     func testToAnnotationTypeMapping() throws {
         // Verify various type strings map to correct AnnotationType
-        // Note: only indexable types are stored in createFromBED (exon, intron excluded)
+        // Verify various type strings map to expected AnnotationType values.
         let lines = [
             bed14(chrom: "chr1", start: 0, end: 100, name: "a", type: "gene"),
             bed14(chrom: "chr1", start: 100, end: 200, name: "b", type: "mRNA"),
@@ -775,7 +776,7 @@ final class AnnotationDatabaseTests: XCTestCase {
             gff3Line(seqid: "chr1", type: "intron", start: 200, end: 300, attributes: "ID=intron1;Name=myIntron"),
         ]
         let (db, count) = try await createAndOpenDBFromGFF3(lines: lines)
-        // gene indexed, exon consumed as child, intron not in indexableTypes
+        // gene indexed, exon consumed as child, intron ignored by GFF3 importer
         XCTAssertEqual(count, 1)
         XCTAssertEqual(db.queryByRegion(chromosome: "chr1", start: 0, end: 1000).first?.name, "myGene")
     }
