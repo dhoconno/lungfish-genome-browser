@@ -305,6 +305,52 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         showWelcomeWindow()
     }
 
+    /// Fallback import entry point for callers that have bundle URLs but cannot
+    /// rely on DownloadCenter callback wiring (e.g. alternate app startup paths).
+    func importReadyBundles(_ bundleURLs: [URL]) {
+        handleMultipleDownloadsSync(bundleURLs)
+    }
+
+    /// Returns true when `url` is inside `directory`, using resolved paths
+    /// (symlink-aware) and path-component prefix matching.
+    private func isURL(_ url: URL, inside directory: URL) -> Bool {
+        let child = url.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+        let parent = directory.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+        return child.count >= parent.count && child.starts(with: parent)
+    }
+
+    /// Ensures the sidebar is scoped to the project containing `url` (or a safe
+    /// fallback folder), then refreshes and selects the item.
+    private func refreshSidebarAndSelectImportedURL(_ url: URL) {
+        guard let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController else { return }
+
+        let targetRoot: URL?
+        if let projectURL = DocumentManager.shared.activeProject?.url, isURL(url, inside: projectURL) {
+            targetRoot = projectURL
+        } else if let workingURL = workingDirectoryURL, isURL(url, inside: workingURL) {
+            targetRoot = workingURL
+        } else if let sidebarProject = sidebarController.currentProjectURL, isURL(url, inside: sidebarProject) {
+            targetRoot = sidebarProject
+        } else {
+            targetRoot = nil
+        }
+
+        if let root = targetRoot {
+            if sidebarController.currentProjectURL?.standardizedFileURL != root.standardizedFileURL {
+                debugLog("refreshSidebarAndSelectImportedURL: Rebasing sidebar to \(root.path)")
+                sidebarController.openProject(at: root)
+            }
+        } else if sidebarController.currentProjectURL == nil {
+            // No project context; mirror disk by showing the containing directory.
+            let parent = url.deletingLastPathComponent()
+            debugLog("refreshSidebarAndSelectImportedURL: No active project, opening parent \(parent.path)")
+            sidebarController.openProject(at: parent)
+        }
+
+        sidebarController.reloadFromFilesystem()
+        _ = sidebarController.selectItem(forURL: url)
+    }
+
     deinit {
         NotificationCenter.default.removeObserver(self)
     }
@@ -1635,8 +1681,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         // Bundles are directories and should be surfaced directly in the sidebar.
         if destinationURL.pathExtension.lowercased() == "lungfishref" {
             activityIndicator?.hide()
-            sidebarController?.reloadFromFilesystem()
-            sidebarController?.selectItem(forURL: destinationURL)
+            refreshSidebarAndSelectImportedURL(destinationURL)
             return
         }
 
@@ -1740,13 +1785,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         for (index, tempURL) in tempFileURLs.enumerated() {
             // Skip copy if file is already inside the project directory (e.g. extraction bundles
             // saved directly to Extractions folder). Just use the URL as-is.
-            let tempPath = tempURL.standardizedFileURL.path
             let alreadyInProject: Bool
-            if let projectPath = DocumentManager.shared.activeProject?.url.standardizedFileURL.path,
-               tempPath.hasPrefix(projectPath) {
+            if let projectURL = DocumentManager.shared.activeProject?.url,
+               isURL(tempURL, inside: projectURL) {
                 alreadyInProject = true
-            } else if let workingPath = workingDirectoryURL?.standardizedFileURL.path,
-                      tempPath.hasPrefix(workingPath) {
+            } else if let workingURL = workingDirectoryURL,
+                      isURL(tempURL, inside: workingURL) {
                 alreadyInProject = true
             } else {
                 alreadyInProject = false
@@ -1805,8 +1849,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         if let firstURL = copiedURLs.first {
             if firstURL.pathExtension.lowercased() == "lungfishref" {
                 activityIndicator?.hide()
-                sidebarController?.reloadFromFilesystem()
-                sidebarController?.selectItem(forURL: firstURL)
+                refreshSidebarAndSelectImportedURL(firstURL)
                 debugLog("handleMultipleDownloadsSync: Imported \(copiedURLs.count) bundle(s)")
                 return
             }

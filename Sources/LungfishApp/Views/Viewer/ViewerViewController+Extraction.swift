@@ -366,11 +366,19 @@ extension SequenceViewerView {
                     DispatchQueue.main.async {
                         MainActor.assumeIsolated {
                             extractionLogger.info("createExtractionBundle: SUCCESS -> \(finalBundleURL.path)")
+                            let bundleURLs = [finalBundleURL]
+                            let hasBundleReadyCallback = DownloadCenter.shared.onBundleReady != nil
                             DownloadCenter.shared.complete(
                                 id: itemId,
                                 detail: "Bundle ready",
-                                bundleURLs: [finalBundleURL]
+                                bundleURLs: bundleURLs
                             )
+                            if !hasBundleReadyCallback {
+                                extractionLogger.error(
+                                    "createExtractionBundle: DownloadCenter.onBundleReady not configured; using AppDelegate fallback import"
+                                )
+                                (NSApp.delegate as? AppDelegate)?.importReadyBundles(bundleURLs)
+                            }
                         }
                     }
                 } catch {
