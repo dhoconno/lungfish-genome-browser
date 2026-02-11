@@ -348,6 +348,28 @@ public class ViewerViewController: NSViewController {
             object: nil
         )
         logger.debug("ViewerViewController: Registered bundleViewStateResetRequested observer")
+
+        // Observer for extraction requests from inspector
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleExtractSequenceRequested(_:)),
+            name: .extractSequenceRequested,
+            object: nil
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleCopyAnnotationAsFASTARequested(_:)),
+            name: .copyAnnotationAsFASTARequested,
+            object: nil
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleCopyTranslationAsFASTARequested(_:)),
+            name: .copyTranslationAsFASTARequested,
+            object: nil
+        )
     }
 
     /// Handles the toggle of CDS translation display from the inspector.
@@ -364,6 +386,21 @@ public class ViewerViewController: NSViewController {
         } else {
             viewerView?.hideCDSTranslation()
         }
+    }
+
+    @objc private func handleExtractSequenceRequested(_ notification: Notification) {
+        guard let annotation = notification.userInfo?["annotation"] as? SequenceAnnotation else { return }
+        viewerView?.presentExtractionSheet(for: .annotation(annotation))
+    }
+
+    @objc private func handleCopyAnnotationAsFASTARequested(_ notification: Notification) {
+        guard let annotation = notification.userInfo?["annotation"] as? SequenceAnnotation else { return }
+        viewerView?.copyAnnotationAsFASTAImpl(annotation)
+    }
+
+    @objc private func handleCopyTranslationAsFASTARequested(_ notification: Notification) {
+        guard let annotation = notification.userInfo?["annotation"] as? SequenceAnnotation else { return }
+        viewerView?.copyAnnotationTranslationAsFASTAImpl(annotation)
     }
 
     /// Handles annotation settings change notifications.
@@ -4680,6 +4717,9 @@ public class SequenceViewerView: NSView {
         deleteItem.representedObject = annotation
         menu.addItem(deleteItem)
 
+        // Extraction actions
+        addExtractionMenuItems(to: menu, for: annotation)
+
         menu.addItem(NSMenuItem.separator())
 
         // Show in Inspector
@@ -4718,6 +4758,9 @@ public class SequenceViewerView: NSView {
         let revCompItem = NSMenuItem(title: "Copy Reverse Complement", action: #selector(copyReverseComplementAction(_:)), keyEquivalent: "")
         revCompItem.target = self
         menu.addItem(revCompItem)
+
+        // Extraction actions
+        addSelectionExtractionMenuItems(to: menu)
 
         menu.addItem(NSMenuItem.separator())
 

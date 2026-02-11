@@ -169,6 +169,27 @@ public class InspectorViewController: NSViewController {
         viewModel.selectionSectionViewModel.onShowTranslation = { [weak self] annotation in
             self?.handleShowTranslationRequested(annotation)
         }
+        viewModel.selectionSectionViewModel.onExtractSequence = { annotation in
+            NotificationCenter.default.post(
+                name: .extractSequenceRequested,
+                object: nil,
+                userInfo: [NotificationUserInfoKey.annotation: annotation]
+            )
+        }
+        viewModel.selectionSectionViewModel.onCopyAsFASTA = { annotation in
+            NotificationCenter.default.post(
+                name: .copyAnnotationAsFASTARequested,
+                object: nil,
+                userInfo: [NotificationUserInfoKey.annotation: annotation]
+            )
+        }
+        viewModel.selectionSectionViewModel.onCopyTranslationAsFASTA = { annotation in
+            NotificationCenter.default.post(
+                name: .copyTranslationAsFASTARequested,
+                object: nil,
+                userInfo: [NotificationUserInfoKey.annotation: annotation]
+            )
+        }
 
         // Appearance section callbacks
         viewModel.appearanceSectionViewModel.onSettingsChanged = { [weak self] in

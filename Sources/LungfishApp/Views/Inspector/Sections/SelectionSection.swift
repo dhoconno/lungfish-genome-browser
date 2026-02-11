@@ -59,6 +59,15 @@ public final class SelectionSectionViewModel {
     /// Callback to show/compute translation in the viewer for a CDS annotation.
     public var onShowTranslation: ((SequenceAnnotation) -> Void)?
 
+    /// Callback to extract sequence (presents extraction sheet).
+    public var onExtractSequence: ((SequenceAnnotation) -> Void)?
+
+    /// Callback to copy annotation as FASTA.
+    public var onCopyAsFASTA: ((SequenceAnnotation) -> Void)?
+
+    /// Callback to copy CDS translation as FASTA.
+    public var onCopyTranslationAsFASTA: ((SequenceAnnotation) -> Void)?
+
     /// Whether the translation track is currently visible in the viewer.
     public var isTranslationVisible: Bool = false
 
@@ -597,6 +606,11 @@ public struct SelectionSection: View {
                 }
             }
 
+            // Extraction actions
+            if let annotation = viewModel.selectedAnnotation {
+                extractionButtons(for: annotation)
+            }
+
             // Translation section (for CDS/mRNA annotations or annotations with stored translations)
             if viewModel.type == .cds || viewModel.type == .mRNA || viewModel.fullTranslation != nil {
                 translationSection
@@ -655,6 +669,46 @@ public struct SelectionSection: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
+    }
+
+    // MARK: - Extraction Buttons
+
+    @ViewBuilder
+    private func extractionButtons(for annotation: SequenceAnnotation) -> some View {
+        Divider()
+            .padding(.vertical, 4)
+
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Sequence")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Button {
+                viewModel.onCopyAsFASTA?(annotation)
+            } label: {
+                Label("Copy as FASTA", systemImage: "doc.on.doc")
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+
+            if annotation.type == .cds {
+                Button {
+                    viewModel.onCopyTranslationAsFASTA?(annotation)
+                } label: {
+                    Label("Copy Translation as FASTA", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+            }
+
+            Button {
+                viewModel.onExtractSequence?(annotation)
+            } label: {
+                Label("Extract Sequence\u{2026}", systemImage: "scissors")
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+        }
     }
 
     // MARK: - Translation Section

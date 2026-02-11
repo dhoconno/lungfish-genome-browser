@@ -722,6 +722,51 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         pasteboard.clearContents()
         pasteboard.setString(coords, forType: .string)
     }
+
+    // MARK: - Extraction Actions
+
+    private func makeAnnotation(from result: AnnotationSearchIndex.SearchResult) -> SequenceAnnotation {
+        let type = AnnotationType(rawValue: result.type) ?? .gene
+        let strand: Strand = result.strand == "+" ? .forward : (result.strand == "-" ? .reverse : .unknown)
+        return SequenceAnnotation(
+            type: type,
+            name: result.name,
+            chromosome: result.chromosome,
+            start: result.start,
+            end: result.end,
+            strand: strand
+        )
+    }
+
+    @objc private func copyAsFASTAAction(_ sender: NSMenuItem) {
+        guard let result = sender.representedObject as? AnnotationSearchIndex.SearchResult else { return }
+        let annotation = makeAnnotation(from: result)
+        NotificationCenter.default.post(
+            name: .copyAnnotationAsFASTARequested,
+            object: nil,
+            userInfo: ["annotation": annotation]
+        )
+    }
+
+    @objc private func copyTranslationAsFASTAAction(_ sender: NSMenuItem) {
+        guard let result = sender.representedObject as? AnnotationSearchIndex.SearchResult else { return }
+        let annotation = makeAnnotation(from: result)
+        NotificationCenter.default.post(
+            name: .copyTranslationAsFASTARequested,
+            object: nil,
+            userInfo: ["annotation": annotation]
+        )
+    }
+
+    @objc private func extractSequenceAction(_ sender: NSMenuItem) {
+        guard let result = sender.representedObject as? AnnotationSearchIndex.SearchResult else { return }
+        let annotation = makeAnnotation(from: result)
+        NotificationCenter.default.post(
+            name: .extractSequenceRequested,
+            object: nil,
+            userInfo: ["annotation": annotation]
+        )
+    }
 }
 
 // MARK: - NSMenuDelegate
@@ -775,5 +820,25 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
             }
             menu.addItem(copyTransItem)
         }
+
+        // Extraction actions
+        menu.addItem(NSMenuItem.separator())
+
+        let copyFASTAItem = NSMenuItem(title: "Copy as FASTA", action: #selector(copyAsFASTAAction(_:)), keyEquivalent: "")
+        copyFASTAItem.target = self
+        copyFASTAItem.representedObject = annotation
+        menu.addItem(copyFASTAItem)
+
+        if isCDS {
+            let copyProteinItem = NSMenuItem(title: "Copy Translation as FASTA", action: #selector(copyTranslationAsFASTAAction(_:)), keyEquivalent: "")
+            copyProteinItem.target = self
+            copyProteinItem.representedObject = annotation
+            menu.addItem(copyProteinItem)
+        }
+
+        let extractItem = NSMenuItem(title: "Extract Sequence\u{2026}", action: #selector(extractSequenceAction(_:)), keyEquivalent: "")
+        extractItem.target = self
+        extractItem.representedObject = annotation
+        menu.addItem(extractItem)
     }
 }

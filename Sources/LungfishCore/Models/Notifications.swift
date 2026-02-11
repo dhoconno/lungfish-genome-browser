@@ -104,6 +104,24 @@ extension Notification.Name {
     /// - `"annotation"`: The `SequenceAnnotation` (CDS) to translate.
     /// - `"visible"`: `Bool` indicating whether to show or hide.
     public static let showCDSTranslationRequested = Notification.Name("showCDSTranslationRequested")
+
+    /// Posted to request extracting sequence from an annotation (shows extraction sheet).
+    ///
+    /// The `userInfo` dictionary contains:
+    /// - `"annotation"`: The `SequenceAnnotation` to extract from.
+    public static let extractSequenceRequested = Notification.Name("extractSequenceRequested")
+
+    /// Posted to request copying an annotation's sequence as FASTA to clipboard.
+    ///
+    /// The `userInfo` dictionary contains:
+    /// - `"annotation"`: The `SequenceAnnotation` to copy.
+    public static let copyAnnotationAsFASTARequested = Notification.Name("copyAnnotationAsFASTARequested")
+
+    /// Posted to request copying a CDS annotation's translation as FASTA to clipboard.
+    ///
+    /// The `userInfo` dictionary contains:
+    /// - `"annotation"`: The `SequenceAnnotation` (CDS) to translate and copy.
+    public static let copyTranslationAsFASTARequested = Notification.Name("copyTranslationAsFASTARequested")
 }
 
 // MARK: - Notification UserInfo Keys
