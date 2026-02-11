@@ -62,6 +62,18 @@ final class AnnotationTableContextMenuTests: XCTestCase {
         return drawer
     }
 
+    private func invokeMenuItem(
+        titled title: String,
+        on drawer: AnnotationTableDrawerView
+    ) -> NSMenuItem? {
+        let menu = NSMenu()
+        drawer.menuNeedsUpdate(menu)
+        guard let item = menu.items.first(where: { $0.title == title }) else { return nil }
+        guard let action = item.action else { return nil }
+        _ = (item.target as AnyObject?)?.perform(action, with: item)
+        return item
+    }
+
     // MARK: - lookupTranslation Tests
 
     func testLookupTranslationReturnsCDSTranslation() throws {
@@ -201,5 +213,62 @@ final class AnnotationTableContextMenuTests: XCTestCase {
         let translationItem = menu.items.first(where: { $0.title == "Copy Translation" })
         XCTAssertNotNil(translationItem, "Mixed-case CDS type should still offer Copy Translation")
         XCTAssertFalse(translationItem?.isEnabled ?? true, "Without translation data, item should be present but disabled")
+    }
+
+    func testCopyTranslationAsFASTAUsesDatabaseIntervals() throws {
+        let drawer = try createDrawerWithDatabase(lines: [
+            "chr1\t100\t260\tcds-1\t0\t+\t100\t260\t0,0,0\t2\t50,40\t0,120\tCDS\ttranslation=MKVLGPRSE"
+        ])
+        XCTAssertTrue(drawer.selectAnnotation(named: "cds-1"))
+
+        expectation(
+            forNotification: .copyTranslationAsFASTARequested,
+            object: nil
+        ) { notification in
+            let captured = notification.userInfo?["annotation"] as? SequenceAnnotation
+            XCTAssertEqual(captured?.type, .cds)
+            XCTAssertEqual(captured?.intervals.count, 2)
+            XCTAssertEqual(captured?.intervals.first?.start, 100)
+            XCTAssertEqual(captured?.intervals.first?.end, 150)
+            XCTAssertEqual(captured?.intervals.last?.start, 220)
+            XCTAssertEqual(captured?.intervals.last?.end, 260)
+            return true
+        }
+
+        let item = invokeMenuItem(titled: "Copy Translation as FASTA", on: drawer)
+        XCTAssertNotNil(item)
+        waitForExpectations(timeout: 1.0)
+    }
+
+    func testCopyTranslationAsFASTAUsesRobustTypeParsingWithoutDatabaseRecord() throws {
+        let drawer = AnnotationTableDrawerView(frame: NSRect(x: 0, y: 0, width: 800, height: 200))
+        drawer.setAnnotations([
+            AnnotationSearchIndex.SearchResult(
+                name: "cds-fallback",
+                chromosome: "chr1",
+                start: 10,
+                end: 40,
+                trackId: "annotations",
+                type: "Cds",
+                strand: "+"
+            )
+        ])
+        XCTAssertTrue(drawer.selectAnnotation(named: "cds-fallback"))
+
+        expectation(
+            forNotification: .copyTranslationAsFASTARequested,
+            object: nil
+        ) { notification in
+            let captured = notification.userInfo?["annotation"] as? SequenceAnnotation
+            XCTAssertEqual(captured?.type, .cds)
+            XCTAssertEqual(captured?.intervals.count, 1)
+            XCTAssertEqual(captured?.intervals.first?.start, 10)
+            XCTAssertEqual(captured?.intervals.first?.end, 40)
+            return true
+        }
+
+        let item = invokeMenuItem(titled: "Copy Translation as FASTA", on: drawer)
+        XCTAssertNotNil(item)
+        waitForExpectations(timeout: 1.0)
     }
 }
