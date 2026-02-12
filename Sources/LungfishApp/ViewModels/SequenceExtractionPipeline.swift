@@ -48,7 +48,14 @@ public final class SequenceExtractionPipeline: @unchecked Sendable {
         let tempDir = fileManager.temporaryDirectory
             .appendingPathComponent("lungfish-extract-\(UUID().uuidString)", isDirectory: true)
         try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? fileManager.removeItem(at: tempDir) }
+        // Cleanup is best-effort and asynchronous to avoid blocking return after
+        // bundle creation on platforms where temp dir removal can stall.
+        defer {
+            let cleanupURL = tempDir
+            DispatchQueue.global(qos: .utility).async {
+                try? FileManager.default.removeItem(at: cleanupURL)
+            }
+        }
 
         // Write plain FASTA
         progressHandler?(0.15, "Writing FASTA...")
