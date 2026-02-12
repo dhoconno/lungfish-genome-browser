@@ -123,18 +123,11 @@ public final class VariantSectionViewModel {
         var hRef = 0, het = 0, hAlt = 0, noCall = 0
 
         for gt in genotypes {
-            guard let gtStr = gt.genotype else { noCall += 1; continue }
-            let trimmed = gtStr.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty || trimmed == "." || trimmed == "./." || trimmed == ".|." {
-                noCall += 1
-            } else if gt.allele1 < 0 && gt.allele2 < 0 {
-                noCall += 1
-            } else if gt.allele1 == 0 && gt.allele2 == 0 {
-                hRef += 1
-            } else if gt.allele1 == gt.allele2 {
-                hAlt += 1
-            } else {
-                het += 1
+            switch GenotypeDisplayCall.classify(genotype: gt.genotype, allele1: gt.allele1, allele2: gt.allele2) {
+            case .homRef: hRef += 1
+            case .het:    het += 1
+            case .homAlt: hAlt += 1
+            case .noCall: noCall += 1
             }
         }
 
@@ -328,7 +321,7 @@ public struct VariantSection: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            ForEach(Array(viewModel.infoFields.prefix(20).enumerated()), id: \.offset) { _, field in
+            ForEach(Array(viewModel.infoFields.prefix(20)), id: \.key) { field in
                 HStack(alignment: .top) {
                     Text(field.key)
                         .font(.system(.caption, design: .monospaced))

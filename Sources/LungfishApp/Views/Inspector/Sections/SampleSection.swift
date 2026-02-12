@@ -29,11 +29,35 @@ public final class SampleSectionViewModel {
     /// Available metadata field names for sorting/filtering.
     var metadataFields: [String] = []
 
+    /// Per-sample metadata dictionaries.
+    var sampleMetadata: [String: [String: String]] = [:]
+
+    /// Source filenames keyed by sample name.
+    var sourceFiles: [String: String] = [:]
+
     /// Whether variant data is available (controls section visibility).
     var hasVariantData: Bool = false
 
     /// Whether the section is expanded.
     var isExpanded: Bool = true
+
+    /// The sample currently being edited (nil means none).
+    var editingSample: String?
+
+    /// Key-value pairs being edited for the current sample.
+    var editingMetadata: [(key: String, value: String)] = []
+
+    /// New key name being typed in the metadata editor.
+    var newMetadataKey: String = ""
+
+    /// New value being typed in the metadata editor.
+    var newMetadataValue: String = ""
+
+    /// Callback to persist metadata changes to the database.
+    var onSaveMetadata: ((_ sampleName: String, _ metadata: [String: String]) -> Void)?
+
+    /// Callback to import metadata from a file.
+    var onImportMetadata: (() -> Void)?
 
     // MARK: - Callbacks
 
@@ -55,10 +79,18 @@ public final class SampleSectionViewModel {
     // MARK: - Methods
 
     /// Updates the section with sample data from a variant database.
-    func update(sampleCount: Int, sampleNames: [String], metadataFields: [String]) {
+    func update(
+        sampleCount: Int,
+        sampleNames: [String],
+        metadataFields: [String],
+        sampleMetadata: [String: [String: String]] = [:],
+        sourceFiles: [String: String] = [:]
+    ) {
         self.sampleCount = sampleCount
         self.sampleNames = sampleNames
         self.metadataFields = metadataFields
+        self.sampleMetadata = sampleMetadata
+        self.sourceFiles = sourceFiles
         self.hasVariantData = sampleCount > 0
     }
 
@@ -67,8 +99,59 @@ public final class SampleSectionViewModel {
         sampleCount = 0
         sampleNames = []
         metadataFields = []
+        sampleMetadata = [:]
+        sourceFiles = [:]
         hasVariantData = false
         displayState = SampleDisplayState()
+        editingSample = nil
+    }
+
+    /// Begins editing metadata for a sample.
+    func beginEditingMetadata(for sampleName: String) {
+        editingSample = sampleName
+        let metadata = sampleMetadata[sampleName] ?? [:]
+        editingMetadata = metadata.sorted(by: { $0.key < $1.key }).map { (key: $0.key, value: $0.value) }
+        newMetadataKey = ""
+        newMetadataValue = ""
+    }
+
+    /// Saves the current metadata edits.
+    func saveMetadataEdits() {
+        guard let sampleName = editingSample else { return }
+        var metadata: [String: String] = [:]
+        for pair in editingMetadata where !pair.key.isEmpty {
+            metadata[pair.key] = pair.value
+        }
+        sampleMetadata[sampleName] = metadata
+        onSaveMetadata?(sampleName, metadata)
+        editingSample = nil
+
+        // Update metadata fields
+        var allFields = Set<String>()
+        for (_, meta) in sampleMetadata {
+            allFields.formUnion(meta.keys)
+        }
+        metadataFields = allFields.sorted()
+    }
+
+    /// Cancels metadata editing.
+    func cancelMetadataEdits() {
+        editingSample = nil
+        editingMetadata = []
+    }
+
+    /// Adds a new key-value pair to the editing metadata.
+    func addMetadataField() {
+        guard !newMetadataKey.isEmpty else { return }
+        editingMetadata.append((key: newMetadataKey, value: newMetadataValue))
+        newMetadataKey = ""
+        newMetadataValue = ""
+    }
+
+    /// Removes a metadata field at the given index.
+    func removeMetadataField(at index: Int) {
+        guard index < editingMetadata.count else { return }
+        editingMetadata.remove(at: index)
     }
 
     /// Toggles genotype row visibility and notifies listeners.
@@ -187,6 +270,10 @@ public struct SampleSection: View {
                     genotypeRowControls
                     Divider()
                     sampleVisibilitySection
+                    if !viewModel.sampleNames.isEmpty {
+                        Divider()
+                        sampleMetadataSection
+                    }
                 }
             } label: {
                 Label("Sample Display", systemImage: "person.3")
@@ -321,5 +408,163 @@ public struct SampleSection: View {
         .onTapGesture {
             viewModel.toggleSampleVisibility(name)
         }
+    }
+
+    // MARK: - Sample Metadata Section
+
+    @ViewBuilder
+    private var sampleMetadataSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Sample Metadata")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if viewModel.onImportMetadata != nil {
+                    Button {
+                        viewModel.onImportMetadata?()
+                    } label: {
+                        Label("Import...", systemImage: "square.and.arrow.down")
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                }
+            }
+
+            ForEach(viewModel.sampleNames.prefix(50), id: \.self) { name in
+                sampleMetadataRow(name)
+            }
+            if viewModel.sampleNames.count > 50 {
+                Text("... and \(viewModel.sampleNames.count - 50) more samples")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sampleMetadataRow(_ name: String) -> some View {
+        let isEditing = viewModel.editingSample == name
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(name)
+                    .font(.system(.caption, design: .monospaced))
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                Button {
+                    if isEditing {
+                        viewModel.saveMetadataEdits()
+                    } else {
+                        viewModel.beginEditingMetadata(for: name)
+                    }
+                } label: {
+                    Image(systemName: isEditing ? "checkmark.circle" : "pencil")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                if isEditing {
+                    Button {
+                        viewModel.cancelMetadataEdits()
+                    } label: {
+                        Image(systemName: "xmark.circle")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+
+            // Source file
+            if let sourceFile = viewModel.sourceFiles[name] {
+                HStack(spacing: 4) {
+                    Text("Source:")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Text(sourceFile)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            if isEditing {
+                metadataEditor
+            } else {
+                // Display existing metadata
+                let metadata = viewModel.sampleMetadata[name] ?? [:]
+                if !metadata.isEmpty {
+                    ForEach(metadata.keys.sorted(), id: \.self) { key in
+                        HStack(spacing: 4) {
+                            Text("\(key):")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                            Text(metadata[key] ?? "")
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private var metadataEditor: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // Existing fields
+            ForEach(Array(viewModel.editingMetadata.enumerated()), id: \.offset) { index, pair in
+                HStack(spacing: 4) {
+                    TextField("Key", text: Binding(
+                        get: { viewModel.editingMetadata[index].key },
+                        set: { viewModel.editingMetadata[index].key = $0 }
+                    ))
+                    .font(.system(.caption, design: .monospaced))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 80)
+
+                    TextField("Value", text: Binding(
+                        get: { viewModel.editingMetadata[index].value },
+                        set: { viewModel.editingMetadata[index].value = $0 }
+                    ))
+                    .font(.system(.caption, design: .monospaced))
+                    .textFieldStyle(.roundedBorder)
+
+                    Button {
+                        viewModel.removeMetadataField(at: index)
+                    } label: {
+                        Image(systemName: "minus.circle")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+
+            // Add new field
+            HStack(spacing: 4) {
+                TextField("New key", text: $viewModel.newMetadataKey)
+                    .font(.system(.caption, design: .monospaced))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 80)
+
+                TextField("New value", text: $viewModel.newMetadataValue)
+                    .font(.system(.caption, design: .monospaced))
+                    .textFieldStyle(.roundedBorder)
+
+                Button {
+                    viewModel.addMetadataField()
+                } label: {
+                    Image(systemName: "plus.circle")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .disabled(viewModel.newMetadataKey.isEmpty)
+            }
+        }
+        .padding(.leading, 8)
     }
 }

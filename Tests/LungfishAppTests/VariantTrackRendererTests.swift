@@ -56,6 +56,27 @@ final class VariantTrackRendererTests: XCTestCase {
         )!
     }
 
+    /// Reads the RGBA pixel at (x, y) from a bitmap context.
+    /// Returns (r, g, b, a) as UInt8 values. Coordinate origin is bottom-left (CG convention).
+    private func pixelColor(at x: Int, y: Int, in ctx: CGContext) -> (r: UInt8, g: UInt8, b: UInt8, a: UInt8) {
+        guard let data = ctx.data else { return (0, 0, 0, 0) }
+        let bytesPerRow = ctx.bytesPerRow
+        // premultipliedFirst = ARGB byte order
+        let offset = y * bytesPerRow + x * 4
+        let ptr = data.assumingMemoryBound(to: UInt8.self)
+        let a = ptr[offset]
+        let r = ptr[offset + 1]
+        let g = ptr[offset + 2]
+        let b = ptr[offset + 3]
+        return (r, g, b, a)
+    }
+
+    /// Checks whether a pixel has been drawn (is not all-zero).
+    private func isNonBlack(at x: Int, y: Int, in ctx: CGContext) -> Bool {
+        let (r, g, b, _) = pixelColor(at: x, y: y, in: ctx)
+        return r > 0 || g > 0 || b > 0
+    }
+
     // MARK: - Layout Height Tests
 
     func testTotalHeightSummaryBarOnly() {
@@ -139,6 +160,12 @@ final class VariantTrackRendererTests: XCTestCase {
         let frame = makeFrame()
         let ctx = makeBitmapContext()
         VariantTrackRenderer.drawSummaryBar(variants: [], frame: frame, context: ctx, yOffset: 0)
+
+        // Empty variants should draw nothing — center pixel should be black/transparent
+        let (r, g, b, _) = pixelColor(at: 400, y: 10, in: ctx)
+        XCTAssertEqual(r, 0, "Empty summary bar should not draw at center")
+        XCTAssertEqual(g, 0)
+        XCTAssertEqual(b, 0)
     }
 
     func testDrawSummaryBarWithSingleSNP() {
@@ -146,6 +173,13 @@ final class VariantTrackRendererTests: XCTestCase {
         let ctx = makeBitmapContext()
         let variant = makeVariantAnnotation(start: 500, end: 501, variantType: "SNP")
         VariantTrackRenderer.drawSummaryBar(variants: [variant], frame: frame, context: ctx, yOffset: 0)
+
+        // SNP at position 500 in range 0-1000 with 800px width → pixel ~400
+        let snpPx = Int(frame.screenPosition(for: 500))
+        let (r, g, b, _) = pixelColor(at: snpPx, y: 10, in: ctx)
+        // SNP color is green (0, 0.6, 0.2) → green channel should dominate
+        XCTAssertGreaterThan(g, r, "SNP pixel should have green > red")
+        XCTAssertGreaterThan(g, 100, "SNP pixel green channel should be significant")
     }
 
     func testDrawSummaryBarWithMultipleTypes() {
@@ -159,6 +193,16 @@ final class VariantTrackRendererTests: XCTestCase {
             makeVariantAnnotation(name: "rs5", start: 500, end: 503, variantType: "COMPLEX"),
         ]
         VariantTrackRenderer.drawSummaryBar(variants: variants, frame: frame, context: ctx, yOffset: 10)
+
+        // Each variant type should render a colored bar at its pixel position
+        let snpPx = Int(frame.screenPosition(for: 100))
+        let delPx = Int(frame.screenPosition(for: 200))
+        let insPx = Int(frame.screenPosition(for: 300))
+
+        // All three positions should have non-zero pixels at mid-bar height (y=20)
+        XCTAssertTrue(isNonBlack(at: snpPx, y: 20, in: ctx), "SNP position should have rendered pixels")
+        XCTAssertTrue(isNonBlack(at: delPx, y: 20, in: ctx), "DEL position should have rendered pixels")
+        XCTAssertTrue(isNonBlack(at: insPx, y: 20, in: ctx), "INS position should have rendered pixels")
     }
 
     func testDrawSummaryBarWithOverlappingVariants() {
@@ -211,6 +255,21 @@ final class VariantTrackRendererTests: XCTestCase {
         VariantTrackRenderer.drawGenotypeRows(
             genotypeData: data, frame: frame, context: ctx, yOffset: 30, state: state
         )
+
+        // Row height is 10px (expanded). yOffset=30.
+        // S1 at y=30, S2 at y=40, S3 at y=50.
+        // Site 1 at position 100 → pixel ~80, Site 2 at position 300 → pixel ~240.
+        let site1Px = Int(frame.screenPosition(for: 100))
+
+        // S2 het at site 1 (y=40+5=45 center): het color = dark blue (34, 12, 253)
+        let (r2, _, b2, _) = pixelColor(at: site1Px, y: 45, in: ctx)
+        XCTAssertGreaterThan(b2, r2, "Het pixel should have dominant blue channel")
+        XCTAssertGreaterThan(b2, 200, "Het pixel should have strong blue")
+
+        // S3 homAlt at site 1 (y=50+5=55 center): homAlt color = cyan (17, 248, 254)
+        let (r3, g3, b3, _) = pixelColor(at: site1Px, y: 55, in: ctx)
+        XCTAssertGreaterThan(g3, r3, "HomAlt pixel should have green > red")
+        XCTAssertGreaterThan(b3, r3, "HomAlt pixel should have blue > red")
     }
 
     func testDrawGenotypeRowsDensityModeSkips() {
@@ -442,19 +501,26 @@ final class VariantTrackRendererTests: XCTestCase {
         XCTAssertEqual(call, .noCall)
     }
 
+    func testGenotypeClassification_NoCall_OneAlleleMissing() {
+        // genotype string is "0/1" but allele2 is -1 → noCall (partial missing)
+        let call = classifyGenotypeForTesting(genotype: "0/1", a1: 0, a2: -1)
+        XCTAssertEqual(call, .noCall)
+    }
+
+    func testGenotypeClassification_ClassifyStaticMethod() {
+        // Directly test the static method on GenotypeDisplayCall
+        XCTAssertEqual(GenotypeDisplayCall.classify(genotype: "0/0", allele1: 0, allele2: 0), .homRef)
+        XCTAssertEqual(GenotypeDisplayCall.classify(genotype: "0/1", allele1: 0, allele2: 1), .het)
+        XCTAssertEqual(GenotypeDisplayCall.classify(genotype: "1/1", allele1: 1, allele2: 1), .homAlt)
+        XCTAssertEqual(GenotypeDisplayCall.classify(genotype: nil, allele1: -1, allele2: -1), .noCall)
+        XCTAssertEqual(GenotypeDisplayCall.classify(genotype: "0/1", allele1: -1, allele2: 1), .noCall)
+    }
+
     // MARK: - Helper for genotype classification
 
     /// Reproduces the classification logic from the free function for testing.
     private func classifyGenotypeForTesting(genotype: String?, a1: Int, a2: Int) -> GenotypeDisplayCall {
-        guard let gtStr = genotype else { return .noCall }
-        let trimmed = gtStr.trimmingCharacters(in: .whitespaces)
-        if trimmed.isEmpty || trimmed == "." || trimmed == "./." || trimmed == ".|." {
-            return .noCall
-        }
-        if a1 < 0 && a2 < 0 { return .noCall }
-        if a1 == 0 && a2 == 0 { return .homRef }
-        if a1 == a2 { return .homAlt }
-        return .het
+        GenotypeDisplayCall.classify(genotype: genotype, allele1: a1, allele2: a2)
     }
 }
 

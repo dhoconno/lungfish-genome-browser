@@ -16,6 +16,7 @@ private let drawerLogger = Logger(subsystem: "com.lungfish.browser", category: "
 @MainActor
 protocol AnnotationTableDrawerDelegate: AnyObject {
     func annotationDrawer(_ drawer: AnnotationTableDrawerView, didSelectAnnotation result: AnnotationSearchIndex.SearchResult)
+    func annotationDrawer(_ drawer: AnnotationTableDrawerView, didDeleteVariants count: Int)
 }
 
 // MARK: - AnnotationTableDrawerView
@@ -98,6 +99,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     private(set) var isLoading: Bool = true {
         didSet { updateLoadingState() }
     }
+
+    /// Guard flag to prevent notification re-entry when programmatically selecting rows.
+    private var isSuppressingDelegateCallbacks = false
 
     // MARK: - UI Components
 
@@ -348,7 +352,51 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         tableView.setAccessibilityLabel("Annotation table")
 
         updateCountLabel()
+
+        // Observe variant selection from the viewer
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleVariantSelected(_:)),
+            name: .variantSelected, object: nil
+        )
+
         drawerLogger.info("AnnotationTableDrawerView: Setup complete")
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    // MARK: - Variant Selection Sync
+
+    /// Handles `.variantSelected` notification from the viewer to sync the drawer's selection.
+    @objc private func handleVariantSelected(_ notification: Notification) {
+        guard let result = notification.userInfo?[NotificationUserInfoKey.searchResult]
+                as? AnnotationSearchIndex.SearchResult else { return }
+        // Ignore if we're the source of the notification
+        if notification.object as AnyObject? === self { return }
+
+        // Switch to variants tab if not already there
+        if activeTab != .variants {
+            switchToTab(.variants)
+        }
+
+        selectVariant(matching: result)
+    }
+
+    /// Finds and selects a variant in the table matching the given search result.
+    func selectVariant(matching result: AnnotationSearchIndex.SearchResult) {
+        guard let index = displayedAnnotations.firstIndex(where: {
+            if let rowId = result.variantRowId, let myRowId = $0.variantRowId {
+                return rowId == myRowId
+            }
+            return $0.chromosome == result.chromosome && $0.start == result.start
+                && $0.ref == result.ref && $0.alt == result.alt
+        }) else { return }
+
+        isSuppressingDelegateCallbacks = true
+        tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+        tableView.scrollRowToVisible(index)
+        isSuppressingDelegateCallbacks = false
     }
 
     // MARK: - Chip Button Factory
@@ -441,6 +489,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         guard tab != activeTab || displayedAnnotations.isEmpty else { return }
         activeTab = tab
         tabControl.selectedSegment = tab.rawValue
+
+        // Multi-select only for variants tab (enables batch delete)
+        tableView.allowsMultipleSelection = (tab == .variants)
 
         // Reconfigure columns for the new tab
         configureColumnsForTab(tab)
@@ -819,7 +870,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         case Self.variantChromColumn:
             tf.stringValue = annotation.chromosome
         case Self.positionColumn:
-            tf.stringValue = numberFormatter.string(from: NSNumber(value: annotation.start)) ?? "\(annotation.start)"
+            // Display as 1-based (VCF convention) — internal storage is 0-based
+            let displayPos = annotation.start + 1
+            tf.stringValue = numberFormatter.string(from: NSNumber(value: displayPos)) ?? "\(displayPos)"
             tf.alignment = .right
         case Self.refColumn:
             tf.stringValue = annotation.ref ?? ""
@@ -848,8 +901,11 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     }
 
     public func tableViewSelectionDidChange(_ notification: Notification) {
-        let row = tableView.selectedRow
-        guard row >= 0, row < displayedAnnotations.count else { return }
+        guard !isSuppressingDelegateCallbacks else { return }
+        let selectedRows = tableView.selectedRowIndexes
+        // Only navigate to a single selection — multi-select doesn't trigger navigation
+        guard selectedRows.count == 1, let row = selectedRows.first,
+              row < displayedAnnotations.count else { return }
         let annotation = displayedAnnotations[row]
         drawerLogger.debug("AnnotationTableDrawerView: Selected '\(annotation.name, privacy: .public)' at row \(row)")
         delegate?.annotationDrawer(self, didSelectAnnotation: annotation)
@@ -909,7 +965,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
     @objc private func copyCoordinatesAction(_ sender: NSMenuItem) {
         guard let annotation = sender.representedObject as? AnnotationSearchIndex.SearchResult else { return }
-        let coords = "\(annotation.chromosome):\(annotation.start)-\(annotation.end)"
+        // Variants use 1-based coordinates (VCF convention); annotations use 0-based (BED convention)
+        let start = activeTab == .variants ? annotation.start + 1 : annotation.start
+        let coords = "\(annotation.chromosome):\(start)-\(annotation.end)"
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(coords, forType: .string)
@@ -1209,5 +1267,105 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         filterTypeItem.target = self
         filterTypeItem.representedObject = annotation
         menu.addItem(filterTypeItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // --- Delete ---
+        let selectedCount = tableView.selectedRowIndexes.count
+        let deleteTitle = selectedCount > 1 ? "Delete \(selectedCount) Selected Variants" : "Delete Selected Variant"
+        let deleteItem = NSMenuItem(title: deleteTitle, action: #selector(deleteSelectedVariantsAction(_:)), keyEquivalent: "")
+        deleteItem.target = self
+        menu.addItem(deleteItem)
+
+        let deleteAllItem = NSMenuItem(title: "Delete All Variants...", action: #selector(deleteAllVariantsAction(_:)), keyEquivalent: "")
+        deleteAllItem.target = self
+        menu.addItem(deleteAllItem)
+    }
+
+    // MARK: - Delete Actions
+
+    @objc private func deleteSelectedVariantsAction(_ sender: NSMenuItem) {
+        let selectedRows = tableView.selectedRowIndexes
+        let variantIds = selectedRows.compactMap { idx -> Int64? in
+            guard idx < displayedAnnotations.count else { return nil }
+            return displayedAnnotations[idx].variantRowId
+        }
+        guard !variantIds.isEmpty else { return }
+
+        let count = variantIds.count
+        let alert = NSAlert()
+        alert.messageText = "Delete \(count) Variant\(count == 1 ? "" : "s")?"
+        alert.informativeText = "This will permanently remove the selected variant\(count == 1 ? "" : "s") from the database."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        guard let window = window else { return }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.performVariantDeletion(ids: variantIds)
+        }
+    }
+
+    @objc private func deleteAllVariantsAction(_ sender: NSMenuItem) {
+        let count = totalVariantCount
+        let alert = NSAlert()
+        alert.messageText = "Delete All \(count) Variants?"
+        alert.informativeText = "This will permanently remove all variants from the database. This cannot be undone."
+        alert.addButton(withTitle: "Delete All")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .critical
+
+        guard let window = window else { return }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.performDeleteAllVariants()
+        }
+    }
+
+    private func performVariantDeletion(ids: [Int64]) {
+        guard let searchIndex else { return }
+
+        // Find the variant database(s) to delete from
+        var deletedCount = 0
+        for (_, db) in searchIndex.variantDatabaseHandles {
+            do {
+                let rwDB = try VariantDatabase(url: db.databaseURL, readWrite: true)
+                try rwDB.deleteVariants(ids: ids)
+                deletedCount += ids.count
+            } catch {
+                drawerLogger.error("performVariantDeletion: \(error.localizedDescription)")
+            }
+        }
+
+        if deletedCount > 0 {
+            totalVariantCount = max(0, totalVariantCount - deletedCount)
+            updateDisplayedAnnotations()
+            updateCountLabel()
+            delegate?.annotationDrawer(self, didDeleteVariants: deletedCount)
+        }
+    }
+
+    private func performDeleteAllVariants() {
+        guard let searchIndex else { return }
+
+        var deletedCount = 0
+        for (_, db) in searchIndex.variantDatabaseHandles {
+            do {
+                let count = db.totalVariantCount()
+                let rwDB = try VariantDatabase(url: db.databaseURL, readWrite: true)
+                try rwDB.deleteAllVariants()
+                deletedCount += count
+            } catch {
+                drawerLogger.error("performDeleteAllVariants: \(error.localizedDescription)")
+            }
+        }
+
+        if deletedCount > 0 {
+            totalVariantCount = 0
+            updateDisplayedAnnotations()
+            updateCountLabel()
+            delegate?.annotationDrawer(self, didDeleteVariants: deletedCount)
+        }
     }
 }

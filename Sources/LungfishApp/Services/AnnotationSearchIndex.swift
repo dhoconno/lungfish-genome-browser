@@ -75,7 +75,10 @@ public final class AnnotationSearchIndex {
     private var database: AnnotationDatabase?
 
     /// Variant SQLite database handle (for unified search).
-    private var variantDatabases: [(trackId: String, db: VariantDatabase)] = []
+    private(set) var variantDatabases: [(trackId: String, db: VariantDatabase)] = []
+
+    /// Public accessor for variant database handles (for delete operations).
+    public var variantDatabaseHandles: [(trackId: String, db: VariantDatabase)] { variantDatabases }
 
     /// Track ID associated with the database (for SearchResult compatibility).
     private var databaseTrackId: String = ""

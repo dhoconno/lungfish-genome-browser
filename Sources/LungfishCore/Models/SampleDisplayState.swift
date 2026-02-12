@@ -222,6 +222,25 @@ public enum GenotypeDisplayCall: String, Sendable, CaseIterable {
     case homAlt = "HOM_ALT"
     case noCall = "NO_CALL"
 
+    /// Classifies a genotype call from its raw VCF components.
+    ///
+    /// - Parameters:
+    ///   - genotype: The GT string (e.g., "0/1", "1|1", ".", nil)
+    ///   - allele1: First allele index (-1 for missing)
+    ///   - allele2: Second allele index (-1 for missing)
+    /// - Returns: The classified genotype display call
+    public static func classify(genotype: String?, allele1: Int, allele2: Int) -> GenotypeDisplayCall {
+        guard let gtStr = genotype else { return .noCall }
+        let trimmed = gtStr.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty || trimmed == "." || trimmed == "./." || trimmed == ".|." {
+            return .noCall
+        }
+        if allele1 < 0 || allele2 < 0 { return .noCall }
+        if allele1 == 0 && allele2 == 0 { return .homRef }
+        if allele1 == allele2 { return .homAlt }
+        return .het
+    }
+
     /// IGV-compatible RGB color for this genotype.
     public var color: (r: Double, g: Double, b: Double) {
         switch self {

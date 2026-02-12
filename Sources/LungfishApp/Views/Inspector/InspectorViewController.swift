@@ -8,6 +8,7 @@ import Combine
 import LungfishCore
 import LungfishIO
 import os.log
+import UniformTypeIdentifiers
 
 /// Logger for inspector operations
 private let logger = Logger(subsystem: "com.lungfish.browser", category: "InspectorViewController")
@@ -684,7 +685,10 @@ public class InspectorViewController: NSViewController {
     private func updateSampleSection(from bundle: ReferenceBundle) {
         var allSampleNames: [String] = []
         var allMetadataFields: Set<String> = []
+        var allSampleMetadata: [String: [String: String]] = [:]
+        var allSourceFiles: [String: String] = [:]
         var dbByTrackId: [String: VariantDatabase] = [:]
+        var variantDBURLs: [URL] = []
 
         for vTrackId in bundle.variantTrackIds {
             guard let trackInfo = bundle.variantTrack(id: vTrackId),
@@ -694,12 +698,22 @@ public class InspectorViewController: NSViewController {
             do {
                 let db = try VariantDatabase(url: dbURL)
                 dbByTrackId[vTrackId] = db
+                variantDBURLs.append(dbURL)
                 let names = db.sampleNames()
                 if !names.isEmpty && allSampleNames.isEmpty {
                     allSampleNames = names
                 }
                 let fields = db.metadataFieldNames()
                 allMetadataFields.formUnion(fields)
+
+                // Load per-sample metadata and source files
+                for (name, metadata) in db.allSampleMetadata() {
+                    allSampleMetadata[name] = metadata
+                }
+                let sources = db.allSourceFiles()
+                for (name, file) in sources {
+                    allSourceFiles[name] = file
+                }
             } catch {
                 logger.warning("updateSampleSection: Failed to open variant database '\(vTrackId, privacy: .public)': \(error.localizedDescription)")
             }
@@ -709,13 +723,68 @@ public class InspectorViewController: NSViewController {
         viewModel.sampleSectionViewModel.update(
             sampleCount: sampleCount,
             sampleNames: allSampleNames,
-            metadataFields: allMetadataFields.sorted()
+            metadataFields: allMetadataFields.sorted(),
+            sampleMetadata: allSampleMetadata,
+            sourceFiles: allSourceFiles
         )
+
+        // Wire save callback for metadata editing
+        let capturedURLs = variantDBURLs
+        viewModel.sampleSectionViewModel.onSaveMetadata = { [weak self] sampleName, metadata in
+            for dbURL in capturedURLs {
+                do {
+                    let rwDB = try VariantDatabase(url: dbURL, readWrite: true)
+                    try rwDB.updateSampleMetadata(name: sampleName, metadata: metadata)
+                    logger.info("updateSampleSection: Saved metadata for '\(sampleName)' to \(dbURL.lastPathComponent)")
+                } catch {
+                    logger.warning("updateSampleSection: Failed to save metadata: \(error.localizedDescription)")
+                }
+            }
+        }
+
+        // Wire import callback
+        viewModel.sampleSectionViewModel.onImportMetadata = { [weak self] in
+            self?.presentMetadataImportPanel(variantDBURLs: capturedURLs, bundle: bundle)
+        }
 
         // Wire variant databases for track-aware genotype lookups.
         viewModel.variantSectionViewModel.variantDatabasesByTrackId = dbByTrackId
 
-        logger.info("updateSampleSection: \(sampleCount) samples, \(allMetadataFields.count) metadata fields")
+        logger.info("updateSampleSection: \(sampleCount) samples, \(allMetadataFields.count) metadata fields, \(allSourceFiles.count) source files")
+    }
+
+    /// Presents an open panel for importing sample metadata from TSV/CSV.
+    private func presentMetadataImportPanel(variantDBURLs: [URL], bundle: ReferenceBundle) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [
+            .init(filenameExtension: "tsv")!,
+            .init(filenameExtension: "csv")!,
+            .init(filenameExtension: "txt")!,
+        ]
+        panel.message = "Select a TSV or CSV file with sample metadata"
+        panel.prompt = "Import"
+
+        guard let window = view.window else { return }
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let fileURL = panel.url else { return }
+            let ext = fileURL.pathExtension.lowercased()
+            let format: MetadataFormat = ext == "csv" ? .csv : .tsv
+
+            var totalUpdated = 0
+            for dbURL in variantDBURLs {
+                do {
+                    let rwDB = try VariantDatabase(url: dbURL, readWrite: true)
+                    let count = try rwDB.importSampleMetadata(from: fileURL, format: format)
+                    totalUpdated += count
+                } catch {
+                    logger.warning("importSampleMetadata: \(error.localizedDescription)")
+                }
+            }
+
+            logger.info("importSampleMetadata: Updated \(totalUpdated) samples from \(fileURL.lastPathComponent)")
+            // Refresh the sample section
+            self?.updateSampleSection(from: bundle)
+        }
     }
 
     /// Updates the quality section with new quality data.

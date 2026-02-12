@@ -51,11 +51,16 @@ public enum VariantTrackRenderer {
     private static let mnpColor = CGColor(red: 0.8, green: 0.5, blue: 0.0, alpha: 1.0)       // orange
     private static let complexColor = CGColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1.0)   // gray
 
-    /// Genotype cell colors (IGV-compatible).
-    private static let homRefColor = CGColor(red: 200/255, green: 200/255, blue: 200/255, alpha: 1.0)
-    private static let hetColor = CGColor(red: 34/255, green: 12/255, blue: 253/255, alpha: 1.0)
-    private static let homAltColor = CGColor(red: 17/255, green: 248/255, blue: 254/255, alpha: 1.0)
-    private static let noCallColor = CGColor(red: 250/255, green: 250/255, blue: 250/255, alpha: 1.0)
+    /// Genotype cell colors derived from GenotypeDisplayCall canonical colors.
+    private static let homRefColor = cgColor(for: .homRef)
+    private static let hetColor = cgColor(for: .het)
+    private static let homAltColor = cgColor(for: .homAlt)
+    private static let noCallColor = cgColor(for: .noCall)
+
+    private static func cgColor(for call: GenotypeDisplayCall) -> CGColor {
+        let c = call.color
+        return CGColor(red: c.r, green: c.g, blue: c.b, alpha: 1.0)
+    }
 
     // MARK: - Public API
 
@@ -120,6 +125,9 @@ public enum VariantTrackRenderer {
 
         let pixelWidth = frame.pixelWidth
         guard pixelWidth > 0 else { return }
+
+        context.saveGState()
+        defer { context.restoreGState() }
 
         // Background
         context.setFillColor(CGColor(red: 0.95, green: 0.95, blue: 0.95, alpha: 1.0))
@@ -225,6 +233,9 @@ public enum VariantTrackRenderer {
 
         let rowH = rowHeight(sampleCount: samples.count, scale: frame.scale, state: state)
         guard rowH > 0 else { return }  // Density mode — no rows to draw
+
+        context.saveGState()
+        defer { context.restoreGState() }
 
         let showLabels = rowH >= expandedRowHeight
         let visibleSamples = Array(samples.prefix(maxSampleRows))

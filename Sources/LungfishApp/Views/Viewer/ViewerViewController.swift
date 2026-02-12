@@ -552,6 +552,7 @@ public class ViewerViewController: NSViewController {
             logger.debug("handleVariantFilterChanged: variantFilterText = '\(text)'")
         }
 
+        viewerView.invalidateFilteredVariantCache()
         viewerView.invalidateAnnotationTile()
         viewerView.needsDisplay = true
         scheduleViewStateSave()
@@ -601,6 +602,7 @@ public class ViewerViewController: NSViewController {
         viewerView.translationColorScheme = .zappo
         viewerView.showVariants = true
         viewerView.visibleVariantTypes = nil
+        viewerView.invalidateFilteredVariantCache()
     }
 
     // MARK: - Progress Indicator
@@ -1811,9 +1813,17 @@ public class SequenceViewerView: NSView {
         return y
     }
 
+    /// Cached filtered variant annotations. Invalidated by `invalidateFilteredVariantCache()`.
+    private var _cachedFilteredVariants: [SequenceAnnotation]?
+
     /// Variant annotations after applying current type/text filters.
+    /// Caches the result to avoid re-filtering on every access during a draw cycle.
     private var filteredVisibleVariantAnnotations: [SequenceAnnotation] {
-        guard showVariants else { return [] }
+        if let cached = _cachedFilteredVariants { return cached }
+        guard showVariants else {
+            _cachedFilteredVariants = []
+            return []
+        }
         var variants = cachedVariantAnnotations
         if let typeFilter = visibleVariantTypes, !typeFilter.isEmpty {
             variants = variants.filter { ann in
@@ -1825,7 +1835,13 @@ public class SequenceViewerView: NSView {
             let lower = variantFilterText.lowercased()
             variants = variants.filter { $0.name.lowercased().contains(lower) }
         }
+        _cachedFilteredVariants = variants
         return variants
+    }
+
+    /// Invalidates the filtered variant cache so it's recomputed on next access.
+    func invalidateFilteredVariantCache() {
+        _cachedFilteredVariants = nil
     }
 
     /// Total height of the variant track area (summary bar + genotype rows).
@@ -2378,6 +2394,7 @@ public class SequenceViewerView: NSView {
         self.cachedAnnotationRegion = nil
         self.cachedVariantAnnotations = []
         self.cachedVariantRegion = nil
+        self.invalidateFilteredVariantCache()
         self.isFetchingBundleData = false
         self.isFetchingAnnotations = false
         self.isFetchingVariants = false
@@ -2439,6 +2456,7 @@ public class SequenceViewerView: NSView {
         self.cachedAnnotationRegion = nil
         self.cachedVariantAnnotations = []
         self.cachedVariantRegion = nil
+        self.invalidateFilteredVariantCache()
         self.cachedGenotypeData = nil
         self.cachedGenotypeRegion = nil
         self.isFetchingBundleData = false
@@ -2464,6 +2482,14 @@ public class SequenceViewerView: NSView {
         }
         bundleFetchError = nil
         failedFetchRegion = nil
+    }
+
+    /// Clears cached variant data so the viewer re-fetches from the database on next draw.
+    func clearCachedVariants() {
+        cachedVariantAnnotations = []
+        cachedVariantRegion = nil
+        invalidateFilteredVariantCache()
+        isFetchingVariants = false
     }
 
     public override func viewDidChangeEffectiveAppearance() {
@@ -2767,12 +2793,17 @@ public class SequenceViewerView: NSView {
 
     /// Schedules UI state updates on the main run loop common modes.
     /// This avoids starvation during AppKit tracking/layout-heavy loops.
-    private static func enqueueMainRunLoop(_ block: @escaping () -> Void) {
+    ///
+    /// Uses `MainActor.assumeIsolated` inside the CFRunLoop block to guarantee
+    /// the compiler knows we're on the main actor (GCD main queue is always drained).
+    private static func enqueueMainRunLoop(_ block: @escaping @MainActor () -> Void) {
         if Thread.isMainThread {
-            block()
+            MainActor.assumeIsolated { block() }
             return
         }
-        CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue, block)
+        CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) {
+            MainActor.assumeIsolated { block() }
+        }
         CFRunLoopWakeUp(CFRunLoopGetMain())
     }
 
@@ -2916,6 +2947,7 @@ public class SequenceViewerView: NSView {
                 let elapsed = Date().timeIntervalSince(fetchStart)
                 viewer.cachedVariantAnnotations = allVariantAnnotations
                 viewer.cachedVariantRegion = expandedRegion
+                viewer.invalidateFilteredVariantCache()
                 viewer.isFetchingVariants = false
                 viewer.invalidateAnnotationTile()
                 logger.info("fetchVariantsAsync: Cached \(count) variant annotations in \(elapsed, format: .fixed(precision: 3))s")
@@ -5825,22 +5857,7 @@ public class SequenceViewerView: NSView {
 /// This is a module-level free function (not a method on @MainActor SequenceViewerView)
 /// so it can be safely called from GCD background queues.
 private func classifyGenotype(_ gt: GenotypeRecord) -> GenotypeDisplayCall {
-    // Missing genotype
-    guard let gtStr = gt.genotype else { return .noCall }
-    let trimmed = gtStr.trimmingCharacters(in: .whitespaces)
-    if trimmed.isEmpty || trimmed == "." || trimmed == "./." || trimmed == ".|." {
-        return .noCall
-    }
-
-    let a1 = gt.allele1
-    let a2 = gt.allele2
-
-    // Missing alleles (encoded as -1)
-    if a1 < 0 || a2 < 0 { return .noCall }
-
-    if a1 == 0 && a2 == 0 { return .homRef }
-    if a1 == a2 { return .homAlt }
-    return .het
+    GenotypeDisplayCall.classify(genotype: gt.genotype, allele1: gt.allele1, allele2: gt.allele2)
 }
 
 // MARK: - TrackHeaderViewDelegate

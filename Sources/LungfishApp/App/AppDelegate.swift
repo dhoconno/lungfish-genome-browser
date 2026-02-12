@@ -906,6 +906,173 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         }
     }
 
+    @objc func importVCFToBundle(_ sender: Any?) {
+        debugLog("importVCFToBundle: Menu action triggered")
+
+        // Require a bundle to be loaded
+        guard let viewerController = mainWindowController?.mainSplitViewController?.viewerController,
+              let bundleURL = viewerController.currentBundleURL else {
+            showAlert(title: "No Bundle Loaded", message: "Please open a reference genome bundle before importing VCF variants.")
+            return
+        }
+
+        guard let window = mainWindowController?.window else {
+            debugLog("importVCFToBundle: No main window available")
+            return
+        }
+
+        // Show NSOpenPanel for VCF files
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        if let vcfType = UTType(filenameExtension: "vcf") {
+            panel.allowedContentTypes = [vcfType]
+        }
+        panel.allowsOtherFileTypes = true  // Allow .vcf.gz
+        panel.message = "Select a VCF file to import into the current bundle"
+        panel.prompt = "Import"
+
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let vcfURL = panel.url else {
+                debugLog("importVCFToBundle: User cancelled")
+                return
+            }
+            debugLog("importVCFToBundle: Selected \(vcfURL.lastPathComponent)")
+            self?.performVCFImport(vcfURL: vcfURL, bundleURL: bundleURL)
+        }
+    }
+
+    private func performVCFImport(vcfURL: URL, bundleURL: URL) {
+        mainWindowController?.mainSplitViewController?.activityIndicator?.show(
+            message: "Importing VCF variants...", style: .indeterminate
+        )
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            // All file I/O on background thread — no UI references captured
+            let result: Result<(variantCount: Int, trackInfo: VariantTrackInfo), Error>
+
+            do {
+                // Create variants directory if needed
+                let variantsDir = bundleURL.appendingPathComponent("variants")
+                try FileManager.default.createDirectory(at: variantsDir, withIntermediateDirectories: true)
+
+                // Generate track ID — strip .gz then .vcf extensions
+                var baseURL = vcfURL
+                if baseURL.pathExtension.lowercased() == "gz" {
+                    baseURL = baseURL.deletingPathExtension()
+                }
+                if baseURL.pathExtension.lowercased() == "vcf" {
+                    baseURL = baseURL.deletingPathExtension()
+                }
+                let trackId = baseURL.lastPathComponent
+                let dbFilename = "\(trackId).db"
+                let dbURL = variantsDir.appendingPathComponent(dbFilename)
+
+                // Remove existing database if re-importing
+                if FileManager.default.fileExists(atPath: dbURL.path) {
+                    try FileManager.default.removeItem(at: dbURL)
+                }
+
+                debugLog("performVCFImport: Creating variant database at \(dbURL.lastPathComponent)")
+
+                // Create SQLite database from VCF
+                let variantCount = try VariantDatabase.createFromVCF(
+                    vcfURL: vcfURL,
+                    outputURL: dbURL,
+                    parseGenotypes: true,
+                    sourceFile: vcfURL.lastPathComponent,
+                    progressHandler: nil
+                )
+
+                debugLog("performVCFImport: Created database with \(variantCount) variants")
+
+                // Normalize chromosome names to match the bundle
+                let currentManifestForChrom = try BundleManifest.load(from: bundleURL)
+                let rwDB = try VariantDatabase(url: dbURL, readWrite: true)
+                let vcfChroms = rwDB.allChromosomes()
+                let chromMapping = mapVCFChromosomes(vcfChroms, toBundleChromosomes: currentManifestForChrom.genome.chromosomes)
+                if !chromMapping.isEmpty {
+                    try rwDB.renameChromosomes(chromMapping)
+                    debugLog("performVCFImport: Remapped chromosomes: \(chromMapping)")
+                }
+
+                // Create VariantTrackInfo
+                let trackInfo = VariantTrackInfo(
+                    id: trackId,
+                    name: vcfURL.deletingPathExtension().lastPathComponent,
+                    description: "Imported from \(vcfURL.lastPathComponent)",
+                    path: "variants/\(trackId).bcf",
+                    indexPath: "variants/\(trackId).bcf.csi",
+                    databasePath: "variants/\(dbFilename)",
+                    variantType: .mixed,
+                    variantCount: variantCount,
+                    source: "VCF Import"
+                )
+
+                // Load current manifest, add track, save
+                let currentManifest = try BundleManifest.load(from: bundleURL)
+
+                // Check for duplicate track ID — remove old entry if re-importing
+                let filteredVariants = currentManifest.variants.filter { $0.id != trackId }
+                let baseManifest: BundleManifest
+                if filteredVariants.count != currentManifest.variants.count {
+                    baseManifest = BundleManifest(
+                        formatVersion: currentManifest.formatVersion,
+                        name: currentManifest.name,
+                        identifier: currentManifest.identifier,
+                        description: currentManifest.description,
+                        createdDate: currentManifest.createdDate,
+                        modifiedDate: Date(),
+                        source: currentManifest.source,
+                        genome: currentManifest.genome,
+                        annotations: currentManifest.annotations,
+                        variants: filteredVariants,
+                        tracks: currentManifest.tracks,
+                        metadata: currentManifest.metadata
+                    )
+                } else {
+                    baseManifest = currentManifest
+                }
+
+                let updatedManifest = baseManifest.addingVariantTrack(trackInfo)
+                try updatedManifest.save(to: bundleURL)
+
+                result = .success((variantCount, trackInfo))
+            } catch {
+                result = .failure(error)
+            }
+
+            debugLog("performVCFImport: Background work done, scheduling main thread callback")
+
+            // Use CFRunLoopPerformBlock to bypass GCD main queue stalls
+            // (DispatchQueue.main.async can be blocked after sheet dismissal)
+            scheduleOnMainRunLoop { [weak self] in
+                debugLog("performVCFImport: Main thread callback executing")
+                self?.mainWindowController?.mainSplitViewController?.activityIndicator?.hide()
+
+                switch result {
+                case .success(let (variantCount, _)):
+                    guard let viewerController = self?.mainWindowController?.mainSplitViewController?.viewerController else {
+                        debugLog("performVCFImport: No viewer controller")
+                        return
+                    }
+                    do {
+                        try viewerController.displayBundle(at: bundleURL)
+                        debugLog("performVCFImport: Bundle reloaded with \(variantCount) variants")
+                    } catch {
+                        debugLog("performVCFImport: Bundle reload failed: \(error.localizedDescription)")
+                        self?.showAlert(title: "Import Error", message: "VCF imported but bundle reload failed: \(error.localizedDescription)")
+                    }
+
+                case .failure(let error):
+                    debugLog("performVCFImport: Failed: \(error.localizedDescription)")
+                    self?.showAlert(title: "VCF Import Failed", message: error.localizedDescription)
+                }
+            }
+        }
+    }
+
     @objc func exportFASTA(_ sender: Any?) {
         // Get current document
         guard let document = mainWindowController?.mainSplitViewController?.viewerController?.currentDocument else {
@@ -1189,6 +1356,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 menuItem.state = isRNAMode ? .on : .off
             }
             return true
+        }
+
+        // "Import VCF Variants..." is only enabled when a bundle is loaded
+        if menuItem.action == #selector(importVCFToBundle(_:)) {
+            let hasBundle = mainWindowController?.mainSplitViewController?.viewerController?.currentBundleURL != nil
+            return hasBundle
         }
 
         return true

@@ -180,6 +180,13 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         }
         viewerView.setNeedsDisplay(viewerView.bounds)
     }
+
+    public func annotationDrawer(_ drawer: AnnotationTableDrawerView, didDeleteVariants count: Int) {
+        annotDrawerLogger.info("annotationDrawer: \(count) variants deleted, clearing cached variants and refreshing")
+        // Clear cached variant annotations so the viewer re-fetches from the (now updated) database
+        viewerView.clearCachedVariants()
+        viewerView.setNeedsDisplay(viewerView.bounds)
+    }
 }
 
 // MARK: - ViewerViewController Stored Properties for Annotation Drawer
