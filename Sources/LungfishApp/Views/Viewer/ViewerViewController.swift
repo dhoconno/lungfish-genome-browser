@@ -3538,6 +3538,7 @@ public class SequenceViewerView: NSView {
         for annot in annotations {
             let startBin = max(0, Int((Double(annot.start) - frame.start) / bpPerBin))
             let endBin = min(binCount - 1, Int((Double(annot.end) - frame.start) / bpPerBin))
+            guard startBin <= endBin else { continue }
             for bin in startBin...endBin {
                 bins[bin] += 1
                 binTypeCounts[bin][annot.type, default: 0] += 1

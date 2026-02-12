@@ -147,6 +147,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     private static let qualityColumn = NSUserInterfaceItemIdentifier("QualityColumn")
     private static let filterColumn = NSUserInterfaceItemIdentifier("FilterColumn")
     private static let samplesColumn = NSUserInterfaceItemIdentifier("SamplesColumn")
+    private static let sourceColumn = NSUserInterfaceItemIdentifier("SourceColumn")
 
     /// Number formatter for genomic coordinates.
     private let numberFormatter: NumberFormatter = {
@@ -185,7 +186,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         addSubview(headerBar)
 
         // Filter search field
-        filterField.placeholderString = "Filter annotations & variants..."
+        filterField.placeholderString = "Filter by name or INFO (e.g. DP>20 AF>=0.05)..."
         filterField.font = .systemFont(ofSize: 11)
         filterField.controlSize = .small
         filterField.translatesAutoresizingMaskIntoConstraints = false
@@ -451,6 +452,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         (qualityColumn, "Quality", 70, 40, "quality"),
         (filterColumn, "Filter", 70, 40, "filter"),
         (samplesColumn, "Samples", 60, 40, "samples"),
+        (sourceColumn, "Source", 120, 60, "source"),
     ]
 
     /// Removes all existing columns and adds columns for the specified tab.
@@ -549,6 +551,11 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         // Show the tab control only when we have at least one type of data
         tabControl.isHidden = totalVariantCount == 0
 
+        // Reconfigure columns if we're already on the variants tab so INFO columns appear
+        if activeTab == .variants {
+            configureColumnsForTab(.variants)
+        }
+
         // Rebuild chip buttons for the active tab
         rebuildChipButtons()
 
@@ -625,15 +632,19 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         let entityName = activeTab == .annotations ? "annotations" : "variants"
         let activeTotal = activeTab == .annotations ? totalAnnotationCount : totalVariantCount
 
+        // Parse INFO filter expressions from the search text for the variants tab.
+        // Expressions like "DP>20" or "AF>=0.05" are split out; remaining text is used as a name filter.
+        let (nameFilter, infoFilters) = parseFilterText(filterText)
+
         // SQLite mode: query the database directly with filters
         if let index = searchIndex, (index.hasDatabaseBackend || index.hasVariantDatabase) {
             // Get the matching count first (fast COUNT query)
             let matchingCount: Int
             switch activeTab {
             case .annotations:
-                matchingCount = index.queryAnnotationCount(nameFilter: filterText, types: typeFilter)
+                matchingCount = index.queryAnnotationCount(nameFilter: nameFilter, types: typeFilter)
             case .variants:
-                matchingCount = index.queryVariantCount(nameFilter: filterText, types: typeFilter)
+                matchingCount = index.queryVariantCount(nameFilter: nameFilter, types: typeFilter, infoFilters: infoFilters)
             }
 
             if matchingCount > Self.maxDisplayCount {
@@ -648,9 +659,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                 let results: [AnnotationSearchIndex.SearchResult]
                 switch activeTab {
                 case .annotations:
-                    results = index.queryAnnotationsOnly(nameFilter: filterText, types: typeFilter, limit: Self.maxDisplayCount)
+                    results = index.queryAnnotationsOnly(nameFilter: nameFilter, types: typeFilter, limit: Self.maxDisplayCount)
                 case .variants:
-                    results = index.queryVariantsOnly(nameFilter: filterText, types: typeFilter, limit: Self.maxDisplayCount)
+                    results = index.queryVariantsOnly(nameFilter: nameFilter, types: typeFilter, infoFilters: infoFilters, limit: Self.maxDisplayCount)
                 }
                 displayedAnnotations = results
                 tableView.reloadData()
@@ -663,7 +674,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
         // Legacy in-memory mode (annotations only — variants always need SQLite)
         if let index = searchIndex, activeTab == .annotations {
-            let hasFilters = !typeFilter.isEmpty || !filterText.isEmpty
+            let hasFilters = !typeFilter.isEmpty || !nameFilter.isEmpty
 
             if !hasFilters && activeTotal > Self.maxDisplayCount {
                 displayedAnnotations = []
@@ -678,8 +689,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                 if !typeFilter.isEmpty {
                     results = results.filter { typeFilter.contains($0.type) }
                 }
-                if !filterText.isEmpty {
-                    let lower = filterText.lowercased()
+                if !nameFilter.isEmpty {
+                    let lower = nameFilter.lowercased()
                     results = results.filter { $0.name.lowercased().contains(lower) }
                 }
                 if results.count > Self.maxDisplayCount {
@@ -738,6 +749,31 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     @objc private func filterFieldChanged(_ sender: NSSearchField) {
         filterText = sender.stringValue
         updateDisplayedAnnotations()
+    }
+
+    /// Splits user filter text into a plain name filter and structured INFO filter expressions.
+    ///
+    /// Tokens like `DP>20`, `AF>=0.05`, or `GENE~BRCA` are parsed as INFO filters;
+    /// all remaining tokens are rejoined as the name/ID search string.
+    private func parseFilterText(_ text: String) -> (nameFilter: String, infoFilters: [VariantDatabase.InfoFilter]) {
+        guard activeTab == .variants, !text.isEmpty else {
+            return (text, [])
+        }
+
+        var infoFilters: [VariantDatabase.InfoFilter] = []
+        var nameTokens: [String] = []
+
+        // Split on whitespace — each token is either an INFO expression or a name search term
+        for token in text.split(separator: " ") where !token.isEmpty {
+            if let filter = VariantDatabase.InfoFilter.parse(String(token)) {
+                infoFilters.append(filter)
+            } else {
+                nameTokens.append(String(token))
+            }
+        }
+
+        let nameFilter = nameTokens.joined(separator: " ")
+        return (nameFilter, infoFilters)
     }
 
     @objc private func typeChipToggled(_ sender: NSButton) {
@@ -819,6 +855,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                 let sa = a.sampleCount ?? 0
                 let sb = b.sampleCount ?? 0
                 result = sa < sb ? .orderedAscending : (sa > sb ? .orderedDescending : .orderedSame)
+            case "source":
+                result = (a.sourceFile ?? "").localizedCaseInsensitiveCompare(b.sourceFile ?? "")
             default:
                 // Dynamic INFO column sort (key starts with "info_")
                 if key.hasPrefix("info_") {
@@ -929,6 +967,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         case Self.samplesColumn:
             tf.stringValue = "\(annotation.sampleCount ?? 0)"
             tf.alignment = .right
+        case Self.sourceColumn:
+            tf.stringValue = annotation.sourceFile ?? ""
+            tf.font = .systemFont(ofSize: 11)
 
         default:
             // Dynamic INFO columns (identifier starts with "info_")

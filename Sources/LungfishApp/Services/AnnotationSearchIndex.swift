@@ -40,6 +40,8 @@ public final class AnnotationSearchIndex {
         public let variantRowId: Int64?
         /// Structured INFO key-value pairs (nil for annotations or legacy databases).
         public let infoDict: [String: String]?
+        /// Human-readable source name (e.g. VCF filename) for provenance display.
+        public let sourceFile: String?
 
         /// Whether this result represents a variant (vs annotation).
         public var isVariant: Bool { ref != nil }
@@ -48,7 +50,7 @@ public final class AnnotationSearchIndex {
                     trackId: String, type: String = "gene", strand: String = ".",
                     ref: String? = nil, alt: String? = nil, quality: Double? = nil,
                     filter: String? = nil, sampleCount: Int? = nil, variantRowId: Int64? = nil,
-                    infoDict: [String: String]? = nil) {
+                    infoDict: [String: String]? = nil, sourceFile: String? = nil) {
             self.id = id
             self.name = name
             self.chromosome = chromosome
@@ -64,6 +66,7 @@ public final class AnnotationSearchIndex {
             self.sampleCount = sampleCount
             self.variantRowId = variantRowId
             self.infoDict = infoDict
+            self.sourceFile = sourceFile
         }
     }
 
@@ -80,6 +83,9 @@ public final class AnnotationSearchIndex {
 
     /// Variant SQLite database handle (for unified search).
     private(set) var variantDatabases: [(trackId: String, db: VariantDatabase)] = []
+
+    /// Human-readable display name per variant track (from VariantTrackInfo.name).
+    private var variantTrackNames: [String: String] = [:]
 
     /// Public accessor for variant database handles (for delete operations).
     public var variantDatabaseHandles: [(trackId: String, db: VariantDatabase)] { variantDatabases }
@@ -206,6 +212,7 @@ public final class AnnotationSearchIndex {
     /// Opens variant databases from the bundle for unified search.
     private func openVariantDatabases(bundle: ReferenceBundle) {
         variantDatabases.removeAll()
+        variantTrackNames.removeAll()
         for vTrackId in bundle.variantTrackIds {
             guard let trackInfo = bundle.variantTrack(id: vTrackId),
                   let dbPath = trackInfo.databasePath else { continue }
@@ -214,6 +221,7 @@ public final class AnnotationSearchIndex {
             do {
                 let db = try VariantDatabase(url: dbURL)
                 variantDatabases.append((trackId: vTrackId, db: db))
+                variantTrackNames[vTrackId] = trackInfo.name
                 let vcount = db.totalCount()
                 searchLogger.info("AnnotationSearchIndex: Opened variant database '\(vTrackId, privacy: .public)' with \(vcount) variants")
             } catch {
@@ -423,7 +431,7 @@ public final class AnnotationSearchIndex {
     }
 
     /// Queries ONLY variants (no annotations). Used when the Variants tab is active.
-    public func queryVariantsOnly(nameFilter: String = "", types: Set<String> = [], limit: Int = 5000) -> [SearchResult] {
+    public func queryVariantsOnly(nameFilter: String = "", types: Set<String> = [], infoFilters: [VariantDatabase.InfoFilter] = [], limit: Int = 5000) -> [SearchResult] {
         var results: [SearchResult] = []
         for handle in variantDatabases {
             let remaining = limit - results.count
@@ -434,6 +442,7 @@ public final class AnnotationSearchIndex {
             let variantRecords = handle.db.queryForTable(
                 nameFilter: nameFilter,
                 types: types.isEmpty ? [] : requestedVariantTypes,
+                infoFilters: infoFilters,
                 limit: remaining
             )
             results.append(contentsOf: variantRecordsToSearchResults(variantRecords, db: handle.db, trackId: handle.trackId))
@@ -442,13 +451,13 @@ public final class AnnotationSearchIndex {
     }
 
     /// Returns count of variants only (no annotations).
-    public func queryVariantCount(nameFilter: String = "", types: Set<String> = []) -> Int {
+    public func queryVariantCount(nameFilter: String = "", types: Set<String> = [], infoFilters: [VariantDatabase.InfoFilter] = []) -> Int {
         var count = 0
         for handle in variantDatabases {
             let variantTypes = Set(handle.db.allTypes())
             let requestedVariantTypes = types.isEmpty ? variantTypes : types.intersection(variantTypes)
             if !requestedVariantTypes.isEmpty || types.isEmpty {
-                count += handle.db.queryCountForTable(nameFilter: nameFilter, types: requestedVariantTypes)
+                count += handle.db.queryCountForTable(nameFilter: nameFilter, types: requestedVariantTypes, infoFilters: infoFilters)
             }
         }
         return count
@@ -549,9 +558,10 @@ public final class AnnotationSearchIndex {
         guard !records.isEmpty else { return [] }
         let variantIds = records.compactMap(\.id)
         let infoDicts = db.batchInfoValues(variantIds: variantIds)
+        let sourceName = variantTrackNames[trackId]
         return records.map { record in
             let infoDict = record.id.flatMap { infoDicts[$0] }
-            return record.toSearchResult(trackId: trackId, infoDict: infoDict)
+            return record.toSearchResult(trackId: trackId, infoDict: infoDict, sourceFile: sourceName)
         }
     }
 }
@@ -561,7 +571,7 @@ public final class AnnotationSearchIndex {
 extension VariantDatabaseRecord {
     /// Converts this variant record to an `AnnotationSearchIndex.SearchResult`
     /// for unified display in the annotation table drawer.
-    public func toSearchResult(trackId: String = "variants", infoDict: [String: String]? = nil) -> AnnotationSearchIndex.SearchResult {
+    public func toSearchResult(trackId: String = "variants", infoDict: [String: String]? = nil, sourceFile: String? = nil) -> AnnotationSearchIndex.SearchResult {
         AnnotationSearchIndex.SearchResult(
             name: variantID,
             chromosome: chromosome,
@@ -576,7 +586,8 @@ extension VariantDatabaseRecord {
             filter: filter,
             sampleCount: sampleCount,
             variantRowId: id,
-            infoDict: infoDict
+            infoDict: infoDict,
+            sourceFile: sourceFile
         )
     }
 }

@@ -522,8 +522,71 @@ public final class VariantDatabase: @unchecked Sendable {
         return Int(sqlite3_column_int64(stmt, 0))
     }
 
-    /// Queries variants with optional type filter and name filter.
-    public func queryForTable(nameFilter: String = "", types: Set<String> = [], limit: Int = 5000) -> [VariantDatabaseRecord] {
+    /// A filter expression on a VCF INFO field (e.g., `DP>20`, `AF>=0.05`).
+    public struct InfoFilter: Sendable {
+        public let key: String
+        public let op: ComparisonOp
+        public let value: String
+
+        public enum ComparisonOp: String, Sendable {
+            case gt = ">"
+            case gte = ">="
+            case lt = "<"
+            case lte = "<="
+            case eq = "="
+            case neq = "!="
+            case like = "~"
+        }
+
+        public init(key: String, op: ComparisonOp, value: String) {
+            self.key = key
+            self.op = op
+            self.value = value
+        }
+
+        /// Parses a filter string like "DP>20" or "AF>=0.05" or "GENE~BRCA".
+        /// Returns nil if the string doesn't match any recognized pattern.
+        public static func parse(_ text: String) -> InfoFilter? {
+            let trimmed = text.trimmingCharacters(in: .whitespaces)
+            // Try operators longest first to avoid ">" matching before ">="
+            for op in [ComparisonOp.gte, .lte, .neq, .gt, .lt, .eq, .like] {
+                if let range = trimmed.range(of: op.rawValue) {
+                    let key = String(trimmed[trimmed.startIndex..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
+                    let value = String(trimmed[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+                    guard !key.isEmpty, !value.isEmpty else { return nil }
+                    return InfoFilter(key: key, op: op, value: value)
+                }
+            }
+            return nil
+        }
+
+        /// SQL condition fragment for an EXISTS subquery on variant_info.
+        func sqlCondition(paramIndex: inout Int32) -> (sql: String, bindings: [(Int32, String)]) {
+            var bindings: [(Int32, String)] = []
+            let keyParam = paramIndex; paramIndex += 1
+            let valueParam = paramIndex; paramIndex += 1
+            bindings.append((keyParam, key))
+            bindings.append((valueParam, value))
+
+            let cast = "CAST(vi.value AS REAL)"
+            let cmp: String
+            switch op {
+            case .gt:   cmp = "\(cast) > CAST(? AS REAL)"
+            case .gte:  cmp = "\(cast) >= CAST(? AS REAL)"
+            case .lt:   cmp = "\(cast) < CAST(? AS REAL)"
+            case .lte:  cmp = "\(cast) <= CAST(? AS REAL)"
+            case .eq:   cmp = "vi.value = ?"
+            case .neq:  cmp = "vi.value != ?"
+            case .like: cmp = "vi.value LIKE '%' || ? || '%'"
+            }
+
+            let sql = "EXISTS (SELECT 1 FROM variant_info vi WHERE vi.variant_id = variants.id AND vi.key = ? AND \(cmp))"
+            return (sql: sql, bindings: bindings)
+        }
+    }
+
+    /// Queries variants with optional type filter, name filter, and INFO filters.
+    public func queryForTable(nameFilter: String = "", types: Set<String> = [], infoFilters: [InfoFilter] = [], limit: Int = 5000) -> [VariantDatabaseRecord] {
         guard let db else { return [] }
 
         let idSelect = hasIdColumn ? "id, " : ""
@@ -548,6 +611,14 @@ public final class VariantDatabase: @unchecked Sendable {
             }
         }
 
+        if hasInfoTable {
+            for filter in infoFilters {
+                let (filterSQL, filterBindings) = filter.sqlCondition(paramIndex: &paramIndex)
+                conditions.append(filterSQL)
+                bindings.append(contentsOf: filterBindings)
+            }
+        }
+
         if !conditions.isEmpty {
             sql += " WHERE " + conditions.joined(separator: " AND ")
         }
@@ -565,7 +636,7 @@ public final class VariantDatabase: @unchecked Sendable {
     }
 
     /// Returns variant count matching optional filters.
-    public func queryCountForTable(nameFilter: String = "", types: Set<String> = []) -> Int {
+    public func queryCountForTable(nameFilter: String = "", types: Set<String> = [], infoFilters: [InfoFilter] = []) -> Int {
         guard let db else { return 0 }
 
         var sql = "SELECT COUNT(*) FROM variants"
@@ -585,6 +656,14 @@ public final class VariantDatabase: @unchecked Sendable {
             for t in types.sorted() {
                 bindings.append((paramIndex, t))
                 paramIndex += 1
+            }
+        }
+
+        if hasInfoTable {
+            for filter in infoFilters {
+                let (filterSQL, filterBindings) = filter.sqlCondition(paramIndex: &paramIndex)
+                conditions.append(filterSQL)
+                bindings.append(contentsOf: filterBindings)
             }
         }
 

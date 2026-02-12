@@ -144,6 +144,7 @@ public enum VariantTrackRenderer {
             let endPx = Int(frame.screenPosition(for: Double(variant.end)))
             let px = max(0, min(startPx, pixelWidth - 1))
             let pxEnd = max(px, min(endPx, pixelWidth - 1))
+            guard pxEnd < pixelWidth else { continue }
 
             let vtype = variant.qualifiers["variant_type"]?.values.first ?? ""
 
