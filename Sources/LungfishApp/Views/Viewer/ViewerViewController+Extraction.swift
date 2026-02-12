@@ -11,6 +11,13 @@ import os.log
 
 private let extractionLogger = Logger(subsystem: "com.lungfish.browser", category: "Extraction")
 
+private func scheduleExtractionOnMainRunLoop(_ block: @escaping @Sendable () -> Void) {
+    CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) {
+        block()
+    }
+    CFRunLoopWakeUp(CFRunLoopGetMain())
+}
+
 // MARK: - SequenceViewerView Extraction Actions
 
 extension SequenceViewerView {
@@ -359,39 +366,43 @@ extension SequenceViewerView {
                 )
 
                 let finalBundleURL = bundleURL
-                await MainActor.run {
-                    extractionLogger.info("createExtractionBundle: SUCCESS -> \(finalBundleURL.path)")
-                    let bundleURLs = [finalBundleURL]
+                scheduleExtractionOnMainRunLoop {
+                    MainActor.assumeIsolated {
+                        extractionLogger.info("createExtractionBundle: SUCCESS -> \(finalBundleURL.path)")
+                        let bundleURLs = [finalBundleURL]
 
-                    // Mark as complete for UI cards.
-                    DownloadCenter.shared.complete(id: itemId, detail: "Bundle ready")
+                        // Mark as complete for UI cards.
+                        DownloadCenter.shared.complete(id: itemId, detail: "Bundle ready")
 
-                    // Import through AppDelegate pipeline.
-                    if let appDelegate = NSApp.delegate as? AppDelegate {
-                        appDelegate.importReadyBundles(bundleURLs)
+                        // Import through AppDelegate pipeline.
+                        if let appDelegate = NSApp.delegate as? AppDelegate {
+                            appDelegate.importReadyBundles(bundleURLs)
 
-                        // Force immediate sidebar refresh/selection as an additional safety path.
-                        if let sidebar = appDelegate.mainWindowController?.mainSplitViewController?.sidebarController {
-                            sidebar.reloadFromFilesystem()
-                            _ = sidebar.selectItem(forURL: finalBundleURL)
+                            // Force immediate sidebar refresh/selection as an additional safety path.
+                            if let sidebar = appDelegate.mainWindowController?.mainSplitViewController?.sidebarController {
+                                sidebar.reloadFromFilesystem()
+                                _ = sidebar.selectItem(forURL: finalBundleURL)
+                            }
                         }
                     }
                 }
             } catch {
                 let errorDesc = error.localizedDescription
                 let errorStr = "\(error)"
-                await MainActor.run {
-                    extractionLogger.error("Bundle creation failed: \(errorStr)")
-                    DownloadCenter.shared.fail(
-                        id: itemId,
-                        detail: "Failed: \(errorDesc)"
-                    )
-                    let alert = NSAlert()
-                    alert.messageText = "Bundle Creation Failed"
-                    alert.informativeText = errorDesc
-                    alert.alertStyle = .warning
-                    alert.addButton(withTitle: "OK")
-                    alert.runModal()
+                scheduleExtractionOnMainRunLoop {
+                    MainActor.assumeIsolated {
+                        extractionLogger.error("Bundle creation failed: \(errorStr)")
+                        DownloadCenter.shared.fail(
+                            id: itemId,
+                            detail: "Failed: \(errorDesc)"
+                        )
+                        let alert = NSAlert()
+                        alert.messageText = "Bundle Creation Failed"
+                        alert.informativeText = errorDesc
+                        alert.alertStyle = .warning
+                        alert.addButton(withTitle: "OK")
+                        alert.runModal()
+                    }
                 }
             }
         }

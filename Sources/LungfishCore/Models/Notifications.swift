@@ -81,10 +81,6 @@ extension Notification.Name {
     /// file, and reset the in-memory `BundleViewState` to defaults.
     public static let bundleViewStateResetRequested = Notification.Name("bundleViewStateResetRequested")
 
-    /// Posted when an extraction pipeline has finished building a bundle on disk.
-    ///
-    /// Contains userInfo key: "bundleURL" (URL)
-    public static let bundleBuiltOnDisk = Notification.Name("bundleBuiltOnDisk")
 }
 
 // MARK: - Inspector Notifications
