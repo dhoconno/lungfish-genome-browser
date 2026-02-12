@@ -3121,18 +3121,21 @@ public class SequenceViewerView: NSView {
         // - keep partially visible features
         // - skip sub-pixel features in detail modes
         // - suppress only giant region-container rows that would obscure detail
+        // Use the larger of visibleSpan and sequenceLength for the region threshold
+        // to avoid false passes when the view has padding beyond chromosome boundaries.
+        let regionThresholdSpan = max(visibleSpan, frame.sequenceLength)
         let displayAnnotations: [SequenceAnnotation]
         if scale > annotationDensityThreshold {
             displayAnnotations = finalAnnotations.filter { annot in
                 let span = annot.end - annot.start
-                return annot.type != .region || span < Int(Double(visibleSpan) * 0.98)
+                return annot.type != .region || span < Int(Double(regionThresholdSpan) * 0.98)
             }
         } else {
             let minFeatureBp = max(1, Int(scale))
             displayAnnotations = finalAnnotations.filter { annot in
                 let span = annot.end - annot.start
                 guard span >= minFeatureBp else { return false }
-                return annot.type != .region || span < Int(Double(visibleSpan) * 0.98)
+                return annot.type != .region || span < Int(Double(regionThresholdSpan) * 0.98)
             }
         }
 

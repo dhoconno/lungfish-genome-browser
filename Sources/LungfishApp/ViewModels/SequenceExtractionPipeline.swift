@@ -142,8 +142,18 @@ public final class SequenceExtractionPipeline: @unchecked Sendable {
                         end: result.effectiveEnd
                     )
 
-                    let transformed = sourceRecords.compactMap { record in
-                        record.transformed(
+                    let transformed = sourceRecords.compactMap { record -> AnnotationDatabaseRecord? in
+                        // Skip "region" annotations that span the entire extraction —
+                        // they represent chromosome/contig boundaries and are meaningless
+                        // in extracted sub-sequences.
+                        if record.type == "region" {
+                            let span = record.end - record.start
+                            let extractionSpan = result.effectiveEnd - result.effectiveStart
+                            if span >= Int(Double(extractionSpan) * 0.90) {
+                                return nil
+                            }
+                        }
+                        return record.transformed(
                             extractionStart: result.effectiveStart,
                             extractionEnd: result.effectiveEnd,
                             isReverseComplement: result.isReverseComplement,
