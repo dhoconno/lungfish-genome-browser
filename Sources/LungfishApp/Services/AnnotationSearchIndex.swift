@@ -68,7 +68,10 @@ public final class AnnotationSearchIndex {
     /// In-memory entries used when SQLite mode is unavailable.
     private var entries: [SearchResult] = []
 
-    /// SQLite database handle (preferred mode).
+    /// SQLite annotation database handles (preferred mode).
+    private var annotationDatabases: [(trackId: String, db: AnnotationDatabase)] = []
+
+    /// Primary annotation database handle retained for backward compatibility.
     private var database: AnnotationDatabase?
 
     /// Variant SQLite database handle (for unified search).
@@ -81,13 +84,16 @@ public final class AnnotationSearchIndex {
     public private(set) var isBuilding: Bool = false
 
     /// Whether this index is backed by SQLite (vs in-memory).
-    public var hasDatabaseBackend: Bool { database != nil }
+    public var hasDatabaseBackend: Bool { !annotationDatabases.isEmpty || database != nil }
 
     /// Provides access to the underlying annotation database for enrichment lookups.
-    public var annotationDatabase: AnnotationDatabase? { database }
+    public var annotationDatabase: AnnotationDatabase? { annotationDatabases.first?.db ?? database }
 
     /// Number of indexed entries.
     public var entryCount: Int {
+        if !annotationDatabases.isEmpty {
+            return annotationDatabases.reduce(0) { $0 + $1.db.totalCount() }
+        }
         if let db = database {
             return db.totalCount()
         }
@@ -97,7 +103,26 @@ public final class AnnotationSearchIndex {
     /// All indexed entries (for populating the annotation table drawer).
     /// For SQLite mode, returns up to the display limit.
     public var allResults: [SearchResult] {
-        if let db = database {
+        if !annotationDatabases.isEmpty {
+            var results: [SearchResult] = []
+            for handle in annotationDatabases {
+                let remaining = 5000 - results.count
+                guard remaining > 0 else { break }
+                let records = handle.db.query(limit: remaining)
+                results.append(contentsOf: records.map { record in
+                    SearchResult(
+                        name: record.name,
+                        chromosome: record.chromosome,
+                        start: record.start,
+                        end: record.end,
+                        trackId: handle.trackId,
+                        type: record.type,
+                        strand: record.strand
+                    )
+                })
+            }
+            return results
+        } else if let db = database {
             let records = db.query(limit: 5000)
             return records.map { record in
                 SearchResult(
@@ -117,7 +142,9 @@ public final class AnnotationSearchIndex {
     /// All distinct annotation types in the index (includes variant types).
     public var allTypes: [String] {
         var types: Set<String>
-        if let db = database {
+        if !annotationDatabases.isEmpty {
+            types = Set(annotationDatabases.flatMap { $0.db.allTypes() })
+        } else if let db = database {
             types = Set(db.allTypes())
         } else {
             types = Set(entries.map { $0.type })
@@ -150,8 +177,10 @@ public final class AnnotationSearchIndex {
         }
 
         do {
-            database = try AnnotationDatabase(url: dbURL)
+            let db = try AnnotationDatabase(url: dbURL)
+            database = db
             databaseTrackId = trackId
+            annotationDatabases = [(trackId: trackId, db: db)]
             isBuilding = false
             let count = database?.totalCount() ?? 0
             searchLogger.info("AnnotationSearchIndex: Opened SQLite database with \(count) annotations")
@@ -197,21 +226,38 @@ public final class AnnotationSearchIndex {
     ///   - chromosomes: The chromosome list to scan
     public func buildIndex(bundle: ReferenceBundle, chromosomes: [ChromosomeInfo]) {
         _ = chromosomes
+        annotationDatabases.removeAll()
+        database = nil
+        databaseTrackId = ""
 
         for trackId in bundle.annotationTrackIds {
             if let trackInfo = bundle.annotationTrack(id: trackId),
                let dbPath = trackInfo.databasePath {
-                if buildFromDatabase(bundle: bundle, trackId: trackId, databasePath: dbPath) {
-                    return
+                let dbURL = bundle.url.appendingPathComponent(dbPath)
+                guard FileManager.default.fileExists(atPath: dbURL.path) else { continue }
+                do {
+                    let db = try AnnotationDatabase(url: dbURL)
+                    annotationDatabases.append((trackId: trackId, db: db))
+                } catch {
+                    searchLogger.warning("AnnotationSearchIndex: Failed to open annotation database '\(trackId, privacy: .public)': \(error.localizedDescription)")
                 }
             }
+        }
+
+        if let first = annotationDatabases.first {
+            database = first.db
+            databaseTrackId = first.trackId
+            let total = annotationDatabases.reduce(0) { $0 + $1.db.totalCount() }
+            searchLogger.info("AnnotationSearchIndex: Opened \(self.annotationDatabases.count) annotation databases with \(total) annotations")
         }
 
         // Open variant databases even if there are no annotation databases.
         openVariantDatabases(bundle: bundle)
         entries = []
         isBuilding = false
-        searchLogger.warning("AnnotationSearchIndex: No annotation SQLite database found; annotation search will be empty")
+        if annotationDatabases.isEmpty {
+            searchLogger.warning("AnnotationSearchIndex: No annotation SQLite database found; annotation search will be empty")
+        }
         onBuildComplete?()
     }
 
@@ -228,18 +274,22 @@ public final class AnnotationSearchIndex {
 
         var results: [SearchResult] = []
 
-        if let db = database {
-            let records = db.query(nameFilter: query, limit: limit)
-            results = records.map { record in
-                SearchResult(
-                    name: record.name,
-                    chromosome: record.chromosome,
-                    start: record.start,
-                    end: record.end,
-                    trackId: databaseTrackId,
-                    type: record.type,
-                    strand: record.strand
-                )
+        if !annotationDatabases.isEmpty {
+            for handle in annotationDatabases {
+                let remaining = limit - results.count
+                guard remaining > 0 else { break }
+                let records = handle.db.query(nameFilter: query, limit: remaining)
+                results.append(contentsOf: records.map { record in
+                    SearchResult(
+                        name: record.name,
+                        chromosome: record.chromosome,
+                        start: record.start,
+                        end: record.end,
+                        trackId: handle.trackId,
+                        type: record.type,
+                        strand: record.strand
+                    )
+                })
             }
         } else {
             // Legacy in-memory search
@@ -284,25 +334,33 @@ public final class AnnotationSearchIndex {
     ///   - limit: Maximum results
     /// - Returns: Array of matching results, or nil if not in SQLite mode
     public func query(nameFilter: String = "", types: Set<String> = [], limit: Int = 5000) -> [SearchResult]? {
-        guard let db = database else { return nil }
-        let records = db.query(nameFilter: nameFilter, types: types, limit: limit)
-        return records.map { record in
-            SearchResult(
-                name: record.name,
-                chromosome: record.chromosome,
-                start: record.start,
-                end: record.end,
-                trackId: databaseTrackId,
-                type: record.type,
-                strand: record.strand
-            )
+        guard !annotationDatabases.isEmpty else { return nil }
+        var results: [SearchResult] = []
+        for handle in annotationDatabases {
+            let remaining = limit - results.count
+            guard remaining > 0 else { break }
+            let records = handle.db.query(nameFilter: nameFilter, types: types, limit: remaining)
+            results.append(contentsOf: records.map { record in
+                SearchResult(
+                    name: record.name,
+                    chromosome: record.chromosome,
+                    start: record.start,
+                    end: record.end,
+                    trackId: handle.trackId,
+                    type: record.type,
+                    strand: record.strand
+                )
+            })
         }
+        return results
     }
 
     /// Returns the count of annotations matching filters (SQLite mode only).
     public func queryCount(nameFilter: String = "", types: Set<String> = []) -> Int? {
-        guard let db = database else { return nil }
-        var count = db.queryCount(nameFilter: nameFilter, types: types)
+        guard !annotationDatabases.isEmpty else { return nil }
+        var count = annotationDatabases.reduce(0) { partial, handle in
+            partial + handle.db.queryCount(nameFilter: nameFilter, types: types)
+        }
 
         // Add variant counts if variant database is available and types match
         for handle in variantDatabases {
@@ -391,10 +449,36 @@ public final class AnnotationSearchIndex {
 
     /// All distinct annotation types only (no variant types).
     public var annotationTypes: [String] {
+        if !annotationDatabases.isEmpty {
+            return Set(annotationDatabases.flatMap { $0.db.allTypes() }).sorted()
+        }
         if let db = database {
             return db.allTypes().sorted()
         }
         return Set(entries.map { $0.type }).sorted()
+    }
+
+    /// Track-aware annotation lookup for drawer/inspector enrichment.
+    public func lookupAnnotation(for result: SearchResult) -> AnnotationDatabaseRecord? {
+        if let matched = annotationDatabases.first(where: { $0.trackId == result.trackId }) {
+            return matched.db.lookupAnnotation(
+                name: result.name,
+                chromosome: result.chromosome,
+                start: result.start,
+                end: result.end
+            )
+        }
+        for handle in annotationDatabases {
+            if let record = handle.db.lookupAnnotation(
+                name: result.name,
+                chromosome: result.chromosome,
+                start: result.start,
+                end: result.end
+            ) {
+                return record
+            }
+        }
+        return nil
     }
 
     /// Whether a variant database is available for unified queries.
@@ -418,6 +502,7 @@ public final class AnnotationSearchIndex {
     public func clear() {
         entries = []
         database = nil
+        annotationDatabases = []
         variantDatabases = []
         isBuilding = false
     }

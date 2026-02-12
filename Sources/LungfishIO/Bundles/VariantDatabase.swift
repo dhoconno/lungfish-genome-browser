@@ -108,6 +108,10 @@ public struct VariantDatabaseRecord: Sendable, Equatable {
         if let f = filter {
             qualifiers["filter"] = AnnotationQualifier(f)
         }
+        qualifiers["sample_count"] = AnnotationQualifier(String(sampleCount))
+        if let rowId = id {
+            qualifiers["variant_row_id"] = AnnotationQualifier(String(rowId))
+        }
 
         let alts = alt.split(separator: ",").map(String.init)
         var noteComponents: [String] = []
@@ -1032,32 +1036,20 @@ public final class VariantDatabase: @unchecked Sendable {
         }
         defer { sqlite3_finalize(insertSampleStmt) }
 
-        // Read VCF content — handle compressed files
-        let lines: [Substring]
-        let ext = vcfURL.pathExtension.lowercased()
-        if ext == "gz" {
-            let data = try decompressGzip(url: vcfURL)
-            let content = String(data: data, encoding: .utf8) ?? ""
-            lines = content.split(separator: "\n")
-        } else {
-            let content = try String(contentsOf: vcfURL, encoding: .utf8)
-            lines = content.split(separator: "\n")
-        }
-
-        progressHandler?(0.05, "Parsing VCF (\(lines.count) lines)...")
-
         var insertCount = 0
         var sampleNames: [String] = []
         var linesProcessed = 0
-        let totalLines = lines.count
+        var totalLines = 0
 
-        for line in lines {
+        progressHandler?(0.05, "Parsing VCF...")
+
+        func parseLine(_ line: Substring) {
             linesProcessed += 1
 
-            guard !line.isEmpty else { continue }
+            guard !line.isEmpty else { return }
 
             // Skip meta-information lines
-            if line.hasPrefix("##") { continue }
+            if line.hasPrefix("##") { return }
 
             // Parse header line for sample names
             if line.hasPrefix("#CHROM") {
@@ -1073,15 +1065,15 @@ public final class VariantDatabase: @unchecked Sendable {
                     }
                     variantDBLogger.info("createFromVCF: Found \(sampleNames.count) samples")
                 }
-                continue
+                return
             }
 
             // Parse variant line
             let fields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-            guard fields.count >= 8 else { continue }
+            guard fields.count >= 8 else { return }
 
             let chromosome = fields[0]
-            guard let pos1based = Int(fields[1]), pos1based >= 1 else { continue }
+            guard let pos1based = Int(fields[1]), pos1based >= 1 else { return }
             let position = pos1based - 1  // Convert to 0-based
 
             let rawID = fields[2]
@@ -1105,18 +1097,37 @@ public final class VariantDatabase: @unchecked Sendable {
             }
             let infoStr = fields[7] == "." ? nil : fields[7]
 
-            // Parse genotype data to count samples
+            // Parse genotype data to count called samples (non-missing GT).
             var genotypeCount = 0
             var formatFields: [String] = []
             if parseGenotypes && fields.count > 9 && !sampleNames.isEmpty {
                 let formatStr = fields[8]
                 formatFields = formatStr.split(separator: ":").map(String.init)
-                // Count non-missing genotypes
+                let gtIndex = formatFields.firstIndex(of: "GT")
                 for sampleIdx in 0..<sampleNames.count {
                     let fieldIdx = 9 + sampleIdx
                     guard fieldIdx < fields.count else { break }
                     let sampleData = fields[fieldIdx]
-                    if sampleData != "." && sampleData != "./." && sampleData != ".|." {
+                    if sampleData == "." || sampleData == "./." || sampleData == ".|." { continue }
+                    guard let gtIdx = gtIndex else { continue }
+                    let sampleFields = sampleData.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+                    guard gtIdx < sampleFields.count else { continue }
+                    let gt = sampleFields[gtIdx]
+                    if gt == "." || gt == "./." || gt == ".|." { continue }
+                    let separator: Character = gt.contains("|") ? "|" : "/"
+                    let alleles = gt.split(separator: separator).map(String.init)
+                    if alleles.count >= 2 {
+                        let a1 = alleles[0] == "." ? -1 : (Int(alleles[0]) ?? -1)
+                        let a2 = alleles[1] == "." ? -1 : (Int(alleles[1]) ?? -1)
+                        if a1 >= 0 || a2 >= 0 {
+                            genotypeCount += 1
+                        }
+                    } else if alleles.count == 1 {
+                        let a1 = alleles[0] == "." ? -1 : (Int(alleles[0]) ?? -1)
+                        if a1 >= 0 {
+                            genotypeCount += 1
+                        }
+                    } else {
                         genotypeCount += 1
                     }
                 }
@@ -1150,7 +1161,7 @@ public final class VariantDatabase: @unchecked Sendable {
 
             guard sqlite3_step(insertVariantStmt) == SQLITE_DONE else {
                 variantDBLogger.warning("Failed to insert variant: \(variantID)")
-                continue
+                return
             }
             let variantRowId = sqlite3_last_insert_rowid(db)
             insertCount += 1
@@ -1186,6 +1197,9 @@ public final class VariantDatabase: @unchecked Sendable {
                         }
                         if alleles.count >= 2 {
                             allele2 = alleles[1] == "." ? -1 : (Int(alleles[1]) ?? -1)
+                        } else if alleles.count == 1 {
+                            // Haploid calls are rendered as homozygous for display purposes.
+                            allele2 = allele1
                         }
                     }
 
@@ -1253,8 +1267,29 @@ public final class VariantDatabase: @unchecked Sendable {
 
             // Progress reporting every 1000 variants
             if insertCount % 1000 == 0 {
-                let fraction = Double(linesProcessed) / Double(max(1, totalLines))
-                progressHandler?(0.05 + fraction * 0.85, "Parsing variants (\(insertCount))...")
+                if totalLines > 0 {
+                    let fraction = Double(linesProcessed) / Double(totalLines)
+                    progressHandler?(0.05 + fraction * 0.85, "Parsing variants (\(insertCount))...")
+                } else {
+                    progressHandler?(0.50, "Parsing variants (\(insertCount))...")
+                }
+            }
+        }
+
+        // Read VCF content.
+        // Plain VCFs use in-memory split (current behavior); .vcf.gz uses streaming to avoid large memory spikes.
+        let ext = vcfURL.pathExtension.lowercased()
+        if ext == "gz" {
+            try streamGzipLines(url: vcfURL) { line in
+                parseLine(line)
+            }
+        } else {
+            let content = try String(contentsOf: vcfURL, encoding: .utf8)
+            let lines = content.split(separator: "\n")
+            totalLines = lines.count
+            progressHandler?(0.05, "Parsing VCF (\(totalLines) lines)...")
+            for line in lines {
+                parseLine(line)
             }
         }
 
@@ -1284,8 +1319,8 @@ public final class VariantDatabase: @unchecked Sendable {
 
     // MARK: - Compressed VCF Support
 
-    /// Decompresses a gzip-compressed file and returns the raw data.
-    private static func decompressGzip(url: URL) throws -> Data {
+    /// Streams lines from a gzip-compressed VCF using `gzip -dc`.
+    private static func streamGzipLines(url: URL, _ handler: (Substring) -> Void) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/gzip")
         process.arguments = ["-dc", url.path]
@@ -1296,19 +1331,30 @@ public final class VariantDatabase: @unchecked Sendable {
 
         try process.run()
 
-        var data = Data()
         let fileHandle = pipe.fileHandleForReading
+        var buffer = Data()
         while true {
-            let chunk = fileHandle.readData(ofLength: 1024 * 1024) // 1MB chunks
+            let chunk = fileHandle.readData(ofLength: 64 * 1024)
             if chunk.isEmpty { break }
-            data.append(chunk)
+            buffer.append(chunk)
+
+            while let newlineIdx = buffer.firstIndex(of: 0x0A) { // "\n"
+                let lineData = buffer.prefix(upTo: newlineIdx)
+                if let line = String(data: lineData, encoding: .utf8) {
+                    handler(Substring(line))
+                }
+                buffer.removeSubrange(...newlineIdx)
+            }
+        }
+
+        if !buffer.isEmpty, let tail = String(data: buffer, encoding: .utf8) {
+            handler(Substring(tail))
         }
 
         process.waitUntilExit()
         guard process.terminationStatus == 0 else {
             throw VariantDatabaseError.createFailed("Failed to decompress \(url.lastPathComponent) (gzip exit code \(process.terminationStatus))")
         }
-        return data
     }
 
     // MARK: - Variant Classification

@@ -152,12 +152,7 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         // Look up the full annotation record from SQLite (preserves BED12 exon blocks).
         // Falls back to a flat single-interval annotation if the database lookup fails.
         let annotation: SequenceAnnotation
-        if let record = annotationSearchIndex?.annotationDatabase?.lookupAnnotation(
-            name: result.name,
-            chromosome: result.chromosome,
-            start: result.start,
-            end: result.end
-        ) {
+        if let record = annotationSearchIndex?.lookupAnnotation(for: result) {
             annotation = record.toAnnotation()
         } else {
             let strand: Strand = switch result.strand {
@@ -176,6 +171,13 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         }
         viewerView.selectedAnnotation = annotation
         viewerView.postAnnotationSelectedNotification(annotation)
+        if result.isVariant {
+            NotificationCenter.default.post(
+                name: .variantSelected,
+                object: self,
+                userInfo: [NotificationUserInfoKey.searchResult: result]
+            )
+        }
         viewerView.setNeedsDisplay(viewerView.bounds)
     }
 }

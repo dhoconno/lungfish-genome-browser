@@ -885,13 +885,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
     /// Looks up the translation string for an annotation from the SQLite database.
     func lookupTranslation(for annotation: AnnotationSearchIndex.SearchResult) -> String? {
-        guard let db = searchIndex?.annotationDatabase else { return nil }
-        guard let record = db.lookupAnnotation(
-            name: annotation.name,
-            chromosome: annotation.chromosome,
-            start: annotation.start,
-            end: annotation.end
-        ) else { return nil }
+        guard let record = searchIndex?.lookupAnnotation(for: annotation) else { return nil }
         guard let attrs = record.attributes, !attrs.isEmpty else { return nil }
         let parsed = AnnotationDatabase.parseAttributes(attrs)
         return parsed["translation"]
@@ -924,12 +918,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     // MARK: - Extraction Actions
 
     private func makeAnnotation(from result: AnnotationSearchIndex.SearchResult) -> SequenceAnnotation {
-        if let record = searchIndex?.annotationDatabase?.lookupAnnotation(
-            name: result.name,
-            chromosome: result.chromosome,
-            start: result.start,
-            end: result.end
-        ) {
+        if let record = searchIndex?.lookupAnnotation(for: result) {
             return record.toAnnotation()
         }
 
@@ -1007,12 +996,20 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
     @objc private func showInInspectorAction(_ sender: NSMenuItem) {
         guard let result = sender.representedObject as? AnnotationSearchIndex.SearchResult else { return }
-        let annotation = makeAnnotation(from: result)
-        // Select the annotation in the viewer first
-        NotificationCenter.default.post(
-            name: .annotationSelected,
-            object: annotation
-        )
+        if result.isVariant {
+            NotificationCenter.default.post(
+                name: .variantSelected,
+                object: self,
+                userInfo: [NotificationUserInfoKey.searchResult: result]
+            )
+        } else {
+            let annotation = makeAnnotation(from: result)
+            NotificationCenter.default.post(
+                name: .annotationSelected,
+                object: nil,
+                userInfo: [NotificationUserInfoKey.annotation: annotation]
+            )
+        }
         // Then show inspector
         NotificationCenter.default.post(
             name: .showInspectorRequested,

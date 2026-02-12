@@ -135,6 +135,12 @@ extension Notification.Name {
     /// - `"annotation"`: The `SequenceAnnotation` to zoom to.
     public static let zoomToAnnotationRequested = Notification.Name("zoomToAnnotationRequested")
 
+    /// Posted when a variant is selected in the viewer or drawer.
+    ///
+    /// The `userInfo` dictionary contains:
+    /// - `"searchResult"`: `AnnotationSearchIndex.SearchResult` for the selected variant.
+    public static let variantSelected = Notification.Name("variantSelected")
+
     /// Posted to request copying an annotation's raw sequence to the clipboard.
     ///
     /// The `userInfo` dictionary contains:
@@ -214,4 +220,13 @@ public enum NotificationUserInfoKey {
 
     /// Key for sample display state (SampleDisplayState).
     public static let sampleDisplayState = "sampleDisplayState"
+
+    /// Key for selected variant search result.
+    public static let searchResult = "searchResult"
+
+    /// Key for variant track ID.
+    public static let variantTrackId = "variantTrackId"
+
+    /// Key for variant database row ID.
+    public static let variantRowId = "variantRowId"
 }

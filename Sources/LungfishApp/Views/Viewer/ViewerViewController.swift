@@ -566,8 +566,10 @@ public class ViewerViewController: NSViewController {
 
         logger.info("handleSampleDisplayStateChanged: showRows=\(state.showGenotypeRows) height=\(state.rowHeightMode.rawValue, privacy: .public)")
         viewerView.sampleDisplayState = state
+        viewerView.clearGenotypeCache()
         viewerView.invalidateAnnotationTile()
         viewerView.needsDisplay = true
+        scheduleViewStateSave()
     }
 
     /// Handles request to reset bundle view state to defaults.
@@ -1803,10 +1805,27 @@ public class SequenceViewerView: NSView {
             }
         }
         // Reserve space for variant summary bar + genotype rows when variants are loaded
-        if showVariants && showVariantSummaryBar && !cachedVariantAnnotations.isEmpty {
+        if showVariants && showVariantSummaryBar && !filteredVisibleVariantAnnotations.isEmpty {
             y += variantTrackTotalHeight + 4
         }
         return y
+    }
+
+    /// Variant annotations after applying current type/text filters.
+    private var filteredVisibleVariantAnnotations: [SequenceAnnotation] {
+        guard showVariants else { return [] }
+        var variants = cachedVariantAnnotations
+        if let typeFilter = visibleVariantTypes, !typeFilter.isEmpty {
+            variants = variants.filter { ann in
+                let vtypeStr = ann.qualifiers["variant_type"]?.values.first ?? ""
+                return typeFilter.contains(vtypeStr)
+            }
+        }
+        if !variantFilterText.isEmpty {
+            let lower = variantFilterText.lowercased()
+            variants = variants.filter { $0.name.lowercased().contains(lower) }
+        }
+        return variants
     }
 
     /// Total height of the variant track area (summary bar + genotype rows).
@@ -2310,6 +2329,14 @@ public class SequenceViewerView: NSView {
         logger.info("hideCDSTranslation: CDS translation cleared")
     }
 
+    /// Clears cached genotype rendering data so the next draw refetches using current display state.
+    func clearGenotypeCache() {
+        genotypeFetchGeneration += 1
+        cachedGenotypeData = nil
+        cachedGenotypeRegion = nil
+        isFetchingGenotypes = false
+    }
+
     /// Enables multi-frame translation mode for the specified reading frames.
     ///
     /// Translates the visible nucleotide sequence on-the-fly in each specified frame.
@@ -2661,24 +2688,7 @@ public class SequenceViewerView: NSView {
             fetchVariantsAsync(bundle: bundle, region: visibleRegion)
         }
 
-        // Filter variants by visibility settings
-        let filteredVariants: [SequenceAnnotation]
-        if showVariants && needsAnnotations {
-            var variants = cachedVariantAnnotations
-            if let typeFilter = visibleVariantTypes, !typeFilter.isEmpty {
-                variants = variants.filter { ann in
-                    let vtypeStr = ann.qualifiers["variant_type"]?.values.first ?? ""
-                    return typeFilter.contains(vtypeStr)
-                }
-            }
-            if !variantFilterText.isEmpty {
-                let lower = variantFilterText.lowercased()
-                variants = variants.filter { $0.name.lowercased().contains(lower) }
-            }
-            filteredVariants = variants
-        } else {
-            filteredVariants = []
-        }
+        let filteredVariants: [SequenceAnnotation] = needsAnnotations ? filteredVisibleVariantAnnotations : []
 
         // Draw variant summary bar + genotype rows (between translation track and annotations)
         if showVariants && showVariantSummaryBar && !filteredVariants.isEmpty {
@@ -2935,6 +2945,7 @@ public class SequenceViewerView: NSView {
         let expandedStart = max(0, region.start - expandAmount)
         let expandedEnd = min(Int(chromLength), region.end + expandAmount)
         let expandedRegion = GenomicRegion(chromosome: region.chromosome, start: expandedStart, end: expandedEnd)
+        let displayState = sampleDisplayState
 
         // Capture bundle URL and track info for background thread
         let bundleURL = bundle.url
@@ -2944,6 +2955,8 @@ public class SequenceViewerView: NSView {
         Self.genotypeFetchQueue.async { [weak self] in
             var allSites: [VariantSite] = []
             var sampleNames: [String] = []
+            var sampleNameSet = Set<String>()
+            var sampleMetadata: [String: [String: String]] = [:]
 
             for trackId in variantTrackIds {
                 guard let trackInfo = bundle.variantTrack(id: trackId),
@@ -2953,8 +2966,13 @@ public class SequenceViewerView: NSView {
 
                 do {
                     let db = try VariantDatabase(url: dbURL)
-                    if sampleNames.isEmpty {
-                        sampleNames = db.sampleNames()
+                    for name in db.sampleNames() where sampleNameSet.insert(name).inserted {
+                        sampleNames.append(name)
+                    }
+                    for entry in db.allSampleMetadata() {
+                        var merged = sampleMetadata[entry.name] ?? [:]
+                        merged.merge(entry.metadata) { current, _ in current }
+                        sampleMetadata[entry.name] = merged
                     }
                     let regionData = db.genotypesInRegion(
                         chromosome: expandedRegion.chromosome,
@@ -2980,8 +2998,10 @@ public class SequenceViewerView: NSView {
                 }
             }
 
+            let visibleOrderedSamples = displayState.visibleSamples(from: sampleNames, metadata: sampleMetadata)
+
             let displayData = GenotypeDisplayData(
-                sampleNames: sampleNames,
+                sampleNames: visibleOrderedSamples,
                 sites: allSites,
                 region: expandedRegion
             )
@@ -4596,6 +4616,7 @@ public class SequenceViewerView: NSView {
                 object: self,
                 userInfo: [NotificationUserInfoKey.annotation: annotation]
             )
+            postVariantSelectedNotificationIfNeeded(annotation)
             logger.info("Posted annotationSelected notification for '\(annotation.name, privacy: .public)'")
         } else {
             // Post notification with nil to indicate deselection
@@ -4604,8 +4625,46 @@ public class SequenceViewerView: NSView {
                 object: self,
                 userInfo: [NotificationUserInfoKey.inspectorTab: "selection"]
             )
+            NotificationCenter.default.post(name: .variantSelected, object: self, userInfo: nil)
             logger.info("Posted annotationSelected notification (deselection)")
         }
+    }
+
+    /// Posts a variant selection notification when the selected annotation is a variant.
+    private func postVariantSelectedNotificationIfNeeded(_ annotation: SequenceAnnotation) {
+        let variantTypes: Set<AnnotationType> = [.snp, .insertion, .deletion, .variation]
+        guard variantTypes.contains(annotation.type) else { return }
+        guard let chromosome = annotation.chromosome else { return }
+
+        let rowId = annotation.qualifiers["variant_row_id"]?.values.first.flatMap { Int64($0) }
+        let trackId = annotation.qualifiers["variant_track_id"]?.values.first ?? ""
+        let variantType = annotation.qualifiers["variant_type"]?.values.first ?? annotation.type.rawValue
+        let ref = annotation.qualifiers["ref"]?.values.first
+        let alt = annotation.qualifiers["alt"]?.values.first
+        let quality = annotation.qualifiers["quality"]?.values.first.flatMap(Double.init)
+        let filter = annotation.qualifiers["filter"]?.values.first
+        let sampleCount = annotation.qualifiers["sample_count"]?.values.first.flatMap(Int.init)
+
+        let result = AnnotationSearchIndex.SearchResult(
+            name: annotation.name,
+            chromosome: chromosome,
+            start: annotation.start,
+            end: annotation.end,
+            trackId: trackId,
+            type: variantType,
+            strand: annotation.strand.rawValue,
+            ref: ref,
+            alt: alt,
+            quality: quality,
+            filter: filter,
+            sampleCount: sampleCount,
+            variantRowId: rowId
+        )
+        NotificationCenter.default.post(
+            name: .variantSelected,
+            object: self,
+            userInfo: [NotificationUserInfoKey.searchResult: result]
+        )
     }
 
     /// Shows a popover with annotation details at the specified location.
@@ -5777,7 +5836,7 @@ private func classifyGenotype(_ gt: GenotypeRecord) -> GenotypeDisplayCall {
     let a2 = gt.allele2
 
     // Missing alleles (encoded as -1)
-    if a1 < 0 && a2 < 0 { return .noCall }
+    if a1 < 0 || a2 < 0 { return .noCall }
 
     if a1 == 0 && a2 == 0 { return .homRef }
     if a1 == a2 { return .homAlt }

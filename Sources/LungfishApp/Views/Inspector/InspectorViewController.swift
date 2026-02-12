@@ -132,6 +132,14 @@ public class InspectorViewController: NSViewController {
             object: nil
         )
 
+        // Listen for explicit variant selections that include track/row identity.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleVariantSelected(_:)),
+            name: .variantSelected,
+            object: nil
+        )
+
         // Listen for bundle loads to update Document tab
         NotificationCenter.default.addObserver(
             self,
@@ -366,14 +374,28 @@ public class InspectorViewController: NSViewController {
         if let annotation = selectedAnnotation {
             viewModel.selectedAnnotation = annotation
             viewModel.selectionSectionViewModel.select(annotation: annotation)
+            if annotation.type != .snp && annotation.type != .insertion && annotation.type != .deletion && annotation.type != .variation {
+                viewModel.variantSectionViewModel.clear()
+            }
             // Auto-switch to Selection tab when an annotation is selected
             viewModel.selectedTab = .selection
         } else {
             // Deselection - clear the annotation
             viewModel.selectedAnnotation = nil
             viewModel.selectionSectionViewModel.select(annotation: nil)
+            viewModel.variantSectionViewModel.clear()
             applyInspectorTabSelection(from: notification)
         }
+    }
+
+    /// Handles variant selection notifications carrying row/track identity.
+    @objc private func handleVariantSelected(_ notification: Notification) {
+        guard let result = notification.userInfo?[NotificationUserInfoKey.searchResult] as? AnnotationSearchIndex.SearchResult else {
+            viewModel.variantSectionViewModel.clear()
+            return
+        }
+        viewModel.variantSectionViewModel.select(variant: result)
+        viewModel.selectedTab = .selection
     }
 
     /// Handles bundle load notifications to update the Document tab.
@@ -662,7 +684,7 @@ public class InspectorViewController: NSViewController {
     private func updateSampleSection(from bundle: ReferenceBundle) {
         var allSampleNames: [String] = []
         var allMetadataFields: Set<String> = []
-        var firstDB: VariantDatabase?
+        var dbByTrackId: [String: VariantDatabase] = [:]
 
         for vTrackId in bundle.variantTrackIds {
             guard let trackInfo = bundle.variantTrack(id: vTrackId),
@@ -671,10 +693,10 @@ public class InspectorViewController: NSViewController {
             guard FileManager.default.fileExists(atPath: dbURL.path) else { continue }
             do {
                 let db = try VariantDatabase(url: dbURL)
+                dbByTrackId[vTrackId] = db
                 let names = db.sampleNames()
                 if !names.isEmpty && allSampleNames.isEmpty {
                     allSampleNames = names
-                    firstDB = db
                 }
                 let fields = db.metadataFieldNames()
                 allMetadataFields.formUnion(fields)
@@ -690,8 +712,8 @@ public class InspectorViewController: NSViewController {
             metadataFields: allMetadataFields.sorted()
         )
 
-        // Wire the variant section's database reference for genotype lookups
-        viewModel.variantSectionViewModel.variantDatabase = firstDB
+        // Wire variant databases for track-aware genotype lookups.
+        viewModel.variantSectionViewModel.variantDatabasesByTrackId = dbByTrackId
 
         logger.info("updateSampleSection: \(sampleCount) samples, \(allMetadataFields.count) metadata fields")
     }

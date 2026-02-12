@@ -33,8 +33,20 @@ public final class VariantSectionViewModel {
     /// Whether genotype data is available for this variant.
     var hasGenotypes: Bool = false
 
-    /// The variant database used for genotype lookups.
-    var variantDatabase: VariantDatabase?
+    /// Variant databases keyed by track ID.
+    var variantDatabasesByTrackId: [String: VariantDatabase] = [:]
+
+    /// Backward-compatible single-database accessor.
+    var variantDatabase: VariantDatabase? {
+        get { variantDatabasesByTrackId.values.first }
+        set {
+            if let newValue {
+                variantDatabasesByTrackId["default"] = newValue
+            } else {
+                variantDatabasesByTrackId.removeAll()
+            }
+        }
+    }
 
     /// Whether the variant detail section is expanded.
     var isExpanded: Bool = true
@@ -85,7 +97,18 @@ public final class VariantSectionViewModel {
 
     /// Loads genotype summary for a variant from the database.
     private func loadGenotypeSummary(for variant: AnnotationSearchIndex.SearchResult) {
-        guard let db = variantDatabase, let rowId = variant.variantRowId else {
+        guard let rowId = variant.variantRowId else {
+            hasGenotypes = false
+            return
+        }
+
+        let db: VariantDatabase?
+        if !variant.trackId.isEmpty {
+            db = variantDatabasesByTrackId[variant.trackId]
+        } else {
+            db = variantDatabasesByTrackId.values.first
+        }
+        guard let db else {
             hasGenotypes = false
             return
         }
