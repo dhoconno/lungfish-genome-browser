@@ -363,33 +363,29 @@ extension SequenceViewerView {
                     )
 
                     let finalBundleURL = bundleURL
-                    DispatchQueue.main.async {
-                        MainActor.assumeIsolated {
-                            extractionLogger.info("createExtractionBundle: SUCCESS -> \(finalBundleURL.path)")
-                            let bundleURLs = [finalBundleURL]
-                            // Complete the task card first, then import directly via AppDelegate.
-                            // This avoids relying on DownloadCenter callback wiring for extraction.
-                            DownloadCenter.shared.complete(id: itemId, detail: "Bundle ready")
-                            (NSApp.delegate as? AppDelegate)?.importReadyBundles(bundleURLs)
-                        }
+                    await MainActor.run {
+                        extractionLogger.info("createExtractionBundle: SUCCESS -> \(finalBundleURL.path)")
+                        let bundleURLs = [finalBundleURL]
+                        // Complete the task card first, then import directly via AppDelegate.
+                        // This avoids relying on DownloadCenter callback wiring for extraction.
+                        DownloadCenter.shared.complete(id: itemId, detail: "Bundle ready")
+                        (NSApp.delegate as? AppDelegate)?.importReadyBundles(bundleURLs)
                     }
                 } catch {
                     let errorDesc = error.localizedDescription
                     let errorStr = "\(error)"
-                    DispatchQueue.main.async {
-                        MainActor.assumeIsolated {
-                            extractionLogger.error("Bundle creation failed: \(errorStr)")
-                            DownloadCenter.shared.fail(
-                                id: itemId,
-                                detail: "Failed: \(errorDesc)"
-                            )
-                            let alert = NSAlert()
-                            alert.messageText = "Bundle Creation Failed"
-                            alert.informativeText = errorDesc
-                            alert.alertStyle = .warning
-                            alert.addButton(withTitle: "OK")
-                            alert.runModal()
-                        }
+                    await MainActor.run {
+                        extractionLogger.error("Bundle creation failed: \(errorStr)")
+                        DownloadCenter.shared.fail(
+                            id: itemId,
+                            detail: "Failed: \(errorDesc)"
+                        )
+                        let alert = NSAlert()
+                        alert.messageText = "Bundle Creation Failed"
+                        alert.informativeText = errorDesc
+                        alert.alertStyle = .warning
+                        alert.addButton(withTitle: "OK")
+                        alert.runModal()
                     }
                 }
             }
