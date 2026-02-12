@@ -54,6 +54,16 @@ public class InspectorViewController: NSViewController {
         viewModel.annotationSectionViewModel
     }
 
+    /// Public access to the variant section view model for wiring variant detail.
+    public var variantSectionViewModel: VariantSectionViewModel {
+        viewModel.variantSectionViewModel
+    }
+
+    /// Public access to the sample section view model for wiring sample data.
+    public var sampleSectionViewModel: SampleSectionViewModel {
+        viewModel.sampleSectionViewModel
+    }
+
     /// Cancellables for Combine subscriptions
     private var cancellables = Set<AnyCancellable>()
 
@@ -227,6 +237,34 @@ public class InspectorViewController: NSViewController {
             self?.handleQualityOverlayToggled(enabled)
         }
 
+        // Variant section callbacks
+        viewModel.variantSectionViewModel.onZoomToVariant = { variant in
+            // Create a SequenceAnnotation from the variant for zoom navigation
+            let annotation = SequenceAnnotation(
+                type: .snp,
+                name: variant.name,
+                chromosome: variant.chromosome,
+                start: variant.start,
+                end: variant.end,
+                strand: .unknown
+            )
+            NotificationCenter.default.post(
+                name: .zoomToAnnotationRequested,
+                object: nil,
+                userInfo: [NotificationUserInfoKey.annotation: annotation]
+            )
+        }
+
+        viewModel.variantSectionViewModel.onCopyVariantInfo = { info in
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(info, forType: .string)
+        }
+
+        // Sample section callbacks
+        viewModel.sampleSectionViewModel.onDisplayStateChanged = { [weak self] state in
+            self?.handleSampleDisplayStateChanged(state)
+        }
+
         // Annotation section callbacks
         viewModel.annotationSectionViewModel.onSettingsChanged = { [weak self] in
             self?.handleAnnotationSettingsChanged()
@@ -355,6 +393,9 @@ public class InspectorViewController: NSViewController {
         // Wire reference bundle for on-the-fly CDS translation computation
         if let bundle = userInfo[NotificationUserInfoKey.referenceBundle] as? ReferenceBundle {
             viewModel.selectionSectionViewModel.referenceBundle = bundle
+
+            // Populate sample section with variant database sample data
+            updateSampleSection(from: bundle)
         }
 
         // Auto-select the first chromosome so the Chromosome section is visible immediately
@@ -513,6 +554,22 @@ public class InspectorViewController: NSViewController {
         )
     }
 
+    /// Handles sample display state changes from the SampleSection.
+    ///
+    /// Posts a `sampleDisplayStateChanged` notification so the viewer
+    /// can update genotype row rendering.
+    private func handleSampleDisplayStateChanged(_ state: SampleDisplayState) {
+        logger.info("handleSampleDisplayStateChanged: showRows=\(state.showGenotypeRows) height=\(state.rowHeightMode.rawValue, privacy: .public) hidden=\(state.hiddenSamples.count)")
+
+        NotificationCenter.default.post(
+            name: .sampleDisplayStateChanged,
+            object: self,
+            userInfo: [
+                NotificationUserInfoKey.sampleDisplayState: state
+            ]
+        )
+    }
+
     /// Handles resetting ALL appearance settings to their defaults.
     ///
     /// This is called when the "Reset to Defaults" button is pressed in the
@@ -597,6 +654,46 @@ public class InspectorViewController: NSViewController {
     /// - Parameter chromosome: The chromosome to display details for, or nil to clear
     public func updateSelectedChromosome(_ chromosome: ChromosomeInfo?) {
         viewModel.documentSectionViewModel.selectChromosome(chromosome)
+    }
+
+    /// Populates the sample section view model from the bundle's variant databases.
+    ///
+    /// Opens each variant database and aggregates sample names and metadata field names.
+    private func updateSampleSection(from bundle: ReferenceBundle) {
+        var allSampleNames: [String] = []
+        var allMetadataFields: Set<String> = []
+        var firstDB: VariantDatabase?
+
+        for vTrackId in bundle.variantTrackIds {
+            guard let trackInfo = bundle.variantTrack(id: vTrackId),
+                  let dbPath = trackInfo.databasePath else { continue }
+            let dbURL = bundle.url.appendingPathComponent(dbPath)
+            guard FileManager.default.fileExists(atPath: dbURL.path) else { continue }
+            do {
+                let db = try VariantDatabase(url: dbURL)
+                let names = db.sampleNames()
+                if !names.isEmpty && allSampleNames.isEmpty {
+                    allSampleNames = names
+                    firstDB = db
+                }
+                let fields = db.metadataFieldNames()
+                allMetadataFields.formUnion(fields)
+            } catch {
+                logger.warning("updateSampleSection: Failed to open variant database '\(vTrackId, privacy: .public)': \(error.localizedDescription)")
+            }
+        }
+
+        let sampleCount = allSampleNames.count
+        viewModel.sampleSectionViewModel.update(
+            sampleCount: sampleCount,
+            sampleNames: allSampleNames,
+            metadataFields: allMetadataFields.sorted()
+        )
+
+        // Wire the variant section's database reference for genotype lookups
+        viewModel.variantSectionViewModel.variantDatabase = firstDB
+
+        logger.info("updateSampleSection: \(sampleCount) samples, \(allMetadataFields.count) metadata fields")
     }
 
     /// Updates the quality section with new quality data.
@@ -703,6 +800,12 @@ public final class InspectorViewModel {
     /// View model for mapped read style section (BAM/CRAM styling placeholder)
     let readStyleSectionViewModel = ReadStyleSectionViewModel()
 
+    /// View model for variant detail section
+    let variantSectionViewModel = VariantSectionViewModel()
+
+    /// View model for sample display controls section
+    let sampleSectionViewModel = SampleSectionViewModel()
+
     // MARK: - Initialization
 
     init() {
@@ -756,6 +859,9 @@ public struct InspectorView: View {
                     case .selection:
                         SelectionSection(viewModel: viewModel.selectionSectionViewModel)
 
+                        // Variant detail (shown when a variant is selected)
+                        VariantSection(viewModel: viewModel.variantSectionViewModel)
+
                         Divider()
 
                         // Sequence style
@@ -765,6 +871,11 @@ public struct InspectorView: View {
 
                         // Annotation style
                         AnnotationSection(viewModel: viewModel.annotationSectionViewModel)
+
+                        Divider()
+
+                        // Sample display controls (shown when variant data is available)
+                        SampleSection(viewModel: viewModel.sampleSectionViewModel)
 
                         Divider()
 

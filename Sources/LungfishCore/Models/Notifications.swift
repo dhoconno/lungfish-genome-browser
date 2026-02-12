@@ -59,6 +59,11 @@ extension Notification.Name {
     /// Contains userInfo keys: "showVariants" (Bool), "visibleVariantTypes" (Set<String>),
     /// "variantFilterText" (String)
     public static let variantFilterChanged = Notification.Name("variantFilterChanged")
+
+    /// Posted when sample display state has changed (row visibility, height mode, sort/filter).
+    ///
+    /// Contains userInfo key: "sampleDisplayState" (SampleDisplayState)
+    public static let sampleDisplayStateChanged = Notification.Name("sampleDisplayStateChanged")
 }
 
 // MARK: - Viewer Navigation Notifications
@@ -206,4 +211,7 @@ public enum NotificationUserInfoKey {
 
     /// Key for variant text filter (String).
     public static let variantFilterText = "variantFilterText"
+
+    /// Key for sample display state (SampleDisplayState).
+    public static let sampleDisplayState = "sampleDisplayState"
 }

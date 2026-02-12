@@ -341,6 +341,14 @@ public class ViewerViewController: NSViewController {
         )
         logger.debug("ViewerViewController: Registered variantFilterChanged observer")
 
+        // Observer for sample display state changes from inspector
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleSampleDisplayStateChanged(_:)),
+            name: .sampleDisplayStateChanged,
+            object: nil
+        )
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleBundleViewStateResetRequested(_:)),
@@ -548,6 +556,18 @@ public class ViewerViewController: NSViewController {
         viewerView.needsDisplay = true
         scheduleViewStateSave()
         logger.info("handleVariantFilterChanged: Triggered viewer redraw")
+    }
+
+    /// Handles sample display state changes from the inspector.
+    @objc private func handleSampleDisplayStateChanged(_ notification: Notification) {
+        guard let state = notification.userInfo?[NotificationUserInfoKey.sampleDisplayState] as? SampleDisplayState else {
+            return
+        }
+
+        logger.info("handleSampleDisplayStateChanged: showRows=\(state.showGenotypeRows) height=\(state.rowHeightMode.rawValue, privacy: .public)")
+        viewerView.sampleDisplayState = state
+        viewerView.invalidateAnnotationTile()
+        viewerView.needsDisplay = true
     }
 
     /// Handles request to reset bundle view state to defaults.
