@@ -4692,44 +4692,85 @@ public class SequenceViewerView: NSView {
     private func showAnnotationContextMenu(for annotation: SequenceAnnotation, at event: NSEvent) {
         let menu = NSMenu(title: "Annotation")
 
-        // Edit annotation
-        let editItem = NSMenuItem(title: "Edit Annotation...", action: #selector(editAnnotationAction(_:)), keyEquivalent: "")
-        editItem.target = self
-        editItem.representedObject = annotation
-        menu.addItem(editItem)
+        // --- Copy submenu ---
+        let copyMenu = NSMenu(title: "Copy")
 
-        menu.addItem(NSMenuItem.separator())
-
-        // Copy annotation name
         let copyNameItem = NSMenuItem(title: "Copy Name", action: #selector(copyAnnotationName(_:)), keyEquivalent: "")
         copyNameItem.target = self
         copyNameItem.representedObject = annotation
-        menu.addItem(copyNameItem)
+        copyMenu.addItem(copyNameItem)
 
-        // Copy annotation sequence
+        let copyCoordItem = NSMenuItem(title: "Copy Coordinates", action: #selector(copyAnnotationCoordinates(_:)), keyEquivalent: "")
+        copyCoordItem.target = self
+        copyCoordItem.representedObject = annotation
+        copyMenu.addItem(copyCoordItem)
+
+        copyMenu.addItem(NSMenuItem.separator())
+
         let copySeqItem = NSMenuItem(title: "Copy Sequence", action: #selector(copyAnnotationSequence(_:)), keyEquivalent: "")
         copySeqItem.target = self
         copySeqItem.representedObject = annotation
-        menu.addItem(copySeqItem)
+        copyMenu.addItem(copySeqItem)
+
+        let copyCompItem = NSMenuItem(title: "Copy Complement", action: #selector(copyAnnotationComplement(_:)), keyEquivalent: "")
+        copyCompItem.target = self
+        copyCompItem.representedObject = annotation
+        copyMenu.addItem(copyCompItem)
+
+        let copyRevCompItem = NSMenuItem(title: "Copy Reverse Complement", action: #selector(copyAnnotationReverseComplement(_:)), keyEquivalent: "")
+        copyRevCompItem.target = self
+        copyRevCompItem.representedObject = annotation
+        copyMenu.addItem(copyRevCompItem)
+
+        copyMenu.addItem(NSMenuItem.separator())
+
+        let copyFASTAItem = NSMenuItem(title: "Copy as FASTA", action: #selector(copyAnnotationAsFASTA(_:)), keyEquivalent: "")
+        copyFASTAItem.target = self
+        copyFASTAItem.representedObject = annotation
+        copyMenu.addItem(copyFASTAItem)
+
+        if annotation.type == .cds {
+            let copyProteinItem = NSMenuItem(title: "Copy Translation as FASTA", action: #selector(copyAnnotationTranslationAsFASTA(_:)), keyEquivalent: "")
+            copyProteinItem.target = self
+            copyProteinItem.representedObject = annotation
+            copyMenu.addItem(copyProteinItem)
+        }
+
+        let copyMenuItem = NSMenuItem(title: "Copy", action: nil, keyEquivalent: "")
+        copyMenuItem.submenu = copyMenu
+        menu.addItem(copyMenuItem)
+
+        // --- Extract ---
+        let extractItem = NSMenuItem(title: "Extract Sequence\u{2026}", action: #selector(extractAnnotationSequence(_:)), keyEquivalent: "")
+        extractItem.target = self
+        extractItem.representedObject = annotation
+        menu.addItem(extractItem)
 
         menu.addItem(NSMenuItem.separator())
 
-        // Delete annotation
-        let deleteItem = NSMenuItem(title: "Delete Annotation", action: #selector(deleteAnnotationAction(_:)), keyEquivalent: "")
-        deleteItem.target = self
-        deleteItem.representedObject = annotation
-        menu.addItem(deleteItem)
+        // --- Navigation ---
+        let zoomItem = NSMenuItem(title: "Zoom to Annotation", action: #selector(zoomToAnnotationAction(_:)), keyEquivalent: "")
+        zoomItem.target = self
+        zoomItem.representedObject = annotation
+        menu.addItem(zoomItem)
 
-        // Extraction actions
-        addExtractionMenuItems(to: menu, for: annotation)
-
-        menu.addItem(NSMenuItem.separator())
-
-        // Show in Inspector
         let inspectorItem = NSMenuItem(title: "Show in Inspector", action: #selector(showAnnotationInInspector(_:)), keyEquivalent: "")
         inspectorItem.target = self
         inspectorItem.representedObject = annotation
         menu.addItem(inspectorItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // --- Edit/Delete ---
+        let editItem = NSMenuItem(title: "Edit Annotation\u{2026}", action: #selector(editAnnotationAction(_:)), keyEquivalent: "")
+        editItem.target = self
+        editItem.representedObject = annotation
+        menu.addItem(editItem)
+
+        let deleteItem = NSMenuItem(title: "Delete Annotation", action: #selector(deleteAnnotationAction(_:)), keyEquivalent: "")
+        deleteItem.target = self
+        deleteItem.representedObject = annotation
+        menu.addItem(deleteItem)
 
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
@@ -4937,18 +4978,118 @@ public class SequenceViewerView: NSView {
     }
 
     @objc private func copyAnnotationSequence(_ sender: NSMenuItem?) {
-        guard let annotation = sender?.representedObject as? SequenceAnnotation,
-              let seq = sequence,
-              let interval = annotation.intervals.first else { return }
-
-        let start = max(0, interval.start)
-        let end = min(seq.length, interval.end)
-        let annotationBases = seq[start..<end]
-
+        guard let annotation = sender?.representedObject as? SequenceAnnotation else { return }
+        guard let bases = fetchAnnotationBases(annotation) else {
+            NSSound.beep()
+            return
+        }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(annotationBases, forType: .string)
-        logger.info("Copied \(end - start) bases from annotation '\(annotation.name)' to clipboard")
+        pasteboard.setString(bases, forType: .string)
+        logger.info("Copied \(bases.count) bases from annotation '\(annotation.name)' to clipboard")
+    }
+
+    @objc private func copyAnnotationCoordinates(_ sender: NSMenuItem?) {
+        guard let annotation = sender?.representedObject as? SequenceAnnotation else { return }
+        let chrom = annotation.chromosome ?? viewController?.referenceFrame?.chromosome ?? ""
+        let coordString = "\(chrom):\(annotation.start)-\(annotation.end)"
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(coordString, forType: .string)
+        logger.info("Copied coordinates '\(coordString)' to clipboard")
+    }
+
+    @objc private func copyAnnotationComplement(_ sender: NSMenuItem?) {
+        guard let annotation = sender?.representedObject as? SequenceAnnotation else { return }
+        guard let bases = fetchAnnotationBases(annotation) else {
+            NSSound.beep()
+            return
+        }
+        let complement = complementString(bases)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(complement, forType: .string)
+        logger.info("Copied \(complement.count) bases (complement) from annotation '\(annotation.name)' to clipboard")
+    }
+
+    @objc private func copyAnnotationReverseComplement(_ sender: NSMenuItem?) {
+        guard let annotation = sender?.representedObject as? SequenceAnnotation else { return }
+        guard let bases = fetchAnnotationBases(annotation) else {
+            NSSound.beep()
+            return
+        }
+        let revComp = reverseComplementString(bases)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(revComp, forType: .string)
+        logger.info("Copied \(revComp.count) bases (reverse complement) from annotation '\(annotation.name)' to clipboard")
+    }
+
+    @objc private func zoomToAnnotationAction(_ sender: NSMenuItem?) {
+        guard let annotation = sender?.representedObject as? SequenceAnnotation,
+              let frame = viewController?.referenceFrame else { return }
+        let padding = max(10, Double(annotation.end - annotation.start) * 0.05)
+        frame.start = Double(annotation.start) - padding
+        frame.end = Double(annotation.end) + padding
+        invalidateAnnotationTile()
+        setNeedsDisplay(bounds)
+        viewController?.enhancedRulerView.setNeedsDisplay(viewController?.enhancedRulerView.bounds ?? .zero)
+        viewController?.updateStatusBar()
+    }
+
+    /// Returns the complement of a DNA string.
+    private func complementString(_ s: String) -> String {
+        String(s.map { base -> Character in
+            switch base.uppercased() {
+            case "A": return "T"
+            case "T": return "A"
+            case "G": return "C"
+            case "C": return "G"
+            default: return base
+            }
+        })
+    }
+
+    /// Returns the reverse complement of a DNA string.
+    private func reverseComplementString(_ s: String) -> String {
+        String(s.reversed().map { base -> Character in
+            switch base.uppercased() {
+            case "A": return "T"
+            case "T": return "A"
+            case "G": return "C"
+            case "C": return "G"
+            default: return base
+            }
+        })
+    }
+
+    /// Fetches the full sequence bases for an annotation, handling multi-block and bundle-backed sequences.
+    private func fetchAnnotationBases(_ annotation: SequenceAnnotation) -> String? {
+        if let bundle = currentReferenceBundle {
+            // Bundle mode: fetch each interval and concatenate
+            let chrom = annotation.chromosome ?? bundle.chromosomeNames.first ?? ""
+            var allBases = ""
+            for interval in annotation.intervals {
+                let start = max(0, interval.start)
+                let end = interval.end
+                let region = GenomicRegion(chromosome: chrom, start: start, end: end)
+                if let bases = try? bundle.fetchSequenceSync(region: region) {
+                    allBases += bases
+                }
+            }
+            return allBases.isEmpty ? nil : allBases
+        } else if let seq = sequence {
+            // Single-sequence mode
+            var allBases = ""
+            for interval in annotation.intervals {
+                let start = max(0, interval.start)
+                let end = min(seq.length, interval.end)
+                guard start < end else { continue }
+                allBases += seq[start..<end]
+            }
+            return allBases.isEmpty ? nil : allBases
+        }
+        return nil
     }
 
     @objc private func deleteAnnotationAction(_ sender: NSMenuItem?) {
