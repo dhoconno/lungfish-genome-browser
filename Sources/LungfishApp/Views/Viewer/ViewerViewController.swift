@@ -5072,8 +5072,19 @@ public class SequenceViewerView: NSView {
     func zoomToAnnotation(_ annotation: SequenceAnnotation) {
         guard let frame = viewController?.referenceFrame else { return }
         let padding = max(10, Double(annotation.end - annotation.start) * 0.05)
-        frame.start = Double(annotation.start) - padding
-        frame.end = Double(annotation.end) + padding
+        let windowLength = Double(annotation.end - annotation.start) + 2 * padding
+        var newStart = Double(annotation.start) - padding
+        var newEnd = Double(annotation.end) + padding
+        if newStart < 0 {
+            newStart = 0
+            newEnd = min(Double(frame.sequenceLength), windowLength)
+        }
+        if newEnd > Double(frame.sequenceLength) {
+            newEnd = Double(frame.sequenceLength)
+            newStart = max(0, newEnd - windowLength)
+        }
+        frame.start = newStart
+        frame.end = newEnd
         invalidateAnnotationTile()
         setNeedsDisplay(bounds)
         viewController?.enhancedRulerView.setNeedsDisplay(viewController?.enhancedRulerView.bounds ?? .zero)
@@ -5496,18 +5507,19 @@ public class SequenceViewerView: NSView {
         }
 
         let visibleSpan = max(1, visibleEnd - visibleStart)
+        let regionThresholdSpan = max(visibleSpan, frame.sequenceLength)
         let displayAnnotations: [SequenceAnnotation]
         if scale > annotationDensityThreshold {
             displayAnnotations = textFiltered.filter { annot in
                 let span = annot.end - annot.start
-                return annot.type != .region || span < Int(Double(visibleSpan) * 0.98)
+                return annot.type != .region || span < Int(Double(regionThresholdSpan) * 0.98)
             }
         } else {
             let minFeatureBp = max(1, Int(scale))
             displayAnnotations = textFiltered.filter { annot in
                 let span = annot.end - annot.start
                 guard span >= minFeatureBp else { return false }
-                return annot.type != .region || span < Int(Double(visibleSpan) * 0.98)
+                return annot.type != .region || span < Int(Double(regionThresholdSpan) * 0.98)
             }
         }
 
