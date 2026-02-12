@@ -636,6 +636,23 @@ final class VariantDatabaseTests: XCTestCase {
         XCTAssertTrue(snpCount < totalCount)
     }
 
+    func testInfoFilterParseRejectsInvalidNumericValue() {
+        XCTAssertNil(VariantDatabase.InfoFilter.parse("DP>abc"))
+        XCTAssertNil(VariantDatabase.InfoFilter.parse("AF<=notANumber"))
+    }
+
+    func testInfoFilterParseAllowsStringOperators() {
+        let contains = VariantDatabase.InfoFilter.parse("gene~BRCA")
+        XCTAssertEqual(contains?.key, "gene")
+        XCTAssertEqual(contains?.op, .like)
+        XCTAssertEqual(contains?.value, "BRCA")
+
+        let eq = VariantDatabase.InfoFilter.parse("impact=HIGH")
+        XCTAssertEqual(eq?.key, "impact")
+        XCTAssertEqual(eq?.op, .eq)
+        XCTAssertEqual(eq?.value, "HIGH")
+    }
+
     // MARK: - Structured INFO Table Tests
 
     func testInfoTableCreated() throws {
@@ -695,6 +712,25 @@ final class VariantDatabaseTests: XCTestCase {
         let info = db.infoValues(variantId: rowId)
         XCTAssertEqual(info["DP"], "70")
         XCTAssertEqual(info["AF"], "0.1,0.05")
+    }
+
+    func testQueryForTableInfoFilterUsesCaseInsensitiveInfoKey() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+        let filters = [VariantDatabase.InfoFilter(key: "dp", op: .gt, value: "60")]
+
+        let results = db.queryForTable(infoFilters: filters)
+
+        XCTAssertEqual(results.count, 2)
+        XCTAssertEqual(Set(results.map(\.variantID)), Set(["chr1_500", "rs1000"]))
+    }
+
+    func testQueryCountForTableInfoFilterUsesCaseInsensitiveInfoKey() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+        let filters = [VariantDatabase.InfoFilter(key: "dP", op: .gte, value: "70")]
+
+        let count = db.queryCountForTable(infoFilters: filters)
+
+        XCTAssertEqual(count, 2)
     }
 
     func testBatchInfoValues() throws {
@@ -795,6 +831,11 @@ final class VariantDatabaseTests: XCTestCase {
         // infoValues should fallback to parsing raw info string
         let info = db.infoValues(variantId: 1)
         XCTAssertEqual(info["DP"], "50", "Legacy fallback should parse raw INFO")
+
+        // INFO filters are unsupported without variant_info; fail closed instead of returning broad results.
+        let filters = [VariantDatabase.InfoFilter(key: "DP", op: .gt, value: "20")]
+        XCTAssertTrue(db.queryForTable(infoFilters: filters).isEmpty)
+        XCTAssertEqual(db.queryCountForTable(infoFilters: filters), 0)
     }
 
     func testDeleteVariantsCascadesToInfo() throws {

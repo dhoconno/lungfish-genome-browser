@@ -554,6 +554,10 @@ public final class VariantDatabase: @unchecked Sendable {
                     let key = String(trimmed[trimmed.startIndex..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
                     let value = String(trimmed[range.upperBound...]).trimmingCharacters(in: .whitespaces)
                     guard !key.isEmpty, !value.isEmpty else { return nil }
+                    // Numeric operators require a numeric RHS; invalid numeric tokens are not filters.
+                    if op == .gt || op == .gte || op == .lt || op == .lte {
+                        guard Double(value) != nil else { return nil }
+                    }
                     return InfoFilter(key: key, op: op, value: value)
                 }
             }
@@ -580,7 +584,7 @@ public final class VariantDatabase: @unchecked Sendable {
             case .like: cmp = "vi.value LIKE '%' || ? || '%'"
             }
 
-            let sql = "EXISTS (SELECT 1 FROM variant_info vi WHERE vi.variant_id = variants.id AND vi.key = ? AND \(cmp))"
+            let sql = "EXISTS (SELECT 1 FROM variant_info vi WHERE vi.variant_id = variants.id AND vi.key = ? COLLATE NOCASE AND \(cmp))"
             return (sql: sql, bindings: bindings)
         }
     }
@@ -588,6 +592,7 @@ public final class VariantDatabase: @unchecked Sendable {
     /// Queries variants with optional type filter, name filter, and INFO filters.
     public func queryForTable(nameFilter: String = "", types: Set<String> = [], infoFilters: [InfoFilter] = [], limit: Int = 5000) -> [VariantDatabaseRecord] {
         guard let db else { return [] }
+        if !infoFilters.isEmpty && !hasInfoTable { return [] }
 
         let idSelect = hasIdColumn ? "id, " : ""
         let sampleCountSelect = hasV2Schema ? ", sample_count" : ""
@@ -638,6 +643,7 @@ public final class VariantDatabase: @unchecked Sendable {
     /// Returns variant count matching optional filters.
     public func queryCountForTable(nameFilter: String = "", types: Set<String> = [], infoFilters: [InfoFilter] = []) -> Int {
         guard let db else { return 0 }
+        if !infoFilters.isEmpty && !hasInfoTable { return 0 }
 
         var sql = "SELECT COUNT(*) FROM variants"
         var conditions: [String] = []
