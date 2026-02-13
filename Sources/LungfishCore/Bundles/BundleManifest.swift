@@ -904,6 +904,20 @@ public func mapVCFChromosomes(
             mapping[vcfChrom] = match.name
             continue
         }
+
+        // 7. FASTA description match: parse "chromosome N" from description
+        //    e.g., description "Macaca mulatta chromosome 7" matches VCF "7"
+        if let match = bundleChromosomes.first(where: { chrom in
+            guard let desc = chrom.fastaDescription?.lowercased() else { return false }
+            // Match "chromosome <vcfChrom>" at word boundary
+            return desc.contains("chromosome \(vcfChrom.lowercased())")
+                && (desc.hasSuffix("chromosome \(vcfChrom.lowercased())")
+                    || desc.contains("chromosome \(vcfChrom.lowercased()),")
+                    || desc.contains("chromosome \(vcfChrom.lowercased()) "))
+        }) {
+            mapping[vcfChrom] = match.name
+            continue
+        }
     }
 
     return mapping

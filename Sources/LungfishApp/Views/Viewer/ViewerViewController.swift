@@ -1938,6 +1938,11 @@ public class SequenceViewerView: NSView {
     /// Number of samples in the current variant database (cached for layout).
     private var cachedSampleCount: Int = 0
 
+    /// Maps reference chromosome names to variant DB chromosome names.
+    /// Built at bundle load time by matching chromosome lengths when names differ.
+    /// Empty if all names match or no variant tracks are loaded.
+    private var variantChromosomeAliasMap: [String: String] = [:]
+
     // MARK: - Annotation Color Cache
 
     /// Cached CGColors keyed by AnnotationType to avoid NSColor allocation per-draw.
@@ -2437,8 +2442,9 @@ public class SequenceViewerView: NSView {
         self.cachedGenotypeRegion = nil
         self.isFetchingGenotypes = false
 
-        // Cache sample count from variant databases for layout calculations
+        // Cache sample count and build chromosome alias map from variant databases
         self.cachedSampleCount = 0
+        self.variantChromosomeAliasMap = [:]
         for trackId in bundle.variantTrackIds {
             if let trackInfo = bundle.variantTrack(id: trackId),
                let dbPath = trackInfo.databasePath {
@@ -2448,8 +2454,19 @@ public class SequenceViewerView: NSView {
                     if count > 0 {
                         self.cachedSampleCount = count
                         logger.info("SequenceViewerView.setReferenceBundle: Found \(count) samples in variant track '\(trackId, privacy: .public)'")
-                        break
                     }
+
+                    // Build chromosome alias map by matching lengths
+                    if self.variantChromosomeAliasMap.isEmpty {
+                        let aliasMap = Self.buildVariantChromosomeAliasMap(
+                            bundleChromosomes: bundle.manifest.genome.chromosomes,
+                            variantDB: db,
+                            logger: logger
+                        )
+                        self.variantChromosomeAliasMap = aliasMap
+                    }
+
+                    if self.cachedSampleCount > 0 { break }
                 }
             }
         }
@@ -2493,6 +2510,7 @@ public class SequenceViewerView: NSView {
         self.isFetchingVariants = false
         self.isFetchingGenotypes = false
         self.cachedSampleCount = 0
+        self.variantChromosomeAliasMap = [:]
         self.sequenceFetchStartTime = nil
         self.annotationFetchStartTime = nil
 
@@ -2926,6 +2944,77 @@ public class SequenceViewerView: NSView {
         }
     }
 
+    /// Builds a map from reference chromosome names to variant DB chromosome names.
+    ///
+    /// When a VCF uses different chromosome naming (e.g., "7" vs "NC_041760.1"),
+    /// this method matches chromosomes by comparing reference lengths to variant
+    /// database max positions. A VCF chromosome matches a reference chromosome
+    /// if its max variant position is within 1% of the reference length.
+    private static func buildVariantChromosomeAliasMap(
+        bundleChromosomes: [ChromosomeInfo],
+        variantDB: VariantDatabase,
+        logger: Logger
+    ) -> [String: String] {
+        let vcfChroms = Set(variantDB.allChromosomes())
+        let refChromNames = Set(bundleChromosomes.map(\.name))
+
+        // Check if all VCF chromosomes already match reference names
+        let unmatched = vcfChroms.subtracting(refChromNames)
+        if unmatched.isEmpty { return [:] }
+
+        // Get max positions from variant DB for unmatched chromosomes
+        let vcfMaxPositions = variantDB.chromosomeMaxPositions()
+
+        // For each unmatched VCF chromosome, find the reference chromosome
+        // whose length is closest to (and >= ) the VCF max position
+        var aliasMap: [String: String] = [:]  // ref name → VCF name
+        var usedVCFChroms = Set<String>()
+
+        for chrom in bundleChromosomes {
+            // Skip if this reference chromosome name already exists in VCF
+            if vcfChroms.contains(chrom.name) { continue }
+
+            // Find the best matching VCF chromosome by length
+            var bestMatch: String?
+            var bestDelta = Int64.max
+
+            for vcfChrom in unmatched where !usedVCFChroms.contains(vcfChrom) {
+                guard let maxPos = vcfMaxPositions[vcfChrom] else { continue }
+                let maxPos64 = Int64(maxPos)
+                // The max variant position must be <= reference length
+                guard maxPos64 <= chrom.length else { continue }
+                // Must be within a reasonable fraction of the reference length.
+                // Large chromosomes (>1Mb): 5% tolerance; small ones: 20%
+                let delta = chrom.length - maxPos64
+                let tolerance = chrom.length > 1_000_000
+                    ? chrom.length / 20   // 5% for large chromosomes
+                    : chrom.length / 5    // 20% for small scaffolds
+                guard delta < tolerance else { continue }
+                if delta < bestDelta {
+                    bestDelta = delta
+                    bestMatch = vcfChrom
+                }
+            }
+
+            if let match = bestMatch {
+                aliasMap[chrom.name] = match
+                usedVCFChroms.insert(match)
+            }
+        }
+
+        if !aliasMap.isEmpty {
+            logger.info("buildVariantChromosomeAliasMap: Built \(aliasMap.count) chromosome aliases (e.g., \(aliasMap.first?.key ?? "") → \(aliasMap.first?.value ?? ""))")
+        }
+
+        return aliasMap
+    }
+
+    /// Translates a reference chromosome name to the variant DB chromosome name.
+    /// Returns the original name if no alias is needed.
+    private func variantDBChromosomeName(for refChrom: String) -> String {
+        variantChromosomeAliasMap[refChrom] ?? refChrom
+    }
+
     /// Fetches variant annotations asynchronously from the VariantDatabase.
     /// Runs SQLite queries on a background thread, converts to SequenceAnnotation,
     /// and merges with the annotation rendering pipeline.
@@ -2947,13 +3036,19 @@ public class SequenceViewerView: NSView {
         let expandedEnd = min(Int(chromLength), region.end + expandAmount)
         let expandedRegion = GenomicRegion(chromosome: region.chromosome, start: expandedStart, end: expandedEnd)
 
-        logger.info("fetchVariantsAsync: gen=\(thisGeneration), Fetching variants for \(expandedRegion.description)")
+        // Translate chromosome name for variant DB query (e.g., NC_041760.1 → 7)
+        let queryChrom = variantDBChromosomeName(for: region.chromosome)
+        let queryRegion = (queryChrom != region.chromosome)
+            ? GenomicRegion(chromosome: queryChrom, start: expandedStart, end: expandedEnd)
+            : expandedRegion
+
+        logger.info("fetchVariantsAsync: gen=\(thisGeneration), Fetching variants for \(expandedRegion.description) (query chrom: \(queryChrom))")
 
         Self.variantFetchQueue.async { [weak self] in
             var allVariantAnnotations: [SequenceAnnotation] = []
             for trackId in variantTrackIds {
                 do {
-                    let annotations = try bundle.getVariantAnnotations(trackId: trackId, region: expandedRegion)
+                    let annotations = try bundle.getVariantAnnotations(trackId: trackId, region: queryRegion)
                     allVariantAnnotations.append(contentsOf: annotations)
                 } catch {
                     logger.error("fetchVariantsAsync: Failed to fetch variants for track \(trackId): \(error.localizedDescription)")
@@ -3008,10 +3103,13 @@ public class SequenceViewerView: NSView {
         let expandedRegion = GenomicRegion(chromosome: region.chromosome, start: expandedStart, end: expandedEnd)
         let displayState = sampleDisplayState
 
+        // Translate chromosome name for variant DB query
+        let queryChrom = variantDBChromosomeName(for: region.chromosome)
+
         // Capture bundle URL and track info for background thread
         let bundleURL = bundle.url
 
-        logger.info("fetchGenotypesAsync: gen=\(thisGeneration), Fetching genotypes for \(expandedRegion.description)")
+        logger.info("fetchGenotypesAsync: gen=\(thisGeneration), Fetching genotypes for \(expandedRegion.description) (query chrom: \(queryChrom))")
 
         Self.genotypeFetchQueue.async { [weak self] in
             var allSites: [VariantSite] = []
@@ -3036,7 +3134,7 @@ public class SequenceViewerView: NSView {
                         sampleMetadata[entry.name] = merged
                     }
                     let regionData = db.genotypesInRegion(
-                        chromosome: expandedRegion.chromosome,
+                        chromosome: queryChrom,
                         start: expandedRegion.start,
                         end: expandedRegion.end,
                         limit: 5_000  // Cap for performance

@@ -445,6 +445,27 @@ public final class VariantDatabase: @unchecked Sendable {
         return chroms
     }
 
+    /// Returns the maximum end position per chromosome.
+    ///
+    /// Used for chromosome name alias matching by comparing max variant positions
+    /// against reference chromosome lengths.
+    public func chromosomeMaxPositions() -> [String: Int] {
+        guard let db else { return [:] }
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, "SELECT chromosome, MAX(end_pos) FROM variants GROUP BY chromosome", -1, &stmt, nil) == SQLITE_OK else { return [:] }
+
+        var result: [String: Int] = [:]
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let cStr = sqlite3_column_text(stmt, 0) {
+                let chrom = String(cString: cStr)
+                let maxPos = Int(sqlite3_column_int64(stmt, 1))
+                result[chrom] = maxPos
+            }
+        }
+        return result
+    }
+
     // MARK: - Region Query
 
     /// Queries variants overlapping a genomic region.
