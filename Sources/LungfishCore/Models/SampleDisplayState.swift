@@ -184,6 +184,43 @@ public struct GenotypeDisplayData: Sendable {
     }
 }
 
+// MARK: - VariantImpact
+
+/// Classification of a variant's predicted effect on protein sequence.
+public enum VariantImpact: String, Sendable, CaseIterable {
+    /// No amino acid change (silent mutation).
+    case synonymous = "SYNONYMOUS"
+    /// Different amino acid (non-synonymous).
+    case missense = "MISSENSE"
+    /// Creates a premature stop codon.
+    case nonsense = "NONSENSE"
+    /// Insertion or deletion shifts the reading frame.
+    case frameshift = "FRAMESHIFT"
+    /// Variant near an exon-intron boundary.
+    case spliceRegion = "SPLICE_REGION"
+    /// No CDS overlap or unknown effect.
+    case unknown = "UNKNOWN"
+
+    /// Initializes from a VEP/CSQ IMPACT string (HIGH, MODERATE, LOW, MODIFIER)
+    /// combined with a Consequence string for more precise classification.
+    public static func fromCSQ(impact: String?, consequence: String?) -> VariantImpact {
+        let csq = consequence?.lowercased() ?? ""
+        if csq.contains("frameshift") { return .frameshift }
+        if csq.contains("stop_gained") || csq.contains("nonsense") { return .nonsense }
+        if csq.contains("missense") { return .missense }
+        if csq.contains("synonymous") { return .synonymous }
+        if csq.contains("splice") { return .spliceRegion }
+
+        // Fall back to IMPACT field
+        switch impact?.uppercased() {
+        case "HIGH":     return .nonsense
+        case "MODERATE": return .missense
+        case "LOW":      return .synonymous
+        default:         return .unknown
+        }
+    }
+}
+
 // MARK: - VariantSite
 
 /// A single variant site with per-sample genotype calls.
@@ -204,12 +241,32 @@ public struct VariantSite: Sendable {
     /// Per-sample genotype calls keyed by sample name.
     public let genotypes: [String: GenotypeDisplayCall]
 
-    public init(position: Int, ref: String, alt: String, variantType: String, genotypes: [String: GenotypeDisplayCall]) {
+    /// Database row ID for looking up INFO/CSQ fields (nil for legacy data).
+    public let databaseRowId: Int64?
+
+    /// Variant ID string (e.g., rsID or generated ID).
+    public let variantID: String?
+
+    /// Predicted amino acid impact (from CSQ or computed). Nil if not determined.
+    public var impact: VariantImpact?
+
+    /// Human-readable amino acid change description (e.g., "p.Arg123Cys").
+    public var aminoAcidChange: String?
+
+    /// Gene symbol associated with this variant (from CSQ or annotation overlap).
+    public var geneSymbol: String?
+
+    public init(position: Int, ref: String, alt: String, variantType: String, genotypes: [String: GenotypeDisplayCall], databaseRowId: Int64? = nil, variantID: String? = nil, impact: VariantImpact? = nil, aminoAcidChange: String? = nil, geneSymbol: String? = nil) {
         self.position = position
         self.ref = ref
         self.alt = alt
         self.variantType = variantType
         self.genotypes = genotypes
+        self.databaseRowId = databaseRowId
+        self.variantID = variantID
+        self.impact = impact
+        self.aminoAcidChange = aminoAcidChange
+        self.geneSymbol = geneSymbol
     }
 }
 

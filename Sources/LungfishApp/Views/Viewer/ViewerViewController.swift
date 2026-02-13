@@ -1835,11 +1835,16 @@ public class SequenceViewerView: NSView {
                 y += translationTrackTotalHeight + 4
             }
         }
-        // Reserve space for variant summary bar + genotype rows when variants are loaded
-        if showVariants && showVariantSummaryBar && !filteredVisibleVariantAnnotations.isEmpty {
-            y += variantTrackTotalHeight + 4
-        }
         return y
+    }
+
+    /// Y position where the variant track starts (below annotations).
+    /// Updated after annotation rendering to reflect actual annotation height.
+    private var lastAnnotationBottomY: CGFloat = 0
+
+    /// Y offset where variant summary bar starts (below annotations).
+    private var variantTrackY: CGFloat {
+        max(lastAnnotationBottomY + 4, annotationTrackY + 4)
     }
 
     /// Cached filtered variant annotations. Invalidated by `invalidateFilteredVariantCache()`.
@@ -1871,15 +1876,6 @@ public class SequenceViewerView: NSView {
     /// Invalidates the filtered variant cache so it's recomputed on next access.
     func invalidateFilteredVariantCache() {
         _cachedFilteredVariants = nil
-    }
-
-    /// Total height of the variant track area (summary bar + genotype rows).
-    private var variantTrackTotalHeight: CGFloat {
-        VariantTrackRenderer.totalHeight(
-            sampleCount: cachedSampleCount,
-            scale: viewController?.referenceFrame?.scale ?? Double.greatestFiniteMagnitude,
-            state: sampleDisplayState
-        )
     }
 
     /// Total height of the translation track area.
@@ -1937,6 +1933,10 @@ public class SequenceViewerView: NSView {
 
     /// Number of samples in the current variant database (cached for layout).
     private var cachedSampleCount: Int = 0
+
+    /// Vertical scroll offset for genotype rows (in pixels).
+    /// Zero = first sample row at top. Positive = scrolled down.
+    var genotypeScrollOffset: CGFloat = 0
 
     /// Maps reference chromosome names to variant DB chromosome names.
     /// Built at bundle load time by matching chromosome lengths when names differ.
@@ -2627,12 +2627,10 @@ public class SequenceViewerView: NSView {
         let scale = frame.scale  // bp/pixel
         let needsSequence = scale < showLineThreshold  // Only fetch sequence when it would be visible
 
-        // Only fetch and render annotations when zoomed in enough (< 100 Kbp visible).
-        // At wider zoom levels, annotations would be too dense to be useful — similar to
-        // how the sequence is only shown when zoomed in past showLineThreshold.
+        // Always fetch annotations — at wide zoom levels, density mode handles large counts.
+        // The density histogram works at any scale; detailed rendering kicks in when zoomed in.
         let visibleSpan = visibleRegion.end - visibleRegion.start
-        let showAnnotationThreshold = 100_000  // bp
-        let needsAnnotations = visibleSpan <= showAnnotationThreshold
+        let needsAnnotations = true
 
         // Check if annotation cache covers the visible region
         let annotationsCovered = cachedAnnotationRegion?.chromosome == visibleRegion.chromosome
@@ -2751,72 +2749,18 @@ public class SequenceViewerView: NSView {
             }
         }
 
-        // Check if variant cache covers the visible region
-        let variantsCovered = cachedVariantRegion?.chromosome == visibleRegion.chromosome
-            && (cachedVariantRegion?.start ?? Int.max) <= visibleRegion.start
-            && (cachedVariantRegion?.end ?? Int.min) >= visibleRegion.end
-
-        // Fetch variants if cache is stale (only when zoomed in enough for annotations)
-        if needsAnnotations && !variantsCovered && !isFetchingVariants {
-            fetchVariantsAsync(bundle: bundle, region: visibleRegion)
-        }
-
-        let filteredVariants: [SequenceAnnotation] = needsAnnotations ? filteredVisibleVariantAnnotations : []
-
-        // Draw variant summary bar + genotype rows (between translation track and annotations)
-        if showVariants && showVariantSummaryBar && !filteredVariants.isEmpty {
-            let variantY: CGFloat
-            if showTranslationTrack && scale < showLettersThreshold {
-                variantY = trackY + trackHeight + 4 + translationTrackTotalHeight + 4
-            } else {
-                variantY = trackY + trackHeight + 4
-            }
-
-            VariantTrackRenderer.drawSummaryBar(
-                variants: filteredVariants,
-                frame: frame,
-                context: context,
-                yOffset: variantY
-            )
-
-            // Draw per-sample genotype rows if available
-            if let genotypeData = cachedGenotypeData, cachedSampleCount > 0 {
-                let genotypeY = variantY + VariantTrackRenderer.summaryBarHeight + VariantTrackRenderer.summaryToRowGap
-                VariantTrackRenderer.drawGenotypeRows(
-                    genotypeData: genotypeData,
-                    frame: frame,
-                    context: context,
-                    yOffset: genotypeY,
-                    state: sampleDisplayState
-                )
-            }
-
-            // Fetch genotype data if needed and we have samples
-            if cachedSampleCount > 0 && !isFetchingGenotypes {
-                let genotypeCovered = cachedGenotypeRegion?.chromosome == visibleRegion.chromosome
-                    && (cachedGenotypeRegion?.start ?? Int.max) <= visibleRegion.start
-                    && (cachedGenotypeRegion?.end ?? Int.min) >= visibleRegion.end
-                if !genotypeCovered {
-                    fetchGenotypesAsync(bundle: bundle, region: visibleRegion)
-                }
-            }
-        }
-
-        // Draw annotations + variants from cache when zoomed in enough
-        if needsAnnotations,
-           cachedAnnotationRegion?.chromosome == visibleRegion.chromosome
-            || cachedVariantRegion?.chromosome == visibleRegion.chromosome {
-            let combined = cachedBundleAnnotations + filteredVariants
-            if !combined.isEmpty {
-                logger.debug("drawBundleContent: Drawing \(combined.count) annotations (\(self.cachedBundleAnnotations.count) annot + \(filteredVariants.count) variant)")
-                drawBundleAnnotations(combined, frame: frame, context: context)
-            } else {
-                logger.debug("drawBundleContent: No annotations to draw (cache empty for current chromosome)")
-            }
+        // --- Draw annotations (above variants) ---
+        if cachedAnnotationRegion?.chromosome == visibleRegion.chromosome,
+           !cachedBundleAnnotations.isEmpty {
+            logger.debug("drawBundleContent: Drawing \(self.cachedBundleAnnotations.count) annotations")
+            drawBundleAnnotations(cachedBundleAnnotations, frame: frame, context: context)
+        } else {
+            // No annotations yet — update bottom Y for variant positioning
+            lastAnnotationBottomY = annotationTrackY
         }
 
         // Show "Fetching annotations..." indicator when annotations are loading
-        if needsAnnotations && isFetchingAnnotations && cachedBundleAnnotations.isEmpty {
+        if isFetchingAnnotations && cachedBundleAnnotations.isEmpty {
             let label = "Fetching annotations..." as NSString
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 10),
@@ -2830,6 +2774,68 @@ public class SequenceViewerView: NSView {
                 height: size.height
             )
             label.draw(in: labelRect, withAttributes: attributes)
+        }
+
+        // --- Variants below annotations ---
+        // Check if variant cache covers the visible region
+        let variantsCovered = cachedVariantRegion?.chromosome == visibleRegion.chromosome
+            && (cachedVariantRegion?.start ?? Int.max) <= visibleRegion.start
+            && (cachedVariantRegion?.end ?? Int.min) >= visibleRegion.end
+
+        // Fetch variants if cache is stale
+        if !variantsCovered && !isFetchingVariants {
+            fetchVariantsAsync(bundle: bundle, region: visibleRegion)
+        }
+
+        let filteredVariants: [SequenceAnnotation] = filteredVisibleVariantAnnotations
+
+        // Draw variant summary bar + genotype rows (below annotations)
+        let variantDisplayCap = 5_000
+        if showVariants && showVariantSummaryBar && !filteredVariants.isEmpty {
+            let vY = variantTrackY
+
+            VariantTrackRenderer.drawSummaryBar(
+                variants: filteredVariants,
+                frame: frame,
+                context: context,
+                yOffset: vY
+            )
+
+            if filteredVariants.count > variantDisplayCap {
+                // Too many variants for genotype display — show zoom-in message
+                let msg = "Zoom in to display genotypes (\(filteredVariants.count) variants visible)" as NSString
+                let msgAttrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 10),
+                    .foregroundColor: NSColor.secondaryLabelColor,
+                ]
+                let msgY = vY + VariantTrackRenderer.summaryBarHeight + 4
+                msg.draw(at: CGPoint(x: 4, y: msgY), withAttributes: msgAttrs)
+            } else {
+                // Draw per-sample genotype rows if available
+                if let genotypeData = cachedGenotypeData, cachedSampleCount > 0 {
+                    let genotypeY = vY + VariantTrackRenderer.summaryBarHeight + VariantTrackRenderer.summaryToRowGap
+                    let availableHeight = max(0, bounds.height - genotypeY)
+                    VariantTrackRenderer.drawGenotypeRows(
+                        genotypeData: genotypeData,
+                        frame: frame,
+                        context: context,
+                        yOffset: genotypeY,
+                        state: sampleDisplayState,
+                        scrollOffset: genotypeScrollOffset,
+                        availableHeight: availableHeight
+                    )
+                }
+
+                // Fetch genotype data if needed and we have samples
+                if cachedSampleCount > 0 && !isFetchingGenotypes {
+                    let genotypeCovered = cachedGenotypeRegion?.chromosome == visibleRegion.chromosome
+                        && (cachedGenotypeRegion?.start ?? Int.max) <= visibleRegion.start
+                        && (cachedGenotypeRegion?.end ?? Int.min) >= visibleRegion.end
+                    if !genotypeCovered {
+                        fetchGenotypesAsync(bundle: bundle, region: visibleRegion)
+                    }
+                }
+            }
         }
     }
 
@@ -3076,6 +3082,20 @@ public class SequenceViewerView: NSView {
                 viewer.invalidateAnnotationTile()
                 logger.info("fetchVariantsAsync: Cached \(count) variant annotations in \(elapsed, format: .fixed(precision: 3))s")
                 viewer.setNeedsDisplay(viewer.bounds)
+
+                // Notify variant table drawer of updated viewport variants
+                // Use the VCF chromosome name so the table can query the variant DB directly
+                let vcfChrom = viewer.variantDBChromosomeName(for: expandedRegion.chromosome)
+                NotificationCenter.default.post(
+                    name: .viewportVariantsUpdated,
+                    object: viewer,
+                    userInfo: [
+                        NotificationUserInfoKey.chromosome: vcfChrom,
+                        NotificationUserInfoKey.start: expandedRegion.start,
+                        NotificationUserInfoKey.end: expandedRegion.end,
+                        "variantCount": count,
+                    ]
+                )
             }
         }
     }
@@ -3157,13 +3177,18 @@ public class SequenceViewerView: NSView {
                             ref: variant.ref,
                             alt: variant.alt,
                             variantType: variant.variantType,
-                            genotypes: gtMap
+                            genotypes: gtMap,
+                            databaseRowId: variant.id,
+                            variantID: variant.variantID
                         ))
                     }
                 } catch {
                     logger.error("fetchGenotypesAsync: Failed for track \(trackId): \(error.localizedDescription)")
                 }
             }
+
+            // Enrich variant sites with CSQ impact data (batch query)
+            enrichSitesWithCSQImpact(&allSites, bundle: bundle, variantTrackIds: variantTrackIds, bundleURL: bundleURL, queryChrom: queryChrom)
 
             let visibleOrderedSamples = displayState.visibleSamples(from: sampleNames, metadata: sampleMetadata)
 
@@ -3485,7 +3510,10 @@ public class SequenceViewerView: NSView {
     /// (O(1) per frame). The tile covers 3x the view width so the user can pan a full
     /// screen-width in each direction before the tile needs re-rendering.
     private func drawBundleAnnotations(_ annotations: [SequenceAnnotation], frame: ReferenceFrame, context: CGContext) {
-        guard showAnnotations, !annotations.isEmpty else { return }
+        guard showAnnotations, !annotations.isEmpty else {
+            lastAnnotationBottomY = annotationTrackY
+            return
+        }
 
         // Clip strictly to the annotation lane so labels/features never overlap sequence track.
         context.saveGState()
@@ -3502,11 +3530,26 @@ public class SequenceViewerView: NSView {
         let displayAnnotations = filterAnnotationsForDisplay(annotations, frame: frame, context: context)
 
         guard let displayAnnotations else {
+            lastAnnotationBottomY = annotationTrackY
             context.restoreGState()
             return
         }
 
         renderAnnotationsDirect(displayAnnotations, frame: frame, context: context)
+
+        // Compute annotation track bottom for variant positioning
+        let scale = frame.scale
+        let maxSquishedFeatures = 5_000
+        let useDensityMode = scale > annotationDensityThreshold
+            || (displayAnnotations.count > maxSquishedFeatures && scale > annotationSquishedThreshold)
+
+        if useDensityMode {
+            lastAnnotationBottomY = annotationTrackY + 30  // density histogram height
+        } else {
+            let (rows, _) = packAnnotationsLayered(displayAnnotations, frame: frame)
+            let rowH: CGFloat = scale > annotationSquishedThreshold ? 7 : (annotationHeight + annotationRowSpacing)
+            lastAnnotationBottomY = annotationTrackY + CGFloat(rows.count) * rowH
+        }
 
         context.restoreGState()
     }
@@ -5687,17 +5730,40 @@ public class SequenceViewerView: NSView {
             }
             invalidateAnnotationTile()
         } else {
-            // Pan with scroll — update coordinates immediately, coalesce redraw at 60fps
-            let panAmount = Double(event.scrollingDeltaX) * frame.scale * 2
-            frame.pan(by: -panAmount)
+            // Check if mouse is in genotype row area for vertical scrolling
+            let location = convert(event.locationInWindow, from: nil)
+            let genotypeTopY = variantTrackY + VariantTrackRenderer.summaryBarHeight + VariantTrackRenderer.summaryToRowGap
+            let inGenotypeArea = showVariants && cachedSampleCount > 0 && location.y >= genotypeTopY
 
-            scrollRedrawTimer?.invalidate()
-            scrollRedrawTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: false) { [weak self] _ in
-                guard let self else { return }
-                self.setNeedsDisplay(self.bounds)
-                self.viewController?.enhancedRulerView.setNeedsDisplay(self.viewController?.enhancedRulerView.bounds ?? .zero)
-                self.viewController?.updateStatusBar()
-                self.viewController?.scheduleViewStateSave()
+            if inGenotypeArea && abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX) {
+                // Vertical scroll in genotype area — scroll through sample rows
+                let rowH = VariantTrackRenderer.rowHeight(
+                    sampleCount: cachedSampleCount,
+                    scale: frame.scale,
+                    state: sampleDisplayState
+                )
+                guard rowH > 0 else { return }
+                let maxOffset = max(0, CGFloat(cachedSampleCount) * rowH - (bounds.height - genotypeTopY))
+                genotypeScrollOffset = max(0, min(maxOffset, genotypeScrollOffset - event.scrollingDeltaY * 3))
+
+                scrollRedrawTimer?.invalidate()
+                scrollRedrawTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: false) { [weak self] _ in
+                    guard let self else { return }
+                    self.setNeedsDisplay(self.bounds)
+                }
+            } else {
+                // Horizontal pan — update coordinates immediately, coalesce redraw at 60fps
+                let panAmount = Double(event.scrollingDeltaX) * frame.scale * 2
+                frame.pan(by: -panAmount)
+
+                scrollRedrawTimer?.invalidate()
+                scrollRedrawTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: false) { [weak self] _ in
+                    guard let self else { return }
+                    self.setNeedsDisplay(self.bounds)
+                    self.viewController?.enhancedRulerView.setNeedsDisplay(self.viewController?.enhancedRulerView.bounds ?? .zero)
+                    self.viewController?.updateStatusBar()
+                    self.viewController?.scheduleViewStateSave()
+                }
             }
         }
     }
@@ -5778,6 +5844,9 @@ public class SequenceViewerView: NSView {
     /// Currently hovered annotation (to avoid redundant tooltip updates)
     private var hoveredAnnotation: SequenceAnnotation?
 
+    /// Last hovered genotype cell (sampleIndex, siteIndex) for tooltip caching.
+    private var lastHoveredGenotypeCell: (sampleIdx: Int, siteIdx: Int)?
+
     public override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let existing = viewerTrackingArea {
@@ -5807,7 +5876,23 @@ public class SequenceViewerView: NSView {
     public override func mouseMoved(with event: NSEvent) {
         let location = convert(event.locationInWindow, from: nil)
 
-        // Try bundle mode hit-testing first, then single-sequence mode
+        // --- Genotype cell hit-testing ---
+        if let genotypeTooltip = genotypeTooltipAtPoint(location) {
+            hoveredAnnotation = nil
+            self.toolTip = genotypeTooltip.tooltip
+            if let controller = viewController {
+                controller.statusBar.update(
+                    position: controller.statusBar.positionLabel.stringValue,
+                    selection: genotypeTooltip.statusText,
+                    scale: controller.referenceFrame?.scale ?? 1.0
+                )
+            }
+            NSCursor.crosshair.set()
+            return
+        }
+        lastHoveredGenotypeCell = nil
+
+        // --- Annotation hit-testing ---
         let annotation: SequenceAnnotation?
         if currentReferenceBundle != nil {
             annotation = bundleAnnotationAtPoint(location)
@@ -5898,8 +5983,128 @@ public class SequenceViewerView: NSView {
         }
     }
 
+    // MARK: - Genotype Tooltip
+
+    /// Result of genotype cell hit-testing.
+    private struct GenotypeTooltipResult {
+        let tooltip: String
+        let statusText: String
+    }
+
+    /// Hit-tests the genotype row area and returns a tooltip if the mouse is over a genotype cell.
+    private func genotypeTooltipAtPoint(_ point: NSPoint) -> GenotypeTooltipResult? {
+        guard showVariants,
+              cachedSampleCount > 0,
+              let genotypeData = cachedGenotypeData,
+              !genotypeData.sampleNames.isEmpty,
+              !genotypeData.sites.isEmpty,
+              let frame = viewController?.referenceFrame else { return nil }
+
+        let genotypeTopY = variantTrackY + VariantTrackRenderer.summaryBarHeight + VariantTrackRenderer.summaryToRowGap
+        guard point.y >= genotypeTopY else { return nil }
+
+        let rowH = VariantTrackRenderer.rowHeight(
+            sampleCount: cachedSampleCount,
+            scale: frame.scale,
+            state: sampleDisplayState
+        )
+        guard rowH > 0 else { return nil }
+
+        // Determine which sample row the mouse is over
+        let relativeY = point.y - genotypeTopY + genotypeScrollOffset
+        let sampleIdx = Int(relativeY / rowH)
+        guard sampleIdx >= 0, sampleIdx < genotypeData.sampleNames.count else { return nil }
+
+        // Determine which variant site the mouse is over
+        let genomicPos = frame.genomicPosition(for: point.x)
+        var bestSiteIdx: Int?
+        for (idx, site) in genotypeData.sites.enumerated() {
+            let siteEnd = site.position + max(1, site.ref.count)
+            let startPx = frame.screenPosition(for: Double(site.position))
+            let endPx = frame.screenPosition(for: Double(siteEnd))
+            let cellWidth = max(1, endPx - startPx)
+            if point.x >= startPx && point.x < startPx + cellWidth {
+                bestSiteIdx = idx
+                break
+            }
+            // For very zoomed out views where variants are sub-pixel, find closest
+            if cellWidth <= 1 && abs(Double(site.position) - genomicPos) < frame.scale {
+                bestSiteIdx = idx
+                break
+            }
+        }
+
+        guard let siteIdx = bestSiteIdx else {
+            lastHoveredGenotypeCell = nil
+            return nil
+        }
+
+        // Avoid recomputing tooltip if we're still on the same cell
+        if let last = lastHoveredGenotypeCell, last.sampleIdx == sampleIdx, last.siteIdx == siteIdx {
+            // Return non-nil to keep current tooltip active (toolTip is already set)
+            return GenotypeTooltipResult(tooltip: self.toolTip ?? "", statusText: "")
+        }
+        lastHoveredGenotypeCell = (sampleIdx, siteIdx)
+
+        let sampleName = genotypeData.sampleNames[sampleIdx]
+        let site = genotypeData.sites[siteIdx]
+        let call = site.genotypes[sampleName] ?? .noCall
+
+        // Build tooltip
+        let callLabel: String
+        switch call {
+        case .homRef:  callLabel = "0/0 (Hom Ref)"
+        case .het:     callLabel = "0/1 (Het)"
+        case .homAlt:  callLabel = "1/1 (Hom Alt)"
+        case .noCall:  callLabel = "./. (No Call)"
+        }
+
+        // Position display (1-based for user)
+        let displayPos = site.position + 1
+        let chrom = viewController?.referenceFrame?.chromosome ?? "?"
+        var tooltip = "\(sampleName)\n\(callLabel)\n\(chrom):\(displayPos.formatted()) \(site.ref) \u{2192} \(site.alt) (\(site.variantType))"
+
+        if let vid = site.variantID, !vid.isEmpty, vid != "." {
+            tooltip += "\nID: \(vid)"
+        }
+
+        // Show pre-computed impact data from VariantSite (enriched during fetch)
+        if let impact = site.impact, impact != .unknown {
+            tooltip += "\nImpact: \(impact.rawValue.lowercased())"
+        }
+        if let gene = site.geneSymbol {
+            tooltip += "\nGene: \(gene)"
+        }
+        if let aaChange = site.aminoAcidChange {
+            tooltip += "\nAA Change: \(aaChange)"
+        }
+
+        // Enrich with additional CSQ/INFO fields from variant database
+        if let rowId = site.databaseRowId,
+           let handles = viewController?.annotationSearchIndex?.variantDatabaseHandles,
+           let firstDB = handles.first?.db {
+            let infoDict = firstDB.infoValues(variantId: rowId)
+            if !infoDict.isEmpty {
+                // Show CSQ consequence string (more detailed than the impact classification)
+                if let consequence = infoDict["CSQ_Consequence"] {
+                    tooltip += "\nConsequence: \(consequence)"
+                }
+                if let codons = infoDict["CSQ_Codons"] {
+                    tooltip += "\nCodons: \(codons)"
+                }
+                if let af = infoDict["AF"] {
+                    tooltip += "\nAF: \(af)"
+                }
+            }
+        }
+
+        let statusText = "Genotype: \(sampleName) \u{2022} \(callLabel) \u{2022} \(chrom):\(displayPos.formatted()) \(site.ref)\u{2192}\(site.alt)"
+        return GenotypeTooltipResult(tooltip: tooltip, statusText: statusText)
+    }
+
     public override func mouseExited(with event: NSEvent) {
         hoveredAnnotation = nil
+        lastHoveredGenotypeCell = nil
         self.toolTip = nil
         NSCursor.arrow.set()
         updateSelectionStatus()
@@ -5917,8 +6122,8 @@ public class SequenceViewerView: NSView {
         // Only hit-test in squished and expanded modes (not density histogram)
         guard scale <= annotationDensityThreshold else { return nil }
 
-        // Use the same annotation pool rendered in drawBundleContent.
-        let bundlePool = cachedBundleAnnotations + cachedVariantAnnotations
+        // Use the same annotation pool rendered in drawBundleContent (variants are separate track).
+        let bundlePool = cachedBundleAnnotations
 
         // Match visible region filtering used by render path.
         let visibleStart = Int(frame.start)
@@ -5994,6 +6199,69 @@ public class SequenceViewerView: NSView {
 /// so it can be safely called from GCD background queues.
 private func classifyGenotype(_ gt: GenotypeRecord) -> GenotypeDisplayCall {
     GenotypeDisplayCall.classify(genotype: gt.genotype, allele1: gt.allele1, allele2: gt.allele2)
+}
+
+/// Enriches variant sites with amino acid impact data from CSQ/INFO fields.
+/// Called on the background genotype fetch queue — does NOT access @MainActor state.
+private func enrichSitesWithCSQImpact(
+    _ sites: inout [VariantSite],
+    bundle: ReferenceBundle,
+    variantTrackIds: [String],
+    bundleURL: URL,
+    queryChrom: String
+) {
+    // Collect variant row IDs that need enrichment
+    let rowIds = sites.compactMap(\.databaseRowId)
+    guard !rowIds.isEmpty else { return }
+
+    // Open a fresh DB handle on this background thread
+    var db: VariantDatabase?
+    for trackId in variantTrackIds {
+        guard let trackInfo = bundle.variantTrack(id: trackId),
+              let dbPath = trackInfo.databasePath else { continue }
+        let dbURL = bundleURL.appendingPathComponent(dbPath)
+        db = try? VariantDatabase(url: dbURL)
+        if db != nil { break }
+    }
+    guard let db else { return }
+
+    // Batch fetch INFO values for all variant sites
+    let infoMap = db.batchInfoValues(variantIds: rowIds)
+
+    // Enrich each site
+    for i in sites.indices {
+        guard let rowId = sites[i].databaseRowId,
+              let info = infoMap[rowId] else { continue }
+
+        let consequence = info["CSQ_Consequence"]
+        let csqImpact = info["CSQ_IMPACT"]
+        let symbol = info["CSQ_SYMBOL"] ?? info["CSQ_Gene"]
+        let aminoAcids = info["CSQ_Amino_acids"]
+        let proteinPos = info["CSQ_Protein_position"]
+
+        // Classify impact from CSQ fields
+        if consequence != nil || csqImpact != nil {
+            sites[i].impact = VariantImpact.fromCSQ(impact: csqImpact, consequence: consequence)
+            sites[i].geneSymbol = symbol
+
+            // Build amino acid change string (e.g., "p.R123C")
+            if let aas = aminoAcids, aas.contains("/") {
+                let parts = aas.split(separator: "/")
+                if parts.count == 2, let pos = proteinPos {
+                    sites[i].aminoAcidChange = "p.\(parts[0])\(pos)\(parts[1])"
+                }
+            }
+        } else {
+            // No CSQ annotation — classify by variant type heuristic
+            if sites[i].variantType == "INS" || sites[i].variantType == "DEL" {
+                let refLen = sites[i].ref.count
+                let altLen = sites[i].alt.count
+                if abs(refLen - altLen) % 3 != 0 {
+                    sites[i].impact = .frameshift
+                }
+            }
+        }
+    }
 }
 
 // MARK: - TrackHeaderViewDelegate

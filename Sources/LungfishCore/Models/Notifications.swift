@@ -80,6 +80,12 @@ extension Notification.Name {
     /// "manifest" (BundleManifest)
     public static let bundleDidLoad = Notification.Name("bundleDidLoad")
 
+    /// Posted when variants in the viewer viewport have been updated.
+    ///
+    /// Contains userInfo keys: "chromosome" (String), "start" (Int), "end" (Int),
+    /// "variantCount" (Int)
+    public static let viewportVariantsUpdated = Notification.Name("viewportVariantsUpdated")
+
     /// Posted when the bundle view state should be reset to defaults.
     ///
     /// Listeners should clear type color overrides, delete the `.viewstate.json`

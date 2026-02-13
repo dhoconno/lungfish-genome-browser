@@ -727,6 +727,126 @@ public final class VariantDatabase: @unchecked Sendable {
         return Int(sqlite3_column_int64(stmt, 0))
     }
 
+    /// Region-filtered variant query for table display.
+    /// Combines the region constraint of `query()` with the name/type/info filters of `queryForTable()`.
+    public func queryForTableInRegion(
+        chromosome: String,
+        start: Int,
+        end: Int,
+        nameFilter: String = "",
+        types: Set<String> = [],
+        infoFilters: [InfoFilter] = [],
+        limit: Int = 5000
+    ) -> [VariantDatabaseRecord] {
+        guard let db else { return [] }
+        if !infoFilters.isEmpty && !hasInfoTable { return [] }
+
+        let idSelect = hasIdColumn ? "id, " : ""
+        let sampleCountSelect = hasV2Schema ? ", sample_count" : ""
+        var sql = "SELECT \(idSelect)chromosome, position, end_pos, variant_id, ref, alt, variant_type, quality, filter, info\(sampleCountSelect) FROM variants"
+        var conditions: [String] = ["chromosome = ?1", "position < ?2", "end_pos > ?3"]
+        var textBindings: [(Int32, String)] = [(1, chromosome)]
+        var intBindings: [(Int32, Int)] = [(2, end), (3, start)]
+        var paramIndex: Int32 = 4
+
+        if !nameFilter.isEmpty {
+            conditions.append("variant_id LIKE ?\(paramIndex)")
+            textBindings.append((paramIndex, "%\(nameFilter)%"))
+            paramIndex += 1
+        }
+
+        if !types.isEmpty {
+            let placeholders = types.enumerated().map { "?\(paramIndex + Int32($0.offset))" }.joined(separator: ",")
+            conditions.append("variant_type IN (\(placeholders))")
+            for t in types.sorted() {
+                textBindings.append((paramIndex, t))
+                paramIndex += 1
+            }
+        }
+
+        if hasInfoTable {
+            for filter in infoFilters {
+                let (filterSQL, filterBindings) = filter.sqlCondition(paramIndex: &paramIndex)
+                conditions.append(filterSQL)
+                textBindings.append(contentsOf: filterBindings)
+            }
+        }
+
+        sql += " WHERE " + conditions.joined(separator: " AND ")
+        sql += " ORDER BY chromosome, position LIMIT \(limit)"
+
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+
+        for (idx, value) in textBindings {
+            sqliteBindText(stmt, idx, value)
+        }
+        for (idx, value) in intBindings {
+            sqlite3_bind_int64(stmt, idx, Int64(value))
+        }
+
+        return readVariantRows(stmt: stmt!)
+    }
+
+    /// Region-filtered variant count for table display.
+    public func queryCountInRegion(
+        chromosome: String,
+        start: Int,
+        end: Int,
+        nameFilter: String = "",
+        types: Set<String> = [],
+        infoFilters: [InfoFilter] = []
+    ) -> Int {
+        guard let db else { return 0 }
+        if !infoFilters.isEmpty && !hasInfoTable { return 0 }
+
+        var sql = "SELECT COUNT(*) FROM variants"
+        var conditions: [String] = ["chromosome = ?1", "position < ?2", "end_pos > ?3"]
+        var textBindings: [(Int32, String)] = [(1, chromosome)]
+        var intBindings: [(Int32, Int)] = [(2, end), (3, start)]
+        var paramIndex: Int32 = 4
+
+        if !nameFilter.isEmpty {
+            conditions.append("variant_id LIKE ?\(paramIndex)")
+            textBindings.append((paramIndex, "%\(nameFilter)%"))
+            paramIndex += 1
+        }
+
+        if !types.isEmpty {
+            let placeholders = types.enumerated().map { "?\(paramIndex + Int32($0.offset))" }.joined(separator: ",")
+            conditions.append("variant_type IN (\(placeholders))")
+            for t in types.sorted() {
+                textBindings.append((paramIndex, t))
+                paramIndex += 1
+            }
+        }
+
+        if hasInfoTable {
+            for filter in infoFilters {
+                let (filterSQL, filterBindings) = filter.sqlCondition(paramIndex: &paramIndex)
+                conditions.append(filterSQL)
+                textBindings.append(contentsOf: filterBindings)
+            }
+        }
+
+        sql += " WHERE " + conditions.joined(separator: " AND ")
+
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
+
+        for (idx, value) in textBindings {
+            sqliteBindText(stmt, idx, value)
+        }
+        for (idx, value) in intBindings {
+            sqlite3_bind_int64(stmt, idx, Int64(value))
+        }
+
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
+        return Int(sqlite3_column_int64(stmt, 0))
+    }
+
     /// Searches variants by ID (e.g., rsID) with case-insensitive prefix/substring matching.
     public func searchByID(idFilter: String, limit: Int = 1000) -> [VariantDatabaseRecord] {
         guard let db, !idFilter.isEmpty else { return [] }
@@ -1574,6 +1694,11 @@ public final class VariantDatabase: @unchecked Sendable {
         var linesProcessed = 0
         var totalLines = 0
 
+        // CSQ (VEP Consequence) sub-field names parsed from ##INFO=<ID=CSQ,...,Description="...Format: A|B|C">
+        var csqFieldNames: [String] = []
+        // Track all structured INFO fields with pipe-delimited sub-fields (key → sub-field names)
+        var structuredInfoFields: [String: [String]] = [:]
+
         progressHandler?(0.05, "Parsing VCF...")
 
         func parseLine(_ line: Substring) {
@@ -1591,6 +1716,32 @@ public final class VariantDatabase: @unchecked Sendable {
                     sqliteBindText(insertInfoDefStmt, 3, def.number)
                     sqliteBindText(insertInfoDefStmt, 4, def.description)
                     sqlite3_step(insertInfoDefStmt)
+
+                    // Detect structured fields with pipe-delimited sub-fields from Description
+                    // e.g., CSQ: "...Format: Allele|Consequence|IMPACT|SYMBOL|Gene|..."
+                    if let formatRange = def.description.range(of: "Format: ", options: .caseInsensitive) {
+                        let formatStr = String(def.description[formatRange.upperBound...])
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                            .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                        let subFields = formatStr.split(separator: "|").map(String.init)
+                        if subFields.count >= 2 {
+                            structuredInfoFields[def.id] = subFields
+                            if def.id == "CSQ" {
+                                csqFieldNames = subFields
+                            }
+                            // Register each sub-field as a separate info def
+                            for subField in subFields {
+                                let subKey = "\(def.id)_\(subField)"
+                                sqlite3_reset(insertInfoDefStmt)
+                                sqliteBindText(insertInfoDefStmt, 1, subKey)
+                                sqliteBindText(insertInfoDefStmt, 2, "String")
+                                sqliteBindText(insertInfoDefStmt, 3, ".")
+                                sqliteBindText(insertInfoDefStmt, 4, "\(def.id) sub-field: \(subField)")
+                                sqlite3_step(insertInfoDefStmt)
+                            }
+                            variantDBLogger.info("createFromVCF: Found structured INFO field '\(def.id)' with \(subFields.count) sub-fields")
+                        }
+                    }
                 }
                 return
             }
@@ -1723,11 +1874,42 @@ public final class VariantDatabase: @unchecked Sendable {
                     } else {
                         continue
                     }
-                    sqlite3_reset(insertInfoStmt)
-                    sqlite3_bind_int64(insertInfoStmt, 1, variantRowId)
-                    sqliteBindText(insertInfoStmt, 2, key)
-                    sqliteBindText(insertInfoStmt, 3, value)
-                    sqlite3_step(insertInfoStmt)
+
+                    // Check if this is a structured field with pipe-delimited sub-fields (e.g., CSQ)
+                    if let subFieldNames = structuredInfoFields[key] {
+                        // Split by comma for multiple entries (e.g., multiple transcripts)
+                        let entries = value.split(separator: ",")
+                        // Use only the first entry for the primary sub-field values
+                        // (store the full raw value too for completeness)
+                        if let firstEntry = entries.first {
+                            let subValues = firstEntry.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+                            for (idx, subFieldName) in subFieldNames.enumerated() {
+                                let subValue = idx < subValues.count ? subValues[idx] : ""
+                                guard !subValue.isEmpty else { continue }
+                                let subKey = "\(key)_\(subFieldName)"
+                                sqlite3_reset(insertInfoStmt)
+                                sqlite3_bind_int64(insertInfoStmt, 1, variantRowId)
+                                sqliteBindText(insertInfoStmt, 2, subKey)
+                                sqliteBindText(insertInfoStmt, 3, subValue)
+                                sqlite3_step(insertInfoStmt)
+                            }
+                        }
+                        // Also store entry count if multiple transcripts
+                        if entries.count > 1 {
+                            sqlite3_reset(insertInfoStmt)
+                            sqlite3_bind_int64(insertInfoStmt, 1, variantRowId)
+                            sqliteBindText(insertInfoStmt, 2, "\(key)_entries")
+                            sqliteBindText(insertInfoStmt, 3, String(entries.count))
+                            sqlite3_step(insertInfoStmt)
+                        }
+                    } else {
+                        // Standard scalar INFO field
+                        sqlite3_reset(insertInfoStmt)
+                        sqlite3_bind_int64(insertInfoStmt, 1, variantRowId)
+                        sqliteBindText(insertInfoStmt, 2, key)
+                        sqliteBindText(insertInfoStmt, 3, value)
+                        sqlite3_step(insertInfoStmt)
+                    }
                 }
             }
 

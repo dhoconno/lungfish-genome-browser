@@ -106,6 +106,15 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     /// INFO field definitions for dynamic variant columns (key + type for sort awareness).
     private var infoColumnKeys: [(key: String, type: String, description: String)] = []
 
+    /// Whether to auto-sync variant table with viewport (when variants tab is active).
+    private(set) var viewportSyncEnabled: Bool = true
+
+    /// Current viewport region for auto-sync (set by viewer notification).
+    private var viewportRegion: (chromosome: String, start: Int, end: Int)?
+
+    /// Debounce work item for viewport sync to avoid thrashing during rapid panning.
+    private var viewportSyncWorkItem: DispatchWorkItem?
+
     // MARK: - UI Components
 
     private let scrollView = NSScrollView()
@@ -363,6 +372,12 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             name: .variantSelected, object: nil
         )
 
+        // Observe viewport variant updates for auto-sync
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleViewportVariantsUpdated(_:)),
+            name: .viewportVariantsUpdated, object: nil
+        )
+
         drawerLogger.info("AnnotationTableDrawerView: Setup complete")
     }
 
@@ -401,6 +416,70 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
         tableView.scrollRowToVisible(index)
         isSuppressingDelegateCallbacks = false
+    }
+
+    // MARK: - Viewport Variant Sync
+
+    /// Handles `.viewportVariantsUpdated` notification to auto-sync the variant table.
+    @objc private func handleViewportVariantsUpdated(_ notification: Notification) {
+        guard viewportSyncEnabled, activeTab == .variants else { return }
+        guard let userInfo = notification.userInfo,
+              let chromosome = userInfo[NotificationUserInfoKey.chromosome] as? String,
+              let start = userInfo[NotificationUserInfoKey.start] as? Int,
+              let end = userInfo[NotificationUserInfoKey.end] as? Int else { return }
+
+        viewportRegion = (chromosome: chromosome, start: start, end: end)
+
+        // Debounce: cancel previous and schedule with 200ms delay
+        viewportSyncWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.performViewportSync()
+        }
+        viewportSyncWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
+    }
+
+    /// Performs region-filtered variant query and updates the table.
+    private func performViewportSync() {
+        guard let region = viewportRegion, let index = searchIndex else { return }
+
+        let typeFilter: Set<String> = visibleVariantTypes.count < availableVariantTypes.count ? visibleVariantTypes : []
+        let (nameFilter, infoFilters) = parseFilterText(filterText)
+
+        // Check count first
+        let count = index.queryVariantCountInRegion(
+            chromosome: region.chromosome,
+            start: region.start,
+            end: region.end,
+            nameFilter: nameFilter,
+            types: typeFilter,
+            infoFilters: infoFilters
+        )
+
+        if count > Self.maxDisplayCount {
+            displayedAnnotations = []
+            tableView.reloadData()
+            scrollView.isHidden = true
+            let total = numberFormatter.string(from: NSNumber(value: count)) ?? "\(count)"
+            let max = numberFormatter.string(from: NSNumber(value: Self.maxDisplayCount)) ?? "\(Self.maxDisplayCount)"
+            tooManyLabel.stringValue = "\(total) variants in view — zoom in to show \(max) or fewer"
+            tooManyLabel.isHidden = false
+        } else {
+            let results = index.queryVariantsInRegion(
+                chromosome: region.chromosome,
+                start: region.start,
+                end: region.end,
+                nameFilter: nameFilter,
+                types: typeFilter,
+                infoFilters: infoFilters,
+                limit: Self.maxDisplayCount
+            )
+            displayedAnnotations = results
+            tableView.reloadData()
+            scrollView.isHidden = false
+            tooManyLabel.isHidden = true
+        }
+        updateCountLabel()
     }
 
     // MARK: - Chip Button Factory

@@ -463,6 +463,57 @@ public final class AnnotationSearchIndex {
         return count
     }
 
+    /// Region-filtered variant query for viewport sync.
+    public func queryVariantsInRegion(
+        chromosome: String,
+        start: Int,
+        end: Int,
+        nameFilter: String = "",
+        types: Set<String> = [],
+        infoFilters: [VariantDatabase.InfoFilter] = [],
+        limit: Int = 5000
+    ) -> [SearchResult] {
+        var results: [SearchResult] = []
+        for handle in variantDatabases {
+            let remaining = limit - results.count
+            guard remaining > 0 else { break }
+            let variantRecords = handle.db.queryForTableInRegion(
+                chromosome: chromosome,
+                start: start,
+                end: end,
+                nameFilter: nameFilter,
+                types: types,
+                infoFilters: infoFilters,
+                limit: remaining
+            )
+            results.append(contentsOf: variantRecordsToSearchResults(variantRecords, db: handle.db, trackId: handle.trackId))
+        }
+        return results
+    }
+
+    /// Region-filtered variant count for viewport sync.
+    public func queryVariantCountInRegion(
+        chromosome: String,
+        start: Int,
+        end: Int,
+        nameFilter: String = "",
+        types: Set<String> = [],
+        infoFilters: [VariantDatabase.InfoFilter] = []
+    ) -> Int {
+        var count = 0
+        for handle in variantDatabases {
+            count += handle.db.queryCountInRegion(
+                chromosome: chromosome,
+                start: start,
+                end: end,
+                nameFilter: nameFilter,
+                types: types,
+                infoFilters: infoFilters
+            )
+        }
+        return count
+    }
+
     /// All distinct annotation types only (no variant types).
     public var annotationTypes: [String] {
         if !annotationDatabases.isEmpty {

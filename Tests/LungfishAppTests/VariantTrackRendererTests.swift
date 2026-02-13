@@ -145,12 +145,12 @@ final class VariantTrackRendererTests: XCTestCase {
         XCTAssertEqual(height, VariantTrackRenderer.expandedRowHeight)
     }
 
-    func testMaxSampleRowsCapped() {
+    func testAllSampleRowsIncluded() {
         let state = SampleDisplayState(showGenotypeRows: true, rowHeightMode: .squished)
         let height = VariantTrackRenderer.totalHeight(sampleCount: 200, scale: 100.0, state: state)
         let expected = VariantTrackRenderer.summaryBarHeight
             + VariantTrackRenderer.summaryToRowGap
-            + CGFloat(VariantTrackRenderer.maxSampleRows) * VariantTrackRenderer.squishedRowHeight
+            + CGFloat(200) * VariantTrackRenderer.squishedRowHeight
         XCTAssertEqual(height, expected)
     }
 
@@ -395,7 +395,7 @@ final class VariantTrackRendererTests: XCTestCase {
         XCTAssertGreaterThan(VariantTrackRenderer.squishedRowHeight, 0)
         XCTAssertGreaterThan(VariantTrackRenderer.expandedRowHeight, 0)
         XCTAssertGreaterThanOrEqual(VariantTrackRenderer.summaryToRowGap, 0)
-        XCTAssertGreaterThan(VariantTrackRenderer.maxSampleRows, 0)
+        XCTAssertGreaterThan(VariantTrackRenderer.minPixelsPerVariant, 0)
     }
 
     func testExpandedIsLargerThanSquished() {
