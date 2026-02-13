@@ -584,7 +584,7 @@ public final class VariantDatabase: @unchecked Sendable {
             case .like: cmp = "vi.value LIKE '%' || ? || '%'"
             }
 
-            let sql = "EXISTS (SELECT 1 FROM variant_info vi WHERE vi.variant_id = variants.id AND vi.key = ? COLLATE NOCASE AND \(cmp))"
+            let sql = "EXISTS (SELECT 1 FROM variant_info vi WHERE vi.variant_id = variants.id AND vi.key COLLATE NOCASE = ? AND \(cmp))"
             return (sql: sql, bindings: bindings)
         }
     }
