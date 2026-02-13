@@ -1,0 +1,262 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		F1E2D3C4B5A6978877665554 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1E2D3C4B5A6978877665548 /* main.swift */; };
+		F1E2D3C4B5A6978877665555 /* LungfishApp in Frameworks */ = {isa = PBXBuildFile; productRef = F1E2D3C4B5A6978877665563 /* LungfishApp */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		F1E2D3C4B5A6978877665548 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Lungfish/main.swift; sourceTree = SOURCE_ROOT; };
+		F1E2D3C4B5A6978877665549 /* Lungfish.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Lungfish.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		F1E2D3C4B5A6978877665552 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F1E2D3C4B5A6978877665555 /* LungfishApp in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		F1E2D3C4B5A6978877665545 = {
+			isa = PBXGroup;
+			children = (
+				F1E2D3C4B5A6978877665546 /* App */,
+				F1E2D3C4B5A6978877665547 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		F1E2D3C4B5A6978877665546 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				F1E2D3C4B5A6978877665548 /* main.swift */,
+			);
+			name = App;
+			sourceTree = "<group>";
+		};
+		F1E2D3C4B5A6978877665547 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				F1E2D3C4B5A6978877665549 /* Lungfish.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		F1E2D3C4B5A6978877665550 /* Lungfish */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F1E2D3C4B5A6978877665556 /* Build configuration list for PBXNativeTarget "Lungfish" */;
+			buildPhases = (
+				F1E2D3C4B5A6978877665551 /* Sources */,
+				F1E2D3C4B5A6978877665552 /* Frameworks */,
+				F1E2D3C4B5A6978877665553 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Lungfish;
+			packageProductDependencies = (
+				F1E2D3C4B5A6978877665563 /* LungfishApp */,
+			);
+			productName = Lungfish;
+			productReference = F1E2D3C4B5A6978877665549 /* Lungfish.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		F1E2D3C4B5A6978877665544 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					F1E2D3C4B5A6978877665550 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+				};
+			};
+			buildConfigurationList = F1E2D3C4B5A6978877665557 /* Build configuration list for PBXProject "Lungfish" */;
+			compatibilityVersion = "Xcode 15.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = F1E2D3C4B5A6978877665545;
+			packageReferences = (
+				F1E2D3C4B5A6978877665562 /* XCLocalSwiftPackageReference "." */,
+			);
+			productRefGroup = F1E2D3C4B5A6978877665547 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				F1E2D3C4B5A6978877665550 /* Lungfish */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		F1E2D3C4B5A6978877665553 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		F1E2D3C4B5A6978877665551 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F1E2D3C4B5A6978877665554 /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		F1E2D3C4B5A6978877665560 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		F1E2D3C4B5A6978877665561 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 3;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				SDKROOT = macosx;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+		F1E2D3C4B5A6978877665558 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Lungfish;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lungfish.browser;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		F1E2D3C4B5A6978877665559 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Lungfish;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lungfish.browser;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		F1E2D3C4B5A6978877665557 /* Build configuration list for PBXProject "Lungfish" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F1E2D3C4B5A6978877665560 /* Debug */,
+				F1E2D3C4B5A6978877665561 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F1E2D3C4B5A6978877665556 /* Build configuration list for PBXNativeTarget "Lungfish" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F1E2D3C4B5A6978877665558 /* Debug */,
+				F1E2D3C4B5A6978877665559 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		F1E2D3C4B5A6978877665562 /* XCLocalSwiftPackageReference "." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = .;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		F1E2D3C4B5A6978877665563 /* LungfishApp */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F1E2D3C4B5A6978877665562 /* XCLocalSwiftPackageReference "." */;
+			productName = LungfishApp;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = F1E2D3C4B5A6978877665544 /* Project object */;
+}
