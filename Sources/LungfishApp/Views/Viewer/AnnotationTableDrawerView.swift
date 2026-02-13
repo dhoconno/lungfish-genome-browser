@@ -158,6 +158,16 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     /// Local copy of sample display state for driving visibility toggles.
     private var currentSampleDisplayState: SampleDisplayState = SampleDisplayState()
 
+    /// Whether we have received an authoritative sample display state from viewer/inspector.
+    private var hasSampleDisplayStateSeed = false
+
+    /// Last variant query match count used for status labeling (especially capped result sets).
+    private var lastVariantQueryMatchCount: Int?
+
+    /// Last variant query scope for status labeling.
+    /// Values: "global", "viewport", "annotations", "annotation".
+    private var lastVariantQueryScope: String = "global"
+
     // MARK: - UI Components
 
     private let scrollView = NSScrollView()
@@ -478,6 +488,15 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         viewportSyncSourceObject = source
     }
 
+    /// Seeds the drawer's local sample display state from the viewer.
+    func setSampleDisplayState(_ state: SampleDisplayState) {
+        currentSampleDisplayState = state
+        hasSampleDisplayStateSeed = true
+        if activeTab == .samples {
+            updateDisplayedSamples()
+        }
+    }
+
     // MARK: - Viewport Variant Sync
 
     /// Handles `.viewportVariantsUpdated` notification to auto-sync the variant table.
@@ -493,7 +512,6 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
               let end = userInfo[NotificationUserInfoKey.end] as? Int else { return }
 
         viewportRegion = (chromosome: chromosome, start: start, end: end)
-        selectedAnnotationRegion = nil  // Viewport update supersedes annotation selection
         guard activeTab == .variants else { return }
 
         // Debounce: cancel previous and schedule with 200ms delay
@@ -892,6 +910,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                 regionSource = "viewport"
             } else {
                 // Connected to a viewer but no region yet — show placeholder
+                lastVariantQueryMatchCount = nil
+                lastVariantQueryScope = "viewport"
                 displayedAnnotations = []
                 tableView.reloadData()
                 scrollView.isHidden = true
@@ -899,8 +919,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                 tooManyLabel.isHidden = false
                 return
             }
-        } else if let annotationRegion = annotationSearchRegion, !nameFilter.isEmpty || filterText.isEmpty {
-            // Use annotation bounding region as fallback (only when a meaningful search was done)
+        } else if let annotationRegion = annotationSearchRegion {
+            // Use annotation bounding region as fallback when no higher-priority region is active.
             effectiveRegion = annotationRegion
             regionSource = "annotations"
         } else {
@@ -916,6 +936,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                 types: typeFilter,
                 infoFilters: infoFilters
             )
+            lastVariantQueryMatchCount = count
+            lastVariantQueryScope = regionSource
             if count > Self.maxDisplayCount {
                 displayedAnnotations = []
                 tableView.reloadData()
@@ -943,6 +965,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         } else {
             // No region constraint — global query over all variants
             let matchingCount = index.queryVariantCount(nameFilter: nameFilter, types: typeFilter, infoFilters: infoFilters)
+            lastVariantQueryMatchCount = matchingCount
+            lastVariantQueryScope = "global"
             if matchingCount > Self.maxDisplayCount {
                 displayedAnnotations = []
                 tableView.reloadData()
@@ -983,10 +1007,20 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         if isLoading {
             countLabel.stringValue = "Building annotation index (scanning all chromosomes)..."
         } else if !tooManyLabel.isHidden {
-            if activeTab == .variants && isViewportSyncActive && viewportRegion != nil {
-                let shown = numberFormatter.string(from: NSNumber(value: displayedAnnotations.count)) ?? "\(displayedAnnotations.count)"
+            if activeTab == .variants {
+                let matchCount = lastVariantQueryMatchCount ?? displayedAnnotations.count
+                let shown = numberFormatter.string(from: NSNumber(value: matchCount)) ?? "\(matchCount)"
                 let total = numberFormatter.string(from: NSNumber(value: totalVariantCount)) ?? "\(totalVariantCount)"
-                countLabel.stringValue = "\(shown) in viewport (\(total) total)"
+                switch lastVariantQueryScope {
+                case "annotation":
+                    countLabel.stringValue = "\(shown) overlapping (\(total) total)"
+                case "viewport":
+                    countLabel.stringValue = "\(shown) in viewport (\(total) total)"
+                case "annotations":
+                    countLabel.stringValue = "\(shown) near annotations (\(total) total)"
+                default:
+                    countLabel.stringValue = "\(shown) matching (\(total) total)"
+                }
             } else {
                 let total = numberFormatter.string(from: NSNumber(value: activeTotal)) ?? "\(activeTotal)"
                 countLabel.stringValue = "\(total) total — filter to browse"
@@ -1885,6 +1919,9 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         }
 
         sampleMetadataFields = metadataKeySet.sorted()
+        if !hasSampleDisplayStateSeed {
+            currentSampleDisplayState = SampleDisplayState()
+        }
     }
 
     /// Updates the displayed samples list based on the current filter text.
@@ -2027,6 +2064,7 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
     }
 
     private func postSampleDisplayStateChange() {
+        hasSampleDisplayStateSeed = true
         NotificationCenter.default.post(
             name: .sampleDisplayStateChanged,
             object: self,
@@ -2039,6 +2077,7 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         if notification.object as AnyObject? === self { return }
         guard let state = notification.userInfo?[NotificationUserInfoKey.sampleDisplayState] as? SampleDisplayState else { return }
         currentSampleDisplayState = state
+        hasSampleDisplayStateSeed = true
         if activeTab == .samples {
             updateDisplayedSamples()
         }

@@ -60,6 +60,7 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         drawer.translatesAutoresizingMaskIntoConstraints = false
         drawer.delegate = self
         drawer.setViewportSyncSource(viewerView)
+        drawer.setSampleDisplayState(viewerView.sampleDisplayState)
         view.addSubview(drawer)
 
         // The drawer sits between the viewer content area and the status bar.

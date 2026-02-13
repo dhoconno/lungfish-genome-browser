@@ -2093,34 +2093,36 @@ extension SidebarViewController: NSMenuDelegate {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let fm = FileManager.default
             var deletedFiles: [String] = []
+            var errors: [String] = []
+
+            func removeIfExists(_ url: URL, label: String) {
+                guard fm.fileExists(atPath: url.path) else { return }
+                do {
+                    try fm.removeItem(at: url)
+                    deletedFiles.append(label)
+                } catch {
+                    errors.append("Failed to delete \(label): \(error.localizedDescription)")
+                }
+            }
 
             for track in tracks {
                 // Delete BCF file
                 let bcfURL = bundleURL.appendingPathComponent(track.path)
-                if fm.fileExists(atPath: bcfURL.path) {
-                    try? fm.removeItem(at: bcfURL)
-                    deletedFiles.append(track.path)
-                }
+                removeIfExists(bcfURL, label: track.path)
 
                 // Delete CSI index file
                 let csiURL = bundleURL.appendingPathComponent(track.indexPath)
-                if fm.fileExists(atPath: csiURL.path) {
-                    try? fm.removeItem(at: csiURL)
-                    deletedFiles.append(track.indexPath)
-                }
+                removeIfExists(csiURL, label: track.indexPath)
 
                 // Delete SQLite variant database
                 if let dbPath = track.databasePath {
                     let dbURL = bundleURL.appendingPathComponent(dbPath)
-                    if fm.fileExists(atPath: dbURL.path) {
-                        try? fm.removeItem(at: dbURL)
-                        deletedFiles.append(dbPath)
-                    }
+                    removeIfExists(dbURL, label: dbPath)
                     // Also remove WAL/SHM files
                     let walURL = dbURL.appendingPathExtension("wal")
                     let shmURL = dbURL.appendingPathExtension("shm")
-                    try? fm.removeItem(at: walURL)
-                    try? fm.removeItem(at: shmURL)
+                    removeIfExists(walURL, label: "\(dbPath).wal")
+                    removeIfExists(shmURL, label: "\(dbPath).shm")
                 }
             }
 
@@ -2141,18 +2143,38 @@ extension SidebarViewController: NSMenuDelegate {
             )
 
             let manifestURL = bundleURL.appendingPathComponent("manifest.json")
-            if let jsonData = try? JSONEncoder().encode(updatedManifest) {
-                try? jsonData.write(to: manifestURL)
+            do {
+                let jsonData = try JSONEncoder().encode(updatedManifest)
+                try jsonData.write(to: manifestURL, options: .atomic)
+            } catch {
+                errors.append("Failed to write manifest.json: \(error.localizedDescription)")
             }
 
+            let finalDeletedCount = deletedFiles.count
+            let finalErrors = errors
             DispatchQueue.main.async {
+                guard let self else { return }
                 MainActor.assumeIsolated {
-                    logger.info("performDeleteVariantTracks: Deleted \(deletedFiles.count) files from bundle")
-                    NotificationCenter.default.post(
-                        name: .bundleVariantTracksDeleted,
-                        object: nil,
-                        userInfo: [NotificationUserInfoKey.bundleURL: bundleURL]
-                    )
+                    if finalErrors.isEmpty {
+                        logger.info("performDeleteVariantTracks: Deleted \(finalDeletedCount) files from bundle")
+                        NotificationCenter.default.post(
+                            name: .bundleVariantTracksDeleted,
+                            object: nil,
+                            userInfo: [NotificationUserInfoKey.bundleURL: bundleURL]
+                        )
+                    } else {
+                        logger.error("performDeleteVariantTracks: Completed with \(finalErrors.count) error(s)")
+                        let alert = NSAlert()
+                        alert.messageText = "Failed to Delete Variant Tracks"
+                        alert.informativeText = finalErrors.joined(separator: "\n")
+                        alert.alertStyle = .warning
+                        alert.addButton(withTitle: "OK")
+                        if let window = self.view.window {
+                            alert.beginSheetModal(for: window)
+                        } else {
+                            alert.runModal()
+                        }
+                    }
                 }
             }
         }
