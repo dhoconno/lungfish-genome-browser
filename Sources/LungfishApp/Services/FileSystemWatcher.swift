@@ -235,6 +235,27 @@ private struct DirectoryEntry: Equatable, Hashable {
     let relativePath: String
     let modificationDate: Date?
     let isDirectory: Bool
+
+    static func == (lhs: DirectoryEntry, rhs: DirectoryEntry) -> Bool {
+        guard lhs.relativePath == rhs.relativePath, lhs.isDirectory == rhs.isDirectory else {
+            return false
+        }
+
+        // Ignore directory mtime churn. We care about structure for directories,
+        // and content mtime for files.
+        if lhs.isDirectory {
+            return true
+        }
+        return lhs.modificationDate == rhs.modificationDate
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(relativePath)
+        hasher.combine(isDirectory)
+        if !isDirectory {
+            hasher.combine(modificationDate)
+        }
+    }
 }
 
 /// Represents a snapshot of directory contents for change detection

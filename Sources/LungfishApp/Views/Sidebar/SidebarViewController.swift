@@ -117,6 +117,9 @@ public class SidebarViewController: NSViewController {
     /// File system watcher for auto-refreshing when files change
     private var fileSystemWatcher: FileSystemWatcher?
 
+    /// Suppresses delegate and notification callbacks during programmatic selection changes.
+    private var suppressSelectionCallbacks = false
+
     // MARK: - Delegate
 
     /// Delegate for selection change callbacks.
@@ -380,7 +383,11 @@ public class SidebarViewController: NSViewController {
         logger.info("reloadFromFilesystem: Scanning '\(projectURL.path, privacy: .public)'")
 
         // Save current selection to restore after reload
-        let selectedURLs = selectedItems().compactMap { $0.url }
+        let selectedURLs = selectedItems().compactMap { $0.url?.standardizedFileURL }
+        let selectedURLSet = Set(selectedURLs)
+
+        // Suppress selection side effects while rebuilding and restoring rows.
+        suppressSelectionCallbacks = true
 
         // Build the sidebar items from the project folder's contents (not the folder itself)
         // This shows the contents at the root level, similar to how Finder shows folder contents
@@ -396,6 +403,14 @@ public class SidebarViewController: NSViewController {
 
         // Restore selection if possible
         restoreSelection(urls: selectedURLs)
+        suppressSelectionCallbacks = false
+
+        // Propagate selection only if it actually changed after refresh.
+        let restoredItems = selectedItems()
+        let restoredURLSet = Set(restoredItems.compactMap { $0.url?.standardizedFileURL })
+        if restoredURLSet != selectedURLSet {
+            handleSelectionChange(restoredItems, source: "reloadFromFilesystem")
+        }
 
         let itemCount = rootItems.reduce(0) { $0 + countItems(in: $1) }
         logger.info("reloadFromFilesystem: Sidebar updated with \(itemCount) items")
@@ -599,6 +614,9 @@ public class SidebarViewController: NSViewController {
         }
 
         if !rowsToSelect.isEmpty {
+            if outlineView.selectedRowIndexes == rowsToSelect {
+                return
+            }
             outlineView.selectRowIndexes(rowsToSelect, byExtendingSelection: false)
         }
     }
@@ -1620,11 +1638,20 @@ extension SidebarViewController: NSOutlineViewDelegate {
     }
 
     public func outlineViewSelectionDidChange(_ notification: Notification) {
+        if suppressSelectionCallbacks {
+            logger.debug("outlineViewSelectionDidChange: Suppressed during programmatic update")
+            return
+        }
+
         // Get ALL selected items for multi-selection support
         let items = selectedItems()
+        handleSelectionChange(items, source: "outlineViewSelectionDidChange")
+    }
+
+    private func handleSelectionChange(_ items: [SidebarItem], source: String) {
 
         if items.isEmpty {
-            logger.debug("outlineViewSelectionDidChange: Selection cleared")
+            logger.debug("\(source, privacy: .public): Selection cleared")
 
             // Call delegate directly - synchronous, no Task needed
             selectionDelegate?.sidebarDidSelectItem(nil)
@@ -1640,7 +1667,7 @@ extension SidebarViewController: NSOutlineViewDelegate {
 
         // Log all selected items
         let itemNames = items.map { $0.title }.joined(separator: ", ")
-        logger.info("outlineViewSelectionDidChange: Selected \(items.count) items: [\(itemNames, privacy: .public)]")
+        logger.info("\(source, privacy: .public): Selected \(items.count) items: [\(itemNames, privacy: .public)]")
 
         // Call delegate directly - synchronous, reliable
         // This is the primary way to handle selection changes for content display
@@ -1660,7 +1687,7 @@ extension SidebarViewController: NSOutlineViewDelegate {
                 "items": items
             ]
         )
-        logger.debug("outlineViewSelectionDidChange: Called delegate and posted notification with \(items.count) items")
+        logger.debug("\(source, privacy: .public): Called delegate and posted notification with \(items.count) items")
     }
 }
 

@@ -888,6 +888,12 @@ extension MainSplitViewController: SidebarSelectionDelegate {
     /// - Setting up the `ReferenceFrame` for the first chromosome
     /// - Configuring the `SequenceViewerView` for on-demand rendering
     private func displayReferenceBundle(at url: URL) {
+        if viewerController.currentBundleDataProvider != nil,
+           viewerController.currentBundleURL?.standardizedFileURL == url.standardizedFileURL {
+            logger.debug("displayReferenceBundle: '\(url.lastPathComponent, privacy: .public)' already displayed, skipping reload")
+            return
+        }
+
         logger.info("displayReferenceBundle: Opening '\(url.lastPathComponent, privacy: .public)'")
 
         do {
