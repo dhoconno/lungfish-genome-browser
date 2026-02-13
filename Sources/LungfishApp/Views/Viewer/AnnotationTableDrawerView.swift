@@ -115,6 +115,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     /// Debounce work item for viewport sync to avoid thrashing during rapid panning.
     private var viewportSyncWorkItem: DispatchWorkItem?
 
+    /// Optional source object to scope viewport sync notifications to a single viewer.
+    private weak var viewportSyncSourceObject: AnyObject?
+
     // MARK: - UI Components
 
     private let scrollView = NSScrollView()
@@ -418,17 +421,27 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         isSuppressingDelegateCallbacks = false
     }
 
+    /// Sets the viewer object that owns viewport-sync notifications for this drawer.
+    func setViewportSyncSource(_ source: AnyObject?) {
+        viewportSyncSourceObject = source
+    }
+
     // MARK: - Viewport Variant Sync
 
     /// Handles `.viewportVariantsUpdated` notification to auto-sync the variant table.
     @objc private func handleViewportVariantsUpdated(_ notification: Notification) {
-        guard viewportSyncEnabled, activeTab == .variants else { return }
+        guard viewportSyncEnabled else { return }
+        if let expectedSource = viewportSyncSourceObject,
+           notification.object as AnyObject? !== expectedSource {
+            return
+        }
         guard let userInfo = notification.userInfo,
               let chromosome = userInfo[NotificationUserInfoKey.chromosome] as? String,
               let start = userInfo[NotificationUserInfoKey.start] as? Int,
               let end = userInfo[NotificationUserInfoKey.end] as? Int else { return }
 
         viewportRegion = (chromosome: chromosome, start: start, end: end)
+        guard activeTab == .variants else { return }
 
         // Debounce: cancel previous and schedule with 200ms delay
         viewportSyncWorkItem?.cancel()
@@ -441,6 +454,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
     /// Performs region-filtered variant query and updates the table.
     private func performViewportSync() {
+        guard viewportSyncEnabled, activeTab == .variants else { return }
         guard let region = viewportRegion, let index = searchIndex else { return }
 
         let typeFilter: Set<String> = visibleVariantTypes.count < availableVariantTypes.count ? visibleVariantTypes : []
@@ -588,6 +602,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     /// Switches to the specified tab, reconfiguring columns, chip bar, and data.
     func switchToTab(_ tab: DrawerTab) {
         guard tab != activeTab || displayedAnnotations.isEmpty else { return }
+        viewportSyncWorkItem?.cancel()
+        viewportSyncWorkItem = nil
         activeTab = tab
         tabControl.selectedSegment = tab.rawValue
 
@@ -602,6 +618,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
         // Re-query for the new tab's data
         updateDisplayedAnnotations()
+        if tab == .variants, viewportRegion != nil {
+            performViewportSync()
+        }
     }
 
     // MARK: - Data Loading

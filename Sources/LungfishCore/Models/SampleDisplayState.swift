@@ -247,6 +247,9 @@ public struct VariantSite: Sendable {
     /// Variant ID string (e.g., rsID or generated ID).
     public let variantID: String?
 
+    /// Source variant track ID for resolving the correct backing database.
+    public let sourceTrackId: String?
+
     /// Predicted amino acid impact (from CSQ or computed). Nil if not determined.
     public var impact: VariantImpact?
 
@@ -256,7 +259,7 @@ public struct VariantSite: Sendable {
     /// Gene symbol associated with this variant (from CSQ or annotation overlap).
     public var geneSymbol: String?
 
-    public init(position: Int, ref: String, alt: String, variantType: String, genotypes: [String: GenotypeDisplayCall], databaseRowId: Int64? = nil, variantID: String? = nil, impact: VariantImpact? = nil, aminoAcidChange: String? = nil, geneSymbol: String? = nil) {
+    public init(position: Int, ref: String, alt: String, variantType: String, genotypes: [String: GenotypeDisplayCall], databaseRowId: Int64? = nil, variantID: String? = nil, sourceTrackId: String? = nil, impact: VariantImpact? = nil, aminoAcidChange: String? = nil, geneSymbol: String? = nil) {
         self.position = position
         self.ref = ref
         self.alt = alt
@@ -264,6 +267,7 @@ public struct VariantSite: Sendable {
         self.genotypes = genotypes
         self.databaseRowId = databaseRowId
         self.variantID = variantID
+        self.sourceTrackId = sourceTrackId
         self.impact = impact
         self.aminoAcidChange = aminoAcidChange
         self.geneSymbol = geneSymbol

@@ -1938,6 +1938,32 @@ public class SequenceViewerView: NSView {
     /// Zero = first sample row at top. Positive = scrolled down.
     var genotypeScrollOffset: CGFloat = 0
 
+    /// Maximum vertical scroll offset for genotype rows at the current frame/layout.
+    private func maxGenotypeScrollOffset(frame: ReferenceFrame) -> CGFloat {
+        let sampleCount = cachedGenotypeData?.sampleNames.count ?? cachedSampleCount
+        guard sampleCount > 0 else { return 0 }
+        let genotypeTopY = variantTrackY + VariantTrackRenderer.summaryBarHeight + VariantTrackRenderer.summaryToRowGap
+        let rowH = VariantTrackRenderer.rowHeight(
+            sampleCount: sampleCount,
+            scale: frame.scale,
+            state: sampleDisplayState
+        )
+        guard rowH > 0 else { return 0 }
+        let availableHeight = max(0, bounds.height - genotypeTopY)
+        return max(0, CGFloat(sampleCount) * rowH - availableHeight)
+    }
+
+    /// Clamps genotype scroll offset to the valid range for current content/layout.
+    private func clampGenotypeScrollOffset(frame: ReferenceFrame? = nil) {
+        let activeFrame = frame ?? viewController?.referenceFrame
+        guard let activeFrame else {
+            genotypeScrollOffset = 0
+            return
+        }
+        let maxOffset = maxGenotypeScrollOffset(frame: activeFrame)
+        genotypeScrollOffset = max(0, min(genotypeScrollOffset, maxOffset))
+    }
+
     /// Maps reference chromosome names to variant DB chromosome names.
     /// Built at bundle load time by matching chromosome lengths when names differ.
     /// Empty if all names match or no variant tracks are loaded.
@@ -2441,6 +2467,7 @@ public class SequenceViewerView: NSView {
         self.cachedGenotypeData = nil
         self.cachedGenotypeRegion = nil
         self.isFetchingGenotypes = false
+        self.genotypeScrollOffset = 0
 
         // Cache sample count and build chromosome alias map from variant databases
         self.cachedSampleCount = 0
@@ -2813,6 +2840,7 @@ public class SequenceViewerView: NSView {
             } else {
                 // Draw per-sample genotype rows if available
                 if let genotypeData = cachedGenotypeData, cachedSampleCount > 0 {
+                    clampGenotypeScrollOffset(frame: frame)
                     let genotypeY = vY + VariantTrackRenderer.summaryBarHeight + VariantTrackRenderer.summaryToRowGap
                     let availableHeight = max(0, bounds.height - genotypeY)
                     VariantTrackRenderer.drawGenotypeRows(
@@ -3085,14 +3113,14 @@ public class SequenceViewerView: NSView {
 
                 // Notify variant table drawer of updated viewport variants
                 // Use the VCF chromosome name so the table can query the variant DB directly
-                let vcfChrom = viewer.variantDBChromosomeName(for: expandedRegion.chromosome)
+                let vcfChrom = viewer.variantDBChromosomeName(for: region.chromosome)
                 NotificationCenter.default.post(
                     name: .viewportVariantsUpdated,
                     object: viewer,
                     userInfo: [
                         NotificationUserInfoKey.chromosome: vcfChrom,
-                        NotificationUserInfoKey.start: expandedRegion.start,
-                        NotificationUserInfoKey.end: expandedRegion.end,
+                        NotificationUserInfoKey.start: region.start,
+                        NotificationUserInfoKey.end: region.end,
                         "variantCount": count,
                     ]
                 )
@@ -3133,6 +3161,7 @@ public class SequenceViewerView: NSView {
 
         Self.genotypeFetchQueue.async { [weak self] in
             var allSites: [VariantSite] = []
+            var variantDBByTrackId: [String: VariantDatabase] = [:]
             var sampleNames: [String] = []
             var sampleNameSet = Set<String>()
             var sampleMetadata: [String: [String: String]] = [:]
@@ -3145,6 +3174,7 @@ public class SequenceViewerView: NSView {
 
                 do {
                     let db = try VariantDatabase(url: dbURL)
+                    variantDBByTrackId[trackId] = db
                     for name in db.sampleNames() where sampleNameSet.insert(name).inserted {
                         sampleNames.append(name)
                     }
@@ -3179,7 +3209,8 @@ public class SequenceViewerView: NSView {
                             variantType: variant.variantType,
                             genotypes: gtMap,
                             databaseRowId: variant.id,
-                            variantID: variant.variantID
+                            variantID: variant.variantID,
+                            sourceTrackId: trackId
                         ))
                     }
                 } catch {
@@ -3188,7 +3219,7 @@ public class SequenceViewerView: NSView {
             }
 
             // Enrich variant sites with CSQ impact data (batch query)
-            enrichSitesWithCSQImpact(&allSites, bundle: bundle, variantTrackIds: variantTrackIds, bundleURL: bundleURL, queryChrom: queryChrom)
+            enrichSitesWithCSQImpact(&allSites, variantDatabasesByTrackId: variantDBByTrackId)
 
             let visibleOrderedSamples = displayState.visibleSamples(from: sampleNames, metadata: sampleMetadata)
 
@@ -3208,6 +3239,7 @@ public class SequenceViewerView: NSView {
                 let elapsed = Date().timeIntervalSince(fetchStart)
                 viewer.cachedGenotypeData = displayData
                 viewer.cachedGenotypeRegion = expandedRegion
+                viewer.clampGenotypeScrollOffset()
                 viewer.isFetchingGenotypes = false
                 viewer.invalidateAnnotationTile()
                 logger.info("fetchGenotypesAsync: Cached \(siteCount) sites × \(sampleNames.count) samples in \(elapsed, format: .fixed(precision: 3))s")
@@ -5743,7 +5775,7 @@ public class SequenceViewerView: NSView {
                     state: sampleDisplayState
                 )
                 guard rowH > 0 else { return }
-                let maxOffset = max(0, CGFloat(cachedSampleCount) * rowH - (bounds.height - genotypeTopY))
+                let maxOffset = maxGenotypeScrollOffset(frame: frame)
                 genotypeScrollOffset = max(0, min(maxOffset, genotypeScrollOffset - event.scrollingDeltaY * 3))
 
                 scrollRedrawTimer?.invalidate()
@@ -5846,6 +5878,8 @@ public class SequenceViewerView: NSView {
 
     /// Last hovered genotype cell (sampleIndex, siteIndex) for tooltip caching.
     private var lastHoveredGenotypeCell: (sampleIdx: Int, siteIdx: Int)?
+    /// Last status text used for hovered genotype cell.
+    private var lastHoveredGenotypeStatusText: String?
 
     public override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -5891,6 +5925,7 @@ public class SequenceViewerView: NSView {
             return
         }
         lastHoveredGenotypeCell = nil
+        lastHoveredGenotypeStatusText = nil
 
         // --- Annotation hit-testing ---
         let annotation: SequenceAnnotation?
@@ -6042,7 +6077,7 @@ public class SequenceViewerView: NSView {
         // Avoid recomputing tooltip if we're still on the same cell
         if let last = lastHoveredGenotypeCell, last.sampleIdx == sampleIdx, last.siteIdx == siteIdx {
             // Return non-nil to keep current tooltip active (toolTip is already set)
-            return GenotypeTooltipResult(tooltip: self.toolTip ?? "", statusText: "")
+            return GenotypeTooltipResult(tooltip: self.toolTip ?? "", statusText: lastHoveredGenotypeStatusText ?? "")
         }
         lastHoveredGenotypeCell = (sampleIdx, siteIdx)
 
@@ -6081,9 +6116,11 @@ public class SequenceViewerView: NSView {
 
         // Enrich with additional CSQ/INFO fields from variant database
         if let rowId = site.databaseRowId,
-           let handles = viewController?.annotationSearchIndex?.variantDatabaseHandles,
-           let firstDB = handles.first?.db {
-            let infoDict = firstDB.infoValues(variantId: rowId)
+           let handles = viewController?.annotationSearchIndex?.variantDatabaseHandles {
+            let db = site.sourceTrackId.flatMap { trackId in
+                handles.first(where: { $0.trackId == trackId })?.db
+            } ?? handles.first?.db
+            let infoDict = db?.infoValues(variantId: rowId) ?? [:]
             if !infoDict.isEmpty {
                 // Show CSQ consequence string (more detailed than the impact classification)
                 if let consequence = infoDict["CSQ_Consequence"] {
@@ -6099,12 +6136,14 @@ public class SequenceViewerView: NSView {
         }
 
         let statusText = "Genotype: \(sampleName) \u{2022} \(callLabel) \u{2022} \(chrom):\(displayPos.formatted()) \(site.ref)\u{2192}\(site.alt)"
+        lastHoveredGenotypeStatusText = statusText
         return GenotypeTooltipResult(tooltip: tooltip, statusText: statusText)
     }
 
     public override func mouseExited(with event: NSEvent) {
         hoveredAnnotation = nil
         lastHoveredGenotypeCell = nil
+        lastHoveredGenotypeStatusText = nil
         self.toolTip = nil
         NSCursor.arrow.set()
         updateSelectionStatus()
@@ -6205,33 +6244,30 @@ private func classifyGenotype(_ gt: GenotypeRecord) -> GenotypeDisplayCall {
 /// Called on the background genotype fetch queue — does NOT access @MainActor state.
 private func enrichSitesWithCSQImpact(
     _ sites: inout [VariantSite],
-    bundle: ReferenceBundle,
-    variantTrackIds: [String],
-    bundleURL: URL,
-    queryChrom: String
+    variantDatabasesByTrackId: [String: VariantDatabase]
 ) {
-    // Collect variant row IDs that need enrichment
-    let rowIds = sites.compactMap(\.databaseRowId)
-    guard !rowIds.isEmpty else { return }
+    guard !sites.isEmpty, !variantDatabasesByTrackId.isEmpty else { return }
 
-    // Open a fresh DB handle on this background thread
-    var db: VariantDatabase?
-    for trackId in variantTrackIds {
-        guard let trackInfo = bundle.variantTrack(id: trackId),
-              let dbPath = trackInfo.databasePath else { continue }
-        let dbURL = bundleURL.appendingPathComponent(dbPath)
-        db = try? VariantDatabase(url: dbURL)
-        if db != nil { break }
+    // Group row IDs by source track to avoid cross-database row-id collisions.
+    var rowIdsByTrack: [String: [Int64]] = [:]
+    for site in sites {
+        guard let trackId = site.sourceTrackId, let rowId = site.databaseRowId else { continue }
+        rowIdsByTrack[trackId, default: []].append(rowId)
     }
-    guard let db else { return }
+    guard !rowIdsByTrack.isEmpty else { return }
 
-    // Batch fetch INFO values for all variant sites
-    let infoMap = db.batchInfoValues(variantIds: rowIds)
+    // Batch-fetch INFO maps per track/database.
+    var infoMapByTrack: [String: [Int64: [String: String]]] = [:]
+    for (trackId, rowIds) in rowIdsByTrack {
+        guard let db = variantDatabasesByTrackId[trackId], !rowIds.isEmpty else { continue }
+        infoMapByTrack[trackId] = db.batchInfoValues(variantIds: rowIds)
+    }
 
     // Enrich each site
     for i in sites.indices {
+        guard let trackId = sites[i].sourceTrackId else { continue }
         guard let rowId = sites[i].databaseRowId,
-              let info = infoMap[rowId] else { continue }
+              let info = infoMapByTrack[trackId]?[rowId] else { continue }
 
         let consequence = info["CSQ_Consequence"]
         let csqImpact = info["CSQ_IMPACT"]
