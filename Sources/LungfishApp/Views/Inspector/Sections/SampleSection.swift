@@ -160,9 +160,15 @@ public final class SampleSectionViewModel {
         notifyStateChanged()
     }
 
-    /// Sets the row height mode and notifies listeners.
-    func setRowHeightMode(_ mode: RowHeightMode) {
-        displayState.rowHeightMode = mode
+    /// Sets the row height and notifies listeners.
+    func setRowHeight(_ height: CGFloat) {
+        displayState.rowHeight = max(2, min(30, height))
+        notifyStateChanged()
+    }
+
+    /// Sets the summary bar height and notifies listeners.
+    func setSummaryBarHeight(_ height: CGFloat) {
+        displayState.summaryBarHeight = max(10, min(60, height))
         notifyStateChanged()
     }
 
@@ -319,22 +325,47 @@ public struct SampleSection: View {
             .controlSize(.small)
 
             if viewModel.displayState.showGenotypeRows {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Row Height")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(Int(viewModel.displayState.rowHeight))px")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    Slider(
+                        value: Binding(
+                            get: { viewModel.displayState.rowHeight },
+                            set: { viewModel.setRowHeight($0) }
+                        ),
+                        in: 2...30,
+                        step: 1
+                    )
+                    .controlSize(.small)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text("Row Height")
+                    Text("Summary Bar")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Picker("", selection: Binding(
-                        get: { viewModel.displayState.rowHeightMode },
-                        set: { viewModel.setRowHeightMode($0) }
-                    )) {
-                        Text("Auto").tag(RowHeightMode.automatic)
-                        Text("Squished").tag(RowHeightMode.squished)
-                        Text("Expanded").tag(RowHeightMode.expanded)
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 160)
+                    Text("\(Int(viewModel.displayState.summaryBarHeight))px")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
                 }
+                Slider(
+                    value: Binding(
+                        get: { viewModel.displayState.summaryBarHeight },
+                        set: { viewModel.setSummaryBarHeight($0) }
+                    ),
+                    in: 10...60,
+                    step: 1
+                )
+                .controlSize(.small)
             }
         }
     }

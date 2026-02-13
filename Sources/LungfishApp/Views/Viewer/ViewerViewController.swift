@@ -573,7 +573,7 @@ public class ViewerViewController: NSViewController {
             return
         }
 
-        logger.info("handleSampleDisplayStateChanged: showRows=\(state.showGenotypeRows) height=\(state.rowHeightMode.rawValue, privacy: .public)")
+        logger.info("handleSampleDisplayStateChanged: showRows=\(state.showGenotypeRows) rowHeight=\(state.rowHeight)")
         viewerView.sampleDisplayState = state
         viewerView.clearGenotypeCache()
         viewerView.invalidateAnnotationTile()
@@ -1973,12 +1973,8 @@ public class SequenceViewerView: NSView {
     private func maxGenotypeScrollOffset(frame: ReferenceFrame) -> CGFloat {
         let sampleCount = cachedGenotypeData?.sampleNames.count ?? cachedSampleCount
         guard sampleCount > 0 else { return 0 }
-        let genotypeTopY = variantTrackY + VariantTrackRenderer.summaryBarHeight + VariantTrackRenderer.summaryToRowGap
-        let rowH = VariantTrackRenderer.rowHeight(
-            sampleCount: sampleCount,
-            scale: frame.scale,
-            state: sampleDisplayState
-        )
+        let genotypeTopY = variantTrackY + sampleDisplayState.summaryBarHeight + VariantTrackRenderer.summaryToRowGap
+        let rowH = sampleDisplayState.rowHeight
         guard rowH > 0 else { return 0 }
         let availableHeight = max(0, bounds.height - genotypeTopY)
         return max(0, CGFloat(sampleCount) * rowH - availableHeight)
@@ -2856,7 +2852,8 @@ public class SequenceViewerView: NSView {
                 variants: filteredVariants,
                 frame: frame,
                 context: context,
-                yOffset: vY
+                yOffset: vY,
+                barHeight: sampleDisplayState.summaryBarHeight
             )
 
             if filteredVariants.count > variantDisplayCap {
@@ -2866,13 +2863,14 @@ public class SequenceViewerView: NSView {
                     .font: NSFont.systemFont(ofSize: 10),
                     .foregroundColor: NSColor.secondaryLabelColor,
                 ]
-                let msgY = vY + VariantTrackRenderer.summaryBarHeight + 4
+                let msgY = vY + sampleDisplayState.summaryBarHeight + 4
                 msg.draw(at: CGPoint(x: 4, y: msgY), withAttributes: msgAttrs)
             } else {
-                // Draw per-sample genotype rows if available
-                if let genotypeData = cachedGenotypeData, cachedSampleCount > 0 {
+                // Draw per-sample genotype rows if available and enabled
+                if let genotypeData = cachedGenotypeData, cachedSampleCount > 0,
+                   sampleDisplayState.showGenotypeRows {
                     clampGenotypeScrollOffset(frame: frame)
-                    let genotypeY = vY + VariantTrackRenderer.summaryBarHeight + VariantTrackRenderer.summaryToRowGap
+                    let genotypeY = vY + sampleDisplayState.summaryBarHeight + VariantTrackRenderer.summaryToRowGap
                     let availableHeight = max(0, bounds.height - genotypeY)
                     VariantTrackRenderer.drawGenotypeRows(
                         genotypeData: genotypeData,
@@ -5795,16 +5793,12 @@ public class SequenceViewerView: NSView {
         } else {
             // Check if mouse is in genotype row area for vertical scrolling
             let location = convert(event.locationInWindow, from: nil)
-            let genotypeTopY = variantTrackY + VariantTrackRenderer.summaryBarHeight + VariantTrackRenderer.summaryToRowGap
+            let genotypeTopY = variantTrackY + sampleDisplayState.summaryBarHeight + VariantTrackRenderer.summaryToRowGap
             let inGenotypeArea = showVariants && cachedSampleCount > 0 && location.y >= genotypeTopY
 
             if inGenotypeArea && abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX) {
                 // Vertical scroll in genotype area — scroll through sample rows
-                let rowH = VariantTrackRenderer.rowHeight(
-                    sampleCount: cachedSampleCount,
-                    scale: frame.scale,
-                    state: sampleDisplayState
-                )
+                let rowH = sampleDisplayState.rowHeight
                 guard rowH > 0 else { return }
                 let maxOffset = maxGenotypeScrollOffset(frame: frame)
                 genotypeScrollOffset = max(0, min(maxOffset, genotypeScrollOffset - event.scrollingDeltaY * 3))
@@ -6066,14 +6060,10 @@ public class SequenceViewerView: NSView {
               !genotypeData.sites.isEmpty,
               let frame = viewController?.referenceFrame else { return nil }
 
-        let genotypeTopY = variantTrackY + VariantTrackRenderer.summaryBarHeight + VariantTrackRenderer.summaryToRowGap
+        let genotypeTopY = variantTrackY + sampleDisplayState.summaryBarHeight + VariantTrackRenderer.summaryToRowGap
         guard point.y >= genotypeTopY else { return nil }
 
-        let rowH = VariantTrackRenderer.rowHeight(
-            sampleCount: cachedSampleCount,
-            scale: frame.scale,
-            state: sampleDisplayState
-        )
+        let rowH = sampleDisplayState.rowHeight
         guard rowH > 0 else { return nil }
 
         // Determine which sample row the mouse is over

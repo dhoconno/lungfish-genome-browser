@@ -81,76 +81,56 @@ final class VariantTrackRendererTests: XCTestCase {
 
     func testTotalHeightSummaryBarOnly() {
         let state = SampleDisplayState()
-        let height = VariantTrackRenderer.totalHeight(sampleCount: 0, scale: 100.0, state: state)
-        XCTAssertEqual(height, VariantTrackRenderer.summaryBarHeight)
+        let height = VariantTrackRenderer.totalHeight(sampleCount: 0, state: state)
+        XCTAssertEqual(height, state.summaryBarHeight)
     }
 
     func testTotalHeightWithSamplesExpanded() {
-        let state = SampleDisplayState(showGenotypeRows: true, rowHeightMode: .expanded)
-        let height = VariantTrackRenderer.totalHeight(sampleCount: 5, scale: 100.0, state: state)
-        let expected = VariantTrackRenderer.summaryBarHeight
+        let state = SampleDisplayState(showGenotypeRows: true, rowHeight: 10)
+        let height = VariantTrackRenderer.totalHeight(sampleCount: 5, state: state)
+        let expected = state.summaryBarHeight
             + VariantTrackRenderer.summaryToRowGap
-            + CGFloat(5) * VariantTrackRenderer.expandedRowHeight
+            + CGFloat(5) * 10
         XCTAssertEqual(height, expected)
     }
 
     func testTotalHeightWithSamplesSquished() {
-        let state = SampleDisplayState(showGenotypeRows: true, rowHeightMode: .squished)
-        let height = VariantTrackRenderer.totalHeight(sampleCount: 10, scale: 100.0, state: state)
-        let expected = VariantTrackRenderer.summaryBarHeight
+        let state = SampleDisplayState(showGenotypeRows: true, rowHeight: 2)
+        let height = VariantTrackRenderer.totalHeight(sampleCount: 10, state: state)
+        let expected = state.summaryBarHeight
             + VariantTrackRenderer.summaryToRowGap
-            + CGFloat(10) * VariantTrackRenderer.squishedRowHeight
+            + CGFloat(10) * 2
         XCTAssertEqual(height, expected)
     }
 
     func testTotalHeightGenotypeRowsHidden() {
         let state = SampleDisplayState(showGenotypeRows: false)
-        let height = VariantTrackRenderer.totalHeight(sampleCount: 10, scale: 100.0, state: state)
-        XCTAssertEqual(height, VariantTrackRenderer.summaryBarHeight)
+        let height = VariantTrackRenderer.totalHeight(sampleCount: 10, state: state)
+        XCTAssertEqual(height, state.summaryBarHeight)
     }
 
-    func testRowHeightAutomatic_DensityMode() {
-        let state = SampleDisplayState(rowHeightMode: .automatic)
-        let height = VariantTrackRenderer.rowHeight(sampleCount: 5, scale: 60_000, state: state)
-        XCTAssertEqual(height, 0, "Density mode (>50k bp/px) should have 0 row height")
+    func testRowHeightFromState() {
+        let state2 = SampleDisplayState(rowHeight: 2)
+        XCTAssertEqual(state2.rowHeight, 2)
+
+        let state12 = SampleDisplayState(rowHeight: 12)
+        XCTAssertEqual(state12.rowHeight, 12)
+
+        let state30 = SampleDisplayState(rowHeight: 30)
+        XCTAssertEqual(state30.rowHeight, 30)
     }
 
-    func testRowHeightAutomatic_SquishedMode() {
-        let state = SampleDisplayState(rowHeightMode: .automatic)
-        let height = VariantTrackRenderer.rowHeight(sampleCount: 5, scale: 1000, state: state)
-        XCTAssertEqual(height, VariantTrackRenderer.squishedRowHeight)
-    }
-
-    func testRowHeightAutomatic_SquishedWithManySamples() {
-        let state = SampleDisplayState(rowHeightMode: .automatic)
-        let height = VariantTrackRenderer.rowHeight(sampleCount: 25, scale: 100, state: state)
-        XCTAssertEqual(height, VariantTrackRenderer.squishedRowHeight)
-    }
-
-    func testRowHeightAutomatic_ExpandedMode() {
-        let state = SampleDisplayState(rowHeightMode: .automatic)
-        let height = VariantTrackRenderer.rowHeight(sampleCount: 5, scale: 100, state: state)
-        XCTAssertEqual(height, VariantTrackRenderer.expandedRowHeight)
-    }
-
-    func testRowHeightForced_Squished() {
-        let state = SampleDisplayState(rowHeightMode: .squished)
-        let height = VariantTrackRenderer.rowHeight(sampleCount: 5, scale: 100, state: state)
-        XCTAssertEqual(height, VariantTrackRenderer.squishedRowHeight)
-    }
-
-    func testRowHeightForced_Expanded() {
-        let state = SampleDisplayState(rowHeightMode: .expanded)
-        let height = VariantTrackRenderer.rowHeight(sampleCount: 50, scale: 10000, state: state)
-        XCTAssertEqual(height, VariantTrackRenderer.expandedRowHeight)
+    func testDefaultRowHeight() {
+        let state = SampleDisplayState()
+        XCTAssertEqual(state.rowHeight, 12)
     }
 
     func testAllSampleRowsIncluded() {
-        let state = SampleDisplayState(showGenotypeRows: true, rowHeightMode: .squished)
-        let height = VariantTrackRenderer.totalHeight(sampleCount: 200, scale: 100.0, state: state)
-        let expected = VariantTrackRenderer.summaryBarHeight
+        let state = SampleDisplayState(showGenotypeRows: true, rowHeight: 2)
+        let height = VariantTrackRenderer.totalHeight(sampleCount: 200, state: state)
+        let expected = state.summaryBarHeight
             + VariantTrackRenderer.summaryToRowGap
-            + CGFloat(200) * VariantTrackRenderer.squishedRowHeight
+            + CGFloat(200) * 2
         XCTAssertEqual(height, expected)
     }
 
@@ -221,6 +201,17 @@ final class VariantTrackRendererTests: XCTestCase {
         VariantTrackRenderer.drawSummaryBar(variants: [variant], frame: frame, context: ctx, yOffset: 0)
     }
 
+    func testDrawSummaryBarWithCustomHeight() {
+        let frame = makeFrame()
+        let ctx = makeBitmapContext(height: 200)
+        let variant = makeVariantAnnotation(start: 500, end: 501, variantType: "SNP")
+        VariantTrackRenderer.drawSummaryBar(variants: [variant], frame: frame, context: ctx, yOffset: 0, barHeight: 40)
+
+        // Should render at custom height — check pixel at y=20 (within 40px bar)
+        let snpPx = Int(frame.screenPosition(for: 500))
+        XCTAssertTrue(isNonBlack(at: snpPx, y: 20, in: ctx), "Custom bar height should render")
+    }
+
     // MARK: - Genotype Row Rendering Tests
 
     func testDrawGenotypeRowsWithEmptyData() {
@@ -240,7 +231,7 @@ final class VariantTrackRendererTests: XCTestCase {
     func testDrawGenotypeRowsWithSamples() {
         let frame = makeFrame(start: 0, end: 1000)
         let ctx = makeBitmapContext(width: 800, height: 200)
-        let state = SampleDisplayState(showGenotypeRows: true, rowHeightMode: .expanded)
+        let state = SampleDisplayState(showGenotypeRows: true, rowHeight: 10)
         let sites = [
             VariantSite(position: 100, ref: "A", alt: "G", variantType: "SNP",
                        genotypes: ["S1": .homRef, "S2": .het, "S3": .homAlt]),
@@ -256,7 +247,7 @@ final class VariantTrackRendererTests: XCTestCase {
             genotypeData: data, frame: frame, context: ctx, yOffset: 30, state: state
         )
 
-        // Row height is 10px (expanded). yOffset=30.
+        // Row height is 10px. yOffset=30.
         // S1 at y=30, S2 at y=40, S3 at y=50.
         // Site 1 at position 100 → pixel ~80, Site 2 at position 300 → pixel ~240.
         let site1Px = Int(frame.screenPosition(for: 100))
@@ -272,10 +263,10 @@ final class VariantTrackRendererTests: XCTestCase {
         XCTAssertGreaterThan(b3, r3, "HomAlt pixel should have blue > red")
     }
 
-    func testDrawGenotypeRowsDensityModeSkips() {
+    func testDrawGenotypeRowsWithSmallRowHeight() {
         let frame = makeFrame(start: 0, end: 50_000_000)
         let ctx = makeBitmapContext()
-        let state = SampleDisplayState(rowHeightMode: .automatic)
+        let state = SampleDisplayState(rowHeight: 2)
         let data = GenotypeDisplayData(
             sampleNames: ["S1"],
             sites: [VariantSite(position: 100, ref: "A", alt: "G", variantType: "SNP",
@@ -391,15 +382,15 @@ final class VariantTrackRendererTests: XCTestCase {
     // MARK: - Layout Constants Sanity
 
     func testLayoutConstantsArePositive() {
-        XCTAssertGreaterThan(VariantTrackRenderer.summaryBarHeight, 0)
-        XCTAssertGreaterThan(VariantTrackRenderer.squishedRowHeight, 0)
-        XCTAssertGreaterThan(VariantTrackRenderer.expandedRowHeight, 0)
+        XCTAssertGreaterThan(VariantTrackRenderer.defaultSummaryBarHeight, 0)
         XCTAssertGreaterThanOrEqual(VariantTrackRenderer.summaryToRowGap, 0)
         XCTAssertGreaterThan(VariantTrackRenderer.minPixelsPerVariant, 0)
     }
 
-    func testExpandedIsLargerThanSquished() {
-        XCTAssertGreaterThan(VariantTrackRenderer.expandedRowHeight, VariantTrackRenderer.squishedRowHeight)
+    func testDefaultRowHeightIsReasonable() {
+        let state = SampleDisplayState()
+        XCTAssertEqual(state.rowHeight, 12)
+        XCTAssertEqual(state.summaryBarHeight, 20)
     }
 
     // MARK: - Large Data Rendering
@@ -417,7 +408,7 @@ final class VariantTrackRendererTests: XCTestCase {
     func testDrawGenotypeRowsWithManySamples() {
         let frame = makeFrame(start: 0, end: 1000)
         let ctx = makeBitmapContext(width: 800, height: 500)
-        let state = SampleDisplayState(showGenotypeRows: true, rowHeightMode: .squished)
+        let state = SampleDisplayState(showGenotypeRows: true, rowHeight: 2)
         let sampleNames = (0..<150).map { "sample_\($0)" }
         let calls: [GenotypeDisplayCall] = [.homRef, .het, .homAlt, .noCall]
         let sites = [
@@ -578,7 +569,7 @@ final class VariantTrackRendererEdgeCaseTests: XCTestCase {
     func testGenotypeRowsWithMissingSampleInGenotypes() {
         let frame = makeFrame()
         let ctx = makeBitmapContext(height: 200)
-        let state = SampleDisplayState(showGenotypeRows: true, rowHeightMode: .expanded)
+        let state = SampleDisplayState(showGenotypeRows: true, rowHeight: 10)
         let sites = [
             VariantSite(position: 500, ref: "A", alt: "G", variantType: "SNP",
                        genotypes: ["S1": .het])  // S2 not present
@@ -593,31 +584,31 @@ final class VariantTrackRendererEdgeCaseTests: XCTestCase {
         )
     }
 
-    func testTotalHeightWithZeroScale() {
-        let state = SampleDisplayState(showGenotypeRows: true, rowHeightMode: .automatic)
-        let height = VariantTrackRenderer.totalHeight(sampleCount: 3, scale: 0, state: state)
-        let expected = VariantTrackRenderer.summaryBarHeight
+    func testTotalHeightWithDefaultState() {
+        let state = SampleDisplayState(showGenotypeRows: true)
+        let height = VariantTrackRenderer.totalHeight(sampleCount: 3, state: state)
+        let expected = state.summaryBarHeight
             + VariantTrackRenderer.summaryToRowGap
-            + 3 * VariantTrackRenderer.expandedRowHeight
+            + 3 * state.rowHeight
         XCTAssertEqual(height, expected)
     }
 
-    func testTotalHeightAt50KBoundary() {
-        let state = SampleDisplayState(showGenotypeRows: true, rowHeightMode: .automatic)
-        let height50k = VariantTrackRenderer.rowHeight(sampleCount: 5, scale: 50_000, state: state)
-        XCTAssertEqual(height50k, VariantTrackRenderer.squishedRowHeight, "At 50k bp/px should be squished, not density")
-
-        let height50k1 = VariantTrackRenderer.rowHeight(sampleCount: 5, scale: 50_001, state: state)
-        XCTAssertEqual(height50k1, 0, "Above 50k bp/px should be density (0 height)")
+    func testTotalGenotypeHeightWithSmallRows() {
+        let state = SampleDisplayState(showGenotypeRows: true, rowHeight: 2)
+        let height = VariantTrackRenderer.totalGenotypeHeight(sampleCount: 5, state: state)
+        XCTAssertEqual(height, 10)
     }
 
-    func testTotalHeightAt500BPBoundary() {
-        let state = SampleDisplayState(showGenotypeRows: true, rowHeightMode: .automatic)
-        let h500 = VariantTrackRenderer.rowHeight(sampleCount: 5, scale: 500, state: state)
-        XCTAssertEqual(h500, VariantTrackRenderer.expandedRowHeight, "At 500 bp/px should be expanded")
+    func testTotalGenotypeHeightWithLargeRows() {
+        let state = SampleDisplayState(showGenotypeRows: true, rowHeight: 30)
+        let height = VariantTrackRenderer.totalGenotypeHeight(sampleCount: 5, state: state)
+        XCTAssertEqual(height, 150)
+    }
 
-        let h501 = VariantTrackRenderer.rowHeight(sampleCount: 5, scale: 501, state: state)
-        XCTAssertEqual(h501, VariantTrackRenderer.squishedRowHeight, "Above 500 bp/px should be squished")
+    func testCustomSummaryBarHeight() {
+        let state = SampleDisplayState(summaryBarHeight: 40)
+        let height = VariantTrackRenderer.totalHeight(sampleCount: 0, state: state)
+        XCTAssertEqual(height, 40)
     }
 
     func testDrawSummaryBarWithNegativeYOffset() {
@@ -635,7 +626,7 @@ final class VariantTrackRendererEdgeCaseTests: XCTestCase {
     func testDrawGenotypeRowsNoSitesButHasSamples() {
         let frame = makeFrame()
         let ctx = makeBitmapContext(height: 200)
-        let state = SampleDisplayState(showGenotypeRows: true, rowHeightMode: .expanded)
+        let state = SampleDisplayState(showGenotypeRows: true, rowHeight: 10)
         let data = GenotypeDisplayData(
             sampleNames: ["S1", "S2"],
             sites: [],  // No variant sites

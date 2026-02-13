@@ -22,7 +22,8 @@ final class SampleDisplayStateTests: XCTestCase {
         XCTAssertTrue(state.filters.isEmpty)
         XCTAssertTrue(state.hiddenSamples.isEmpty)
         XCTAssertTrue(state.showGenotypeRows)
-        XCTAssertEqual(state.rowHeightMode, .automatic)
+        XCTAssertEqual(state.rowHeight, 12)
+        XCTAssertEqual(state.summaryBarHeight, 20)
     }
 
     // MARK: - Hidden Samples
@@ -215,7 +216,10 @@ final class SampleDisplayStateTests: XCTestCase {
         state.filters = [SampleFilter(field: "sex", op: .equals, value: "male")]
         state.hiddenSamples = ["S2", "S5"]
         state.showGenotypeRows = false
-        state.rowHeightMode = .expanded
+        state.rowHeight = 10
+        state.summaryBarHeight = 40
+        state.sampleOrder = ["S1", "S3", "S2"]
+        state.displayNameField = "alias"
 
         let encoder = JSONEncoder()
         let data = try encoder.encode(state)
@@ -230,7 +234,39 @@ final class SampleDisplayStateTests: XCTestCase {
         XCTAssertEqual(decoded.filters[0].op, .equals)
         XCTAssertEqual(decoded.hiddenSamples, ["S2", "S5"])
         XCTAssertFalse(decoded.showGenotypeRows)
-        XCTAssertEqual(decoded.rowHeightMode, .expanded)
+        XCTAssertEqual(decoded.rowHeight, 10)
+        XCTAssertEqual(decoded.summaryBarHeight, 40)
+        XCTAssertEqual(decoded.sampleOrder, ["S1", "S3", "S2"])
+        XCTAssertEqual(decoded.displayNameField, "alias")
+    }
+
+    func testCodableLegacyMigration() throws {
+        // Simulate old format with rowHeightMode instead of rowHeight
+        let json = """
+        {"showGenotypeRows":true,"rowHeightMode":"squished","sortFields":[],"filters":[],"hiddenSamples":[]}
+        """
+        let data = json.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(SampleDisplayState.self, from: data)
+        XCTAssertEqual(decoded.rowHeight, 2, "Legacy 'squished' should migrate to 2px")
+        XCTAssertEqual(decoded.summaryBarHeight, 20, "Missing summaryBarHeight should default to 20")
+    }
+
+    func testCodableLegacyExpandedMigration() throws {
+        let json = """
+        {"showGenotypeRows":true,"rowHeightMode":"expanded","sortFields":[],"filters":[],"hiddenSamples":[]}
+        """
+        let data = json.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(SampleDisplayState.self, from: data)
+        XCTAssertEqual(decoded.rowHeight, 10, "Legacy 'expanded' should migrate to 10px")
+    }
+
+    func testCodableLegacyAutomaticMigration() throws {
+        let json = """
+        {"showGenotypeRows":true,"rowHeightMode":"automatic","sortFields":[],"filters":[],"hiddenSamples":[]}
+        """
+        let data = json.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(SampleDisplayState.self, from: data)
+        XCTAssertEqual(decoded.rowHeight, 12, "Legacy 'automatic' should migrate to 12px (default)")
     }
 
     // MARK: - SampleFilter.matches
@@ -287,13 +323,64 @@ final class SampleDisplayStateTests: XCTestCase {
         XCTAssertEqual(GenotypeDisplayCall.allCases.count, 4)
     }
 
-    // MARK: - RowHeightMode
+    // MARK: - Row Height Defaults
 
-    func testRowHeightModeAllCases() {
-        XCTAssertEqual(RowHeightMode.allCases.count, 3)
-        XCTAssertTrue(RowHeightMode.allCases.contains(.automatic))
-        XCTAssertTrue(RowHeightMode.allCases.contains(.squished))
-        XCTAssertTrue(RowHeightMode.allCases.contains(.expanded))
+    func testRowHeightDefaults() {
+        let state = SampleDisplayState()
+        XCTAssertEqual(state.rowHeight, 12)
+        XCTAssertEqual(state.summaryBarHeight, 20)
+    }
+
+    func testRowHeightCustom() {
+        let state = SampleDisplayState(rowHeight: 5, summaryBarHeight: 30)
+        XCTAssertEqual(state.rowHeight, 5)
+        XCTAssertEqual(state.summaryBarHeight, 30)
+    }
+
+    // MARK: - Sample Order
+
+    func testSampleOrderApplied() {
+        var state = SampleDisplayState()
+        state.sampleOrder = ["S3", "S1", "S2"]
+        let visible = state.visibleSamples(from: ["S1", "S2", "S3"])
+        XCTAssertEqual(visible, ["S3", "S1", "S2"])
+    }
+
+    func testSampleOrderWithNewSamples() {
+        var state = SampleDisplayState()
+        state.sampleOrder = ["S2", "S1"]
+        // S3 is new and not in sampleOrder — appended at end
+        let visible = state.visibleSamples(from: ["S1", "S2", "S3"])
+        XCTAssertEqual(visible, ["S2", "S1", "S3"])
+    }
+
+    func testSampleOrderWithRemovedSamples() {
+        var state = SampleDisplayState()
+        state.sampleOrder = ["S3", "S99", "S1"]
+        // S99 doesn't exist in allSamples — silently skipped
+        let visible = state.visibleSamples(from: ["S1", "S2", "S3"])
+        XCTAssertEqual(visible, ["S3", "S1", "S2"])
+    }
+
+    func testSampleOrderNilUsesDefault() {
+        let state = SampleDisplayState()
+        XCTAssertNil(state.sampleOrder)
+        let visible = state.visibleSamples(from: ["S1", "S2", "S3"])
+        XCTAssertEqual(visible, ["S1", "S2", "S3"])
+    }
+
+    // MARK: - Display Name Field
+
+    func testDisplayNameFieldDefault() {
+        let state = SampleDisplayState()
+        XCTAssertNil(state.displayNameField)
+    }
+
+    func testDisplayNameFieldCodable() throws {
+        let state = SampleDisplayState(displayNameField: "alias")
+        let data = try JSONEncoder().encode(state)
+        let decoded = try JSONDecoder().decode(SampleDisplayState.self, from: data)
+        XCTAssertEqual(decoded.displayNameField, "alias")
     }
 
     // MARK: - FilterOp

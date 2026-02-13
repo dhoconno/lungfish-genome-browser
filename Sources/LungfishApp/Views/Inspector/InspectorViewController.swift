@@ -582,7 +582,7 @@ public class InspectorViewController: NSViewController {
     /// Posts a `sampleDisplayStateChanged` notification so the viewer
     /// can update genotype row rendering.
     private func handleSampleDisplayStateChanged(_ state: SampleDisplayState) {
-        logger.info("handleSampleDisplayStateChanged: showRows=\(state.showGenotypeRows) height=\(state.rowHeightMode.rawValue, privacy: .public) hidden=\(state.hiddenSamples.count)")
+        logger.info("handleSampleDisplayStateChanged: showRows=\(state.showGenotypeRows) rowHeight=\(state.rowHeight) hidden=\(state.hiddenSamples.count)")
 
         NotificationCenter.default.post(
             name: .sampleDisplayStateChanged,

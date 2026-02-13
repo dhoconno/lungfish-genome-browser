@@ -27,14 +27,8 @@ public enum VariantTrackRenderer {
 
     // MARK: - Layout Constants
 
-    /// Height of the variant summary bar.
-    static let summaryBarHeight: CGFloat = 20
-
-    /// Height per sample row in squished mode.
-    static let squishedRowHeight: CGFloat = 2
-
-    /// Height per sample row in expanded mode.
-    static let expandedRowHeight: CGFloat = 10
+    /// Default height of the variant summary bar (used when no state is available).
+    static let defaultSummaryBarHeight: CGFloat = 20
 
     /// Spacing between the summary bar and the first sample row.
     static let summaryToRowGap: CGFloat = 2
@@ -85,48 +79,28 @@ public enum VariantTrackRenderer {
     /// - Returns: Total height in pixels for all sample rows
     public static func totalGenotypeHeight(
         sampleCount: Int,
-        scale: Double,
         state: SampleDisplayState
     ) -> CGFloat {
         guard state.showGenotypeRows && sampleCount > 0 else { return 0 }
-        let rowH = rowHeight(sampleCount: sampleCount, scale: scale, state: state)
-        return CGFloat(sampleCount) * rowH
+        return CGFloat(sampleCount) * state.rowHeight
     }
 
     /// Returns the total height needed for variant rendering including summary bar.
     /// This reports the full content height (all rows), not the visible/clipped height.
     public static func totalHeight(
         sampleCount: Int,
-        scale: Double,
         state: SampleDisplayState
     ) -> CGFloat {
-        var height = summaryBarHeight
+        var height = state.summaryBarHeight
         if state.showGenotypeRows && sampleCount > 0 {
-            let rowH = rowHeight(sampleCount: sampleCount, scale: scale, state: state)
-            height += summaryToRowGap + CGFloat(sampleCount) * rowH
+            height += summaryToRowGap + CGFloat(sampleCount) * state.rowHeight
         }
         return height
     }
 
-    /// Returns the row height for genotype rows based on zoom and display state.
-    public static func rowHeight(
-        sampleCount: Int,
-        scale: Double,
-        state: SampleDisplayState
-    ) -> CGFloat {
-        switch state.rowHeightMode {
-        case .squished:
-            return squishedRowHeight
-        case .expanded:
-            return expandedRowHeight
-        case .automatic:
-            // Density mode: no rows (>50k bp/px)
-            if scale > 50_000 { return 0 }
-            // Squished mode (>500 bp/px or many samples)
-            if scale > 500 || sampleCount > 20 { return squishedRowHeight }
-            // Expanded mode
-            return expandedRowHeight
-        }
+    /// Returns the summary bar height from display state, or the default.
+    public static func summaryBarHeight(state: SampleDisplayState?) -> CGFloat {
+        state?.summaryBarHeight ?? defaultSummaryBarHeight
     }
 
     // MARK: - Summary Bar Rendering
@@ -142,7 +116,8 @@ public enum VariantTrackRenderer {
         variants: [SequenceAnnotation],
         frame: ReferenceFrame,
         context: CGContext,
-        yOffset: CGFloat
+        yOffset: CGFloat,
+        barHeight: CGFloat = 20
     ) {
         guard !variants.isEmpty else { return }
 
@@ -154,7 +129,7 @@ public enum VariantTrackRenderer {
 
         // Background
         context.setFillColor(CGColor(red: 0.95, green: 0.95, blue: 0.95, alpha: 1.0))
-        context.fill(CGRect(x: 0, y: yOffset, width: CGFloat(pixelWidth), height: summaryBarHeight))
+        context.fill(CGRect(x: 0, y: yOffset, width: CGFloat(pixelWidth), height: barHeight))
 
         // Bin variants into per-pixel buckets by type
         var snpCounts = [Int](repeating: 0, count: pixelWidth)
@@ -188,14 +163,14 @@ public enum VariantTrackRenderer {
             if total > computedMax { computedMax = total }
         }
         let maxCount = computedMax
-        let barBottom = yOffset + summaryBarHeight
+        let barBottom = yOffset + barHeight
 
         // Draw stacked bars per pixel
         for px in 0..<pixelWidth {
             let total = snpCounts[px] + insCounts[px] + delCounts[px] + otherCounts[px]
             guard total > 0 else { continue }
 
-            let normalizedHeight = (CGFloat(total) / CGFloat(maxCount)) * (summaryBarHeight - 2)
+            let normalizedHeight = (CGFloat(total) / CGFloat(maxCount)) * (barHeight - 2)
             var currentY = barBottom - 1  // 1px margin at bottom
 
             // Draw stacked from bottom: SNP, INS, DEL, other
@@ -230,7 +205,7 @@ public enum VariantTrackRenderer {
         ]
         let labelSize = label.size(withAttributes: attrs)
         label.draw(
-            at: CGPoint(x: 4, y: yOffset + (summaryBarHeight - labelSize.height) / 2),
+            at: CGPoint(x: 4, y: yOffset + (barHeight - labelSize.height) / 2),
             withAttributes: attrs
         )
     }
@@ -262,8 +237,8 @@ public enum VariantTrackRenderer {
         let samples = genotypeData.sampleNames
         guard !samples.isEmpty, !genotypeData.sites.isEmpty else { return }
 
-        let rowH = rowHeight(sampleCount: samples.count, scale: frame.scale, state: state)
-        guard rowH > 0 else { return }  // Density mode — no rows to draw
+        let rowH = state.rowHeight
+        guard rowH > 0 else { return }
 
         context.saveGState()
         defer { context.restoreGState() }
@@ -272,7 +247,7 @@ public enum VariantTrackRenderer {
         let clipRect = CGRect(x: 0, y: yOffset, width: CGFloat(frame.pixelWidth), height: availableHeight)
         context.clip(to: clipRect)
 
-        let showLabels = rowH >= expandedRowHeight
+        let showLabels = rowH >= 8
         let totalRows = samples.count
 
         // Compute visible row range from scroll offset
@@ -287,11 +262,12 @@ public enum VariantTrackRenderer {
             let sampleName = samples[sampleIdx]
             let rowY = yOffset + CGFloat(sampleIdx) * rowH - scrollOffset
 
-            // Sample name label (expanded mode only)
+            // Sample name label (when rows are tall enough)
             if showLabels {
                 let label = sampleName as NSString
+                let fontSize = max(7, min(rowH - 2, 12))
                 let labelAttrs: [NSAttributedString.Key: Any] = [
-                    .font: NSFont.systemFont(ofSize: 7, weight: .regular),
+                    .font: NSFont.systemFont(ofSize: fontSize, weight: .regular),
                     .foregroundColor: NSColor.labelColor,
                 ]
                 label.draw(
@@ -318,8 +294,8 @@ public enum VariantTrackRenderer {
                 ))
             }
 
-            // Row separator in expanded mode
-            if showLabels && sampleIdx < totalRows - 1 {
+            // Row separator when rows are tall enough
+            if rowH >= 4 && sampleIdx < totalRows - 1 {
                 context.setStrokeColor(CGColor(red: 0.9, green: 0.9, blue: 0.9, alpha: 1.0))
                 context.setLineWidth(0.5)
                 let sepY = rowY + rowH

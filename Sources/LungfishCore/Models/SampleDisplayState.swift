@@ -25,8 +25,18 @@ public struct SampleDisplayState: Sendable, Codable, Equatable {
     /// Whether to show per-sample genotype rows (vs. summary bar only).
     public var showGenotypeRows: Bool = true
 
-    /// Height mode for genotype rows.
-    public var rowHeightMode: RowHeightMode = .automatic
+    /// Height per genotype row in pixels (2–30). Default 12.
+    public var rowHeight: CGFloat = 12
+
+    /// Height of the variant summary bar in pixels (10–60). Default 20.
+    public var summaryBarHeight: CGFloat = 20
+
+    /// Explicit sample ordering. When non-nil, `visibleSamples(from:)` uses this
+    /// order instead of VCF default order. When nil, falls back to VCF order.
+    public var sampleOrder: [String]?
+
+    /// Metadata field to use as display label instead of sample name.
+    public var displayNameField: String?
 
     public init() {}
 
@@ -35,13 +45,64 @@ public struct SampleDisplayState: Sendable, Codable, Equatable {
         filters: [SampleFilter] = [],
         hiddenSamples: Set<String> = [],
         showGenotypeRows: Bool = true,
-        rowHeightMode: RowHeightMode = .automatic
+        rowHeight: CGFloat = 12,
+        summaryBarHeight: CGFloat = 20,
+        sampleOrder: [String]? = nil,
+        displayNameField: String? = nil
     ) {
         self.sortFields = sortFields
         self.filters = filters
         self.hiddenSamples = hiddenSamples
         self.showGenotypeRows = showGenotypeRows
-        self.rowHeightMode = rowHeightMode
+        self.rowHeight = rowHeight
+        self.summaryBarHeight = summaryBarHeight
+        self.sampleOrder = sampleOrder
+        self.displayNameField = displayNameField
+    }
+
+    // MARK: - Codable (backward compatibility)
+
+    private enum CodingKeys: String, CodingKey {
+        case sortFields, filters, hiddenSamples, showGenotypeRows
+        case rowHeight, summaryBarHeight, sampleOrder, displayNameField
+        // Legacy key for migration
+        case rowHeightMode
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sortFields = try container.decodeIfPresent([SortField].self, forKey: .sortFields) ?? []
+        filters = try container.decodeIfPresent([SampleFilter].self, forKey: .filters) ?? []
+        hiddenSamples = try container.decodeIfPresent(Set<String>.self, forKey: .hiddenSamples) ?? []
+        showGenotypeRows = try container.decodeIfPresent(Bool.self, forKey: .showGenotypeRows) ?? true
+        summaryBarHeight = try container.decodeIfPresent(CGFloat.self, forKey: .summaryBarHeight) ?? 20
+        sampleOrder = try container.decodeIfPresent([String].self, forKey: .sampleOrder)
+        displayNameField = try container.decodeIfPresent(String.self, forKey: .displayNameField)
+
+        // Migrate from legacy RowHeightMode if present
+        if let height = try container.decodeIfPresent(CGFloat.self, forKey: .rowHeight) {
+            rowHeight = height
+        } else if let legacyMode = try container.decodeIfPresent(String.self, forKey: .rowHeightMode) {
+            switch legacyMode {
+            case "squished": rowHeight = 2
+            case "expanded": rowHeight = 10
+            default: rowHeight = 12  // automatic → default
+            }
+        } else {
+            rowHeight = 12
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(sortFields, forKey: .sortFields)
+        try container.encode(filters, forKey: .filters)
+        try container.encode(hiddenSamples, forKey: .hiddenSamples)
+        try container.encode(showGenotypeRows, forKey: .showGenotypeRows)
+        try container.encode(rowHeight, forKey: .rowHeight)
+        try container.encode(summaryBarHeight, forKey: .summaryBarHeight)
+        try container.encodeIfPresent(sampleOrder, forKey: .sampleOrder)
+        try container.encodeIfPresent(displayNameField, forKey: .displayNameField)
     }
 
     /// Returns the ordered, filtered list of sample names to display.
@@ -54,7 +115,18 @@ public struct SampleDisplayState: Sendable, Codable, Equatable {
         from allSamples: [String],
         metadata: [String: [String: String]] = [:]
     ) -> [String] {
-        var samples = allSamples
+        // 0. Apply explicit ordering if set
+        var samples: [String]
+        if let order = sampleOrder {
+            let allSet = Set(allSamples)
+            // Ordered samples first, then any new samples not in order
+            var ordered = order.filter { allSet.contains($0) }
+            let orderedSet = Set(ordered)
+            ordered.append(contentsOf: allSamples.filter { !orderedSet.contains($0) })
+            samples = ordered
+        } else {
+            samples = allSamples
+        }
 
         // 1. Remove hidden samples
         if !hiddenSamples.isEmpty {
@@ -146,18 +218,6 @@ public enum FilterOp: String, Sendable, Codable, CaseIterable {
     case equals
     case notEquals
     case contains
-}
-
-// MARK: - RowHeightMode
-
-/// Controls how genotype row heights are determined.
-public enum RowHeightMode: String, Sendable, Codable, CaseIterable {
-    /// Automatically choose between squished and expanded based on zoom level.
-    case automatic
-    /// Always use squished mode (2px per row).
-    case squished
-    /// Always use expanded mode (10px per row with labels).
-    case expanded
 }
 
 // MARK: - GenotypeDisplayData

@@ -161,12 +161,20 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     /// Whether we have received an authoritative sample display state from viewer/inspector.
     private var hasSampleDisplayStateSeed = false
 
+    /// Scope of the last variant query, for status label display.
+    private enum VariantQueryScope {
+        case global
+        case viewport
+        case annotations
+        case annotation
+        case placeholder
+    }
+
     /// Last variant query match count used for status labeling (especially capped result sets).
     private var lastVariantQueryMatchCount: Int?
 
     /// Last variant query scope for status labeling.
-    /// Values: "global", "viewport", "annotations", "annotation".
-    private var lastVariantQueryScope: String = "global"
+    private var lastVariantQueryScope: VariantQueryScope = .global
 
     // MARK: - UI Components
 
@@ -332,6 +340,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         tableView.gridStyleMask = .solidVerticalGridLineMask
         tableView.target = self
         tableView.doubleAction = #selector(tableViewDoubleClicked(_:))
+        tableView.registerForDraggedTypes([.string])
 
         // Context menu (built dynamically via NSMenuDelegate)
         let contextMenu = NSMenu()
@@ -502,10 +511,6 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     /// Handles `.viewportVariantsUpdated` notification to auto-sync the variant table.
     @objc private func handleViewportVariantsUpdated(_ notification: Notification) {
         guard viewportSyncEnabled else { return }
-        if let expectedSource = viewportSyncSourceObject,
-           notification.object as AnyObject? !== expectedSource {
-            return
-        }
         guard let userInfo = notification.userInfo,
               let chromosome = userInfo[NotificationUserInfoKey.chromosome] as? String,
               let start = userInfo[NotificationUserInfoKey.start] as? Int,
@@ -659,8 +664,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         activeTab = tab
         tabControl.selectedSegment = tab.rawValue
 
-        // Multi-select only for variants tab (enables batch delete)
-        tableView.allowsMultipleSelection = (tab == .variants)
+        // Multi-select for variants and samples tabs
+        tableView.allowsMultipleSelection = (tab == .variants || tab == .samples)
 
         // Reconfigure columns for the new tab
         configureColumnsForTab(tab)
@@ -899,30 +904,31 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         //   3. annotationSearchRegion (bounding box of current annotation search results)
         //   4. Global query (no region constraint)
         let effectiveRegion: (chromosome: String, start: Int, end: Int)?
-        var regionSource: String = ""
+        var regionScope: VariantQueryScope = .global
 
         if let selected = selectedAnnotationRegion {
             effectiveRegion = selected
-            regionSource = "annotation"
+            regionScope = .annotation
         } else if isViewportSyncActive {
             if let vp = viewportRegion {
                 effectiveRegion = vp
-                regionSource = "viewport"
+                regionScope = .viewport
             } else {
                 // Connected to a viewer but no region yet — show placeholder
                 lastVariantQueryMatchCount = nil
-                lastVariantQueryScope = "viewport"
+                lastVariantQueryScope = .placeholder
                 displayedAnnotations = []
                 tableView.reloadData()
                 scrollView.isHidden = true
                 tooManyLabel.stringValue = "Navigate to a region to view variants"
                 tooManyLabel.isHidden = false
+                updateCountLabel()
                 return
             }
         } else if let annotationRegion = annotationSearchRegion {
             // Use annotation bounding region as fallback when no higher-priority region is active.
             effectiveRegion = annotationRegion
-            regionSource = "annotations"
+            regionScope = .annotations
         } else {
             effectiveRegion = nil
         }
@@ -937,14 +943,14 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                 infoFilters: infoFilters
             )
             lastVariantQueryMatchCount = count
-            lastVariantQueryScope = regionSource
+            lastVariantQueryScope = regionScope
             if count > Self.maxDisplayCount {
                 displayedAnnotations = []
                 tableView.reloadData()
                 scrollView.isHidden = true
                 let total = numberFormatter.string(from: NSNumber(value: count)) ?? "\(count)"
                 let max = numberFormatter.string(from: NSNumber(value: Self.maxDisplayCount)) ?? "\(Self.maxDisplayCount)"
-                let hint = regionSource == "viewport" ? "zoom in" : "filter"
+                let hint = regionScope == .viewport ? "zoom in" : "filter"
                 tooManyLabel.stringValue = "\(total) variants in region — \(hint) to show \(max) or fewer"
                 tooManyLabel.isHidden = false
             } else {
@@ -966,7 +972,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             // No region constraint — global query over all variants
             let matchingCount = index.queryVariantCount(nameFilter: nameFilter, types: typeFilter, infoFilters: infoFilters)
             lastVariantQueryMatchCount = matchingCount
-            lastVariantQueryScope = "global"
+            lastVariantQueryScope = .global
             if matchingCount > Self.maxDisplayCount {
                 displayedAnnotations = []
                 tableView.reloadData()
@@ -1006,37 +1012,37 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
         if isLoading {
             countLabel.stringValue = "Building annotation index (scanning all chromosomes)..."
-        } else if !tooManyLabel.isHidden {
-            if activeTab == .variants {
-                let matchCount = lastVariantQueryMatchCount ?? displayedAnnotations.count
-                let shown = numberFormatter.string(from: NSNumber(value: matchCount)) ?? "\(matchCount)"
-                let total = numberFormatter.string(from: NSNumber(value: totalVariantCount)) ?? "\(totalVariantCount)"
-                switch lastVariantQueryScope {
-                case "annotation":
-                    countLabel.stringValue = "\(shown) overlapping (\(total) total)"
-                case "viewport":
-                    countLabel.stringValue = "\(shown) in viewport (\(total) total)"
-                case "annotations":
-                    countLabel.stringValue = "\(shown) near annotations (\(total) total)"
-                default:
-                    countLabel.stringValue = "\(shown) matching (\(total) total)"
+        } else if activeTab == .variants {
+            // Unified variant count label using tracked scope and match count
+            let total = numberFormatter.string(from: NSNumber(value: totalVariantCount)) ?? "\(totalVariantCount)"
+            switch lastVariantQueryScope {
+            case .placeholder:
+                countLabel.stringValue = "\(total) variants total"
+            case .annotation:
+                let count = lastVariantQueryMatchCount ?? displayedAnnotations.count
+                let shown = numberFormatter.string(from: NSNumber(value: count)) ?? "\(count)"
+                countLabel.stringValue = "\(shown) overlapping (\(total) total)"
+            case .viewport:
+                let count = lastVariantQueryMatchCount ?? displayedAnnotations.count
+                let shown = numberFormatter.string(from: NSNumber(value: count)) ?? "\(count)"
+                countLabel.stringValue = "\(shown) in viewport (\(total) total)"
+            case .annotations:
+                let count = lastVariantQueryMatchCount ?? displayedAnnotations.count
+                let shown = numberFormatter.string(from: NSNumber(value: count)) ?? "\(count)"
+                countLabel.stringValue = "\(shown) near annotations (\(total) total)"
+            case .global:
+                if !tooManyLabel.isHidden {
+                    countLabel.stringValue = "\(total) total — filter to browse"
+                } else if displayedAnnotations.count == totalVariantCount {
+                    countLabel.stringValue = "\(total) variants"
+                } else {
+                    let shown = numberFormatter.string(from: NSNumber(value: displayedAnnotations.count)) ?? "\(displayedAnnotations.count)"
+                    countLabel.stringValue = "\(shown) of \(total)"
                 }
-            } else {
-                let total = numberFormatter.string(from: NSNumber(value: activeTotal)) ?? "\(activeTotal)"
-                countLabel.stringValue = "\(total) total — filter to browse"
             }
-        } else if activeTab == .variants && selectedAnnotationRegion != nil {
-            let shown = numberFormatter.string(from: NSNumber(value: displayedAnnotations.count)) ?? "\(displayedAnnotations.count)"
-            let total = numberFormatter.string(from: NSNumber(value: totalVariantCount)) ?? "\(totalVariantCount)"
-            countLabel.stringValue = "\(shown) overlapping (\(total) total)"
-        } else if activeTab == .variants && isViewportSyncActive && viewportRegion != nil {
-            let shown = numberFormatter.string(from: NSNumber(value: displayedAnnotations.count)) ?? "\(displayedAnnotations.count)"
-            let total = numberFormatter.string(from: NSNumber(value: totalVariantCount)) ?? "\(totalVariantCount)"
-            countLabel.stringValue = "\(shown) in viewport (\(total) total)"
-        } else if activeTab == .variants && annotationSearchRegion != nil {
-            let shown = numberFormatter.string(from: NSNumber(value: displayedAnnotations.count)) ?? "\(displayedAnnotations.count)"
-            let total = numberFormatter.string(from: NSNumber(value: totalVariantCount)) ?? "\(totalVariantCount)"
-            countLabel.stringValue = "\(shown) near annotations (\(total) total)"
+        } else if !tooManyLabel.isHidden {
+            let total = numberFormatter.string(from: NSNumber(value: activeTotal)) ?? "\(activeTotal)"
+            countLabel.stringValue = "\(total) total — filter to browse"
         } else if displayedAnnotations.count == activeTotal {
             countLabel.stringValue = "\(numberFormatter.string(from: NSNumber(value: activeTotal)) ?? "\(activeTotal)") \(entityName)"
         } else {
@@ -1143,6 +1149,23 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
         if activeTab == .samples {
             sortDisplayedSamples(key: key, ascending: ascending)
+            // Sync sort to SampleDisplayState so viewer rendering order matches
+            let displayField: String
+            switch key {
+            case "visible": displayField = "visible"
+            case "sample_name": displayField = "name"
+            case "source_file": displayField = "source"
+            default:
+                if key.hasPrefix("meta_") {
+                    displayField = String(key.dropFirst(5))
+                } else {
+                    displayField = key
+                }
+            }
+            currentSampleDisplayState.sortFields = [SortField(field: displayField, ascending: ascending)]
+            // Update sampleOrder to reflect the current visual order
+            currentSampleDisplayState.sampleOrder = displayedSamples.map(\.name)
+            postSampleDisplayStateChange()
             tableView.reloadData()
             return
         }
@@ -1924,11 +1947,23 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         }
     }
 
-    /// Updates the displayed samples list based on the current filter text.
+    /// Updates the displayed samples list based on the current filter text and sample order.
     private func updateDisplayedSamples() {
         let filter = filterText.lowercased()
 
-        displayedSamples = allSampleNames.compactMap { name in
+        // Use sampleOrder from display state if available, otherwise default VCF order
+        let orderedNames: [String]
+        if let order = currentSampleDisplayState.sampleOrder {
+            let allSet = Set(allSampleNames)
+            var ordered = order.filter { allSet.contains($0) }
+            let orderedSet = Set(ordered)
+            ordered.append(contentsOf: allSampleNames.filter { !orderedSet.contains($0) })
+            orderedNames = ordered
+        } else {
+            orderedNames = allSampleNames
+        }
+
+        displayedSamples = orderedNames.compactMap { name in
             let sourceFile = sampleSourceFiles[name] ?? ""
             let metadata = sampleMetadata[name] ?? [:]
             let isVisible = !currentSampleDisplayState.hiddenSamples.contains(name)
@@ -2117,13 +2152,32 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
 
     private func buildSampleContextMenu(_ menu: NSMenu, row: Int) {
         let sample = displayedSamples[row]
+        let selectedRows = tableView.selectedRowIndexes
+        let hasMultiSelection = selectedRows.count > 1
 
-        // Visibility toggle
+        // Visibility toggle for clicked row
         let visTitle = sample.isVisible ? "Hide \(sample.name)" : "Show \(sample.name)"
         let visItem = NSMenuItem(title: visTitle, action: #selector(toggleSampleVisibilityAction(_:)), keyEquivalent: "")
         visItem.target = self
         visItem.representedObject = sample.name
         menu.addItem(visItem)
+
+        // Multi-selection visibility actions
+        if hasMultiSelection {
+            menu.addItem(NSMenuItem.separator())
+
+            let hideSelectedItem = NSMenuItem(title: "Hide Selected (\(selectedRows.count))", action: #selector(hideSelectedSamplesAction(_:)), keyEquivalent: "")
+            hideSelectedItem.target = self
+            menu.addItem(hideSelectedItem)
+
+            let showSelectedItem = NSMenuItem(title: "Show Selected (\(selectedRows.count))", action: #selector(showSelectedSamplesAction(_:)), keyEquivalent: "")
+            showSelectedItem.target = self
+            menu.addItem(showSelectedItem)
+
+            let showOnlyItem = NSMenuItem(title: "Show Only Selected", action: #selector(showOnlySelectedSamplesAction(_:)), keyEquivalent: "")
+            showOnlyItem.target = self
+            menu.addItem(showOnlyItem)
+        }
 
         menu.addItem(NSMenuItem.separator())
 
@@ -2143,6 +2197,18 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         copyItem.target = self
         copyItem.representedObject = sample.name
         menu.addItem(copyItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // Import metadata
+        let importItem = NSMenuItem(title: "Import Metadata\u{2026}", action: #selector(importMetadataAction(_:)), keyEquivalent: "")
+        importItem.target = self
+        menu.addItem(importItem)
+
+        // Add custom field
+        let addFieldItem = NSMenuItem(title: "Add Field\u{2026}", action: #selector(addCustomFieldAction(_:)), keyEquivalent: "")
+        addFieldItem.target = self
+        menu.addItem(addFieldItem)
     }
 
     private func buildSampleGlobalContextMenu(_ menu: NSMenu) {
@@ -2153,5 +2219,189 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         let hideAllItem = NSMenuItem(title: "Hide All Samples", action: #selector(hideAllSamplesAction(_:)), keyEquivalent: "")
         hideAllItem.target = self
         menu.addItem(hideAllItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let importItem = NSMenuItem(title: "Import Metadata\u{2026}", action: #selector(importMetadataAction(_:)), keyEquivalent: "")
+        importItem.target = self
+        menu.addItem(importItem)
+
+        let addFieldItem = NSMenuItem(title: "Add Field\u{2026}", action: #selector(addCustomFieldAction(_:)), keyEquivalent: "")
+        addFieldItem.target = self
+        menu.addItem(addFieldItem)
+    }
+
+    // MARK: - Multi-Selection Visibility Actions
+
+    @objc private func hideSelectedSamplesAction(_ sender: NSMenuItem) {
+        let selectedRows = tableView.selectedRowIndexes
+        for row in selectedRows {
+            guard row < displayedSamples.count else { continue }
+            let name = displayedSamples[row].name
+            currentSampleDisplayState.hiddenSamples.insert(name)
+        }
+        postSampleDisplayStateChange()
+        updateDisplayedSamples()
+    }
+
+    @objc private func showSelectedSamplesAction(_ sender: NSMenuItem) {
+        let selectedRows = tableView.selectedRowIndexes
+        for row in selectedRows {
+            guard row < displayedSamples.count else { continue }
+            let name = displayedSamples[row].name
+            currentSampleDisplayState.hiddenSamples.remove(name)
+        }
+        postSampleDisplayStateChange()
+        updateDisplayedSamples()
+    }
+
+    @objc private func showOnlySelectedSamplesAction(_ sender: NSMenuItem) {
+        let selectedRows = tableView.selectedRowIndexes
+        var selectedNames = Set<String>()
+        for row in selectedRows {
+            guard row < displayedSamples.count else { continue }
+            selectedNames.insert(displayedSamples[row].name)
+        }
+        currentSampleDisplayState.hiddenSamples = Set(allSampleNames.filter { !selectedNames.contains($0) })
+        postSampleDisplayStateChange()
+        updateDisplayedSamples()
+    }
+
+    // MARK: - Import Metadata
+
+    @objc private func importMetadataAction(_ sender: NSMenuItem) {
+        guard let searchIndex else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [
+            .init(filenameExtension: "tsv")!,
+            .init(filenameExtension: "csv")!,
+            .init(filenameExtension: "txt")!,
+        ]
+        panel.message = "Select a TSV or CSV file with sample metadata"
+        panel.prompt = "Import"
+
+        guard let window = self.window else { return }
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .OK, let fileURL = panel.url else { return }
+            let ext = fileURL.pathExtension.lowercased()
+            let format: MetadataFormat = ext == "csv" ? .csv : .tsv
+
+            var totalUpdated = 0
+            for handle in searchIndex.variantDatabaseHandles {
+                do {
+                    let rwDB = try VariantDatabase(url: handle.db.databaseURL, readWrite: true)
+                    let count = try rwDB.importSampleMetadata(from: fileURL, format: format)
+                    totalUpdated += count
+                } catch {
+                    drawerLogger.warning("importSampleMetadata: \(error.localizedDescription)")
+                }
+            }
+
+            drawerLogger.info("importSampleMetadata: Updated \(totalUpdated) samples from \(fileURL.lastPathComponent)")
+            self.populateSampleData(from: searchIndex)
+            self.configureColumnsForTab(.samples)
+            self.updateDisplayedSamples()
+        }
+    }
+
+    // MARK: - Add Custom Field
+
+    @objc private func addCustomFieldAction(_ sender: NSMenuItem) {
+        let alert = NSAlert()
+        alert.messageText = "Add Custom Field"
+        alert.informativeText = "Enter a name for the new metadata field:"
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Cancel")
+
+        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        textField.placeholderString = "Field name"
+        alert.accessoryView = textField
+
+        guard let window = self.window else { return }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn else { return }
+            let fieldName = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !fieldName.isEmpty else { return }
+            guard !self.sampleMetadataFields.contains(fieldName) else { return }
+
+            self.sampleMetadataFields.append(fieldName)
+            self.sampleMetadataFields.sort()
+            self.configureColumnsForTab(.samples)
+            self.updateDisplayedSamples()
+        }
+    }
+
+    // MARK: - Sample Drag-and-Drop Reordering
+
+    public func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
+        guard activeTab == .samples, row < displayedSamples.count else { return nil }
+        let item = NSPasteboardItem()
+        item.setString(String(row), forType: .string)
+        return item
+    }
+
+    public func tableView(
+        _ tableView: NSTableView,
+        validateDrop info: any NSDraggingInfo,
+        proposedRow row: Int,
+        proposedDropOperation dropOperation: NSTableView.DropOperation
+    ) -> NSDragOperation {
+        guard activeTab == .samples else { return [] }
+        if dropOperation == .above {
+            return .move
+        }
+        return []
+    }
+
+    public func tableView(
+        _ tableView: NSTableView,
+        acceptDrop info: any NSDraggingInfo,
+        row: Int,
+        dropOperation: NSTableView.DropOperation
+    ) -> Bool {
+        guard activeTab == .samples else { return false }
+
+        // Collect dragged row indices
+        var draggedRows = IndexSet()
+        info.enumerateDraggingItems(
+            options: [],
+            for: tableView,
+            classes: [NSPasteboardItem.self],
+            searchOptions: [:]
+        ) { item, _, _ in
+            if let pbItem = item.item as? NSPasteboardItem,
+               let rowStr = pbItem.string(forType: .string),
+               let sourceRow = Int(rowStr) {
+                draggedRows.insert(sourceRow)
+            }
+        }
+
+        guard !draggedRows.isEmpty else { return false }
+
+        // Collect the dragged items in order
+        let draggedItems = draggedRows.sorted().compactMap { idx -> SampleDisplayRow? in
+            guard idx < displayedSamples.count else { return nil }
+            return displayedSamples[idx]
+        }
+
+        // Remove dragged items (from highest index first)
+        for idx in draggedRows.sorted().reversed() {
+            guard idx < displayedSamples.count else { continue }
+            displayedSamples.remove(at: idx)
+        }
+
+        // Calculate the adjusted insertion point
+        let adjustedRow = min(row - draggedRows.filter { $0 < row }.count, displayedSamples.count)
+        displayedSamples.insert(contentsOf: draggedItems, at: adjustedRow)
+
+        // Update allSampleNames to reflect new order
+        allSampleNames = displayedSamples.map(\.name)
+
+        // Update display state with new order
+        currentSampleDisplayState.sampleOrder = allSampleNames
+        postSampleDisplayStateChange()
+
+        tableView.reloadData()
+        return true
     }
 }

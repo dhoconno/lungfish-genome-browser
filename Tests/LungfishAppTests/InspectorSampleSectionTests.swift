@@ -27,7 +27,7 @@ final class SampleSectionViewModelTests: XCTestCase {
         XCTAssertFalse(vm.hasVariantData)
         XCTAssertTrue(vm.isExpanded)
         XCTAssertTrue(vm.displayState.showGenotypeRows)
-        XCTAssertEqual(vm.displayState.rowHeightMode, .automatic)
+        XCTAssertEqual(vm.displayState.rowHeight, 12)
         XCTAssertTrue(vm.displayState.hiddenSamples.isEmpty)
         XCTAssertTrue(vm.displayState.sortFields.isEmpty)
         XCTAssertTrue(vm.displayState.filters.isEmpty)
@@ -64,7 +64,7 @@ final class SampleSectionViewModelTests: XCTestCase {
         XCTAssertTrue(vm.metadataFields.isEmpty)
         XCTAssertFalse(vm.hasVariantData)
         XCTAssertTrue(vm.displayState.showGenotypeRows)
-        XCTAssertEqual(vm.displayState.rowHeightMode, .automatic)
+        XCTAssertEqual(vm.displayState.rowHeight, 12)
     }
 
     // MARK: - Genotype Row Toggle
@@ -89,29 +89,57 @@ final class SampleSectionViewModelTests: XCTestCase {
         XCTAssertTrue(callbackFired)
     }
 
-    // MARK: - Row Height Mode
+    // MARK: - Row Height
 
-    func testSetRowHeightMode() {
+    func testSetRowHeight() {
         let vm = makeViewModel()
-        XCTAssertEqual(vm.displayState.rowHeightMode, .automatic)
+        XCTAssertEqual(vm.displayState.rowHeight, 12)
 
-        vm.setRowHeightMode(.squished)
-        XCTAssertEqual(vm.displayState.rowHeightMode, .squished)
+        vm.setRowHeight(2)
+        XCTAssertEqual(vm.displayState.rowHeight, 2)
 
-        vm.setRowHeightMode(.expanded)
-        XCTAssertEqual(vm.displayState.rowHeightMode, .expanded)
+        vm.setRowHeight(30)
+        XCTAssertEqual(vm.displayState.rowHeight, 30)
 
-        vm.setRowHeightMode(.automatic)
-        XCTAssertEqual(vm.displayState.rowHeightMode, .automatic)
+        vm.setRowHeight(12)
+        XCTAssertEqual(vm.displayState.rowHeight, 12)
     }
 
-    func testSetRowHeightModeFiresCallback() {
+    func testSetRowHeightClampsRange() {
+        let vm = makeViewModel()
+
+        vm.setRowHeight(0)
+        XCTAssertEqual(vm.displayState.rowHeight, 2)
+
+        vm.setRowHeight(100)
+        XCTAssertEqual(vm.displayState.rowHeight, 30)
+    }
+
+    func testSetRowHeightFiresCallback() {
         let vm = makeViewModel()
         var receivedState: SampleDisplayState?
         vm.onDisplayStateChanged = { state in receivedState = state }
 
-        vm.setRowHeightMode(.squished)
-        XCTAssertEqual(receivedState?.rowHeightMode, .squished)
+        vm.setRowHeight(5)
+        XCTAssertEqual(receivedState?.rowHeight, 5)
+    }
+
+    func testSetSummaryBarHeight() {
+        let vm = makeViewModel()
+        XCTAssertEqual(vm.displayState.summaryBarHeight, 20)
+
+        vm.setSummaryBarHeight(40)
+        XCTAssertEqual(vm.displayState.summaryBarHeight, 40)
+    }
+
+    func testSetSummaryBarHeightClampsRange() {
+        let vm = makeViewModel()
+
+        vm.setSummaryBarHeight(5)
+        XCTAssertEqual(vm.displayState.summaryBarHeight, 10)
+
+        vm.setSummaryBarHeight(100)
+        XCTAssertEqual(vm.displayState.summaryBarHeight, 60)
     }
 
     // MARK: - Sample Visibility
@@ -308,13 +336,13 @@ final class SampleSectionViewModelTests: XCTestCase {
 
         // Modify state
         vm.toggleGenotypeRows()
-        vm.setRowHeightMode(.squished)
+        vm.setRowHeight(2)
         vm.hideAllSamples()
         vm.addSortField("sex")
         vm.addFilter(field: "sex", op: .equals, value: "male")
 
         XCTAssertFalse(vm.displayState.showGenotypeRows)
-        XCTAssertEqual(vm.displayState.rowHeightMode, .squished)
+        XCTAssertEqual(vm.displayState.rowHeight, 2)
         XCTAssertEqual(vm.displayState.hiddenSamples.count, 5)
         XCTAssertEqual(vm.displayState.sortFields.count, 1)
         XCTAssertEqual(vm.displayState.filters.count, 1)
@@ -322,7 +350,7 @@ final class SampleSectionViewModelTests: XCTestCase {
         vm.resetToDefaults()
 
         XCTAssertTrue(vm.displayState.showGenotypeRows)
-        XCTAssertEqual(vm.displayState.rowHeightMode, .automatic)
+        XCTAssertEqual(vm.displayState.rowHeight, 12)
         XCTAssertTrue(vm.displayState.hiddenSamples.isEmpty)
         XCTAssertTrue(vm.displayState.sortFields.isEmpty)
         XCTAssertTrue(vm.displayState.filters.isEmpty)
