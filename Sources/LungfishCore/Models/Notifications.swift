@@ -92,6 +92,11 @@ extension Notification.Name {
     /// file, and reset the in-memory `BundleViewState` to defaults.
     public static let bundleViewStateResetRequested = Notification.Name("bundleViewStateResetRequested")
 
+    /// Posted when variant tracks have been deleted from a bundle.
+    ///
+    /// Contains userInfo keys: `bundleURL` (URL)
+    public static let bundleVariantTracksDeleted = Notification.Name("bundleVariantTracksDeleted")
+
 }
 
 // MARK: - Inspector Notifications

@@ -1853,6 +1853,14 @@ extension SidebarViewController: NSMenuDelegate {
             getInfoItem.target = self
             menu.addItem(getInfoItem)
 
+            // Delete Variant Tracks — only if bundle has variant tracks
+            if let url = items.first?.url, bundleHasVariantTracks(url) {
+                menu.addItem(NSMenuItem.separator())
+                let deleteVariantsItem = NSMenuItem(title: "Delete Variant Tracks\u{2026}", action: #selector(contextMenuDeleteVariantTracks(_:)), keyEquivalent: "")
+                deleteVariantsItem.target = self
+                menu.addItem(deleteVariantsItem)
+            }
+
             menu.addItem(NSMenuItem.separator())
         }
 
@@ -2040,6 +2048,112 @@ extension SidebarViewController: NSMenuDelegate {
                 alert.beginSheetModal(for: window)
             } else {
                 alert.runModal()
+            }
+        }
+    }
+
+    /// Checks if a bundle URL has variant tracks by reading its manifest.
+    private func bundleHasVariantTracks(_ bundleURL: URL) -> Bool {
+        let manifestURL = bundleURL.appendingPathComponent("manifest.json")
+        guard FileManager.default.fileExists(atPath: manifestURL.path) else { return false }
+        guard let data = try? Data(contentsOf: manifestURL),
+              let manifest = try? JSONDecoder().decode(BundleManifest.self, from: data) else { return false }
+        return !manifest.variants.isEmpty
+    }
+
+    @objc private func contextMenuDeleteVariantTracks(_ sender: Any?) {
+        let items = selectedItems()
+        guard let item = items.first, item.type == .referenceBundle, let bundleURL = item.url else { return }
+
+        let manifestURL = bundleURL.appendingPathComponent("manifest.json")
+        guard let data = try? Data(contentsOf: manifestURL),
+              let manifest = try? JSONDecoder().decode(BundleManifest.self, from: data),
+              !manifest.variants.isEmpty else { return }
+
+        let tracks = manifest.variants
+        let trackNames = tracks.map(\.name).joined(separator: ", ")
+        let alert = NSAlert()
+        alert.messageText = "Delete Variant Tracks?"
+        alert.informativeText = "This will permanently delete \(tracks.count) variant track\(tracks.count == 1 ? "" : "s") (\(trackNames)) and their database files from the bundle. This cannot be undone."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .critical
+
+        guard let window = self.view.window else { return }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.performDeleteVariantTracks(bundleURL: bundleURL, manifest: manifest)
+        }
+    }
+
+    private func performDeleteVariantTracks(bundleURL: URL, manifest: BundleManifest) {
+        let tracks = manifest.variants
+        guard !tracks.isEmpty else { return }
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let fm = FileManager.default
+            var deletedFiles: [String] = []
+
+            for track in tracks {
+                // Delete BCF file
+                let bcfURL = bundleURL.appendingPathComponent(track.path)
+                if fm.fileExists(atPath: bcfURL.path) {
+                    try? fm.removeItem(at: bcfURL)
+                    deletedFiles.append(track.path)
+                }
+
+                // Delete CSI index file
+                let csiURL = bundleURL.appendingPathComponent(track.indexPath)
+                if fm.fileExists(atPath: csiURL.path) {
+                    try? fm.removeItem(at: csiURL)
+                    deletedFiles.append(track.indexPath)
+                }
+
+                // Delete SQLite variant database
+                if let dbPath = track.databasePath {
+                    let dbURL = bundleURL.appendingPathComponent(dbPath)
+                    if fm.fileExists(atPath: dbURL.path) {
+                        try? fm.removeItem(at: dbURL)
+                        deletedFiles.append(dbPath)
+                    }
+                    // Also remove WAL/SHM files
+                    let walURL = dbURL.appendingPathExtension("wal")
+                    let shmURL = dbURL.appendingPathExtension("shm")
+                    try? fm.removeItem(at: walURL)
+                    try? fm.removeItem(at: shmURL)
+                }
+            }
+
+            // Update manifest to remove variant tracks
+            let updatedManifest = BundleManifest(
+                formatVersion: manifest.formatVersion,
+                name: manifest.name,
+                identifier: manifest.identifier,
+                description: manifest.description,
+                createdDate: manifest.createdDate,
+                modifiedDate: Date(),
+                source: manifest.source,
+                genome: manifest.genome,
+                annotations: manifest.annotations,
+                variants: [],
+                tracks: manifest.tracks,
+                metadata: manifest.metadata
+            )
+
+            let manifestURL = bundleURL.appendingPathComponent("manifest.json")
+            if let jsonData = try? JSONEncoder().encode(updatedManifest) {
+                try? jsonData.write(to: manifestURL)
+            }
+
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    logger.info("performDeleteVariantTracks: Deleted \(deletedFiles.count) files from bundle")
+                    NotificationCenter.default.post(
+                        name: .bundleVariantTracksDeleted,
+                        object: nil,
+                        userInfo: [NotificationUserInfoKey.bundleURL: bundleURL]
+                    )
+                }
             }
         }
     }

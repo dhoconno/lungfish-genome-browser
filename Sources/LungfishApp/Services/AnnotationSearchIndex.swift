@@ -595,7 +595,14 @@ public final class AnnotationSearchIndex {
         database = nil
         annotationDatabases = []
         variantDatabases = []
+        variantTrackNames = [:]
         isBuilding = false
+    }
+
+    /// Clears only variant databases, leaving annotation data intact.
+    public func clearVariantDatabases() {
+        variantDatabases.removeAll()
+        variantTrackNames.removeAll()
     }
 
     // MARK: - Private Helpers

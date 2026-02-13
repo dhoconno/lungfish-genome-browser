@@ -357,6 +357,14 @@ public class ViewerViewController: NSViewController {
         )
         logger.debug("ViewerViewController: Registered bundleViewStateResetRequested observer")
 
+        // Observer for variant track deletion
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleBundleVariantTracksDeleted(_:)),
+            name: .bundleVariantTracksDeleted,
+            object: nil
+        )
+
         // Observer for extraction requests from inspector
         NotificationCenter.default.addObserver(
             self,
@@ -603,6 +611,29 @@ public class ViewerViewController: NSViewController {
         viewerView.showVariants = true
         viewerView.visibleVariantTypes = nil
         viewerView.invalidateFilteredVariantCache()
+    }
+
+    @objc private func handleBundleVariantTracksDeleted(_ notification: Notification) {
+        guard let deletedURL = notification.userInfo?[NotificationUserInfoKey.bundleURL] as? URL else { return }
+        guard let myURL = currentBundleURL,
+              myURL.standardizedFileURL == deletedURL.standardizedFileURL else { return }
+
+        logger.info("handleBundleVariantTracksDeleted: Clearing variant data for current bundle")
+
+        // Clear variant display state
+        viewerView.showVariants = false
+        viewerView.visibleVariantTypes = nil
+        viewerView.invalidateFilteredVariantCache()
+
+        // Clear variant databases from search index
+        annotationSearchIndex?.clearVariantDatabases()
+
+        // Refresh the drawer to remove variant data
+        if let index = annotationSearchIndex {
+            annotationDrawerView?.setSearchIndex(index)
+        }
+
+        viewerView.needsDisplay = true
     }
 
     // MARK: - Progress Indicator
@@ -6104,13 +6135,17 @@ public class SequenceViewerView: NSView {
         }
 
         // Show pre-computed impact data from VariantSite (enriched during fetch)
+        if let shortAA = site.shortAAChange {
+            tooltip += "\nAA: \(shortAA)"
+        }
         if let impact = site.impact, impact != .unknown {
             tooltip += "\nImpact: \(impact.rawValue.lowercased())"
         }
         if let gene = site.geneSymbol {
             tooltip += "\nGene: \(gene)"
         }
-        if let aaChange = site.aminoAcidChange {
+        if let aaChange = site.aminoAcidChange, site.shortAAChange == nil {
+            // Only show long form if shortAAChange wasn't populated
             tooltip += "\nAA Change: \(aaChange)"
         }
 
@@ -6135,7 +6170,8 @@ public class SequenceViewerView: NSView {
             }
         }
 
-        let statusText = "Genotype: \(sampleName) \u{2022} \(callLabel) \u{2022} \(chrom):\(displayPos.formatted()) \(site.ref)\u{2192}\(site.alt)"
+        let aaStatus = site.shortAAChange.map { " \u{2022} \($0)" } ?? ""
+        let statusText = "Genotype: \(sampleName) \u{2022} \(callLabel) \u{2022} \(chrom):\(displayPos.formatted()) \(site.ref)\u{2192}\(site.alt)\(aaStatus)"
         lastHoveredGenotypeStatusText = statusText
         return GenotypeTooltipResult(tooltip: tooltip, statusText: statusText)
     }
@@ -6283,11 +6319,24 @@ private func enrichSitesWithCSQImpact(
             sites[i].impact = VariantImpact.fromCSQ(impact: csqImpact, consequence: consequence)
             sites[i].geneSymbol = symbol
 
-            // Build amino acid change string (e.g., "p.R123C")
+            // Build amino acid change string (e.g., "p.R123C") and compact form (e.g., "R123C")
             if let aas = aminoAcids, aas.contains("/") {
                 let parts = aas.split(separator: "/")
                 if parts.count == 2, let pos = proteinPos {
-                    sites[i].aminoAcidChange = "p.\(parts[0])\(pos)\(parts[1])"
+                    let refAA = String(parts[0])
+                    let altAA = String(parts[1])
+                    sites[i].aminoAcidChange = "p.\(refAA)\(pos)\(altAA)"
+                    // Single-letter shorthand (VEP uses single-letter by default)
+                    if refAA.count == 1 && altAA.count == 1 {
+                        sites[i].shortAAChange = "\(refAA)\(pos)\(altAA)"
+                    } else {
+                        // 3-letter codes: convert to single-letter
+                        let refSingle = threeLetterToSingleAA(refAA)
+                        let altSingle = threeLetterToSingleAA(altAA)
+                        if let r = refSingle, let a = altSingle {
+                            sites[i].shortAAChange = "\(r)\(pos)\(a)"
+                        }
+                    }
                 }
             }
         } else {
@@ -6301,6 +6350,20 @@ private func enrichSitesWithCSQImpact(
             }
         }
     }
+}
+
+/// Converts a 3-letter amino acid code to its single-letter equivalent.
+private func threeLetterToSingleAA(_ code: String) -> String? {
+    let map: [String: String] = [
+        "Ala": "A", "Arg": "R", "Asn": "N", "Asp": "D", "Cys": "C",
+        "Gln": "Q", "Glu": "E", "Gly": "G", "His": "H", "Ile": "I",
+        "Leu": "L", "Lys": "K", "Met": "M", "Phe": "F", "Pro": "P",
+        "Ser": "S", "Thr": "T", "Trp": "W", "Tyr": "Y", "Val": "V",
+        "Sec": "U", "Pyl": "O", "Ter": "*",
+    ]
+    // Already single-letter?
+    if code.count == 1 { return code }
+    return map[code]
 }
 
 // MARK: - TrackHeaderViewDelegate

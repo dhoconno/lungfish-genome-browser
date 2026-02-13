@@ -258,10 +258,13 @@ public struct VariantSite: Sendable {
     /// Human-readable amino acid change description (e.g., "p.Arg123Cys").
     public var aminoAcidChange: String?
 
+    /// Compact amino acid change (e.g., "S28P"). Single-letter ref AA + position + single-letter alt AA.
+    public var shortAAChange: String?
+
     /// Gene symbol associated with this variant (from CSQ or annotation overlap).
     public var geneSymbol: String?
 
-    public init(position: Int, ref: String, alt: String, variantType: String, genotypes: [String: GenotypeDisplayCall], databaseRowId: Int64? = nil, variantID: String? = nil, sourceTrackId: String? = nil, impact: VariantImpact? = nil, aminoAcidChange: String? = nil, geneSymbol: String? = nil) {
+    public init(position: Int, ref: String, alt: String, variantType: String, genotypes: [String: GenotypeDisplayCall], databaseRowId: Int64? = nil, variantID: String? = nil, sourceTrackId: String? = nil, impact: VariantImpact? = nil, aminoAcidChange: String? = nil, shortAAChange: String? = nil, geneSymbol: String? = nil) {
         self.position = position
         self.ref = ref
         self.alt = alt
@@ -272,6 +275,7 @@ public struct VariantSite: Sendable {
         self.sourceTrackId = sourceTrackId
         self.impact = impact
         self.aminoAcidChange = aminoAcidChange
+        self.shortAAChange = shortAAChange
         self.geneSymbol = geneSymbol
     }
 }

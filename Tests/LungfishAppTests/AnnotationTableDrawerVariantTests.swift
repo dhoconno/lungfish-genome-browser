@@ -210,7 +210,8 @@ final class AnnotationTableDrawerVariantTests: XCTestCase {
     func testDrawerTabRoundTrip() {
         XCTAssertEqual(AnnotationTableDrawerView.DrawerTab(rawValue: 0), .annotations)
         XCTAssertEqual(AnnotationTableDrawerView.DrawerTab(rawValue: 1), .variants)
-        XCTAssertNil(AnnotationTableDrawerView.DrawerTab(rawValue: 2))
+        XCTAssertEqual(AnnotationTableDrawerView.DrawerTab(rawValue: 2), .samples)
+        XCTAssertNil(AnnotationTableDrawerView.DrawerTab(rawValue: 3))
     }
 
     // MARK: - Initial State Tests

@@ -730,7 +730,7 @@ public class InspectorViewController: NSViewController {
 
         // Wire save callback for metadata editing
         let capturedURLs = variantDBURLs
-        viewModel.sampleSectionViewModel.onSaveMetadata = { [weak self] sampleName, metadata in
+        viewModel.sampleSectionViewModel.onSaveMetadata = { sampleName, metadata in
             for dbURL in capturedURLs {
                 do {
                     let rwDB = try VariantDatabase(url: dbURL, readWrite: true)
