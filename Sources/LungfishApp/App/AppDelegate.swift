@@ -926,10 +926,16 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
+        var vcfTypes: [UTType] = []
         if let vcfType = UTType(filenameExtension: "vcf") {
-            panel.allowedContentTypes = [vcfType]
+            vcfTypes.append(vcfType)
         }
-        panel.allowsOtherFileTypes = true  // Allow .vcf.gz
+        // .vcf.gz files have UTType for "gz" — include it so they're visible by default
+        if let gzType = UTType(filenameExtension: "gz") {
+            vcfTypes.append(gzType)
+        }
+        panel.allowedContentTypes = vcfTypes
+        panel.allowsOtherFileTypes = true
         panel.message = "Select a VCF file to import into the current bundle"
         panel.prompt = "Import"
 
