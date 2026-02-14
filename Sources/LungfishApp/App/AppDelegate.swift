@@ -962,7 +962,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
     private func performVCFImport(vcfURL: URL, bundleURL: URL) {
         mainWindowController?.mainSplitViewController?.activityIndicator?.show(
-            message: "Importing VCF variants...", style: .indeterminate
+            message: "Importing VCF variants...", style: .determinate(progress: 0)
         )
 
         DispatchQueue.global(qos: .userInitiated).async {
@@ -999,7 +999,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     outputURL: dbURL,
                     parseGenotypes: true,
                     sourceFile: vcfURL.lastPathComponent,
-                    progressHandler: nil
+                    progressHandler: { [weak self] progress, message in
+                        scheduleOnMainRunLoop {
+                            self?.mainWindowController?.mainSplitViewController?.activityIndicator?.updateProgress(progress)
+                            self?.mainWindowController?.mainSplitViewController?.activityIndicator?.updateMessage(message)
+                        }
+                    }
                 )
 
                 debugLog("performVCFImport: Created database with \(variantCount) variants")

@@ -1691,8 +1691,7 @@ public final class VariantDatabase: @unchecked Sendable {
 
         var insertCount = 0
         var sampleNames: [String] = []
-        var linesProcessed = 0
-        var totalLines = 0
+        let fileSize: Int64 = (try? FileManager.default.attributesOfItem(atPath: vcfURL.path)[.size] as? Int64) ?? 0
 
         // CSQ (VEP Consequence) sub-field names parsed from ##INFO=<ID=CSQ,...,Description="...Format: A|B|C">
         var csqFieldNames: [String] = []
@@ -1702,8 +1701,6 @@ public final class VariantDatabase: @unchecked Sendable {
         progressHandler?(0.05, "Parsing VCF...")
 
         func parseLine(_ line: Substring) {
-            linesProcessed += 1
-
             guard !line.isEmpty else { return }
 
             // Parse ##INFO=<...> header lines for structured INFO definitions
@@ -2000,26 +1997,21 @@ public final class VariantDatabase: @unchecked Sendable {
                 }
             }
 
-            // Progress reporting every 1000 variants
-            if insertCount % 1000 == 0 {
-                if totalLines > 0 {
-                    let fraction = Double(linesProcessed) / Double(totalLines)
-                    progressHandler?(0.05 + fraction * 0.85, "Parsing variants (\(insertCount))...")
-                } else {
-                    progressHandler?(0.50, "Parsing variants (\(insertCount))...")
-                }
-            }
         }
 
-        // Read VCF content.
+        // Read VCF content with byte-based progress tracking.
         // Both plain and .vcf.gz VCFs use line-by-line streaming to avoid large memory spikes.
         let ext = vcfURL.pathExtension.lowercased()
+        let byteProgress: (Double) -> Void = { fraction in
+            progressHandler?(0.05 + fraction * 0.85, "Parsing variants (\(insertCount))...")
+        }
         if ext == "gz" {
-            try streamGzipLines(url: vcfURL) { line in
+            let estimatedSize = fileSize * 8  // VCF typically compresses ~8x with gzip
+            try streamGzipLines(url: vcfURL, estimatedUncompressedSize: estimatedSize, onProgress: byteProgress) { line in
                 parseLine(line)
             }
         } else {
-            try streamPlainLines(url: vcfURL) { line in
+            try streamPlainLines(url: vcfURL, totalFileSize: fileSize, onProgress: byteProgress) { line in
                 parseLine(line)
             }
         }
@@ -2072,18 +2064,30 @@ public final class VariantDatabase: @unchecked Sendable {
     /// Streams lines from a plain-text VCF file using buffered I/O.
     ///
     /// Avoids loading the entire file into memory, which can fail for multi-GB VCFs.
-    private static func streamPlainLines(url: URL, _ handler: (Substring) -> Void) throws {
+    /// Reports byte-level progress when `totalFileSize` is provided.
+    private static func streamPlainLines(
+        url: URL,
+        totalFileSize: Int64 = 0,
+        onProgress: ((Double) -> Void)? = nil,
+        _ handler: (Substring) -> Void
+    ) throws {
         guard let fh = FileHandle(forReadingAtPath: url.path) else {
             throw VariantDatabaseError.createFailed("Cannot open VCF file: \(url.lastPathComponent)")
         }
         defer { fh.closeFile() }
 
         var buffer = Data()
+        var bytesRead: Int64 = 0
         let chunkSize = 256 * 1024  // 256 KB read chunks
         while true {
             let chunk = fh.readData(ofLength: chunkSize)
             if chunk.isEmpty { break }
+            bytesRead += Int64(chunk.count)
             buffer.append(chunk)
+
+            if totalFileSize > 0 {
+                onProgress?(Double(bytesRead) / Double(totalFileSize))
+            }
 
             while let newlineIdx = buffer.firstIndex(of: 0x0A) {
                 let lineData = buffer.prefix(upTo: newlineIdx)
@@ -2100,7 +2104,14 @@ public final class VariantDatabase: @unchecked Sendable {
     }
 
     /// Streams lines from a gzip-compressed VCF using `gzip -dc`.
-    private static func streamGzipLines(url: URL, _ handler: (Substring) -> Void) throws {
+    ///
+    /// Reports approximate progress based on decompressed bytes vs estimated uncompressed size.
+    private static func streamGzipLines(
+        url: URL,
+        estimatedUncompressedSize: Int64 = 0,
+        onProgress: ((Double) -> Void)? = nil,
+        _ handler: (Substring) -> Void
+    ) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/gzip")
         process.arguments = ["-dc", url.path]
@@ -2113,10 +2124,16 @@ public final class VariantDatabase: @unchecked Sendable {
 
         let fileHandle = pipe.fileHandleForReading
         var buffer = Data()
+        var bytesRead: Int64 = 0
         while true {
             let chunk = fileHandle.readData(ofLength: 64 * 1024)
             if chunk.isEmpty { break }
+            bytesRead += Int64(chunk.count)
             buffer.append(chunk)
+
+            if estimatedUncompressedSize > 0 {
+                onProgress?(min(1.0, Double(bytesRead) / Double(estimatedUncompressedSize)))
+            }
 
             while let newlineIdx = buffer.firstIndex(of: 0x0A) { // "\n"
                 let lineData = buffer.prefix(upTo: newlineIdx)
