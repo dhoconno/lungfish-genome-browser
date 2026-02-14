@@ -717,7 +717,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
             do {
                 let document = try await DocumentManager.shared.loadDocument(at: url)
-                print("Loaded document: \(document.name) with \(document.sequences.count) sequences")
+                debugLog("Loaded document: \(document.name) with \(document.sequences.count) sequences")
 
                 // Hide progress and display document
                 viewerController?.hideProgress()
@@ -1680,7 +1680,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 // Refresh the viewer to show the new annotation
                 viewerController.displayDocument(document)
 
-                print("Added annotation: \(name) (\(typeString)) at \(selectionRange)")
+                debugLog("Added annotation: \(name) (\(typeString)) at \(selectionRange)")
             }
         }
     }
@@ -2133,7 +2133,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         do {
             try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
         } catch {
-            print("Warning: Could not create destination directory: \(error.localizedDescription)")
+            debugLog("Warning: Could not create destination directory: \(error.localizedDescription)")
             // Fall back to opening from temp location
             _ = openDocument(at: tempFileURL)
             return

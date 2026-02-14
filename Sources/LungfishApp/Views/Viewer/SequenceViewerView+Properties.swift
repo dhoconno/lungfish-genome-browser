@@ -246,7 +246,6 @@ extension SequenceViewerView {
     /// Returns the calculated annotation track Y position for multi-sequence mode.
     ///
     /// When multiple sequences are displayed, annotations appear below all sequence tracks.
-    /// Note: This is deprecated - annotations are now drawn within each sequence's track area.
     internal var multiSequenceAnnotationTrackY: CGFloat {
         guard let state = multiSequenceState else {
             return trackY + trackHeight + 30

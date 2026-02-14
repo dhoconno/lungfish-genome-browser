@@ -6,6 +6,10 @@
 
 import Foundation
 import AppKit
+import os.log
+
+/// Logger for appearance settings persistence.
+private let logger = Logger(subsystem: "com.lungfish.core", category: "SequenceAppearance")
 
 /// User preferences for sequence visualization appearance.
 ///
@@ -212,10 +216,7 @@ extension SequenceAppearance {
             let data = try encoder.encode(self)
             UserDefaults.standard.set(data, forKey: Self.userDefaultsKey)
         } catch {
-            // Log error but don't crash - appearance settings are not critical
-            #if DEBUG
-            print("SequenceAppearance: Failed to save settings: \(error)")
-            #endif
+            logger.warning("Failed to save settings: \(error)")
         }
     }
 
@@ -238,10 +239,7 @@ extension SequenceAppearance {
             let decoder = JSONDecoder()
             return try decoder.decode(SequenceAppearance.self, from: data)
         } catch {
-            // Log error but return defaults - don't crash for settings
-            #if DEBUG
-            print("SequenceAppearance: Failed to load settings: \(error)")
-            #endif
+            logger.warning("Failed to load settings: \(error)")
             return .default
         }
     }

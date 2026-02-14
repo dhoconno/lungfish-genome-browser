@@ -107,25 +107,6 @@ public struct InputSignature: Sendable, Hashable {
         self.inputDescription = inputDescription
     }
 
-    /// Creates a new input signature (deprecated initializer for backward compatibility).
-    @available(*, deprecated, renamed: "init(requiredCapabilities:optionalCapabilities:minimumCount:maximumCount:preferredFormat:inputDescription:)")
-    public init(
-        requiredCapabilities: DocumentCapability,
-        optionalCapabilities: DocumentCapability = .none,
-        minimumCount: Int = 1,
-        maximumCount: Int? = 1,
-        preferredFormat: FormatIdentifier? = nil,
-        description: String
-    ) {
-        self.init(
-            requiredCapabilities: requiredCapabilities,
-            optionalCapabilities: optionalCapabilities,
-            minimumCount: minimumCount,
-            maximumCount: maximumCount,
-            preferredFormat: preferredFormat,
-            inputDescription: description
-        )
-    }
 
     // MARK: - Validation
 

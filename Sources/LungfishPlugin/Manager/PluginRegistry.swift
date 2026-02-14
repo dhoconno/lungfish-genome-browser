@@ -5,6 +5,10 @@
 // Owner: Plugin Architecture Lead (Role 15)
 
 import Foundation
+import os.log
+
+/// Logger for plugin registry operations.
+private let pluginLogger = Logger(subsystem: "com.lungfish.plugin", category: "PluginRegistry")
 
 // MARK: - Plugin Registry
 
@@ -235,8 +239,7 @@ public final class PluginRegistry: ObservableObject {
             try register(RestrictionSiteFinderPlugin())
 
         } catch {
-            // Log error but don't crash - some plugins may fail to load
-            print("Warning: Failed to load built-in plugin: \(error)")
+            pluginLogger.error("Failed to load built-in plugin: \(error)")
         }
     }
 }

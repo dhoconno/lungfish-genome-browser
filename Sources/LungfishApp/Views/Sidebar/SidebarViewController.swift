@@ -642,9 +642,27 @@ public class SidebarViewController: NSViewController {
         return projectURL
     }
 
-    // MARK: - Legacy Methods (Deprecated)
-    // These methods are kept for backwards compatibility but should not be used
-    // with the new filesystem-backed model. They will be removed in a future version.
+    // MARK: - Document Management
+
+    /// Returns the sidebar item type and icon name for a given document type.
+    private func sidebarItemInfo(for documentType: DocumentType) -> (type: SidebarItemType, icon: String) {
+        switch documentType {
+        case .fasta, .fastq:
+            return (.sequence, "doc.text")
+        case .genbank:
+            return (.sequence, "doc.richtext")
+        case .gff3, .bed:
+            return (.annotation, "list.bullet.rectangle")
+        case .vcf:
+            return (.annotation, "chart.bar.xaxis")
+        case .bam:
+            return (.alignment, "chart.bar")
+        case .lungfishProject:
+            return (.sequence, "folder.badge.gearshape")
+        case .lungfishReferenceBundle:
+            return (.referenceBundle, "cylinder.split.1x2")
+        }
+    }
 
     /// Adds a loaded document to the sidebar
     public func addLoadedDocument(_ document: LoadedDocument) {
@@ -662,32 +680,7 @@ public class SidebarViewController: NSViewController {
             rootItems.insert(openDocsGroup!, at: 0)
         }
 
-        // Determine the item type based on document type
-        let itemType: SidebarItemType
-        let icon: String
-        switch document.type {
-        case .fasta, .fastq:
-            itemType = .sequence
-            icon = "doc.text"
-        case .genbank:
-            itemType = .sequence
-            icon = "doc.richtext"
-        case .gff3, .bed:
-            itemType = .annotation
-            icon = "list.bullet.rectangle"
-        case .vcf:
-            itemType = .annotation
-            icon = "chart.bar.xaxis"
-        case .bam:
-            itemType = .alignment
-            icon = "chart.bar"
-        case .lungfishProject:
-            itemType = .sequence
-            icon = "folder.badge.gearshape"
-        case .lungfishReferenceBundle:
-            itemType = .referenceBundle
-            icon = "cylinder.split.1x2"
-        }
+        let info = sidebarItemInfo(for: document.type)
 
         // Check if document already exists in sidebar
         if openDocsGroup!.children.contains(where: { $0.url == document.url }) {
@@ -698,8 +691,8 @@ public class SidebarViewController: NSViewController {
         // Create the sidebar item
         let item = SidebarItem(
             title: document.name,
-            type: itemType,
-            icon: icon,
+            type: info.type,
+            icon: info.icon,
             children: [],
             url: document.url
         )
@@ -773,32 +766,7 @@ public class SidebarViewController: NSViewController {
             projectItem.children.insert(downloadsFolder!, at: firstNonFolderIndex)
         }
 
-        // Determine the item type based on document type
-        let itemType: SidebarItemType
-        let icon: String
-        switch document.type {
-        case .fasta, .fastq:
-            itemType = .sequence
-            icon = "doc.text"
-        case .genbank:
-            itemType = .sequence
-            icon = "doc.richtext"
-        case .gff3, .bed:
-            itemType = .annotation
-            icon = "list.bullet.rectangle"
-        case .vcf:
-            itemType = .annotation
-            icon = "chart.bar.xaxis"
-        case .bam:
-            itemType = .alignment
-            icon = "chart.bar"
-        case .lungfishProject:
-            itemType = .sequence
-            icon = "folder.badge.gearshape"
-        case .lungfishReferenceBundle:
-            itemType = .referenceBundle
-            icon = "cylinder.split.1x2"
-        }
+        let info = sidebarItemInfo(for: document.type)
 
         // Check if document already exists in downloads folder
         if downloadsFolder!.children.contains(where: { $0.url == document.url }) {
@@ -809,8 +777,8 @@ public class SidebarViewController: NSViewController {
         // Create the sidebar item for the downloaded document
         let item = SidebarItem(
             title: document.name,
-            type: itemType,
-            icon: icon,
+            type: info.type,
+            icon: info.icon,
             children: [],
             url: document.url
         )
@@ -866,38 +834,13 @@ public class SidebarViewController: NSViewController {
                 .replacingOccurrences(of: folderURL.path, with: "")
                 .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
 
-            // Determine item type based on document type
-            let itemType: SidebarItemType
-            let icon: String
-            switch document.type {
-            case .fasta, .fastq:
-                itemType = .sequence
-                icon = "doc.text"
-            case .genbank:
-                itemType = .sequence
-                icon = "doc.richtext"
-            case .gff3, .bed:
-                itemType = .annotation
-                icon = "list.bullet.rectangle"
-            case .vcf:
-                itemType = .annotation
-                icon = "chart.bar.xaxis"
-            case .bam:
-                itemType = .alignment
-                icon = "chart.bar"
-            case .lungfishProject:
-                itemType = .sequence
-                icon = "folder.badge.gearshape"
-            case .lungfishReferenceBundle:
-                itemType = .referenceBundle
-                icon = "cylinder.split.1x2"
-            }
+            let info = sidebarItemInfo(for: document.type)
 
             // Create document item
             let docItem = SidebarItem(
                 title: document.name,
-                type: itemType,
-                icon: icon,
+                type: info.type,
+                icon: info.icon,
                 children: [],
                 url: document.url
             )
@@ -991,38 +934,13 @@ public class SidebarViewController: NSViewController {
             .replacingOccurrences(of: projectURL.path, with: "")
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
 
-        // Determine item type based on document type
-        let itemType: SidebarItemType
-        let icon: String
-        switch document.type {
-        case .fasta, .fastq:
-            itemType = .sequence
-            icon = "doc.text"
-        case .genbank:
-            itemType = .sequence
-            icon = "doc.richtext"
-        case .gff3, .bed:
-            itemType = .annotation
-            icon = "list.bullet.rectangle"
-        case .vcf:
-            itemType = .annotation
-            icon = "chart.bar.xaxis"
-        case .bam:
-            itemType = .alignment
-            icon = "chart.bar"
-        case .lungfishProject:
-            itemType = .sequence
-            icon = "folder.badge.gearshape"
-        case .lungfishReferenceBundle:
-            itemType = .referenceBundle
-            icon = "cylinder.split.1x2"
-        }
+        let info = sidebarItemInfo(for: document.type)
 
         // Create document item
         let docItem = SidebarItem(
             title: document.name,
-            type: itemType,
-            icon: icon,
+            type: info.type,
+            icon: info.icon,
             children: [],
             url: document.url
         )
