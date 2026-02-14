@@ -2203,7 +2203,13 @@ public final class VariantDatabase: @unchecked Sendable {
             | (UInt32(bytes[1]) << 8)
             | (UInt32(bytes[2]) << 16)
             | (UInt32(bytes[3]) << 24)
-        return isize > 0 ? Int64(isize) : fallback
+        // Sanity check: ISIZE is uint32 so wraps at 4 GB, and bgzip multi-member
+        // files report only the last member's size. If the footer value is smaller
+        // than the compressed size, it's almost certainly wrong for text data —
+        // fall back to the heuristic.
+        guard isize > 0 else { return fallback }
+        let estimate = Int64(isize)
+        return estimate >= compressedSize ? estimate : fallback
     }
 
     /// Emits progress updates with simple coalescing to avoid flooding UI callbacks.

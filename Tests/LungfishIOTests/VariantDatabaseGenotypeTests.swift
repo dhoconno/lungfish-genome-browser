@@ -853,11 +853,16 @@ final class VariantDatabaseGenotypeTests: XCTestCase {
     }
 
     func testEstimateGzipUncompressedSizeUsesFooterISIZE() throws {
-        let content = """
-        ##fileformat=VCFv4.3
-        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
-        chr1\t1\t.\tA\tG\t10\tPASS\t.
-        """
+        // Generate a VCF large enough that compressed < uncompressed (gzip needs
+        // repetitive content before compression ratio drops below 1.0).
+        var lines = [
+            "##fileformat=VCFv4.3",
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO"
+        ]
+        for i in 1...500 {
+            lines.append("chr1\t\(i)\t.\tA\tG\t10\tPASS\tDP=10")
+        }
+        let content = lines.joined(separator: "\n")
         let plainURL = try createTempVCF(content: content, name: "estimate.vcf")
         let gzURL = tempDir.appendingPathComponent("estimate.vcf.gz")
 
@@ -872,9 +877,35 @@ final class VariantDatabaseGenotypeTests: XCTestCase {
         try gzData.write(to: gzURL)
 
         let compressedSize = Int64(gzData.count)
+        let uncompressedSize = Int64(content.utf8.count)
+        // Verify our test data actually compresses (uncompressed > compressed)
+        XCTAssertGreaterThan(uncompressedSize, compressedSize, "Test VCF must be large enough to compress")
+
         let estimate = VariantDatabase.estimateGzipUncompressedSize(url: gzURL, compressedSize: compressedSize)
-        let expected = Int64(content.utf8.count)
-        XCTAssertEqual(estimate, expected, "Estimator should use gzip ISIZE footer when available")
+        XCTAssertEqual(estimate, uncompressedSize, "Estimator should use gzip ISIZE footer when available")
+    }
+
+    func testEstimateGzipFallsBackWhenISIZESmallerThanCompressed() throws {
+        // For tiny files where gzip overhead makes compressed > uncompressed,
+        // ISIZE < compressedSize triggers heuristic fallback (compressedSize * 8).
+        let content = "##fileformat=VCFv4.3\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\nchr1\t1\t.\tA\tG\t10\tPASS\t."
+        let plainURL = try createTempVCF(content: content, name: "tiny_estimate.vcf")
+        let gzURL = tempDir.appendingPathComponent("tiny_estimate.vcf.gz")
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/gzip")
+        process.arguments = ["-c", plainURL.path]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        try process.run()
+        process.waitUntilExit()
+        let gzData = pipe.fileHandleForReading.readDataToEndOfFile()
+        try gzData.write(to: gzURL)
+
+        let compressedSize = Int64(gzData.count)
+        let estimate = VariantDatabase.estimateGzipUncompressedSize(url: gzURL, compressedSize: compressedSize)
+        // Should fall back to heuristic since ISIZE < compressedSize for tiny files
+        XCTAssertEqual(estimate, compressedSize * 8, "Should use heuristic fallback for tiny/bgzip files")
     }
 
     // MARK: - Read/Write Mode
