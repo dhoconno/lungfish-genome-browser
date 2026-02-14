@@ -523,9 +523,6 @@ final class AnnotationDatabaseTests: XCTestCase {
         let (db, count) = try createAndOpenDB(lines: lines)
         XCTAssertEqual(count, 2)
 
-        // Verify v3 schema detected
-        XCTAssertTrue(db.hasBlockColumns, "Database should have v3 block columns")
-
         let results = db.queryByRegion(chromosome: "chr1", start: 0, end: 3000)
         XCTAssertEqual(results.count, 2)
 
@@ -607,53 +604,6 @@ final class AnnotationDatabaseTests: XCTestCase {
         XCTAssertEqual(byName["fwd"]?.strand, .forward)
         XCTAssertEqual(byName["rev"]?.strand, .reverse)
         XCTAssertEqual(byName["unk"]?.strand, .unknown)
-    }
-
-    func testV2SchemaGracefulDegradation() throws {
-        // Create a v2 database (without block columns) manually
-        let dbURL = tempDir.appendingPathComponent("v2.db")
-        let bedURL = tempDir.appendingPathComponent("v2.bed")
-        // BED6 (no block data columns)
-        let content = "chr1\t100\t500\tgeneA\t0\t+"
-        try content.write(to: bedURL, atomically: true, encoding: .utf8)
-
-        // Manually create v2 schema (no block_count, block_sizes, block_starts)
-        var dbPtr: OpaquePointer?
-        sqlite3_open(dbURL.path, &dbPtr)
-        let schema = """
-        CREATE TABLE annotations (
-            name TEXT NOT NULL,
-            type TEXT NOT NULL,
-            chromosome TEXT NOT NULL,
-            start INTEGER NOT NULL,
-            end INTEGER NOT NULL,
-            strand TEXT NOT NULL DEFAULT '.',
-            attributes TEXT
-        );
-        INSERT INTO annotations (name, type, chromosome, start, end, strand)
-        VALUES ('geneA', 'gene', 'chr1', 100, 500, '+');
-        CREATE INDEX idx_annotations_region ON annotations(chromosome, start, end);
-        """
-        sqlite3_exec(dbPtr, schema, nil, nil, nil)
-        sqlite3_close(dbPtr)
-
-        // Open with new code — should detect v2 (no block columns)
-        let db = try AnnotationDatabase(url: dbURL)
-        XCTAssertFalse(db.hasBlockColumns, "v2 database should not have block columns")
-
-        let results = db.queryByRegion(chromosome: "chr1", start: 0, end: 1000)
-        XCTAssertEqual(results.count, 1)
-
-        let record = results[0]
-        XCTAssertNil(record.blockCount, "v2 record should have nil blockCount")
-        XCTAssertNil(record.blockSizes, "v2 record should have nil blockSizes")
-        XCTAssertNil(record.blockStarts, "v2 record should have nil blockStarts")
-
-        // toAnnotation should still work — produces single interval
-        let annotation = record.toAnnotation()
-        XCTAssertEqual(annotation.intervals.count, 1)
-        XCTAssertEqual(annotation.intervals[0].start, 100)
-        XCTAssertEqual(annotation.intervals[0].end, 500)
     }
 
     func testToAnnotationTypeMapping() throws {
@@ -1117,7 +1067,9 @@ final class AnnotationDatabaseTests: XCTestCase {
                      attributes: "ID=g1;Name=TestGene;gene=TestGene"),
         ]
         let (db, _) = try await createAndOpenDBFromGFF3(lines: lines)
-        XCTAssertTrue(db.hasGeneNameColumn, "New databases should have gene_name column")
+        // Verify gene_name is populated (column always present in v4 schema)
+        let results = db.queryByRegion(chromosome: "chr1", start: 0, end: 1000)
+        XCTAssertEqual(results.first?.geneName, "TestGene")
     }
 
     func testGeneNameNilWhenAbsent() async throws {

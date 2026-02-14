@@ -22,7 +22,7 @@ public struct AnnotationDatabaseRecord: Sendable {
     public let strand: String
     /// GFF3 attributes string (semicolon-delimited key=value pairs), if available.
     public let attributes: String?
-    /// Number of blocks (BED12 column 9). Nil for v2 schema or single-interval features.
+    /// Number of blocks (BED12 column 9). Nil for single-interval features.
     public let blockCount: Int?
     /// Comma-separated block sizes (BED12 column 10), e.g. "120,300,200".
     public let blockSizes: String?
@@ -115,7 +115,7 @@ extension AnnotationDatabaseRecord {
 /// The database is created during bundle building and provides instant search/filter
 /// over annotation names, types, and coordinates without scanning BigBed R-trees.
 ///
-/// Schema (v3 — v2 databases without block columns are supported transparently):
+/// Schema (v4):
 /// ```sql
 /// CREATE TABLE annotations (
 ///     name TEXT NOT NULL,
@@ -127,22 +127,14 @@ extension AnnotationDatabaseRecord {
 ///     attributes TEXT,
 ///     block_count INTEGER,
 ///     block_sizes TEXT,
-///     block_starts TEXT
+///     block_starts TEXT,
+///     gene_name TEXT
 /// );
 /// ```
 public final class AnnotationDatabase: @unchecked Sendable {
 
     private var db: OpaquePointer?
     private let url: URL
-
-    /// Whether the database has the `attributes` column (v2+ schema).
-    private let hasAttributesColumn: Bool
-
-    /// Whether the database has the block columns (v3 schema).
-    public private(set) var hasBlockColumns: Bool
-
-    /// Whether the database has the gene_name column (v4 schema).
-    public private(set) var hasGeneNameColumn: Bool
 
     /// Opens an existing annotation database for reading.
     ///
@@ -158,27 +150,13 @@ public final class AnnotationDatabase: @unchecked Sendable {
             throw AnnotationDatabaseError.openFailed(msg)
         }
 
-        // Detect schema version by checking which columns exist
-        hasAttributesColumn = AnnotationDatabase.columnExists(db: db, table: "annotations", column: "attributes")
-        hasBlockColumns = AnnotationDatabase.columnExists(db: db, table: "annotations", column: "block_count")
-        hasGeneNameColumn = AnnotationDatabase.columnExists(db: db, table: "annotations", column: "gene_name")
-
-        dbLogger.info("Opened annotation database: \(url.lastPathComponent) (hasAttributes=\(self.hasAttributesColumn), hasBlocks=\(self.hasBlockColumns), hasGeneName=\(self.hasGeneNameColumn))")
+        dbLogger.info("Opened annotation database: \(url.lastPathComponent)")
     }
 
     deinit {
         if let db {
             sqlite3_close(db)
         }
-    }
-
-    /// Checks if a column exists in a table.
-    private static func columnExists(db: OpaquePointer?, table: String, column: String) -> Bool {
-        guard let db else { return false }
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        let sql = "SELECT \(column) FROM \(table) LIMIT 0"
-        return sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK
     }
 
     /// Returns the total number of annotations in the database.
@@ -312,7 +290,7 @@ public final class AnnotationDatabase: @unchecked Sendable {
 
     /// Looks up a single annotation by name, chromosome, and coordinates.
     ///
-    /// Returns the full record including attributes (if the database has the v2 schema).
+    /// Returns the full record including attributes and block data.
     /// Used for enriching hover tooltips and inspector details with GFF3 metadata.
     ///
     /// - Parameters:
@@ -324,13 +302,10 @@ public final class AnnotationDatabase: @unchecked Sendable {
     public func lookupAnnotation(name: String, chromosome: String, start: Int, end: Int) -> AnnotationDatabaseRecord? {
         guard let db else { return nil }
 
-        var columnList = "name, type, chromosome, start, end, strand"
-        if hasAttributesColumn { columnList += ", attributes" }
-        if hasBlockColumns { columnList += ", block_count, block_sizes, block_starts" }
-        if hasGeneNameColumn { columnList += ", gene_name" }
-
+        // v4 schema: fixed column order
         let sql = """
-        SELECT \(columnList)
+        SELECT name, type, chromosome, start, end, strand, attributes,
+               block_count, block_sizes, block_starts, gene_name
         FROM annotations
         WHERE (name = ? OR gene_name = ?) AND chromosome = ? AND start = ? AND end = ?
         LIMIT 1
@@ -353,37 +328,12 @@ public final class AnnotationDatabase: @unchecked Sendable {
         let rStart = Int(sqlite3_column_int64(stmt, 3))
         let rEnd = Int(sqlite3_column_int64(stmt, 4))
         let rStrand = sqlite3_column_text(stmt, 5).map { String(cString: $0) } ?? "."
-
-        var colIdx: Int32 = 6
-        let rAttrs: String?
-        if hasAttributesColumn {
-            rAttrs = sqlite3_column_text(stmt, colIdx).map { String(cString: $0) }
-            colIdx += 1
-        } else {
-            rAttrs = nil
-        }
-
-        let rBlockCount: Int?
-        let rBlockSizes: String?
-        let rBlockStarts: String?
-        if hasBlockColumns {
-            let bcType = sqlite3_column_type(stmt, colIdx)
-            rBlockCount = bcType != SQLITE_NULL ? Int(sqlite3_column_int64(stmt, colIdx)) : nil
-            rBlockSizes = sqlite3_column_text(stmt, colIdx + 1).map { String(cString: $0) }
-            rBlockStarts = sqlite3_column_text(stmt, colIdx + 2).map { String(cString: $0) }
-        } else {
-            rBlockCount = nil
-            rBlockSizes = nil
-            rBlockStarts = nil
-        }
-
-        let rGeneName: String?
-        if hasGeneNameColumn {
-            if hasBlockColumns { colIdx += 3 }
-            rGeneName = sqlite3_column_text(stmt, colIdx).map { String(cString: $0) }
-        } else {
-            rGeneName = nil
-        }
+        let rAttrs = sqlite3_column_text(stmt, 6).map { String(cString: $0) }
+        let bcType = sqlite3_column_type(stmt, 7)
+        let rBlockCount = bcType != SQLITE_NULL ? Int(sqlite3_column_int64(stmt, 7)) : nil
+        let rBlockSizes = sqlite3_column_text(stmt, 8).map { String(cString: $0) }
+        let rBlockStarts = sqlite3_column_text(stmt, 9).map { String(cString: $0) }
+        let rGeneName = sqlite3_column_text(stmt, 10).map { String(cString: $0) }
 
         return AnnotationDatabaseRecord(
             name: rName, type: rType, chromosome: rChrom,
@@ -408,13 +358,10 @@ public final class AnnotationDatabase: @unchecked Sendable {
     public func queryByRegion(chromosome: String, start: Int, end: Int, limit: Int = 10000) -> [AnnotationDatabaseRecord] {
         guard let db else { return [] }
 
-        var columnList = "name, type, chromosome, start, end, strand"
-        if hasAttributesColumn { columnList += ", attributes" }
-        if hasBlockColumns { columnList += ", block_count, block_sizes, block_starts" }
-        if hasGeneNameColumn { columnList += ", gene_name" }
-
+        // v4 schema: fixed column order
         let sql = """
-        SELECT \(columnList)
+        SELECT name, type, chromosome, start, end, strand, attributes,
+               block_count, block_sizes, block_starts, gene_name
         FROM annotations
         WHERE chromosome = ? AND end > ? AND start < ?
         ORDER BY start ASC, end ASC, name COLLATE NOCASE ASC
@@ -441,37 +388,12 @@ public final class AnnotationDatabase: @unchecked Sendable {
             let rStart = Int(sqlite3_column_int64(stmt, 3))
             let rEnd = Int(sqlite3_column_int64(stmt, 4))
             let rStrand = sqlite3_column_text(stmt, 5).map { String(cString: $0) } ?? "."
-
-            var colIdx: Int32 = 6
-            let rAttrs: String?
-            if hasAttributesColumn {
-                rAttrs = sqlite3_column_text(stmt, colIdx).map { String(cString: $0) }
-                colIdx += 1
-            } else {
-                rAttrs = nil
-            }
-
-            let rBlockCount: Int?
-            let rBlockSizes: String?
-            let rBlockStarts: String?
-            if hasBlockColumns {
-                let bcType = sqlite3_column_type(stmt, colIdx)
-                rBlockCount = bcType != SQLITE_NULL ? Int(sqlite3_column_int64(stmt, colIdx)) : nil
-                rBlockSizes = sqlite3_column_text(stmt, colIdx + 1).map { String(cString: $0) }
-                rBlockStarts = sqlite3_column_text(stmt, colIdx + 2).map { String(cString: $0) }
-            } else {
-                rBlockCount = nil
-                rBlockSizes = nil
-                rBlockStarts = nil
-            }
-
-            let rGeneName: String?
-            if hasGeneNameColumn {
-                if hasBlockColumns { colIdx += 3 }
-                rGeneName = sqlite3_column_text(stmt, colIdx).map { String(cString: $0) }
-            } else {
-                rGeneName = nil
-            }
+            let rAttrs = sqlite3_column_text(stmt, 6).map { String(cString: $0) }
+            let bcType = sqlite3_column_type(stmt, 7)
+            let rBlockCount = bcType != SQLITE_NULL ? Int(sqlite3_column_int64(stmt, 7)) : nil
+            let rBlockSizes = sqlite3_column_text(stmt, 8).map { String(cString: $0) }
+            let rBlockStarts = sqlite3_column_text(stmt, 9).map { String(cString: $0) }
+            let rGeneName = sqlite3_column_text(stmt, 10).map { String(cString: $0) }
 
             results.append(AnnotationDatabaseRecord(
                 name: rName, type: rType, chromosome: rChrom,

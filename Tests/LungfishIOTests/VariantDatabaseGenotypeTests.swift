@@ -99,24 +99,6 @@ final class VariantDatabaseGenotypeTests: XCTestCase {
         return (db, dbURL)
     }
 
-    // MARK: - V2 Schema Detection
-
-    func testV2SchemaDetected() throws {
-        let (db, _) = try createDatabase(from: multiSampleVCF)
-        // hasV2Schema is internal, but we can verify by checking genotype queries work
-        XCTAssertTrue(db.sampleCount() > 0, "V2 schema should support sample queries")
-    }
-
-    func testV1SchemaBackwardCompatibility() throws {
-        // A database created with the old code won't have genotypes/samples tables
-        // But since we always create v2 now, test with parseGenotypes: false instead
-        let (db, _) = try createDatabase(from: noSampleVCF)
-        // No sample columns → 0 samples, but v2 schema still created (tables exist but empty)
-        XCTAssertEqual(db.sampleCount(), 0)
-        XCTAssertEqual(db.sampleNames(), [])
-        XCTAssertEqual(db.totalCount(), 2, "Should still have variant records")
-    }
-
     // MARK: - Sample Parsing
 
     func testSampleNamesFromMultiSampleVCF() throws {
@@ -1118,11 +1100,6 @@ final class VariantDatabaseGenotypeTests: XCTestCase {
     }
 
     // MARK: - V3 Import Optimizations
-
-    func testOmitHomrefFlag() throws {
-        let (db, _) = try createDatabase(from: multiSampleVCF)
-        XCTAssertTrue(db.omitHomref, "v3 databases should have omit_homref=true")
-    }
 
     func testSampleCountPreservedWithOmitHomref() throws {
         let (db, _) = try createDatabase(from: multiSampleVCF)

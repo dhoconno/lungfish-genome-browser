@@ -793,55 +793,6 @@ final class VariantDatabaseTests: XCTestCase {
         XCTAssertEqual(noteDef?.description, "Contains comma, and \"quoted\" text")
     }
 
-    func testBackwardCompatNoInfoTable() throws {
-        // Create a minimal database without the variant_info tables (simulating legacy)
-        let dbURL = tempDir.appendingPathComponent("legacy.db")
-        var dbPtr: OpaquePointer?
-        sqlite3_open(dbURL.path, &dbPtr)
-        defer { sqlite3_close(dbPtr) }
-
-        let schema = """
-        CREATE TABLE variants (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chromosome TEXT NOT NULL,
-            position INTEGER NOT NULL,
-            end_pos INTEGER NOT NULL,
-            variant_id TEXT NOT NULL,
-            ref TEXT NOT NULL,
-            alt TEXT NOT NULL,
-            variant_type TEXT NOT NULL,
-            quality REAL,
-            filter TEXT,
-            info TEXT,
-            sample_count INTEGER DEFAULT 0
-        );
-        CREATE TABLE genotypes (
-            variant_id INTEGER NOT NULL REFERENCES variants(id),
-            sample_name TEXT NOT NULL,
-            PRIMARY KEY (variant_id, sample_name)
-        );
-        CREATE TABLE samples (name TEXT PRIMARY KEY, display_name TEXT, source_file TEXT, metadata TEXT);
-        """
-        sqlite3_exec(dbPtr, schema, nil, nil, nil)
-        sqlite3_exec(dbPtr, "INSERT INTO variants VALUES (1, 'chr1', 100, 101, 'rs1', 'A', 'G', 'SNP', 30.0, 'PASS', 'DP=50', 0)", nil, nil, nil)
-        sqlite3_close(dbPtr)
-        dbPtr = nil
-
-        // Open with VariantDatabase — should detect missing info table and not crash
-        let db = try VariantDatabase(url: dbURL)
-        let keys = db.infoKeys()
-        XCTAssertTrue(keys.isEmpty, "Legacy DB should return empty infoKeys")
-
-        // infoValues should fallback to parsing raw info string
-        let info = db.infoValues(variantId: 1)
-        XCTAssertEqual(info["DP"], "50", "Legacy fallback should parse raw INFO")
-
-        // INFO filters are unsupported without variant_info; fail closed instead of returning broad results.
-        let filters = [VariantDatabase.InfoFilter(key: "DP", op: .gt, value: "20")]
-        XCTAssertTrue(db.queryForTable(infoFilters: filters).isEmpty)
-        XCTAssertEqual(db.queryCountForTable(infoFilters: filters), 0)
-    }
-
     func testDeleteVariantsCascadesToInfo() throws {
         let vcfURL = try createTempVCF(content: testVCF)
         let dbURL = tempDir.appendingPathComponent("delete_info.db")

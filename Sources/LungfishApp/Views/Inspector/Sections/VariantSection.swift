@@ -103,9 +103,10 @@ public final class VariantSectionViewModel {
         }
 
         let db: VariantDatabase?
-        if !variant.trackId.isEmpty {
-            db = variantDatabasesByTrackId[variant.trackId]
+        if !variant.trackId.isEmpty, let match = variantDatabasesByTrackId[variant.trackId] {
+            db = match
         } else {
+            // Fallback: single-database common case (e.g. set via legacy .variantDatabase setter)
             db = variantDatabasesByTrackId.values.first
         }
         guard let db else {
@@ -115,69 +116,45 @@ public final class VariantSectionViewModel {
 
         let genotypes = db.genotypes(forVariantId: rowId)
         let totalSamples = db.sampleCount()
-        let calledSamples = variant.sampleCount ?? 0
 
-        // For v3 databases (omitHomref), genotype rows only contain non-hom-ref calls.
-        // Hom-ref count is inferred from sample_count minus stored non-hom-ref calls.
-        // No-call count is inferred from total samples minus called samples.
-        let dbOmitHomref = db.omitHomref
-
-        if genotypes.isEmpty && !dbOmitHomref {
-            hasGenotypes = false
-            return
+        // Determine called sample count (hom-ref genotypes are omitted from the DB).
+        // Prefer the SearchResult value; fall back to the DB variant record.
+        let calledSamples: Int
+        if let sc = variant.sampleCount {
+            calledSamples = sc
+        } else {
+            let records = db.query(chromosome: variant.chromosome, start: variant.start, end: variant.end, limit: 1)
+            calledSamples = records.first(where: { $0.id == rowId })?.sampleCount ?? 0
         }
 
         hasGenotypes = true
-        var hRef = 0, het = 0, hAlt = 0, noCall = 0
+        var het = 0, hAlt = 0
 
         for gt in genotypes {
             switch GenotypeDisplayCall.classify(genotype: gt.genotype, allele1: gt.allele1, allele2: gt.allele2) {
-            case .homRef: hRef += 1
+            case .homRef: break  // should not appear in DB (omitted)
             case .het:    het += 1
             case .homAlt: hAlt += 1
-            case .noCall: noCall += 1
+            case .noCall: break  // counted from calledSamples below
             }
         }
 
-        if dbOmitHomref {
-            // Infer hom-ref from called samples minus stored non-hom-ref genotypes.
-            hRef = max(0, calledSamples - (het + hAlt + noCall))
-            // Infer no-call from total samples minus called samples.
-            noCall += max(0, totalSamples - calledSamples)
-        }
-
-        homRefCount = hRef
+        // Infer hom-ref: called minus non-hom-ref called genotypes (het + homAlt).
+        homRefCount = max(0, calledSamples - (het + hAlt))
         hetCount = het
         homAltCount = hAlt
-        noCallCount = noCall
+        // No-call = total samples minus called samples.
+        noCallCount = max(0, totalSamples - calledSamples)
 
-        // Fetch structured INFO from variant_info EAV table (or fallback to raw parsing)
+        // Fetch structured INFO from variant_info EAV table
         let infoDict = db.infoValues(variantId: rowId)
         if !infoDict.isEmpty {
             infoFields = infoDict.sorted(by: { $0.key < $1.key }).map { (key: $0.key, value: $0.value) }
         } else {
-            // Legacy fallback: parse raw INFO string from the variant record
-            let records = db.query(chromosome: variant.chromosome, start: variant.start, end: variant.end, limit: 1)
-            if let record = records.first(where: { $0.id == rowId }), let info = record.info {
-                infoFields = parseINFO(info)
-            } else {
-                infoFields = []
-            }
+            infoFields = []
         }
     }
 
-    /// Parses a VCF INFO string into key-value pairs (legacy fallback).
-    private func parseINFO(_ info: String) -> [(key: String, value: String)] {
-        info.split(separator: ";").compactMap { field in
-            let parts = field.split(separator: "=", maxSplits: 1)
-            if parts.count == 2 {
-                return (key: String(parts[0]), value: String(parts[1]))
-            } else if parts.count == 1 {
-                return (key: String(parts[0]), value: "true")
-            }
-            return nil
-        }
-    }
 }
 
 // MARK: - VariantSection View

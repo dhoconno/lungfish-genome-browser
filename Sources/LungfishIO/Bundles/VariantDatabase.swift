@@ -14,7 +14,7 @@ private let variantDBLogger = Logger(subsystem: "com.lungfish.browser", category
 
 /// A single variant record from the SQLite database.
 public struct VariantDatabaseRecord: Sendable, Equatable {
-    /// Auto-increment row ID (nil for legacy databases without id column)
+    /// Auto-increment row ID.
     public let id: Int64?
 
     /// Chromosome name
@@ -266,7 +266,7 @@ private func sqliteBindTextOrNull(_ stmt: OpaquePointer?, _ index: Int32, _ text
 /// The database is created during bundle building from VCF files, providing instant
 /// random-access queries by genomic region without requiring a tabix/CSI index reader.
 ///
-/// Schema (v2 — with genotype and sample tables):
+/// Schema (v3):
 /// ```sql
 /// CREATE TABLE variants (
 ///     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -282,24 +282,11 @@ private func sqliteBindTextOrNull(_ stmt: OpaquePointer?, _ index: Int32, _ text
 ///     info TEXT,
 ///     sample_count INTEGER DEFAULT 0
 /// );
-/// CREATE TABLE genotypes (
-///     variant_id INTEGER NOT NULL REFERENCES variants(id),
-///     sample_name TEXT NOT NULL,
-///     genotype TEXT,
-///     allele1 INTEGER,
-///     allele2 INTEGER,
-///     is_phased INTEGER DEFAULT 0,
-///     depth INTEGER,
-///     genotype_quality INTEGER,
-///     allele_depths TEXT,
-///     raw_fields TEXT,
-///     PRIMARY KEY (variant_id, sample_name)
-/// );
-/// CREATE TABLE samples (
-///     name TEXT PRIMARY KEY,
-///     display_name TEXT,
-///     metadata TEXT
-/// );
+/// CREATE TABLE genotypes (...);
+/// CREATE TABLE samples (...);
+/// CREATE TABLE variant_info (...);
+/// CREATE TABLE variant_info_defs (...);
+/// CREATE TABLE db_metadata (...);
 /// ```
 public final class VariantDatabase: @unchecked Sendable {
 
@@ -308,17 +295,8 @@ public final class VariantDatabase: @unchecked Sendable {
 
     /// The URL of the database file.
     public var databaseURL: URL { url }
-    /// Whether this database has the v2 schema (id column, genotypes, samples tables).
-    private let hasV2Schema: Bool
-    /// Whether the samples table has a source_file column.
-    private let hasSourceFileColumn: Bool
     /// Whether the database is opened read-only.
     private let isReadOnly: Bool
-    /// Whether the variant_info EAV table exists (for structured INFO field queries).
-    private let hasInfoTable: Bool
-    /// Whether hom-ref (0/0) genotypes are omitted from the genotypes table (v3 import optimization).
-    /// When true, absence of a genotype row for a sample at a variant site means hom-ref, not no-call.
-    public let omitHomref: Bool
 
     /// Opens an existing variant database for reading.
     ///
@@ -340,15 +318,7 @@ public final class VariantDatabase: @unchecked Sendable {
         }
         // Enforce FK constraints so genotype rows cannot be orphaned.
         sqlite3_exec(db, "PRAGMA foreign_keys = ON", nil, nil, nil)
-        // Detect v2 schema by checking for genotypes table
-        self.hasV2Schema = VariantDatabase.tableExists(db: db!, name: "genotypes")
-        // Detect source_file column in samples table
-        self.hasSourceFileColumn = hasV2Schema && VariantDatabase.columnExists(db: db!, table: "samples", column: "source_file")
-        // Detect variant_info EAV table
-        self.hasInfoTable = VariantDatabase.tableExists(db: db!, name: "variant_info")
-        // Detect v3 import optimization (hom-ref genotypes omitted)
-        self.omitHomref = VariantDatabase.metadataValue(db: db!, key: "omit_homref") == "true"
-        variantDBLogger.info("Opened variant database: \(url.lastPathComponent) (v2=\(self.hasV2Schema), sourceFile=\(self.hasSourceFileColumn), infoTable=\(self.hasInfoTable), omitHomref=\(self.omitHomref))")
+        variantDBLogger.info("Opened variant database: \(url.lastPathComponent)")
     }
 
     /// Convenience init that opens read-only (backward compatible).
@@ -371,35 +341,6 @@ public final class VariantDatabase: @unchecked Sendable {
         sqliteBindText(stmt, 1, name)
         return sqlite3_step(stmt) == SQLITE_ROW
     }
-
-    /// Reads a value from the db_metadata table, returning nil if the table or key doesn't exist.
-    private static func metadataValue(db: OpaquePointer, key: String) -> String? {
-        guard tableExists(db: db, name: "db_metadata") else { return nil }
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        let sql = "SELECT value FROM db_metadata WHERE key = ?"
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
-        sqliteBindText(stmt, 1, key)
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        return sqlite3_column_text(stmt, 0).map { String(cString: $0) }
-    }
-
-    /// Checks whether a column exists in a table.
-    private static func columnExists(db: OpaquePointer, table: String, column: String) -> Bool {
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        let sql = "PRAGMA table_info(\(table))"
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            if let name = sqlite3_column_text(stmt, 1) {
-                if String(cString: name) == column { return true }
-            }
-        }
-        return false
-    }
-
-    /// Whether the id column exists in the variants table.
-    private var hasIdColumn: Bool { hasV2Schema }
 
     // MARK: - Metadata Queries
 
@@ -483,9 +424,7 @@ public final class VariantDatabase: @unchecked Sendable {
     ) -> [VariantDatabaseRecord] {
         guard let db else { return [] }
 
-        let idSelect = hasIdColumn ? "id, " : ""
-        let sampleCountSelect = hasV2Schema ? ", sample_count" : ""
-        var sql = "SELECT \(idSelect)chromosome, position, end_pos, variant_id, ref, alt, variant_type, quality, filter, info\(sampleCountSelect) FROM variants"
+        var sql = "SELECT id, chromosome, position, end_pos, variant_id, ref, alt, variant_type, quality, filter, info, sample_count FROM variants"
         var conditions: [String] = []
         var bindingsText: [(Int32, String)] = []
         var bindingsDouble: [(Int32, Double)] = []
@@ -630,11 +569,9 @@ public final class VariantDatabase: @unchecked Sendable {
     /// Queries variants with optional type filter, name filter, and INFO filters.
     public func queryForTable(nameFilter: String = "", types: Set<String> = [], infoFilters: [InfoFilter] = [], limit: Int = 5000) -> [VariantDatabaseRecord] {
         guard let db else { return [] }
-        if !infoFilters.isEmpty && !hasInfoTable { return [] }
+        // All infoFilters are resolved via variant_info EAV table
 
-        let idSelect = hasIdColumn ? "id, " : ""
-        let sampleCountSelect = hasV2Schema ? ", sample_count" : ""
-        var sql = "SELECT \(idSelect)chromosome, position, end_pos, variant_id, ref, alt, variant_type, quality, filter, info\(sampleCountSelect) FROM variants"
+        var sql = "SELECT id, chromosome, position, end_pos, variant_id, ref, alt, variant_type, quality, filter, info, sample_count FROM variants"
         var conditions: [String] = []
         var bindings: [(Int32, String)] = []
         var paramIndex: Int32 = 1
@@ -654,12 +591,10 @@ public final class VariantDatabase: @unchecked Sendable {
             }
         }
 
-        if hasInfoTable {
-            for filter in infoFilters {
-                let (filterSQL, filterBindings) = filter.sqlCondition(paramIndex: &paramIndex)
-                conditions.append(filterSQL)
-                bindings.append(contentsOf: filterBindings)
-            }
+        for filter in infoFilters {
+            let (filterSQL, filterBindings) = filter.sqlCondition(paramIndex: &paramIndex)
+            conditions.append(filterSQL)
+            bindings.append(contentsOf: filterBindings)
         }
 
         if !conditions.isEmpty {
@@ -681,7 +616,7 @@ public final class VariantDatabase: @unchecked Sendable {
     /// Returns variant count matching optional filters.
     public func queryCountForTable(nameFilter: String = "", types: Set<String> = [], infoFilters: [InfoFilter] = []) -> Int {
         guard let db else { return 0 }
-        if !infoFilters.isEmpty && !hasInfoTable { return 0 }
+        // All infoFilters are resolved via variant_info EAV table
 
         var sql = "SELECT COUNT(*) FROM variants"
         var conditions: [String] = []
@@ -703,12 +638,10 @@ public final class VariantDatabase: @unchecked Sendable {
             }
         }
 
-        if hasInfoTable {
-            for filter in infoFilters {
-                let (filterSQL, filterBindings) = filter.sqlCondition(paramIndex: &paramIndex)
-                conditions.append(filterSQL)
-                bindings.append(contentsOf: filterBindings)
-            }
+        for filter in infoFilters {
+            let (filterSQL, filterBindings) = filter.sqlCondition(paramIndex: &paramIndex)
+            conditions.append(filterSQL)
+            bindings.append(contentsOf: filterBindings)
         }
 
         if !conditions.isEmpty {
@@ -739,11 +672,9 @@ public final class VariantDatabase: @unchecked Sendable {
         limit: Int = 5000
     ) -> [VariantDatabaseRecord] {
         guard let db else { return [] }
-        if !infoFilters.isEmpty && !hasInfoTable { return [] }
+        // All infoFilters are resolved via variant_info EAV table
 
-        let idSelect = hasIdColumn ? "id, " : ""
-        let sampleCountSelect = hasV2Schema ? ", sample_count" : ""
-        var sql = "SELECT \(idSelect)chromosome, position, end_pos, variant_id, ref, alt, variant_type, quality, filter, info\(sampleCountSelect) FROM variants"
+        var sql = "SELECT id, chromosome, position, end_pos, variant_id, ref, alt, variant_type, quality, filter, info, sample_count FROM variants"
         var conditions: [String] = ["chromosome = ?1", "position < ?2", "end_pos > ?3"]
         var textBindings: [(Int32, String)] = [(1, chromosome)]
         var intBindings: [(Int32, Int)] = [(2, end), (3, start)]
@@ -764,12 +695,10 @@ public final class VariantDatabase: @unchecked Sendable {
             }
         }
 
-        if hasInfoTable {
-            for filter in infoFilters {
-                let (filterSQL, filterBindings) = filter.sqlCondition(paramIndex: &paramIndex)
-                conditions.append(filterSQL)
-                textBindings.append(contentsOf: filterBindings)
-            }
+        for filter in infoFilters {
+            let (filterSQL, filterBindings) = filter.sqlCondition(paramIndex: &paramIndex)
+            conditions.append(filterSQL)
+            textBindings.append(contentsOf: filterBindings)
         }
 
         sql += " WHERE " + conditions.joined(separator: " AND ")
@@ -799,7 +728,7 @@ public final class VariantDatabase: @unchecked Sendable {
         infoFilters: [InfoFilter] = []
     ) -> Int {
         guard let db else { return 0 }
-        if !infoFilters.isEmpty && !hasInfoTable { return 0 }
+        // All infoFilters are resolved via variant_info EAV table
 
         var sql = "SELECT COUNT(*) FROM variants"
         var conditions: [String] = ["chromosome = ?1", "position < ?2", "end_pos > ?3"]
@@ -822,12 +751,10 @@ public final class VariantDatabase: @unchecked Sendable {
             }
         }
 
-        if hasInfoTable {
-            for filter in infoFilters {
-                let (filterSQL, filterBindings) = filter.sqlCondition(paramIndex: &paramIndex)
-                conditions.append(filterSQL)
-                textBindings.append(contentsOf: filterBindings)
-            }
+        for filter in infoFilters {
+            let (filterSQL, filterBindings) = filter.sqlCondition(paramIndex: &paramIndex)
+            conditions.append(filterSQL)
+            textBindings.append(contentsOf: filterBindings)
         }
 
         sql += " WHERE " + conditions.joined(separator: " AND ")
@@ -851,9 +778,7 @@ public final class VariantDatabase: @unchecked Sendable {
     public func searchByID(idFilter: String, limit: Int = 1000) -> [VariantDatabaseRecord] {
         guard let db, !idFilter.isEmpty else { return [] }
 
-        let idSelect = hasIdColumn ? "id, " : ""
-        let sampleCountSelect = hasV2Schema ? ", sample_count" : ""
-        let sql = "SELECT \(idSelect)chromosome, position, end_pos, variant_id, ref, alt, variant_type, quality, filter, info\(sampleCountSelect) FROM variants WHERE variant_id LIKE ? ORDER BY variant_id COLLATE NOCASE LIMIT ?"
+        let sql = "SELECT id, chromosome, position, end_pos, variant_id, ref, alt, variant_type, quality, filter, info, sample_count FROM variants WHERE variant_id LIKE ? ORDER BY variant_id COLLATE NOCASE LIMIT ?"
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
@@ -864,24 +789,26 @@ public final class VariantDatabase: @unchecked Sendable {
         return readVariantRows(stmt: stmt!)
     }
 
-    /// Reads variant rows from a prepared statement, handling both v1 and v2 schemas.
+    /// Reads variant rows from a prepared statement.
+    ///
+    /// Expected column order: id, chromosome, position, end_pos, variant_id, ref, alt,
+    /// variant_type, quality, filter, info, sample_count
     private func readVariantRows(stmt: OpaquePointer) -> [VariantDatabaseRecord] {
         var results: [VariantDatabaseRecord] = []
-        let offset: Int32 = hasIdColumn ? 1 : 0
 
         while sqlite3_step(stmt) == SQLITE_ROW {
-            let rowId: Int64? = hasIdColumn ? sqlite3_column_int64(stmt, 0) : nil
-            let chrom = sqlite3_column_text(stmt, 0 + offset).map { String(cString: $0) } ?? ""
-            let pos = Int(sqlite3_column_int64(stmt, 1 + offset))
-            let endPos = Int(sqlite3_column_int64(stmt, 2 + offset))
-            let vid = sqlite3_column_text(stmt, 3 + offset).map { String(cString: $0) } ?? ""
-            let ref = sqlite3_column_text(stmt, 4 + offset).map { String(cString: $0) } ?? ""
-            let alt = sqlite3_column_text(stmt, 5 + offset).map { String(cString: $0) } ?? ""
-            let vtype = sqlite3_column_text(stmt, 6 + offset).map { String(cString: $0) } ?? "SNP"
-            let quality: Double? = sqlite3_column_type(stmt, 7 + offset) == SQLITE_NULL ? nil : sqlite3_column_double(stmt, 7 + offset)
-            let filter = sqlite3_column_text(stmt, 8 + offset).map { String(cString: $0) }
-            let info = sqlite3_column_text(stmt, 9 + offset).map { String(cString: $0) }
-            let sampleCount: Int = hasV2Schema ? Int(sqlite3_column_int64(stmt, 10 + offset)) : 0
+            let rowId = sqlite3_column_int64(stmt, 0)
+            let chrom = sqlite3_column_text(stmt, 1).map { String(cString: $0) } ?? ""
+            let pos = Int(sqlite3_column_int64(stmt, 2))
+            let endPos = Int(sqlite3_column_int64(stmt, 3))
+            let vid = sqlite3_column_text(stmt, 4).map { String(cString: $0) } ?? ""
+            let ref = sqlite3_column_text(stmt, 5).map { String(cString: $0) } ?? ""
+            let alt = sqlite3_column_text(stmt, 6).map { String(cString: $0) } ?? ""
+            let vtype = sqlite3_column_text(stmt, 7).map { String(cString: $0) } ?? "SNP"
+            let quality: Double? = sqlite3_column_type(stmt, 8) == SQLITE_NULL ? nil : sqlite3_column_double(stmt, 8)
+            let filter = sqlite3_column_text(stmt, 9).map { String(cString: $0) }
+            let info = sqlite3_column_text(stmt, 10).map { String(cString: $0) }
+            let sampleCount = Int(sqlite3_column_int64(stmt, 11))
 
             results.append(VariantDatabaseRecord(
                 id: rowId,
@@ -898,7 +825,7 @@ public final class VariantDatabase: @unchecked Sendable {
 
     /// Returns all sample names in the database.
     public func sampleNames() -> [String] {
-        guard let db, hasV2Schema else { return [] }
+        guard let db else { return [] }
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
         guard sqlite3_prepare_v2(db, "SELECT name FROM samples ORDER BY name", -1, &stmt, nil) == SQLITE_OK else { return [] }
@@ -914,7 +841,7 @@ public final class VariantDatabase: @unchecked Sendable {
 
     /// Returns the number of samples in the database.
     public func sampleCount() -> Int {
-        guard let db, hasV2Schema else { return 0 }
+        guard let db else { return 0 }
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
         guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM samples", -1, &stmt, nil) == SQLITE_OK,
@@ -924,7 +851,7 @@ public final class VariantDatabase: @unchecked Sendable {
 
     /// Returns genotype records for a specific variant (by row ID).
     public func genotypes(forVariantId variantRowId: Int64) -> [GenotypeRecord] {
-        guard let db, hasV2Schema else { return [] }
+        guard let db else { return [] }
         let sql = "SELECT variant_id, sample_name, genotype, allele1, allele2, is_phased, depth, genotype_quality, allele_depths, raw_fields FROM genotypes WHERE variant_id = ? ORDER BY sample_name"
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
@@ -937,7 +864,7 @@ public final class VariantDatabase: @unchecked Sendable {
     ///
     /// This avoids N+1 round trips when rendering genotype-heavy table views.
     public func genotypes(forVariantIds variantRowIds: [Int64]) -> [Int64: [GenotypeRecord]] {
-        guard let db, hasV2Schema else { return [:] }
+        guard let db else { return [:] }
         let uniqueIds = Array(Set(variantRowIds))
         guard !uniqueIds.isEmpty else { return [:] }
 
@@ -971,7 +898,7 @@ public final class VariantDatabase: @unchecked Sendable {
     ///
     /// Joins genotypes with variants to filter by region.
     public func genotypes(forSample sampleName: String, chromosome: String, start: Int, end: Int) -> [GenotypeRecord] {
-        guard let db, hasV2Schema else { return [] }
+        guard let db else { return [] }
         let sql = """
             SELECT g.variant_id, g.sample_name, g.genotype, g.allele1, g.allele2,
                    g.is_phased, g.depth, g.genotype_quality, g.allele_depths, g.raw_fields
@@ -995,7 +922,7 @@ public final class VariantDatabase: @unchecked Sendable {
     /// This is the primary query for genotype rendering — returns variant positions with
     /// all sample genotypes for that region. Uses a single JOIN query to avoid N+1 round-trips.
     public func genotypesInRegion(chromosome: String, start: Int, end: Int, limit: Int = 10_000) -> [(variant: VariantDatabaseRecord, genotypes: [GenotypeRecord])] {
-        guard let db, hasV2Schema else { return [] }
+        guard let db else { return [] }
 
         // Step 1: fetch a bounded list of variant rows in-region.
         let variantSQL = """
@@ -1139,33 +1066,30 @@ public final class VariantDatabase: @unchecked Sendable {
             // Child rows must be deleted BEFORE variants because PRAGMA foreign_keys = ON
             // is active at runtime and the schema declares REFERENCES variants(id) without
             // ON DELETE CASCADE. Deleting a variant first would trigger SQLITE_CONSTRAINT.
-            if hasInfoTable {
-                let deleteInfoSQL = "DELETE FROM variant_info WHERE variant_id IN (\(placeholders))"
-                var infoStmt: OpaquePointer?
-                defer { sqlite3_finalize(infoStmt) }
-                guard sqlite3_prepare_v2(db, deleteInfoSQL, -1, &infoStmt, nil) == SQLITE_OK else {
-                    throw VariantDatabaseError.createFailed("Failed to prepare info delete statement")
-                }
-                for (i, id) in ids.enumerated() {
-                    sqlite3_bind_int64(infoStmt, Int32(i + 1), id)
-                }
-                guard sqlite3_step(infoStmt) == SQLITE_DONE else {
-                    throw VariantDatabaseError.createFailed("Failed to delete info for selected variants")
-                }
+            let deleteInfoSQL = "DELETE FROM variant_info WHERE variant_id IN (\(placeholders))"
+            var infoStmt: OpaquePointer?
+            defer { sqlite3_finalize(infoStmt) }
+            guard sqlite3_prepare_v2(db, deleteInfoSQL, -1, &infoStmt, nil) == SQLITE_OK else {
+                throw VariantDatabaseError.createFailed("Failed to prepare info delete statement")
             }
-            if hasV2Schema {
-                let deleteGenotypesSQL = "DELETE FROM genotypes WHERE variant_id IN (\(placeholders))"
-                var gtStmt: OpaquePointer?
-                defer { sqlite3_finalize(gtStmt) }
-                guard sqlite3_prepare_v2(db, deleteGenotypesSQL, -1, &gtStmt, nil) == SQLITE_OK else {
-                    throw VariantDatabaseError.createFailed("Failed to prepare genotype delete statement")
-                }
-                for (i, id) in ids.enumerated() {
-                    sqlite3_bind_int64(gtStmt, Int32(i + 1), id)
-                }
-                guard sqlite3_step(gtStmt) == SQLITE_DONE else {
-                    throw VariantDatabaseError.createFailed("Failed to delete genotypes for selected variants")
-                }
+            for (i, id) in ids.enumerated() {
+                sqlite3_bind_int64(infoStmt, Int32(i + 1), id)
+            }
+            guard sqlite3_step(infoStmt) == SQLITE_DONE else {
+                throw VariantDatabaseError.createFailed("Failed to delete info for selected variants")
+            }
+
+            let deleteGenotypesSQL = "DELETE FROM genotypes WHERE variant_id IN (\(placeholders))"
+            var gtStmt: OpaquePointer?
+            defer { sqlite3_finalize(gtStmt) }
+            guard sqlite3_prepare_v2(db, deleteGenotypesSQL, -1, &gtStmt, nil) == SQLITE_OK else {
+                throw VariantDatabaseError.createFailed("Failed to prepare genotype delete statement")
+            }
+            for (i, id) in ids.enumerated() {
+                sqlite3_bind_int64(gtStmt, Int32(i + 1), id)
+            }
+            guard sqlite3_step(gtStmt) == SQLITE_DONE else {
+                throw VariantDatabaseError.createFailed("Failed to delete genotypes for selected variants")
             }
 
             let deleteVariantsSQL = "DELETE FROM variants WHERE id IN (\(placeholders))"
@@ -1201,12 +1125,8 @@ public final class VariantDatabase: @unchecked Sendable {
 
         do {
             try executeSQL("BEGIN TRANSACTION")
-            if hasInfoTable {
-                try executeSQL("DELETE FROM variant_info")
-            }
-            if hasV2Schema {
-                try executeSQL("DELETE FROM genotypes")
-            }
+            try executeSQL("DELETE FROM variant_info")
+            try executeSQL("DELETE FROM genotypes")
             try executeSQL("DELETE FROM variants")
             let deleted = Int(sqlite3_changes(db))
             try executeSQL("COMMIT")
@@ -1233,9 +1153,8 @@ public final class VariantDatabase: @unchecked Sendable {
     /// Returns INFO field definitions from the variant_info_defs table.
     ///
     /// These are parsed from VCF `##INFO=<...>` header lines during import.
-    /// Returns empty array for legacy databases without the variant_info table.
     public func infoKeys() -> [(key: String, type: String, number: String, description: String)] {
-        guard let db, hasInfoTable else { return [] }
+        guard let db else { return [] }
         let sql = "SELECT key, type, number, description FROM variant_info_defs ORDER BY key"
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
@@ -1253,7 +1172,7 @@ public final class VariantDatabase: @unchecked Sendable {
 
     /// Returns true if the given INFO key has at least one non-empty value in `variant_info`.
     public func hasNonEmptyInfoValue(forKey key: String) -> Bool {
-        guard let db, hasInfoTable else { return false }
+        guard let db else { return false }
         let sql = "SELECT 1 FROM variant_info WHERE key = ? AND TRIM(value) != '' LIMIT 1"
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
@@ -1262,42 +1181,19 @@ public final class VariantDatabase: @unchecked Sendable {
         return sqlite3_step(stmt) == SQLITE_ROW
     }
 
-    /// Returns all INFO key-value pairs for a specific variant.
-    ///
-    /// Falls back to parsing the raw INFO string for legacy databases.
+    /// Returns all INFO key-value pairs for a specific variant from the variant_info EAV table.
     public func infoValues(variantId: Int64) -> [String: String] {
         guard let db else { return [:] }
-        if hasInfoTable {
-            let sql = "SELECT key, value FROM variant_info WHERE variant_id = ?"
-            var stmt: OpaquePointer?
-            defer { sqlite3_finalize(stmt) }
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [:] }
-            sqlite3_bind_int64(stmt, 1, variantId)
-            var result: [String: String] = [:]
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                let key = sqlite3_column_text(stmt, 0).map { String(cString: $0) } ?? ""
-                let value = sqlite3_column_text(stmt, 1).map { String(cString: $0) } ?? ""
-                result[key] = value
-            }
-            return result
-        }
-        // Legacy fallback: parse raw INFO string
-        let sql = "SELECT info FROM variants WHERE id = ?"
+        let sql = "SELECT key, value FROM variant_info WHERE variant_id = ?"
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [:] }
         sqlite3_bind_int64(stmt, 1, variantId)
-        guard sqlite3_step(stmt) == SQLITE_ROW,
-              let rawInfo = sqlite3_column_text(stmt, 0).map({ String(cString: $0) }),
-              rawInfo != "." else { return [:] }
         var result: [String: String] = [:]
-        for field in rawInfo.split(separator: ";") {
-            let parts = field.split(separator: "=", maxSplits: 1)
-            if parts.count == 2 {
-                result[String(parts[0])] = String(parts[1])
-            } else if parts.count == 1 {
-                result[String(parts[0])] = "true"
-            }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let key = sqlite3_column_text(stmt, 0).map { String(cString: $0) } ?? ""
+            let value = sqlite3_column_text(stmt, 1).map { String(cString: $0) } ?? ""
+            result[key] = value
         }
         return result
     }
@@ -1307,7 +1203,7 @@ public final class VariantDatabase: @unchecked Sendable {
     /// More efficient than calling `infoValues(variantId:)` per-variant.
     /// Returns a dictionary mapping variant ID to its INFO key-value pairs.
     public func batchInfoValues(variantIds: [Int64]) -> [Int64: [String: String]] {
-        guard let db, hasInfoTable, !variantIds.isEmpty else { return [:] }
+        guard let db, !variantIds.isEmpty else { return [:] }
         var result: [Int64: [String: String]] = [:]
         let uniqueIds = Array(Set(variantIds))
         let chunkSize = 500 // Keep well below SQLite bind-variable limits.
@@ -1335,7 +1231,7 @@ public final class VariantDatabase: @unchecked Sendable {
 
     /// Returns distinct non-empty values for an INFO key, limited and sorted by frequency.
     public func distinctInfoValues(forKey key: String, limit: Int = 21) -> [String] {
-        guard let db, hasInfoTable, limit > 0 else { return [] }
+        guard let db, limit > 0 else { return [] }
         let sql = """
             SELECT value, COUNT(*) AS c
             FROM variant_info
@@ -1362,7 +1258,7 @@ public final class VariantDatabase: @unchecked Sendable {
 
     /// Returns the source filename for a specific sample.
     public func sourceFile(forSample name: String) -> String? {
-        guard let db, hasV2Schema, hasSourceFileColumn else { return nil }
+        guard let db else { return nil }
         let sql = "SELECT source_file FROM samples WHERE name = ?"
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
@@ -1374,7 +1270,7 @@ public final class VariantDatabase: @unchecked Sendable {
 
     /// Returns all source filenames keyed by sample name.
     public func allSourceFiles() -> [String: String] {
-        guard let db, hasV2Schema, hasSourceFileColumn else { return [:] }
+        guard let db else { return [:] }
         let sql = "SELECT name, source_file FROM samples ORDER BY name"
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
@@ -1394,7 +1290,7 @@ public final class VariantDatabase: @unchecked Sendable {
 
     /// Returns metadata for a specific sample as a dictionary.
     public func sampleMetadata(name: String) -> [String: String] {
-        guard let db, hasV2Schema else { return [:] }
+        guard let db else { return [:] }
         let sql = "SELECT metadata FROM samples WHERE name = ?"
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
@@ -1409,7 +1305,7 @@ public final class VariantDatabase: @unchecked Sendable {
 
     /// Returns all sample names with their metadata.
     public func allSampleMetadata() -> [(name: String, metadata: [String: String])] {
-        guard let db, hasV2Schema else { return [] }
+        guard let db else { return [] }
         let sql = "SELECT name, metadata FROM samples ORDER BY name"
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
@@ -1441,8 +1337,8 @@ public final class VariantDatabase: @unchecked Sendable {
 
     /// Updates metadata for a specific sample.
     public func updateSampleMetadata(name: String, metadata: [String: String]) throws {
-        guard let db, hasV2Schema, !isReadOnly else {
-            throw VariantDatabaseError.createFailed("Database not open for writing or missing v2 schema")
+        guard let db, !isReadOnly else {
+            throw VariantDatabaseError.createFailed("Database not open for writing")
         }
         let jsonData = try JSONSerialization.data(withJSONObject: metadata)
         let jsonStr = String(data: jsonData, encoding: .utf8) ?? "{}"
@@ -1471,8 +1367,8 @@ public final class VariantDatabase: @unchecked Sendable {
     /// - Returns: Number of samples updated
     @discardableResult
     public func importSampleMetadata(from url: URL, format: MetadataFormat) throws -> Int {
-        guard let db, hasV2Schema, !isReadOnly else {
-            throw VariantDatabaseError.createFailed("Database not open for writing or missing v2 schema")
+        guard let db, !isReadOnly else {
+            throw VariantDatabaseError.createFailed("Database not open for writing")
         }
 
         let rows: [[String]]
@@ -1725,13 +1621,11 @@ public final class VariantDatabase: @unchecked Sendable {
         ensureBookmarkTable()
         guard let db, hasBookmarkTable else { return [] }
 
-        let idSelect = hasIdColumn ? "v.id, " : ""
-        let sampleCountSelect = hasV2Schema ? ", v.sample_count" : ""
         let sql = """
-            SELECT \(idSelect)v.chromosome, v.position, v.end_pos, v.variant_id, v.ref, v.alt, \
-            v.variant_type, v.quality, v.filter, v.info\(sampleCountSelect) \
+            SELECT v.id, v.chromosome, v.position, v.end_pos, v.variant_id, v.ref, v.alt, \
+            v.variant_type, v.quality, v.filter, v.info, v.sample_count \
             FROM variants v \
-            INNER JOIN variant_bookmarks b ON v.\(hasIdColumn ? "id" : "rowid") = b.variant_id \
+            INNER JOIN variant_bookmarks b ON v.id = b.variant_id \
             ORDER BY v.chromosome, v.position
             """
         var stmt: OpaquePointer?
@@ -1787,8 +1681,10 @@ public final class VariantDatabase: @unchecked Sendable {
         sqlite3_exec(db, "PRAGMA journal_mode = OFF", nil, nil, nil)
         sqlite3_exec(db, "PRAGMA synchronous = OFF", nil, nil, nil)
         sqlite3_exec(db, "PRAGMA cache_size = -64000", nil, nil, nil)
+        sqlite3_exec(db, "PRAGMA temp_store = MEMORY", nil, nil, nil)
+        sqlite3_exec(db, "PRAGMA locking_mode = EXCLUSIVE", nil, nil, nil)
 
-        // Create v2 schema
+        // Create v3 schema
         let schema = """
         CREATE TABLE variants (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1901,6 +1797,13 @@ public final class VariantDatabase: @unchecked Sendable {
         }
         defer { sqlite3_finalize(insertInfoStmt) }
 
+        let updateSampleCountSQL = "UPDATE variants SET sample_count = ? WHERE id = ?"
+        var updateSampleCountStmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, updateSampleCountSQL, -1, &updateSampleCountStmt, nil) == SQLITE_OK else {
+            throw VariantDatabaseError.createFailed("Failed to prepare sample_count UPDATE statement")
+        }
+        defer { sqlite3_finalize(updateSampleCountStmt) }
+
         var insertCount = 0
         var sampleNames: [String] = []
         let fileSize: Int64 = (try? FileManager.default.attributesOfItem(atPath: vcfURL.path)[.size] as? Int64) ?? 0
@@ -2006,43 +1909,7 @@ public final class VariantDatabase: @unchecked Sendable {
             }
             let infoStr = fields[7] == "." ? nil : fields[7]
 
-            // Parse genotype data to count called samples (non-missing GT).
-            var genotypeCount = 0
-            var formatFields: [String] = []
-            if parseGenotypes && fields.count > 9 && !sampleNames.isEmpty {
-                let formatStr = fields[8]
-                formatFields = formatStr.split(separator: ":").map(String.init)
-                let gtIndex = formatFields.firstIndex(of: "GT")
-                for sampleIdx in 0..<sampleNames.count {
-                    let fieldIdx = 9 + sampleIdx
-                    guard fieldIdx < fields.count else { break }
-                    let sampleData = fields[fieldIdx]
-                    if sampleData == "." || sampleData == "./." || sampleData == ".|." { continue }
-                    guard let gtIdx = gtIndex else { continue }
-                    let sampleFields = sampleData.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
-                    guard gtIdx < sampleFields.count else { continue }
-                    let gt = sampleFields[gtIdx]
-                    if gt == "." || gt == "./." || gt == ".|." { continue }
-                    let separator: Character = gt.contains("|") ? "|" : "/"
-                    let alleles = gt.split(separator: separator).map(String.init)
-                    if alleles.count >= 2 {
-                        let a1 = alleles[0] == "." ? -1 : (Int(alleles[0]) ?? -1)
-                        let a2 = alleles[1] == "." ? -1 : (Int(alleles[1]) ?? -1)
-                        if a1 >= 0 || a2 >= 0 {
-                            genotypeCount += 1
-                        }
-                    } else if alleles.count == 1 {
-                        let a1 = alleles[0] == "." ? -1 : (Int(alleles[0]) ?? -1)
-                        if a1 >= 0 {
-                            genotypeCount += 1
-                        }
-                    } else {
-                        genotypeCount += 1
-                    }
-                }
-            }
-
-            // Insert variant
+            // Insert variant (sample_count initially 0; updated after genotype pass).
             sqlite3_reset(insertVariantStmt)
             sqliteBindText(insertVariantStmt, 1, chromosome)
             sqlite3_bind_int64(insertVariantStmt, 2, Int64(position))
@@ -2059,7 +1926,7 @@ public final class VariantDatabase: @unchecked Sendable {
             sqliteBindTextOrNull(insertVariantStmt, 9, filter)
             // v3: Don't store raw INFO string (redundant with variant_info EAV table).
             sqlite3_bind_null(insertVariantStmt, 10)
-            sqlite3_bind_int(insertVariantStmt, 11, Int32(genotypeCount))
+            sqlite3_bind_int(insertVariantStmt, 11, 0)
 
             guard sqlite3_step(insertVariantStmt) == SQLITE_DONE else {
                 variantDBLogger.warning("Failed to insert variant: \(variantID)")
@@ -2122,12 +1989,15 @@ public final class VariantDatabase: @unchecked Sendable {
                 }
             }
 
-            // Insert genotype records for each sample
-            if parseGenotypes && !formatFields.isEmpty && !sampleNames.isEmpty {
+            // Single-pass: parse genotypes, INSERT non-hom-ref, and count called samples.
+            if parseGenotypes && fields.count > 9 && !sampleNames.isEmpty {
+                let formatStr = fields[8]
+                let formatFields = formatStr.split(separator: ":").map(String.init)
                 let gtIndex = formatFields.firstIndex(of: "GT")
                 let dpIndex = formatFields.firstIndex(of: "DP")
                 let gqIndex = formatFields.firstIndex(of: "GQ")
                 let adIndex = formatFields.firstIndex(of: "AD")
+                var calledCount = 0
 
                 for sampleIdx in 0..<sampleNames.count {
                     let fieldIdx = 9 + sampleIdx
@@ -2159,6 +2029,17 @@ public final class VariantDatabase: @unchecked Sendable {
                         }
                     }
 
+                    // Count called sample (at least one non-missing allele)
+                    if allele1 >= 0 || allele2 >= 0 {
+                        calledCount += 1
+                    } else {
+                        continue  // No-call — skip genotype INSERT too
+                    }
+
+                    // Skip hom-ref genotypes (0/0) — inferred from absence.
+                    // This typically eliminates ~90% of genotype rows.
+                    if allele1 == 0 && allele2 == 0 { continue }
+
                     // Parse DP
                     var depth: Int?
                     if let dpIdx = dpIndex, dpIdx < sampleFields.count {
@@ -2172,10 +2053,6 @@ public final class VariantDatabase: @unchecked Sendable {
                         let gqStr = sampleFields[gqIdx]
                         if gqStr != "." { gq = Int(gqStr) }
                     }
-
-                    // v3: Skip hom-ref genotypes (0/0) — inferred from absence.
-                    // This typically eliminates ~90% of genotype rows.
-                    if allele1 == 0 && allele2 == 0 { continue }
 
                     // Parse AD
                     var ad: String?
@@ -2206,6 +2083,14 @@ public final class VariantDatabase: @unchecked Sendable {
                     sqlite3_bind_null(insertGenotypeStmt, 10)
 
                     sqlite3_step(insertGenotypeStmt)
+                }
+
+                // Update the variant's sample_count now that we know the called count.
+                if calledCount > 0 {
+                    sqlite3_reset(updateSampleCountStmt)
+                    sqlite3_bind_int(updateSampleCountStmt, 1, Int32(calledCount))
+                    sqlite3_bind_int64(updateSampleCountStmt, 2, variantRowId)
+                    sqlite3_step(updateSampleCountStmt)
                 }
             }
 

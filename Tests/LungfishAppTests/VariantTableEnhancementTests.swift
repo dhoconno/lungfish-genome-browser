@@ -602,6 +602,98 @@ final class VariantTableEnhancementTests: XCTestCase {
         XCTAssertNotEqual(keyA, keyB)
     }
 
+    /// Integration test: bookmarks are track-scoped across multiple variant databases.
+    func testMultiTrackBookmarkIntegration() throws {
+        // Create two VCFs with the same rowId=1 in each
+        let vcfA = """
+        ##fileformat=VCFv4.2
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+        chr1\t100\trsA1\tA\tG\t30.0\tPASS\t.
+        chr1\t200\trsA2\tC\tT\t25.0\tPASS\t.
+        """
+        let vcfB = """
+        ##fileformat=VCFv4.2
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+        chr2\t500\trsB1\tG\tA\t40.0\tPASS\t.
+        """
+
+        let vcfAURL = tempDir.appendingPathComponent("trackA.vcf")
+        let vcfBURL = tempDir.appendingPathComponent("trackB.vcf")
+        try vcfA.write(to: vcfAURL, atomically: true, encoding: .utf8)
+        try vcfB.write(to: vcfBURL, atomically: true, encoding: .utf8)
+
+        let dbAURL = tempDir.appendingPathComponent("trackA.db")
+        let dbBURL = tempDir.appendingPathComponent("trackB.db")
+        try VariantDatabase.createFromVCF(vcfURL: vcfAURL, outputURL: dbAURL)
+        try VariantDatabase.createFromVCF(vcfURL: vcfBURL, outputURL: dbBURL)
+
+        // Create a minimal annotation DB
+        let bedContent = "chr1\t0\t1000\tgeneX\t0\t+\t0\t1000\t0,0,0\t1\t1000\t0\tgene\t."
+        let bedURL = tempDir.appendingPathComponent("ann.bed")
+        try bedContent.write(to: bedURL, atomically: true, encoding: .utf8)
+        let annDbURL = tempDir.appendingPathComponent("ann.db")
+        try AnnotationDatabase.createFromBED(bedURL: bedURL, outputURL: annDbURL)
+
+        // Build manifest with two variant tracks
+        let manifest = BundleManifest(
+            formatVersion: "1.0",
+            name: "MultiTrack",
+            identifier: "multitrack.test",
+            source: SourceInfo(organism: "Test", assembly: "test"),
+            genome: GenomeInfo(
+                path: "seq.fa.gz", indexPath: "seq.fa.gz.fai",
+                totalLength: 10000, chromosomes: []
+            ),
+            annotations: [
+                AnnotationTrackInfo(id: "ann", name: "Annotations", path: "ann.bb", databasePath: "ann.db")
+            ],
+            variants: [
+                VariantTrackInfo(id: "trackA", name: "Track A", path: "a.bcf", indexPath: "a.csi", databasePath: "trackA.db"),
+                VariantTrackInfo(id: "trackB", name: "Track B", path: "b.bcf", indexPath: "b.csi", databasePath: "trackB.db"),
+            ]
+        )
+
+        let bundle = ReferenceBundle(url: tempDir, manifest: manifest)
+        let searchIndex = AnnotationSearchIndex()
+        searchIndex.buildFromDatabase(bundle: bundle, trackId: "ann", databasePath: "ann.db")
+
+        // Verify two variant databases loaded
+        XCTAssertEqual(searchIndex.variantDatabaseHandles.count, 2)
+
+        let drawer = AnnotationTableDrawerView(frame: NSRect(x: 0, y: 0, width: 800, height: 200))
+        drawer.setSearchIndex(searchIndex)
+        drawer.loadBookmarkedVariantIds()
+        XCTAssertTrue(drawer.bookmarkedVariantKeys.isEmpty)
+
+        // Bookmark rowId=1 in trackA only
+        let dbA = searchIndex.variantDatabaseHandles.first(where: { $0.trackId == "trackA" })!.db
+        _ = dbA.toggleBookmark(variantId: 1)
+
+        drawer.loadBookmarkedVariantIds()
+        XCTAssertEqual(drawer.bookmarkedVariantKeys.count, 1)
+        XCTAssertTrue(drawer.bookmarkedVariantKeys.contains(drawer.bookmarkKey(trackId: "trackA", variantRowId: 1)))
+        // Same rowId in trackB should NOT be bookmarked
+        XCTAssertFalse(drawer.bookmarkedVariantKeys.contains(drawer.bookmarkKey(trackId: "trackB", variantRowId: 1)))
+
+        // Bookmark rowId=1 in trackB independently
+        let dbB = searchIndex.variantDatabaseHandles.first(where: { $0.trackId == "trackB" })!.db
+        _ = dbB.toggleBookmark(variantId: 1)
+        drawer.loadBookmarkedVariantIds()
+        XCTAssertEqual(drawer.bookmarkedVariantKeys.count, 2)
+
+        // Remove bookmark from trackA; trackB bookmark survives
+        _ = dbA.toggleBookmark(variantId: 1)
+        drawer.loadBookmarkedVariantIds()
+        XCTAssertEqual(drawer.bookmarkedVariantKeys.count, 1)
+        XCTAssertFalse(drawer.bookmarkedVariantKeys.contains(drawer.bookmarkKey(trackId: "trackA", variantRowId: 1)))
+        XCTAssertTrue(drawer.bookmarkedVariantKeys.contains(drawer.bookmarkKey(trackId: "trackB", variantRowId: 1)))
+
+        // Verify export from both tracks returns correct results
+        let bookmarkedB = dbB.bookmarkedVariants()
+        XCTAssertEqual(bookmarkedB.count, 1)
+        XCTAssertEqual(bookmarkedB[0].variantID, "rsB1")
+    }
+
     // MARK: - Phase 3: Sample Group Tests
 
     func testSampleGroupCodable() throws {
