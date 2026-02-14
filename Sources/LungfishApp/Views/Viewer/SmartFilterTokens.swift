@@ -23,6 +23,7 @@ enum SmartToken: String, CaseIterable, Sendable {
     case depthGE10
     case clinvarPathogenic
     case heterozygous
+    case bookmarked
 
     /// Display label shown on the chip button.
     var label: String {
@@ -37,6 +38,7 @@ enum SmartToken: String, CaseIterable, Sendable {
         case .depthGE10:          return "DP \u{2265} 10"
         case .clinvarPathogenic:  return "ClinVar Path."
         case .heterozygous:       return "Het Only"
+        case .bookmarked:         return "Bookmarked"
         }
     }
 
@@ -46,6 +48,7 @@ enum SmartToken: String, CaseIterable, Sendable {
         case .passOnly:          return "checkmark.shield"
         case .clinvarPathogenic: return "exclamationmark.triangle"
         case .heterozygous:      return "person.2"
+        case .bookmarked:        return "star.fill"
         default:                 return nil
         }
     }
@@ -54,7 +57,8 @@ enum SmartToken: String, CaseIterable, Sendable {
     func isAvailable(
         infoKeys: Set<String>,
         variantTypes: Set<String>,
-        hasGenotypes: Bool
+        hasGenotypes: Bool,
+        hasBookmarks: Bool = false
     ) -> Bool {
         switch self {
         case .passOnly:
@@ -79,6 +83,8 @@ enum SmartToken: String, CaseIterable, Sendable {
         case .heterozygous:
             // Requires genotype-level post-filtering, not yet implemented.
             return false
+        case .bookmarked:
+            return hasBookmarks
         }
     }
 
@@ -116,6 +122,7 @@ enum SmartToken: String, CaseIterable, Sendable {
 
     enum PostFilterKind: Sendable {
         case heterozygousOnly
+        case bookmarkedOnly
     }
 
     /// Returns the filter effects for this token, given the available INFO keys.
@@ -182,6 +189,9 @@ enum SmartToken: String, CaseIterable, Sendable {
 
         case .heterozygous:
             return [.postFilter(.heterozygousOnly)]
+
+        case .bookmarked:
+            return [.postFilter(.bookmarkedOnly)]
         }
     }
 }

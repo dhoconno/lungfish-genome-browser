@@ -435,4 +435,166 @@ final class VariantTableEnhancementTests: XCTestCase {
         }
         _ = drawer  // suppress unused warning
     }
+
+    // MARK: - Phase 3: Bookmark Tests
+
+    private func createBookmarkTestDB() throws -> VariantDatabase {
+        let vcfContent = """
+        ##fileformat=VCFv4.2
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+        chr1\t100\trs1\tA\tG\t30.0\tPASS\t.
+        chr1\t200\trs2\tC\tT\t20.0\t.\t.
+        """
+        let vcfURL = tempDir.appendingPathComponent("bookmark_test.vcf")
+        try vcfContent.write(to: vcfURL, atomically: true, encoding: .utf8)
+        let dbURL = tempDir.appendingPathComponent("bookmark_test.db")
+        try VariantDatabase.createFromVCF(vcfURL: vcfURL, outputURL: dbURL)
+        return try VariantDatabase(url: dbURL, readWrite: true)
+    }
+
+    func testVariantDatabaseBookmarkRoundTrip() throws {
+        let db = try createBookmarkTestDB()
+
+        // Initially no bookmarks
+        let initial = db.bookmarkedVariantIds()
+        XCTAssertTrue(initial.isEmpty)
+
+        // Toggle bookmark on → returns true
+        let result = db.toggleBookmark(variantId: 1)
+        XCTAssertTrue(result)
+        XCTAssertTrue(db.isBookmarked(variantId: 1))
+        XCTAssertFalse(db.isBookmarked(variantId: 2))
+
+        // Bookmarked set should contain 1
+        let afterAdd = db.bookmarkedVariantIds()
+        XCTAssertEqual(afterAdd, [1])
+
+        // Toggle off → returns false
+        let result2 = db.toggleBookmark(variantId: 1)
+        XCTAssertFalse(result2)
+        XCTAssertFalse(db.isBookmarked(variantId: 1))
+        XCTAssertTrue(db.bookmarkedVariantIds().isEmpty)
+    }
+
+    func testVariantDatabaseBookmarkedVariantsJoin() throws {
+        let db = try createBookmarkTestDB()
+
+        // Bookmark variant 1 only
+        _ = db.toggleBookmark(variantId: 1)
+
+        // bookmarkedVariants() uses SQL JOIN — should return only the bookmarked record
+        let records = db.bookmarkedVariants()
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records[0].variantID, "rs1")
+        XCTAssertEqual(records[0].ref, "A")
+
+        // Bookmark variant 2 as well
+        _ = db.toggleBookmark(variantId: 2)
+        let records2 = db.bookmarkedVariants()
+        XCTAssertEqual(records2.count, 2)
+
+        // Remove variant 1
+        _ = db.toggleBookmark(variantId: 1)
+        let records3 = db.bookmarkedVariants()
+        XCTAssertEqual(records3.count, 1)
+        XCTAssertEqual(records3[0].variantID, "rs2")
+    }
+
+    func testVariantDatabaseBookmarkNote() throws {
+        let db = try createBookmarkTestDB()
+
+        _ = db.toggleBookmark(variantId: 1)
+        db.updateBookmarkNote(variantId: 1, note: "Interesting variant")
+
+        let all = db.allBookmarks()
+        XCTAssertEqual(all.count, 1)
+        XCTAssertEqual(all.first?.note, "Interesting variant")
+    }
+
+    // MARK: - Phase 3: Smart Token Bookmark Test
+
+    func testBookmarkedSmartTokenAvailability() {
+        let infoKeys: Set<String> = ["DP"]
+        let variantTypes: Set<String> = ["SNV"]
+
+        // Without bookmarks
+        XCTAssertFalse(SmartToken.bookmarked.isAvailable(infoKeys: infoKeys, variantTypes: variantTypes, hasGenotypes: false, hasBookmarks: false))
+
+        // With bookmarks
+        XCTAssertTrue(SmartToken.bookmarked.isAvailable(infoKeys: infoKeys, variantTypes: variantTypes, hasGenotypes: false, hasBookmarks: true))
+    }
+
+    func testBookmarkedSmartTokenFilterEffect() {
+        let effects = SmartToken.bookmarked.filterEffects(infoKeys: [])
+        XCTAssertEqual(effects.count, 1)
+        if case .postFilter(.bookmarkedOnly) = effects.first {} else {
+            XCTFail("Expected .postFilter(.bookmarkedOnly)")
+        }
+    }
+
+    // MARK: - Phase 3: Filter Profile Tests
+
+    func testBuiltInFilterProfiles() {
+        XCTAssertFalse(FilterProfile.builtInProfiles.isEmpty)
+        for profile in FilterProfile.builtInProfiles {
+            XCTAssertTrue(profile.isBuiltIn)
+            XCTAssertFalse(profile.name.isEmpty)
+        }
+    }
+
+    func testFilterProfileTokenConversion() {
+        let profile = FilterProfile.clinical
+        let tokens = profile.smartTokens
+        XCTAssertTrue(tokens.contains(.passOnly))
+        XCTAssertTrue(tokens.contains(.clinvarPathogenic))
+    }
+
+    func testFilterProfilePersistence() {
+        let key = "com.lungfish.filterProfiles.test"
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+
+        let custom = FilterProfile(name: "My Profile", activeTokens: ["passOnly", "snv"], filterText: "qual>=30")
+        let data = try? JSONEncoder().encode([custom])
+        XCTAssertNotNil(data)
+
+        let decoded = try? JSONDecoder().decode([FilterProfile].self, from: data!)
+        XCTAssertEqual(decoded?.count, 1)
+        XCTAssertEqual(decoded?.first?.name, "My Profile")
+        XCTAssertEqual(decoded?.first?.smartTokens, [.passOnly, .snv])
+    }
+
+    // MARK: - Phase 3: Sample Group Tests
+
+    func testSampleGroupCodable() throws {
+        let group = SampleGroup(name: "Cases", sampleNames: ["S1", "S2"], colorHex: "#FF0000")
+        let data = try JSONEncoder().encode(group)
+        let decoded = try JSONDecoder().decode(SampleGroup.self, from: data)
+        XCTAssertEqual(decoded.name, "Cases")
+        XCTAssertEqual(decoded.sampleNames, ["S1", "S2"])
+        XCTAssertEqual(decoded.colorHex, "#FF0000")
+    }
+
+    func testSampleDisplayStateWithGroups() throws {
+        var state = SampleDisplayState()
+        state.sampleGroups = [
+            SampleGroup(name: "Cases", sampleNames: ["S1", "S2"]),
+            SampleGroup(name: "Controls", sampleNames: ["S3", "S4"]),
+        ]
+
+        let data = try JSONEncoder().encode(state)
+        let decoded = try JSONDecoder().decode(SampleDisplayState.self, from: data)
+        XCTAssertEqual(decoded.sampleGroups.count, 2)
+        XCTAssertEqual(decoded.sampleGroups[0].name, "Cases")
+        XCTAssertEqual(decoded.sampleGroups[1].sampleNames, ["S3", "S4"])
+    }
+
+    func testSampleDisplayStateBackwardCompatibility() throws {
+        // Simulate old JSON without sampleGroups
+        let json = """
+        {"sortFields":[],"filters":[],"hiddenSamples":[],"showGenotypeRows":true,"showSummaryBar":false,"rowHeight":12,"summaryBarHeight":20}
+        """
+        let data = json.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(SampleDisplayState.self, from: data)
+        XCTAssertTrue(decoded.sampleGroups.isEmpty)
+    }
 }

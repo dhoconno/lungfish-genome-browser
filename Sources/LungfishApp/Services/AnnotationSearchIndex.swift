@@ -223,7 +223,7 @@ public final class AnnotationSearchIndex {
             let dbURL = bundle.url.appendingPathComponent(dbPath)
             guard FileManager.default.fileExists(atPath: dbURL.path) else { continue }
             do {
-                let db = try VariantDatabase(url: dbURL)
+                let db = try VariantDatabase(url: dbURL, readWrite: true)
                 variantDatabases.append((trackId: vTrackId, db: db))
                 variantTrackNames[vTrackId] = trackInfo.name
                 variantTrackChromosomes[vTrackId] = Set(db.allChromosomes())

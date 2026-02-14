@@ -228,6 +228,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     private let variantFilterField = NSSearchField()
     private let sampleFilterField = NSSearchField()
     private let addSampleFieldButton = NSButton()
+    private let sampleGroupsButton = NSButton()
     private let countLabel = NSTextField(labelWithString: "")
     private let headerBar = NSView()
     private let searchBar = NSView()
@@ -246,6 +247,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     private let downloadTemplateButton = NSButton()
     let exportButton = NSButton()
     let columnConfigButton = NSButton()
+    let profileButton = NSPopUpButton(frame: .zero, pullsDown: true)
     let variantSubtabControl = NSSegmentedControl()
 
     /// Maximum number of annotations to display in the table.
@@ -266,7 +268,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     private var smartTokenButtons: [SmartToken: NSButton] = [:]
     /// Reverse lookup: button identity -> SmartToken.
     private var smartTokenPayloads: [ObjectIdentifier: SmartToken] = [:]
-    /// Temporary mapping used by Search Builder INFO key/value popups.
+    /// Bookmarked variant row IDs (for star column display).
+    var bookmarkedVariantIds: Set<Int64> = []
     /// Column configuration popover (gear menu).
     var columnConfigPopover: NSPopover?
 
@@ -423,6 +426,16 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         addSampleFieldButton.isHidden = true
         searchBar.addSubview(addSampleFieldButton)
 
+        sampleGroupsButton.title = "Groups"
+        sampleGroupsButton.controlSize = .small
+        sampleGroupsButton.bezelStyle = .rounded
+        sampleGroupsButton.font = .systemFont(ofSize: 10, weight: .medium)
+        sampleGroupsButton.translatesAutoresizingMaskIntoConstraints = false
+        sampleGroupsButton.target = self
+        sampleGroupsButton.action = #selector(showSampleGroupsSheet(_:))
+        sampleGroupsButton.isHidden = true
+        searchBar.addSubview(sampleGroupsButton)
+
         downloadTemplateButton.title = "Template TSV/CSV"
         downloadTemplateButton.controlSize = .small
         downloadTemplateButton.bezelStyle = .rounded
@@ -459,6 +472,15 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         exportButton.translatesAutoresizingMaskIntoConstraints = false
         exportButton.toolTip = "Export table as CSV/TSV"
         headerBar.addSubview(exportButton)
+
+        // Filter profile popup (header bar) — only shown on variants tab
+        profileButton.controlSize = .small
+        profileButton.font = .systemFont(ofSize: 10, weight: .medium)
+        profileButton.translatesAutoresizingMaskIntoConstraints = false
+        profileButton.toolTip = "Filter profiles"
+        profileButton.isHidden = true  // shown only on variants tab
+        rebuildProfileMenu()
+        headerBar.addSubview(profileButton)
 
         // Column config gear button (header bar)
         columnConfigButton.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "Configure columns")
@@ -560,7 +582,11 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             loadingIndicator.leadingAnchor.constraint(equalTo: headerBar.leadingAnchor, constant: 8),
 
             tabControl.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
-            tabControl.trailingAnchor.constraint(equalTo: exportButton.leadingAnchor, constant: -6),
+            tabControl.trailingAnchor.constraint(equalTo: profileButton.leadingAnchor, constant: -6),
+
+            profileButton.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+            profileButton.widthAnchor.constraint(lessThanOrEqualToConstant: 120),
+            profileButton.trailingAnchor.constraint(equalTo: exportButton.leadingAnchor, constant: -4),
 
             exportButton.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
             exportButton.widthAnchor.constraint(equalToConstant: 20),
@@ -608,7 +634,10 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             searchBuilderButton.trailingAnchor.constraint(equalTo: presetFiltersToggleButton.leadingAnchor, constant: -8),
 
             addSampleFieldButton.topAnchor.constraint(equalTo: searchBar.topAnchor, constant: 4),
-            addSampleFieldButton.trailingAnchor.constraint(equalTo: downloadTemplateButton.leadingAnchor, constant: -6),
+            addSampleFieldButton.trailingAnchor.constraint(equalTo: sampleGroupsButton.leadingAnchor, constant: -6),
+
+            sampleGroupsButton.centerYAnchor.constraint(equalTo: addSampleFieldButton.centerYAnchor),
+            sampleGroupsButton.trailingAnchor.constraint(equalTo: downloadTemplateButton.leadingAnchor, constant: -6),
 
             downloadTemplateButton.centerYAnchor.constraint(equalTo: addSampleFieldButton.centerYAnchor),
             downloadTemplateButton.trailingAnchor.constraint(equalTo: searchBar.trailingAnchor, constant: -8),
@@ -814,8 +843,10 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         variantFilterField.isHidden = activeTab != .variants
         sampleFilterField.isHidden = activeTab != .samples
         addSampleFieldButton.isHidden = activeTab != .samples
+        sampleGroupsButton.isHidden = activeTab != .samples
         downloadTemplateButton.isHidden = activeTab != .samples
         variantSubtabControl.isHidden = activeTab != .variants
+        profileButton.isHidden = activeTab != .variants
         let showVariantTools = activeTab == .variants
         presetFiltersToggleButton.isHidden = !showVariantTools || infoColumnKeys.isEmpty
         presetFiltersToggleButton.title = showVariantPresetChips ? "Presets ▾" : "Presets ▸"
@@ -945,6 +976,11 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                 )
                 tableView.addTableColumn(col)
             }
+        }
+
+        // Add bookmark column for variants tab (before saved prefs so it persists across reconfigs)
+        if tab == .variants {
+            addBookmarkColumnIfNeeded()
         }
 
         // Apply saved column preferences (visibility + ordering)
@@ -1102,6 +1138,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         // Populate sample data from variant databases
         populateSampleData(from: index)
 
+        // Load bookmarked variant IDs for star column display
+        loadBookmarkedVariantIds()
+
         // Enable/disable variant tab based on whether variants exist
         tabControl.setEnabled(totalVariantCount > 0, forSegment: 1)
         // Enable/disable samples tab based on whether samples exist
@@ -1182,7 +1221,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             let hasGT = !allSampleNames.isEmpty
             var addedTokens = false
             for token in SmartToken.allCases {
-                guard token.isAvailable(infoKeys: infoKeySet, variantTypes: variantTypeSet, hasGenotypes: hasGT) else { continue }
+                guard token.isAvailable(infoKeys: infoKeySet, variantTypes: variantTypeSet, hasGenotypes: hasGT, hasBookmarks: hasBookmarks) else { continue }
                 let chip = NSButton(title: token.label, target: self, action: #selector(smartTokenToggled(_:)))
                 chip.font = .systemFont(ofSize: 10, weight: .medium)
                 chip.controlSize = .small
@@ -1485,6 +1524,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         // Compose smart token filters
         let infoKeySet = Set(infoColumnKeys.map(\.key))
         let smartComposed = activeSmartTokens.composeFilters(infoKeys: infoKeySet)
+        let filterBookmarkedOnly = smartComposed.postFilters.contains(where: {
+            if case .bookmarkedOnly = $0 { return true }; return false
+        })
 
         // Merge type restrictions from smart tokens with existing type filter
         var effectiveTypeFilter = typeFilter
@@ -1578,8 +1620,12 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                     infoFilters: mergedInfoFilters,
                     limit: Self.maxDisplayCount * 3
                 )
-                displayedAnnotations = applyVariantAdvancedFilters(results, query: effectiveQuery).prefix(Self.maxDisplayCount).map { $0 }
-                if effectiveQuery.hasPostFilters {
+                var filtered = applyVariantAdvancedFilters(results, query: effectiveQuery)
+                if filterBookmarkedOnly {
+                    filtered = filtered.filter { $0.variantRowId.map { bookmarkedVariantIds.contains($0) } ?? false }
+                }
+                displayedAnnotations = filtered.prefix(Self.maxDisplayCount).map { $0 }
+                if effectiveQuery.hasPostFilters || filterBookmarkedOnly {
                     lastVariantQueryMatchCount = displayedAnnotations.count
                 }
                 tableView.reloadData()
@@ -1606,8 +1652,12 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                     infoFilters: mergedInfoFilters,
                     limit: Self.maxDisplayCount * 3
                 )
-                displayedAnnotations = applyVariantAdvancedFilters(results, query: effectiveQuery).prefix(Self.maxDisplayCount).map { $0 }
-                if effectiveQuery.hasPostFilters {
+                var filtered = applyVariantAdvancedFilters(results, query: effectiveQuery)
+                if filterBookmarkedOnly {
+                    filtered = filtered.filter { $0.variantRowId.map { bookmarkedVariantIds.contains($0) } ?? false }
+                }
+                displayedAnnotations = filtered.prefix(Self.maxDisplayCount).map { $0 }
+                if effectiveQuery.hasPostFilters || filterBookmarkedOnly {
                     lastVariantQueryMatchCount = displayedAnnotations.count
                 }
                 tableView.reloadData()
@@ -2232,6 +2282,109 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     /// Saved user query presets (not persisted across sessions yet — Phase 3 adds BundleViewState support).
     var savedQueryPresets: [QueryPreset] = []
 
+    // MARK: - Filter Profiles
+
+    /// Rebuilds the filter profile popup menu.
+    func rebuildProfileMenu() {
+        profileButton.removeAllItems()
+        // Title item (pullsDown mode uses the first item as title)
+        profileButton.addItem(withTitle: "Profiles")
+        profileButton.item(at: 0)?.image = NSImage(systemSymbolName: "line.3.horizontal.decrease.circle", accessibilityDescription: nil)
+
+        // "None" option to clear profile
+        let noneItem = NSMenuItem(title: "No Profile", action: #selector(clearFilterProfile(_:)), keyEquivalent: "")
+        noneItem.target = self
+        profileButton.menu?.addItem(noneItem)
+
+        profileButton.menu?.addItem(NSMenuItem.separator())
+
+        // Built-in profiles
+        let infoKeySet = Set(infoColumnKeys.map(\.key))
+        let variantTypeSet = Set(availableVariantTypes)
+        let hasGT = !allSampleNames.isEmpty
+        for profile in FilterProfile.builtInProfiles {
+            // Only show profiles whose tokens are available
+            let tokens = profile.smartTokens
+            let available = tokens.allSatisfy { $0.isAvailable(infoKeys: infoKeySet, variantTypes: variantTypeSet, hasGenotypes: hasGT, hasBookmarks: hasBookmarks) }
+            guard available || tokens.isEmpty else { continue }
+            let item = NSMenuItem(title: profile.name, action: #selector(selectFilterProfile(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = profile
+            profileButton.menu?.addItem(item)
+        }
+
+        // Custom profiles
+        let customProfiles = FilterProfileStore.loadCustomProfiles()
+        if !customProfiles.isEmpty {
+            profileButton.menu?.addItem(NSMenuItem.separator())
+            for profile in customProfiles {
+                let item = NSMenuItem(title: profile.name, action: #selector(selectFilterProfile(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = profile
+                profileButton.menu?.addItem(item)
+            }
+        }
+
+        // Save current as profile
+        profileButton.menu?.addItem(NSMenuItem.separator())
+        let saveItem = NSMenuItem(title: "Save Current as Profile\u{2026}", action: #selector(saveCurrentAsProfile(_:)), keyEquivalent: "")
+        saveItem.target = self
+        profileButton.menu?.addItem(saveItem)
+    }
+
+    @objc private func selectFilterProfile(_ sender: NSMenuItem) {
+        guard let profile = sender.representedObject as? FilterProfile else { return }
+        applyFilterProfile(profile)
+    }
+
+    @objc private func clearFilterProfile(_ sender: Any?) {
+        activeSmartTokens.removeAll()
+        variantFilterText = ""
+        variantFilterField.stringValue = ""
+        updateChipStates()
+        updateDisplayedAnnotations()
+    }
+
+    private func applyFilterProfile(_ profile: FilterProfile) {
+        // Apply smart tokens
+        activeSmartTokens = profile.smartTokens
+
+        // Apply filter text
+        variantFilterText = profile.filterText
+        variantFilterField.stringValue = profile.filterText
+
+        // Update UI
+        updateChipStates()
+        updateDisplayedAnnotations()
+    }
+
+    @objc private func saveCurrentAsProfile(_ sender: Any?) {
+        guard let window = self.window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Save Filter Profile"
+        alert.informativeText = "Enter a name for this filter profile."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        let nameField = NSTextField(frame: NSRect(x: 0, y: 0, width: 250, height: 24))
+        nameField.placeholderString = "Profile name"
+        alert.accessoryView = nameField
+
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return }
+
+            let tokens = self.activeSmartTokens.map(\.rawValue)
+            let profile = FilterProfile(name: name, activeTokens: tokens, filterText: self.variantFilterText)
+            var customs = FilterProfileStore.loadCustomProfiles()
+            customs.append(profile)
+            FilterProfileStore.saveCustomProfiles(customs)
+            self.rebuildProfileMenu()
+        }
+    }
+
     private func applySampleBuilderSettings(showSamplesText: String, orderText: String) {
         let shownSamples = showSamplesText
             .split(separator: ",")
@@ -2483,6 +2636,11 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard let column = tableColumn else { return nil }
         let identifier = column.identifier
+
+        // Bookmark column (star icon) — custom button, not a text cell
+        if identifier == Self.bookmarkColumn {
+            return bookmarkView(for: row)
+        }
 
         // Samples tab uses its own data source
         if activeTab == .samples {
@@ -2994,6 +3152,24 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         inspectorItem.target = self
         inspectorItem.representedObject = annotation
         menu.addItem(inspectorItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // --- Bookmark ---
+        if let variantRowId = annotation.variantRowId {
+            let isBookmarked = bookmarkedVariantIds.contains(variantRowId)
+            let bookmarkTitle = isBookmarked ? "Remove Bookmark" : "Bookmark Variant"
+            let bookmarkItem = NSMenuItem(title: bookmarkTitle, action: #selector(contextBookmarkToggle(_:)), keyEquivalent: "")
+            bookmarkItem.target = self
+            bookmarkItem.representedObject = annotation
+            menu.addItem(bookmarkItem)
+        }
+
+        if hasBookmarks {
+            let exportBookmarksItem = NSMenuItem(title: "Export Bookmarked Variants\u{2026}", action: #selector(exportBookmarkedVariants(_:)), keyEquivalent: "")
+            exportBookmarksItem.target = self
+            menu.addItem(exportBookmarksItem)
+        }
 
         menu.addItem(NSMenuItem.separator())
 
@@ -3643,6 +3819,41 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
             self.configureColumnsForTab(.samples)
             self.updateDisplayedSamples()
         }
+    }
+
+    // MARK: - Sample Groups
+
+    @objc private func showSampleGroupsSheet(_ sender: Any?) {
+        guard let hostWindow = self.window else { return }
+
+        let sheetView = SampleGroupSheet(
+            groups: currentSampleDisplayState.sampleGroups,
+            allSampleNames: allSampleNames,
+            onApply: { [weak self] groups in
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        hostWindow.endSheet(hostWindow.sheets.last ?? hostWindow)
+                        self.currentSampleDisplayState.sampleGroups = groups
+                        self.postSampleDisplayStateChange()
+                        self.updateDisplayedSamples()
+                    }
+                }
+            },
+            onCancel: {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        hostWindow.endSheet(hostWindow.sheets.last ?? hostWindow)
+                    }
+                }
+            }
+        )
+
+        let hostingController = NSHostingController(rootView: sheetView)
+        let sheetWindow = NSPanel(contentViewController: hostingController)
+        sheetWindow.styleMask = [.titled, .closable, .resizable]
+        sheetWindow.title = "Sample Groups"
+        hostWindow.beginSheet(sheetWindow)
     }
 
     // MARK: - Add Custom Field

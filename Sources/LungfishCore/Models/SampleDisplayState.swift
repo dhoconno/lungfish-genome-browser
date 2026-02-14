@@ -51,6 +51,9 @@ public struct SampleDisplayState: Sendable, Codable, Equatable {
     /// Name of the selected color theme. Maps to `VariantColorTheme.named(_:)`.
     public var colorThemeName: String = VariantColorTheme.modern.name
 
+    /// Named groups of samples for comparison analysis.
+    public var sampleGroups: [SampleGroup] = []
+
     public init() {}
 
     public init(
@@ -88,6 +91,7 @@ public struct SampleDisplayState: Sendable, Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case sortFields, filters, hiddenSamples, showGenotypeRows, showSummaryBar
         case rowHeight, summaryBarHeight, sampleOrder, displayNameField, colorThemeName
+        case sampleGroups
         // Legacy key for migration
         case rowHeightMode
     }
@@ -104,6 +108,7 @@ public struct SampleDisplayState: Sendable, Codable, Equatable {
         sampleOrder = try container.decodeIfPresent([String].self, forKey: .sampleOrder)
         displayNameField = try container.decodeIfPresent(String.self, forKey: .displayNameField)
         colorThemeName = try container.decodeIfPresent(String.self, forKey: .colorThemeName) ?? VariantColorTheme.modern.name
+        sampleGroups = try container.decodeIfPresent([SampleGroup].self, forKey: .sampleGroups) ?? []
 
         // Migrate from legacy RowHeightMode if present
         if let height = try container.decodeIfPresent(CGFloat.self, forKey: .rowHeight) {
@@ -131,6 +136,9 @@ public struct SampleDisplayState: Sendable, Codable, Equatable {
         try container.encodeIfPresent(sampleOrder, forKey: .sampleOrder)
         try container.encodeIfPresent(displayNameField, forKey: .displayNameField)
         try container.encode(colorThemeName, forKey: .colorThemeName)
+        if !sampleGroups.isEmpty {
+            try container.encode(sampleGroups, forKey: .sampleGroups)
+        }
     }
 
     /// Returns the ordered, filtered list of sample names to display.
@@ -246,6 +254,24 @@ public enum FilterOp: String, Sendable, Codable, CaseIterable {
     case equals
     case notEquals
     case contains
+}
+
+// MARK: - SampleGroup
+
+/// A named group of samples for comparison (e.g. "Cases" vs "Controls").
+public struct SampleGroup: Codable, Sendable, Identifiable, Equatable {
+    public let id: UUID
+    public var name: String
+    public var sampleNames: Set<String>
+    /// Hex color string for the group (e.g., "#FF6B6B").
+    public var colorHex: String
+
+    public init(id: UUID = UUID(), name: String, sampleNames: Set<String> = [], colorHex: String = "#4A90D9") {
+        self.id = id
+        self.name = name
+        self.sampleNames = sampleNames
+        self.colorHex = colorHex
+    }
 }
 
 // MARK: - GenotypeDisplayData
