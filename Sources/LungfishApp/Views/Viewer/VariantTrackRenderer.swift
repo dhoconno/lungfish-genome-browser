@@ -38,6 +38,8 @@ public enum VariantTrackRenderer {
 
     /// Width of the scroll indicator track.
     private static let scrollIndicatorWidth: CGFloat = 6
+    /// Horizontal gutter reserved for sample labels so cells never draw under text.
+    private static let sampleLabelGutterWidth: CGFloat = 150
 
     // MARK: - Color Palette
 
@@ -246,6 +248,8 @@ public enum VariantTrackRenderer {
 
         let showLabels = rowH >= 8
         let totalRows = samples.count
+        let dataStartX = showLabels ? sampleLabelGutterWidth : 0
+        let dataWidth = max(0, CGFloat(frame.pixelWidth) - dataStartX)
 
         // Compute visible row range from scroll offset
         let firstVisibleRow = max(0, Int(scrollOffset / rowH))
@@ -267,6 +271,8 @@ public enum VariantTrackRenderer {
                     .font: NSFont.systemFont(ofSize: fontSize, weight: .regular),
                     .foregroundColor: NSColor.labelColor,
                 ]
+                context.setFillColor(CGColor(red: 0.96, green: 0.96, blue: 0.96, alpha: 0.92))
+                context.fill(CGRect(x: 0, y: rowY, width: dataStartX, height: rowH))
                 label.draw(
                     at: CGPoint(x: 2, y: rowY + 1),
                     withAttributes: labelAttrs
@@ -281,12 +287,15 @@ public enum VariantTrackRenderer {
                 let startPx = frame.screenPosition(for: Double(site.position))
                 let endPx = frame.screenPosition(for: Double(site.position + max(1, site.ref.count)))
                 let cellWidth = max(1, endPx - startPx)
+                let clippedStart = max(dataStartX, startPx)
+                let clippedEnd = min(CGFloat(frame.pixelWidth), startPx + cellWidth)
+                guard clippedEnd > clippedStart else { continue }
 
                 context.setFillColor(color)
                 context.fill(CGRect(
-                    x: startPx,
+                    x: clippedStart,
                     y: rowY,
-                    width: cellWidth,
+                    width: clippedEnd - clippedStart,
                     height: rowH
                 ))
             }
@@ -297,7 +306,7 @@ public enum VariantTrackRenderer {
                 context.setLineWidth(0.5)
                 let sepY = rowY + rowH
                 context.move(to: CGPoint(x: 0, y: sepY))
-                context.addLine(to: CGPoint(x: CGFloat(frame.pixelWidth), y: sepY))
+                context.addLine(to: CGPoint(x: dataStartX + dataWidth, y: sepY))
                 context.strokePath()
             }
         }

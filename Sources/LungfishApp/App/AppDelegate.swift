@@ -964,6 +964,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         mainWindowController?.mainSplitViewController?.activityIndicator?.show(
             message: "Importing VCF variants...", style: .determinate(progress: 0)
         )
+        let importStartedAt = Date()
 
         DispatchQueue.global(qos: .userInitiated).async {
             // All file I/O on background thread — no UI references captured
@@ -1001,9 +1002,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     sourceFile: vcfURL.lastPathComponent,
                     progressHandler: { [weak self] progress, message in
                         let clampedProgress = max(0.0, min(1.0, progress))
+                        let etaText = Self.estimatedRemainingText(progress: clampedProgress, startedAt: importStartedAt)
                         scheduleOnMainRunLoop {
                             self?.mainWindowController?.mainSplitViewController?.activityIndicator?.updateProgress(clampedProgress)
-                            self?.mainWindowController?.mainSplitViewController?.activityIndicator?.updateMessage(message)
+                            let displayMessage = etaText.isEmpty ? message : "\(message) • \(etaText)"
+                            self?.mainWindowController?.mainSplitViewController?.activityIndicator?.updateMessage(displayMessage)
                         }
                     }
                 )
@@ -1094,6 +1097,23 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 }
             }
         }
+    }
+
+    private nonisolated static func estimatedRemainingText(progress: Double, startedAt: Date) -> String {
+        guard progress > 0.01, progress < 1.0 else { return "" }
+        let elapsed = Date().timeIntervalSince(startedAt)
+        guard elapsed > 0.5 else { return "" }
+        let totalEstimate = elapsed / progress
+        let remaining = max(0, totalEstimate - elapsed)
+        guard remaining.isFinite else { return "" }
+
+        let rounded = Int(remaining.rounded())
+        if rounded < 60 {
+            return "ETA ~\(rounded)s"
+        }
+        let mins = rounded / 60
+        let secs = rounded % 60
+        return secs == 0 ? "ETA ~\(mins)m" : "ETA ~\(mins)m \(secs)s"
     }
 
     @objc func exportFASTA(_ sender: Any?) {

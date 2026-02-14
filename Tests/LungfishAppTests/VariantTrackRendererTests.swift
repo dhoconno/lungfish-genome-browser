@@ -80,13 +80,13 @@ final class VariantTrackRendererTests: XCTestCase {
     // MARK: - Layout Height Tests
 
     func testTotalHeightSummaryBarOnly() {
-        let state = SampleDisplayState()
+        let state = SampleDisplayState(showSummaryBar: true)
         let height = VariantTrackRenderer.totalHeight(sampleCount: 0, state: state)
         XCTAssertEqual(height, state.summaryBarHeight)
     }
 
     func testTotalHeightWithSamplesExpanded() {
-        let state = SampleDisplayState(showGenotypeRows: true, rowHeight: 10)
+        let state = SampleDisplayState(showGenotypeRows: true, showSummaryBar: true, rowHeight: 10)
         let height = VariantTrackRenderer.totalHeight(sampleCount: 5, state: state)
         let expected = state.summaryBarHeight
             + VariantTrackRenderer.summaryToRowGap
@@ -95,7 +95,7 @@ final class VariantTrackRendererTests: XCTestCase {
     }
 
     func testTotalHeightWithSamplesSquished() {
-        let state = SampleDisplayState(showGenotypeRows: true, rowHeight: 2)
+        let state = SampleDisplayState(showGenotypeRows: true, showSummaryBar: true, rowHeight: 2)
         let height = VariantTrackRenderer.totalHeight(sampleCount: 10, state: state)
         let expected = state.summaryBarHeight
             + VariantTrackRenderer.summaryToRowGap
@@ -104,7 +104,7 @@ final class VariantTrackRendererTests: XCTestCase {
     }
 
     func testTotalHeightGenotypeRowsHidden() {
-        let state = SampleDisplayState(showGenotypeRows: false)
+        let state = SampleDisplayState(showGenotypeRows: false, showSummaryBar: true)
         let height = VariantTrackRenderer.totalHeight(sampleCount: 10, state: state)
         XCTAssertEqual(height, state.summaryBarHeight)
     }
@@ -126,7 +126,7 @@ final class VariantTrackRendererTests: XCTestCase {
     }
 
     func testAllSampleRowsIncluded() {
-        let state = SampleDisplayState(showGenotypeRows: true, rowHeight: 2)
+        let state = SampleDisplayState(showGenotypeRows: true, showSummaryBar: true, rowHeight: 2)
         let height = VariantTrackRenderer.totalHeight(sampleCount: 200, state: state)
         let expected = state.summaryBarHeight
             + VariantTrackRenderer.summaryToRowGap

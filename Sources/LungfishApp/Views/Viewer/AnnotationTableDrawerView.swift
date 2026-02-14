@@ -19,6 +19,13 @@ protocol AnnotationTableDrawerDelegate: AnyObject {
     func annotationDrawer(_ drawer: AnnotationTableDrawerView, didDeleteVariants count: Int)
 }
 
+private extension String {
+    func value(after prefix: String) -> String? {
+        guard lowercased().hasPrefix(prefix.lowercased()) else { return nil }
+        return String(dropFirst(prefix.count))
+    }
+}
+
 // MARK: - AnnotationTableDrawerView
 
 /// A bottom drawer panel that displays a sortable, filterable table of annotations.
@@ -65,8 +72,10 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     /// Filtered and displayed annotations/variants.
     private(set) var displayedAnnotations: [AnnotationSearchIndex.SearchResult] = []
 
-    /// Current name filter text.
-    private var filterText: String = ""
+    /// Per-tab filter text so each tab preserves its own search state.
+    private var annotationFilterText: String = ""
+    private var variantFilterText: String = ""
+    private var sampleFilterText: String = ""
 
     /// Visible types for the annotation tab (empty means show all).
     private var visibleAnnotationTypes: Set<String> = []
@@ -183,7 +192,10 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
     private let scrollView = NSScrollView()
     private let tableView = NSTableView()
-    private let filterField = NSSearchField()
+    private let annotationFilterField = NSSearchField()
+    private let variantFilterField = NSSearchField()
+    private let sampleFilterField = NSSearchField()
+    private let addSampleFieldButton = NSButton()
     private let countLabel = NSTextField(labelWithString: "")
     private let headerBar = NSView()
     private let chipBar = NSView()
@@ -234,6 +246,15 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         return f
     }()
 
+    /// Returns the search field currently active for the selected tab.
+    private var activeSearchField: NSSearchField {
+        switch activeTab {
+        case .annotations: return annotationFilterField
+        case .variants: return variantFilterField
+        case .samples: return sampleFilterField
+        }
+    }
+
     // MARK: - Initialization
 
     override init(frame frameRect: NSRect) {
@@ -263,16 +284,25 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         headerBar.translatesAutoresizingMaskIntoConstraints = false
         addSubview(headerBar)
 
-        // Filter search field
-        filterField.placeholderString = "Filter by name or INFO (e.g. DP>20 AF>=0.05)..."
-        filterField.font = .systemFont(ofSize: 11)
-        filterField.controlSize = .small
-        filterField.translatesAutoresizingMaskIntoConstraints = false
-        filterField.sendsSearchStringImmediately = true
-        filterField.target = self
-        filterField.action = #selector(filterFieldChanged(_:))
-        filterField.setAccessibilityLabel("Filter annotations by name")
-        headerBar.addSubview(filterField)
+        // Filter search fields (tab-specific, only one visible at a time)
+        configureSearchField(
+            annotationFilterField,
+            placeholder: "Annotations: name, type:, chr:, strand:, region:chr:start-end",
+            accessibilityLabel: "Filter annotations"
+        )
+        configureSearchField(
+            variantFilterField,
+            placeholder: "Variants: ID text + DP>20 AF>=0.05 chr: pos:100-200 qual>=30 sc>=2",
+            accessibilityLabel: "Filter variants"
+        )
+        configureSearchField(
+            sampleFilterField,
+            placeholder: "Samples: name:, source:, visible:true/false, meta.FIELD:value",
+            accessibilityLabel: "Filter samples"
+        )
+        headerBar.addSubview(annotationFilterField)
+        headerBar.addSubview(variantFilterField)
+        headerBar.addSubview(sampleFilterField)
 
         // "All" convenience button
         let allButton = makeChipButton(title: "All", action: #selector(selectAllTypes(_:)))
@@ -283,6 +313,17 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         let noneButton = makeChipButton(title: "None", action: #selector(selectNoTypes(_:)))
         noneButton.translatesAutoresizingMaskIntoConstraints = false
         headerBar.addSubview(noneButton)
+
+        // Samples-tab convenience button for adding editable metadata fields.
+        addSampleFieldButton.title = "Add Field"
+        addSampleFieldButton.controlSize = .small
+        addSampleFieldButton.bezelStyle = .rounded
+        addSampleFieldButton.font = .systemFont(ofSize: 10, weight: .medium)
+        addSampleFieldButton.translatesAutoresizingMaskIntoConstraints = false
+        addSampleFieldButton.target = self
+        addSampleFieldButton.action = #selector(addCustomFieldAction(_:))
+        addSampleFieldButton.isHidden = true
+        headerBar.addSubview(addSampleFieldButton)
 
         // Tab segmented control (Annotations | Variants | Samples)
         tabControl.segmentCount = 3
@@ -377,15 +418,26 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             headerBar.trailingAnchor.constraint(equalTo: trailingAnchor),
             headerBar.heightAnchor.constraint(equalToConstant: 28),
 
-            filterField.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
-            filterField.leadingAnchor.constraint(equalTo: headerBar.leadingAnchor, constant: 8),
-            filterField.widthAnchor.constraint(equalToConstant: 200),
+            annotationFilterField.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+            annotationFilterField.leadingAnchor.constraint(equalTo: headerBar.leadingAnchor, constant: 8),
+            annotationFilterField.widthAnchor.constraint(equalToConstant: 280),
+
+            variantFilterField.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+            variantFilterField.leadingAnchor.constraint(equalTo: headerBar.leadingAnchor, constant: 8),
+            variantFilterField.widthAnchor.constraint(equalTo: annotationFilterField.widthAnchor),
+
+            sampleFilterField.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+            sampleFilterField.leadingAnchor.constraint(equalTo: headerBar.leadingAnchor, constant: 8),
+            sampleFilterField.widthAnchor.constraint(equalTo: annotationFilterField.widthAnchor),
 
             allButton.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
-            allButton.leadingAnchor.constraint(equalTo: filterField.trailingAnchor, constant: 8),
+            allButton.leadingAnchor.constraint(equalTo: annotationFilterField.trailingAnchor, constant: 8),
 
             noneButton.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
             noneButton.leadingAnchor.constraint(equalTo: allButton.trailingAnchor, constant: 4),
+
+            addSampleFieldButton.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+            addSampleFieldButton.leadingAnchor.constraint(equalTo: sampleFilterField.trailingAnchor, constant: 8),
 
             loadingIndicator.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
             loadingIndicator.leadingAnchor.constraint(equalTo: noneButton.trailingAnchor, constant: 8),
@@ -424,6 +476,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
         // Hide chip bar initially (shown after data loads)
         chipBar.isHidden = true
+        updateSearchFieldVisibility()
 
         // Accessibility
         setAccessibilityElement(true)
@@ -447,6 +500,10 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleViewportVariantsUpdated(_:)),
             name: .viewportVariantsUpdated, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleViewerCoordinatesChanged(_:)),
+            name: .viewerCoordinatesChanged, object: nil
         )
 
         // Observe sample display state changes from other sources (e.g. Inspector)
@@ -538,7 +595,53 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
     }
 
+    /// Tracks viewer pan/zoom even when variant fetch notifications are delayed or skipped by cache reuse.
+    @objc private func handleViewerCoordinatesChanged(_ notification: Notification) {
+        guard viewportSyncEnabled else { return }
+        if let expectedSource = viewportSyncSourceIdentifier {
+            guard let sender = notification.object as AnyObject?,
+                  ObjectIdentifier(sender) == expectedSource else {
+                return
+            }
+        }
+        guard let userInfo = notification.userInfo,
+              let chromosome = userInfo[NotificationUserInfoKey.chromosome] as? String,
+              let start = userInfo[NotificationUserInfoKey.start] as? Int,
+              let end = userInfo[NotificationUserInfoKey.end] as? Int else { return }
+        viewportRegion = (chromosome: chromosome, start: start, end: end)
+        guard activeTab == .variants else { return }
+        handleCoordinateSyncFromViewer()
+    }
+
+    private func handleCoordinateSyncFromViewer() {
+        viewportSyncWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.updateDisplayedAnnotations()
+        }
+        viewportSyncWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: workItem)
+    }
+
     // MARK: - Chip Button Factory
+
+    private func configureSearchField(_ field: NSSearchField, placeholder: String, accessibilityLabel: String) {
+        field.placeholderString = placeholder
+        field.font = .systemFont(ofSize: 11)
+        field.controlSize = .small
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.sendsSearchStringImmediately = true
+        field.target = self
+        field.action = #selector(filterFieldChanged(_:))
+        field.setAccessibilityLabel(accessibilityLabel)
+        field.isHidden = true
+    }
+
+    private func updateSearchFieldVisibility() {
+        annotationFilterField.isHidden = activeTab != .annotations
+        variantFilterField.isHidden = activeTab != .variants
+        sampleFilterField.isHidden = activeTab != .samples
+        addSampleFieldButton.isHidden = activeTab != .samples
+    }
 
     private func makeChipButton(title: String, action: Selector) -> NSButton {
         let button = NSButton(title: title, target: self, action: action)
@@ -673,9 +776,19 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         viewportSyncWorkItem = nil
         activeTab = tab
         tabControl.selectedSegment = tab.rawValue
+        updateSearchFieldVisibility()
 
         // Multi-select for variants and samples tabs
         tableView.allowsMultipleSelection = (tab == .variants || tab == .samples)
+
+        switch tab {
+        case .annotations:
+            annotationFilterField.stringValue = annotationFilterText
+        case .variants:
+            variantFilterField.stringValue = variantFilterText
+        case .samples:
+            sampleFilterField.stringValue = sampleFilterText
+        }
 
         // Reconfigure columns for the new tab
         configureColumnsForTab(tab)
@@ -688,6 +801,11 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             updateDisplayedSamples()
         } else {
             updateDisplayedAnnotations()
+        }
+
+        // Keep viewport-synced variants fresh when the user switches to that tab.
+        if tab == .variants {
+            handleCoordinateSyncFromViewer()
         }
     }
 
@@ -803,26 +921,39 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     // MARK: - Filtering
 
     private func updateDisplayedAnnotations() {
+        let currentFilterText: String = switch activeTab {
+        case .annotations: annotationFilterText
+        case .variants: variantFilterText
+        case .samples: sampleFilterText
+        }
+
         // Build the type filter set — only pass types if not all are selected
         let typeFilter: Set<String> = visibleTypes.count < availableTypes.count ? visibleTypes : []
 
         let entityName = activeTab == .annotations ? "annotations" : "variants"
         let activeTotal = activeTab == .annotations ? totalAnnotationCount : totalVariantCount
 
-        // Parse INFO filter expressions from the search text for the variants tab.
-        // Expressions like "DP>20" or "AF>=0.05" are split out; remaining text is used as a name filter.
-        let (nameFilter, infoFilters) = parseFilterText(filterText)
+        // Parse tab-specific advanced search expressions.
+        let annotationQuery = parseAnnotationFilterText(currentFilterText)
+        let variantQuery = parseVariantFilterText(currentFilterText)
+        let nameFilter = activeTab == .annotations ? annotationQuery.nameFilter : variantQuery.nameFilter
+        let infoFilters = variantQuery.infoFilters
 
         // SQLite mode: query the database directly with filters
         if let index = searchIndex, (index.hasDatabaseBackend || index.hasVariantDatabase) {
             if activeTab == .variants {
-                updateDisplayedVariants(index: index, nameFilter: nameFilter, typeFilter: typeFilter, infoFilters: infoFilters)
+                updateDisplayedVariants(index: index, typeFilter: typeFilter, query: variantQuery)
                 updateCountLabel()
                 return
             }
 
             // Annotations tab: global query
-            let matchingCount = index.queryAnnotationCount(nameFilter: nameFilter, types: typeFilter)
+            let mergedTypeFilter: Set<String> = {
+                guard let explicitType = annotationQuery.typeFilter, !explicitType.isEmpty else { return typeFilter }
+                if typeFilter.isEmpty { return explicitType }
+                return typeFilter.intersection(explicitType)
+            }()
+            let matchingCount = index.queryAnnotationCount(nameFilter: nameFilter, types: mergedTypeFilter)
 
             if matchingCount > Self.maxDisplayCount {
                 displayedAnnotations = []
@@ -834,8 +965,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                 tooManyLabel.isHidden = false
                 annotationSearchRegion = nil
             } else {
-                let results = index.queryAnnotationsOnly(nameFilter: nameFilter, types: typeFilter, limit: Self.maxDisplayCount)
-                displayedAnnotations = results
+                let results = index.queryAnnotationsOnly(nameFilter: nameFilter, types: mergedTypeFilter, limit: Self.maxDisplayCount * 3)
+                displayedAnnotations = applyAnnotationAdvancedFilters(results, query: annotationQuery).prefix(Self.maxDisplayCount).map { $0 }
                 tableView.reloadData()
                 scrollView.isHidden = false
                 tooManyLabel.isHidden = true
@@ -903,9 +1034,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
     private func updateDisplayedVariants(
         index: AnnotationSearchIndex,
-        nameFilter: String,
         typeFilter: Set<String>,
-        infoFilters: [VariantDatabase.InfoFilter]
+        query: VariantFilterQuery
     ) {
         // Determine the effective region for the query.
         // Priority:
@@ -943,14 +1073,17 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             effectiveRegion = nil
         }
 
-        if let region = effectiveRegion {
+        // Let advanced query constraints tighten/override the region.
+        let requestedRegion = query.region ?? effectiveRegion
+
+        if let region = requestedRegion {
             let count = index.queryVariantCountInRegion(
                 chromosome: region.chromosome,
                 start: region.start,
                 end: region.end,
-                nameFilter: nameFilter,
+                nameFilter: query.nameFilter,
                 types: typeFilter,
-                infoFilters: infoFilters
+                infoFilters: query.infoFilters
             )
             lastVariantQueryMatchCount = count
             lastVariantQueryScope = regionScope
@@ -968,19 +1101,22 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                     chromosome: region.chromosome,
                     start: region.start,
                     end: region.end,
-                    nameFilter: nameFilter,
+                    nameFilter: query.nameFilter,
                     types: typeFilter,
-                    infoFilters: infoFilters,
-                    limit: Self.maxDisplayCount
+                    infoFilters: query.infoFilters,
+                    limit: Self.maxDisplayCount * 3
                 )
-                displayedAnnotations = results
+                displayedAnnotations = applyVariantAdvancedFilters(results, query: query).prefix(Self.maxDisplayCount).map { $0 }
+                if query.hasPostFilters {
+                    lastVariantQueryMatchCount = displayedAnnotations.count
+                }
                 tableView.reloadData()
                 scrollView.isHidden = false
                 tooManyLabel.isHidden = true
             }
         } else {
             // No region constraint — global query over all variants
-            let matchingCount = index.queryVariantCount(nameFilter: nameFilter, types: typeFilter, infoFilters: infoFilters)
+            let matchingCount = index.queryVariantCount(nameFilter: query.nameFilter, types: typeFilter, infoFilters: query.infoFilters)
             lastVariantQueryMatchCount = matchingCount
             lastVariantQueryScope = .global
             if matchingCount > Self.maxDisplayCount {
@@ -992,8 +1128,16 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                 tooManyLabel.stringValue = "\(total) variants match — use the search field or type filters to narrow to \(max) or fewer"
                 tooManyLabel.isHidden = false
             } else {
-                let results = index.queryVariantsOnly(nameFilter: nameFilter, types: typeFilter, infoFilters: infoFilters, limit: Self.maxDisplayCount)
-                displayedAnnotations = results
+                let results = index.queryVariantsOnly(
+                    nameFilter: query.nameFilter,
+                    types: typeFilter,
+                    infoFilters: query.infoFilters,
+                    limit: Self.maxDisplayCount * 3
+                )
+                displayedAnnotations = applyVariantAdvancedFilters(results, query: query).prefix(Self.maxDisplayCount).map { $0 }
+                if query.hasPostFilters {
+                    lastVariantQueryMatchCount = displayedAnnotations.count
+                }
                 tableView.reloadData()
                 scrollView.isHidden = false
                 tooManyLabel.isHidden = true
@@ -1073,7 +1217,14 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     }
 
     @objc private func filterFieldChanged(_ sender: NSSearchField) {
-        filterText = sender.stringValue
+        switch activeTab {
+        case .annotations:
+            annotationFilterText = sender.stringValue
+        case .variants:
+            variantFilterText = sender.stringValue
+        case .samples:
+            sampleFilterText = sender.stringValue
+        }
         // Clear annotation-specific region when user types on variants tab
         if activeTab == .variants {
             selectedAnnotationRegion = nil
@@ -1085,29 +1236,203 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         }
     }
 
-    /// Splits user filter text into a plain name filter and structured INFO filter expressions.
-    ///
-    /// Tokens like `DP>20`, `AF>=0.05`, or `GENE~BRCA` are parsed as INFO filters;
-    /// all remaining tokens are rejoined as the name/ID search string.
-    private func parseFilterText(_ text: String) -> (nameFilter: String, infoFilters: [VariantDatabase.InfoFilter]) {
-        guard activeTab == .variants, !text.isEmpty else {
-            return (text, [])
-        }
+    private struct AnnotationFilterQuery {
+        var nameFilter: String = ""
+        var typeFilter: Set<String>?
+        var chromosome: String?
+        var strand: String?
+        var start: Int?
+        var end: Int?
+    }
 
+    private struct VariantFilterQuery {
+        var nameFilter: String = ""
         var infoFilters: [VariantDatabase.InfoFilter] = []
-        var nameTokens: [String] = []
+        var region: (chromosome: String, start: Int, end: Int)?
+        var minQuality: Double?
+        var maxQuality: Double?
+        var minSampleCount: Int?
+        var maxSampleCount: Int?
 
-        // Split on whitespace — each token is either an INFO expression or a name search term
-        for token in text.split(separator: " ") where !token.isEmpty {
-            if let filter = VariantDatabase.InfoFilter.parse(String(token)) {
-                infoFilters.append(filter)
+        var hasPostFilters: Bool {
+            minQuality != nil || maxQuality != nil || minSampleCount != nil || maxSampleCount != nil
+        }
+    }
+
+    private struct SampleFilterQuery {
+        var textFilter: String = ""
+        var nameFilter: String?
+        var sourceFilter: String?
+        var visibility: Bool?
+        var metadataFilters: [(String, String)] = []
+    }
+
+    /// Parses advanced annotation search syntax:
+    /// `type:gene chr:NC_045512 strand:+ region:NC_045512:100-900 myName`
+    private func parseAnnotationFilterText(_ text: String) -> AnnotationFilterQuery {
+        var query = AnnotationFilterQuery()
+        var freeTokens: [String] = []
+        for tokenSub in text.split(whereSeparator: \.isWhitespace) {
+            let token = String(tokenSub)
+            if let value = token.value(after: "type:") {
+                query.typeFilter = [value]
+            } else if let value = token.value(after: "chr:") ?? token.value(after: "chrom:") {
+                query.chromosome = value
+            } else if let value = token.value(after: "strand:") {
+                query.strand = value
+            } else if let value = token.value(after: "start:"), let parsed = Int(value) {
+                query.start = parsed
+            } else if let value = token.value(after: "end:"), let parsed = Int(value) {
+                query.end = parsed
+            } else if let value = token.value(after: "region:"), let parsed = parseRegion(value) {
+                query.chromosome = parsed.chromosome
+                query.start = parsed.start
+                query.end = parsed.end
             } else {
-                nameTokens.append(String(token))
+                freeTokens.append(token)
             }
         }
+        query.nameFilter = freeTokens.joined(separator: " ")
+        return query
+    }
 
-        let nameFilter = nameTokens.joined(separator: " ")
-        return (nameFilter, infoFilters)
+    /// Parses advanced variant syntax:
+    /// `chr:7 pos:100-200 DP>20 AF>=0.01 qual>=30 sc>=2 rs123`
+    private func parseVariantFilterText(_ text: String) -> VariantFilterQuery {
+        var query = VariantFilterQuery()
+        var nameTokens: [String] = []
+
+        for tokenSub in text.split(whereSeparator: \.isWhitespace) {
+            let token = String(tokenSub)
+            if let parsed = VariantDatabase.InfoFilter.parse(token) {
+                query.infoFilters.append(parsed)
+                continue
+            }
+            if let value = token.value(after: "chr:") ?? token.value(after: "chrom:") {
+                if let region = query.region {
+                    query.region = (value, region.start, region.end)
+                } else {
+                    query.region = (value, 0, Int.max)
+                }
+                continue
+            }
+            if let value = token.value(after: "pos:") ?? token.value(after: "range:"),
+               let range = parseRange(value) {
+                let chr = query.region?.chromosome ?? ""
+                if !chr.isEmpty {
+                    query.region = (chr, range.start, range.end)
+                }
+                continue
+            }
+            if let opValue = parseComparisonToken(token, keys: ["qual", "quality"]) {
+                if opValue.op == ">" || opValue.op == ">=" {
+                    query.minQuality = opValue.value
+                } else if opValue.op == "<" || opValue.op == "<=" {
+                    query.maxQuality = opValue.value
+                }
+                continue
+            }
+            if let opValue = parseComparisonToken(token, keys: ["sc", "samples", "samplecount"]) {
+                let count = Int(opValue.value.rounded())
+                if opValue.op == ">" || opValue.op == ">=" {
+                    query.minSampleCount = count
+                } else if opValue.op == "<" || opValue.op == "<=" {
+                    query.maxSampleCount = count
+                }
+                continue
+            }
+            nameTokens.append(token)
+        }
+        query.nameFilter = nameTokens.joined(separator: " ")
+        // Discard placeholder region if no valid chromosome was specified.
+        if let region = query.region, region.chromosome.isEmpty {
+            query.region = nil
+        }
+        return query
+    }
+
+    /// Parses advanced sample syntax:
+    /// `name:S1 source:run42 visible:true meta.Country:USA`
+    private func parseSampleFilterText(_ text: String) -> SampleFilterQuery {
+        var query = SampleFilterQuery()
+        var freeTokens: [String] = []
+        for tokenSub in text.split(whereSeparator: \.isWhitespace) {
+            let token = String(tokenSub)
+            if let value = token.value(after: "name:") {
+                query.nameFilter = value
+            } else if let value = token.value(after: "source:") {
+                query.sourceFilter = value
+            } else if let value = token.value(after: "visible:") {
+                let lower = value.lowercased()
+                if ["1", "true", "yes", "on"].contains(lower) { query.visibility = true }
+                if ["0", "false", "no", "off"].contains(lower) { query.visibility = false }
+            } else if token.lowercased().hasPrefix("meta."),
+                      let sep = token.firstIndex(of: ":") {
+                let key = String(token[token.index(token.startIndex, offsetBy: 5)..<sep])
+                let value = String(token[token.index(after: sep)...])
+                if !key.isEmpty, !value.isEmpty {
+                    query.metadataFilters.append((key, value))
+                }
+            } else {
+                freeTokens.append(token)
+            }
+        }
+        query.textFilter = freeTokens.joined(separator: " ")
+        return query
+    }
+
+    private func applyAnnotationAdvancedFilters(
+        _ results: [AnnotationSearchIndex.SearchResult],
+        query: AnnotationFilterQuery
+    ) -> [AnnotationSearchIndex.SearchResult] {
+        results.filter { row in
+            if let chr = query.chromosome, row.chromosome.caseInsensitiveCompare(chr) != .orderedSame { return false }
+            if let strand = query.strand, row.strand.caseInsensitiveCompare(strand) != .orderedSame { return false }
+            if let start = query.start, row.end <= start { return false }
+            if let end = query.end, row.start >= end { return false }
+            return true
+        }
+    }
+
+    private func applyVariantAdvancedFilters(
+        _ results: [AnnotationSearchIndex.SearchResult],
+        query: VariantFilterQuery
+    ) -> [AnnotationSearchIndex.SearchResult] {
+        results.filter { row in
+            if let minQ = query.minQuality, (row.quality ?? -Double.greatestFiniteMagnitude) < minQ { return false }
+            if let maxQ = query.maxQuality, (row.quality ?? Double.greatestFiniteMagnitude) > maxQ { return false }
+            if let minSC = query.minSampleCount, (row.sampleCount ?? 0) < minSC { return false }
+            if let maxSC = query.maxSampleCount, (row.sampleCount ?? Int.max) > maxSC { return false }
+            return true
+        }
+    }
+
+    private func parseRange(_ text: String) -> (start: Int, end: Int)? {
+        let parts = text.split(separator: "-", maxSplits: 1).map(String.init)
+        guard parts.count == 2, let start = Int(parts[0]), let end = Int(parts[1]) else { return nil }
+        guard end > start else { return nil }
+        return (start, end)
+    }
+
+    private func parseRegion(_ text: String) -> (chromosome: String, start: Int, end: Int)? {
+        let pieces = text.split(separator: ":", maxSplits: 1).map(String.init)
+        guard pieces.count == 2, !pieces[0].isEmpty else { return nil }
+        guard let range = parseRange(pieces[1]) else { return nil }
+        return (pieces[0], range.start, range.end)
+    }
+
+    private func parseComparisonToken(_ token: String, keys: [String]) -> (op: String, value: Double)? {
+        let operators = [">=", "<=", ">", "<"]
+        for key in keys {
+            for op in operators {
+                let prefix = "\(key)\(op)"
+                if token.lowercased().hasPrefix(prefix),
+                   let value = Double(token.dropFirst(prefix.count)) {
+                    return (op, value)
+                }
+            }
+        }
+        return nil
     }
 
     @objc private func typeChipToggled(_ sender: NSButton) {
@@ -1872,7 +2197,7 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         }
 
         // Only compute a meaningful region when filtering is active
-        guard !filterText.isEmpty || visibleAnnotationTypes.count < availableAnnotationTypes.count else {
+        guard !annotationFilterText.isEmpty || visibleAnnotationTypes.count < availableAnnotationTypes.count else {
             annotationSearchRegion = nil
             return
         }
@@ -1959,7 +2284,8 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
 
     /// Updates the displayed samples list based on the current filter text and sample order.
     private func updateDisplayedSamples() {
-        let filter = filterText.lowercased()
+        let query = parseSampleFilterText(sampleFilterText)
+        let freeText = query.textFilter.lowercased()
 
         displayedSamples = resolvedSampleOrder().compactMap { name in
             let sourceFile = sampleSourceFiles[name] ?? ""
@@ -1967,9 +2293,16 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
             let isVisible = !currentSampleDisplayState.hiddenSamples.contains(name)
 
             // Apply text filter across name, source, and metadata values
-            if !filter.isEmpty {
+            if !freeText.isEmpty {
                 let searchText = ([name, sourceFile] + metadata.values).joined(separator: " ").lowercased()
-                guard searchText.contains(filter) else { return nil }
+                guard searchText.contains(freeText) else { return nil }
+            }
+            if let specificName = query.nameFilter, !name.localizedCaseInsensitiveContains(specificName) { return nil }
+            if let source = query.sourceFilter, !sourceFile.localizedCaseInsensitiveContains(source) { return nil }
+            if let expectedVisibility = query.visibility, expectedVisibility != isVisible { return nil }
+            for (key, expectedValue) in query.metadataFilters {
+                let actual = metadata[key] ?? metadata.first(where: { $0.key.caseInsensitiveCompare(key) == .orderedSame })?.value ?? ""
+                if !actual.localizedCaseInsensitiveContains(expectedValue) { return nil }
             }
 
             return SampleDisplayRow(name: name, sourceFile: sourceFile, isVisible: isVisible, metadata: metadata)

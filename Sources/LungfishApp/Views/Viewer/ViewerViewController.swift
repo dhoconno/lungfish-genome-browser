@@ -1486,7 +1486,7 @@ public class ViewerViewController: NSViewController {
         // Notify toolbar / other observers about coordinate changes
         NotificationCenter.default.post(
             name: .viewerCoordinatesChanged,
-            object: self,
+            object: viewerView,
             userInfo: [
                 NotificationUserInfoKey.chromosome: frame.chromosome,
                 NotificationUserInfoKey.start: Int(frame.start),
@@ -1873,9 +1873,14 @@ public class SequenceViewerView: NSView {
     /// Updated after annotation rendering to reflect actual annotation height.
     private var lastAnnotationBottomY: CGFloat = 0
 
+    /// Extra spacing to prevent annotation labels from colliding with variant labels/rows.
+    private let annotationToVariantPadding: CGFloat = 10
+    /// Reserve text descender space below annotation rows (overflow/hint labels).
+    private let annotationLabelClearance: CGFloat = 14
+
     /// Y offset where variant summary bar starts (below annotations).
     private var variantTrackY: CGFloat {
-        max(lastAnnotationBottomY + 4, annotationTrackY + 4)
+        max(lastAnnotationBottomY + annotationToVariantPadding, annotationTrackY + annotationToVariantPadding)
     }
 
     /// Cached filtered variant annotations. Invalidated by `invalidateFilteredVariantCache()`.
@@ -3636,11 +3641,11 @@ public class SequenceViewerView: NSView {
             || (displayAnnotations.count > maxSquishedFeatures && scale > annotationSquishedThreshold)
 
         if useDensityMode {
-            lastAnnotationBottomY = annotationTrackY + 30  // density histogram height
+            lastAnnotationBottomY = annotationTrackY + 30 + annotationLabelClearance  // density histogram + label
         } else {
             let (rows, _) = packAnnotationsLayered(displayAnnotations, frame: frame)
             let rowH: CGFloat = scale > annotationSquishedThreshold ? 7 : (annotationHeight + annotationRowSpacing)
-            lastAnnotationBottomY = annotationTrackY + CGFloat(rows.count) * rowH
+            lastAnnotationBottomY = annotationTrackY + CGFloat(rows.count) * rowH + annotationLabelClearance
         }
 
         context.restoreGState()
