@@ -115,6 +115,55 @@ final class VariantDatabaseTests: XCTestCase {
         }
     }
 
+    func testOpenRejectsUnsupportedSchemaVersion() throws {
+        let dbURL = tempDir.appendingPathComponent("unsupported_schema.db")
+        var rawDB: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(dbURL.path, &rawDB), SQLITE_OK)
+        defer { sqlite3_close(rawDB) }
+        XCTAssertNotNil(rawDB)
+        XCTAssertEqual(sqlite3_exec(rawDB, """
+            CREATE TABLE variants (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chromosome TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                end_pos INTEGER NOT NULL,
+                variant_id TEXT NOT NULL,
+                ref TEXT NOT NULL,
+                alt TEXT NOT NULL,
+                variant_type TEXT NOT NULL,
+                quality REAL,
+                filter TEXT,
+                info TEXT,
+                sample_count INTEGER DEFAULT 0
+            );
+            CREATE TABLE genotypes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                variant_id INTEGER NOT NULL,
+                sample_name TEXT NOT NULL,
+                genotype TEXT,
+                allele1 INTEGER NOT NULL DEFAULT -1,
+                allele2 INTEGER NOT NULL DEFAULT -1,
+                is_phased INTEGER NOT NULL DEFAULT 0,
+                depth INTEGER,
+                genotype_quality INTEGER,
+                allele_depths TEXT,
+                raw_fields TEXT
+            );
+            CREATE TABLE samples (name TEXT PRIMARY KEY, display_name TEXT, source_file TEXT);
+            CREATE TABLE variant_info (variant_id INTEGER NOT NULL, key TEXT NOT NULL, value TEXT);
+            CREATE TABLE variant_info_defs (key TEXT PRIMARY KEY, type TEXT NOT NULL, number TEXT NOT NULL, description TEXT);
+            CREATE TABLE db_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            INSERT INTO db_metadata VALUES ('schema_version', '2');
+            """, nil, nil, nil), SQLITE_OK)
+
+        XCTAssertThrowsError(try VariantDatabase(url: dbURL)) { error in
+            guard case VariantDatabaseError.invalidSchema(let message) = error else {
+                return XCTFail("Expected invalidSchema error, got \(error)")
+            }
+            XCTAssertTrue(message.contains("Unsupported schema_version"))
+        }
+    }
+
     // MARK: - Total Count Tests
 
     func testTotalCount() throws {

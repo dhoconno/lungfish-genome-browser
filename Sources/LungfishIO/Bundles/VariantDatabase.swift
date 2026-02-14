@@ -290,6 +290,19 @@ private func sqliteBindTextOrNull(_ stmt: OpaquePointer?, _ index: Int32, _ text
 /// ```
 public final class VariantDatabase: @unchecked Sendable {
 
+    private static let expectedSchemaVersion = 3
+    private static let requiredTables: Set<String> = [
+        "variants", "genotypes", "samples", "variant_info", "variant_info_defs", "db_metadata"
+    ]
+    private static let requiredVariantColumns: Set<String> = [
+        "id", "chromosome", "position", "end_pos", "variant_id",
+        "ref", "alt", "variant_type", "quality", "filter", "info", "sample_count"
+    ]
+    private static let requiredGenotypeColumns: Set<String> = [
+        "variant_id", "sample_name", "genotype", "allele1", "allele2",
+        "is_phased", "depth", "genotype_quality", "allele_depths", "raw_fields"
+    ]
+
     private var db: OpaquePointer?
     private let url: URL
 
@@ -316,8 +329,12 @@ public final class VariantDatabase: @unchecked Sendable {
             db = nil
             throw VariantDatabaseError.openFailed(msg)
         }
+        guard let db else {
+            throw VariantDatabaseError.openFailed("Database handle is nil")
+        }
         // Enforce FK constraints so genotype rows cannot be orphaned.
         sqlite3_exec(db, "PRAGMA foreign_keys = ON", nil, nil, nil)
+        try Self.validateSchema(db: db)
         variantDBLogger.info("Opened variant database: \(url.lastPathComponent)")
     }
 
@@ -340,6 +357,55 @@ public final class VariantDatabase: @unchecked Sendable {
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
         sqliteBindText(stmt, 1, name)
         return sqlite3_step(stmt) == SQLITE_ROW
+    }
+
+    private static func columnsForTable(db: OpaquePointer, table: String) -> Set<String> {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        let sql = "PRAGMA table_info(\(table))"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        var columns: Set<String> = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let cStr = sqlite3_column_text(stmt, 1) {
+                columns.insert(String(cString: cStr))
+            }
+        }
+        return columns
+    }
+
+    private static func schemaVersion(db: OpaquePointer) -> Int? {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        let sql = "SELECT value FROM db_metadata WHERE key='schema_version' LIMIT 1"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        guard sqlite3_step(stmt) == SQLITE_ROW, let cStr = sqlite3_column_text(stmt, 0) else {
+            return nil
+        }
+        return Int(String(cString: cStr))
+    }
+
+    private static func validateSchema(db: OpaquePointer) throws {
+        let existingTables = requiredTables.filter { tableExists(db: db, name: $0) }
+        guard existingTables.count == requiredTables.count else {
+            let missing = requiredTables.subtracting(existingTables).sorted().joined(separator: ", ")
+            throw VariantDatabaseError.invalidSchema("Missing required tables: \(missing)")
+        }
+        let variantColumns = columnsForTable(db: db, table: "variants")
+        guard requiredVariantColumns.isSubset(of: variantColumns) else {
+            let missing = requiredVariantColumns.subtracting(variantColumns).sorted().joined(separator: ", ")
+            throw VariantDatabaseError.invalidSchema("variants table missing required columns: \(missing)")
+        }
+        let genotypeColumns = columnsForTable(db: db, table: "genotypes")
+        guard requiredGenotypeColumns.isSubset(of: genotypeColumns) else {
+            let missing = requiredGenotypeColumns.subtracting(genotypeColumns).sorted().joined(separator: ", ")
+            throw VariantDatabaseError.invalidSchema("genotypes table missing required columns: \(missing)")
+        }
+        guard let version = schemaVersion(db: db) else {
+            throw VariantDatabaseError.invalidSchema("Missing db_metadata schema_version")
+        }
+        guard version == expectedSchemaVersion else {
+            throw VariantDatabaseError.invalidSchema("Unsupported schema_version \(version); expected \(expectedSchemaVersion)")
+        }
     }
 
     // MARK: - Metadata Queries
@@ -2006,6 +2072,14 @@ public final class VariantDatabase: @unchecked Sendable {
                     if sampleData == "." || sampleData == "./." || sampleData == ".|." { continue }
 
                     let sampleFields = sampleData.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+                    if gtIndex == nil {
+                        // FORMAT can omit GT for some callsets; treat non-empty sample payload as called
+                        // for sample_count even though we cannot infer zygosity or hom-ref omission.
+                        if sampleFields.contains(where: { !$0.isEmpty && $0 != "." }) {
+                            calledCount += 1
+                        }
+                        continue
+                    }
 
                     // Parse GT
                     var allele1 = -1
@@ -2454,11 +2528,13 @@ public final class VariantDatabase: @unchecked Sendable {
 public enum VariantDatabaseError: Error, LocalizedError, Sendable {
     case openFailed(String)
     case createFailed(String)
+    case invalidSchema(String)
 
     public var errorDescription: String? {
         switch self {
         case .openFailed(let msg): return "Failed to open variant database: \(msg)"
         case .createFailed(let msg): return "Failed to create variant database: \(msg)"
+        case .invalidSchema(let msg): return "Invalid variant database schema: \(msg)"
         }
     }
 }

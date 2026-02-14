@@ -260,6 +260,36 @@ final class AnnotationDatabaseTests: XCTestCase {
         XCTAssertNil(record)
     }
 
+    func testOpenRejectsMissingSchemaMetadata() throws {
+        let dbURL = tempDir.appendingPathComponent("bad_annotations.db")
+        var rawDB: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(dbURL.path, &rawDB), SQLITE_OK)
+        defer { sqlite3_close(rawDB) }
+        XCTAssertNotNil(rawDB)
+        XCTAssertEqual(sqlite3_exec(rawDB, """
+            CREATE TABLE annotations (
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                chromosome TEXT NOT NULL,
+                start INTEGER NOT NULL,
+                end INTEGER NOT NULL,
+                strand TEXT NOT NULL DEFAULT '.',
+                attributes TEXT,
+                block_count INTEGER,
+                block_sizes TEXT,
+                block_starts TEXT,
+                gene_name TEXT
+            );
+            """, nil, nil, nil), SQLITE_OK)
+
+        XCTAssertThrowsError(try AnnotationDatabase(url: dbURL)) { error in
+            guard case AnnotationDatabaseError.invalidSchema(let message) = error else {
+                return XCTFail("Expected invalidSchema error, got \(error)")
+            }
+            XCTAssertTrue(message.contains("db_metadata"))
+        }
+    }
+
     // MARK: - Tests: allTypes with New Types
 
     func testAllTypesIncludesNewTypes() throws {

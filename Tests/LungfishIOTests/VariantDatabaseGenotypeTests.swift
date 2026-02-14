@@ -62,6 +62,14 @@ final class VariantDatabaseGenotypeTests: XCTestCase {
     chr1\t200\trs2\tC\tT\t45.0\tPASS\tDP=25
     """
 
+    /// VCF where FORMAT omits GT (sample_count should still reflect non-empty sample payloads)
+    private let noGTFormatVCF = """
+    ##fileformat=VCFv4.3
+    ##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read depth">
+    #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\tS2\tS3
+    chr1\t100\trsNoGT\tA\tG\t60.0\tPASS\t.\tDP\t12\t.\t22
+    """
+
     private var tempDir: URL!
 
     override func setUpWithError() throws {
@@ -188,17 +196,12 @@ final class VariantDatabaseGenotypeTests: XCTestCase {
         let (db, _) = try createDatabase(from: edgeCaseVCF)
 
         // First variant: S1="./.:.", S2=".|.:.", S3="0/1:20"
-        // Only bare ".", "./.", ".|." are skipped — "./.:." has FORMAT fields so it's not bare
-        // All 3 samples are stored (S1 and S2 with no-call alleles, S3 with het)
+        // No-call genotypes are omitted in v3, so only called non-hom-ref rows are stored.
         let variants = db.query(chromosome: "chr1", start: 99, end: 100)
         let variant = try XCTUnwrap(variants.first)
         let genotypes = db.genotypes(forVariantId: variant.id!)
 
-        XCTAssertEqual(genotypes.count, 3, "All samples stored (./.:. is not bare missing)")
-
-        let s1 = genotypes.first { $0.sampleName == "S1" }
-        XCTAssertEqual(s1?.genotypeCall, .noCall, "S1 ./. should be no call")
-        XCTAssertNil(s1?.depth, "S1 DP is '.' → nil")
+        XCTAssertEqual(genotypes.count, 1, "Only S3 should be stored as a called non-hom-ref genotype")
 
         let s3 = genotypes.first { $0.sampleName == "S3" }
         XCTAssertEqual(s3?.genotypeCall, .het)
@@ -285,6 +288,16 @@ final class VariantDatabaseGenotypeTests: XCTestCase {
         for v in variants {
             XCTAssertEqual(v.sampleCount, 0)
         }
+    }
+
+    func testSampleCountWhenFormatHasNoGT() throws {
+        let (db, _) = try createDatabase(from: noGTFormatVCF)
+        let variants = db.query(chromosome: "chr1", start: 99, end: 100)
+        XCTAssertEqual(variants.count, 1)
+        XCTAssertEqual(variants.first?.sampleCount, 2, "S1 and S3 should count as called when FORMAT has no GT")
+        let variant = try XCTUnwrap(variants.first)
+        let genotypes = db.genotypes(forVariantId: try XCTUnwrap(variant.id))
+        XCTAssertTrue(genotypes.isEmpty, "Without GT, no genotype rows should be inserted")
     }
 
     // MARK: - Variant Row ID

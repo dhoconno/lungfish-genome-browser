@@ -133,6 +133,12 @@ extension AnnotationDatabaseRecord {
 /// ```
 public final class AnnotationDatabase: @unchecked Sendable {
 
+    private static let expectedSchemaVersion = 4
+    private static let requiredAnnotationColumns: Set<String> = [
+        "name", "type", "chromosome", "start", "end", "strand",
+        "attributes", "block_count", "block_sizes", "block_starts", "gene_name"
+    ]
+
     private var db: OpaquePointer?
     private let url: URL
 
@@ -149,6 +155,11 @@ public final class AnnotationDatabase: @unchecked Sendable {
             db = nil
             throw AnnotationDatabaseError.openFailed(msg)
         }
+        guard let db else {
+            throw AnnotationDatabaseError.openFailed("Database handle is nil")
+        }
+
+        try Self.validateSchema(db: db)
 
         dbLogger.info("Opened annotation database: \(url.lastPathComponent)")
     }
@@ -157,6 +168,62 @@ public final class AnnotationDatabase: @unchecked Sendable {
         if let db {
             sqlite3_close(db)
         }
+    }
+
+    private static func validateSchema(db: OpaquePointer) throws {
+        guard tableExists(db: db, name: "annotations") else {
+            throw AnnotationDatabaseError.invalidSchema("Missing required table: annotations")
+        }
+        guard tableExists(db: db, name: "db_metadata") else {
+            throw AnnotationDatabaseError.invalidSchema("Missing required table: db_metadata")
+        }
+        let columns = columnsForTable(db: db, table: "annotations")
+        guard requiredAnnotationColumns.isSubset(of: columns) else {
+            let missing = requiredAnnotationColumns.subtracting(columns).sorted().joined(separator: ", ")
+            throw AnnotationDatabaseError.invalidSchema("annotations table missing required columns: \(missing)")
+        }
+        guard let version = schemaVersion(db: db) else {
+            throw AnnotationDatabaseError.invalidSchema("Missing db_metadata schema_version")
+        }
+        guard version == expectedSchemaVersion else {
+            throw AnnotationDatabaseError.invalidSchema(
+                "Unsupported schema_version \(version); expected \(expectedSchemaVersion)"
+            )
+        }
+    }
+
+    private static func tableExists(db: OpaquePointer, name: String) -> Bool {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        let sql = "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        sqlite3_bind_text(stmt, 1, (name as NSString).utf8String, -1, nil)
+        return sqlite3_step(stmt) == SQLITE_ROW
+    }
+
+    private static func columnsForTable(db: OpaquePointer, table: String) -> Set<String> {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        let sql = "PRAGMA table_info(\(table))"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        var columns: Set<String> = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let cStr = sqlite3_column_text(stmt, 1) {
+                columns.insert(String(cString: cStr))
+            }
+        }
+        return columns
+    }
+
+    private static func schemaVersion(db: OpaquePointer) -> Int? {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        let sql = "SELECT value FROM db_metadata WHERE key='schema_version' LIMIT 1"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        guard sqlite3_step(stmt) == SQLITE_ROW, let cStr = sqlite3_column_text(stmt, 0) else {
+            return nil
+        }
+        return Int(String(cString: cStr))
     }
 
     /// Returns the total number of annotations in the database.
@@ -469,6 +536,10 @@ public final class AnnotationDatabase: @unchecked Sendable {
             block_starts TEXT,
             gene_name TEXT
         );
+        CREATE TABLE db_metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
         """
         var errMsg: UnsafeMutablePointer<CChar>?
         sqlite3_exec(db, schema, nil, nil, &errMsg)
@@ -477,6 +548,7 @@ public final class AnnotationDatabase: @unchecked Sendable {
             sqlite3_free(errMsg)
             throw AnnotationDatabaseError.createFailed(msg)
         }
+        sqlite3_exec(db, "INSERT INTO db_metadata VALUES ('schema_version', '4')", nil, nil, nil)
 
         // Begin transaction for bulk insert
         sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil)
@@ -639,6 +711,10 @@ public final class AnnotationDatabase: @unchecked Sendable {
             block_starts TEXT,
             gene_name TEXT
         );
+        CREATE TABLE db_metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
         """
         var errMsg: UnsafeMutablePointer<CChar>?
         sqlite3_exec(db, schema, nil, nil, &errMsg)
@@ -647,6 +723,7 @@ public final class AnnotationDatabase: @unchecked Sendable {
             sqlite3_free(errMsg)
             throw AnnotationDatabaseError.createFailed(msg)
         }
+        sqlite3_exec(db, "INSERT INTO db_metadata VALUES ('schema_version', '4')", nil, nil, nil)
 
         let chromSizeMap: [String: Int64]?
         if let sizes = chromosomeSizes {
@@ -1144,11 +1221,13 @@ extension AnnotationDatabaseRecord {
 public enum AnnotationDatabaseError: Error, LocalizedError, Sendable {
     case openFailed(String)
     case createFailed(String)
+    case invalidSchema(String)
 
     public var errorDescription: String? {
         switch self {
         case .openFailed(let msg): return "Failed to open annotation database: \(msg)"
         case .createFailed(let msg): return "Failed to create annotation database: \(msg)"
+        case .invalidSchema(let msg): return "Invalid annotation database schema: \(msg)"
         }
     }
 }
