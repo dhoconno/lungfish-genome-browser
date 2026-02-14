@@ -1,0 +1,318 @@
+// VariantTableEnhancementTests.swift - Tests for Phase 1 variant table features
+// Copyright (c) 2024 Lungfish Contributors
+// SPDX-License-Identifier: MIT
+
+import XCTest
+@testable import LungfishCore
+@testable import LungfishIO
+@testable import LungfishApp
+
+@MainActor
+final class VariantTableEnhancementTests: XCTestCase {
+
+    private nonisolated(unsafe) var tempDir: URL!
+
+    override func setUp() {
+        super.setUp()
+        tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vt_enhance_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    }
+
+    override func tearDown() {
+        // Clean up UserDefaults test keys
+        UserDefaults.standard.removeObject(forKey: "ColumnPreferences_annotations")
+        UserDefaults.standard.removeObject(forKey: "ColumnPreferences_variantCalls")
+        UserDefaults.standard.removeObject(forKey: "ColumnPreferences_variantGenotypes")
+        UserDefaults.standard.removeObject(forKey: "ColumnPreferences_samples")
+        if let tempDir {
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+        super.tearDown()
+    }
+
+    // MARK: - Column Preference Model Tests
+
+    func testColumnPreferenceRoundTrip() throws {
+        let prefs = TabColumnPreferences(columns: [
+            ColumnPreference(id: "NameColumn", title: "Name", isVisible: true, order: 0),
+            ColumnPreference(id: "TypeColumn", title: "Type", isVisible: false, order: 1),
+            ColumnPreference(id: "ChromColumn", title: "Chrom", isVisible: true, order: 2),
+        ])
+
+        ColumnPrefsKey.save(prefs, tab: "test_roundtrip")
+        let loaded = ColumnPrefsKey.load(tab: "test_roundtrip")
+        XCTAssertNotNil(loaded)
+        XCTAssertEqual(loaded?.columns.count, 3)
+        XCTAssertEqual(loaded?.columns[1].isVisible, false)
+
+        // Clean up
+        UserDefaults.standard.removeObject(forKey: "ColumnPreferences_test_roundtrip")
+    }
+
+    func testVisibleColumnsFilter() {
+        let prefs = TabColumnPreferences(columns: [
+            ColumnPreference(id: "A", title: "A", isVisible: true, order: 2),
+            ColumnPreference(id: "B", title: "B", isVisible: false, order: 1),
+            ColumnPreference(id: "C", title: "C", isVisible: true, order: 0),
+        ])
+
+        let visible = prefs.visibleColumns
+        XCTAssertEqual(visible.count, 2)
+        XCTAssertEqual(visible[0].id, "C")  // order 0 first
+        XCTAssertEqual(visible[1].id, "A")  // order 2 second
+    }
+
+    func testResetToDefaults() {
+        var prefs = TabColumnPreferences(columns: [
+            ColumnPreference(id: "A", title: "A", isVisible: false, order: 5),
+            ColumnPreference(id: "B", title: "B", isVisible: false, order: 3),
+        ])
+        prefs.resetToDefaults()
+        XCTAssertTrue(prefs.columns[0].isVisible)
+        XCTAssertTrue(prefs.columns[1].isVisible)
+        XCTAssertEqual(prefs.columns[0].order, 0)
+        XCTAssertEqual(prefs.columns[1].order, 1)
+    }
+
+    func testLoadMissingPrefsReturnsNil() {
+        let loaded = ColumnPrefsKey.load(tab: "nonexistent_tab_\(UUID().uuidString)")
+        XCTAssertNil(loaded)
+    }
+
+    // MARK: - Genotype Display Row Tests
+
+    func testGenotypeClassification() {
+        typealias Row = AnnotationTableDrawerView.GenotypeDisplayRow
+        XCTAssertEqual(Row.classify(allele1: 0, allele2: 0), "Hom Ref")
+        XCTAssertEqual(Row.classify(allele1: 0, allele2: 1), "Het")
+        XCTAssertEqual(Row.classify(allele1: 1, allele2: 0), "Het")
+        XCTAssertEqual(Row.classify(allele1: 1, allele2: 1), "Hom Alt")
+        XCTAssertEqual(Row.classify(allele1: 2, allele2: 2), "Hom Alt")
+        XCTAssertEqual(Row.classify(allele1: -1, allele2: -1), "Missing")
+        XCTAssertEqual(Row.classify(allele1: 0, allele2: -1), "Missing")
+    }
+
+    func testAlleleBalanceComputation() {
+        typealias Row = AnnotationTableDrawerView.GenotypeDisplayRow
+
+        // Standard het: 10 ref, 15 alt
+        let ab1 = Row.computeAlleleBalance(from: "10,15")
+        XCTAssertNotNil(ab1)
+        XCTAssertEqual(ab1!, 0.6, accuracy: 0.001)
+
+        // Hom ref: all ref reads
+        let ab2 = Row.computeAlleleBalance(from: "30,0")
+        XCTAssertNotNil(ab2)
+        XCTAssertEqual(ab2!, 0.0, accuracy: 0.001)
+
+        // Hom alt: all alt reads
+        let ab3 = Row.computeAlleleBalance(from: "0,25")
+        XCTAssertNotNil(ab3)
+        XCTAssertEqual(ab3!, 1.0, accuracy: 0.001)
+
+        // Multi-allelic: 5 ref, 10 alt1, 5 alt2
+        let ab4 = Row.computeAlleleBalance(from: "5,10,5")
+        XCTAssertNotNil(ab4)
+        XCTAssertEqual(ab4!, 0.75, accuracy: 0.001)
+
+        // Edge cases
+        XCTAssertNil(Row.computeAlleleBalance(from: nil))
+        XCTAssertNil(Row.computeAlleleBalance(from: ""))
+        XCTAssertNil(Row.computeAlleleBalance(from: "0,0"))
+        XCTAssertNil(Row.computeAlleleBalance(from: "5"))
+    }
+
+    // MARK: - Drawer Tab Tests
+
+    func testDrawerTabPrefsKey() {
+        typealias Tab = AnnotationTableDrawerView.DrawerTab
+        XCTAssertEqual(Tab.annotations.prefsKey, "annotations")
+        XCTAssertEqual(Tab.variants.prefsKey, "variantCalls")
+        XCTAssertEqual(Tab.samples.prefsKey, "samples")
+    }
+
+    // MARK: - Export Field Escaping Tests
+
+    func testExportCellValueForAnnotation() throws {
+        let drawer = try createDrawerWithAnnotationsOnly()
+
+        // Switch to annotations and load data
+        drawer.switchToTab(.annotations)
+
+        // Verify the drawer has data
+        XCTAssertGreaterThan(drawer.displayedAnnotations.count, 0,
+                            "Drawer should have loaded annotation data")
+
+        // Test cell value extraction
+        let name = drawer.cellValueString(
+            for: AnnotationTableDrawerView.nameColumn, row: 0)
+        XCTAssertFalse(name.isEmpty, "Name should not be empty")
+    }
+
+    func testExportCellValueForVariants() throws {
+        let drawer = try createDrawerWithAnnotationsAndVariants()
+
+        drawer.switchToTab(.variants)
+
+        // Variants should be loaded
+        XCTAssertGreaterThan(drawer.displayedAnnotations.count, 0,
+                            "Drawer should have variant data")
+
+        let varId = drawer.cellValueString(
+            for: AnnotationTableDrawerView.variantIdColumn, row: 0)
+        XCTAssertFalse(varId.isEmpty, "Variant ID should not be empty")
+    }
+
+    // MARK: - Variant Subtab Tests
+
+    func testVariantSubtabDefaultIsCalls() {
+        let drawer = AnnotationTableDrawerView(frame: NSRect(x: 0, y: 0, width: 800, height: 200))
+        XCTAssertEqual(drawer.activeVariantSubtab.rawValue, 0)
+    }
+
+    func testSwitchToVariantsResetsSubtab() throws {
+        let drawer = try createDrawerWithAnnotationsAndVariants()
+        drawer.activeVariantSubtab = .genotypes
+        drawer.switchToTab(.annotations)
+        drawer.switchToTab(.variants)
+        XCTAssertEqual(drawer.activeVariantSubtab.rawValue, 0,
+                      "Switching to variants tab should reset subtab to Calls")
+    }
+
+    // MARK: - Promoted Column Tests
+
+    func testPromotedInfoColumnsAppearForVariants() throws {
+        // Create a VCF with AF and GENE info fields
+        let vcfContent = """
+        ##fileformat=VCFv4.2
+        ##INFO=<ID=AF,Number=A,Type=Float,Description="Allele Frequency">
+        ##INFO=<ID=GENE,Number=1,Type=String,Description="Gene Name">
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+        chr1\t150\trs12345\tA\tG\t30.0\tPASS\tAF=0.01;GENE=BRCA1
+        """
+        let drawer = try createDrawerWithAnnotationsAndVariants(vcfContent: vcfContent)
+        drawer.switchToTab(.variants)
+
+        // Find the AF and GENE columns
+        let colIds = drawer.tableView.tableColumns.map(\.identifier.rawValue)
+        XCTAssertTrue(colIds.contains("info_AF"), "AF column should be present")
+        XCTAssertTrue(colIds.contains("info_GENE"), "GENE column should be present")
+
+        // AF should appear before GENE (promoted order)
+        if let afIdx = colIds.firstIndex(of: "info_AF"),
+           let geneIdx = colIds.firstIndex(of: "info_GENE") {
+            XCTAssertLessThan(afIdx, geneIdx, "AF should be before GENE in column order")
+        }
+    }
+
+    // MARK: - Genotype Column Configuration
+
+    func testGenotypeColumnsConfigured() throws {
+        let drawer = try createDrawerWithAnnotationsAndVariants()
+        drawer.switchToTab(.variants)
+        drawer.configureColumnsForGenotypes()
+
+        let colIds = drawer.tableView.tableColumns.map(\.identifier.rawValue)
+        XCTAssertTrue(colIds.contains("GTSampleColumn"))
+        XCTAssertTrue(colIds.contains("GTGenotypeColumn"))
+        XCTAssertTrue(colIds.contains("GTZygosityColumn"))
+        XCTAssertTrue(colIds.contains("GTDPColumn"))
+        XCTAssertTrue(colIds.contains("GTGQColumn"))
+        XCTAssertTrue(colIds.contains("GTABColumn"))
+    }
+
+    // MARK: - Helpers
+
+    private func createDrawerWithAnnotationsOnly(
+        bedLines: [String] = [
+            "chr1\t100\t500\tBRCA1\t0\t+\t100\t500\t0,0,0\t1\t400\t0\tgene\tgene=BRCA1"
+        ]
+    ) throws -> AnnotationTableDrawerView {
+        let bedContent = bedLines.joined(separator: "\n")
+        let bedURL = tempDir.appendingPathComponent("annotations.bed")
+        try bedContent.write(to: bedURL, atomically: true, encoding: .utf8)
+        let dbURL = tempDir.appendingPathComponent("annotations.db")
+        try AnnotationDatabase.createFromBED(bedURL: bedURL, outputURL: dbURL)
+
+        let manifest = BundleManifest(
+            formatVersion: "1.0",
+            name: "Test",
+            identifier: "test.bundle",
+            source: SourceInfo(organism: "Test", assembly: "test"),
+            genome: GenomeInfo(
+                path: "seq.fa.gz", indexPath: "seq.fa.gz.fai",
+                totalLength: 1000, chromosomes: []
+            ),
+            annotations: [
+                AnnotationTrackInfo(
+                    id: "annotations", name: "Annotations",
+                    path: "annotations.bb", databasePath: "annotations.db"
+                )
+            ]
+        )
+
+        let bundle = ReferenceBundle(url: tempDir, manifest: manifest)
+        let searchIndex = AnnotationSearchIndex()
+        let success = searchIndex.buildFromDatabase(bundle: bundle, trackId: "annotations", databasePath: "annotations.db")
+        XCTAssertTrue(success)
+
+        let drawer = AnnotationTableDrawerView(frame: NSRect(x: 0, y: 0, width: 800, height: 200))
+        drawer.setSearchIndex(searchIndex)
+        return drawer
+    }
+
+    private func createDrawerWithAnnotationsAndVariants(
+        vcfContent: String = """
+        ##fileformat=VCFv4.2
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+        chr1\t150\trs12345\tA\tG\t30.0\tPASS\t.
+        chr1\t250\trs67890\tTC\tT\t45.5\tPASS\t.
+        chr1\t350\t.\tG\tGAA\t20.0\tLowQual\t.
+        """
+    ) throws -> AnnotationTableDrawerView {
+        let bedContent = "chr1\t100\t500\tBRCA1\t0\t+\t100\t500\t0,0,0\t1\t400\t0\tgene\tgene=BRCA1"
+        let bedURL = tempDir.appendingPathComponent("annotations.bed")
+        try bedContent.write(to: bedURL, atomically: true, encoding: .utf8)
+        let annotDbURL = tempDir.appendingPathComponent("annotations.db")
+        try AnnotationDatabase.createFromBED(bedURL: bedURL, outputURL: annotDbURL)
+
+        let vcfURL = tempDir.appendingPathComponent("variants.vcf")
+        try vcfContent.write(to: vcfURL, atomically: true, encoding: .utf8)
+        let variantDbURL = tempDir.appendingPathComponent("variants.db")
+        try VariantDatabase.createFromVCF(vcfURL: vcfURL, outputURL: variantDbURL)
+
+        let manifest = BundleManifest(
+            formatVersion: "1.0",
+            name: "Test",
+            identifier: "test.bundle",
+            source: SourceInfo(organism: "Test", assembly: "test"),
+            genome: GenomeInfo(
+                path: "seq.fa.gz", indexPath: "seq.fa.gz.fai",
+                totalLength: 1000, chromosomes: []
+            ),
+            annotations: [
+                AnnotationTrackInfo(
+                    id: "annotations", name: "Annotations",
+                    path: "annotations.bb", databasePath: "annotations.db"
+                )
+            ],
+            variants: [
+                VariantTrackInfo(
+                    id: "variants", name: "Variants",
+                    path: "variants.bcf", indexPath: "variants.bcf.csi",
+                    databasePath: "variants.db"
+                )
+            ]
+        )
+
+        let bundle = ReferenceBundle(url: tempDir, manifest: manifest)
+        let searchIndex = AnnotationSearchIndex()
+        let success = searchIndex.buildFromDatabase(bundle: bundle, trackId: "annotations", databasePath: "annotations.db")
+        XCTAssertTrue(success)
+
+        let drawer = AnnotationTableDrawerView(frame: NSRect(x: 0, y: 0, width: 800, height: 200))
+        drawer.setSearchIndex(searchIndex)
+        return drawer
+    }
+}

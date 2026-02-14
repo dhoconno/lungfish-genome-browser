@@ -43,6 +43,15 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         case annotations = 0
         case variants = 1
         case samples = 2
+
+        /// Persistence key for column preferences.
+        var prefsKey: String {
+            switch self {
+            case .annotations: return "annotations"
+            case .variants: return "variantCalls"
+            case .samples: return "samples"
+            }
+        }
     }
 
     /// A single row in the samples tab display.
@@ -58,10 +67,19 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     weak var delegate: AnnotationTableDrawerDelegate?
 
     /// Reference to the search index for direct SQL queries.
-    private var searchIndex: AnnotationSearchIndex?
+    private(set) var searchIndex: AnnotationSearchIndex?
 
     /// The currently active tab.
     private(set) var activeTab: DrawerTab = .annotations
+
+    /// Active subtab within the Variants tab (Calls vs Genotypes).
+    var activeVariantSubtab: VariantSubtab = .calls
+
+    /// Displayed genotype rows (genotype subtab).
+    var displayedGenotypes: [GenotypeDisplayRow] = []
+
+    /// Generation counter for stale genotype fetch prevention.
+    var genotypeFetchGeneration: Int = 0
 
     /// Total annotation count in the database (annotation tab only).
     private var totalAnnotationCount: Int = 0
@@ -178,7 +196,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     private var sampleMetadataFields: [String] = []
 
     /// Filtered and displayed samples for the samples tab.
-    private var displayedSamples: [SampleDisplayRow] = []
+    var displayedSamples: [SampleDisplayRow] = []
 
     /// Local copy of sample display state for driving visibility toggles.
     private var currentSampleDisplayState: SampleDisplayState = SampleDisplayState()
@@ -204,7 +222,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     // MARK: - UI Components
 
     private let scrollView = NSScrollView()
-    private let tableView = NSTableView()
+    let tableView = NSTableView()
     private let annotationFilterField = NSSearchField()
     private let variantFilterField = NSSearchField()
     private let sampleFilterField = NSSearchField()
@@ -225,6 +243,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     private let presetFiltersToggleButton = NSButton()
     private let searchBuilderButton = NSButton()
     private let downloadTemplateButton = NSButton()
+    let exportButton = NSButton()
+    let columnConfigButton = NSButton()
+    let variantSubtabControl = NSSegmentedControl()
 
     /// Maximum number of annotations to display in the table.
     /// Beyond this, user must filter to narrow down results.
@@ -240,35 +261,37 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     private var variantPresetMorePayloads: [ObjectIdentifier: String] = [:]
     /// Temporary mapping used by Search Builder INFO key/value popups.
     private var searchBuilderInfoValuePopups: [ObjectIdentifier: NSPopUpButton] = [:]
+    /// Column configuration popover (gear menu).
+    var columnConfigPopover: NSPopover?
 
-    // Annotation column identifiers
-    private static let nameColumn = NSUserInterfaceItemIdentifier("NameColumn")
-    private static let typeColumn = NSUserInterfaceItemIdentifier("TypeColumn")
-    private static let chromosomeColumn = NSUserInterfaceItemIdentifier("ChromosomeColumn")
-    private static let startColumn = NSUserInterfaceItemIdentifier("StartColumn")
-    private static let endColumn = NSUserInterfaceItemIdentifier("EndColumn")
-    private static let sizeColumn = NSUserInterfaceItemIdentifier("SizeColumn")
-    private static let strandColumn = NSUserInterfaceItemIdentifier("StrandColumn")
+    // Annotation column identifiers (internal for extension access)
+    static let nameColumn = NSUserInterfaceItemIdentifier("NameColumn")
+    static let typeColumn = NSUserInterfaceItemIdentifier("TypeColumn")
+    static let chromosomeColumn = NSUserInterfaceItemIdentifier("ChromosomeColumn")
+    static let startColumn = NSUserInterfaceItemIdentifier("StartColumn")
+    static let endColumn = NSUserInterfaceItemIdentifier("EndColumn")
+    static let sizeColumn = NSUserInterfaceItemIdentifier("SizeColumn")
+    static let strandColumn = NSUserInterfaceItemIdentifier("StrandColumn")
 
-    // Variant column identifiers
-    private static let variantIdColumn = NSUserInterfaceItemIdentifier("VariantIdColumn")
-    private static let variantTypeColumn = NSUserInterfaceItemIdentifier("VariantTypeColumn")
-    private static let variantChromColumn = NSUserInterfaceItemIdentifier("VariantChromColumn")
-    private static let positionColumn = NSUserInterfaceItemIdentifier("PositionColumn")
-    private static let refColumn = NSUserInterfaceItemIdentifier("RefColumn")
-    private static let altColumn = NSUserInterfaceItemIdentifier("AltColumn")
-    private static let qualityColumn = NSUserInterfaceItemIdentifier("QualityColumn")
-    private static let filterColumn = NSUserInterfaceItemIdentifier("FilterColumn")
-    private static let samplesColumn = NSUserInterfaceItemIdentifier("SamplesColumn")
-    private static let sourceColumn = NSUserInterfaceItemIdentifier("SourceColumn")
+    // Variant column identifiers (internal for extension access)
+    static let variantIdColumn = NSUserInterfaceItemIdentifier("VariantIdColumn")
+    static let variantTypeColumn = NSUserInterfaceItemIdentifier("VariantTypeColumn")
+    static let variantChromColumn = NSUserInterfaceItemIdentifier("VariantChromColumn")
+    static let positionColumn = NSUserInterfaceItemIdentifier("PositionColumn")
+    static let refColumn = NSUserInterfaceItemIdentifier("RefColumn")
+    static let altColumn = NSUserInterfaceItemIdentifier("AltColumn")
+    static let qualityColumn = NSUserInterfaceItemIdentifier("QualityColumn")
+    static let filterColumn = NSUserInterfaceItemIdentifier("FilterColumn")
+    static let samplesColumn = NSUserInterfaceItemIdentifier("SamplesColumn")
+    static let sourceColumn = NSUserInterfaceItemIdentifier("SourceColumn")
 
-    // Sample column identifiers
-    private static let sampleVisibleColumn = NSUserInterfaceItemIdentifier("SampleVisibleColumn")
-    private static let sampleNameColumn = NSUserInterfaceItemIdentifier("SampleNameColumn")
-    private static let sampleSourceColumn = NSUserInterfaceItemIdentifier("SampleSourceColumn")
+    // Sample column identifiers (internal for extension access)
+    static let sampleVisibleColumn = NSUserInterfaceItemIdentifier("SampleVisibleColumn")
+    static let sampleNameColumn = NSUserInterfaceItemIdentifier("SampleNameColumn")
+    static let sampleSourceColumn = NSUserInterfaceItemIdentifier("SampleSourceColumn")
 
     /// Number formatter for genomic coordinates.
-    private let numberFormatter: NumberFormatter = {
+    let numberFormatter: NumberFormatter = {
         let f = NumberFormatter()
         f.numberStyle = .decimal
         return f
@@ -327,6 +350,22 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         searchBar.addSubview(annotationFilterField)
         searchBar.addSubview(variantFilterField)
         searchBar.addSubview(sampleFilterField)
+
+        // Variant subtab control (Calls | Genotypes), visible only on Variants tab
+        variantSubtabControl.segmentCount = 2
+        variantSubtabControl.setLabel("Calls", forSegment: 0)
+        variantSubtabControl.setLabel("Genotypes", forSegment: 1)
+        variantSubtabControl.setWidth(55, forSegment: 0)
+        variantSubtabControl.setWidth(75, forSegment: 1)
+        variantSubtabControl.selectedSegment = 0
+        variantSubtabControl.segmentStyle = .capsule
+        variantSubtabControl.controlSize = .small
+        variantSubtabControl.font = .systemFont(ofSize: 10)
+        variantSubtabControl.target = self
+        variantSubtabControl.action = #selector(variantSubtabChanged(_:))
+        variantSubtabControl.translatesAutoresizingMaskIntoConstraints = false
+        variantSubtabControl.isHidden = true
+        searchBar.addSubview(variantSubtabControl)
 
         // "All"/"None" convenience buttons for annotation/variant type chips
         allTypesButton.title = "All"
@@ -402,6 +441,30 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         tabControl.action = #selector(tabChanged(_:))
         tabControl.setAccessibilityLabel("Switch between annotations and variants")
         headerBar.addSubview(tabControl)
+
+        // Export button (header bar)
+        exportButton.image = NSImage(systemSymbolName: "square.and.arrow.up", accessibilityDescription: "Export table")
+        exportButton.bezelStyle = .recessed
+        exportButton.isBordered = false
+        exportButton.controlSize = .small
+        exportButton.imageScaling = .scaleProportionallyDown
+        exportButton.target = self
+        exportButton.action = #selector(exportTableContents(_:))
+        exportButton.translatesAutoresizingMaskIntoConstraints = false
+        exportButton.toolTip = "Export table as CSV/TSV"
+        headerBar.addSubview(exportButton)
+
+        // Column config gear button (header bar)
+        columnConfigButton.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "Configure columns")
+        columnConfigButton.bezelStyle = .recessed
+        columnConfigButton.isBordered = false
+        columnConfigButton.controlSize = .small
+        columnConfigButton.imageScaling = .scaleProportionallyDown
+        columnConfigButton.target = self
+        columnConfigButton.action = #selector(showColumnConfig(_:))
+        columnConfigButton.translatesAutoresizingMaskIntoConstraints = false
+        columnConfigButton.toolTip = "Column visibility and order"
+        headerBar.addSubview(columnConfigButton)
 
         // Count label
         countLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
@@ -491,7 +554,17 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             loadingIndicator.leadingAnchor.constraint(equalTo: headerBar.leadingAnchor, constant: 8),
 
             tabControl.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
-            tabControl.trailingAnchor.constraint(equalTo: countLabel.leadingAnchor, constant: -8),
+            tabControl.trailingAnchor.constraint(equalTo: exportButton.leadingAnchor, constant: -6),
+
+            exportButton.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+            exportButton.widthAnchor.constraint(equalToConstant: 20),
+            exportButton.heightAnchor.constraint(equalToConstant: 20),
+            exportButton.trailingAnchor.constraint(equalTo: columnConfigButton.leadingAnchor, constant: -2),
+
+            columnConfigButton.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+            columnConfigButton.widthAnchor.constraint(equalToConstant: 20),
+            columnConfigButton.heightAnchor.constraint(equalToConstant: 20),
+            columnConfigButton.trailingAnchor.constraint(equalTo: countLabel.leadingAnchor, constant: -6),
 
             countLabel.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
             countLabel.trailingAnchor.constraint(equalTo: headerBar.trailingAnchor, constant: -8),
@@ -533,6 +606,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
             downloadTemplateButton.centerYAnchor.constraint(equalTo: addSampleFieldButton.centerYAnchor),
             downloadTemplateButton.trailingAnchor.constraint(equalTo: searchBar.trailingAnchor, constant: -8),
+
+            variantSubtabControl.topAnchor.constraint(equalTo: variantFilterField.bottomAnchor, constant: 2),
+            variantSubtabControl.leadingAnchor.constraint(equalTo: searchBar.leadingAnchor, constant: 8),
 
             searchHintLabel.topAnchor.constraint(equalTo: annotationFilterField.bottomAnchor, constant: 4),
             searchHintLabel.leadingAnchor.constraint(equalTo: searchBar.leadingAnchor, constant: 10),
@@ -733,6 +809,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         sampleFilterField.isHidden = activeTab != .samples
         addSampleFieldButton.isHidden = activeTab != .samples
         downloadTemplateButton.isHidden = activeTab != .samples
+        variantSubtabControl.isHidden = activeTab != .variants
         let showVariantTools = activeTab == .variants
         presetFiltersToggleButton.isHidden = !showVariantTools || infoColumnKeys.isEmpty
         presetFiltersToggleButton.title = showVariantPresetChips ? "Presets ▾" : "Presets ▸"
@@ -828,22 +905,22 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             tableView.addTableColumn(col)
         }
 
-        // Add dynamic INFO columns for variants tab
+        // Add dynamic INFO columns for variants tab.
+        // Promoted keys (AF, Gene, Impact) are inserted right after fixed columns
+        // so they appear in a biologically useful default order. Remaining INFO
+        // columns follow in their original discovery order.
         if tab == .variants {
-            for info in infoColumnKeys {
-                let identifier = NSUserInterfaceItemIdentifier("info_\(info.key)")
-                let col = NSTableColumn(identifier: identifier)
-                col.title = info.key
-                let fullName = info.description.isEmpty ? info.key : "\(info.description) (\(info.key))"
-                col.headerToolTip = fullName
-                col.width = max(80, CGFloat(info.key.count + 2) * 7)
-                col.minWidth = 40
-                col.resizingMask = .autoresizingMask
-                col.sortDescriptorPrototype = NSSortDescriptor(
-                    key: "info_\(info.key)", ascending: true,
-                    selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
-                )
-                tableView.addTableColumn(col)
+            let promotedKeys = Self.promotedInfoKeys(from: infoColumnKeys)
+            let promotedKeySet = Set(promotedKeys.map(\.key))
+
+            // Phase 1: promoted keys in expert-recommended order
+            for info in promotedKeys {
+                addInfoColumn(info)
+            }
+
+            // Phase 2: remaining keys in discovery order
+            for info in infoColumnKeys where !promotedKeySet.contains(info.key) {
+                addInfoColumn(info)
             }
         }
 
@@ -863,6 +940,66 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                 tableView.addTableColumn(col)
             }
         }
+
+        // Apply saved column preferences (visibility + ordering)
+        if let saved = ColumnPrefsKey.load(tab: tab.prefsKey) {
+            let hiddenIds = Set(saved.columns.filter { !$0.isVisible }.map(\.id))
+            for col in tableView.tableColumns.reversed() {
+                if hiddenIds.contains(col.identifier.rawValue) {
+                    tableView.removeTableColumn(col)
+                }
+            }
+            // Reorder visible columns to match saved order
+            let orderedIds = saved.visibleColumns.map(\.id)
+            for (targetIndex, colId) in orderedIds.enumerated() {
+                if let currentIndex = tableView.tableColumns.firstIndex(where: { $0.identifier.rawValue == colId }),
+                   currentIndex != targetIndex, targetIndex < tableView.tableColumns.count {
+                    tableView.moveColumn(currentIndex, toColumn: targetIndex)
+                }
+            }
+        }
+    }
+
+    /// INFO keys that should be promoted to default-visible positions when present.
+    /// Order matches the expert-recommended column layout:
+    /// ... fixed columns ... | AF | Gene | Impact | ... remaining INFO ...
+    private static let promotedInfoKeyPatterns: [(displayTitle: String, keys: [String])] = [
+        ("AF", ["AF", "af", "gnomAD_AF", "ExAC_AF", "1000G_AF"]),
+        ("Gene", ["GENE", "Gene", "gene", "GENEINFO", "ANN_Gene", "CSQ_SYMBOL"]),
+        ("Impact", ["IMPACT", "impact", "ANN_IMPACT", "CSQ_IMPACT"]),
+    ]
+
+    /// Returns the subset of `infoColumnKeys` that match promoted patterns, in display order.
+    private static func promotedInfoKeys(
+        from infoColumnKeys: [(key: String, type: String, description: String)]
+    ) -> [(key: String, type: String, description: String)] {
+        let keySet = Set(infoColumnKeys.map(\.key))
+        var result: [(key: String, type: String, description: String)] = []
+        for pattern in promotedInfoKeyPatterns {
+            // Take the first matching key variant that exists in this VCF
+            if let matchingKey = pattern.keys.first(where: { keySet.contains($0) }),
+               let info = infoColumnKeys.first(where: { $0.key == matchingKey }) {
+                result.append(info)
+            }
+        }
+        return result
+    }
+
+    /// Adds a single INFO column to the table view.
+    private func addInfoColumn(_ info: (key: String, type: String, description: String)) {
+        let identifier = NSUserInterfaceItemIdentifier("info_\(info.key)")
+        let col = NSTableColumn(identifier: identifier)
+        col.title = info.key
+        let fullName = info.description.isEmpty ? info.key : "\(info.description) (\(info.key))"
+        col.headerToolTip = fullName
+        col.width = max(80, CGFloat(info.key.count + 2) * 7)
+        col.minWidth = 40
+        col.resizingMask = .autoresizingMask
+        col.sortDescriptorPrototype = NSSortDescriptor(
+            key: "info_\(info.key)", ascending: true,
+            selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
+        )
+        tableView.addTableColumn(col)
     }
 
     // MARK: - Tab Switching
@@ -870,6 +1007,19 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     @objc private func tabChanged(_ sender: NSSegmentedControl) {
         guard let tab = DrawerTab(rawValue: sender.selectedSegment) else { return }
         switchToTab(tab)
+    }
+
+    @objc func variantSubtabChanged(_ sender: NSSegmentedControl) {
+        guard let subtab = VariantSubtab(rawValue: sender.selectedSegment) else { return }
+        activeVariantSubtab = subtab
+        if subtab == .genotypes {
+            configureColumnsForGenotypes()
+            buildGenotypeRows()
+        } else {
+            configureColumnsForTab(.variants)
+            tableView.reloadData()
+            updateCountLabel()
+        }
     }
 
     /// Switches to the specified tab, reconfiguring columns, chip bar, and data.
@@ -891,6 +1041,12 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             variantFilterField.stringValue = variantFilterText
         case .samples:
             sampleFilterField.stringValue = sampleFilterText
+        }
+
+        // Reset variant subtab when switching to variants
+        if tab == .variants {
+            activeVariantSubtab = .calls
+            variantSubtabControl.selectedSegment = 0
         }
 
         // Reconfigure columns for the new tab
@@ -1359,7 +1515,12 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         }
     }
 
-    private func updateCountLabel() {
+    func updateCountLabel() {
+        if activeTab == .variants && activeVariantSubtab == .genotypes {
+            let count = displayedGenotypes.count
+            countLabel.stringValue = "\(count) genotype\(count == 1 ? "" : "s")"
+            return
+        }
         if activeTab == .samples {
             let total = allSampleNames.count
             let shown = displayedSamples.count
@@ -2135,8 +2296,18 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     @objc private func tableViewDoubleClicked(_ sender: Any) {
         let row = tableView.clickedRow
         guard row >= 0 else { return }
-        // Samples tab doesn't navigate on double-click
+        // Samples and genotype subtab don't navigate on double-click
         guard activeTab != .samples else { return }
+        if activeTab == .variants && activeVariantSubtab == .genotypes {
+            // Navigate to the variant's position for the genotype row
+            guard row < displayedGenotypes.count else { return }
+            let gt = displayedGenotypes[row]
+            // Find the corresponding variant in displayedAnnotations to navigate
+            if let variant = displayedAnnotations.first(where: { $0.variantRowId == gt.variantRowId }) {
+                delegate?.annotationDrawer(self, didSelectAnnotation: variant)
+            }
+            return
+        }
         guard row < displayedAnnotations.count else { return }
         let annotation = displayedAnnotations[row]
         drawerLogger.info("AnnotationTableDrawerView: Double-clicked '\(annotation.name, privacy: .public)' on \(annotation.chromosome, privacy: .public)")
@@ -2146,7 +2317,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     // MARK: - NSTableViewDataSource
 
     public func numberOfRows(in tableView: NSTableView) -> Int {
-        activeTab == .samples ? displayedSamples.count : displayedAnnotations.count
+        if activeTab == .samples { return displayedSamples.count }
+        if activeTab == .variants && activeVariantSubtab == .genotypes { return displayedGenotypes.count }
+        return displayedAnnotations.count
     }
 
     public func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
@@ -2175,6 +2348,39 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             currentSampleDisplayState.sampleOrder = sortedAllSamples
             postSampleDisplayStateChange()
             updateDisplayedSamples()
+            return
+        }
+
+        if activeTab == .variants && activeVariantSubtab == .genotypes {
+            displayedGenotypes.sort { a, b in
+                let result: ComparisonResult
+                switch key {
+                case "sample": result = a.sampleName.localizedCaseInsensitiveCompare(b.sampleName)
+                case "variant": result = a.variantID.localizedCaseInsensitiveCompare(b.variantID)
+                case "chromosome": result = a.chromosome.localizedCaseInsensitiveCompare(b.chromosome)
+                case "position":
+                    result = a.position < b.position ? .orderedAscending : (a.position > b.position ? .orderedDescending : .orderedSame)
+                case "genotype": result = a.genotype.localizedCaseInsensitiveCompare(b.genotype)
+                case "zygosity": result = a.zygosity.localizedCaseInsensitiveCompare(b.zygosity)
+                case "ad": result = a.alleleDepths.localizedCaseInsensitiveCompare(b.alleleDepths)
+                case "dp":
+                    let aVal = a.depth ?? -1
+                    let bVal = b.depth ?? -1
+                    result = aVal < bVal ? .orderedAscending : (aVal > bVal ? .orderedDescending : .orderedSame)
+                case "gq":
+                    let aVal = a.genotypeQuality ?? -1
+                    let bVal = b.genotypeQuality ?? -1
+                    result = aVal < bVal ? .orderedAscending : (aVal > bVal ? .orderedDescending : .orderedSame)
+                case "ab":
+                    let aVal = a.alleleBalance ?? -1.0
+                    let bVal = b.alleleBalance ?? -1.0
+                    result = aVal < bVal ? .orderedAscending : (aVal > bVal ? .orderedDescending : .orderedSame)
+                default:
+                    result = .orderedSame
+                }
+                return ascending ? result == .orderedAscending : result == .orderedDescending
+            }
+            tableView.reloadData()
             return
         }
 
@@ -2247,6 +2453,11 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         // Samples tab uses its own data source
         if activeTab == .samples {
             return sampleCellView(for: identifier, row: row)
+        }
+
+        // Genotype subtab uses its own data source
+        if activeTab == .variants && activeVariantSubtab == .genotypes {
+            return genotypeView(for: column, row: row)
         }
 
         guard row < displayedAnnotations.count else { return nil }
@@ -2355,8 +2566,17 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         guard activeTab != .samples else { return }
         let selectedRows = tableView.selectedRowIndexes
         // Only navigate to a single selection — multi-select doesn't trigger navigation
-        guard selectedRows.count == 1, let row = selectedRows.first,
-              row < displayedAnnotations.count else { return }
+        guard selectedRows.count == 1, let row = selectedRows.first else { return }
+        // Genotype subtab: navigate to the parent variant
+        if activeTab == .variants && activeVariantSubtab == .genotypes {
+            guard row < displayedGenotypes.count else { return }
+            let gt = displayedGenotypes[row]
+            if let variant = displayedAnnotations.first(where: { $0.variantRowId == gt.variantRowId }) {
+                delegate?.annotationDrawer(self, didSelectAnnotation: variant)
+            }
+            return
+        }
+        guard row < displayedAnnotations.count else { return }
         let annotation = displayedAnnotations[row]
         drawerLogger.debug("AnnotationTableDrawerView: Selected '\(annotation.name, privacy: .public)' at row \(row)")
         delegate?.annotationDrawer(self, didSelectAnnotation: annotation)
@@ -2364,7 +2584,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
     // MARK: - Formatting
 
-    private func formatSize(_ bp: Int) -> String {
+    func formatSize(_ bp: Int) -> String {
         switch bp {
         case 0..<1_000:
             return "\(bp) bp"
@@ -2590,6 +2810,11 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
                 return
             }
             buildSampleContextMenu(menu, row: targetRow)
+            return
+        }
+
+        // Genotype subtab: no context menu yet (defer to Calls subtab for variant actions)
+        if activeTab == .variants && activeVariantSubtab == .genotypes {
             return
         }
 
