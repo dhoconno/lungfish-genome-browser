@@ -199,11 +199,14 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
 
         if regions.isEmpty {
             geneTabBarView.setGeneRegions([])
-            lastSelectedGeneTabName = nil
+            lastSelectedGeneTabSelection = nil
             return
         }
 
-        geneTabBarView.setGeneRegions(regions, preferredGeneName: lastSelectedGeneTabName)
+        let preferredRegion = lastSelectedGeneTabSelection.map {
+            GeneRegion(name: $0.name, chromosome: $0.chromosome, start: $0.start, end: $0.end)
+        }
+        geneTabBarView.setGeneRegions(regions, preferredRegion: preferredRegion, preferredGeneName: lastSelectedGeneTabSelection?.name)
 
         // Auto-navigate only when the tab bar first appears.
         if !wasVisible, let selected = geneTabBarView.selectedGeneRegion {
@@ -278,7 +281,7 @@ extension ViewerViewController {
     private static var annotationDrawerBottomKey: UInt8 = 0
     private static var annotationDrawerOpenKey: UInt8 = 0
     private static var annotationSearchIndexKey: UInt8 = 0
-    private static var lastSelectedGeneTabNameKey: UInt8 = 0
+    private static var lastSelectedGeneTabSelectionKey: UInt8 = 0
 
     var annotationDrawerView: AnnotationTableDrawerView? {
         get { objc_getAssociatedObject(self, &Self.annotationDrawerViewKey) as? AnnotationTableDrawerView }
@@ -306,9 +309,30 @@ extension ViewerViewController {
         }
     }
 
-    var lastSelectedGeneTabName: String? {
-        get { objc_getAssociatedObject(self, &Self.lastSelectedGeneTabNameKey) as? String }
-        set { objc_setAssociatedObject(self, &Self.lastSelectedGeneTabNameKey, newValue, .OBJC_ASSOCIATION_COPY_NONATOMIC) }
+    var lastSelectedGeneTabSelection: (name: String, chromosome: String, start: Int, end: Int)? {
+        get {
+            guard let dict = objc_getAssociatedObject(self, &Self.lastSelectedGeneTabSelectionKey) as? [String: Any],
+                  let name = dict["name"] as? String,
+                  let chromosome = dict["chromosome"] as? String,
+                  let start = dict["start"] as? Int,
+                  let end = dict["end"] as? Int else {
+                return nil
+            }
+            return (name: name, chromosome: chromosome, start: start, end: end)
+        }
+        set {
+            if let newValue {
+                let payload: [String: Any] = [
+                    "name": newValue.name,
+                    "chromosome": newValue.chromosome,
+                    "start": newValue.start,
+                    "end": newValue.end,
+                ]
+                objc_setAssociatedObject(self, &Self.lastSelectedGeneTabSelectionKey, payload, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            } else {
+                objc_setAssociatedObject(self, &Self.lastSelectedGeneTabSelectionKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            }
+        }
     }
 }
 
@@ -317,7 +341,12 @@ extension ViewerViewController {
 extension ViewerViewController: GeneTabBarDelegate {
 
     func geneTabBar(_ tabBar: GeneTabBarView, didSelectGene region: GeneRegion) {
-        lastSelectedGeneTabName = region.name
+        lastSelectedGeneTabSelection = (
+            name: region.name,
+            chromosome: region.chromosome,
+            start: region.start,
+            end: region.end
+        )
         let buffer = 1000
         viewerView.clearSequenceFetchError()
 
@@ -340,7 +369,7 @@ extension ViewerViewController: GeneTabBarDelegate {
     }
 
     func geneTabBarDidRequestDismiss(_ tabBar: GeneTabBarView) {
-        lastSelectedGeneTabName = nil
+        lastSelectedGeneTabSelection = nil
         geneTabBarView.setGeneRegions([])
     }
 }

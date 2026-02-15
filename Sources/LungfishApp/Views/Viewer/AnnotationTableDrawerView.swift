@@ -680,11 +680,6 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             scopeControl.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
             scopeControl.leadingAnchor.constraint(equalTo: searchBar.leadingAnchor, constant: 8),
 
-            variantFilterField.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
-            variantFilterField.leadingAnchor.constraint(equalTo: haploidModeButton.trailingAnchor, constant: 6),
-            variantFilterField.heightAnchor.constraint(equalToConstant: 24),
-            variantFilterField.trailingAnchor.constraint(lessThanOrEqualTo: searchBuilderButton.leadingAnchor, constant: -8),
-
             haploidModeButton.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
             haploidModeButton.leadingAnchor.constraint(equalTo: scopeControl.trailingAnchor, constant: 6),
 
@@ -939,7 +934,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     /// Updates the Search Builder button title and Clear button visibility
     /// based on whether a variant filter is active.
     private func updateVariantFilterIndicator() {
-        let hasFilter = !variantFilterText.isEmpty
+        let hasFilter = !variantFilterText.isEmpty || !activeSmartTokens.isEmpty || !selectedVariantPresetByKey.isEmpty
         clearFilterButton.isHidden = !(activeTab == .variants && hasFilter)
         searchBuilderButton.title = hasFilter ? "Edit Query..." : "Query Builder..."
     }
@@ -947,6 +942,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     @objc private func clearVariantFilter(_ sender: Any) {
         variantFilterText = ""
         activeSmartTokens.removeAll()
+        selectedVariantPresetByKey.removeAll()
         selectedAnnotationRegion = nil
         updateVariantFilterIndicator()
         updateChipStates()
@@ -1498,6 +1494,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             activeSmartTokens.remove(token)
         }
         updateChipStates()
+        updateVariantFilterIndicator()
         updateDisplayedAnnotations()
     }
 
@@ -1511,6 +1508,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             selectedVariantPresetByKey.removeValue(forKey: key)
         }
         updateChipStates()
+        updateVariantFilterIndicator()
         updateDisplayedAnnotations()
     }
 
@@ -2831,6 +2829,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
     @objc private func clearFilterProfile(_ sender: Any?) {
         activeSmartTokens.removeAll()
+        selectedVariantPresetByKey.removeAll()
         variantFilterText = ""
         updateVariantFilterIndicator()
         updateChipStates()

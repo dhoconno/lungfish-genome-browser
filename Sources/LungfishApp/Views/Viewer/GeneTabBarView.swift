@@ -118,7 +118,11 @@ public final class GeneTabBarView: NSView {
 
     /// Populates the tab bar with gene regions.
     /// Pass an empty array to hide the tab bar.
-    func setGeneRegions(_ regions: [GeneRegion], preferredGeneName: String? = nil) {
+    func setGeneRegions(
+        _ regions: [GeneRegion],
+        preferredRegion: GeneRegion? = nil,
+        preferredGeneName: String? = nil
+    ) {
         let priorSelectedName = selectedGeneRegion?.name
         geneRegions = regions
 
@@ -144,8 +148,15 @@ public final class GeneTabBarView: NSView {
         rebuildOverflowMenu()
 
         // Preserve previous selection when possible.
-        let candidateName = preferredGeneName ?? priorSelectedName ?? regions.first?.name
-        if let candidateName,
+        if let preferredRegion,
+           let idx = regions.firstIndex(where: {
+               $0.name.caseInsensitiveCompare(preferredRegion.name) == .orderedSame &&
+               $0.chromosome.caseInsensitiveCompare(preferredRegion.chromosome) == .orderedSame &&
+               $0.start == preferredRegion.start &&
+               $0.end == preferredRegion.end
+           }) {
+            selectedGlobalIndex = idx
+        } else if let candidateName = preferredGeneName ?? priorSelectedName ?? regions.first?.name,
            let idx = regions.firstIndex(where: { $0.name.caseInsensitiveCompare(candidateName) == .orderedSame }) {
             selectedGlobalIndex = idx
         } else {

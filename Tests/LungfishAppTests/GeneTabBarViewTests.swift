@@ -41,5 +41,18 @@ final class GeneTabBarViewTests: XCTestCase {
         view.setGeneRegions(regions, preferredGeneName: "GENE8")
         XCTAssertEqual(view.selectedGeneRegion?.name, "GENE8")
     }
-}
 
+    func testPreferredRegionBeatsAmbiguousName() {
+        let view = GeneTabBarView(frame: NSRect(x: 0, y: 0, width: 900, height: 28))
+        let regions = [
+            GeneRegion(name: "ABC1", chromosome: "chr1", start: 100, end: 200),
+            GeneRegion(name: "ABC1", chromosome: "chr2", start: 1000, end: 1200),
+            GeneRegion(name: "DEF2", chromosome: "chr3", start: 2000, end: 2200),
+        ]
+        let preferred = GeneRegion(name: "ABC1", chromosome: "chr2", start: 1000, end: 1200)
+
+        view.setGeneRegions(regions, preferredRegion: preferred, preferredGeneName: "ABC1")
+        XCTAssertEqual(view.selectedGeneRegion?.chromosome, "chr2")
+        XCTAssertEqual(view.selectedGeneRegion?.start, 1000)
+    }
+}
