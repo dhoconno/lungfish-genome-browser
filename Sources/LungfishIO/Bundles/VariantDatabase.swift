@@ -1748,13 +1748,14 @@ public final class VariantDatabase: @unchecked Sendable {
         sqlite3_exec(db, "PRAGMA journal_mode = OFF", nil, nil, nil)
         sqlite3_exec(db, "PRAGMA synchronous = OFF", nil, nil, nil)
         sqlite3_exec(db, "PRAGMA locking_mode = EXCLUSIVE", nil, nil, nil)
-        // Allow SQLite to use multiple worker threads for internal sorts/build steps (index creation).
-        let sqliteWorkerThreads = max(1, min(8, ProcessInfo.processInfo.activeProcessorCount - 1))
+        // Keep worker thread fanout small in low-memory mode.
+        let sqliteWorkerThreads = max(1, min(2, ProcessInfo.processInfo.activeProcessorCount - 1))
         sqlite3_exec(db, "PRAGMA threads = \(sqliteWorkerThreads)", nil, nil, nil)
 
-        // Keep page cache small for streaming inserts — we write sequentially and rarely re-read
-        // pages, so a large cache just wastes memory. 32 MB is plenty for B-tree page splits.
-        sqlite3_exec(db, "PRAGMA cache_size = -\(32 * 1024)", nil, nil, nil)
+        // Keep page cache tight during streaming import to bound RSS on laptops.
+        let importCacheKB = 8 * 1024
+        sqlite3_exec(db, "PRAGMA cache_size = -\(importCacheKB)", nil, nil, nil)
+        sqlite3_exec(db, "PRAGMA cache_spill = ON", nil, nil, nil)
         // Disable memory-mapped I/O — as the DB file grows during import, an mmap region would
         // inflate RSS proportionally. Standard read/write I/O with the small cache above is fine.
         sqlite3_exec(db, "PRAGMA mmap_size = 0", nil, nil, nil)
@@ -1885,9 +1886,12 @@ public final class VariantDatabase: @unchecked Sendable {
 
         var insertCount = 0
         var sampleNames: [String] = []
-        let transactionChunkVariants = 10_000
+        let transactionWriteBudget = 30_000
+        let shrinkEveryCommits = 4
         let fileSize: Int64 = (try? FileManager.default.attributesOfItem(atPath: vcfURL.path)[.size] as? Int64) ?? 0
         var wasCancelled = false
+        var writesSinceCommit = 0
+        var transactionCommitCount = 0
 
         // CSQ (VEP Consequence) sub-field names parsed from ##INFO=<ID=CSQ,...,Description="...Format: A|B|C">
         var csqFieldNames: [String] = []
@@ -1899,6 +1903,45 @@ public final class VariantDatabase: @unchecked Sendable {
         @inline(__always)
         func isCancelled() -> Bool {
             shouldCancel?() == true
+        }
+
+        @inline(__always)
+        func releaseSQLiteMemory(forceShrink: Bool = false) {
+            _ = sqlite3_db_release_memory(db)
+            if forceShrink {
+                sqlite3_exec(db, "PRAGMA shrink_memory", nil, nil, nil)
+            }
+        }
+
+        func commitImportTransaction(reopen: Bool, forceShrink: Bool = false) {
+            var commitErr: UnsafeMutablePointer<CChar>?
+            sqlite3_exec(db, "COMMIT", nil, nil, &commitErr)
+            if let commitErr {
+                let msg = String(cString: commitErr)
+                sqlite3_free(commitErr)
+                variantDBLogger.warning("createFromVCF: COMMIT failed: \(msg)")
+            }
+
+            transactionCommitCount += 1
+            writesSinceCommit = 0
+            let shouldShrinkNow = forceShrink || (transactionCommitCount % shrinkEveryCommits == 0)
+            releaseSQLiteMemory(forceShrink: shouldShrinkNow)
+
+            if reopen {
+                var beginErr: UnsafeMutablePointer<CChar>?
+                sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, &beginErr)
+                if let beginErr {
+                    let msg = String(cString: beginErr)
+                    sqlite3_free(beginErr)
+                    variantDBLogger.warning("createFromVCF: BEGIN TRANSACTION failed: \(msg)")
+                }
+            }
+        }
+
+        @inline(__always)
+        func rotateImportTransactionIfNeeded() {
+            guard writesSinceCommit >= transactionWriteBudget else { return }
+            commitImportTransaction(reopen: true)
         }
 
         func parseLine(_ line: Substring) {
@@ -1914,6 +1957,7 @@ public final class VariantDatabase: @unchecked Sendable {
                     sqliteBindText(insertInfoDefStmt, 3, def.number)
                     sqliteBindText(insertInfoDefStmt, 4, def.description)
                     sqlite3_step(insertInfoDefStmt)
+                    writesSinceCommit += 1
 
                     // Detect structured fields with pipe-delimited sub-fields from Description
                     // e.g., CSQ: "...Format: Allele|Consequence|IMPACT|SYMBOL|Gene|..."
@@ -1936,11 +1980,13 @@ public final class VariantDatabase: @unchecked Sendable {
                                 sqliteBindText(insertInfoDefStmt, 3, ".")
                                 sqliteBindText(insertInfoDefStmt, 4, "\(def.id) sub-field: \(subField)")
                                 sqlite3_step(insertInfoDefStmt)
+                                writesSinceCommit += 1
                             }
                             variantDBLogger.info("createFromVCF: Found structured INFO field '\(def.id)' with \(subFields.count) sub-fields")
                         }
                     }
                 }
+                rotateImportTransactionIfNeeded()
                 return
             }
 
@@ -1960,9 +2006,11 @@ public final class VariantDatabase: @unchecked Sendable {
                         sqliteBindText(insertSampleStmt, 2, sampleName)
                         sqliteBindText(insertSampleStmt, 3, srcFile)
                         sqlite3_step(insertSampleStmt)
+                        writesSinceCommit += 1
                     }
                     variantDBLogger.info("createFromVCF: Found \(sampleNames.count) samples")
                 }
+                rotateImportTransactionIfNeeded()
                 return
             }
 
@@ -2021,12 +2069,7 @@ public final class VariantDatabase: @unchecked Sendable {
             }
             let variantRowId = sqlite3_last_insert_rowid(db)
             insertCount += 1
-
-            // Keep transaction sizes bounded to cap dirty-page growth while preserving throughput.
-            if insertCount % transactionChunkVariants == 0 {
-                sqlite3_exec(db, "COMMIT", nil, nil, nil)
-                sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil)
-            }
+            writesSinceCommit += 1
 
             // Insert structured INFO key-value pairs into variant_info EAV table
             if let infoStr, infoStr != "." {
@@ -2061,6 +2104,7 @@ public final class VariantDatabase: @unchecked Sendable {
                                 sqliteBindText(insertInfoStmt, 2, subKey)
                                 sqliteBindText(insertInfoStmt, 3, String(subValue))
                                 sqlite3_step(insertInfoStmt)
+                                writesSinceCommit += 1
                             }
                         }
                         // Also store entry count if multiple transcripts
@@ -2070,6 +2114,7 @@ public final class VariantDatabase: @unchecked Sendable {
                             sqliteBindText(insertInfoStmt, 2, "\(key)_entries")
                             sqliteBindText(insertInfoStmt, 3, String(entries.count))
                             sqlite3_step(insertInfoStmt)
+                            writesSinceCommit += 1
                         }
                     } else {
                         // Standard scalar INFO field
@@ -2078,6 +2123,7 @@ public final class VariantDatabase: @unchecked Sendable {
                         sqliteBindText(insertInfoStmt, 2, key)
                         sqliteBindText(insertInfoStmt, 3, String(value))
                         sqlite3_step(insertInfoStmt)
+                        writesSinceCommit += 1
                     }
                 }
             }
@@ -2184,6 +2230,7 @@ public final class VariantDatabase: @unchecked Sendable {
                     sqlite3_bind_null(insertGenotypeStmt, 10)
 
                     sqlite3_step(insertGenotypeStmt)
+                    writesSinceCommit += 1
                 }
 
                 // Update the variant's sample_count now that we know the called count.
@@ -2192,9 +2239,11 @@ public final class VariantDatabase: @unchecked Sendable {
                     sqlite3_bind_int(updateSampleCountStmt, 1, Int32(calledCount))
                     sqlite3_bind_int64(updateSampleCountStmt, 2, variantRowId)
                     sqlite3_step(updateSampleCountStmt)
+                    writesSinceCommit += 1
                 }
             }
 
+            rotateImportTransactionIfNeeded()
         }
 
         // Read VCF content with byte-based progress tracking.
@@ -2220,9 +2269,12 @@ public final class VariantDatabase: @unchecked Sendable {
             throw VariantDatabaseError.cancelled
         }
 
+        // Finalize all parsed rows before index creation, then explicitly release heap/cache.
+        commitImportTransaction(reopen: false, forceShrink: true)
+
         progressHandler?(0.92, "Creating indexes...")
 
-        // Create indexes after bulk insert (faster). Log any failures.
+        // Build indexes outside the long-running import transaction and shrink between each.
         let indexStatements = [
             "CREATE INDEX idx_variants_region ON variants(chromosome, position, end_pos)",
             "CREATE INDEX idx_variants_type ON variants(variant_type)",
@@ -2245,20 +2297,13 @@ public final class VariantDatabase: @unchecked Sendable {
                 sqlite3_free(idxErr)
                 variantDBLogger.warning("createFromVCF: Index creation failed: \(msg)")
             }
+            releaseSQLiteMemory(forceShrink: true)
         }
 
         if wasCancelled {
-            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
             throw VariantDatabaseError.cancelled
         }
-
-        var commitErr: UnsafeMutablePointer<CChar>?
-        sqlite3_exec(db, "COMMIT", nil, nil, &commitErr)
-        if let commitErr {
-            let msg = String(cString: commitErr)
-            sqlite3_free(commitErr)
-            variantDBLogger.error("createFromVCF: COMMIT failed: \(msg)")
-        }
+        releaseSQLiteMemory(forceShrink: true)
 
         progressHandler?(1.0, "Done (\(insertCount) variants, \(sampleNames.count) samples)")
 

@@ -37,21 +37,16 @@ private func debugLog(_ message: String) {
 ///
 /// - Parameter block: The MainActor-isolated block to execute
 private func scheduleOnMainRunLoop(_ block: @escaping @MainActor @Sendable () -> Void) {
-    debugLog("scheduleOnMainRunLoop: Scheduling block via CFRunLoopPerformBlock")
-
     // Use CFRunLoopPerformBlock directly - this bypasses GCD completely
     // and schedules the block directly to the main run loop
     CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) {
-        debugLog("scheduleOnMainRunLoop: CFRunLoopPerformBlock executing")
         // We're on main thread via CFRunLoop, safe to assume MainActor
         MainActor.assumeIsolated {
-            debugLog("scheduleOnMainRunLoop: MainActor block executing")
             block()
         }
     }
     // Wake up the run loop to process the block immediately
     CFRunLoopWakeUp(CFRunLoopGetMain())
-    debugLog("scheduleOnMainRunLoop: CFRunLoopWakeUp called")
 }
 
 /// Result of loading file data on a background thread using GCD sync pattern.
