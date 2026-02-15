@@ -6,6 +6,7 @@ import AppKit
 import LungfishCore
 import LungfishIO
 import UniformTypeIdentifiers
+import os
 
 /// Debug logging to file for troubleshooting (only writes to disk in DEBUG builds)
 private func debugLog(_ message: String) {
@@ -961,31 +962,35 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     }
 
     private func performVCFImport(vcfURL: URL, bundleURL: URL) {
+        let cancelFlag = OSAllocatedUnfairLock(initialState: false)
         mainWindowController?.mainSplitViewController?.activityIndicator?.show(
-            message: "Importing VCF variants...", style: .determinate(progress: 0)
+            message: "Importing VCF variants...", style: .determinate(progress: 0), cancellable: true
         )
+        mainWindowController?.mainSplitViewController?.activityIndicator?.onCancel = {
+            cancelFlag.withLock { $0 = true }
+        }
         let importStartedAt = Date()
 
         DispatchQueue.global(qos: .userInitiated).async {
             // All file I/O on background thread — no UI references captured
             let result: Result<(variantCount: Int, trackInfo: VariantTrackInfo), Error>
 
+            // Compute dbURL before `do` so it's available for cleanup on cancellation
+            var baseURL = vcfURL
+            if baseURL.pathExtension.lowercased() == "gz" {
+                baseURL = baseURL.deletingPathExtension()
+            }
+            if baseURL.pathExtension.lowercased() == "vcf" {
+                baseURL = baseURL.deletingPathExtension()
+            }
+            let trackId = baseURL.lastPathComponent
+            let dbFilename = "\(trackId).db"
+            let variantsDir = bundleURL.appendingPathComponent("variants")
+            let dbURL = variantsDir.appendingPathComponent(dbFilename)
+
             do {
                 // Create variants directory if needed
-                let variantsDir = bundleURL.appendingPathComponent("variants")
                 try FileManager.default.createDirectory(at: variantsDir, withIntermediateDirectories: true)
-
-                // Generate track ID — strip .gz then .vcf extensions
-                var baseURL = vcfURL
-                if baseURL.pathExtension.lowercased() == "gz" {
-                    baseURL = baseURL.deletingPathExtension()
-                }
-                if baseURL.pathExtension.lowercased() == "vcf" {
-                    baseURL = baseURL.deletingPathExtension()
-                }
-                let trackId = baseURL.lastPathComponent
-                let dbFilename = "\(trackId).db"
-                let dbURL = variantsDir.appendingPathComponent(dbFilename)
 
                 // Remove existing database if re-importing
                 if FileManager.default.fileExists(atPath: dbURL.path) {
@@ -1008,7 +1013,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                             let displayMessage = etaText.isEmpty ? message : "\(message) • \(etaText)"
                             self?.mainWindowController?.mainSplitViewController?.activityIndicator?.updateMessage(displayMessage)
                         }
-                    }
+                    },
+                    shouldCancel: { cancelFlag.withLock { $0 } }
                 )
 
                 debugLog("performVCFImport: Created database with \(variantCount) variants")
@@ -1075,6 +1081,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             // (DispatchQueue.main.async can be blocked after sheet dismissal)
             scheduleOnMainRunLoop { [weak self] in
                 debugLog("performVCFImport: Main thread callback executing")
+                self?.mainWindowController?.mainSplitViewController?.activityIndicator?.onCancel = nil
                 self?.mainWindowController?.mainSplitViewController?.activityIndicator?.hide()
 
                 switch result {
@@ -1092,8 +1099,13 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     }
 
                 case .failure(let error):
-                    debugLog("performVCFImport: Failed: \(error.localizedDescription)")
-                    self?.showAlert(title: "VCF Import Failed", message: error.localizedDescription)
+                    if let dbErr = error as? VariantDatabaseError, case .cancelled = dbErr {
+                        try? FileManager.default.removeItem(at: dbURL)
+                        debugLog("performVCFImport: Cancelled by user")
+                    } else {
+                        debugLog("performVCFImport: Failed: \(error.localizedDescription)")
+                        self?.showAlert(title: "VCF Import Failed", message: error.localizedDescription)
+                    }
                 }
             }
         }

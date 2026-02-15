@@ -1728,7 +1728,8 @@ public final class VariantDatabase: @unchecked Sendable {
         outputURL: URL,
         parseGenotypes: Bool = true,
         sourceFile: String? = nil,
-        progressHandler: (@Sendable (Double, String) -> Void)? = nil
+        progressHandler: (@Sendable (Double, String) -> Void)? = nil,
+        shouldCancel: (@Sendable () -> Bool)? = nil
     ) throws -> Int {
         try? FileManager.default.removeItem(at: outputURL)
 
@@ -1746,9 +1747,17 @@ public final class VariantDatabase: @unchecked Sendable {
         // validate every genotype INSERT against the variants table, adding significant overhead.
         sqlite3_exec(db, "PRAGMA journal_mode = OFF", nil, nil, nil)
         sqlite3_exec(db, "PRAGMA synchronous = OFF", nil, nil, nil)
-        sqlite3_exec(db, "PRAGMA cache_size = -64000", nil, nil, nil)
-        sqlite3_exec(db, "PRAGMA temp_store = MEMORY", nil, nil, nil)
         sqlite3_exec(db, "PRAGMA locking_mode = EXCLUSIVE", nil, nil, nil)
+
+        // Scale page cache to ~1/16 of physical RAM, clamped to 16–256 MB.
+        // Negative value = size in KiB. Default page_size is 4096, so -N means N KiB of cache.
+        let physicalMB = Int(ProcessInfo.processInfo.physicalMemory / (1024 * 1024))
+        let cacheMB = max(16, min(256, physicalMB / 16))
+        sqlite3_exec(db, "PRAGMA cache_size = -\(cacheMB * 1024)", nil, nil, nil)
+        // temp_store = FILE (default) — index-building sorts spill to disk instead of consuming
+        // unbounded RAM. On SSD the speed penalty is negligible; on low-memory machines this
+        // prevents the 8 post-import CREATE INDEX statements from exhausting physical memory.
+        sqlite3_exec(db, "PRAGMA temp_store = FILE", nil, nil, nil)
 
         // Create v3 schema
         let schema = """
@@ -1873,6 +1882,7 @@ public final class VariantDatabase: @unchecked Sendable {
         var insertCount = 0
         var sampleNames: [String] = []
         let fileSize: Int64 = (try? FileManager.default.attributesOfItem(atPath: vcfURL.path)[.size] as? Int64) ?? 0
+        var wasCancelled = false
 
         // CSQ (VEP Consequence) sub-field names parsed from ##INFO=<ID=CSQ,...,Description="...Format: A|B|C">
         var csqFieldNames: [String] = []
@@ -1882,7 +1892,7 @@ public final class VariantDatabase: @unchecked Sendable {
         progressHandler?(0.05, "Parsing VCF...")
 
         func parseLine(_ line: Substring) {
-            guard !line.isEmpty else { return }
+            guard !line.isEmpty, !wasCancelled else { return }
 
             // Parse ##INFO=<...> header lines for structured INFO definitions
             if line.hasPrefix("##INFO=") {
@@ -2178,13 +2188,17 @@ public final class VariantDatabase: @unchecked Sendable {
         }
         if ext == "gz" {
             let estimatedSize = estimateGzipUncompressedSize(url: vcfURL, compressedSize: fileSize)
-            try streamGzipLines(url: vcfURL, estimatedUncompressedSize: estimatedSize, onProgress: byteProgress) { line in
+            try streamGzipLines(url: vcfURL, estimatedUncompressedSize: estimatedSize, shouldCancel: shouldCancel, onProgress: byteProgress) { line in
                 parseLine(line)
             }
         } else {
-            try streamPlainLines(url: vcfURL, totalFileSize: fileSize, onProgress: byteProgress) { line in
+            try streamPlainLines(url: vcfURL, totalFileSize: fileSize, shouldCancel: shouldCancel, onProgress: byteProgress) { line in
                 parseLine(line)
             }
+        }
+
+        if wasCancelled {
+            throw VariantDatabaseError.cancelled
         }
 
         progressHandler?(0.92, "Creating indexes...")
@@ -2239,6 +2253,7 @@ public final class VariantDatabase: @unchecked Sendable {
     private static func streamPlainLines(
         url: URL,
         totalFileSize: Int64 = 0,
+        shouldCancel: (() -> Bool)? = nil,
         onProgress: ((Double) -> Void)? = nil,
         _ handler: (Substring) -> Void
     ) throws {
@@ -2253,6 +2268,7 @@ public final class VariantDatabase: @unchecked Sendable {
         var lastEmitTime = Date.distantPast
         let chunkSize = 256 * 1024  // 256 KB read chunks
         while true {
+            if shouldCancel?() == true { break }
             let chunk = fh.readData(ofLength: chunkSize)
             if chunk.isEmpty { break }
             bytesRead += Int64(chunk.count)
@@ -2296,6 +2312,7 @@ public final class VariantDatabase: @unchecked Sendable {
     private static func streamGzipLines(
         url: URL,
         estimatedUncompressedSize: Int64 = 0,
+        shouldCancel: (() -> Bool)? = nil,
         onProgress: ((Double) -> Void)? = nil,
         _ handler: (Substring) -> Void
     ) throws {
@@ -2314,7 +2331,13 @@ public final class VariantDatabase: @unchecked Sendable {
         var bytesRead: Int64 = 0
         var lastProgress = -1.0
         var lastEmitTime = Date.distantPast
+        var cancelled = false
         while true {
+            if shouldCancel?() == true {
+                cancelled = true
+                process.terminate()
+                break
+            }
             let chunk = fileHandle.readData(ofLength: 64 * 1024)
             if chunk.isEmpty { break }
             bytesRead += Int64(chunk.count)
@@ -2352,7 +2375,7 @@ public final class VariantDatabase: @unchecked Sendable {
         }
 
         process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
+        if !cancelled, process.terminationStatus != 0 {
             throw VariantDatabaseError.createFailed("Failed to decompress \(url.lastPathComponent) (gzip exit code \(process.terminationStatus))")
         }
     }
@@ -2529,12 +2552,14 @@ public enum VariantDatabaseError: Error, LocalizedError, Sendable {
     case openFailed(String)
     case createFailed(String)
     case invalidSchema(String)
+    case cancelled
 
     public var errorDescription: String? {
         switch self {
         case .openFailed(let msg): return "Failed to open variant database: \(msg)"
         case .createFailed(let msg): return "Failed to create variant database: \(msg)"
         case .invalidSchema(let msg): return "Invalid variant database schema: \(msg)"
+        case .cancelled: return "VCF import was cancelled"
         }
     }
 }
