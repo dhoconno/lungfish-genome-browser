@@ -2101,7 +2101,7 @@ public class SequenceViewerView: NSView {
 
     /// Below this threshold: show individual base letters with colors
     /// At this zoom level, bases are large enough to read
-    private let showLettersThreshold: Double = 10.0
+    private var showLettersThreshold: Double { AppSettings.shared.showLettersThresholdBpPerPixel }
 
     /// Above this threshold: switch from colored blocks to simple line
     /// Beyond this zoom level, colored blocks become uninformative visual noise
@@ -2185,7 +2185,8 @@ public class SequenceViewerView: NSView {
 
     /// Handles appearance change notifications by reloading settings and redrawing.
     @objc private func handleAppearanceChanged(_ notification: Notification) {
-        sequenceAppearance = .load()
+        // Reload appearance from centralized settings
+        sequenceAppearance = AppSettings.shared.sequenceAppearance
 
         // Update track height from appearance settings
         trackHeight = sequenceAppearance.trackHeight
@@ -2193,6 +2194,9 @@ public class SequenceViewerView: NSView {
 
         // Also update the header view track height
         viewController?.updateTrackHeights(sequenceAppearance.trackHeight)
+
+        // Invalidate tile cache so annotation colors/dimensions are re-rendered
+        invalidateAnnotationTile()
 
         needsDisplay = true
         logger.info("SequenceViewerView: Appearance changed, triggering redraw")
@@ -3346,7 +3350,7 @@ public class SequenceViewerView: NSView {
 
         // Limit fetch to a reasonable size to avoid loading hundreds of MB.
         // Always fetch at least 100 Kb to provide buffer for panning.
-        let maxFetchSize = 500_000  // 500 Kb max per fetch
+        let maxFetchSize = AppSettings.shared.sequenceFetchCapKb * 1_000
         let center = (region.start + region.end) / 2
         let visibleSpan = region.end - region.start
         let halfFetch = min(maxFetchSize / 2, max(50_000, visibleSpan / 2 + visibleSpan))
@@ -3576,13 +3580,13 @@ public class SequenceViewerView: NSView {
     // - EXPANDED MODE: < 500 bp/pixel — full boxes with labels, strand arrows
 
     /// Above this threshold (bp/pixel): draw density histogram instead of features
-    private let annotationDensityThreshold: Double = 50_000
+    private var annotationDensityThreshold: Double { AppSettings.shared.densityThresholdBpPerPixel }
 
     /// Above this threshold (bp/pixel): draw squished (thin, no labels) features
-    private let annotationSquishedThreshold: Double = 500
+    private var annotationSquishedThreshold: Double { AppSettings.shared.squishedThresholdBpPerPixel }
 
     /// Maximum annotation rows before showing "+N more" indicator
-    private let maxAnnotationRows: Int = 50
+    private var maxAnnotationRows: Int { AppSettings.shared.maxAnnotationRows }
 
     /// Minimum feature width for expanded labels to avoid visual clutter.
     private let minExpandedLabelWidth: CGFloat = 72
@@ -4358,18 +4362,12 @@ public class SequenceViewerView: NSView {
         let visibleBases = frame.end - frame.start
         let pixelsPerBase = bounds.width / CGFloat(max(1, visibleBases))
 
-        // Standard annotation colors by type
-        let typeColors: [AnnotationType: NSColor] = [
-            .gene: NSColor(calibratedRed: 0.2, green: 0.6, blue: 0.2, alpha: 1.0),
-            .cds: NSColor(calibratedRed: 0.2, green: 0.4, blue: 0.8, alpha: 1.0),
-            .exon: NSColor(calibratedRed: 0.6, green: 0.3, blue: 0.8, alpha: 1.0),
-            .mRNA: NSColor(calibratedRed: 0.8, green: 0.4, blue: 0.2, alpha: 1.0),
-            .transcript: NSColor(calibratedRed: 0.7, green: 0.5, blue: 0.3, alpha: 1.0),
-            .misc_feature: NSColor(calibratedRed: 0.5, green: 0.5, blue: 0.5, alpha: 1.0),
-            .region: NSColor(calibratedRed: 0.4, green: 0.7, blue: 0.7, alpha: 1.0),
-            .primer: NSColor(calibratedRed: 0.2, green: 0.8, blue: 0.2, alpha: 1.0),
-            .restrictionSite: NSColor(calibratedRed: 0.8, green: 0.2, blue: 0.2, alpha: 1.0),
-        ]
+        // Annotation colors from user settings
+        let settings = AppSettings.shared
+        var typeColors: [AnnotationType: NSColor] = [:]
+        for type in AnnotationType.allCases {
+            typeColors[type] = settings.annotationColor(for: type)
+        }
 
         let visibleStart = Int(frame.start)
         let visibleEnd = Int(frame.end)

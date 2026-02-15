@@ -59,8 +59,8 @@ public final class EditableSequence: ObservableObject {
     /// Stack of operations that can be redone
     private var redoStack: [EditOperation] = []
 
-    /// Maximum undo history size (0 = unlimited)
-    public var maxUndoLevels: Int = 100
+    /// Maximum undo history size (0 = unlimited). Defaults from AppSettings.
+    public var maxUndoLevels: Int = AppSettings.shared.maxUndoLevels
 
     // MARK: - Initialization
 

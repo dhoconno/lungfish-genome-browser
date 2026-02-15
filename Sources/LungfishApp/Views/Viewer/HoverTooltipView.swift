@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import LungfishCore
 
 /// A lightweight floating tooltip that appears much faster than the system tooltip.
 ///
@@ -13,8 +14,8 @@ final class HoverTooltipView: NSView {
 
     // MARK: - Constants
 
-    /// Delay before showing the tooltip (ms). Much faster than AppKit's ~800ms.
-    private static let showDelay: TimeInterval = 0.15
+    /// Delay before showing the tooltip. Much faster than AppKit's ~800ms.
+    private static var showDelay: TimeInterval { AppSettings.shared.tooltipDelay }
 
     /// Maximum width before text wraps.
     private static let maxWidth: CGFloat = 320

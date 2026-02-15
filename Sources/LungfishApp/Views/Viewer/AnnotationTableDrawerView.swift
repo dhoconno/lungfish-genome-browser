@@ -267,7 +267,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
     /// Maximum number of annotations to display in the table.
     /// Beyond this, user must filter to narrow down results.
-    private static let maxDisplayCount = 5_000
+    private static var maxDisplayCount: Int { AppSettings.shared.maxTableDisplayCount }
 
     /// Chip buttons keyed by type name.
     private var chipButtons: [String: NSButton] = [:]

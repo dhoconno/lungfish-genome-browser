@@ -286,6 +286,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         // Clean up stale temp files from previous sessions
         Task {
+            await TempFileManager.shared.setMaxAge(hours: AppSettings.shared.tempFileRetentionHours)
             await TempFileManager.shared.cleanupOnLaunch()
         }
 

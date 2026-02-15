@@ -51,8 +51,8 @@ public actor TempFileManager {
     ]
 
     /// Maximum age (in seconds) for temp files before they're considered stale.
-    /// Default: 24 hours
-    private let maxTempFileAge: TimeInterval = 24 * 60 * 60
+    /// Set from AppSettings.tempFileRetentionHours at launch.
+    public var maxTempFileAge: TimeInterval = 24 * 60 * 60
 
     /// Tracks temp directories created during this session for cleanup.
     private var sessionTempDirectories: Set<URL> = []
@@ -60,6 +60,11 @@ public actor TempFileManager {
     // MARK: - Initialization
 
     private init() {}
+
+    /// Sets the max temp file age from a retention value in hours.
+    public func setMaxAge(hours: Int) {
+        maxTempFileAge = TimeInterval(hours * 3600)
+    }
 
     // MARK: - Public API
 
