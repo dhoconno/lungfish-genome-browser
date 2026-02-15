@@ -247,6 +247,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     /// Welcome window controller for project selection
     private var welcomeWindowController: WelcomeWindowController?
 
+    /// Settings window controller (lazy singleton)
+    private var settingsWindowController: SettingsWindowController?
+
     /// Current working directory for downloads when no project is active
     private var workingDirectoryURL: URL?
 
@@ -272,6 +275,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
+        // Load persisted settings (migrates legacy keys on first run)
+        AppSettings.load()
+
         // Configure application appearance
         configureAppearance()
 
@@ -804,8 +810,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     }
 
     @IBAction func showPreferences(_ sender: Any?) {
-        // Show preferences window (will be SwiftUI Settings scene)
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        if settingsWindowController == nil {
+            settingsWindowController = SettingsWindowController()
+        }
+        settingsWindowController?.show()
     }
 
     // MARK: - FileMenuActions
