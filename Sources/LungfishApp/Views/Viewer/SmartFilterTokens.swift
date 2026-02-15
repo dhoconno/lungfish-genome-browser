@@ -24,6 +24,10 @@ enum SmartToken: String, CaseIterable, Sendable {
     case clinvarPathogenic
     case heterozygous
     case bookmarked
+    // Within-sample frequency tokens (viral/bacterial)
+    case minorVariant       // Within-sample AF < 20% (minor variant in population)
+    case mixedInfection     // Within-sample AF 20-80% (potential mixed infection)
+    case dominantMutation   // Within-sample AF > 80% (dominant/fixed mutation)
 
     /// Display label shown on the chip button.
     var label: String {
@@ -39,6 +43,9 @@ enum SmartToken: String, CaseIterable, Sendable {
         case .clinvarPathogenic:  return "ClinVar Path."
         case .heterozygous:       return "Het Only"
         case .bookmarked:         return "Bookmarked"
+        case .minorVariant:       return "Minor (<20%)"
+        case .mixedInfection:     return "Mixed (20-80%)"
+        case .dominantMutation:   return "Dominant (>80%)"
         }
     }
 
@@ -49,6 +56,9 @@ enum SmartToken: String, CaseIterable, Sendable {
         case .clinvarPathogenic: return "exclamationmark.triangle"
         case .heterozygous:      return "person.2"
         case .bookmarked:        return "star.fill"
+        case .minorVariant:      return "chart.bar.fill"
+        case .mixedInfection:    return "arrow.triangle.branch"
+        case .dominantMutation:  return "arrow.up.circle"
         default:                 return nil
         }
     }
@@ -58,7 +68,8 @@ enum SmartToken: String, CaseIterable, Sendable {
         infoKeys: Set<String>,
         variantTypes: Set<String>,
         hasGenotypes: Bool,
-        hasBookmarks: Bool = false
+        hasBookmarks: Bool = false,
+        isHaploidOrganism: Bool = false
     ) -> Bool {
         switch self {
         case .passOnly:
@@ -81,10 +92,12 @@ enum SmartToken: String, CaseIterable, Sendable {
         case .clinvarPathogenic:
             return !infoKeys.isDisjoint(with: Self.clinvarKeys)
         case .heterozygous:
-            // Requires genotype-level post-filtering, not yet implemented.
             return false
         case .bookmarked:
             return hasBookmarks
+        // Within-sample AF tokens: only shown for haploid organisms with genotype data
+        case .minorVariant, .mixedInfection, .dominantMutation:
+            return isHaploidOrganism && hasGenotypes
         }
     }
 
@@ -124,6 +137,8 @@ enum SmartToken: String, CaseIterable, Sendable {
         case heterozygousOnly
         case bookmarkedOnly
         case moderateOrHigherImpact
+        /// Within-sample AF from AD field: alt reads / total reads
+        case withinSampleAFRange(min: Double, max: Double)
     }
 
     /// Returns the filter effects for this token, given the available INFO keys.
@@ -180,6 +195,15 @@ enum SmartToken: String, CaseIterable, Sendable {
 
         case .bookmarked:
             return [.postFilter(.bookmarkedOnly)]
+
+        case .minorVariant:
+            return [.postFilter(.withinSampleAFRange(min: 0.0, max: 0.2))]
+
+        case .mixedInfection:
+            return [.postFilter(.withinSampleAFRange(min: 0.2, max: 0.8))]
+
+        case .dominantMutation:
+            return [.postFilter(.withinSampleAFRange(min: 0.8, max: 1.0))]
         }
     }
 }

@@ -712,6 +712,26 @@ public final class AnnotationSearchIndex {
         return presets
     }
 
+    /// Returns true if the variant data likely comes from a haploid organism (virus/bacteria).
+    ///
+    /// Heuristic: total genome span (sum of max variant positions per chromosome) < 10 Mb.
+    /// This reliably separates viral (~10-30 kb) and most bacterial (~1-10 Mb) genomes from
+    /// eukaryotic genomes (>50 Mb). When true, within-sample allele frequency filters
+    /// become available since each position may have a continuous AF rather than discrete
+    /// diploid genotypes.
+    public var isLikelyHaploidOrganism: Bool {
+        var totalSpan = 0
+        for handle in variantDatabases {
+            let maxPositions = handle.db.chromosomeMaxPositions()
+            for (_, maxPos) in maxPositions {
+                totalSpan += maxPos
+            }
+        }
+        // Threshold: 10 Mb. Viral genomes are <100 kb, bacteria are <10 Mb.
+        // Eukaryotic genomes are >50 Mb (even C. elegans is 100 Mb).
+        return totalSpan > 0 && totalSpan < 10_000_000
+    }
+
     /// Clears the index.
     public func clear() {
         entries = []

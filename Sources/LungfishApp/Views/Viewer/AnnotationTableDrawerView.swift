@@ -159,6 +159,10 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     /// Whether preset chips are expanded in the variants tab.
     private var showVariantPresetChips: Bool = false
 
+    /// True if the variant data comes from a haploid organism (virus/bacteria).
+    /// Enables within-sample frequency smart tokens and related UI.
+    private var isHaploidOrganism: Bool = false
+
     /// Whether to auto-sync variant table with viewport (when variants tab is active).
     private(set) var viewportSyncEnabled: Bool = true
 
@@ -1151,6 +1155,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         variantPresetLoadState = .idle
         selectedVariantPresetByKey.removeAll()
 
+        // Detect haploid organism for within-sample AF features
+        isHaploidOrganism = index.isLikelyHaploidOrganism
+
         // All types visible by default for both tabs
         visibleAnnotationTypes = Set(availableAnnotationTypes)
         visibleVariantTypes = Set(availableVariantTypes)
@@ -1241,7 +1248,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             let hasGT = !allSampleNames.isEmpty
             var addedTokens = false
             for token in SmartToken.allCases {
-                guard token.isAvailable(infoKeys: infoKeySet, variantTypes: variantTypeSet, hasGenotypes: hasGT, hasBookmarks: hasBookmarks) else { continue }
+                guard token.isAvailable(infoKeys: infoKeySet, variantTypes: variantTypeSet, hasGenotypes: hasGT, hasBookmarks: hasBookmarks, isHaploidOrganism: isHaploidOrganism) else { continue }
                 let chip = NSButton(title: token.label, target: self, action: #selector(smartTokenToggled(_:)))
                 chip.font = .systemFont(ofSize: 10, weight: .medium)
                 chip.controlSize = .small
@@ -1550,7 +1557,12 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         let filterModerateOrHigher = smartComposed.postFilters.contains(where: {
             if case .moderateOrHigherImpact = $0 { return true }; return false
         })
-        let hasSmartPostFilter = filterBookmarkedOnly || filterModerateOrHigher
+        // Extract within-sample AF range filter (for viral/bacterial smart tokens)
+        let withinSampleAFRange: (min: Double, max: Double)? = smartComposed.postFilters.compactMap {
+            if case .withinSampleAFRange(let lo, let hi) = $0 { return (min: lo, max: hi) }
+            return nil
+        }.first
+        let hasSmartPostFilter = filterBookmarkedOnly || filterModerateOrHigher || withinSampleAFRange != nil
 
         // Merge type restrictions from smart tokens with existing type filter
         var effectiveTypeFilter = typeFilter
@@ -1655,6 +1667,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                         return bookmarkedVariantKeys.contains(bookmarkKey(trackId: result.trackId, variantRowId: rowId))
                     }
                 }
+                if let afRange = withinSampleAFRange {
+                    filtered = filterByWithinSampleAF(filtered, min: afRange.min, max: afRange.max)
+                }
                 displayedAnnotations = filtered.prefix(Self.maxDisplayCount).map { $0 }
                 if effectiveQuery.hasPostFilters || hasSmartPostFilter {
                     lastVariantQueryMatchCount = displayedAnnotations.count
@@ -1693,6 +1708,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                         return bookmarkedVariantKeys.contains(bookmarkKey(trackId: result.trackId, variantRowId: rowId))
                     }
                 }
+                if let afRange = withinSampleAFRange {
+                    filtered = filterByWithinSampleAF(filtered, min: afRange.min, max: afRange.max)
+                }
                 displayedAnnotations = filtered.prefix(Self.maxDisplayCount).map { $0 }
                 if effectiveQuery.hasPostFilters || hasSmartPostFilter {
                     lastVariantQueryMatchCount = displayedAnnotations.count
@@ -1701,6 +1719,25 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                 scrollView.isHidden = false
                 tooManyLabel.isHidden = true
             }
+        }
+    }
+
+    private func filterByWithinSampleAF(
+        _ results: [AnnotationSearchIndex.SearchResult],
+        min: Double,
+        max: Double
+    ) -> [AnnotationSearchIndex.SearchResult] {
+        let afKeys = SmartToken.afKeys
+        return results.filter { result in
+            guard let info = result.infoDict else { return false }
+            for key in afKeys {
+                guard let raw = info[key], !raw.isEmpty else { continue }
+                // Handle multi-allelic: "0.05,0.12" — use the max AF across alts
+                let values = raw.split(separator: ",").compactMap { Double($0) }
+                guard let af = values.max() else { continue }
+                return af >= min && af < max
+            }
+            return false
         }
     }
 
@@ -2373,7 +2410,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         for profile in FilterProfile.builtInProfiles {
             // Only show profiles whose tokens are available
             let tokens = profile.smartTokens
-            let available = tokens.allSatisfy { $0.isAvailable(infoKeys: infoKeySet, variantTypes: variantTypeSet, hasGenotypes: hasGT, hasBookmarks: hasBookmarks) }
+            let available = tokens.allSatisfy { $0.isAvailable(infoKeys: infoKeySet, variantTypes: variantTypeSet, hasGenotypes: hasGT, hasBookmarks: hasBookmarks, isHaploidOrganism: isHaploidOrganism) }
             guard available || tokens.isEmpty else { continue }
             let item = NSMenuItem(title: profile.name, action: #selector(selectFilterProfile(_:)), keyEquivalent: "")
             item.target = self
