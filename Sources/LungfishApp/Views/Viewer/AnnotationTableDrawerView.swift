@@ -249,6 +249,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     let columnConfigButton = NSButton()
     let profileButton = NSPopUpButton(frame: .zero, pullsDown: true)
     let variantSubtabControl = NSSegmentedControl()
+    private let scopeButton = NSButton()
 
     /// Maximum number of annotations to display in the table.
     /// Beyond this, user must filter to narrow down results.
@@ -360,7 +361,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         searchBar.addSubview(variantFilterField)
         searchBar.addSubview(sampleFilterField)
 
-        // Variant subtab control (Calls | Genotypes), visible only on Variants tab
+        // Variant subtab control (Calls | Genotypes) — lives in header bar, visible only on Variants tab
         variantSubtabControl.segmentCount = 2
         variantSubtabControl.setLabel("Calls", forSegment: 0)
         variantSubtabControl.setLabel("Genotypes", forSegment: 1)
@@ -374,7 +375,20 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         variantSubtabControl.action = #selector(variantSubtabChanged(_:))
         variantSubtabControl.translatesAutoresizingMaskIntoConstraints = false
         variantSubtabControl.isHidden = true
-        searchBar.addSubview(variantSubtabControl)
+        variantSubtabControl.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        headerBar.addSubview(variantSubtabControl)
+
+        // Scope toggle button (Viewport/Genome) — visible only on Variants tab
+        scopeButton.title = "📍 Viewport"
+        scopeButton.font = .systemFont(ofSize: 10, weight: .medium)
+        scopeButton.controlSize = .small
+        scopeButton.bezelStyle = .recessed
+        scopeButton.target = self
+        scopeButton.action = #selector(toggleScopeAction(_:))
+        scopeButton.translatesAutoresizingMaskIntoConstraints = false
+        scopeButton.toolTip = "Toggle between viewport-synced and genome-wide variant queries"
+        scopeButton.isHidden = true
+        searchBar.addSubview(scopeButton)
 
         // "All"/"None" convenience buttons for annotation/variant type chips
         allTypesButton.title = "All"
@@ -512,6 +526,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         searchHintLabel.textColor = .secondaryLabelColor
         searchHintLabel.lineBreakMode = .byTruncatingTail
         searchHintLabel.translatesAutoresizingMaskIntoConstraints = false
+        searchHintLabel.isHidden = true  // Redundant with search field placeholder text
         searchBar.addSubview(searchHintLabel)
 
         // Chip bar (row 2) — horizontal scrolling row of type toggle chips
@@ -582,7 +597,10 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             loadingIndicator.leadingAnchor.constraint(equalTo: headerBar.leadingAnchor, constant: 8),
 
             tabControl.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
-            tabControl.trailingAnchor.constraint(equalTo: profileButton.leadingAnchor, constant: -6),
+            tabControl.trailingAnchor.constraint(lessThanOrEqualTo: profileButton.leadingAnchor, constant: -6),
+
+            variantSubtabControl.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+            variantSubtabControl.leadingAnchor.constraint(equalTo: tabControl.trailingAnchor, constant: 8),
 
             profileButton.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
             profileButton.widthAnchor.constraint(lessThanOrEqualToConstant: 120),
@@ -604,24 +622,27 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             searchBar.topAnchor.constraint(equalTo: headerBar.bottomAnchor),
             searchBar.leadingAnchor.constraint(equalTo: leadingAnchor),
             searchBar.trailingAnchor.constraint(equalTo: trailingAnchor),
-            searchBar.heightAnchor.constraint(equalToConstant: 50),
+            searchBar.heightAnchor.constraint(equalToConstant: 32),
 
-            annotationFilterField.topAnchor.constraint(equalTo: searchBar.topAnchor, constant: 4),
+            annotationFilterField.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
             annotationFilterField.leadingAnchor.constraint(equalTo: searchBar.leadingAnchor, constant: 8),
             annotationFilterField.heightAnchor.constraint(equalToConstant: 24),
             annotationFilterField.trailingAnchor.constraint(lessThanOrEqualTo: allTypesButton.leadingAnchor, constant: -8),
 
-            variantFilterField.topAnchor.constraint(equalTo: searchBar.topAnchor, constant: 4),
-            variantFilterField.leadingAnchor.constraint(equalTo: searchBar.leadingAnchor, constant: 8),
+            scopeButton.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
+            scopeButton.leadingAnchor.constraint(equalTo: searchBar.leadingAnchor, constant: 8),
+
+            variantFilterField.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
+            variantFilterField.leadingAnchor.constraint(equalTo: scopeButton.trailingAnchor, constant: 6),
             variantFilterField.heightAnchor.constraint(equalToConstant: 24),
             variantFilterField.trailingAnchor.constraint(lessThanOrEqualTo: searchBuilderButton.leadingAnchor, constant: -8),
 
-            sampleFilterField.topAnchor.constraint(equalTo: searchBar.topAnchor, constant: 4),
+            sampleFilterField.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
             sampleFilterField.leadingAnchor.constraint(equalTo: searchBar.leadingAnchor, constant: 8),
             sampleFilterField.heightAnchor.constraint(equalToConstant: 24),
             sampleFilterField.trailingAnchor.constraint(lessThanOrEqualTo: addSampleFieldButton.leadingAnchor, constant: -8),
 
-            allTypesButton.topAnchor.constraint(equalTo: searchBar.topAnchor, constant: 4),
+            allTypesButton.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
             allTypesButton.trailingAnchor.constraint(equalTo: noneTypesButton.leadingAnchor, constant: -4),
 
             noneTypesButton.centerYAnchor.constraint(equalTo: allTypesButton.centerYAnchor),
@@ -641,13 +662,6 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
             downloadTemplateButton.centerYAnchor.constraint(equalTo: addSampleFieldButton.centerYAnchor),
             downloadTemplateButton.trailingAnchor.constraint(equalTo: searchBar.trailingAnchor, constant: -8),
-
-            variantSubtabControl.topAnchor.constraint(equalTo: variantFilterField.bottomAnchor, constant: 2),
-            variantSubtabControl.leadingAnchor.constraint(equalTo: searchBar.leadingAnchor, constant: 8),
-
-            searchHintLabel.topAnchor.constraint(equalTo: annotationFilterField.bottomAnchor, constant: 4),
-            searchHintLabel.leadingAnchor.constraint(equalTo: searchBar.leadingAnchor, constant: 10),
-            searchHintLabel.trailingAnchor.constraint(equalTo: searchBar.trailingAnchor, constant: -10),
 
             chipBar.topAnchor.constraint(equalTo: searchBar.bottomAnchor),
             chipBar.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -839,32 +853,31 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     }
 
     private func updateSearchFieldVisibility() {
+        let showVariants = activeTab == .variants
         annotationFilterField.isHidden = activeTab != .annotations
-        variantFilterField.isHidden = activeTab != .variants
+        variantFilterField.isHidden = !showVariants
         sampleFilterField.isHidden = activeTab != .samples
         addSampleFieldButton.isHidden = activeTab != .samples
         sampleGroupsButton.isHidden = activeTab != .samples
         downloadTemplateButton.isHidden = activeTab != .samples
-        variantSubtabControl.isHidden = activeTab != .variants
-        profileButton.isHidden = activeTab != .variants
-        let showVariantTools = activeTab == .variants
-        presetFiltersToggleButton.isHidden = !showVariantTools || infoColumnKeys.isEmpty
+        variantSubtabControl.isHidden = !showVariants
+        profileButton.isHidden = !showVariants
+        scopeButton.isHidden = !showVariants
+        presetFiltersToggleButton.isHidden = !showVariants || infoColumnKeys.isEmpty
         presetFiltersToggleButton.title = showVariantPresetChips ? "Presets ▾" : "Presets ▸"
         presetFiltersToggleButton.isEnabled = variantPresetLoadState != .loading
-        searchBuilderButton.isHidden = !showVariantTools
+        searchBuilderButton.isHidden = !showVariants
         let showTypeControls = activeTab != .samples && !availableTypes.isEmpty
         allTypesButton.isHidden = !showTypeControls
         noneTypesButton.isHidden = !showTypeControls
-        switch activeTab {
-        case .annotations:
-            searchHintLabel.stringValue = "Advanced: text=geneA; type=gene; chr=NC_041760.1; strand=+; region=NC_041760.1:86680000-86690000"
-        case .variants:
-            searchHintLabel.stringValue = "Advanced: text=rs; chr=NC_041760.1; pos=86680000-86690000; qual>=30; samples>=2; AF>=0.01"
-            if !variantInfoPresetValues.isEmpty {
-                searchHintLabel.stringValue += " • use Presets or Search Builder for guided filtering"
-            }
-        case .samples:
-            searchHintLabel.stringValue = "Advanced: text=sample; name=Sample1; source=TrackA; visible=true; meta.Country=USA"
+        updateScopeButtonTitle()
+    }
+
+    private func updateScopeButtonTitle() {
+        if viewportSyncEnabled {
+            scopeButton.title = "📍 Viewport"
+        } else {
+            scopeButton.title = "🌐 Genome"
         }
     }
 
@@ -1062,6 +1075,13 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             tableView.reloadData()
             updateCountLabel()
         }
+    }
+
+    @objc private func toggleScopeAction(_ sender: NSButton) {
+        viewportSyncEnabled.toggle()
+        updateScopeButtonTitle()
+        // Re-query with new scope
+        updateDisplayedAnnotations()
     }
 
     /// Switches to the specified tab, reconfiguring columns, chip bar, and data.
