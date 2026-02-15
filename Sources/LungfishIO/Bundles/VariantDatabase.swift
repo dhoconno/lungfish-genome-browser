@@ -1748,6 +1748,9 @@ public final class VariantDatabase: @unchecked Sendable {
         sqlite3_exec(db, "PRAGMA journal_mode = OFF", nil, nil, nil)
         sqlite3_exec(db, "PRAGMA synchronous = OFF", nil, nil, nil)
         sqlite3_exec(db, "PRAGMA locking_mode = EXCLUSIVE", nil, nil, nil)
+        // Allow SQLite to use multiple worker threads for internal sorts/build steps (index creation).
+        let sqliteWorkerThreads = max(1, min(8, ProcessInfo.processInfo.activeProcessorCount - 1))
+        sqlite3_exec(db, "PRAGMA threads = \(sqliteWorkerThreads)", nil, nil, nil)
 
         // Keep page cache small for streaming inserts — we write sequentially and rarely re-read
         // pages, so a large cache just wastes memory. 32 MB is plenty for B-tree page splits.
@@ -1882,6 +1885,7 @@ public final class VariantDatabase: @unchecked Sendable {
 
         var insertCount = 0
         var sampleNames: [String] = []
+        let transactionChunkVariants = 10_000
         let fileSize: Int64 = (try? FileManager.default.attributesOfItem(atPath: vcfURL.path)[.size] as? Int64) ?? 0
         var wasCancelled = false
 
@@ -1945,9 +1949,9 @@ public final class VariantDatabase: @unchecked Sendable {
 
             // Parse header line for sample names
             if line.hasPrefix("#CHROM") {
-                let fields = line.split(separator: "\t").map(String.init)
+                let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
                 if fields.count > 9 {
-                    sampleNames = Array(fields.dropFirst(9))
+                    sampleNames = fields.dropFirst(9).map(String.init)
                     // Insert sample records
                     let srcFile = sourceFile ?? vcfURL.lastPathComponent
                     for sampleName in sampleNames {
@@ -1963,24 +1967,25 @@ public final class VariantDatabase: @unchecked Sendable {
             }
 
             // Parse variant line
-            let fields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
             guard fields.count >= 8 else { return }
 
-            let chromosome = fields[0]
+            let chromosome = String(fields[0])
             guard let pos1based = Int(fields[1]), pos1based >= 1 else { return }
             let position = pos1based - 1  // Convert to 0-based
 
             let rawID = fields[2]
-            let variantID = rawID == "." ? "\(chromosome)_\(pos1based)" : rawID
+            let variantID = rawID == "." ? "\(chromosome)_\(pos1based)" : String(rawID)
 
-            let ref = fields[3]
-            let alt = fields[4]
+            let refField = fields[3]
+            let altField = fields[4]
+            let ref = String(refField)
+            let alt = String(altField)
             let qualStr = fields[5]
             let quality: Double? = qualStr == "." ? nil : Double(qualStr)
-            let filter = fields[6] == "." ? nil : fields[6]
+            let filter = fields[6] == "." ? nil : String(fields[6])
 
-            let altAlleles = alt.split(separator: ",").map(String.init)
-            let variantType = classifyVariant(ref: ref, alts: altAlleles)
+            let variantType = classifyVariant(ref: refField, altField: altField)
 
             let infoField = fields[7]
             let endPos: Int
@@ -1989,7 +1994,7 @@ public final class VariantDatabase: @unchecked Sendable {
             } else {
                 endPos = position + ref.count
             }
-            let infoStr = fields[7] == "." ? nil : fields[7]
+            let infoStr: Substring? = fields[7] == "." ? nil : fields[7]
 
             // Insert variant (sample_count initially 0; updated after genotype pass).
             sqlite3_reset(insertVariantStmt)
@@ -2017,11 +2022,8 @@ public final class VariantDatabase: @unchecked Sendable {
             let variantRowId = sqlite3_last_insert_rowid(db)
             insertCount += 1
 
-            // Periodic commit every 1,000 variants to flush dirty pages and cap memory.
-            // With genotypes each variant generates N sample INSERTs, so 1K variants ≈
-            // tens of thousands of rows — enough to amortize fsync but small enough to
-            // keep dirty-page RSS under control.
-            if insertCount % 1_000 == 0 {
+            // Keep transaction sizes bounded to cap dirty-page growth while preserving throughput.
+            if insertCount % transactionChunkVariants == 0 {
                 sqlite3_exec(db, "COMMIT", nil, nil, nil)
                 sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil)
             }
@@ -2031,10 +2033,10 @@ public final class VariantDatabase: @unchecked Sendable {
                 for field in infoStr.split(separator: ";") {
                     let parts = field.split(separator: "=", maxSplits: 1)
                     let key: String
-                    let value: String
+                    let value: Substring
                     if parts.count == 2 {
                         key = String(parts[0])
-                        value = String(parts[1])
+                        value = parts[1]
                     } else if parts.count == 1 {
                         key = String(parts[0])
                         value = "true"
@@ -2049,7 +2051,7 @@ public final class VariantDatabase: @unchecked Sendable {
                         // Use only the first entry for the primary sub-field values
                         // (store the full raw value too for completeness)
                         if let firstEntry = entries.first {
-                            let subValues = firstEntry.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+                            let subValues = firstEntry.split(separator: "|", omittingEmptySubsequences: false)
                             for (idx, subFieldName) in subFieldNames.enumerated() {
                                 let subValue = idx < subValues.count ? subValues[idx] : ""
                                 guard !subValue.isEmpty else { continue }
@@ -2057,7 +2059,7 @@ public final class VariantDatabase: @unchecked Sendable {
                                 sqlite3_reset(insertInfoStmt)
                                 sqlite3_bind_int64(insertInfoStmt, 1, variantRowId)
                                 sqliteBindText(insertInfoStmt, 2, subKey)
-                                sqliteBindText(insertInfoStmt, 3, subValue)
+                                sqliteBindText(insertInfoStmt, 3, String(subValue))
                                 sqlite3_step(insertInfoStmt)
                             }
                         }
@@ -2074,7 +2076,7 @@ public final class VariantDatabase: @unchecked Sendable {
                         sqlite3_reset(insertInfoStmt)
                         sqlite3_bind_int64(insertInfoStmt, 1, variantRowId)
                         sqliteBindText(insertInfoStmt, 2, key)
-                        sqliteBindText(insertInfoStmt, 3, value)
+                        sqliteBindText(insertInfoStmt, 3, String(value))
                         sqlite3_step(insertInfoStmt)
                     }
                 }
@@ -2083,11 +2085,11 @@ public final class VariantDatabase: @unchecked Sendable {
             // Single-pass: parse genotypes, INSERT non-hom-ref, and count called samples.
             if parseGenotypes && fields.count > 9 && !sampleNames.isEmpty {
                 let formatStr = fields[8]
-                let formatFields = formatStr.split(separator: ":").map(String.init)
-                let gtIndex = formatFields.firstIndex(of: "GT")
-                let dpIndex = formatFields.firstIndex(of: "DP")
-                let gqIndex = formatFields.firstIndex(of: "GQ")
-                let adIndex = formatFields.firstIndex(of: "AD")
+                let formatFields = formatStr.split(separator: ":", omittingEmptySubsequences: false)
+                let gtIndex = formatFields.firstIndex(where: { $0 == "GT" })
+                let dpIndex = formatFields.firstIndex(where: { $0 == "DP" })
+                let gqIndex = formatFields.firstIndex(where: { $0 == "GQ" })
+                let adIndex = formatFields.firstIndex(where: { $0 == "AD" })
                 var calledCount = 0
 
                 for sampleIdx in 0..<sampleNames.count {
@@ -2096,7 +2098,7 @@ public final class VariantDatabase: @unchecked Sendable {
                     let sampleData = fields[fieldIdx]
                     if sampleData == "." || sampleData == "./." || sampleData == ".|." { continue }
 
-                    let sampleFields = sampleData.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+                    let sampleFields = sampleData.split(separator: ":", omittingEmptySubsequences: false)
                     if gtIndex == nil {
                         // FORMAT can omit GT for some callsets; treat non-empty sample payload as called
                         // for sample_count even though we cannot infer zygosity or hom-ref omission.
@@ -2113,10 +2115,10 @@ public final class VariantDatabase: @unchecked Sendable {
                     var rawGT: String?
                     if let gtIdx = gtIndex, gtIdx < sampleFields.count {
                         let gt = sampleFields[gtIdx]
-                        rawGT = gt
+                        rawGT = String(gt)
                         let separator: Character = gt.contains("|") ? "|" : "/"
                         isPhased = separator == "|"
-                        let alleles = gt.split(separator: separator).map(String.init)
+                        let alleles = gt.split(separator: separator)
                         if alleles.count >= 1 {
                             allele1 = alleles[0] == "." ? -1 : (Int(alleles[0]) ?? -1)
                         }
@@ -2157,7 +2159,7 @@ public final class VariantDatabase: @unchecked Sendable {
                     var ad: String?
                     if let adIdx = adIndex, adIdx < sampleFields.count {
                         let adStr = sampleFields[adIdx]
-                        if adStr != "." { ad = adStr }
+                        if adStr != "." { ad = String(adStr) }
                     }
 
                     sqlite3_reset(insertGenotypeStmt)
@@ -2313,26 +2315,25 @@ public final class VariantDatabase: @unchecked Sendable {
                 )
             }
 
-            while let newlineIdx = buffer.firstIndex(of: 0x0A) {
-                // Scope lineData inside autoreleasepool so it's released BEFORE
-                // removeSubrange — avoids a full copy-on-write of the remaining buffer
-                // on every line (lineData shares storage with buffer via Data slicing).
-                // Also drains autoreleased objects from String/NSString bridging in handler.
+            // Parse all complete lines in-buffer, then drop the consumed prefix once.
+            var lineStart = buffer.startIndex
+            while let newlineIdx = buffer[lineStart...].firstIndex(of: 0x0A) {
                 autoreleasepool {
-                    let lineData = buffer.prefix(upTo: newlineIdx)
-                    if let line = String(data: lineData, encoding: .utf8) {
-                        handler(Substring(line))
-                    }
+                    let lineData = buffer[lineStart..<newlineIdx]
+                    let line = String(decoding: lineData, as: UTF8.self)
+                    handler(Substring(line))
                 }
-                buffer.removeSubrange(...newlineIdx)
+                lineStart = buffer.index(after: newlineIdx)
+            }
+            if lineStart > buffer.startIndex {
+                buffer.removeSubrange(..<lineStart)
             }
         }
 
         if !cancelled, !buffer.isEmpty {
             autoreleasepool {
-                if let tail = String(data: buffer, encoding: .utf8) {
-                    handler(Substring(tail))
-                }
+                let tail = String(decoding: buffer, as: UTF8.self)
+                handler(Substring(tail))
             }
         }
 
@@ -2393,22 +2394,24 @@ public final class VariantDatabase: @unchecked Sendable {
                 )
             }
 
-            while let newlineIdx = buffer.firstIndex(of: 0x0A) { // "\n"
+            var lineStart = buffer.startIndex
+            while let newlineIdx = buffer[lineStart...].firstIndex(of: 0x0A) { // "\n"
                 autoreleasepool {
-                    let lineData = buffer.prefix(upTo: newlineIdx)
-                    if let line = String(data: lineData, encoding: .utf8) {
-                        handler(Substring(line))
-                    }
+                    let lineData = buffer[lineStart..<newlineIdx]
+                    let line = String(decoding: lineData, as: UTF8.self)
+                    handler(Substring(line))
                 }
-                buffer.removeSubrange(...newlineIdx)
+                lineStart = buffer.index(after: newlineIdx)
+            }
+            if lineStart > buffer.startIndex {
+                buffer.removeSubrange(..<lineStart)
             }
         }
 
         if !cancelled, !buffer.isEmpty {
             autoreleasepool {
-                if let tail = String(data: buffer, encoding: .utf8) {
-                    handler(Substring(tail))
-                }
+                let tail = String(decoding: buffer, as: UTF8.self)
+                handler(Substring(tail))
             }
         }
 
@@ -2496,6 +2499,28 @@ public final class VariantDatabase: @unchecked Sendable {
         }
     }
 
+    /// Classifies a variant using the first ALT allele without allocating intermediate strings.
+    static func classifyVariant(ref: Substring, altField: Substring) -> String {
+        guard let firstAlt = altField.split(separator: ",", omittingEmptySubsequences: false).first,
+              !firstAlt.isEmpty,
+              firstAlt != "."
+        else {
+            return VariantType.reference.rawValue
+        }
+
+        if ref.count == 1 && firstAlt.count == 1 {
+            return VariantType.snp.rawValue
+        } else if ref.count > firstAlt.count {
+            return VariantType.deletion.rawValue
+        } else if ref.count < firstAlt.count {
+            return VariantType.insertion.rawValue
+        } else if ref.count == firstAlt.count && ref.count > 1 {
+            return VariantType.mnp.rawValue
+        } else {
+            return VariantType.complex.rawValue
+        }
+    }
+
     /// Parses a VCF ##INFO=<ID=X,Number=Y,Type=Z,Description="..."> header line.
     ///
     /// Sync version of the parser in VCFReader (which uses async APIs).
@@ -2563,8 +2588,8 @@ public final class VariantDatabase: @unchecked Sendable {
     }
 
     /// Parses the END value from a VCF INFO field string.
-    private static func parseINFOEnd(_ info: String) -> Int? {
-        guard info != "." else { return nil }
+    private static func parseINFOEnd<S: StringProtocol>(_ info: S) -> Int? {
+        guard !(info.count == 1 && info.first == ".") else { return nil }
         for pair in info.split(separator: ";") {
             if pair.hasPrefix("END=") {
                 let value = pair.dropFirst(4)
