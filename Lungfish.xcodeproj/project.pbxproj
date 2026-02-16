@@ -65,6 +65,7 @@
 				F1E2D3C4B5A6978877665551 /* Sources */,
 				F1E2D3C4B5A6978877665552 /* Frameworks */,
 				F1E2D3C4B5A6978877665553 /* Resources */,
+				F1E2D3C4B5A6978877665566 /* Index Help Book */,
 			);
 			buildRules = (
 			);
@@ -124,6 +125,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		F1E2D3C4B5A6978877665566 /* Index Help Book */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Index Help Book";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Lungfish.help/Contents/Resources/en.lproj/search.helpindex",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ -x /usr/bin/hiutil ]; then\n  HELP_LPROJ=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Lungfish.help/Contents/Resources/en.lproj\"\n  if [ -d \"${HELP_LPROJ}\" ]; then\n    /usr/bin/hiutil -Caf \"${HELP_LPROJ}/search.helpindex\" \"${HELP_LPROJ}\" || true\n  fi\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		F1E2D3C4B5A6978877665551 /* Sources */ = {
