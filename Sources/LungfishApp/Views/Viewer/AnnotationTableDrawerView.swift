@@ -829,15 +829,16 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             clearFilterButton.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
             clearFilterButton.trailingAnchor.constraint(equalTo: searchBuilderButton.leadingAnchor, constant: -4),
 
-            sampleFilterField.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
-            sampleFilterField.leadingAnchor.constraint(equalTo: searchBar.leadingAnchor, constant: 8),
-            sampleFilterField.heightAnchor.constraint(equalToConstant: 24),
-            sampleFilterField.trailingAnchor.constraint(lessThanOrEqualTo: sampleQueryBuilderButton.leadingAnchor, constant: -8),
+            sampleFilterField.widthAnchor.constraint(equalToConstant: 0),
+            sampleFilterField.heightAnchor.constraint(equalToConstant: 0),
+            sampleFilterField.leadingAnchor.constraint(equalTo: searchBar.leadingAnchor),
+            sampleFilterField.topAnchor.constraint(equalTo: searchBar.topAnchor),
 
             clearSampleFilterButton.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
             clearSampleFilterButton.trailingAnchor.constraint(equalTo: sampleQueryBuilderButton.leadingAnchor, constant: -4),
 
             sampleQueryBuilderButton.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
+            sampleQueryBuilderButton.leadingAnchor.constraint(greaterThanOrEqualTo: searchBar.leadingAnchor, constant: 8),
             sampleQueryBuilderButton.trailingAnchor.constraint(equalTo: sampleGroupPresetButton.leadingAnchor, constant: -6),
 
             sampleGroupPresetButton.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
@@ -1094,7 +1095,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         let showSamples = activeTab == .samples
         annotationFilterField.isHidden = activeTab != .annotations
         variantFilterField.isHidden = true  // Always hidden; Query Builder writes to variantFilterText directly
-        sampleFilterField.isHidden = !showSamples
+        sampleFilterField.isHidden = true  // Samples use Query Builder; free-text field hidden to reduce toolbar density
         addSampleFieldButton.isHidden = !showSamples
         sampleGroupsButton.isHidden = !showSamples
         downloadTemplateButton.isHidden = !showSamples
@@ -3061,7 +3062,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             options: [.regularExpression, .caseInsensitive]
         )
 
-        if normalizedInput.contains(";") {
+        let explicitClauseOperators = ["!~", "^=", "$=", "!=", "~", "="]
+        let hasExplicitClauseSyntax = explicitClauseOperators.contains { normalizedInput.contains($0) }
+        if normalizedInput.contains(";") || hasExplicitClauseSyntax {
             var query = SampleFilterQuery()
             var freeTokens: [String] = []
             for clause in parseSearchClauses(normalizedInput) {
@@ -3143,7 +3146,6 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
     @objc private func clearSampleFilter(_ sender: Any) {
         sampleFilterText = ""
-        sampleFilterField.stringValue = ""
         activeSampleTokens.removeAll()
         selectedSampleGroupId = nil
         updateChipStates()
@@ -3177,7 +3179,6 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                     MainActor.assumeIsolated {
                         guard let self else { return }
                         self.sampleFilterText = filterText
-                        self.sampleFilterField.stringValue = filterText
                         self.updateChipStates()
                         self.updateDisplayedSamples()
                         hostWindow.endSheet(hostWindow.sheets.last ?? NSPanel())
@@ -4137,6 +4138,12 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         updateChipStates()
         updateDisplayedAnnotations()
     }
+
+    public func tableView(_ tableView: NSTableView, didClick tableColumn: NSTableColumn) {
+        guard activeTab == .samples else { return }
+        guard let columnIndex = tableView.tableColumns.firstIndex(of: tableColumn) else { return }
+        showSampleColumnHeaderFilterMenu(column: columnIndex)
+    }
 }
 
 // MARK: - NSMenuDelegate
@@ -5065,7 +5072,6 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         let clause = value.isEmpty ? "\(key)\(op)" : "\(key)\(op)\(value)"
         let current = sampleFilterText.trimmingCharacters(in: .whitespacesAndNewlines)
         sampleFilterText = current.isEmpty ? clause : "\(current); \(clause)"
-        sampleFilterField.stringValue = sampleFilterText
         updateDisplayedSamples()
     }
 
@@ -5089,7 +5095,6 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
             let clause = "\(key)\(op)\(value)"
             let current = self.sampleFilterText.trimmingCharacters(in: .whitespacesAndNewlines)
             self.sampleFilterText = current.isEmpty ? clause : "\(current); \(clause)"
-            self.sampleFilterField.stringValue = self.sampleFilterText
             self.updateDisplayedSamples()
         }
     }
@@ -5242,6 +5247,16 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
             self.postSampleDisplayStateChange()
             self.rebuildSampleGroupPresetMenu()
         }
+    }
+
+    private func showSampleColumnHeaderFilterMenu(column: Int) {
+        guard column >= 0, column < tableView.tableColumns.count else { return }
+        guard let headerView = tableView.headerView else { return }
+        let menu = NSMenu()
+        buildSampleColumnHeaderContextMenu(menu, column: column)
+        let rect = headerView.headerRect(ofColumn: column)
+        let anchorPoint = NSPoint(x: rect.minX + 8, y: rect.minY - 2)
+        menu.popUp(positioning: nil, at: anchorPoint, in: headerView)
     }
 
     // MARK: - Import Metadata

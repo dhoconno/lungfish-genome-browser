@@ -110,11 +110,24 @@ private struct SampleQueryRuleUI: Identifiable {
 }
 
 struct SampleQueryBuilderView: View {
-    @State private var rules: [SampleQueryRuleUI] = [SampleQueryRuleUI()]
+    @State private var rules: [SampleQueryRuleUI]
     let initialFilterText: String
     let metadataFields: [String]
     let onApply: (String) -> Void
     let onCancel: () -> Void
+
+    init(
+        initialFilterText: String,
+        metadataFields: [String],
+        onApply: @escaping (String) -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        self.initialFilterText = initialFilterText
+        self.metadataFields = metadataFields
+        self.onApply = onApply
+        self.onCancel = onCancel
+        _rules = State(initialValue: Self.parseInitialRules(from: initialFilterText))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -230,6 +243,12 @@ struct SampleQueryBuilderView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
 
+                Button("Clear Filters") {
+                    onApply("")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
                 Spacer()
 
                 Button("Cancel") {
@@ -262,6 +281,90 @@ struct SampleQueryBuilderView: View {
         rules.removeAll { $0.id == id }
         if rules.isEmpty {
             rules = [SampleQueryRuleUI()]
+        }
+    }
+
+    private static func parseInitialRules(from rawText: String) -> [SampleQueryRuleUI] {
+        let text = rawText
+            .replacingOccurrences(
+                of: #"^\s*samples:\s*"#,
+                with: "",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return [SampleQueryRuleUI()] }
+
+        let operators = ["!~", "^=", "$=", "!=", "~", "="]
+        var parsed: [SampleQueryRuleUI] = []
+
+        for rawClause in text.split(separator: ";") {
+            let clause = rawClause.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !clause.isEmpty else { continue }
+
+            guard let op = operators.first(where: { clause.contains($0) }),
+                  let range = clause.range(of: op) else {
+                var rule = SampleQueryRuleUI()
+                rule.field = .text
+                rule.value = clause
+                parsed.append(rule)
+                continue
+            }
+
+            let key = String(clause[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = String(clause[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let lowerKey = key.lowercased()
+
+            var rule = SampleQueryRuleUI()
+            switch lowerKey {
+            case "text":
+                rule.field = .text
+                rule.value = value
+            case "name":
+                rule.field = .name
+                rule.op = opToSampleOperator(op: op, value: value)
+                rule.value = value
+            case "source":
+                rule.field = .source
+                rule.op = opToSampleOperator(op: op, value: value)
+                rule.value = value
+            case "visible":
+                rule.field = .visible
+                let lowerValue = value.lowercased()
+                let isVisible = ["1", "true", "yes", "on", "visible"].contains(lowerValue)
+                let isHidden = ["0", "false", "no", "off", "hidden"].contains(lowerValue)
+                switch op {
+                case "!=":
+                    rule.value = isVisible ? "hidden" : "visible"
+                default:
+                    rule.value = isHidden ? "hidden" : "visible"
+                }
+            default:
+                rule.field = .metadata
+                if lowerKey.hasPrefix("meta.") {
+                    rule.metadataField = String(key.dropFirst(5))
+                } else {
+                    rule.metadataField = key
+                }
+                rule.op = opToSampleOperator(op: op, value: value)
+                rule.value = value
+            }
+            parsed.append(rule)
+        }
+
+        return parsed.isEmpty ? [SampleQueryRuleUI()] : parsed
+    }
+
+    private static func opToSampleOperator(op: String, value: String) -> SampleQueryOperator {
+        if op == "=" && value.isEmpty { return .isEmpty }
+        if op == "!=" && value.isEmpty { return .isNotEmpty }
+        switch op {
+        case "=": return .equals
+        case "!=": return .notEquals
+        case "~": return .contains
+        case "!~": return .notContains
+        case "^=": return .beginsWith
+        case "$=": return .endsWith
+        default: return .contains
         }
     }
 }
