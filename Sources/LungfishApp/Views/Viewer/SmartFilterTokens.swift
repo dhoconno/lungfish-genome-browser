@@ -29,6 +29,23 @@ enum SmartToken: String, CaseIterable, Sendable {
     case mixedInfection     // Within-sample AF 20-80% (potential mixed infection)
     case dominantMutation   // Within-sample AF >= 80% (dominant/fixed mutation)
 
+    /// UI section used to group token chips by intent in the variant browser.
+    enum UISection: Int, CaseIterable, Sendable {
+        case biologicalEffect
+        case qualityAndQC
+        case populationAndFrequency
+        case sampleAndGenotype
+
+        var title: String {
+            switch self {
+            case .biologicalEffect: return "Biological Effect"
+            case .qualityAndQC: return "Quality / QC"
+            case .populationAndFrequency: return "Population / Frequency"
+            case .sampleAndGenotype: return "Sample / Genotype"
+            }
+        }
+    }
+
     /// Display label shown on the chip button.
     var label: String {
         switch self {
@@ -60,6 +77,34 @@ enum SmartToken: String, CaseIterable, Sendable {
         case .mixedInfection:    return "arrow.triangle.branch"
         case .dominantMutation:  return "arrow.up.circle"
         default:                 return nil
+        }
+    }
+
+    /// Section for chip layout and visual grouping in the drawer UI.
+    var uiSection: UISection {
+        switch self {
+        case .snv, .indel, .highImpact, .moderateImpact, .clinvarPathogenic:
+            return .biologicalEffect
+        case .passOnly, .qualityGE30, .depthGE10:
+            return .qualityAndQC
+        case .rareVariant, .minorVariant, .mixedInfection, .dominantMutation:
+            return .populationAndFrequency
+        case .heterozygous, .bookmarked:
+            return .sampleAndGenotype
+        }
+    }
+
+    /// Optional exclusivity group key used to render tokens with radio-like behavior.
+    var exclusivityGroupKey: String? {
+        switch self {
+        case .snv, .indel:
+            return "variant-type"
+        case .highImpact, .moderateImpact:
+            return "impact-tier"
+        case .minorVariant, .mixedInfection, .dominantMutation:
+            return "within-sample-af"
+        default:
+            return nil
         }
     }
 

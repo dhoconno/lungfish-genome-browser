@@ -284,6 +284,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     private let searchBar = NSView()
     private let searchHintLabel = NSTextField(labelWithString: "")
     private let chipBar = NSView()
+    private let chipSummaryLabel = NSTextField(labelWithString: "")
     private let chipScrollView = NSScrollView()
     private let chipStackView = NSStackView()
     private let dragHandle = NSView()
@@ -642,6 +643,13 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         chipScrollView.drawsBackground = false
         chipBar.addSubview(chipScrollView)
 
+        chipSummaryLabel.font = .systemFont(ofSize: 10, weight: .medium)
+        chipSummaryLabel.textColor = .secondaryLabelColor
+        chipSummaryLabel.lineBreakMode = .byTruncatingTail
+        chipSummaryLabel.translatesAutoresizingMaskIntoConstraints = false
+        chipSummaryLabel.isHidden = true
+        chipBar.addSubview(chipSummaryLabel)
+
         chipStackView.orientation = .horizontal
         chipStackView.spacing = 4
         chipStackView.alignment = .centerY
@@ -785,9 +793,13 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             chipBar.topAnchor.constraint(equalTo: searchBar.bottomAnchor),
             chipBar.leadingAnchor.constraint(equalTo: leadingAnchor),
             chipBar.trailingAnchor.constraint(equalTo: trailingAnchor),
-            chipBar.heightAnchor.constraint(equalToConstant: 26),
+            chipBar.heightAnchor.constraint(equalToConstant: 48),
 
-            chipScrollView.topAnchor.constraint(equalTo: chipBar.topAnchor),
+            chipSummaryLabel.topAnchor.constraint(equalTo: chipBar.topAnchor, constant: 2),
+            chipSummaryLabel.leadingAnchor.constraint(equalTo: chipBar.leadingAnchor, constant: 8),
+            chipSummaryLabel.trailingAnchor.constraint(equalTo: chipBar.trailingAnchor, constant: -8),
+
+            chipScrollView.topAnchor.constraint(equalTo: chipSummaryLabel.bottomAnchor, constant: 2),
             chipScrollView.leadingAnchor.constraint(equalTo: chipBar.leadingAnchor, constant: 8),
             chipScrollView.trailingAnchor.constraint(equalTo: chipBar.trailingAnchor, constant: -8),
             chipScrollView.bottomAnchor.constraint(equalTo: chipBar.bottomAnchor),
@@ -1035,6 +1047,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         let hasFilter = !variantFilterText.isEmpty || !activeSmartTokens.isEmpty || !selectedVariantPresetByKey.isEmpty
         clearFilterButton.isHidden = !(activeTab == .variants && hasFilter)
         searchBuilderButton.title = hasFilter ? "Edit Query..." : "Query Builder..."
+        updateVariantLogicSummary()
     }
 
     @objc private func clearVariantFilter(_ sender: Any) {
@@ -1059,6 +1072,55 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setAccessibilityLabel("Toggle \(type) annotations")
         return button
+    }
+
+    private func makeSmartTokenChipButton(token: SmartToken) -> NSButton {
+        let button = NSButton(title: token.label, target: self, action: #selector(smartTokenToggled(_:)))
+        button.font = .systemFont(ofSize: 10, weight: .medium)
+        button.controlSize = .small
+        button.bezelStyle = token.exclusivityGroupKey == nil ? .recessed : .rounded
+        button.isBordered = true
+        button.setButtonType(.pushOnPushOff)
+        button.state = activeSmartTokens.contains(token) ? .on : .off
+        button.translatesAutoresizingMaskIntoConstraints = false
+        var toolTip = "\(token.uiSection.title): \(token.label)"
+        if token.exclusivityGroupKey != nil {
+            toolTip += " (mutually exclusive)"
+        }
+        button.toolTip = toolTip
+        return button
+    }
+
+    private func updateVariantLogicSummary() {
+        guard activeTab == .variants else {
+            chipSummaryLabel.isHidden = true
+            return
+        }
+
+        var parts: [String] = []
+        parts.append(viewportSyncEnabled ? "region follow enabled" : "genome scope")
+        if !activeSmartTokens.isEmpty {
+            parts.append("tokens: \(activeSmartTokens.map(\.label).sorted().joined(separator: ", "))")
+        }
+        if !selectedVariantPresetByKey.isEmpty {
+            let values = selectedVariantPresetByKey.keys.sorted().compactMap { key in
+                selectedVariantPresetByKey[key].map { "\(key)=\($0)" }
+            }.joined(separator: ", ")
+            if !values.isEmpty {
+                parts.append("preset filters: \(values)")
+            }
+        }
+        if !variantFilterText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            parts.append("query builder rules active")
+        }
+        if !availableVariantTypes.isEmpty && visibleVariantTypes.count < availableVariantTypes.count {
+            parts.append("types: \(visibleVariantTypes.count)/\(availableVariantTypes.count)")
+        }
+
+        chipSummaryLabel.stringValue = parts.isEmpty
+            ? "Current logic: no filters (all variants)"
+            : "Current logic: " + parts.joined(separator: "  •  ")
+        chipSummaryLabel.isHidden = false
     }
 
     // MARK: - Column Configuration
@@ -1248,6 +1310,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         viewportSyncEnabled = (sender.selectedSegment == 0)
         markVariantFilterStateMutated()
         updateScopeControlSelection()
+        updateVariantLogicSummary()
         // Re-query with new scope
         updateDisplayedAnnotations()
     }
@@ -1486,29 +1549,43 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         smartTokenButtons.removeAll()
         smartTokenPayloads.removeAll()
 
-        // Smart tokens for the variants tab (shown before type chips)
+        var hasSmartTokens = false
+        // Smart tokens for the variants tab (grouped by semantic section).
         if activeTab == .variants {
             let infoKeySet = Set(infoColumnKeys.map(\.key))
             let variantTypeSet = Set(availableVariantTypes)
             let hasGT = !allSampleNames.isEmpty
-            var addedTokens = false
-            for token in SmartToken.allCases {
-                guard token.isAvailable(infoKeys: infoKeySet, variantTypes: variantTypeSet, hasGenotypes: hasGT, hasBookmarks: hasBookmarks, isHaploidOrganism: isHaploidOrganism) else { continue }
-                let chip = NSButton(title: token.label, target: self, action: #selector(smartTokenToggled(_:)))
-                chip.font = .systemFont(ofSize: 10, weight: .medium)
-                chip.controlSize = .small
-                chip.bezelStyle = .recessed
-                chip.isBordered = true
-                chip.setButtonType(.pushOnPushOff)
-                chip.state = activeSmartTokens.contains(token) ? .on : .off
-                chip.translatesAutoresizingMaskIntoConstraints = false
-                chip.toolTip = token.label
-                chipStackView.addArrangedSubview(chip)
-                smartTokenButtons[token] = chip
-                smartTokenPayloads[ObjectIdentifier(chip)] = token
-                addedTokens = true
+            for section in SmartToken.UISection.allCases {
+                let sectionTokens = SmartToken.allCases.filter {
+                    $0.uiSection == section
+                        && $0.isAvailable(
+                            infoKeys: infoKeySet,
+                            variantTypes: variantTypeSet,
+                            hasGenotypes: hasGT,
+                            hasBookmarks: hasBookmarks,
+                            isHaploidOrganism: isHaploidOrganism
+                        )
+                }
+                guard !sectionTokens.isEmpty else { continue }
+                if hasSmartTokens {
+                    let spacer = NSView(frame: NSRect(x: 0, y: 0, width: 10, height: 1))
+                    spacer.translatesAutoresizingMaskIntoConstraints = false
+                    spacer.widthAnchor.constraint(equalToConstant: 10).isActive = true
+                    chipStackView.addArrangedSubview(spacer)
+                }
+                let label = NSTextField(labelWithString: section.title)
+                label.font = .systemFont(ofSize: 10, weight: .semibold)
+                label.textColor = .tertiaryLabelColor
+                chipStackView.addArrangedSubview(label)
+                for token in sectionTokens {
+                    let chip = makeSmartTokenChipButton(token: token)
+                    chipStackView.addArrangedSubview(chip)
+                    smartTokenButtons[token] = chip
+                    smartTokenPayloads[ObjectIdentifier(chip)] = token
+                }
+                hasSmartTokens = true
             }
-            if addedTokens && !availableTypes.isEmpty {
+            if hasSmartTokens && !availableTypes.isEmpty {
                 let spacer = NSView(frame: NSRect(x: 0, y: 0, width: 8, height: 1))
                 spacer.translatesAutoresizingMaskIntoConstraints = false
                 spacer.widthAnchor.constraint(equalToConstant: 8).isActive = true
@@ -1566,8 +1643,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
         // Show chip bar if we have types or smart tokens (never for samples tab)
         let hasPresetUI = activeTab == .variants && showVariantPresetChips && (!variantPresetChipButtons.isEmpty || !variantPresetMorePayloads.isEmpty)
-        let hasSmartTokens = !smartTokenButtons.isEmpty
         chipBar.isHidden = activeTab == .samples || (availableTypes.isEmpty && !hasPresetUI && !hasSmartTokens)
+        updateVariantLogicSummary()
     }
 
     private func updateChipStates() {
@@ -1582,20 +1659,16 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         for (token, button) in smartTokenButtons {
             button.state = activeSmartTokens.contains(token) ? .on : .off
         }
+        updateVariantLogicSummary()
     }
 
     @objc private func smartTokenToggled(_ sender: NSButton) {
         guard let token = smartTokenPayloads[ObjectIdentifier(sender)] else { return }
         if sender.state == .on {
-            // Mutual exclusion: SNV and Indel are exclusive type tokens
-            if token == .snv { activeSmartTokens.remove(.indel) }
-            if token == .indel { activeSmartTokens.remove(.snv) }
-            if token == .highImpact { activeSmartTokens.remove(.moderateImpact) }
-            if token == .moderateImpact { activeSmartTokens.remove(.highImpact) }
-            // Within-sample AF range tokens are mutually exclusive
-            let afTokens: Set<SmartToken> = [.minorVariant, .mixedInfection, .dominantMutation]
-            if afTokens.contains(token) {
-                for t in afTokens where t != token { activeSmartTokens.remove(t) }
+            if let group = token.exclusivityGroupKey {
+                for existing in activeSmartTokens where existing != token && existing.exclusivityGroupKey == group {
+                    activeSmartTokens.remove(existing)
+                }
             }
             activeSmartTokens.insert(token)
         } else {
