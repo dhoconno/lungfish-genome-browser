@@ -229,6 +229,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     private var activeSampleTokens: Set<SampleSmartToken> = []
     /// Optional currently-selected sample-group preset.
     private var selectedSampleGroupId: UUID?
+    /// Snapshot of manual hidden-sample state before query-driven show-only filtering.
+    private var sampleFilterBaselineHiddenSamples: Set<String>?
 
     /// Local copy of sample display state for driving visibility toggles.
     private var currentSampleDisplayState: SampleDisplayState = {
@@ -4609,11 +4611,43 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
             return SampleDisplayRow(name: name, sourceFile: sourceFile, isVisible: isVisible, metadata: metadata)
         }
 
+        // Propagate query-filtered sample subset to viewer genotype row visibility.
+        syncSampleFilterVisibilityToViewer(query: query)
+
         tableView.reloadData()
         scrollView.isHidden = false
         tooManyLabel.isHidden = true
         updateSampleFilterIndicator()
         updateCountLabel()
+    }
+
+    private func syncSampleFilterVisibilityToViewer(query: SampleFilterQuery) {
+        let hasVisibilityConstraint =
+            query.visibility != nil ||
+            activeSampleTokens.contains(.visibleOnly) ||
+            activeSampleTokens.contains(.hiddenOnly)
+        let shouldSyncByQuery = hasActiveSampleFilters && !hasVisibilityConstraint
+
+        if shouldSyncByQuery {
+            if sampleFilterBaselineHiddenSamples == nil {
+                sampleFilterBaselineHiddenSamples = currentSampleDisplayState.hiddenSamples
+            }
+            let shownNames = Set(displayedSamples.map(\.name))
+            let desiredHidden = Set(allSampleNames.filter { !shownNames.contains($0) })
+            if desiredHidden != currentSampleDisplayState.hiddenSamples {
+                currentSampleDisplayState.hiddenSamples = desiredHidden
+                postSampleDisplayStateChange()
+            }
+            return
+        }
+
+        if !hasActiveSampleFilters, let baseline = sampleFilterBaselineHiddenSamples {
+            sampleFilterBaselineHiddenSamples = nil
+            if baseline != currentSampleDisplayState.hiddenSamples {
+                currentSampleDisplayState.hiddenSamples = baseline
+                postSampleDisplayStateChange()
+            }
+        }
     }
 
     private func sampleStringMatches(actual: String, op: String, expected: String) -> Bool {

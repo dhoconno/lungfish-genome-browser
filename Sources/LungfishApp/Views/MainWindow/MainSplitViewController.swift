@@ -891,6 +891,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         if viewerController.currentBundleDataProvider != nil,
            viewerController.currentBundleURL?.standardizedFileURL == url.standardizedFileURL {
             logger.debug("displayReferenceBundle: '\(url.lastPathComponent, privacy: .public)' already displayed, skipping reload")
+            viewerController.openAnnotationDrawerIfBundleHasData()
             return
         }
 

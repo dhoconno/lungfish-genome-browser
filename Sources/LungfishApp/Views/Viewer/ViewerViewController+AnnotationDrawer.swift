@@ -50,6 +50,22 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         }
     }
 
+    /// Opens the annotation drawer by default when the selected bundle has table data.
+    /// Data criteria: at least one annotation or variant track in the manifest.
+    public func openAnnotationDrawerIfBundleHasData(manifest: BundleManifest? = nil) {
+        let effectiveManifest = manifest ?? currentReferenceBundle?.manifest
+        guard let effectiveManifest else { return }
+
+        let hasDrawerData = !effectiveManifest.annotations.isEmpty || !effectiveManifest.variants.isEmpty
+        guard hasDrawerData else { return }
+
+        if !isAnnotationDrawerOpen {
+            toggleAnnotationDrawer()
+        } else if let index = annotationSearchIndex, !index.isBuilding {
+            annotationDrawerView?.setSearchIndex(index)
+        }
+    }
+
     // MARK: - Configuration
 
     /// Creates and configures the annotation drawer, inserting it into the view hierarchy.

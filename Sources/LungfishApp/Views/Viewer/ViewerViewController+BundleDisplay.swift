@@ -175,6 +175,9 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
             ]
         )
 
+        // Open the bottom drawer by default for bundles with annotation/variant/sample data.
+        openAnnotationDrawerIfBundleHasData(manifest: manifest)
+
         // Sync inspector to restored view state
         let savedState = viewState
         DispatchQueue.main.async { [weak self] in
