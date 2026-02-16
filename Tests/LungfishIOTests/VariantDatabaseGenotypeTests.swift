@@ -832,6 +832,38 @@ final class VariantDatabaseGenotypeTests: XCTestCase {
         XCTAssertEqual(meta["sex"], "male")
     }
 
+    func testImportMetadataAcceptsSampleHeaderAliasAndCaseInsensitiveNames() throws {
+        let (db, _) = try createWritableDatabase(from: multiSampleVCF)
+
+        let tsvContent = "Sample\tsex\tpopulation\nsample_a\tmale\tEUR\nSAMPLE_B\tfemale\tAFR"
+        let tsvURL = tempDir.appendingPathComponent("metadata_sample_header.tsv")
+        try tsvContent.write(to: tsvURL, atomically: true, encoding: .utf8)
+
+        let updatedCount = try db.importSampleMetadata(from: tsvURL, format: .tsv)
+        XCTAssertEqual(updatedCount, 2)
+
+        let metaA = db.sampleMetadata(name: "SAMPLE_A")
+        XCTAssertEqual(metaA["sex"], "male")
+        XCTAssertEqual(metaA["population"], "EUR")
+    }
+
+    func testImportMetadataTrimsBOMAndWhitespaceInSampleColumn() throws {
+        let (db, _) = try createWritableDatabase(from: multiSampleVCF)
+
+        let bom = "\u{FEFF}"
+        let tsvContent = "\(bom)Sample\tsex\n  SAMPLE_A  \tmale\n\t\nSAMPLE_C\tfemale"
+        let tsvURL = tempDir.appendingPathComponent("metadata_bom.tsv")
+        try tsvContent.write(to: tsvURL, atomically: true, encoding: .utf8)
+
+        let updatedCount = try db.importSampleMetadata(from: tsvURL, format: .tsv)
+        XCTAssertEqual(updatedCount, 2)
+
+        let metaA = db.sampleMetadata(name: "SAMPLE_A")
+        XCTAssertEqual(metaA["sex"], "male")
+        let metaC = db.sampleMetadata(name: "SAMPLE_C")
+        XCTAssertEqual(metaC["sex"], "female")
+    }
+
     func testImportMetadataMergesWithExisting() throws {
         let (db, _) = try createWritableDatabase(from: multiSampleVCF)
 

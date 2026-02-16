@@ -1463,10 +1463,27 @@ public final class VariantDatabase: @unchecked Sendable {
         }
 
         guard rows.count >= 2 else { return 0 } // Need header + at least one data row
-        let headers = rows[0]
-        guard headers.count >= 2 else { return 0 } // Need sample name + at least one field
+        let rawHeaders = rows[0].map(normalizeImportedCell)
+        guard rawHeaders.count >= 2 else { return 0 } // Need sample name + at least one field
 
-        let existingSamples = Set(sampleNames())
+        // Accept common sample-name header aliases and fall back to first column.
+        let sampleHeaderAliases = Set(["sample", "sample_name", "sample id", "sample_id", "name"])
+        let sampleNameColumnIndex = rawHeaders.firstIndex {
+            sampleHeaderAliases.contains($0.lowercased())
+        } ?? 0
+
+        let metadataColumns: [(index: Int, key: String)] = rawHeaders.enumerated().compactMap { idx, header in
+            guard idx != sampleNameColumnIndex else { return nil }
+            let key = header.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty else { return nil }
+            return (idx, key)
+        }
+        guard !metadataColumns.isEmpty else { return 0 }
+
+        let existingSamples = sampleNames()
+        let existingSampleLookup = Dictionary(
+            uniqueKeysWithValues: existingSamples.map { (normalizeSampleName($0), $0) }
+        )
 
         sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil)
         let updateSQL = "UPDATE samples SET metadata = ? WHERE name = ?"
@@ -1479,27 +1496,26 @@ public final class VariantDatabase: @unchecked Sendable {
 
         var updatedCount = 0
         for row in rows.dropFirst() {
-            guard !row.isEmpty else { continue }
-            let sampleName = row[0]
-            guard existingSamples.contains(sampleName) else {
-                variantDBLogger.info("importSampleMetadata: Skipping unknown sample '\(sampleName, privacy: .public)'")
+            guard sampleNameColumnIndex < row.count else { continue }
+            let importedSampleName = normalizeImportedCell(row[sampleNameColumnIndex])
+            guard !importedSampleName.isEmpty else { continue }
+            let normalizedSampleName = normalizeSampleName(importedSampleName)
+            guard let resolvedSampleName = existingSampleLookup[normalizedSampleName] else {
+                variantDBLogger.info("importSampleMetadata: Skipping unknown sample '\(importedSampleName, privacy: .public)'")
                 continue
             }
 
             // Build metadata dictionary from remaining columns
             var metadata: [String: String] = [:]
-            for (i, header) in headers.dropFirst().enumerated() {
-                let valueIndex = i + 1
-                if valueIndex < row.count {
-                    let value = row[valueIndex]
-                    if !value.isEmpty {
-                        metadata[header] = value
-                    }
+            for (index, key) in metadataColumns where index < row.count {
+                let value = normalizeImportedCell(row[index])
+                if !value.isEmpty {
+                    metadata[key] = value
                 }
             }
 
             // Merge with existing metadata
-            var existing = sampleMetadata(name: sampleName)
+            var existing = sampleMetadata(name: resolvedSampleName)
             existing.merge(metadata) { _, new in new }
 
             let jsonData = try JSONSerialization.data(withJSONObject: existing)
@@ -1507,7 +1523,7 @@ public final class VariantDatabase: @unchecked Sendable {
 
             sqlite3_reset(updateStmt)
             sqliteBindText(updateStmt, 1, jsonStr)
-            sqliteBindText(updateStmt, 2, sampleName)
+            sqliteBindText(updateStmt, 2, resolvedSampleName)
 
             if sqlite3_step(updateStmt) == SQLITE_DONE {
                 updatedCount += 1
@@ -1522,23 +1538,24 @@ public final class VariantDatabase: @unchecked Sendable {
     // MARK: - TSV/CSV Parsing
 
     private func parseTSV(url: URL) throws -> [[String]] {
-        let content = try String(contentsOf: url, encoding: .utf8)
-        return content.split(separator: "\n", omittingEmptySubsequences: true).map { line in
-            line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-        }
+        let content = try readTextFileForMetadataImport(url: url)
+        return parseDelimitedRows(content, delimiter: "\t")
     }
 
     private func parseCSV(url: URL) throws -> [[String]] {
-        let content = try String(contentsOf: url, encoding: .utf8)
-        var rows: [[String]] = []
-        for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
-            rows.append(parseCSVLine(String(line)))
-        }
-        return rows
+        let content = try readTextFileForMetadataImport(url: url)
+        return parseDelimitedRows(content, delimiter: ",")
     }
 
-    /// Parses a single CSV line, handling quoted fields with embedded commas.
-    private func parseCSVLine(_ line: String) -> [String] {
+    /// Parses delimited text (TSV/CSV), honoring quoted fields for the active delimiter.
+    private func parseDelimitedRows(_ content: String, delimiter: Character) -> [[String]] {
+        content
+            .split(omittingEmptySubsequences: true, whereSeparator: \.isNewline)
+            .map { parseDelimitedLine(String($0), delimiter: delimiter) }
+    }
+
+    /// Parses a single delimited line, handling quoted fields with embedded delimiters.
+    private func parseDelimitedLine(_ line: String, delimiter: Character) -> [String] {
         var fields: [String] = []
         var current = ""
         var inQuotes = false
@@ -1552,7 +1569,7 @@ public final class VariantDatabase: @unchecked Sendable {
                     } else {
                         prevWasQuote = true
                     }
-                } else if char == "," && prevWasQuote {
+                } else if char == delimiter && prevWasQuote {
                     inQuotes = false
                     prevWasQuote = false
                     fields.append(current)
@@ -1568,7 +1585,7 @@ public final class VariantDatabase: @unchecked Sendable {
                 if char == "\"" && current.isEmpty {
                     inQuotes = true
                     prevWasQuote = false
-                } else if char == "," {
+                } else if char == delimiter {
                     fields.append(current)
                     current = ""
                 } else {
@@ -1580,6 +1597,31 @@ public final class VariantDatabase: @unchecked Sendable {
         if prevWasQuote { inQuotes = false }
         fields.append(current)
         return fields
+    }
+
+    private func readTextFileForMetadataImport(url: URL) throws -> String {
+        let data = try Data(contentsOf: url)
+        if let text = String(data: data, encoding: .utf8) {
+            return text
+        }
+        if let text = String(data: data, encoding: .utf16LittleEndian) {
+            return text
+        }
+        if let text = String(data: data, encoding: .utf16BigEndian) {
+            return text
+        }
+        throw VariantDatabaseError.createFailed("Unable to decode metadata file '\(url.lastPathComponent)' as UTF-8/UTF-16 text")
+    }
+
+    /// Normalizes imported cells by trimming whitespace/newlines and stripping UTF BOM.
+    private func normalizeImportedCell(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.replacingOccurrences(of: "\u{FEFF}", with: "")
+    }
+
+    /// Canonical sample-name key used for robust sample matching on import.
+    private func normalizeSampleName(_ value: String) -> String {
+        normalizeImportedCell(value).lowercased()
     }
 
     // MARK: - Static Creation (for bundle building)
