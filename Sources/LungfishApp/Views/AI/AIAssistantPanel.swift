@@ -313,15 +313,20 @@ final class AIAssistantViewController: NSViewController {
         let messageView = AIMessageBubbleView(text: text, isUser: isUser, isWelcome: isWelcome)
         messagesStackView.addArrangedSubview(messageView)
 
-        // Set width constraint
-        let widthAnchor: NSLayoutConstraint
+        // Set width constraints.
         if isUser {
-            widthAnchor = messageView.widthAnchor.constraint(lessThanOrEqualTo: messagesStackView.widthAnchor, multiplier: 0.85)
-            messageView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            // User messages should not collapse into a very narrow column for long prompts.
+            let maxWidth = messageView.widthAnchor.constraint(lessThanOrEqualTo: messagesStackView.widthAnchor, multiplier: 0.85)
+            maxWidth.isActive = true
+
+            if text.count > 80 {
+                let minWidth = messageView.widthAnchor.constraint(greaterThanOrEqualTo: messagesStackView.widthAnchor, multiplier: 0.55)
+                minWidth.isActive = true
+            }
         } else {
-            widthAnchor = messageView.widthAnchor.constraint(equalTo: messagesStackView.widthAnchor, constant: -32)
+            let fullWidth = messageView.widthAnchor.constraint(equalTo: messagesStackView.widthAnchor, constant: -32)
+            fullWidth.isActive = true
         }
-        widthAnchor.isActive = true
 
         // Scroll to bottom
         DispatchQueue.main.async { [weak self] in
@@ -530,6 +535,7 @@ final class AIMessageBubbleView: NSView {
     private var rawText: String = ""
     private var copyButton: NSButton?
     private weak var textLabel: NSTextField?
+    private var lastPreferredTextWidth: CGFloat = 0
 
     init(text: String, isUser: Bool, isWelcome: Bool = false) {
         self.isWelcome = isWelcome
@@ -562,6 +568,15 @@ final class AIMessageBubbleView: NSView {
         label.drawsBackground = false
         label.isBordered = false
         label.translatesAutoresizingMaskIntoConstraints = false
+        label.maximumNumberOfLines = 0
+        label.lineBreakMode = .byWordWrapping
+        label.usesSingleLineMode = false
+        if let cell = label.cell as? NSTextFieldCell {
+            cell.wraps = true
+            cell.isScrollable = false
+            cell.usesSingleLineMode = false
+            cell.lineBreakMode = .byWordWrapping
+        }
 
         // Apply markdown-like formatting
         let attributedString = formatMessage(text, isUser: isUser)
@@ -604,10 +619,12 @@ final class AIMessageBubbleView: NSView {
     override func layout() {
         super.layout()
         if let label = textLabel {
-            let availableWidth = bounds.width - 24
-            if availableWidth > 0 && abs(label.preferredMaxLayoutWidth - availableWidth) > 1 {
+            let availableWidth = max(0, bounds.width - 24)
+            if availableWidth > 0 && abs(lastPreferredTextWidth - availableWidth) > 0.5 {
+                lastPreferredTextWidth = availableWidth
                 label.preferredMaxLayoutWidth = availableWidth
-                super.layout()
+                label.invalidateIntrinsicContentSize()
+                invalidateIntrinsicContentSize()
             }
         }
     }

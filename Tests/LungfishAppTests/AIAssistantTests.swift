@@ -511,6 +511,14 @@ final class AIMessageBubbleViewTests: XCTestCase {
             XCTAssertGreaterThan(label.attributedStringValue.length, 0)
             // Verify the label uses wrapping
             XCTAssertEqual(label.lineBreakMode, .byWordWrapping)
+            XCTAssertEqual(label.maximumNumberOfLines, 0)
+            if let cell = label.cell as? NSTextFieldCell {
+                XCTAssertTrue(cell.wraps)
+                XCTAssertFalse(cell.isScrollable)
+                XCTAssertFalse(cell.usesSingleLineMode)
+            } else {
+                XCTFail("Expected NSTextFieldCell")
+            }
         } else {
             XCTFail("Expected NSTextField subview")
         }
@@ -555,6 +563,22 @@ final class AIMessageBubbleViewTests: XCTestCase {
         let narrowHeight = view.fittingSize.height
 
         XCTAssertGreaterThan(narrowHeight, wideHeight, "Narrower width should produce taller wrapped text")
+    }
+
+    func testLongSingleLinePromptWrapsToMultipleLines() {
+        let prompt = "Pick a well-known disease-associated gene for Macaca mulatta (Rhesus monkey), check if it exists in assembly Mmul_10, and if so list all variants within that gene's coordinates."
+        let view = AIMessageBubbleView(text: prompt, isUser: true)
+
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 800))
+        container.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: container.topAnchor),
+            view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            view.widthAnchor.constraint(equalToConstant: 320),
+        ])
+        container.layoutSubtreeIfNeeded()
+
+        XCTAssertGreaterThan(view.fittingSize.height, 80, "Long prompts should wrap to multiple lines instead of rendering as a clipped single line")
     }
 }
 
