@@ -57,7 +57,13 @@ struct VariantQueryBuilderView: View {
         self.onApply = onApply
         self.onSavePreset = onSavePreset
         self.onCancel = onCancel
-        _rules = State(initialValue: [QueryRule()])
+        let defaultRule = QueryRule(
+            category: .callQuality,
+            field: QueryCategory.callQuality.fields.first ?? "Quality",
+            op: QueryCategory.callQuality.operators(for: QueryCategory.callQuality.fields.first ?? "Quality").first ?? "=",
+            value: ""
+        )
+        _rules = State(initialValue: [defaultRule])
     }
 
     var body: some View {
