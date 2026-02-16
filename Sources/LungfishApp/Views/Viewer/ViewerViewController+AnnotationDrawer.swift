@@ -50,6 +50,22 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         }
     }
 
+    /// Opens the annotation drawer by default when the selected bundle has table data.
+    /// Data criteria: at least one annotation or variant track in the manifest.
+    public func openAnnotationDrawerIfBundleHasData(manifest: BundleManifest? = nil) {
+        let effectiveManifest = manifest ?? currentReferenceBundle?.manifest
+        guard let effectiveManifest else { return }
+
+        let hasDrawerData = !effectiveManifest.annotations.isEmpty || !effectiveManifest.variants.isEmpty
+        guard hasDrawerData else { return }
+
+        if !isAnnotationDrawerOpen {
+            toggleAnnotationDrawer()
+        } else if let index = annotationSearchIndex, !index.isBuilding {
+            annotationDrawerView?.setSearchIndex(index)
+        }
+    }
+
     // MARK: - Configuration
 
     /// Creates and configures the annotation drawer, inserting it into the view hierarchy.
@@ -59,6 +75,8 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         let drawer = AnnotationTableDrawerView()
         drawer.translatesAutoresizingMaskIntoConstraints = false
         drawer.delegate = self
+        drawer.setViewportSyncSource(viewerView)
+        drawer.setSampleDisplayState(viewerView.sampleDisplayState)
         view.addSubview(drawer)
 
         // The drawer sits between the viewer content area and the status bar.
@@ -122,6 +140,9 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         annotDrawerLogger.info("annotationDrawer: Navigating to '\(result.name, privacy: .public)' type=\(result.type, privacy: .public) at \(result.chromosome, privacy: .public):\(result.start)-\(result.end) strand=\(result.strand, privacy: .public)")
 
         let buffer = 1000 // 1kb buffer on each side
+        let navigationChromosome = result.isVariant
+            ? viewerView.referenceChromosomeName(forVariantDBChromosome: result.chromosome)
+            : result.chromosome
 
         // Clear any previous sequence fetch error so the new region can be fetched
         viewerView.clearSequenceFetchError()
@@ -132,10 +153,10 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         annotDrawerLogger.info("annotationDrawer: Pre-nav state: currentChrom=\(currentChrom, privacy: .public), scale=\(currentScale, format: .fixed(precision: 2)) bp/px")
 
         if let provider = currentBundleDataProvider,
-           let chromInfo = provider.chromosomeInfo(named: result.chromosome) {
+           let chromInfo = provider.chromosomeInfo(named: navigationChromosome) {
             annotDrawerLogger.info("annotationDrawer: Using bundle provider, chromLength=\(chromInfo.length)")
             navigateToChromosomeAndPosition(
-                chromosome: result.chromosome,
+                chromosome: chromInfo.name,
                 chromosomeLength: Int(chromInfo.length),
                 start: max(0, result.start - buffer),
                 end: min(Int(chromInfo.length), result.end + buffer)
@@ -143,7 +164,7 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         } else {
             annotDrawerLogger.info("annotationDrawer: No bundle provider, using navigateToPosition")
             navigateToPosition(
-                chromosome: result.chromosome,
+                chromosome: navigationChromosome,
                 start: max(0, result.start - buffer),
                 end: result.end + buffer
             )
@@ -152,12 +173,7 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         // Look up the full annotation record from SQLite (preserves BED12 exon blocks).
         // Falls back to a flat single-interval annotation if the database lookup fails.
         let annotation: SequenceAnnotation
-        if let record = annotationSearchIndex?.annotationDatabase?.lookupAnnotation(
-            name: result.name,
-            chromosome: result.chromosome,
-            start: result.start,
-            end: result.end
-        ) {
+        if let record = annotationSearchIndex?.lookupAnnotation(for: result) {
             annotation = record.toAnnotation()
         } else {
             let strand: Strand = switch result.strand {
@@ -169,14 +185,107 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
             annotation = SequenceAnnotation(
                 type: annotationType,
                 name: result.name,
-                chromosome: result.chromosome,
+                chromosome: navigationChromosome,
                 intervals: [AnnotationInterval(start: result.start, end: result.end)],
                 strand: strand
             )
         }
         viewerView.selectedAnnotation = annotation
         viewerView.postAnnotationSelectedNotification(annotation)
+        if result.isVariant {
+            NotificationCenter.default.post(
+                name: .variantSelected,
+                object: self,
+                userInfo: [NotificationUserInfoKey.searchResult: result]
+            )
+        }
         viewerView.setNeedsDisplay(viewerView.bounds)
+    }
+
+    public func annotationDrawer(_ drawer: AnnotationTableDrawerView, didDeleteVariants count: Int) {
+        annotDrawerLogger.info("annotationDrawer: \(count) variants deleted, clearing cached variants and refreshing")
+        syncVariantCountsToManifest()
+        // Clear cached variant annotations so the viewer re-fetches from the (now updated) database
+        viewerView.clearCachedVariants()
+        viewerView.setNeedsDisplay(viewerView.bounds)
+    }
+
+    public func annotationDrawer(_ drawer: AnnotationTableDrawerView, didResolveGeneRegions regions: [GeneRegion]) {
+        let wasVisible = !geneTabBarView.isHidden
+
+        if regions.isEmpty {
+            geneTabBarView.setGeneRegions([])
+            lastSelectedGeneTabSelection = nil
+            return
+        }
+
+        let preferredRegion = lastSelectedGeneTabSelection.map {
+            GeneRegion(name: $0.name, chromosome: $0.chromosome, start: $0.start, end: $0.end)
+        }
+        geneTabBarView.setGeneRegions(regions, preferredRegion: preferredRegion, preferredGeneName: lastSelectedGeneTabSelection?.name)
+
+        // Auto-navigate only when the tab bar first appears.
+        if !wasVisible, let selected = geneTabBarView.selectedGeneRegion {
+            geneTabBar(geneTabBarView, didSelectGene: selected)
+        }
+    }
+
+    /// Recomputes per-track variant counts from the already-open SQLite handles
+    /// and persists them into manifest.json on a background queue.
+    private func syncVariantCountsToManifest() {
+        guard let bundleURL = currentBundleURL,
+              let searchIndex = annotationSearchIndex else { return }
+
+        // Build a snapshot of live counts from the existing read-only handles
+        // (no new DB connections needed — these are already open).
+        let liveCounts = Dictionary(
+            uniqueKeysWithValues: searchIndex.variantDatabaseHandles.map { ($0.trackId, $0.db.totalVariantCount()) }
+        )
+
+        // Dispatch manifest load + save off the main thread to avoid blocking UI.
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                let manifest = try BundleManifest.load(from: bundleURL)
+                var changed = false
+                let updatedTracks = manifest.variants.map { track -> VariantTrackInfo in
+                    guard let liveCount = liveCounts[track.id],
+                          liveCount != track.variantCount else {
+                        return track
+                    }
+                    changed = true
+                    return VariantTrackInfo(
+                        id: track.id,
+                        name: track.name,
+                        description: track.description,
+                        path: track.path,
+                        indexPath: track.indexPath,
+                        databasePath: track.databasePath,
+                        variantType: track.variantType,
+                        variantCount: liveCount,
+                        source: track.source
+                    )
+                }
+                guard changed else { return }
+                let updatedManifest = BundleManifest(
+                    formatVersion: manifest.formatVersion,
+                    name: manifest.name,
+                    identifier: manifest.identifier,
+                    description: manifest.description,
+                    createdDate: manifest.createdDate,
+                    modifiedDate: Date(),
+                    source: manifest.source,
+                    genome: manifest.genome,
+                    annotations: manifest.annotations,
+                    variants: updatedTracks,
+                    tracks: manifest.tracks,
+                    metadata: manifest.metadata
+                )
+                try updatedManifest.save(to: bundleURL)
+                annotDrawerLogger.info("syncVariantCountsToManifest: Persisted updated variant counts")
+            } catch {
+                annotDrawerLogger.error("syncVariantCountsToManifest: \(error.localizedDescription)")
+            }
+        }
     }
 }
 
@@ -188,6 +297,7 @@ extension ViewerViewController {
     private static var annotationDrawerBottomKey: UInt8 = 0
     private static var annotationDrawerOpenKey: UInt8 = 0
     private static var annotationSearchIndexKey: UInt8 = 0
+    private static var lastSelectedGeneTabSelectionKey: UInt8 = 0
 
     var annotationDrawerView: AnnotationTableDrawerView? {
         get { objc_getAssociatedObject(self, &Self.annotationDrawerViewKey) as? AnnotationTableDrawerView }
@@ -213,5 +323,69 @@ extension ViewerViewController {
                 drawer.setSearchIndex(index)
             }
         }
+    }
+
+    var lastSelectedGeneTabSelection: (name: String, chromosome: String, start: Int, end: Int)? {
+        get {
+            guard let dict = objc_getAssociatedObject(self, &Self.lastSelectedGeneTabSelectionKey) as? [String: Any],
+                  let name = dict["name"] as? String,
+                  let chromosome = dict["chromosome"] as? String,
+                  let start = dict["start"] as? Int,
+                  let end = dict["end"] as? Int else {
+                return nil
+            }
+            return (name: name, chromosome: chromosome, start: start, end: end)
+        }
+        set {
+            if let newValue {
+                let payload: [String: Any] = [
+                    "name": newValue.name,
+                    "chromosome": newValue.chromosome,
+                    "start": newValue.start,
+                    "end": newValue.end,
+                ]
+                objc_setAssociatedObject(self, &Self.lastSelectedGeneTabSelectionKey, payload, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            } else {
+                objc_setAssociatedObject(self, &Self.lastSelectedGeneTabSelectionKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            }
+        }
+    }
+}
+
+// MARK: - GeneTabBarDelegate
+
+extension ViewerViewController: GeneTabBarDelegate {
+
+    func geneTabBar(_ tabBar: GeneTabBarView, didSelectGene region: GeneRegion) {
+        lastSelectedGeneTabSelection = (
+            name: region.name,
+            chromosome: region.chromosome,
+            start: region.start,
+            end: region.end
+        )
+        let buffer = 1000
+        viewerView.clearSequenceFetchError()
+
+        if let provider = currentBundleDataProvider,
+           let chromInfo = provider.chromosomeInfo(named: region.chromosome) {
+            navigateToChromosomeAndPosition(
+                chromosome: chromInfo.name,
+                chromosomeLength: Int(chromInfo.length),
+                start: max(0, region.start - buffer),
+                end: min(Int(chromInfo.length), region.end + buffer)
+            )
+        } else {
+            navigateToPosition(
+                chromosome: region.chromosome,
+                start: max(0, region.start - buffer),
+                end: region.end + buffer
+            )
+        }
+        annotDrawerLogger.info("Gene tab navigated to \(region.name, privacy: .public) at \(region.chromosome, privacy: .public):\(region.start)-\(region.end)")
+    }
+
+    func geneTabBarDidRequestDismiss(_ tabBar: GeneTabBarView) {
+        lastSelectedGeneTabSelection = nil
+        geneTabBarView.setGeneRegions([])
     }
 }

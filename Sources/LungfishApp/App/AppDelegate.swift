@@ -6,6 +6,7 @@ import AppKit
 import LungfishCore
 import LungfishIO
 import UniformTypeIdentifiers
+import os
 
 /// Debug logging to file for troubleshooting (only writes to disk in DEBUG builds)
 private func debugLog(_ message: String) {
@@ -36,21 +37,16 @@ private func debugLog(_ message: String) {
 ///
 /// - Parameter block: The MainActor-isolated block to execute
 private func scheduleOnMainRunLoop(_ block: @escaping @MainActor @Sendable () -> Void) {
-    debugLog("scheduleOnMainRunLoop: Scheduling block via CFRunLoopPerformBlock")
-
     // Use CFRunLoopPerformBlock directly - this bypasses GCD completely
     // and schedules the block directly to the main run loop
     CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) {
-        debugLog("scheduleOnMainRunLoop: CFRunLoopPerformBlock executing")
         // We're on main thread via CFRunLoop, safe to assume MainActor
         MainActor.assumeIsolated {
-            debugLog("scheduleOnMainRunLoop: MainActor block executing")
             block()
         }
     }
     // Wake up the run loop to process the block immediately
     CFRunLoopWakeUp(CFRunLoopGetMain())
-    debugLog("scheduleOnMainRunLoop: CFRunLoopWakeUp called")
 }
 
 /// Result of loading file data on a background thread using GCD sync pattern.
@@ -251,8 +247,23 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     /// Welcome window controller for project selection
     private var welcomeWindowController: WelcomeWindowController?
 
+    /// Settings window controller (lazy singleton)
+    private var settingsWindowController: SettingsWindowController?
+
     /// Current working directory for downloads when no project is active
     private var workingDirectoryURL: URL?
+
+    /// Last applied temp retention setting in hours.
+    private var lastAppliedTempRetentionHours: Int = 24
+
+    private struct VCFImportHelperEvent: Decodable {
+        let event: String
+        let progress: Double?
+        let message: String?
+        let variantCount: Int?
+        let error: String?
+        let profile: String?
+    }
 
     /// Public accessor for working directory URL
     public func getWorkingDirectoryURL() -> URL? {
@@ -267,11 +278,21 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
+        // Load persisted settings
+        AppSettings.load()
+        lastAppliedTempRetentionHours = AppSettings.shared.tempFileRetentionHours
+
         // Configure application appearance
         configureAppearance()
 
         // Register for system notifications
         registerNotifications()
+
+        // Clean up stale temp files from previous sessions
+        Task {
+            await TempFileManager.shared.setMaxAge(hours: AppSettings.shared.tempFileRetentionHours)
+            await TempFileManager.shared.cleanupOnLaunch()
+        }
 
         // Wire up DownloadCenter to handle bundle import when downloads complete.
         // This is the primary mechanism for getting built bundles into the sidebar
@@ -543,6 +564,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     public func applicationWillTerminate(_ notification: Notification) {
         // Save application state
         saveApplicationState()
+
+        // Clean up any temp files created during this session
+        // Note: This is synchronous since we're terminating
+        Task {
+            await TempFileManager.shared.cleanupSessionFiles()
+        }
     }
 
     public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -623,6 +650,13 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             object: nil
         )
 
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppSettingsChanged(_:)),
+            name: .appSettingsChanged,
+            object: nil
+        )
+
     }
 
     /// Handles annotation updates from the inspector.
@@ -688,6 +722,19 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         // viewController reference, so no additional save trigger is needed here.
     }
 
+    /// Applies runtime settings that require service reconfiguration.
+    @objc private func handleAppSettingsChanged(_ notification: Notification) {
+        let retentionHours = AppSettings.shared.tempFileRetentionHours
+        guard retentionHours != lastAppliedTempRetentionHours else { return }
+        lastAppliedTempRetentionHours = retentionHours
+
+        Task {
+            await TempFileManager.shared.setMaxAge(hours: retentionHours)
+            // Apply reduced retention immediately instead of waiting for restart.
+            await TempFileManager.shared.cleanupOnLaunch()
+        }
+    }
+
     @objc private func windowWillClose(_ notification: Notification) {
         // Handle window close events
     }
@@ -706,7 +753,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
             do {
                 let document = try await DocumentManager.shared.loadDocument(at: url)
-                print("Loaded document: \(document.name) with \(document.sequences.count) sequences")
+                debugLog("Loaded document: \(document.name) with \(document.sequences.count) sequences")
 
                 // Hide progress and display document
                 viewerController?.hideProgress()
@@ -788,8 +835,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     }
 
     @IBAction func showPreferences(_ sender: Any?) {
-        // Show preferences window (will be SwiftUI Settings scene)
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        if settingsWindowController == nil {
+            settingsWindowController = SettingsWindowController()
+        }
+        settingsWindowController?.show()
     }
 
     // MARK: - FileMenuActions
@@ -904,6 +953,399 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 }
             }
         }
+    }
+
+    @objc func importVCFToBundle(_ sender: Any?) {
+        debugLog("importVCFToBundle: Menu action triggered")
+
+        // Require a bundle to be loaded
+        guard let viewerController = mainWindowController?.mainSplitViewController?.viewerController,
+              let bundleURL = viewerController.currentBundleURL else {
+            showAlert(title: "No Bundle Loaded", message: "Please open a reference genome bundle before importing VCF variants.")
+            return
+        }
+
+        guard let window = mainWindowController?.window else {
+            debugLog("importVCFToBundle: No main window available")
+            return
+        }
+
+        // Show NSOpenPanel for VCF files
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        var vcfTypes: [UTType] = []
+        if let vcfType = UTType(filenameExtension: "vcf") {
+            vcfTypes.append(vcfType)
+        }
+        // .vcf.gz files have UTType for "gz" — include it so they're visible by default
+        if let gzType = UTType(filenameExtension: "gz") {
+            vcfTypes.append(gzType)
+        }
+        panel.allowedContentTypes = vcfTypes
+        panel.allowsOtherFileTypes = true
+        panel.message = "Select a VCF file to import into the current bundle"
+        panel.prompt = "Import"
+
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let vcfURL = panel.url else {
+                debugLog("importVCFToBundle: User cancelled")
+                return
+            }
+            debugLog("importVCFToBundle: Selected \(vcfURL.lastPathComponent)")
+            self?.performVCFImport(vcfURL: vcfURL, bundleURL: bundleURL)
+        }
+    }
+
+    private func performVCFImport(vcfURL: URL, bundleURL: URL) {
+        let cancelFlag = OSAllocatedUnfairLock(initialState: false)
+        let selectedImportProfile = selectedVCFImportProfile()
+        let profileLabel = Self.importProfileLabel(selectedImportProfile)
+        mainWindowController?.mainSplitViewController?.activityIndicator?.show(
+            message: "Importing VCF variants (\(profileLabel))...",
+            style: .determinate(progress: 0),
+            cancellable: true
+        )
+        mainWindowController?.mainSplitViewController?.activityIndicator?.onCancel = {
+            cancelFlag.withLock { $0 = true }
+        }
+        let importStartedAt = Date()
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            // All file I/O on background thread — no UI references captured
+            let result: Result<(variantCount: Int, trackInfo: VariantTrackInfo), Error>
+            let isCancelled: @Sendable () -> Bool = { cancelFlag.withLock { $0 } }
+
+            // Compute dbURL before `do` so it's available for cleanup on cancellation
+            var baseURL = vcfURL
+            if baseURL.pathExtension.lowercased() == "gz" {
+                baseURL = baseURL.deletingPathExtension()
+            }
+            if baseURL.pathExtension.lowercased() == "vcf" {
+                baseURL = baseURL.deletingPathExtension()
+            }
+            let trackId = baseURL.lastPathComponent
+            let dbFilename = "\(trackId).db"
+            let variantsDir = bundleURL.appendingPathComponent("variants")
+            let dbURL = variantsDir.appendingPathComponent(dbFilename)
+
+            do {
+                // Create variants directory if needed
+                try FileManager.default.createDirectory(at: variantsDir, withIntermediateDirectories: true)
+
+                // Remove existing database if re-importing
+                if FileManager.default.fileExists(atPath: dbURL.path) {
+                    try FileManager.default.removeItem(at: dbURL)
+                }
+
+                debugLog("performVCFImport: Creating variant database at \(dbURL.lastPathComponent) via helper")
+
+                let variantCount = try Self.runVCFImportViaHelper(
+                    vcfURL: vcfURL,
+                    outputDBURL: dbURL,
+                    sourceFile: vcfURL.lastPathComponent,
+                    importProfile: selectedImportProfile,
+                    shouldCancel: isCancelled,
+                    progressHandler: { [weak self] progress, message in
+                        let clampedProgress = max(0.0, min(1.0, progress))
+                        let etaText = Self.estimatedRemainingText(progress: clampedProgress, startedAt: importStartedAt)
+                        scheduleOnMainRunLoop {
+                            self?.mainWindowController?.mainSplitViewController?.activityIndicator?.updateProgress(clampedProgress)
+                            let displayMessage = etaText.isEmpty ? message : "\(message) • \(etaText)"
+                            self?.mainWindowController?.mainSplitViewController?.activityIndicator?.updateMessage(displayMessage)
+                        }
+                    }
+                )
+
+                debugLog("performVCFImport: Created database with \(variantCount) variants")
+                if isCancelled() {
+                    throw VariantDatabaseError.cancelled
+                }
+
+                // Normalize chromosome names to match the bundle
+                let currentManifestForChrom = try BundleManifest.load(from: bundleURL)
+                let rwDB = try VariantDatabase(url: dbURL, readWrite: true)
+                let vcfChroms = rwDB.allChromosomes()
+                let chromMapping = mapVCFChromosomes(vcfChroms, toBundleChromosomes: currentManifestForChrom.genome.chromosomes)
+                if !chromMapping.isEmpty {
+                    try rwDB.renameChromosomes(chromMapping)
+                    debugLog("performVCFImport: Remapped chromosomes: \(chromMapping)")
+                }
+                if isCancelled() {
+                    throw VariantDatabaseError.cancelled
+                }
+
+                // Create VariantTrackInfo
+                let trackInfo = VariantTrackInfo(
+                    id: trackId,
+                    name: vcfURL.deletingPathExtension().lastPathComponent,
+                    description: "Imported from \(vcfURL.lastPathComponent)",
+                    path: "variants/\(trackId).bcf",
+                    indexPath: "variants/\(trackId).bcf.csi",
+                    databasePath: "variants/\(dbFilename)",
+                    variantType: .mixed,
+                    variantCount: variantCount,
+                    source: "VCF Import"
+                )
+
+                // Load current manifest, add track, save
+                let currentManifest = try BundleManifest.load(from: bundleURL)
+
+                // Check for duplicate track ID — remove old entry if re-importing
+                let filteredVariants = currentManifest.variants.filter { $0.id != trackId }
+                let baseManifest: BundleManifest
+                if filteredVariants.count != currentManifest.variants.count {
+                    baseManifest = BundleManifest(
+                        formatVersion: currentManifest.formatVersion,
+                        name: currentManifest.name,
+                        identifier: currentManifest.identifier,
+                        description: currentManifest.description,
+                        createdDate: currentManifest.createdDate,
+                        modifiedDate: Date(),
+                        source: currentManifest.source,
+                        genome: currentManifest.genome,
+                        annotations: currentManifest.annotations,
+                        variants: filteredVariants,
+                        tracks: currentManifest.tracks,
+                        metadata: currentManifest.metadata
+                    )
+                } else {
+                    baseManifest = currentManifest
+                }
+
+                let updatedManifest = baseManifest.addingVariantTrack(trackInfo)
+                try updatedManifest.save(to: bundleURL)
+
+                result = .success((variantCount, trackInfo))
+            } catch {
+                result = .failure(error)
+            }
+
+            debugLog("performVCFImport: Background work done, scheduling main thread callback")
+
+            // Use CFRunLoopPerformBlock to bypass GCD main queue stalls
+            // (DispatchQueue.main.async can be blocked after sheet dismissal)
+            scheduleOnMainRunLoop { [weak self] in
+                debugLog("performVCFImport: Main thread callback executing")
+                self?.mainWindowController?.mainSplitViewController?.activityIndicator?.onCancel = nil
+                self?.mainWindowController?.mainSplitViewController?.activityIndicator?.hide()
+
+                switch result {
+                case .success(let (variantCount, _)):
+                    guard let viewerController = self?.mainWindowController?.mainSplitViewController?.viewerController else {
+                        debugLog("performVCFImport: No viewer controller")
+                        return
+                    }
+                    do {
+                        try viewerController.displayBundle(at: bundleURL)
+                        debugLog("performVCFImport: Bundle reloaded with \(variantCount) variants")
+                    } catch {
+                        debugLog("performVCFImport: Bundle reload failed: \(error.localizedDescription)")
+                        self?.showAlert(title: "Import Error", message: "VCF imported but bundle reload failed: \(error.localizedDescription)")
+                    }
+
+                case .failure(let error):
+                    if let dbErr = error as? VariantDatabaseError, case .cancelled = dbErr {
+                        try? FileManager.default.removeItem(at: dbURL)
+                        debugLog("performVCFImport: Cancelled by user")
+                    } else {
+                        debugLog("performVCFImport: Failed: \(error.localizedDescription)")
+                        self?.showAlert(title: "VCF Import Failed", message: error.localizedDescription)
+                    }
+                }
+            }
+        }
+    }
+
+    private func selectedVCFImportProfile() -> VCFImportProfile {
+        let raw = AppSettings.shared.vcfImportProfile
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return .auto }
+        if let profile = VCFImportProfile(rawValue: raw) {
+            return profile
+        }
+        switch raw.lowercased() {
+        case "fast":
+            return .fast
+        case "lowmemory", "low-memory", "low_memory":
+            return .lowMemory
+        default:
+            return .auto
+        }
+    }
+
+    private nonisolated static func importProfileLabel(_ profile: VCFImportProfile) -> String {
+        switch profile {
+        case .auto:
+            return "Auto"
+        case .lowMemory:
+            return "Low Memory"
+        case .fast:
+            return "Fast"
+        }
+    }
+
+    private nonisolated static func runVCFImportViaHelper(
+        vcfURL: URL,
+        outputDBURL: URL,
+        sourceFile: String,
+        importProfile: VCFImportProfile,
+        shouldCancel: @escaping @Sendable () -> Bool,
+        progressHandler: @escaping @Sendable (Double, String) -> Void
+    ) throws -> Int {
+        guard let executablePath = CommandLine.arguments.first, !executablePath.isEmpty else {
+            throw VariantDatabaseError.createFailed("Could not locate application executable for helper import")
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executablePath)
+        process.arguments = [
+            "--vcf-import-helper",
+            "--vcf-path", vcfURL.path,
+            "--output-db-path", outputDBURL.path,
+            "--source-file", sourceFile,
+            "--import-profile", importProfile.rawValue,
+        ]
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        struct HelperParseState: Sendable {
+            var stdoutBuffer = Data()
+            var helperError: String?
+            var variantCount: Int?
+            var wasCancelled = false
+        }
+        let parseState = OSAllocatedUnfairLock(initialState: HelperParseState())
+        let stderrState = OSAllocatedUnfairLock(initialState: Data())
+
+        let handleEventLine: @Sendable (Data) -> Void = { line in
+            guard !line.isEmpty else { return }
+            guard let event = try? JSONDecoder().decode(VCFImportHelperEvent.self, from: line) else {
+                if let text = String(data: line, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                    parseState.withLock { state in
+                        if state.helperError == nil {
+                            state.helperError = text
+                        }
+                    }
+                }
+                return
+            }
+
+            switch event.event {
+            case "progress":
+                if let progress = event.progress {
+                    progressHandler(progress, event.message ?? "Importing VCF...")
+                }
+            case "done":
+                if let variantCount = event.variantCount {
+                    parseState.withLock { $0.variantCount = variantCount }
+                }
+            case "error":
+                let message = event.error ?? event.message ?? "VCF helper import failed"
+                parseState.withLock { $0.helperError = message }
+            case "cancelled":
+                parseState.withLock { $0.wasCancelled = true }
+            default:
+                break
+            }
+        }
+
+        let consumeStdoutData: @Sendable (Data) -> Void = { data in
+            guard !data.isEmpty else { return }
+            let lines = parseState.withLock { state -> [Data] in
+                var parsed: [Data] = []
+                state.stdoutBuffer.append(data)
+                while let newlineIndex = state.stdoutBuffer.firstIndex(of: 0x0A) {
+                    let line = Data(state.stdoutBuffer.prefix(upTo: newlineIndex))
+                    state.stdoutBuffer.removeSubrange(...newlineIndex)
+                    parsed.append(line)
+                }
+                return parsed
+            }
+            for line in lines {
+                handleEventLine(line)
+            }
+        }
+
+        let stdoutHandle = stdoutPipe.fileHandleForReading
+        let stderrHandle = stderrPipe.fileHandleForReading
+
+        stdoutHandle.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            consumeStdoutData(data)
+        }
+        stderrHandle.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            stderrState.withLock { $0.append(data) }
+        }
+
+        try process.run()
+
+        while process.isRunning {
+            if shouldCancel() {
+                process.terminate()
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        process.waitUntilExit()
+
+        stdoutHandle.readabilityHandler = nil
+        stderrHandle.readabilityHandler = nil
+        consumeStdoutData(stdoutHandle.readDataToEndOfFile())
+
+        if let trailing = parseState.withLock({ state -> Data? in
+            guard !state.stdoutBuffer.isEmpty else { return nil }
+            defer { state.stdoutBuffer.removeAll(keepingCapacity: false) }
+            return state.stdoutBuffer
+        }) {
+            handleEventLine(trailing)
+        }
+
+        let helperCancelled = parseState.withLock { $0.wasCancelled }
+        if shouldCancel() || helperCancelled {
+            throw VariantDatabaseError.cancelled
+        }
+
+        guard process.terminationStatus == 0 else {
+            let helperError = parseState.withLock { $0.helperError }
+            let stderrMessage = stderrState.withLock { data -> String in
+                String(data: data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            }
+            let message = helperError ?? (stderrMessage.isEmpty ? "VCF helper exited with status \(process.terminationStatus)" : stderrMessage)
+            throw VariantDatabaseError.createFailed(message)
+        }
+
+        if let variantCount = parseState.withLock({ $0.variantCount }) {
+            return variantCount
+        }
+
+        let importedDB = try VariantDatabase(url: outputDBURL)
+        return importedDB.totalCount()
+    }
+
+    private nonisolated static func estimatedRemainingText(progress: Double, startedAt: Date) -> String {
+        guard progress > 0.01, progress < 1.0 else { return "" }
+        let elapsed = Date().timeIntervalSince(startedAt)
+        guard elapsed > 0.5 else { return "" }
+        let totalEstimate = elapsed / progress
+        let remaining = max(0, totalEstimate - elapsed)
+        guard remaining.isFinite else { return "" }
+
+        let rounded = Int(remaining.rounded())
+        if rounded < 60 {
+            return "ETA ~\(rounded)s"
+        }
+        let mins = rounded / 60
+        let secs = rounded % 60
+        return secs == 0 ? "ETA ~\(mins)m" : "ETA ~\(mins)m \(secs)s"
     }
 
     @objc func exportFASTA(_ sender: Any?) {
@@ -1191,6 +1633,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             return true
         }
 
+        // "Import VCF Variants..." is only enabled when a bundle is loaded
+        if menuItem.action == #selector(importVCFToBundle(_:)) {
+            let hasBundle = mainWindowController?.mainSplitViewController?.viewerController?.currentBundleURL != nil
+            return hasBundle
+        }
+
         return true
     }
 
@@ -1464,7 +1912,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 // Refresh the viewer to show the new annotation
                 viewerController.displayDocument(document)
 
-                print("Added annotation: \(name) (\(typeString)) at \(selectionRange)")
+                debugLog("Added annotation: \(name) (\(typeString)) at \(selectionRange)")
             }
         }
     }
@@ -1917,7 +2365,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         do {
             try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
         } catch {
-            print("Warning: Could not create destination directory: \(error.localizedDescription)")
+            debugLog("Warning: Could not create destination directory: \(error.localizedDescription)")
             // Fall back to opening from temp location
             _ = openDocument(at: tempFileURL)
             return

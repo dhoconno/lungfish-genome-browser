@@ -8,6 +8,7 @@ import Combine
 import LungfishCore
 import LungfishIO
 import os.log
+import UniformTypeIdentifiers
 
 /// Logger for inspector operations
 private let logger = Logger(subsystem: "com.lungfish.browser", category: "InspectorViewController")
@@ -52,6 +53,16 @@ public class InspectorViewController: NSViewController {
     /// Public access to the annotation section view model for wiring variant types.
     public var annotationSectionViewModel: AnnotationSectionViewModel {
         viewModel.annotationSectionViewModel
+    }
+
+    /// Public access to the variant section view model for wiring variant detail.
+    public var variantSectionViewModel: VariantSectionViewModel {
+        viewModel.variantSectionViewModel
+    }
+
+    /// Public access to the sample section view model for wiring sample data.
+    public var sampleSectionViewModel: SampleSectionViewModel {
+        viewModel.sampleSectionViewModel
     }
 
     /// Cancellables for Combine subscriptions
@@ -119,6 +130,14 @@ public class InspectorViewController: NSViewController {
             self,
             selector: #selector(handleAnnotationSelected(_:)),
             name: .annotationSelected,
+            object: nil
+        )
+
+        // Listen for explicit variant selections that include track/row identity.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleVariantSelected(_:)),
+            name: .variantSelected,
             object: nil
         )
 
@@ -227,6 +246,34 @@ public class InspectorViewController: NSViewController {
             self?.handleQualityOverlayToggled(enabled)
         }
 
+        // Variant section callbacks
+        viewModel.variantSectionViewModel.onZoomToVariant = { variant in
+            // Create a SequenceAnnotation from the variant for zoom navigation
+            let annotation = SequenceAnnotation(
+                type: .snp,
+                name: variant.name,
+                chromosome: variant.chromosome,
+                start: variant.start,
+                end: variant.end,
+                strand: .unknown
+            )
+            NotificationCenter.default.post(
+                name: .zoomToAnnotationRequested,
+                object: nil,
+                userInfo: [NotificationUserInfoKey.annotation: annotation]
+            )
+        }
+
+        viewModel.variantSectionViewModel.onCopyVariantInfo = { info in
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(info, forType: .string)
+        }
+
+        // Sample section callbacks
+        viewModel.sampleSectionViewModel.onDisplayStateChanged = { [weak self] state in
+            self?.handleSampleDisplayStateChanged(state)
+        }
+
         // Annotation section callbacks
         viewModel.annotationSectionViewModel.onSettingsChanged = { [weak self] in
             self?.handleAnnotationSettingsChanged()
@@ -328,14 +375,28 @@ public class InspectorViewController: NSViewController {
         if let annotation = selectedAnnotation {
             viewModel.selectedAnnotation = annotation
             viewModel.selectionSectionViewModel.select(annotation: annotation)
+            if annotation.type != .snp && annotation.type != .insertion && annotation.type != .deletion && annotation.type != .variation {
+                viewModel.variantSectionViewModel.clear()
+            }
             // Auto-switch to Selection tab when an annotation is selected
             viewModel.selectedTab = .selection
         } else {
             // Deselection - clear the annotation
             viewModel.selectedAnnotation = nil
             viewModel.selectionSectionViewModel.select(annotation: nil)
+            viewModel.variantSectionViewModel.clear()
             applyInspectorTabSelection(from: notification)
         }
+    }
+
+    /// Handles variant selection notifications carrying row/track identity.
+    @objc private func handleVariantSelected(_ notification: Notification) {
+        guard let result = notification.userInfo?[NotificationUserInfoKey.searchResult] as? AnnotationSearchIndex.SearchResult else {
+            viewModel.variantSectionViewModel.clear()
+            return
+        }
+        viewModel.variantSectionViewModel.select(variant: result)
+        viewModel.selectedTab = .selection
     }
 
     /// Handles bundle load notifications to update the Document tab.
@@ -355,6 +416,9 @@ public class InspectorViewController: NSViewController {
         // Wire reference bundle for on-the-fly CDS translation computation
         if let bundle = userInfo[NotificationUserInfoKey.referenceBundle] as? ReferenceBundle {
             viewModel.selectionSectionViewModel.referenceBundle = bundle
+
+            // Populate sample section with variant database sample data
+            updateSampleSection(from: bundle)
         }
 
         // Auto-select the first chromosome so the Chromosome section is visible immediately
@@ -486,15 +550,11 @@ public class InspectorViewController: NSViewController {
         appearance.trackHeight = CGFloat(viewModel.appearanceSectionViewModel.trackHeight)
         logger.info("handleAppearanceChanged: Track height = \(appearance.trackHeight, privacy: .public)")
 
-        appearance.save()
+        AppSettings.shared.sequenceAppearance = appearance
+        AppSettings.shared.save()
         viewModel.appearance = appearance
 
-        NotificationCenter.default.post(
-            name: .appearanceChanged,
-            object: self,
-            userInfo: nil
-        )
-        logger.info("handleAppearanceChanged: Posted appearanceChanged notification")
+        logger.info("handleAppearanceChanged: Appearance persisted")
     }
 
     /// Handles quality overlay toggle changes.
@@ -503,13 +563,26 @@ public class InspectorViewController: NSViewController {
     private func handleQualityOverlayToggled(_ enabled: Bool) {
         var appearance = viewModel.appearance
         appearance.showQualityOverlay = enabled
-        appearance.save()
+        AppSettings.shared.sequenceAppearance = appearance
+        AppSettings.shared.save()
         viewModel.appearance = appearance
 
+        // AppSettings.save() posts .appearanceChanged
+    }
+
+    /// Handles sample display state changes from the SampleSection.
+    ///
+    /// Posts a `sampleDisplayStateChanged` notification so the viewer
+    /// can update genotype row rendering.
+    private func handleSampleDisplayStateChanged(_ state: SampleDisplayState) {
+        logger.info("handleSampleDisplayStateChanged: showRows=\(state.showGenotypeRows) rowHeight=\(state.rowHeight) hidden=\(state.hiddenSamples.count)")
+
         NotificationCenter.default.post(
-            name: .appearanceChanged,
+            name: .sampleDisplayStateChanged,
             object: self,
-            userInfo: nil
+            userInfo: [
+                NotificationUserInfoKey.sampleDisplayState: state
+            ]
         )
     }
 
@@ -537,20 +610,14 @@ public class InspectorViewController: NSViewController {
         // 3. Reset the annotation section view model (height, spacing, visibility, filters)
         viewModel.annotationSectionViewModel.resetToDefaults()
 
-        // 4. Reset the core SequenceAppearance model and clear persisted settings
-        let defaultAppearance = SequenceAppearance.resetToDefaults()
+        // 4. Reset the core appearance model in AppSettings
+        let defaultAppearance = SequenceAppearance.default
+        AppSettings.shared.sequenceAppearance = defaultAppearance
+        AppSettings.shared.save()
         viewModel.appearance = defaultAppearance
-        logger.info("handleResetAllAppearanceSettings: Cleared persisted settings, using defaults")
+        logger.info("handleResetAllAppearanceSettings: Reset persisted settings to defaults")
 
-        // 5. Post notifications so the viewer updates
-        // Post appearance changed notification
-        NotificationCenter.default.post(
-            name: .appearanceChanged,
-            object: self,
-            userInfo: nil
-        )
-
-        // Post annotation settings changed notification
+        // 5. Post annotation notifications so the viewer updates
         NotificationCenter.default.post(
             name: .annotationSettingsChanged,
             object: self,
@@ -597,6 +664,114 @@ public class InspectorViewController: NSViewController {
     /// - Parameter chromosome: The chromosome to display details for, or nil to clear
     public func updateSelectedChromosome(_ chromosome: ChromosomeInfo?) {
         viewModel.documentSectionViewModel.selectChromosome(chromosome)
+    }
+
+    /// Populates the sample section view model from the bundle's variant databases.
+    ///
+    /// Opens each variant database and aggregates sample names and metadata field names.
+    private func updateSampleSection(from bundle: ReferenceBundle) {
+        var allSampleNames: [String] = []
+        var sampleNameSet = Set<String>()
+        var allMetadataFields: Set<String> = []
+        var allSampleMetadata: [String: [String: String]] = [:]
+        var allSourceFiles: [String: String] = [:]
+        var dbByTrackId: [String: VariantDatabase] = [:]
+        var variantDBURLs: [URL] = []
+
+        for vTrackId in bundle.variantTrackIds {
+            guard let trackInfo = bundle.variantTrack(id: vTrackId),
+                  let dbPath = trackInfo.databasePath else { continue }
+            let dbURL = bundle.url.appendingPathComponent(dbPath)
+            guard FileManager.default.fileExists(atPath: dbURL.path) else { continue }
+            do {
+                let db = try VariantDatabase(url: dbURL)
+                dbByTrackId[vTrackId] = db
+                variantDBURLs.append(dbURL)
+                for name in db.sampleNames() where sampleNameSet.insert(name).inserted {
+                    allSampleNames.append(name)
+                }
+                let fields = db.metadataFieldNames()
+                allMetadataFields.formUnion(fields)
+
+                // Load per-sample metadata and source files
+                for (name, metadata) in db.allSampleMetadata() {
+                    allSampleMetadata[name] = metadata
+                }
+                let sources = db.allSourceFiles()
+                for (name, file) in sources {
+                    allSourceFiles[name] = file
+                }
+            } catch {
+                logger.warning("updateSampleSection: Failed to open variant database '\(vTrackId, privacy: .public)': \(error.localizedDescription)")
+            }
+        }
+
+        let sampleCount = allSampleNames.count
+        viewModel.sampleSectionViewModel.update(
+            sampleCount: sampleCount,
+            sampleNames: allSampleNames,
+            metadataFields: allMetadataFields.sorted(),
+            sampleMetadata: allSampleMetadata,
+            sourceFiles: allSourceFiles
+        )
+
+        // Wire save callback for metadata editing
+        let capturedURLs = variantDBURLs
+        viewModel.sampleSectionViewModel.onSaveMetadata = { sampleName, metadata in
+            for dbURL in capturedURLs {
+                do {
+                    let rwDB = try VariantDatabase(url: dbURL, readWrite: true)
+                    try rwDB.updateSampleMetadata(name: sampleName, metadata: metadata)
+                    logger.info("updateSampleSection: Saved metadata for '\(sampleName)' to \(dbURL.lastPathComponent)")
+                } catch {
+                    logger.warning("updateSampleSection: Failed to save metadata: \(error.localizedDescription)")
+                }
+            }
+        }
+
+        // Wire import callback
+        viewModel.sampleSectionViewModel.onImportMetadata = { [weak self] in
+            self?.presentMetadataImportPanel(variantDBURLs: capturedURLs, bundle: bundle)
+        }
+
+        // Wire variant databases for track-aware genotype lookups.
+        viewModel.variantSectionViewModel.variantDatabasesByTrackId = dbByTrackId
+
+        logger.info("updateSampleSection: \(sampleCount) samples, \(allMetadataFields.count) metadata fields, \(allSourceFiles.count) source files")
+    }
+
+    /// Presents an open panel for importing sample metadata from TSV/CSV.
+    private func presentMetadataImportPanel(variantDBURLs: [URL], bundle: ReferenceBundle) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [
+            .init(filenameExtension: "tsv")!,
+            .init(filenameExtension: "csv")!,
+            .init(filenameExtension: "txt")!,
+        ]
+        panel.message = "Select a TSV or CSV file with sample metadata"
+        panel.prompt = "Import"
+
+        guard let window = view.window else { return }
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let fileURL = panel.url else { return }
+            let ext = fileURL.pathExtension.lowercased()
+            let format: MetadataFormat = ext == "csv" ? .csv : .tsv
+
+            var totalUpdated = 0
+            for dbURL in variantDBURLs {
+                do {
+                    let rwDB = try VariantDatabase(url: dbURL, readWrite: true)
+                    let count = try rwDB.importSampleMetadata(from: fileURL, format: format)
+                    totalUpdated += count
+                } catch {
+                    logger.warning("importSampleMetadata: \(error.localizedDescription)")
+                }
+            }
+
+            logger.info("importSampleMetadata: Updated \(totalUpdated) samples from \(fileURL.lastPathComponent)")
+            // Refresh the sample section
+            self?.updateSampleSection(from: bundle)
+        }
     }
 
     /// Updates the quality section with new quality data.
@@ -673,7 +848,7 @@ public final class InspectorViewModel {
     // MARK: - Appearance State
 
     /// Current appearance settings
-    var appearance: SequenceAppearance = .load()
+    var appearance: SequenceAppearance = AppSettings.shared.sequenceAppearance
 
     // MARK: - Quality State
 
@@ -702,6 +877,12 @@ public final class InspectorViewModel {
 
     /// View model for mapped read style section (BAM/CRAM styling placeholder)
     let readStyleSectionViewModel = ReadStyleSectionViewModel()
+
+    /// View model for variant detail section
+    let variantSectionViewModel = VariantSectionViewModel()
+
+    /// View model for sample display controls section
+    let sampleSectionViewModel = SampleSectionViewModel()
 
     // MARK: - Initialization
 
@@ -756,6 +937,9 @@ public struct InspectorView: View {
                     case .selection:
                         SelectionSection(viewModel: viewModel.selectionSectionViewModel)
 
+                        // Variant detail (shown when a variant is selected)
+                        VariantSection(viewModel: viewModel.variantSectionViewModel)
+
                         Divider()
 
                         // Sequence style
@@ -765,6 +949,11 @@ public struct InspectorView: View {
 
                         // Annotation style
                         AnnotationSection(viewModel: viewModel.annotationSectionViewModel)
+
+                        Divider()
+
+                        // Sample display controls (shown when variant data is available)
+                        SampleSection(viewModel: viewModel.sampleSectionViewModel)
 
                         Divider()
 

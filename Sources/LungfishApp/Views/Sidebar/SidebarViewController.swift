@@ -117,6 +117,9 @@ public class SidebarViewController: NSViewController {
     /// File system watcher for auto-refreshing when files change
     private var fileSystemWatcher: FileSystemWatcher?
 
+    /// Suppresses delegate and notification callbacks during programmatic selection changes.
+    private var suppressSelectionCallbacks = false
+
     // MARK: - Delegate
 
     /// Delegate for selection change callbacks.
@@ -380,7 +383,11 @@ public class SidebarViewController: NSViewController {
         logger.info("reloadFromFilesystem: Scanning '\(projectURL.path, privacy: .public)'")
 
         // Save current selection to restore after reload
-        let selectedURLs = selectedItems().compactMap { $0.url }
+        let selectedURLs = selectedItems().compactMap { $0.url?.standardizedFileURL }
+        let selectedURLSet = Set(selectedURLs)
+
+        // Suppress selection side effects while rebuilding and restoring rows.
+        suppressSelectionCallbacks = true
 
         // Build the sidebar items from the project folder's contents (not the folder itself)
         // This shows the contents at the root level, similar to how Finder shows folder contents
@@ -396,6 +403,14 @@ public class SidebarViewController: NSViewController {
 
         // Restore selection if possible
         restoreSelection(urls: selectedURLs)
+        suppressSelectionCallbacks = false
+
+        // Propagate selection only if it actually changed after refresh.
+        let restoredItems = selectedItems()
+        let restoredURLSet = Set(restoredItems.compactMap { $0.url?.standardizedFileURL })
+        if restoredURLSet != selectedURLSet {
+            handleSelectionChange(restoredItems, source: "reloadFromFilesystem")
+        }
 
         let itemCount = rootItems.reduce(0) { $0 + countItems(in: $1) }
         logger.info("reloadFromFilesystem: Sidebar updated with \(itemCount) items")
@@ -599,6 +614,9 @@ public class SidebarViewController: NSViewController {
         }
 
         if !rowsToSelect.isEmpty {
+            if outlineView.selectedRowIndexes == rowsToSelect {
+                return
+            }
             outlineView.selectRowIndexes(rowsToSelect, byExtendingSelection: false)
         }
     }
@@ -624,9 +642,27 @@ public class SidebarViewController: NSViewController {
         return projectURL
     }
 
-    // MARK: - Legacy Methods (Deprecated)
-    // These methods are kept for backwards compatibility but should not be used
-    // with the new filesystem-backed model. They will be removed in a future version.
+    // MARK: - Document Management
+
+    /// Returns the sidebar item type and icon name for a given document type.
+    private func sidebarItemInfo(for documentType: DocumentType) -> (type: SidebarItemType, icon: String) {
+        switch documentType {
+        case .fasta, .fastq:
+            return (.sequence, "doc.text")
+        case .genbank:
+            return (.sequence, "doc.richtext")
+        case .gff3, .bed:
+            return (.annotation, "list.bullet.rectangle")
+        case .vcf:
+            return (.annotation, "chart.bar.xaxis")
+        case .bam:
+            return (.alignment, "chart.bar")
+        case .lungfishProject:
+            return (.sequence, "folder.badge.gearshape")
+        case .lungfishReferenceBundle:
+            return (.referenceBundle, "cylinder.split.1x2")
+        }
+    }
 
     /// Adds a loaded document to the sidebar
     public func addLoadedDocument(_ document: LoadedDocument) {
@@ -644,32 +680,7 @@ public class SidebarViewController: NSViewController {
             rootItems.insert(openDocsGroup!, at: 0)
         }
 
-        // Determine the item type based on document type
-        let itemType: SidebarItemType
-        let icon: String
-        switch document.type {
-        case .fasta, .fastq:
-            itemType = .sequence
-            icon = "doc.text"
-        case .genbank:
-            itemType = .sequence
-            icon = "doc.richtext"
-        case .gff3, .bed:
-            itemType = .annotation
-            icon = "list.bullet.rectangle"
-        case .vcf:
-            itemType = .annotation
-            icon = "chart.bar.xaxis"
-        case .bam:
-            itemType = .alignment
-            icon = "chart.bar"
-        case .lungfishProject:
-            itemType = .sequence
-            icon = "folder.badge.gearshape"
-        case .lungfishReferenceBundle:
-            itemType = .referenceBundle
-            icon = "cylinder.split.1x2"
-        }
+        let info = sidebarItemInfo(for: document.type)
 
         // Check if document already exists in sidebar
         if openDocsGroup!.children.contains(where: { $0.url == document.url }) {
@@ -680,8 +691,8 @@ public class SidebarViewController: NSViewController {
         // Create the sidebar item
         let item = SidebarItem(
             title: document.name,
-            type: itemType,
-            icon: icon,
+            type: info.type,
+            icon: info.icon,
             children: [],
             url: document.url
         )
@@ -755,32 +766,7 @@ public class SidebarViewController: NSViewController {
             projectItem.children.insert(downloadsFolder!, at: firstNonFolderIndex)
         }
 
-        // Determine the item type based on document type
-        let itemType: SidebarItemType
-        let icon: String
-        switch document.type {
-        case .fasta, .fastq:
-            itemType = .sequence
-            icon = "doc.text"
-        case .genbank:
-            itemType = .sequence
-            icon = "doc.richtext"
-        case .gff3, .bed:
-            itemType = .annotation
-            icon = "list.bullet.rectangle"
-        case .vcf:
-            itemType = .annotation
-            icon = "chart.bar.xaxis"
-        case .bam:
-            itemType = .alignment
-            icon = "chart.bar"
-        case .lungfishProject:
-            itemType = .sequence
-            icon = "folder.badge.gearshape"
-        case .lungfishReferenceBundle:
-            itemType = .referenceBundle
-            icon = "cylinder.split.1x2"
-        }
+        let info = sidebarItemInfo(for: document.type)
 
         // Check if document already exists in downloads folder
         if downloadsFolder!.children.contains(where: { $0.url == document.url }) {
@@ -791,8 +777,8 @@ public class SidebarViewController: NSViewController {
         // Create the sidebar item for the downloaded document
         let item = SidebarItem(
             title: document.name,
-            type: itemType,
-            icon: icon,
+            type: info.type,
+            icon: info.icon,
             children: [],
             url: document.url
         )
@@ -848,38 +834,13 @@ public class SidebarViewController: NSViewController {
                 .replacingOccurrences(of: folderURL.path, with: "")
                 .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
 
-            // Determine item type based on document type
-            let itemType: SidebarItemType
-            let icon: String
-            switch document.type {
-            case .fasta, .fastq:
-                itemType = .sequence
-                icon = "doc.text"
-            case .genbank:
-                itemType = .sequence
-                icon = "doc.richtext"
-            case .gff3, .bed:
-                itemType = .annotation
-                icon = "list.bullet.rectangle"
-            case .vcf:
-                itemType = .annotation
-                icon = "chart.bar.xaxis"
-            case .bam:
-                itemType = .alignment
-                icon = "chart.bar"
-            case .lungfishProject:
-                itemType = .sequence
-                icon = "folder.badge.gearshape"
-            case .lungfishReferenceBundle:
-                itemType = .referenceBundle
-                icon = "cylinder.split.1x2"
-            }
+            let info = sidebarItemInfo(for: document.type)
 
             // Create document item
             let docItem = SidebarItem(
                 title: document.name,
-                type: itemType,
-                icon: icon,
+                type: info.type,
+                icon: info.icon,
                 children: [],
                 url: document.url
             )
@@ -973,38 +934,13 @@ public class SidebarViewController: NSViewController {
             .replacingOccurrences(of: projectURL.path, with: "")
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
 
-        // Determine item type based on document type
-        let itemType: SidebarItemType
-        let icon: String
-        switch document.type {
-        case .fasta, .fastq:
-            itemType = .sequence
-            icon = "doc.text"
-        case .genbank:
-            itemType = .sequence
-            icon = "doc.richtext"
-        case .gff3, .bed:
-            itemType = .annotation
-            icon = "list.bullet.rectangle"
-        case .vcf:
-            itemType = .annotation
-            icon = "chart.bar.xaxis"
-        case .bam:
-            itemType = .alignment
-            icon = "chart.bar"
-        case .lungfishProject:
-            itemType = .sequence
-            icon = "folder.badge.gearshape"
-        case .lungfishReferenceBundle:
-            itemType = .referenceBundle
-            icon = "cylinder.split.1x2"
-        }
+        let info = sidebarItemInfo(for: document.type)
 
         // Create document item
         let docItem = SidebarItem(
             title: document.name,
-            type: itemType,
-            icon: icon,
+            type: info.type,
+            icon: info.icon,
             children: [],
             url: document.url
         )
@@ -1620,11 +1556,20 @@ extension SidebarViewController: NSOutlineViewDelegate {
     }
 
     public func outlineViewSelectionDidChange(_ notification: Notification) {
+        if suppressSelectionCallbacks {
+            logger.debug("outlineViewSelectionDidChange: Suppressed during programmatic update")
+            return
+        }
+
         // Get ALL selected items for multi-selection support
         let items = selectedItems()
+        handleSelectionChange(items, source: "outlineViewSelectionDidChange")
+    }
+
+    private func handleSelectionChange(_ items: [SidebarItem], source: String) {
 
         if items.isEmpty {
-            logger.debug("outlineViewSelectionDidChange: Selection cleared")
+            logger.debug("\(source, privacy: .public): Selection cleared")
 
             // Call delegate directly - synchronous, no Task needed
             selectionDelegate?.sidebarDidSelectItem(nil)
@@ -1640,7 +1585,7 @@ extension SidebarViewController: NSOutlineViewDelegate {
 
         // Log all selected items
         let itemNames = items.map { $0.title }.joined(separator: ", ")
-        logger.info("outlineViewSelectionDidChange: Selected \(items.count) items: [\(itemNames, privacy: .public)]")
+        logger.info("\(source, privacy: .public): Selected \(items.count) items: [\(itemNames, privacy: .public)]")
 
         // Call delegate directly - synchronous, reliable
         // This is the primary way to handle selection changes for content display
@@ -1660,7 +1605,7 @@ extension SidebarViewController: NSOutlineViewDelegate {
                 "items": items
             ]
         )
-        logger.debug("outlineViewSelectionDidChange: Called delegate and posted notification with \(items.count) items")
+        logger.debug("\(source, privacy: .public): Called delegate and posted notification with \(items.count) items")
     }
 }
 
@@ -1825,6 +1770,14 @@ extension SidebarViewController: NSMenuDelegate {
             let getInfoItem = NSMenuItem(title: "Get Bundle Info", action: #selector(contextMenuGetBundleInfo(_:)), keyEquivalent: "")
             getInfoItem.target = self
             menu.addItem(getInfoItem)
+
+            // Delete Variant Tracks — only if bundle has variant tracks
+            if let url = items.first?.url, bundleHasVariantTracks(url) {
+                menu.addItem(NSMenuItem.separator())
+                let deleteVariantsItem = NSMenuItem(title: "Delete Variant Tracks\u{2026}", action: #selector(contextMenuDeleteVariantTracks(_:)), keyEquivalent: "")
+                deleteVariantsItem.target = self
+                menu.addItem(deleteVariantsItem)
+            }
 
             menu.addItem(NSMenuItem.separator())
         }
@@ -2013,6 +1966,147 @@ extension SidebarViewController: NSMenuDelegate {
                 alert.beginSheetModal(for: window)
             } else {
                 alert.runModal()
+            }
+        }
+    }
+
+    /// Checks if a bundle URL has variant tracks by reading its manifest.
+    private func bundleHasVariantTracks(_ bundleURL: URL) -> Bool {
+        let manifestURL = bundleURL.appendingPathComponent("manifest.json")
+        guard FileManager.default.fileExists(atPath: manifestURL.path) else { return false }
+        guard let data = try? Data(contentsOf: manifestURL),
+              let manifest = try? JSONDecoder().decode(BundleManifest.self, from: data) else { return false }
+        return !manifest.variants.isEmpty
+    }
+
+    @objc private func contextMenuDeleteVariantTracks(_ sender: Any?) {
+        let items = selectedItems()
+        guard let item = items.first, item.type == .referenceBundle, let bundleURL = item.url else { return }
+
+        let manifestURL = bundleURL.appendingPathComponent("manifest.json")
+        guard let data = try? Data(contentsOf: manifestURL),
+              let manifest = try? JSONDecoder().decode(BundleManifest.self, from: data),
+              !manifest.variants.isEmpty else { return }
+
+        let tracks = manifest.variants
+        let trackNames = tracks.map(\.name).joined(separator: ", ")
+        let alert = NSAlert()
+        alert.messageText = "Delete Variant Tracks?"
+        alert.informativeText = "This will permanently delete \(tracks.count) variant track\(tracks.count == 1 ? "" : "s") (\(trackNames)) and their database files from the bundle. This cannot be undone."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .critical
+
+        guard let window = self.view.window else { return }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.performDeleteVariantTracks(bundleURL: bundleURL, manifest: manifest)
+        }
+    }
+
+    private func performDeleteVariantTracks(bundleURL: URL, manifest: BundleManifest) {
+        let tracks = manifest.variants
+        guard !tracks.isEmpty else { return }
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let fm = FileManager.default
+            var deletedFiles: [String] = []
+            var errors: [String] = []
+            var warnings: [String] = []
+
+            func removeFile(_ url: URL, label: String, critical: Bool) {
+                guard fm.fileExists(atPath: url.path) else { return }
+                do {
+                    try fm.removeItem(at: url)
+                    deletedFiles.append(label)
+                } catch {
+                    let msg = "Failed to delete \(label): \(error.localizedDescription)"
+                    if critical {
+                        errors.append(msg)
+                    } else {
+                        warnings.append(msg)
+                    }
+                }
+            }
+
+            for track in tracks {
+                // Delete BCF file
+                let bcfURL = bundleURL.appendingPathComponent(track.path)
+                removeFile(bcfURL, label: track.path, critical: true)
+
+                // Delete CSI index file
+                let csiURL = bundleURL.appendingPathComponent(track.indexPath)
+                removeFile(csiURL, label: track.indexPath, critical: true)
+
+                // Delete SQLite variant database
+                if let dbPath = track.databasePath {
+                    let dbURL = bundleURL.appendingPathComponent(dbPath)
+                    removeFile(dbURL, label: dbPath, critical: true)
+                    // WAL/SHM are transient journal files — warn but don't block
+                    let walURL = dbURL.appendingPathExtension("wal")
+                    let shmURL = dbURL.appendingPathExtension("shm")
+                    removeFile(walURL, label: "\(dbPath).wal", critical: false)
+                    removeFile(shmURL, label: "\(dbPath).shm", critical: false)
+                }
+            }
+
+            // Update manifest to remove variant tracks
+            let updatedManifest = BundleManifest(
+                formatVersion: manifest.formatVersion,
+                name: manifest.name,
+                identifier: manifest.identifier,
+                description: manifest.description,
+                createdDate: manifest.createdDate,
+                modifiedDate: Date(),
+                source: manifest.source,
+                genome: manifest.genome,
+                annotations: manifest.annotations,
+                variants: [],
+                tracks: manifest.tracks,
+                metadata: manifest.metadata
+            )
+
+            let manifestURL = bundleURL.appendingPathComponent("manifest.json")
+            do {
+                let jsonData = try JSONEncoder().encode(updatedManifest)
+                try jsonData.write(to: manifestURL, options: .atomic)
+            } catch {
+                errors.append("Failed to write manifest.json: \(error.localizedDescription)")
+            }
+
+            let finalDeletedCount = deletedFiles.count
+            let finalErrors = errors
+            let finalWarnings = warnings
+            DispatchQueue.main.async {
+                guard let self else { return }
+                MainActor.assumeIsolated {
+                    for w in finalWarnings {
+                        logger.warning("performDeleteVariantTracks: \(w, privacy: .public)")
+                    }
+
+                    if finalErrors.isEmpty {
+                        logger.info("performDeleteVariantTracks: Deleted \(finalDeletedCount) files from bundle")
+                        NotificationCenter.default.post(
+                            name: .bundleVariantTracksDeleted,
+                            object: nil,
+                            userInfo: [NotificationUserInfoKey.bundleURL: bundleURL]
+                        )
+                    }
+
+                    if !finalErrors.isEmpty {
+                        logger.error("performDeleteVariantTracks: Completed with \(finalErrors.count) error(s)")
+                        let alert = NSAlert()
+                        alert.messageText = "Variant Track Deletion Completed with Errors"
+                        alert.informativeText = finalErrors.joined(separator: "\n")
+                        alert.alertStyle = .warning
+                        alert.addButton(withTitle: "OK")
+                        if let window = self.view.window {
+                            alert.beginSheetModal(for: window)
+                        } else {
+                            alert.runModal()
+                        }
+                    }
+                }
             }
         }
     }

@@ -378,7 +378,11 @@ public final class ReferenceBundle: Sendable {
                         end: region.end
                     )
                     logger.debug("getVariantAnnotations: \(trackId) returned \(records.count) variant annotations for \(region.description)")
-                    return records.map { $0.toAnnotation() }
+                    return records.map { record in
+                        var annotation = record.toAnnotation()
+                        annotation.qualifiers["variant_track_id"] = AnnotationQualifier(trackId)
+                        return annotation
+                    }
                 } catch {
                     logger.error("getVariantAnnotations: SQLite query failed for \(trackId): \(error.localizedDescription)")
                 }

@@ -44,6 +44,12 @@ extension Notification.Name {
     /// to update their rendering accordingly.
     public static let appearanceChanged = Notification.Name("appearanceChanged")
 
+    /// Posted when any application-level setting has changed (via AppSettings.save()).
+    ///
+    /// Observers should re-read relevant values from `AppSettings.shared` and
+    /// invalidate caches as needed (e.g., offscreen tile, type color cache).
+    public static let appSettingsChanged = Notification.Name("appSettingsChanged")
+
     /// Posted when annotation display settings have changed.
     ///
     /// Contains userInfo keys: "showAnnotations", "annotationHeight", "annotationSpacing"
@@ -59,6 +65,17 @@ extension Notification.Name {
     /// Contains userInfo keys: "showVariants" (Bool), "visibleVariantTypes" (Set<String>),
     /// "variantFilterText" (String)
     public static let variantFilterChanged = Notification.Name("variantFilterChanged")
+
+    /// Posted when sample display state has changed (row visibility, height mode, sort/filter).
+    ///
+    /// Contains userInfo key: "sampleDisplayState" (SampleDisplayState)
+    public static let sampleDisplayStateChanged = Notification.Name("sampleDisplayStateChanged")
+
+    /// Posted when the variant color theme changes.
+    ///
+    /// Observers should refresh variant/call renderers that derive colors from
+    /// `SampleDisplayState.colorThemeName` or app-level appearance defaults.
+    public static let variantColorThemeDidChange = Notification.Name("com.lungfish.variantColorThemeDidChange")
 }
 
 // MARK: - Viewer Navigation Notifications
@@ -75,11 +92,22 @@ extension Notification.Name {
     /// "manifest" (BundleManifest)
     public static let bundleDidLoad = Notification.Name("bundleDidLoad")
 
+    /// Posted when variants in the viewer viewport have been updated.
+    ///
+    /// Contains userInfo keys: "chromosome" (String), "start" (Int), "end" (Int),
+    /// "variantCount" (Int)
+    public static let viewportVariantsUpdated = Notification.Name("viewportVariantsUpdated")
+
     /// Posted when the bundle view state should be reset to defaults.
     ///
     /// Listeners should clear type color overrides, delete the `.viewstate.json`
     /// file, and reset the in-memory `BundleViewState` to defaults.
     public static let bundleViewStateResetRequested = Notification.Name("bundleViewStateResetRequested")
+
+    /// Posted when variant tracks have been deleted from a bundle.
+    ///
+    /// Contains userInfo keys: `bundleURL` (URL)
+    public static let bundleVariantTracksDeleted = Notification.Name("bundleVariantTracksDeleted")
 
 }
 
@@ -130,6 +158,12 @@ extension Notification.Name {
     /// - `"annotation"`: The `SequenceAnnotation` to zoom to.
     public static let zoomToAnnotationRequested = Notification.Name("zoomToAnnotationRequested")
 
+    /// Posted when a variant is selected in the viewer or drawer.
+    ///
+    /// The `userInfo` dictionary contains:
+    /// - `"searchResult"`: `AnnotationSearchIndex.SearchResult` for the selected variant.
+    public static let variantSelected = Notification.Name("variantSelected")
+
     /// Posted to request copying an annotation's raw sequence to the clipboard.
     ///
     /// The `userInfo` dictionary contains:
@@ -158,6 +192,9 @@ public enum NotificationUserInfoKey {
 
     /// Key for the chromosome or sequence name associated with a notification.
     public static let chromosome = "chromosome"
+
+    /// Key for variant-database chromosome name (may differ from reference chromosome label).
+    public static let variantChromosome = "variantChromosome"
 
     /// Key for the selection state associated with a notification.
     public static let selectionState = "selectionState"
@@ -206,4 +243,16 @@ public enum NotificationUserInfoKey {
 
     /// Key for variant text filter (String).
     public static let variantFilterText = "variantFilterText"
+
+    /// Key for sample display state (SampleDisplayState).
+    public static let sampleDisplayState = "sampleDisplayState"
+
+    /// Key for selected variant search result.
+    public static let searchResult = "searchResult"
+
+    /// Key for variant track ID.
+    public static let variantTrackId = "variantTrackId"
+
+    /// Key for variant database row ID.
+    public static let variantRowId = "variantRowId"
 }

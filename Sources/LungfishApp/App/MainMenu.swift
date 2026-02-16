@@ -191,6 +191,13 @@ public final class MainMenu {
         )
         importItem.keyEquivalentModifierMask = [.command, .shift]
 
+        // Import VCF variants into the current bundle
+        fileMenu.addItem(
+            withTitle: "Import VCF Variants...",
+            action: #selector(FileMenuActions.importVCFToBundle(_:)),
+            keyEquivalent: ""
+        )
+
         // Export submenu
         let exportItem = NSMenuItem(title: "Export", action: nil, keyEquivalent: "")
         let exportMenu = NSMenu(title: "Export")
@@ -685,6 +692,8 @@ public final class MainMenu {
 @objc protocol FileMenuActions {
     /// Unified import with format auto-detection
     func importFiles(_ sender: Any?)
+    /// Import VCF variants into the current bundle
+    func importVCFToBundle(_ sender: Any?)
     func exportFASTA(_ sender: Any?)
     func exportGenBank(_ sender: Any?)
     func exportGFF3(_ sender: Any?)

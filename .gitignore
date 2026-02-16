@@ -14,6 +14,13 @@ DerivedData/
 *.dSYM.zip
 *.dSYM
 
+# Track the dedicated app project for debugging/running as a macOS .app
+!Lungfish.xcodeproj/
+!Lungfish.xcodeproj/project.pbxproj
+!Lungfish.xcodeproj/xcshareddata/
+!Lungfish.xcodeproj/xcshareddata/xcschemes/
+!Lungfish.xcodeproj/xcshareddata/xcschemes/Lungfish.xcscheme
+
 # macOS
 .DS_Store
 .AppleDouble

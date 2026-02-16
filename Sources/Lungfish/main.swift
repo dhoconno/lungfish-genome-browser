@@ -2,28 +2,19 @@
 // Copyright (c) 2024 Lungfish Contributors
 // SPDX-License-Identifier: MIT
 
+import Foundation
 import AppKit
 import LungfishApp
 
-// Use MainActor to properly initialize the app delegate
-@MainActor
-func runApp() {
-    let app = NSApplication.shared
-    let delegate = AppDelegate()
-    app.delegate = delegate
-
-    // Activate the app (bring to front)
-    app.setActivationPolicy(.regular)
-    app.activate(ignoringOtherApps: true)
-
-    // Run the main event loop
-    app.run()
+if let helperExitCode = VCFImportHelper.runIfRequested(arguments: CommandLine.arguments) {
+    exit(helperExitCode)
 }
 
-// Start the app on the main actor
-DispatchQueue.main.async {
-    runApp()
-}
-
-// Keep the main thread alive
-dispatchMain()
+// Launch AppKit on the main thread using a single event loop.
+// Avoid nested/dual run-loop patterns (e.g. app.run + dispatchMain) which can
+// cause delayed menu-bar activation and unstable full-screen behavior.
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.setActivationPolicy(.regular)
+app.delegate = delegate
+app.run()

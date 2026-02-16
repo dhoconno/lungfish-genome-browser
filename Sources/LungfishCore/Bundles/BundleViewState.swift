@@ -5,6 +5,10 @@
 // Owner: Storage & Indexing Lead (Role 18)
 
 import Foundation
+import os.log
+
+/// Logger for view state persistence operations.
+private let logger = Logger(subsystem: "com.lungfish.core", category: "BundleViewState")
 
 /// Persisted visual state for a `.lungfishref` bundle.
 ///
@@ -158,9 +162,7 @@ extension BundleViewState {
             let decoder = JSONDecoder()
             return try decoder.decode(BundleViewState.self, from: data)
         } catch {
-            #if DEBUG
-            print("BundleViewState: Failed to decode \(fileURL.path): \(error)")
-            #endif
+            logger.warning("Failed to decode \(fileURL.path): \(error)")
             return .default
         }
     }
@@ -174,9 +176,7 @@ extension BundleViewState {
             let data = try encoder.encode(self)
             try data.write(to: fileURL, options: .atomic)
         } catch {
-            #if DEBUG
-            print("BundleViewState: Failed to save to \(fileURL.path): \(error)")
-            #endif
+            logger.warning("Failed to save to \(fileURL.path): \(error)")
         }
     }
 

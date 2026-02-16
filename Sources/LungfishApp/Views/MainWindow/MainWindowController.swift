@@ -82,6 +82,7 @@ public class MainWindowController: NSWindowController {
         window.titleVisibility = .visible
         window.toolbarStyle = .unified
 
+        window.collectionBehavior = [.fullScreenPrimary]
         window.tabbingMode = .automatic
         window.tabbingIdentifier = "LungfishMainWindow"
         window.center()
@@ -349,7 +350,37 @@ public class MainWindowController: NSWindowController {
 
 // MARK: - NSWindowDelegate
 
-extension MainWindowController: NSWindowDelegate { }
+extension MainWindowController: NSWindowDelegate {
+
+    public func windowWillEnterFullScreen(_ notification: Notification) {
+        // Invalidate the annotation tile before the transition so it doesn't
+        // persist at the old (smaller) window size during the animation.
+        mainSplitViewController?.viewerController?.invalidateAnnotationTile()
+    }
+
+    public func windowDidEnterFullScreen(_ notification: Notification) {
+        // After full-screen transition completes, force redraw so the
+        // viewer fills the entire screen and the reference frame width is updated.
+        //
+        // Important: do not reorder/reactivate the window here; forcing
+        // makeKeyAndOrderFront/activate during this transition can interfere with
+        // AppKit's full-screen space management and leave a letterboxed/black state.
+        mainSplitViewController?.viewerController?.forceFullRedraw()
+    }
+
+    public func windowDidExitFullScreen(_ notification: Notification) {
+        // Same treatment when leaving full screen.
+        // Do not force window ordering; AppKit restores key/main status.
+        mainSplitViewController?.viewerController?.forceFullRedraw()
+    }
+
+    public func windowDidBecomeKey(_ notification: Notification) {
+        // When the window becomes key (e.g., switching back to the app),
+        // ensure the annotation tile is current — it may have been
+        // invalidated while the window was in the background.
+        mainSplitViewController?.viewerController?.forceFullRedraw()
+    }
+}
 
 // MARK: - NSToolbarDelegate
 
