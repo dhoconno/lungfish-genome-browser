@@ -952,4 +952,29 @@ final class AnnotationTableDrawerVariantTests: XCTestCase {
         XCTAssertEqual(parsed.filterValue, "PASS")
         XCTAssertTrue(parsed.geneList.isEmpty)
     }
+
+    func testVariantSearchResolvesImpactAliasToAvailableInfoKey() throws {
+        let vcfContent = """
+        ##fileformat=VCFv4.2
+        ##INFO=<ID=CSQ_IMPACT,Number=1,Type=String,Description=\"Impact\">
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+        chr1\t150\trs12345\tA\tG\t30.0\tPASS\tCSQ_IMPACT=HIGH
+        """
+        let drawer = try createDrawerWithAnnotationsAndVariants(vcfContent: vcfContent)
+        let keys = drawer.debugParseVariantInfoFilterKeys("IMPACT=HIGH")
+        XCTAssertEqual(keys, ["CSQ_IMPACT"])
+    }
+
+    func testVariantSearchResolvesSemicolonImpactAliasToAvailableInfoKey() throws {
+        let vcfContent = """
+        ##fileformat=VCFv4.2
+        ##INFO=<ID=ANN_IMPACT,Number=1,Type=String,Description=\"Impact\">
+        ##INFO=<ID=DP,Number=1,Type=Integer,Description=\"Depth\">
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+        chr1\t150\trs12345\tA\tG\t30.0\tPASS\tANN_IMPACT=HIGH;DP=22
+        """
+        let drawer = try createDrawerWithAnnotationsAndVariants(vcfContent: vcfContent)
+        let keys = drawer.debugParseVariantInfoFilterKeys("IMPACT=HIGH; DP>=10")
+        XCTAssertEqual(keys, ["ANN_IMPACT", "DP"])
+    }
 }

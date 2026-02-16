@@ -2594,14 +2594,15 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             var query = VariantFilterQuery()
             var nameTokens: [String] = []
             for clause in parseSearchClauses(text) {
-                guard let rawKey = clause.key?.lowercased() else {
+                guard let rawKeyText = clause.key?.trimmingCharacters(in: .whitespacesAndNewlines), !rawKeyText.isEmpty else {
                     if let parsed = VariantDatabase.InfoFilter.parse(clause.value) {
-                        query.infoFilters.append(parsed)
+                        query.infoFilters.append(resolveVariantInfoFilter(parsed))
                     } else {
                         nameTokens.append(clause.value)
                     }
                     continue
                 }
+                let rawKey = rawKeyText.lowercased()
                 switch rawKey {
                 case "text", "name", "id":
                     nameTokens.append(clause.value)
@@ -2680,7 +2681,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                     guard !clause.value.isEmpty else { continue }
                     query.infoFilters.append(
                         VariantDatabase.InfoFilter(
-                            key: rawKey,
+                            key: resolveVariantInfoKey(rawKeyText),
                             op: infoComparisonOp(from: clause.op),
                             value: clause.value
                         )
@@ -2794,7 +2795,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                 continue
             }
             if let parsed = VariantDatabase.InfoFilter.parse(token) {
-                query.infoFilters.append(parsed)
+                query.infoFilters.append(resolveVariantInfoFilter(parsed))
                 idx += 1
                 continue
             }
@@ -2809,10 +2810,58 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         return query
     }
 
+    /// Resolves a user-facing or logical INFO key (e.g. "IMPACT", "GENE") to a concrete
+    /// INFO key present in the loaded VCF, preferring exact/real keys when available.
+    private func resolveVariantInfoKey(_ requestedKey: String) -> String {
+        let trimmed = requestedKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return requestedKey }
+
+        let availableKeys = infoColumnKeys.map(\.key)
+        let availableSet = Set(availableKeys)
+        if availableSet.contains(trimmed) {
+            return trimmed
+        }
+        if let caseInsensitiveMatch = availableKeys.first(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+            return caseInsensitiveMatch
+        }
+
+        let normalized = trimmed.lowercased()
+        let aliases: [String]
+        switch normalized {
+        case "impact":
+            aliases = ["CSQ_IMPACT", "ANN_IMPACT", "IMPACT", "impact"]
+        case "gene":
+            aliases = ["CSQ_SYMBOL", "ANN_Gene", "GENE", "Gene", "gene", "GENEINFO"]
+        case "clnsig", "clinvar", "clinvar_sig":
+            aliases = ["CLNSIG", "ClinVar_SIG", "clinvar_sig", "CLNDN"]
+        case "af":
+            aliases = ["AF", "af", "gnomAD_AF", "gnomADe_AF", "gnomADg_AF", "ExAC_AF", "1000G_AF", "MAX_AF"]
+        default:
+            aliases = []
+        }
+
+        for alias in aliases where availableSet.contains(alias) {
+            return alias
+        }
+        return trimmed
+    }
+
+    private func resolveVariantInfoFilter(_ filter: VariantDatabase.InfoFilter) -> VariantDatabase.InfoFilter {
+        VariantDatabase.InfoFilter(
+            key: resolveVariantInfoKey(filter.key),
+            op: filter.op,
+            value: filter.value
+        )
+    }
+
     #if DEBUG
     func debugParseVariantFilterText(_ text: String) -> (nameFilter: String, geneList: [String], filterValue: String?) {
         let query = parseVariantFilterText(text)
         return (query.nameFilter, query.geneList ?? [], query.filterValue)
+    }
+
+    func debugParseVariantInfoFilterKeys(_ text: String) -> [String] {
+        parseVariantFilterText(text).infoFilters.map(\.key)
     }
 
     func debugSetVariantScopeRegionEnabled(_ enabled: Bool) {

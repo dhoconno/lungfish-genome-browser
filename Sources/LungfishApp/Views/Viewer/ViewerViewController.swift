@@ -295,6 +295,10 @@ public class ViewerViewController: NSViewController {
     public override func viewDidLayout() {
         super.viewDidLayout()
 
+        // Keep custom drawing clipped to viewer bounds across animation/layout churn.
+        viewerView.wantsLayer = true
+        viewerView.layer?.masksToBounds = true
+
         // Update reference frame width immediately (needed for correct rendering)
         if let frame = referenceFrame, viewerView.bounds.width > 0 {
             frame.pixelWidth = Int(viewerView.bounds.width)
