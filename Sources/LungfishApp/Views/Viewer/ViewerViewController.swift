@@ -258,9 +258,6 @@ public class ViewerViewController: NSViewController {
         // Set background color
         view.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
 
-        // Ensure viewer clips to bounds so it never overlays the annotation drawer
-        viewerView.layer?.masksToBounds = true
-
         // Don't create a default reference frame - start with nil
         // The reference frame will be created when a sequence is actually loaded
         // This ensures the viewer shows "No sequence selected" for empty projects

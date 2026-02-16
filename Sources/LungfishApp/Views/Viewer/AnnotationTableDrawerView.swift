@@ -1710,13 +1710,11 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         viewportSyncEnabled && (viewportSyncSourceIdentifier != nil || viewportSyncSourceObject != nil)
     }
 
-    /// Whether the current query has filters that imply genome-wide search intent
-    /// (smart tokens, text search, preset filters).
-    /// When true, viewport/annotation region scoping is bypassed in favor of genome-wide queries,
-    /// so that e.g. "High Impact" finds variants across the whole genome rather than just the viewport.
+    /// Whether the current query has user-entered filters/tokens.
+    /// Filtered queries run genome-wide first, with optional post-query viewport filtering.
     private var hasActiveSearchFilters: Bool {
         if !activeSmartTokens.isEmpty { return true }
-        if !variantFilterText.isEmpty { return true }
+        if !variantFilterText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
         if !selectedVariantPresetByKey.isEmpty { return true }
         return false
     }
@@ -1775,7 +1773,13 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         if let smartFilter = smartComposed.filterValue, effectiveQuery.filterValue == nil {
             effectiveQuery.filterValue = smartFilter
         }
-        let usePostFiltering = hasSmartPostFilter || effectiveQuery.hasPostFilters
+        // User-requested behavior: filtered queries should search genome-wide first.
+        let hasGlobalOverrideFilters = hasActiveSearchFilters
+        let viewportPostFilterRegion: (chromosome: String, start: Int, end: Int)? = {
+            guard hasGlobalOverrideFilters, viewportSyncEnabled, let viewportRegion else { return nil }
+            return viewportRegion
+        }()
+        let usePostFiltering = hasSmartPostFilter || effectiveQuery.hasPostFilters || viewportPostFilterRegion != nil
 
         // Freeze mutable vars as `let` for safe capture in the @Sendable dispatch closure.
         let frozenQuery = effectiveQuery
@@ -1796,10 +1800,14 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             // Gene list path — region is not used
             effectiveRegion = nil
             regionScope = .global
+        } else if hasGlobalOverrideFilters {
+            // Active filters/tokens force initial genome-wide query.
+            effectiveRegion = nil
+            regionScope = viewportPostFilterRegion != nil ? .viewport : .global
         } else if let selected = selectedAnnotationRegion {
             effectiveRegion = selected
             regionScope = .annotation
-        } else if isViewportSyncActive && !hasActiveSearchFilters {
+        } else if isViewportSyncActive {
             if let vp = viewportRegion {
                 effectiveRegion = vp
                 regionScope = .viewport
@@ -1815,15 +1823,16 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                 updateCountLabel()
                 return
             }
-        } else if viewportSyncEnabled && !hasActiveSearchFilters, let annotationRegion = annotationSearchRegion {
+        } else if viewportSyncEnabled, let annotationRegion = annotationSearchRegion {
             effectiveRegion = annotationRegion
             regionScope = .annotations
         } else {
             effectiveRegion = nil
         }
 
-        // Let advanced query constraints tighten/override the region.
-        let requestedRegion = frozenQuery.region ?? effectiveRegion
+        // Filtered/tokenized queries intentionally start genome-wide; otherwise
+        // let explicit advanced-region clauses tighten/override the region.
+        let requestedRegion = hasGlobalOverrideFilters ? nil : (frozenQuery.region ?? effectiveRegion)
         let frozenRegionScope = regionScope
 
         // No gene list active — dismiss tab bar immediately
@@ -1890,6 +1899,14 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                     if let afRange = withinSampleAFRange {
                         filtered = filterByWithinSampleAFOffMain(filtered, min: afRange.min, max: afRange.max)
                     }
+                    if let viewportPostFilterRegion {
+                        filtered = filterVariantsToRegionOffMain(
+                            filtered,
+                            chromosome: viewportPostFilterRegion.chromosome,
+                            start: viewportPostFilterRegion.start,
+                            end: viewportPostFilterRegion.end
+                        )
+                    }
                     return filtered
                 }
 
@@ -1940,7 +1957,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                     if shouldCancel() { return }
                     results = filtered
                     matchCount = filtered.count
-                    queryScope = .global
+                    queryScope = viewportPostFilterRegion != nil ? .viewport : .global
                     tooManyMessage = nil
 
                 } else if let region = requestedRegion {
@@ -1951,7 +1968,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                         infoFilters: mergedInfoFilters, shouldCancel: shouldCancel
                     )
                     if shouldCancel() { return }
-                    if count > maxDisplay && !hasSmartPostFilter && !frozenQuery.hasPostFilters {
+                    if count > maxDisplay && !usePostFiltering {
                         results = []
                         matchCount = count
                         queryScope = frozenRegionScope
@@ -1980,7 +1997,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                         )
                         if shouldCancel() { return }
                         results = filtered
-                        matchCount = (frozenQuery.hasPostFilters || hasSmartPostFilter) ? filtered.count : count
+                        matchCount = usePostFiltering ? filtered.count : count
                         queryScope = frozenRegionScope
                         tooManyMessage = nil
                     }
@@ -1992,10 +2009,10 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                         infoFilters: mergedInfoFilters, shouldCancel: shouldCancel
                     )
                     if shouldCancel() { return }
-                    if count > maxDisplay && !hasSmartPostFilter && !frozenQuery.hasPostFilters {
+                    if count > maxDisplay && !usePostFiltering {
                         results = []
                         matchCount = count
-                        queryScope = .global
+                        queryScope = viewportPostFilterRegion != nil ? .viewport : .global
                         let nf = NumberFormatter()
                         nf.numberStyle = .decimal
                         let total = nf.string(from: NSNumber(value: count)) ?? "\(count)"
@@ -2019,8 +2036,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                         )
                         if shouldCancel() { return }
                         results = filtered
-                        matchCount = (frozenQuery.hasPostFilters || hasSmartPostFilter) ? filtered.count : count
-                        queryScope = .global
+                        matchCount = usePostFiltering ? filtered.count : count
+                        queryScope = viewportPostFilterRegion != nil ? .viewport : .global
                         tooManyMessage = nil
                     }
                 }
@@ -2575,6 +2592,24 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     func debugParseVariantFilterText(_ text: String) -> (nameFilter: String, geneList: [String], filterValue: String?) {
         let query = parseVariantFilterText(text)
         return (query.nameFilter, query.geneList ?? [], query.filterValue)
+    }
+
+    func debugSetVariantScopeRegionEnabled(_ enabled: Bool) {
+        viewportSyncEnabled = enabled
+        updateScopeControlSelection()
+    }
+
+    func debugSetViewportRegion(chromosome: String, start: Int, end: Int) {
+        viewportRegion = (chromosome: chromosome, start: start, end: end)
+    }
+
+    func debugSetVariantFilterText(_ text: String) {
+        variantFilterText = text
+        updateVariantFilterIndicator()
+    }
+
+    func debugSetSelectedAnnotationRegion(chromosome: String, start: Int, end: Int) {
+        selectedAnnotationRegion = (chromosome: chromosome, start: start, end: end)
     }
     #endif
 
@@ -4956,4 +4991,29 @@ private func filterByWithinSampleAFOffMain(
         guard let af = values.max() else { return false }
         return af >= min && af <= max
     }
+}
+
+/// Pure viewport-region filter used after genome-wide queries.
+private func filterVariantsToRegionOffMain(
+    _ results: [AnnotationSearchIndex.SearchResult],
+    chromosome: String,
+    start: Int,
+    end: Int
+) -> [AnnotationSearchIndex.SearchResult] {
+    let canonicalTargetChromosome = canonicalChromosomeForFiltering(chromosome)
+    return results.filter { row in
+        guard canonicalChromosomeForFiltering(row.chromosome) == canonicalTargetChromosome else { return false }
+        return row.start <= end && row.end >= start
+    }
+}
+
+private func canonicalChromosomeForFiltering(_ raw: String) -> String {
+    var value = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    if value.hasPrefix("chr") {
+        value = String(value.dropFirst(3))
+    }
+    if let dot = value.firstIndex(of: ".") {
+        value = String(value[..<dot])
+    }
+    return value
 }

@@ -312,6 +312,30 @@ final class AnnotationTableDrawerVariantTests: XCTestCase {
         XCTAssertTrue(drawer.displayedAnnotations.allSatisfy { !$0.isVariant })
     }
 
+    func testActiveFilterQueriesGenomeThenAppliesViewportRegionFilter() throws {
+        let drawer = try createDrawerWithAnnotationsAndVariants()
+        drawer.debugSetVariantScopeRegionEnabled(true)
+        drawer.debugSetViewportRegion(chromosome: "chr1", start: 240, end: 260)
+        drawer.debugSetVariantFilterText("rs")
+
+        switchToVariantsAndWait(drawer)
+
+        let names = Set(drawer.displayedAnnotations.map(\.name))
+        XCTAssertEqual(names, ["rs67890"], "Region scope should post-filter genome-wide filtered results to viewport")
+    }
+
+    func testActiveFilterIgnoresSelectedAnnotationRegionWhenGenomeScope() throws {
+        let drawer = try createDrawerWithAnnotationsAndVariants()
+        drawer.debugSetVariantScopeRegionEnabled(false) // Genome scope
+        drawer.debugSetSelectedAnnotationRegion(chromosome: "chr1", start: 140, end: 160)
+        drawer.debugSetVariantFilterText("rs")
+
+        switchToVariantsAndWait(drawer)
+
+        let names = Set(drawer.displayedAnnotations.map(\.name))
+        XCTAssertEqual(names, ["rs12345", "rs67890"], "Filtered query should be genome-wide before optional viewport post-filtering")
+    }
+
     // MARK: - Column Configuration Tests
 
     func testAnnotationTabHasAnnotationColumns() throws {
