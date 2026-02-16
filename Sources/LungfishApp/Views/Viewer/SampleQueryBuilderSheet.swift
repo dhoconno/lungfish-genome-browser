@@ -24,33 +24,87 @@ private enum SampleQueryField: String, CaseIterable, Identifiable {
     }
 }
 
+private enum SampleQueryOperator: String, CaseIterable, Identifiable {
+    case contains = "~"
+    case notContains = "!~"
+    case equals = "="
+    case notEquals = "!="
+    case beginsWith = "^="
+    case endsWith = "$="
+    case isEmpty = "is-empty"
+    case isNotEmpty = "is-not-empty"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .contains: return "contains"
+        case .notContains: return "does not contain"
+        case .equals: return "equals"
+        case .notEquals: return "not equals"
+        case .beginsWith: return "begins with"
+        case .endsWith: return "ends with"
+        case .isEmpty: return "is empty"
+        case .isNotEmpty: return "is not empty"
+        }
+    }
+
+    var requiresValue: Bool {
+        switch self {
+        case .isEmpty, .isNotEmpty:
+            return false
+        default:
+            return true
+        }
+    }
+}
+
 private struct SampleQueryRuleUI: Identifiable {
     let id = UUID()
     var field: SampleQueryField = .name
     var metadataField: String = ""
-    var op: String = "="
+    var op: SampleQueryOperator = .contains
     var value: String = ""
 
     func toClause() -> String? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let opToken: String
+        switch op {
+        case .isEmpty:
+            opToken = "="
+        case .isNotEmpty:
+            opToken = "!="
+        default:
+            opToken = op.rawValue
+        }
         switch field {
         case .text:
             guard !trimmed.isEmpty else { return nil }
-            return "text=\(trimmed)"
+            return "text~\(trimmed)"
         case .name:
-            guard !trimmed.isEmpty else { return nil }
-            return "name\(op)\(trimmed)"
+            if op.requiresValue {
+                guard !trimmed.isEmpty else { return nil }
+                return "name\(opToken)\(trimmed)"
+            }
+            return "name\(opToken)"
         case .source:
-            guard !trimmed.isEmpty else { return nil }
-            return "source\(op)\(trimmed)"
+            if op.requiresValue {
+                guard !trimmed.isEmpty else { return nil }
+                return "source\(opToken)\(trimmed)"
+            }
+            return "source\(opToken)"
         case .visible:
             if value == "visible" { return "visible=true" }
             if value == "hidden" { return "visible=false" }
             return nil
         case .metadata:
             let key = metadataField.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !key.isEmpty, !trimmed.isEmpty else { return nil }
-            return "meta.\(key)\(op)\(trimmed)"
+            guard !key.isEmpty else { return nil }
+            if op.requiresValue {
+                guard !trimmed.isEmpty else { return nil }
+                return "meta.\(key)\(opToken)\(trimmed)"
+            }
+            return "meta.\(key)\(opToken)"
         }
     }
 }
@@ -97,15 +151,24 @@ struct SampleQueryBuilderView: View {
                             }
 
                             if rule.field != .visible {
-                                Picker("", selection: $rule.op) {
-                                    Text("contains").tag("=")
-                                    Text("not contains").tag("!=")
+                                if rule.field != .text {
+                                    Picker("", selection: $rule.op) {
+                                        ForEach(SampleQueryOperator.allCases) { op in
+                                            Text(op.label).tag(op)
+                                        }
+                                    }
+                                    .frame(width: 120)
                                 }
-                                .frame(width: 110)
 
-                                TextField("Value", text: $rule.value)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(minWidth: 180)
+                                if rule.field == .text || rule.op.requiresValue {
+                                    TextField("Value", text: $rule.value)
+                                        .textFieldStyle(.roundedBorder)
+                                        .frame(minWidth: 180)
+                                } else {
+                                    Text("No value")
+                                        .foregroundStyle(.secondary)
+                                        .frame(minWidth: 180, alignment: .leading)
+                                }
                             } else {
                                 Picker("", selection: $rule.value) {
                                     Text("Visible").tag("visible")
@@ -139,6 +202,7 @@ struct SampleQueryBuilderView: View {
                     if next.field == .visible {
                         next.value = "visible"
                     }
+                    next.op = .contains
                     rules.append(next)
                 } label: {
                     Label("Add Rule", systemImage: "plus.circle")

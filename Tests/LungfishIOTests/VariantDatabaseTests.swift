@@ -678,6 +678,27 @@ final class VariantDatabaseTests: XCTestCase {
         XCTAssertTrue(results.allSatisfy { $0.variantID.contains("rs") })
     }
 
+    func testQueryForTableWithSampleFilter() throws {
+        let vcf = """
+        ##fileformat=VCFv4.3
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\tS2
+        chr1\t100\trs_s1\tA\tG\t30\tPASS\t.\tGT\t0/1\t0/0
+        chr1\t200\trs_s2\tC\tT\t30\tPASS\t.\tGT\t0/0\t1/1
+        chr1\t300\trs_none\tG\tA\t30\tPASS\t.\tGT\t0/0\t0/0
+        """
+        let (db, _) = try createDatabase(from: vcf)
+
+        let s1Results = db.queryForTable(sampleNames: ["S1"])
+        XCTAssertEqual(Set(s1Results.map(\.variantID)), ["rs_s1"])
+
+        let s2Results = db.queryForTable(sampleNames: ["S2"])
+        XCTAssertEqual(Set(s2Results.map(\.variantID)), ["rs_s2"])
+
+        let countS1 = db.queryCountForTable(sampleNames: ["S1"])
+        XCTAssertEqual(countS1, 1)
+    }
+
     func testQueryCountForTable() throws {
         let (db, _) = try createDatabase(from: testVCF)
 

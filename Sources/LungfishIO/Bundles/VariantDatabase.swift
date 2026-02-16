@@ -648,7 +648,13 @@ public final class VariantDatabase: @unchecked Sendable {
     }
 
     /// Queries variants with optional type filter, name filter, and INFO filters.
-    public func queryForTable(nameFilter: String = "", types: Set<String> = [], infoFilters: [InfoFilter] = [], limit: Int = 5000) -> [VariantDatabaseRecord] {
+    public func queryForTable(
+        nameFilter: String = "",
+        types: Set<String> = [],
+        infoFilters: [InfoFilter] = [],
+        sampleNames: Set<String> = [],
+        limit: Int = 5000
+    ) -> [VariantDatabaseRecord] {
         guard let db else { return [] }
         // All infoFilters are resolved via variant_info EAV table
 
@@ -668,6 +674,16 @@ public final class VariantDatabase: @unchecked Sendable {
             conditions.append("variant_type IN (\(placeholders))")
             for t in types.sorted() {
                 bindings.append((paramIndex, t))
+                paramIndex += 1
+            }
+        }
+
+        if !sampleNames.isEmpty {
+            let sortedNames = sampleNames.sorted()
+            let placeholders = sortedNames.map { _ in "?" }.joined(separator: ",")
+            conditions.append("EXISTS (SELECT 1 FROM genotypes g WHERE g.variant_id = variants.id AND g.sample_name IN (\(placeholders)))")
+            for sampleName in sortedNames {
+                bindings.append((paramIndex, sampleName))
                 paramIndex += 1
             }
         }
@@ -695,7 +711,12 @@ public final class VariantDatabase: @unchecked Sendable {
     }
 
     /// Returns variant count matching optional filters.
-    public func queryCountForTable(nameFilter: String = "", types: Set<String> = [], infoFilters: [InfoFilter] = []) -> Int {
+    public func queryCountForTable(
+        nameFilter: String = "",
+        types: Set<String> = [],
+        infoFilters: [InfoFilter] = [],
+        sampleNames: Set<String> = []
+    ) -> Int {
         guard let db else { return 0 }
         // All infoFilters are resolved via variant_info EAV table
 
@@ -715,6 +736,16 @@ public final class VariantDatabase: @unchecked Sendable {
             conditions.append("variant_type IN (\(placeholders))")
             for t in types.sorted() {
                 bindings.append((paramIndex, t))
+                paramIndex += 1
+            }
+        }
+
+        if !sampleNames.isEmpty {
+            let sortedNames = sampleNames.sorted()
+            let placeholders = sortedNames.map { _ in "?" }.joined(separator: ",")
+            conditions.append("EXISTS (SELECT 1 FROM genotypes g WHERE g.variant_id = variants.id AND g.sample_name IN (\(placeholders)))")
+            for sampleName in sortedNames {
+                bindings.append((paramIndex, sampleName))
                 paramIndex += 1
             }
         }
@@ -750,6 +781,7 @@ public final class VariantDatabase: @unchecked Sendable {
         nameFilter: String = "",
         types: Set<String> = [],
         infoFilters: [InfoFilter] = [],
+        sampleNames: Set<String> = [],
         limit: Int = 5000
     ) -> [VariantDatabaseRecord] {
         guard let db else { return [] }
@@ -772,6 +804,16 @@ public final class VariantDatabase: @unchecked Sendable {
             conditions.append("variant_type IN (\(placeholders))")
             for t in types.sorted() {
                 textBindings.append((paramIndex, t))
+                paramIndex += 1
+            }
+        }
+
+        if !sampleNames.isEmpty {
+            let sortedNames = sampleNames.sorted()
+            let placeholders = sortedNames.enumerated().map { "?\(paramIndex + Int32($0.offset))" }.joined(separator: ",")
+            conditions.append("EXISTS (SELECT 1 FROM genotypes g WHERE g.variant_id = variants.id AND g.sample_name IN (\(placeholders)))")
+            for sampleName in sortedNames {
+                textBindings.append((paramIndex, sampleName))
                 paramIndex += 1
             }
         }
@@ -806,7 +848,8 @@ public final class VariantDatabase: @unchecked Sendable {
         end: Int,
         nameFilter: String = "",
         types: Set<String> = [],
-        infoFilters: [InfoFilter] = []
+        infoFilters: [InfoFilter] = [],
+        sampleNames: Set<String> = []
     ) -> Int {
         guard let db else { return 0 }
         // All infoFilters are resolved via variant_info EAV table
@@ -828,6 +871,16 @@ public final class VariantDatabase: @unchecked Sendable {
             conditions.append("variant_type IN (\(placeholders))")
             for t in types.sorted() {
                 textBindings.append((paramIndex, t))
+                paramIndex += 1
+            }
+        }
+
+        if !sampleNames.isEmpty {
+            let sortedNames = sampleNames.sorted()
+            let placeholders = sortedNames.enumerated().map { "?\(paramIndex + Int32($0.offset))" }.joined(separator: ",")
+            conditions.append("EXISTS (SELECT 1 FROM genotypes g WHERE g.variant_id = variants.id AND g.sample_name IN (\(placeholders)))")
+            for sampleName in sortedNames {
+                textBindings.append((paramIndex, sampleName))
                 paramIndex += 1
             }
         }

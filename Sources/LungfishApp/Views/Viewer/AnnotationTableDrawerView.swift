@@ -322,15 +322,15 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     private enum SampleSmartToken: String, CaseIterable {
         case visibleOnly
         case hiddenOnly
-        case hasMetadata
-        case missingMetadata
+        case hasSource
+        case missingSource
 
         var label: String {
             switch self {
             case .visibleOnly: return "Visible"
             case .hiddenOnly: return "Hidden"
-            case .hasMetadata: return "Has Metadata"
-            case .missingMetadata: return "Missing Metadata"
+            case .hasSource: return "Has Source"
+            case .missingSource: return "Missing Source"
             }
         }
 
@@ -338,8 +338,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             switch self {
             case .visibleOnly, .hiddenOnly:
                 return "visibility"
-            case .hasMetadata, .missingMetadata:
-                return "metadata"
+            case .hasSource, .missingSource:
+                return "source"
             }
         }
     }
@@ -362,6 +362,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         let maxSampleCountInclusive: Bool
         let nameFilter: String
         let geneList: [String]
+        let selectedSamples: [String]
     }
 
     /// Chip buttons keyed by type name.
@@ -467,7 +468,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         )
         configureSearchField(
             sampleFilterField,
-            placeholder: "Samples: text=foo; visible=true; source=track; meta.Country=USA",
+            placeholder: "text~foo; visible=true; source~track; meta.Country=USA",
             accessibilityLabel: "Filter samples"
         )
         searchBar.addSubview(annotationFilterField)
@@ -855,13 +856,13 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             searchBuilderButton.centerYAnchor.constraint(equalTo: allTypesButton.centerYAnchor),
             searchBuilderButton.trailingAnchor.constraint(equalTo: presetFiltersToggleButton.leadingAnchor, constant: -8),
 
-            addSampleFieldButton.topAnchor.constraint(equalTo: searchBar.topAnchor, constant: 4),
+            addSampleFieldButton.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
             addSampleFieldButton.trailingAnchor.constraint(equalTo: sampleGroupsButton.leadingAnchor, constant: -6),
 
-            sampleGroupsButton.centerYAnchor.constraint(equalTo: addSampleFieldButton.centerYAnchor),
+            sampleGroupsButton.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
             sampleGroupsButton.trailingAnchor.constraint(equalTo: downloadTemplateButton.leadingAnchor, constant: -6),
 
-            downloadTemplateButton.centerYAnchor.constraint(equalTo: addSampleFieldButton.centerYAnchor),
+            downloadTemplateButton.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
             downloadTemplateButton.trailingAnchor.constraint(equalTo: searchBar.trailingAnchor, constant: -8),
 
             chipBar.topAnchor.constraint(equalTo: searchBar.bottomAnchor),
@@ -1991,6 +1992,15 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         return false
     }
 
+    /// Returns a narrowed sample set for variant queries when the user has hidden samples.
+    /// Empty set means "no sample restriction".
+    private func selectedSamplesForVariantQuery() -> Set<String> {
+        guard !allSampleNames.isEmpty else { return [] }
+        let visible = Set(allSampleNames.filter { !currentSampleDisplayState.hiddenSamples.contains($0) })
+        guard !visible.isEmpty, visible.count < allSampleNames.count else { return [] }
+        return visible
+    }
+
     private func updateDisplayedVariants(
         index: AnnotationSearchIndex,
         typeFilter: Set<String>,
@@ -2034,6 +2044,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         }
 
         let mergedInfoFilters = query.infoFilters + chipInfoFilters + smartComposed.infoFilters
+        let selectedSamples = selectedSamplesForVariantQuery()
 
         // Build effective query with smart token overlays
         var effectiveQuery = query
@@ -2083,7 +2094,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             maxSampleCount: effectiveQuery.maxSampleCount,
             maxSampleCountInclusive: effectiveQuery.maxSampleCountInclusive,
             nameFilter: effectiveQuery.nameFilter,
-            geneList: activeGeneList ?? []
+            geneList: activeGeneList ?? [],
+            selectedSamples: selectedSamples.sorted()
         )
 
         // Determine the effective region for the query (fast — no database queries).
@@ -2231,6 +2243,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                         activeGeneList,
                         types: frozenTypeFilter,
                         infoFilters: mergedInfoFilters,
+                        sampleNames: selectedSamples,
                         limit: max(initialLimit, maxDisplay),
                         shouldCancel: shouldCancel
                     )
@@ -2249,6 +2262,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                                 activeGeneList,
                                 types: frozenTypeFilter,
                                 infoFilters: mergedInfoFilters,
+                                sampleNames: selectedSamples,
                                 limit: max(limit, maxDisplay),
                                 shouldCancel: shouldCancel
                             ).results
@@ -2286,7 +2300,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                     let count = ctx.queryVariantCountInRegion(
                         chromosome: region.chromosome, start: region.start, end: region.end,
                         nameFilter: frozenQuery.nameFilter, types: frozenTypeFilter,
-                        infoFilters: mergedInfoFilters, shouldCancel: shouldCancel
+                        infoFilters: mergedInfoFilters,
+                        sampleNames: selectedSamples,
+                        shouldCancel: shouldCancel
                     )
                     if shouldCancel() { return }
                     if count > maxDisplay && !usePostFiltering {
@@ -2310,7 +2326,10 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                                 ctx.queryVariantsInRegion(
                                     chromosome: region.chromosome, start: region.start, end: region.end,
                                     nameFilter: frozenQuery.nameFilter, types: frozenTypeFilter,
-                                    infoFilters: mergedInfoFilters, limit: limit, shouldCancel: shouldCancel
+                                    infoFilters: mergedInfoFilters,
+                                    sampleNames: selectedSamples,
+                                    limit: limit,
+                                    shouldCancel: shouldCancel
                                 )
                             },
                             postFilter: applyAllPostFilters,
@@ -2339,7 +2358,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                     // Global query — no region constraint.
                     let count = ctx.queryVariantCount(
                         nameFilter: frozenQuery.nameFilter, types: frozenTypeFilter,
-                        infoFilters: mergedInfoFilters, shouldCancel: shouldCancel
+                        infoFilters: mergedInfoFilters,
+                        sampleNames: selectedSamples,
+                        shouldCancel: shouldCancel
                     )
                     if shouldCancel() { return }
                     if count > maxDisplay && !usePostFiltering {
@@ -2361,7 +2382,10 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                             fetch: { limit in
                                 ctx.queryVariantsOnly(
                                     nameFilter: frozenQuery.nameFilter, types: frozenTypeFilter,
-                                    infoFilters: mergedInfoFilters, limit: limit, shouldCancel: shouldCancel
+                                    infoFilters: mergedInfoFilters,
+                                    sampleNames: selectedSamples,
+                                    limit: limit,
+                                    shouldCancel: shouldCancel
                                 )
                             },
                             postFilter: applyAllPostFilters,
@@ -2600,8 +2624,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
     private struct SampleFilterQuery {
         var textFilter: String = ""
-        var nameFilter: String?
-        var sourceFilter: String?
+        var nameFilter: (op: String, value: String)?
+        var sourceFilter: (op: String, value: String)?
         var visibility: Bool?
         var metadataFilters: [(field: String, op: String, value: String)] = []
     }
@@ -2615,7 +2639,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     /// Semicolon-delimited parser used for explicit advanced search, e.g.:
     /// `chr=NC_041760.1;pos=100-200;qual>=30;DP>=20`.
     private func parseSearchClauses(_ text: String) -> [ParsedSearchClause] {
-        let operators = [">=", "<=", "!=", "~", ">", "<", "="]
+        let operators = ["!~", "^=", "$=", ">=", "<=", "!=", "~", ">", "<", "="]
         return text.split(separator: ";").compactMap { segment in
             let token = String(segment).trimmingCharacters(in: .whitespacesAndNewlines)
             guard !token.isEmpty else { return nil }
@@ -3031,10 +3055,16 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     /// Parses advanced sample syntax:
     /// `name:S1 source:run42 visible:true meta.Country:USA`
     private func parseSampleFilterText(_ text: String) -> SampleFilterQuery {
-        if text.contains(";") {
+        let normalizedInput = text.replacingOccurrences(
+            of: #"^\s*samples:\s*"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+
+        if normalizedInput.contains(";") {
             var query = SampleFilterQuery()
             var freeTokens: [String] = []
-            for clause in parseSearchClauses(text) {
+            for clause in parseSearchClauses(normalizedInput) {
                 guard let rawKey = clause.key?.trimmingCharacters(in: .whitespacesAndNewlines), !rawKey.isEmpty else {
                     freeTokens.append(clause.value)
                     continue
@@ -3044,20 +3074,24 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                 case "text":
                     freeTokens.append(clause.value)
                 case "name":
-                    query.nameFilter = clause.value
+                    query.nameFilter = (op: clause.op, value: clause.value)
                 case "source":
-                    query.sourceFilter = clause.value
+                    query.sourceFilter = (op: clause.op, value: clause.value)
                 case "visible":
                     let lower = clause.value.lowercased()
-                    if ["1", "true", "yes", "on"].contains(lower) { query.visibility = true }
-                    if ["0", "false", "no", "off"].contains(lower) { query.visibility = false }
+                    if ["1", "true", "yes", "on"].contains(lower) {
+                        query.visibility = clause.op == "!=" ? false : true
+                    }
+                    if ["0", "false", "no", "off"].contains(lower) {
+                        query.visibility = clause.op == "!=" ? true : false
+                    }
                 default:
                     if key.hasPrefix("meta.") {
                         let field = String(rawKey.dropFirst(5))
-                        if !field.isEmpty, !clause.value.isEmpty {
+                        if !field.isEmpty {
                             query.metadataFilters.append((field: field, op: clause.op, value: clause.value))
                         }
-                    } else if !clause.value.isEmpty {
+                    } else {
                         // Treat unknown keys as metadata fields for convenience.
                         query.metadataFilters.append((field: rawKey, op: clause.op, value: clause.value))
                     }
@@ -3069,12 +3103,12 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
         var query = SampleFilterQuery()
         var freeTokens: [String] = []
-        for tokenSub in text.split(whereSeparator: \.isWhitespace) {
+        for tokenSub in normalizedInput.split(whereSeparator: \.isWhitespace) {
             let token = String(tokenSub)
             if let value = token.value(after: "name:") {
-                query.nameFilter = value
+                query.nameFilter = (op: "~", value: value)
             } else if let value = token.value(after: "source:") {
-                query.sourceFilter = value
+                query.sourceFilter = (op: "~", value: value)
             } else if let value = token.value(after: "visible:") {
                 let lower = value.lowercased()
                 if ["1", "true", "yes", "on"].contains(lower) { query.visibility = true }
@@ -3084,7 +3118,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                 let key = String(token[token.index(token.startIndex, offsetBy: 5)..<sep])
                 let value = String(token[token.index(after: sep)...])
                 if !key.isEmpty, !value.isEmpty {
-                    query.metadataFilters.append((field: key, op: ":", value: value))
+                    query.metadataFilters.append((field: key, op: "~", value: value))
                 }
             } else {
                 freeTokens.append(token)
@@ -3097,6 +3131,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     private var hasActiveSampleFilters: Bool {
         if !sampleFilterText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
         if !activeSampleTokens.isEmpty { return true }
+        if selectedSampleGroupId != nil { return true }
         return false
     }
 
@@ -4126,11 +4161,16 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
 
         // Samples tab context menu
         if activeTab == .samples {
+            let targetColumn = tableView.clickedColumn
             guard targetRow >= 0, targetRow < displayedSamples.count else {
+                if targetColumn >= 0 {
+                    buildSampleColumnHeaderContextMenu(menu, column: targetColumn)
+                    return
+                }
                 buildSampleGlobalContextMenu(menu)
                 return
             }
-            buildSampleContextMenu(menu, row: targetRow)
+            buildSampleContextMenu(menu, row: targetRow, clickedColumn: targetColumn)
             return
         }
 
@@ -4534,35 +4574,24 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
                 let searchText = ([name, sourceFile] + metadata.values).joined(separator: " ").lowercased()
                 guard searchText.contains(freeText) else { return nil }
             }
-            if let specificName = query.nameFilter, !name.localizedCaseInsensitiveContains(specificName) { return nil }
-            if let source = query.sourceFilter, !sourceFile.localizedCaseInsensitiveContains(source) { return nil }
+            if let nameFilter = query.nameFilter,
+               !sampleStringMatches(actual: name, op: nameFilter.op, expected: nameFilter.value) { return nil }
+            if let sourceFilter = query.sourceFilter,
+               !sampleStringMatches(actual: sourceFile, op: sourceFilter.op, expected: sourceFilter.value) { return nil }
             if let expectedVisibility = query.visibility, expectedVisibility != isVisible { return nil }
             for filter in query.metadataFilters {
                 let actual = metadata[filter.field]
                     ?? metadata.first(where: { $0.key.caseInsensitiveCompare(filter.field) == .orderedSame })?.value
                     ?? ""
-                let matches: Bool
-                switch filter.op {
-                case "=", ":":
-                    matches = actual.localizedCaseInsensitiveContains(filter.value)
-                case "!=":
-                    matches = !actual.localizedCaseInsensitiveContains(filter.value)
-                case "~":
-                    matches = actual.localizedCaseInsensitiveContains(filter.value)
-                default:
-                    matches = actual.localizedCaseInsensitiveContains(filter.value)
-                }
-                if !matches { return nil }
+                if !sampleStringMatches(actual: actual, op: filter.op, expected: filter.value) { return nil }
             }
 
             // Token-based filters
             if activeSampleTokens.contains(.visibleOnly) && !isVisible { return nil }
             if activeSampleTokens.contains(.hiddenOnly) && isVisible { return nil }
-            let hasAnyMetadataValue = metadata.values.contains {
-                !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            }
-            if activeSampleTokens.contains(.hasMetadata) && !hasAnyMetadataValue { return nil }
-            if activeSampleTokens.contains(.missingMetadata) && hasAnyMetadataValue { return nil }
+            let hasSource = !sourceFile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if activeSampleTokens.contains(.hasSource) && !hasSource { return nil }
+            if activeSampleTokens.contains(.missingSource) && hasSource { return nil }
 
             if let selectedGroup = selectedSampleGroupId,
                let group = currentSampleDisplayState.sampleGroups.first(where: { $0.id == selectedGroup }),
@@ -4578,6 +4607,35 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         tooManyLabel.isHidden = true
         updateSampleFilterIndicator()
         updateCountLabel()
+    }
+
+    private func sampleStringMatches(actual: String, op: String, expected: String) -> Bool {
+        let normalizedActual = actual.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedExpected = expected.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        switch op {
+        case "=":
+            if normalizedExpected.isEmpty { return normalizedActual.isEmpty }  // "is empty"
+            return normalizedActual.caseInsensitiveCompare(normalizedExpected) == .orderedSame
+        case "!=":
+            if normalizedExpected.isEmpty { return !normalizedActual.isEmpty } // "is not empty"
+            return normalizedActual.caseInsensitiveCompare(normalizedExpected) != .orderedSame
+        case "~", ":":
+            if normalizedExpected.isEmpty { return true }
+            return normalizedActual.localizedCaseInsensitiveContains(normalizedExpected)
+        case "!~":
+            if normalizedExpected.isEmpty { return true }
+            return !normalizedActual.localizedCaseInsensitiveContains(normalizedExpected)
+        case "^=":
+            if normalizedExpected.isEmpty { return true }
+            return normalizedActual.lowercased().hasPrefix(normalizedExpected.lowercased())
+        case "$=":
+            if normalizedExpected.isEmpty { return true }
+            return normalizedActual.lowercased().hasSuffix(normalizedExpected.lowercased())
+        default:
+            if normalizedExpected.isEmpty { return true }
+            return normalizedActual.localizedCaseInsensitiveContains(normalizedExpected)
+        }
     }
 
     /// Returns sample names in effective display order (persisted order + any new samples).
@@ -4746,6 +4804,9 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         hasSampleDisplayStateSeed = true
         if activeTab == .samples {
             updateDisplayedSamples()
+        } else if activeTab == .variants {
+            markVariantFilterStateMutated()
+            updateDisplayedAnnotations()
         }
     }
 
@@ -4814,7 +4875,7 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         pasteboard.setString(name, forType: .string)
     }
 
-    private func buildSampleContextMenu(_ menu: NSMenu, row: Int) {
+    private func buildSampleContextMenu(_ menu: NSMenu, row: Int, clickedColumn: Int) {
         let sample = displayedSamples[row]
         let selectedRows = tableView.selectedRowIndexes
         let hasMultiSelection = selectedRows.count > 1
@@ -4862,6 +4923,72 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         copyItem.representedObject = sample.name
         menu.addItem(copyItem)
 
+        if clickedColumn >= 0, clickedColumn < tableView.tableColumns.count {
+            let column = tableView.tableColumns[clickedColumn]
+            let columnId = column.identifier.rawValue
+            if let filterKey = sampleFilterKey(forColumnIdentifier: columnId) {
+                let value = sampleFilterValue(sample: sample, columnIdentifier: columnId)
+                menu.addItem(NSMenuItem.separator())
+
+                let applyMenu = NSMenu(title: "Filter Column")
+                let applyMenuItem = NSMenuItem(title: "Filter Column", action: nil, keyEquivalent: "")
+                applyMenuItem.submenu = applyMenu
+                menu.addItem(applyMenuItem)
+
+                addSampleColumnFilterItem(
+                    to: applyMenu,
+                    title: "Equals",
+                    key: filterKey,
+                    op: "=",
+                    value: value
+                )
+                addSampleColumnFilterItem(
+                    to: applyMenu,
+                    title: "Not Equals",
+                    key: filterKey,
+                    op: "!=",
+                    value: value
+                )
+                if !value.isEmpty {
+                    addSampleColumnFilterItem(
+                        to: applyMenu,
+                        title: "Contains",
+                        key: filterKey,
+                        op: "~",
+                        value: value
+                    )
+                    addSampleColumnFilterItem(
+                        to: applyMenu,
+                        title: "Begins With",
+                        key: filterKey,
+                        op: "^=",
+                        value: value
+                    )
+                    addSampleColumnFilterItem(
+                        to: applyMenu,
+                        title: "Ends With",
+                        key: filterKey,
+                        op: "$=",
+                        value: value
+                    )
+                }
+                addSampleColumnFilterItem(
+                    to: applyMenu,
+                    title: "Is Empty",
+                    key: filterKey,
+                    op: "=",
+                    value: ""
+                )
+                addSampleColumnFilterItem(
+                    to: applyMenu,
+                    title: "Is Not Empty",
+                    key: filterKey,
+                    op: "!=",
+                    value: ""
+                )
+            }
+        }
+
         menu.addItem(NSMenuItem.separator())
 
         // Import metadata
@@ -4882,6 +5009,89 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         let groupFromShown = NSMenuItem(title: "Create Group from Shown Results\u{2026}", action: #selector(createSampleGroupFromShownResults(_:)), keyEquivalent: "")
         groupFromShown.target = self
         menu.addItem(groupFromShown)
+    }
+
+    private func sampleFilterKey(forColumnIdentifier columnId: String) -> String? {
+        switch columnId {
+        case Self.sampleNameColumn.rawValue:
+            return "name"
+        case Self.sampleSourceColumn.rawValue:
+            return "source"
+        case Self.sampleVisibleColumn.rawValue:
+            return "visible"
+        default:
+            if columnId.hasPrefix("meta_") {
+                return "meta.\(String(columnId.dropFirst(5)))"
+            }
+            return nil
+        }
+    }
+
+    private func sampleFilterValue(sample: SampleDisplayRow, columnIdentifier columnId: String) -> String {
+        switch columnId {
+        case Self.sampleNameColumn.rawValue:
+            return sample.name
+        case Self.sampleSourceColumn.rawValue:
+            return sample.sourceFile
+        case Self.sampleVisibleColumn.rawValue:
+            return sample.isVisible ? "true" : "false"
+        default:
+            if columnId.hasPrefix("meta_") {
+                let key = String(columnId.dropFirst(5))
+                return sample.metadata[key] ?? ""
+            }
+            return ""
+        }
+    }
+
+    private func addSampleColumnFilterItem(
+        to menu: NSMenu,
+        title: String,
+        key: String,
+        op: String,
+        value: String
+    ) {
+        let item = NSMenuItem(title: title, action: #selector(applySampleColumnFilterAction(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = ["key": key, "op": op, "value": value]
+        menu.addItem(item)
+    }
+
+    @objc private func applySampleColumnFilterAction(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? [String: String],
+              let key = payload["key"],
+              let op = payload["op"],
+              let value = payload["value"] else { return }
+        let clause = value.isEmpty ? "\(key)\(op)" : "\(key)\(op)\(value)"
+        let current = sampleFilterText.trimmingCharacters(in: .whitespacesAndNewlines)
+        sampleFilterText = current.isEmpty ? clause : "\(current); \(clause)"
+        sampleFilterField.stringValue = sampleFilterText
+        updateDisplayedSamples()
+    }
+
+    @objc private func promptSampleColumnFilterAction(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? [String: String],
+              let key = payload["key"],
+              let op = payload["op"],
+              let window = self.window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Add Sample Filter"
+        alert.informativeText = "Enter a value for \(key)."
+        alert.addButton(withTitle: "Apply")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = "Filter value"
+        alert.accessoryView = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty, let self else { return }
+            let clause = "\(key)\(op)\(value)"
+            let current = self.sampleFilterText.trimmingCharacters(in: .whitespacesAndNewlines)
+            self.sampleFilterText = current.isEmpty ? clause : "\(current); \(clause)"
+            self.sampleFilterField.stringValue = self.sampleFilterText
+            self.updateDisplayedSamples()
+        }
     }
 
     private func buildSampleGlobalContextMenu(_ menu: NSMenu) {
@@ -4911,6 +5121,63 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         let groupFromShown = NSMenuItem(title: "Create Group from Shown Results\u{2026}", action: #selector(createSampleGroupFromShownResults(_:)), keyEquivalent: "")
         groupFromShown.target = self
         menu.addItem(groupFromShown)
+    }
+
+    private func buildSampleColumnHeaderContextMenu(_ menu: NSMenu, column: Int) {
+        guard column >= 0, column < tableView.tableColumns.count else {
+            buildSampleGlobalContextMenu(menu)
+            return
+        }
+        let tableColumn = tableView.tableColumns[column]
+        guard let key = sampleFilterKey(forColumnIdentifier: tableColumn.identifier.rawValue) else {
+            buildSampleGlobalContextMenu(menu)
+            return
+        }
+        let displayName = tableColumn.title.isEmpty ? "Visible" : tableColumn.title
+
+        let containsItem = NSMenuItem(
+            title: "Filter \(displayName) Contains\u{2026}",
+            action: #selector(promptSampleColumnFilterAction(_:)),
+            keyEquivalent: ""
+        )
+        containsItem.target = self
+        containsItem.representedObject = ["key": key, "op": "~"]
+        menu.addItem(containsItem)
+
+        let equalsItem = NSMenuItem(
+            title: "Filter \(displayName) Equals\u{2026}",
+            action: #selector(promptSampleColumnFilterAction(_:)),
+            keyEquivalent: ""
+        )
+        equalsItem.target = self
+        equalsItem.representedObject = ["key": key, "op": "="]
+        menu.addItem(equalsItem)
+
+        let beginsWithItem = NSMenuItem(
+            title: "Filter \(displayName) Begins With\u{2026}",
+            action: #selector(promptSampleColumnFilterAction(_:)),
+            keyEquivalent: ""
+        )
+        beginsWithItem.target = self
+        beginsWithItem.representedObject = ["key": key, "op": "^="]
+        menu.addItem(beginsWithItem)
+
+        let endsWithItem = NSMenuItem(
+            title: "Filter \(displayName) Ends With\u{2026}",
+            action: #selector(promptSampleColumnFilterAction(_:)),
+            keyEquivalent: ""
+        )
+        endsWithItem.target = self
+        endsWithItem.representedObject = ["key": key, "op": "$="]
+        menu.addItem(endsWithItem)
+
+        menu.addItem(NSMenuItem.separator())
+        addSampleColumnFilterItem(to: menu, title: "Filter \(displayName) Is Empty", key: key, op: "=", value: "")
+        addSampleColumnFilterItem(to: menu, title: "Filter \(displayName) Is Not Empty", key: key, op: "!=", value: "")
+        menu.addItem(NSMenuItem.separator())
+        let clearItem = NSMenuItem(title: "Clear Sample Filters", action: #selector(clearSampleFilter(_:)), keyEquivalent: "")
+        clearItem.target = self
+        menu.addItem(clearItem)
     }
 
     // MARK: - Multi-Selection Visibility Actions
@@ -5309,7 +5576,9 @@ private struct VariantQueryContext: @unchecked Sendable {
     func queryVariantsInRegion(
         chromosome: String, start: Int, end: Int,
         nameFilter: String = "", types: Set<String> = [],
-        infoFilters: [VariantDatabase.InfoFilter] = [], limit: Int = 5000,
+        infoFilters: [VariantDatabase.InfoFilter] = [],
+        sampleNames: Set<String> = [],
+        limit: Int = 5000,
         shouldCancel: (() -> Bool)? = nil
     ) -> [AnnotationSearchIndex.SearchResult] {
         var results: [AnnotationSearchIndex.SearchResult] = []
@@ -5324,7 +5593,7 @@ private struct VariantQueryContext: @unchecked Sendable {
                 let records = handle.db.queryForTableInRegion(
                     chromosome: queryChrom, start: start, end: end,
                     nameFilter: nameFilter, types: types,
-                    infoFilters: infoFilters, limit: chunkLimit
+                    infoFilters: infoFilters, sampleNames: sampleNames, limit: chunkLimit
                 )
                 if !records.isEmpty {
                     results.append(contentsOf: variantRecordsToSearchResults(records, db: handle.db, trackId: handle.trackId))
@@ -5338,6 +5607,7 @@ private struct VariantQueryContext: @unchecked Sendable {
         chromosome: String, start: Int, end: Int,
         nameFilter: String = "", types: Set<String> = [],
         infoFilters: [VariantDatabase.InfoFilter] = [],
+        sampleNames: Set<String> = [],
         shouldCancel: (() -> Bool)? = nil
     ) -> Int {
         var count = 0
@@ -5348,7 +5618,7 @@ private struct VariantQueryContext: @unchecked Sendable {
                 count += handle.db.queryCountInRegion(
                     chromosome: queryChrom, start: start, end: end,
                     nameFilter: nameFilter, types: types,
-                    infoFilters: infoFilters
+                    infoFilters: infoFilters, sampleNames: sampleNames
                 )
             }
         }
@@ -5357,7 +5627,9 @@ private struct VariantQueryContext: @unchecked Sendable {
 
     func queryVariantsOnly(
         nameFilter: String = "", types: Set<String> = [],
-        infoFilters: [VariantDatabase.InfoFilter] = [], limit: Int = 5000,
+        infoFilters: [VariantDatabase.InfoFilter] = [],
+        sampleNames: Set<String> = [],
+        limit: Int = 5000,
         shouldCancel: (() -> Bool)? = nil
     ) -> [AnnotationSearchIndex.SearchResult] {
         var results: [AnnotationSearchIndex.SearchResult] = []
@@ -5371,7 +5643,7 @@ private struct VariantQueryContext: @unchecked Sendable {
             let records = handle.db.queryForTable(
                 nameFilter: nameFilter,
                 types: types.isEmpty ? [] : requestedVariantTypes,
-                infoFilters: infoFilters, limit: remaining
+                infoFilters: infoFilters, sampleNames: sampleNames, limit: remaining
             )
             results.append(contentsOf: variantRecordsToSearchResults(records, db: handle.db, trackId: handle.trackId))
         }
@@ -5381,6 +5653,7 @@ private struct VariantQueryContext: @unchecked Sendable {
     func queryVariantCount(
         nameFilter: String = "", types: Set<String> = [],
         infoFilters: [VariantDatabase.InfoFilter] = [],
+        sampleNames: Set<String> = [],
         shouldCancel: (() -> Bool)? = nil
     ) -> Int {
         var count = 0
@@ -5389,7 +5662,12 @@ private struct VariantQueryContext: @unchecked Sendable {
             let variantTypes = Set(handle.db.allTypes())
             let requestedVariantTypes = types.isEmpty ? variantTypes : types.intersection(variantTypes)
             if !requestedVariantTypes.isEmpty || types.isEmpty {
-                count += handle.db.queryCountForTable(nameFilter: nameFilter, types: requestedVariantTypes, infoFilters: infoFilters)
+                count += handle.db.queryCountForTable(
+                    nameFilter: nameFilter,
+                    types: requestedVariantTypes,
+                    infoFilters: infoFilters,
+                    sampleNames: sampleNames
+                )
             }
         }
         return count
@@ -5399,6 +5677,7 @@ private struct VariantQueryContext: @unchecked Sendable {
         _ geneNames: [String],
         types: Set<String> = [],
         infoFilters: [VariantDatabase.InfoFilter] = [],
+        sampleNames: Set<String> = [],
         limit: Int = 5000,
         shouldCancel: (() -> Bool)? = nil
     ) -> (results: [AnnotationSearchIndex.SearchResult], resolvedRegions: [GeneRegion]) {
@@ -5414,7 +5693,11 @@ private struct VariantQueryContext: @unchecked Sendable {
             guard results.count < limit else { break }
             let regionVariants = queryVariantsInRegion(
                 chromosome: region.chromosome, start: region.start, end: region.end,
-                types: types, infoFilters: infoFilters, limit: limit - results.count, shouldCancel: shouldCancel
+                types: types,
+                infoFilters: infoFilters,
+                sampleNames: sampleNames,
+                limit: limit - results.count,
+                shouldCancel: shouldCancel
             )
             for v in regionVariants {
                 if seenRowIds.insert(v.variantRowId ?? -1).inserted || v.variantRowId == nil {
@@ -5435,7 +5718,11 @@ private struct VariantQueryContext: @unchecked Sendable {
                 var mergedFilters = infoFilters
                 mergedFilters.append(VariantDatabase.InfoFilter(key: geneKey, op: .like, value: trimmed))
                 let infoResults = queryVariantsOnly(
-                    types: types, infoFilters: mergedFilters, limit: limit - results.count, shouldCancel: shouldCancel
+                    types: types,
+                    infoFilters: mergedFilters,
+                    sampleNames: sampleNames,
+                    limit: limit - results.count,
+                    shouldCancel: shouldCancel
                 )
                 for v in infoResults {
                     if seenRowIds.insert(v.variantRowId ?? -1).inserted || v.variantRowId == nil {
