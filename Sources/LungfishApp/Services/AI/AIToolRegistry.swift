@@ -556,7 +556,24 @@ public final class AIToolRegistry {
 
     private func fetchData(from url: URL) async throws -> Data {
         let request = URLRequest(url: url)
-        let (data, response) = try await httpClient.data(for: request)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await httpClient.data(for: request)
+        } catch let urlError as URLError {
+            switch urlError.code {
+            case .cannotFindHost, .dnsLookupFailed:
+                throw AIProviderError.networkError("Cannot resolve PubMed host. Check proxy/DNS settings.")
+            case .notConnectedToInternet:
+                throw AIProviderError.networkError("No internet connection while reaching PubMed.")
+            case .timedOut:
+                throw AIProviderError.networkError("PubMed request timed out.")
+            default:
+                throw AIProviderError.networkError("PubMed network error (\(urlError.code.rawValue)).")
+            }
+        } catch {
+            throw AIProviderError.networkError("PubMed request failed: \(error.localizedDescription)")
+        }
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AIProviderError.networkError("Invalid HTTP response from PubMed")
         }

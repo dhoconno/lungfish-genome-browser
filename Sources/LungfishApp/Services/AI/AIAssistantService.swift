@@ -76,6 +76,7 @@ public final class AIAssistantService {
 
             // Conversation loop: send message, execute tools, repeat until done
             var rounds = 0
+            var consecutiveAllToolFailureRounds = 0
             while rounds < maxToolRounds {
                 rounds += 1
 
@@ -108,6 +109,18 @@ public final class AIAssistantService {
                     toolResults.append(result)
                 }
 
+                let failedToolResults = toolResults.filter(\.isError)
+                if failedToolResults.count == toolResults.count {
+                    consecutiveAllToolFailureRounds += 1
+                    if consecutiveAllToolFailureRounds >= 2 {
+                        let summary = makeToolFailureSummary(from: failedToolResults)
+                        lastError = summary
+                        return summary
+                    }
+                } else {
+                    consecutiveAllToolFailureRounds = 0
+                }
+
                 // Add tool results as a message
                 let toolMessage = AIMessage(
                     role: .tool,
@@ -120,6 +133,10 @@ public final class AIAssistantService {
             }
 
             logger.warning("Maximum tool rounds (\(self.maxToolRounds)) reached")
+            if let summary = makeRecentToolFailureSummary() {
+                lastError = summary
+                return summary
+            }
             return messages.last { $0.role == .assistant }?.content ?? "I've been working on your request but reached the maximum number of analysis steps. Here's what I found so far."
 
         } catch let error as AIProviderError {
@@ -266,6 +283,19 @@ public final class AIAssistantService {
         case .missingAPIKey, .invalidResponse, .contextTooLong, .decodingError:
             return false
         }
+    }
+
+    private func makeToolFailureSummary(from failures: [AIToolResult]) -> String {
+        let messages = Set(failures.map { $0.content.replacingOccurrences(of: "Error: ", with: "") })
+        let joined = messages.prefix(3).joined(separator: " | ")
+        return "The requested tools failed repeatedly: \(joined). Please check your network/proxy settings or try a non-PubMed query."
+    }
+
+    private func makeRecentToolFailureSummary() -> String? {
+        let recentToolResults = messages.reversed().first(where: { $0.role == .tool })?.toolResults ?? []
+        let failures = recentToolResults.filter(\.isError)
+        guard !failures.isEmpty else { return nil }
+        return makeToolFailureSummary(from: failures)
     }
 
     // MARK: - System Prompt
