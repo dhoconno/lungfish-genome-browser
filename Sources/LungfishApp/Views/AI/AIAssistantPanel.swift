@@ -160,6 +160,8 @@ final class AIAssistantViewController: NSViewController {
         messagesStackView.spacing = 12
         messagesStackView.alignment = .leading
         messagesStackView.edgeInsets = NSEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
+        messagesStackView.setContentHuggingPriority(.required, for: .vertical)
+        messagesStackView.setContentCompressionResistancePriority(.required, for: .vertical)
 
         let documentView = NSView()
         documentView.translatesAutoresizingMaskIntoConstraints = false
@@ -170,7 +172,7 @@ final class AIAssistantViewController: NSViewController {
             messagesStackView.topAnchor.constraint(equalTo: documentView.topAnchor),
             messagesStackView.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
             messagesStackView.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
-            messagesStackView.bottomAnchor.constraint(lessThanOrEqualTo: documentView.bottomAnchor),
+            messagesStackView.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
             messagesStackView.widthAnchor.constraint(equalTo: documentView.widthAnchor),
         ])
 
@@ -275,6 +277,31 @@ final class AIAssistantViewController: NSViewController {
         return inputBar
     }
 
+    /// Ensures the scroll document grows with message content so long responses remain visible.
+    private func updateMessageDocumentHeight() {
+        guard let documentView = scrollView.documentView else { return }
+        documentView.layoutSubtreeIfNeeded()
+        messagesStackView.layoutSubtreeIfNeeded()
+
+        let contentHeight = messagesStackView.fittingSize.height
+        let minHeight = scrollView.contentView.bounds.height
+        let desiredHeight = max(minHeight, contentHeight)
+
+        if abs(documentView.frame.height - desiredHeight) > 0.5 {
+            var frame = documentView.frame
+            frame.size.height = desiredHeight
+            documentView.frame = frame
+        }
+    }
+
+    private func scrollMessagesToBottom() {
+        guard let documentView = scrollView.documentView else { return }
+        updateMessageDocumentHeight()
+        let maxY = max(0, documentView.frame.height - scrollView.contentView.bounds.height)
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: maxY))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
     // MARK: - Messages
 
     private func addWelcomeMessage() {
@@ -298,12 +325,7 @@ final class AIAssistantViewController: NSViewController {
 
         // Scroll to bottom
         DispatchQueue.main.async { [weak self] in
-            guard let scrollView = self?.scrollView,
-                  let documentView = scrollView.documentView else { return }
-            let maxY = documentView.frame.maxY - scrollView.contentView.bounds.height
-            if maxY > 0 {
-                scrollView.contentView.scroll(to: NSPoint(x: 0, y: maxY))
-            }
+            self?.scrollMessagesToBottom()
         }
     }
 
@@ -331,12 +353,7 @@ final class AIAssistantViewController: NSViewController {
 
         // Scroll to bottom
         DispatchQueue.main.async { [weak self] in
-            guard let scrollView = self?.scrollView,
-                  let documentView = scrollView.documentView else { return }
-            let maxY = documentView.frame.maxY - scrollView.contentView.bounds.height
-            if maxY > 0 {
-                scrollView.contentView.scroll(to: NSPoint(x: 0, y: maxY))
-            }
+            self?.scrollMessagesToBottom()
         }
     }
 
@@ -350,6 +367,7 @@ final class AIAssistantViewController: NSViewController {
         }
         thinkingIndicator?.stopAnimation(nil)
         thinkingIndicator = nil
+        updateMessageDocumentHeight()
     }
 
     /// Updates the label text next to the thinking spinner.
@@ -439,10 +457,21 @@ final class AIAssistantViewController: NSViewController {
         Task { [weak self] in
             guard let self else { return }
             let response = await service.sendMessage(text)
+            logger.info("AI panel received response chars=\(response.count)")
+            let responseToDisplay: String
+            if response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               let fallback = service.messages.reversed().first(where: {
+                   $0.role == .assistant && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+               })?.content {
+                logger.warning("AI panel response was empty; using last assistant message chars=\(fallback.count)")
+                responseToDisplay = fallback
+            } else {
+                responseToDisplay = response
+            }
 
             service.onStatusUpdate = nil
             hideThinkingIndicator()
-            addMessageView(text: response, isUser: false)
+            addMessageView(text: responseToDisplay, isUser: false)
             statusLabel.stringValue = ""
             sendButton.isEnabled = true
             inputField.isEnabled = true
@@ -460,6 +489,7 @@ final class AIAssistantViewController: NSViewController {
         }
 
         addWelcomeMessage()
+        updateMessageDocumentHeight()
         suggestedQueriesContainer.isHidden = false
         refreshSuggestedQueries()
         statusLabel.stringValue = ""
