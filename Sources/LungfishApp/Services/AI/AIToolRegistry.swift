@@ -26,6 +26,12 @@ public final class AIToolRegistry {
     /// Callback to get the current viewer state.
     var getCurrentViewState: (() -> ViewerState)?
 
+    /// Callback to get a text snapshot of the variant table (selected/visible rows).
+    var getVariantTableContext: ((_ selectionScope: String, _ limit: Int) -> String)?
+
+    /// Callback to get a text snapshot of the sample table (selected/visible rows).
+    var getSampleTableContext: ((_ selectionScope: String, _ limit: Int, _ visibleOnly: Bool) -> String)?
+
     /// HTTP client used by tools that call external services.
     private let httpClient: HTTPClient
 
@@ -103,6 +109,8 @@ public final class AIToolRegistry {
             searchVariantsDef,
             getVariantStatsDef,
             getGeneDetailsDef,
+            getVariantTableContextDef,
+            getSampleTableContextDef,
             getCurrentViewDef,
             navigateToGeneDef,
             navigateToRegionDef,
@@ -160,6 +168,56 @@ public final class AIToolRegistry {
             name: "get_current_view",
             description: "Get information about what the user is currently viewing in the genome browser, including the chromosome, position range, loaded genome assembly, and available data tracks.",
             parameters: []
+        )
+    }
+
+    private var getVariantTableContextDef: AIToolDefinition {
+        AIToolDefinition(
+            name: "get_variant_table_context",
+            description: "Get the currently visible or selected variant rows from the Variants table in the UI (including per-row annotations such as IMPACT/CSQ when available). Use this when the user asks about selected/visible table variants.",
+            parameters: [
+                AIToolParameter(
+                    name: "selection_scope",
+                    type: .string,
+                    description: "Which rows to return: selected, visible, or selected_or_visible (default).",
+                    required: false,
+                    enumValues: ["selected", "visible", "selected_or_visible"]
+                ),
+                AIToolParameter(
+                    name: "limit",
+                    type: .integer,
+                    description: "Maximum number of rows to return (default 25, max 200).",
+                    required: false
+                ),
+            ]
+        )
+    }
+
+    private var getSampleTableContextDef: AIToolDefinition {
+        AIToolDefinition(
+            name: "get_sample_table_context",
+            description: "Get the currently visible or selected sample rows from the Samples table, including metadata fields shown in the UI. Use this when the user asks about sample subsets or metadata-driven sample groups.",
+            parameters: [
+                AIToolParameter(
+                    name: "selection_scope",
+                    type: .string,
+                    description: "Which rows to return: selected, visible, or selected_or_visible (default).",
+                    required: false,
+                    enumValues: ["selected", "visible", "selected_or_visible"]
+                ),
+                AIToolParameter(
+                    name: "visible_only",
+                    type: .boolean,
+                    description: "Whether to include only samples currently marked visible (default true).",
+                    required: false
+                ),
+                AIToolParameter(
+                    name: "limit",
+                    type: .integer,
+                    description: "Maximum number of rows to return (default 50, max 300).",
+                    required: false
+                ),
+            ]
         )
     }
 
@@ -223,6 +281,10 @@ public final class AIToolRegistry {
                 result = try await executeGetVariantStats(toolCall)
             case "get_gene_details":
                 result = try await executeGetGeneDetails(toolCall)
+            case "get_variant_table_context":
+                result = executeGetVariantTableContext(toolCall)
+            case "get_sample_table_context":
+                result = executeGetSampleTableContext(toolCall)
             case "get_current_view":
                 result = executeGetCurrentView()
             case "navigate_to_gene":
@@ -466,6 +528,25 @@ public final class AIToolRegistry {
         }
 
         return lines.isEmpty ? "No genome data is currently loaded." : lines.joined(separator: "\n")
+    }
+
+    private func executeGetVariantTableContext(_ call: AIToolCall) -> String {
+        guard let callback = getVariantTableContext else {
+            return "Variant table context is unavailable because no active viewer is connected."
+        }
+        let scope = (call.string("selection_scope") ?? "selected_or_visible").lowercased()
+        let limit = min(max(call.int("limit") ?? 25, 1), 200)
+        return callback(scope, limit)
+    }
+
+    private func executeGetSampleTableContext(_ call: AIToolCall) -> String {
+        guard let callback = getSampleTableContext else {
+            return "Sample table context is unavailable because no active viewer is connected."
+        }
+        let scope = (call.string("selection_scope") ?? "selected_or_visible").lowercased()
+        let visibleOnly = call.bool("visible_only") ?? true
+        let limit = min(max(call.int("limit") ?? 50, 1), 300)
+        return callback(scope, limit, visibleOnly)
     }
 
     private func executeNavigateToGene(_ call: AIToolCall) async throws -> String {

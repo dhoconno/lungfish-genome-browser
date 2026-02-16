@@ -3972,6 +3972,75 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         return true
     }
 
+    // MARK: - AI Snapshot API
+
+    /// Returns the currently shown variant rows in the Calls subtab.
+    ///
+    /// - Parameters:
+    ///   - limit: Maximum rows to return.
+    ///   - selectedOnly: Whether to return only selected rows.
+    ///   - fallbackToVisibleIfSelectionEmpty: When `selectedOnly` is true and no rows are
+    ///     selected, return visible rows instead.
+    func aiVariantRows(
+        limit: Int = 50,
+        selectedOnly: Bool = false,
+        fallbackToVisibleIfSelectionEmpty: Bool = true
+    ) -> [AnnotationSearchIndex.SearchResult] {
+        guard activeTab == .variants, activeVariantSubtab == .calls else { return [] }
+
+        let rowsToUse: [AnnotationSearchIndex.SearchResult]
+        if selectedOnly {
+            let selected = tableView.selectedRowIndexes.compactMap { idx -> AnnotationSearchIndex.SearchResult? in
+                guard idx >= 0, idx < displayedAnnotations.count else { return nil }
+                return displayedAnnotations[idx]
+            }
+            if selected.isEmpty && fallbackToVisibleIfSelectionEmpty {
+                rowsToUse = displayedAnnotations
+            } else {
+                rowsToUse = selected
+            }
+        } else {
+            rowsToUse = displayedAnnotations
+        }
+
+        return Array(rowsToUse.prefix(max(1, limit)))
+    }
+
+    /// Returns the currently shown sample rows in the Samples tab.
+    ///
+    /// - Parameters:
+    ///   - limit: Maximum rows to return.
+    ///   - selectedOnly: Whether to return only selected rows.
+    ///   - visibleOnly: Whether to include only visible samples.
+    ///   - fallbackToVisibleIfSelectionEmpty: When `selectedOnly` is true and no rows are
+    ///     selected, return visible rows instead.
+    func aiSampleRows(
+        limit: Int = 100,
+        selectedOnly: Bool = false,
+        visibleOnly: Bool = true,
+        fallbackToVisibleIfSelectionEmpty: Bool = true
+    ) -> [SampleDisplayRow] {
+        guard activeTab == .samples else { return [] }
+
+        let baseRows: [SampleDisplayRow]
+        if selectedOnly {
+            let selected = tableView.selectedRowIndexes.compactMap { idx -> SampleDisplayRow? in
+                guard idx >= 0, idx < displayedSamples.count else { return nil }
+                return displayedSamples[idx]
+            }
+            if selected.isEmpty && fallbackToVisibleIfSelectionEmpty {
+                baseRows = displayedSamples
+            } else {
+                baseRows = selected
+            }
+        } else {
+            baseRows = displayedSamples
+        }
+
+        let filtered = visibleOnly ? baseRows.filter(\.isVisible) : baseRows
+        return Array(filtered.prefix(max(1, limit)))
+    }
+
     // MARK: - Context Menu Actions
 
     /// Looks up the translation string for an annotation from the SQLite database.

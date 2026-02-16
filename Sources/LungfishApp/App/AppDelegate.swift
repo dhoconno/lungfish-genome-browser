@@ -1716,6 +1716,137 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             }
         }
 
+        toolRegistry.getVariantTableContext = { [weak self] selectionScope, limit in
+            guard let viewerController = self?.mainWindowController?.mainSplitViewController?.viewerController else {
+                return "No active viewer is available."
+            }
+            guard let drawer = viewerController.annotationDrawerView else {
+                return "Variant table is unavailable because the bottom drawer is not open."
+            }
+
+            let isVariantTabActive = drawer.activeTab == .variants
+            let isCallsSubtabActive = drawer.activeVariantSubtab == .calls
+            let selectedRows = drawer.aiVariantRows(
+                limit: limit,
+                selectedOnly: true,
+                fallbackToVisibleIfSelectionEmpty: false
+            )
+            let visibleRows = drawer.aiVariantRows(
+                limit: limit,
+                selectedOnly: false,
+                fallbackToVisibleIfSelectionEmpty: false
+            )
+
+            let rows: [AnnotationSearchIndex.SearchResult]
+            switch selectionScope {
+            case "selected":
+                rows = selectedRows
+            case "visible":
+                rows = visibleRows
+            default:
+                rows = selectedRows.isEmpty ? visibleRows : selectedRows
+            }
+
+            var lines: [String] = []
+            lines.append("Variant table state:")
+            lines.append("  Variant tab active: \(isVariantTabActive ? "yes" : "no")")
+            lines.append("  Calls subtab active: \(isCallsSubtabActive ? "yes" : "no")")
+            lines.append("  Selected rows: \(selectedRows.count)")
+            lines.append("  Visible rows: \(visibleRows.count)")
+
+            if rows.isEmpty {
+                lines.append("No rows available for selection_scope='\(selectionScope)'.")
+                return lines.joined(separator: "\n")
+            }
+
+            lines.append("Rows returned (\(rows.count), scope=\(selectionScope)):")
+            for row in rows {
+                let qualityString = row.quality.map { String(format: "%.1f", $0) } ?? "."
+                var infoParts: [String] = []
+                if let info = row.infoDict {
+                    for key in ["CSQ_SYMBOL", "SYMBOL", "CSQ_IMPACT", "IMPACT", "CSQ_Consequence", "Consequence", "AF"] {
+                        if let value = info[key], !value.isEmpty {
+                            infoParts.append("\(key)=\(value)")
+                        }
+                    }
+                    if infoParts.isEmpty {
+                        let keys = info.keys.sorted().prefix(4)
+                        for key in keys {
+                            if let value = info[key], !value.isEmpty {
+                                infoParts.append("\(key)=\(value)")
+                            }
+                        }
+                    }
+                }
+
+                let infoSummary = infoParts.isEmpty ? "" : " info{\(infoParts.joined(separator: "; "))}"
+                let rowId = row.variantRowId.map(String.init) ?? "nil"
+                lines.append(
+                    "- id=\(row.name) chrom=\(row.chromosome) pos1=\(row.start + 1) ref=\(row.ref ?? ".") alt=\(row.alt ?? ".") type=\(row.type) qual=\(qualityString) filter=\(row.filter ?? ".") samples=\(row.sampleCount ?? 0) track=\(row.trackId) row_id=\(rowId)\(infoSummary)"
+                )
+            }
+
+            return lines.joined(separator: "\n")
+        }
+
+        toolRegistry.getSampleTableContext = { [weak self] selectionScope, limit, visibleOnly in
+            guard let viewerController = self?.mainWindowController?.mainSplitViewController?.viewerController else {
+                return "No active viewer is available."
+            }
+            guard let drawer = viewerController.annotationDrawerView else {
+                return "Sample table is unavailable because the bottom drawer is not open."
+            }
+
+            let isSampleTabActive = drawer.activeTab == .samples
+            let selectedRows = drawer.aiSampleRows(
+                limit: limit,
+                selectedOnly: true,
+                visibleOnly: visibleOnly,
+                fallbackToVisibleIfSelectionEmpty: false
+            )
+            let visibleRows = drawer.aiSampleRows(
+                limit: limit,
+                selectedOnly: false,
+                visibleOnly: visibleOnly,
+                fallbackToVisibleIfSelectionEmpty: false
+            )
+
+            let rows: [AnnotationTableDrawerView.SampleDisplayRow]
+            switch selectionScope {
+            case "selected":
+                rows = selectedRows
+            case "visible":
+                rows = visibleRows
+            default:
+                rows = selectedRows.isEmpty ? visibleRows : selectedRows
+            }
+
+            var lines: [String] = []
+            lines.append("Sample table state:")
+            lines.append("  Samples tab active: \(isSampleTabActive ? "yes" : "no")")
+            lines.append("  Selected rows: \(selectedRows.count)")
+            lines.append("  Visible rows: \(visibleRows.count)")
+            lines.append("  visible_only: \(visibleOnly ? "true" : "false")")
+
+            if rows.isEmpty {
+                lines.append("No rows available for selection_scope='\(selectionScope)'.")
+                return lines.joined(separator: "\n")
+            }
+
+            lines.append("Rows returned (\(rows.count), scope=\(selectionScope)):")
+            for row in rows {
+                let metadataPairs = row.metadata
+                    .sorted { $0.key < $1.key }
+                    .filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                    .prefix(6)
+                    .map { "\($0.key)=\($0.value)" }
+                let metadataSummary = metadataPairs.isEmpty ? "" : " metadata{\(metadataPairs.joined(separator: "; "))}"
+                lines.append("- sample=\(row.name) visible=\(row.isVisible ? "true" : "false") source=\(row.sourceFile)\(metadataSummary)")
+            }
+
+            return lines.joined(separator: "\n")
+        }
+
         // Connect current view state callback
         toolRegistry.getCurrentViewState = { [weak self] in
             guard let viewerController = self?.mainWindowController?.mainSplitViewController?.viewerController else {

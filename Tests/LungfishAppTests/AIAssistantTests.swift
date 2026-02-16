@@ -44,12 +44,14 @@ final class AIToolRegistryTests: XCTestCase {
         XCTAssertTrue(names.contains("search_variants"))
         XCTAssertTrue(names.contains("get_variant_statistics"))
         XCTAssertTrue(names.contains("get_gene_details"))
+        XCTAssertTrue(names.contains("get_variant_table_context"))
+        XCTAssertTrue(names.contains("get_sample_table_context"))
         XCTAssertTrue(names.contains("get_current_view"))
         XCTAssertTrue(names.contains("navigate_to_gene"))
         XCTAssertTrue(names.contains("navigate_to_region"))
         XCTAssertTrue(names.contains("list_chromosomes"))
         XCTAssertTrue(names.contains("search_pubmed"))
-        XCTAssertEqual(tools.count, 9)
+        XCTAssertEqual(tools.count, 11)
     }
 
     func testToolDefinitionsHaveDescriptions() {
@@ -131,6 +133,20 @@ final class AIToolRegistryTests: XCTestCase {
         let call = AIToolCall(id: "1", name: "get_current_view", arguments: [:])
         let result = await registry.execute(call)
         XCTAssertTrue(result.content.contains("No genome viewer"))
+    }
+
+    func testGetVariantTableContextWithoutCallback() async {
+        let registry = AIToolRegistry()
+        let call = AIToolCall(id: "1", name: "get_variant_table_context", arguments: [:])
+        let result = await registry.execute(call)
+        XCTAssertTrue(result.content.contains("unavailable"))
+    }
+
+    func testGetSampleTableContextWithoutCallback() async {
+        let registry = AIToolRegistry()
+        let call = AIToolCall(id: "1", name: "get_sample_table_context", arguments: [:])
+        let result = await registry.execute(call)
+        XCTAssertTrue(result.content.contains("unavailable"))
     }
 
     func testNavigateToGeneWithoutData() async {
@@ -221,6 +237,45 @@ final class AIToolRegistryTests: XCTestCase {
         XCTAssertEqual(navigatedTo?.1, 1000)
         XCTAssertEqual(navigatedTo?.2, 2000)
         XCTAssertTrue(result.content.contains("Navigated to chr5:1000-2000"))
+    }
+
+    func testGetVariantTableContextUsesCallback() async {
+        let registry = AIToolRegistry()
+        registry.getVariantTableContext = { selectionScope, limit in
+            "variant_context scope=\(selectionScope) limit=\(limit)"
+        }
+
+        let call = AIToolCall(
+            id: "1",
+            name: "get_variant_table_context",
+            arguments: ["selection_scope": .string("visible"), "limit": .integer(7)]
+        )
+        let result = await registry.execute(call)
+        XCTAssertFalse(result.isError)
+        XCTAssertTrue(result.content.contains("scope=visible"))
+        XCTAssertTrue(result.content.contains("limit=7"))
+    }
+
+    func testGetSampleTableContextUsesCallback() async {
+        let registry = AIToolRegistry()
+        registry.getSampleTableContext = { selectionScope, limit, visibleOnly in
+            "sample_context scope=\(selectionScope) limit=\(limit) visible_only=\(visibleOnly)"
+        }
+
+        let call = AIToolCall(
+            id: "1",
+            name: "get_sample_table_context",
+            arguments: [
+                "selection_scope": .string("selected"),
+                "limit": .integer(12),
+                "visible_only": .bool(false),
+            ]
+        )
+        let result = await registry.execute(call)
+        XCTAssertFalse(result.isError)
+        XCTAssertTrue(result.content.contains("scope=selected"))
+        XCTAssertTrue(result.content.contains("limit=12"))
+        XCTAssertTrue(result.content.contains("visible_only=false"))
     }
 
     // MARK: - Current View State

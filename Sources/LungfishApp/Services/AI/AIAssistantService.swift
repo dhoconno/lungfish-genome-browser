@@ -75,7 +75,7 @@ public final class AIAssistantService {
 
         do {
             let providers = try await resolveProviders()
-            let systemPrompt = buildSystemPrompt()
+            let systemPrompt = buildSystemPrompt(for: text)
             let tools = toolRegistry.toolDefinitions
             let providerSummary = providers.map { "\($0.name)(\($0.modelId))" }.joined(separator: ", ")
             logger.info("AI[\(requestID, privacy: .public)] Using providers: \(providerSummary, privacy: .public)")
@@ -333,7 +333,7 @@ public final class AIAssistantService {
     // MARK: - System Prompt
 
     /// Builds a context-aware system prompt based on the current app state.
-    private func buildSystemPrompt() -> String {
+    private func buildSystemPrompt(for userMessage: String) -> String {
         let viewerState = toolRegistry.getCurrentViewState?() ?? AIToolRegistry.ViewerState()
 
         var contextLines: [String] = []
@@ -387,7 +387,7 @@ public final class AIAssistantService {
             ? "No genome data is currently loaded."
             : contextLines.joined(separator: "\n")
 
-        return """
+        var prompt = """
         You are a genomics research assistant built into the Lungfish genome browser application. \
         Your role is to help researchers explore and understand genomic data, especially those who \
         may not have extensive experience with genome browsers or bioinformatics.
@@ -397,6 +397,7 @@ public final class AIAssistantService {
         - Search for genes and annotations in the loaded genome data
         - Search for genetic variants (SNPs, insertions, deletions) from VCF files
         - Get variant statistics and gene details
+        - Read currently selected/visible rows from the Variants and Samples tables
         - Navigate the genome browser to specific genes or regions
         - Search PubMed for relevant scientific literature
 
@@ -434,7 +435,89 @@ public final class AIAssistantService {
         9. **Use loaded table state**: If variant/sample table row summaries are present in context, \
         treat them as the user's current filtered working set and discuss those first before broadening \
         to genome-wide searches.
+
+        10. **For table-focused questions, call table tools first**: If the user asks about \
+        selected/visible variants or samples in the UI table, call `get_variant_table_context` \
+        and/or `get_sample_table_context` before forming conclusions.
         """
+
+        let lowered = userMessage.lowercased()
+        let variantTablePhrases = [
+            "variant table",
+            "selected variant",
+            "selected variants",
+            "visible variant",
+            "visible variants",
+            "shown variant",
+            "shown variants",
+            "displayed variant",
+            "displayed variants",
+            "table variants",
+            "variant rows",
+            "rows in the variant table",
+            "these variants",
+            "those variants",
+            "current variants",
+            "listed variants",
+        ]
+        let sampleTablePhrases = [
+            "sample table",
+            "selected sample",
+            "selected samples",
+            "visible sample",
+            "visible samples",
+            "shown sample",
+            "shown samples",
+            "displayed sample",
+            "displayed samples",
+            "table samples",
+            "sample rows",
+            "rows in the sample table",
+            "these samples",
+            "those samples",
+            "current samples",
+            "listed samples",
+        ]
+        let referencesVariantTable = variantTablePhrases.contains(where: lowered.contains)
+        let referencesSampleTable = sampleTablePhrases.contains(where: lowered.contains)
+
+        if referencesVariantTable {
+            prompt += """
+
+            ## Mandatory Step For This Request
+            Before answering this request, call `get_variant_table_context` with \
+            `selection_scope=\"selected_or_visible\"`.
+            """
+            if let variantSnapshot = toolRegistry.getVariantTableContext?("selected_or_visible", 25),
+               !variantSnapshot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                prompt += """
+
+                ## Variant Table Snapshot (Current UI)
+                \(variantSnapshot)
+                """
+            }
+        }
+
+        if referencesSampleTable {
+            prompt += """
+
+            ## Mandatory Step For This Request
+            Before answering this request, call `get_sample_table_context` with \
+            `selection_scope=\"selected_or_visible\"`.
+            """
+            if let sampleSnapshot = toolRegistry.getSampleTableContext?("selected_or_visible", 50, true),
+               !sampleSnapshot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                prompt += """
+
+                ## Sample Table Snapshot (Current UI)
+                \(sampleSnapshot)
+                """
+            }
+        }
+
+        return prompt
     }
 
     // MARK: - Suggested Queries
@@ -603,6 +686,8 @@ public final class AIAssistantService {
         case "search_variants": return "Searching variants..."
         case "get_variant_statistics": return "Getting variant stats..."
         case "get_gene_details": return "Looking up gene details..."
+        case "get_variant_table_context": return "Reading variant table..."
+        case "get_sample_table_context": return "Reading sample table..."
         case "get_current_view": return "Reading viewer state..."
         case "navigate_to_gene": return "Navigating to gene..."
         case "navigate_to_region": return "Navigating to region..."
