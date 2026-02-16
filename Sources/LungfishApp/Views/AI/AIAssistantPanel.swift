@@ -361,6 +361,21 @@ final class AIAssistantViewController: NSViewController {
         thinkingIndicator = nil
     }
 
+    /// Updates the label text next to the thinking spinner.
+    private func updateThinkingLabel(_ text: String) {
+        let indicatorId = NSUserInterfaceItemIdentifier("thinkingIndicator")
+        for view in messagesStackView.arrangedSubviews {
+            if view.identifier == indicatorId, let stack = view as? NSStackView {
+                for subview in stack.arrangedSubviews {
+                    if let label = subview as? NSTextField, label != thinkingIndicator as? NSView {
+                        label.stringValue = text
+                        break
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Suggested Queries
 
     private func refreshSuggestedQueries() {
@@ -422,15 +437,25 @@ final class AIAssistantViewController: NSViewController {
         showThinkingIndicator()
         statusLabel.stringValue = "Thinking..."
         sendButton.isEnabled = false
+        inputField.isEnabled = false
+
+        // Wire up status updates for tool execution feedback
+        service.onStatusUpdate = { [weak self] status in
+            self?.statusLabel.stringValue = status
+            self?.updateThinkingLabel(status)
+        }
 
         Task { [weak self] in
             guard let self else { return }
             let response = await service.sendMessage(text)
 
+            service.onStatusUpdate = nil
             hideThinkingIndicator()
             addMessageView(text: response, isUser: false)
             statusLabel.stringValue = ""
             sendButton.isEnabled = true
+            inputField.isEnabled = true
+            view.window?.makeFirstResponder(inputField)
         }
     }
 
@@ -474,9 +499,12 @@ extension AIAssistantViewController: NSTextFieldDelegate {
 @MainActor
 final class AIMessageBubbleView: NSView {
     let isWelcome: Bool
+    private var rawText: String = ""
+    private var copyButton: NSButton?
 
     init(text: String, isUser: Bool, isWelcome: Bool = false) {
         self.isWelcome = isWelcome
+        self.rawText = text
         super.init(frame: .zero)
         self.translatesAutoresizingMaskIntoConstraints = false
         setup(text: text, isUser: isUser, isWelcome: isWelcome)
@@ -514,6 +542,29 @@ final class AIMessageBubbleView: NSView {
         textView.textStorage?.setAttributedString(attributedString)
 
         addSubview(textView)
+
+        // Add copy button for AI responses (not user messages, not welcome)
+        if !isUser && !isWelcome {
+            let btn = NSButton()
+            btn.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "Copy")
+            btn.bezelStyle = .toolbar
+            btn.isBordered = false
+            btn.imageScaling = .scaleProportionallyDown
+            btn.toolTip = "Copy response"
+            btn.target = self
+            btn.action = #selector(copyText)
+            btn.translatesAutoresizingMaskIntoConstraints = false
+            btn.alphaValue = 0.4
+            addSubview(btn)
+            copyButton = btn
+
+            NSLayoutConstraint.activate([
+                btn.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+                btn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+                btn.widthAnchor.constraint(equalToConstant: 20),
+                btn.heightAnchor.constraint(equalToConstant: 20),
+            ])
+        }
 
         NSLayoutConstraint.activate([
             textView.topAnchor.constraint(equalTo: topAnchor),
@@ -643,5 +694,39 @@ final class AIMessageBubbleView: NSView {
         }
 
         return result
+    }
+
+    @objc private func copyText() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(rawText, forType: .string)
+
+        // Briefly show checkmark icon for feedback
+        copyButton?.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: "Copied")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.copyButton?.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "Copy")
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas {
+            removeTrackingArea(area)
+        }
+        if copyButton != nil {
+            let area = NSTrackingArea(
+                rect: bounds,
+                options: [.mouseEnteredAndExited, .activeInKeyWindow],
+                owner: self
+            )
+            addTrackingArea(area)
+        }
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        copyButton?.animator().alphaValue = 1.0
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        copyButton?.animator().alphaValue = 0.4
     }
 }

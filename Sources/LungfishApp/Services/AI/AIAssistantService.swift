@@ -35,6 +35,9 @@ public final class AIAssistantService {
     /// Total tokens used in this conversation.
     public private(set) var totalTokensUsed: Int = 0
 
+    /// Status update callback for UI feedback during tool execution.
+    public var onStatusUpdate: ((String) -> Void)?
+
     /// Maximum tool execution rounds per user message (prevents infinite loops).
     private let maxToolRounds = 8
 
@@ -93,6 +96,8 @@ public final class AIAssistantService {
                 logger.info("Executing \(response.toolCalls.count) tool call(s)")
                 var toolResults: [AIToolResult] = []
                 for toolCall in response.toolCalls {
+                    let toolLabel = toolDisplayName(toolCall.name)
+                    onStatusUpdate?(toolLabel)
                     let result = await toolRegistry.execute(toolCall)
                     toolResults.append(result)
                 }
@@ -322,6 +327,24 @@ public final class AIAssistantService {
         ))
 
         return queries
+    }
+
+    // MARK: - Helpers
+
+    /// Human-readable label for a tool name, shown during execution.
+    private func toolDisplayName(_ name: String) -> String {
+        switch name {
+        case "search_genes": return "Searching genes..."
+        case "search_variants": return "Searching variants..."
+        case "get_variant_statistics": return "Getting variant stats..."
+        case "get_gene_details": return "Looking up gene details..."
+        case "get_current_view": return "Reading viewer state..."
+        case "navigate_to_gene": return "Navigating to gene..."
+        case "navigate_to_region": return "Navigating to region..."
+        case "list_chromosomes": return "Listing chromosomes..."
+        case "search_pubmed": return "Searching PubMed..."
+        default: return "Running \(name)..."
+        }
     }
 }
 
