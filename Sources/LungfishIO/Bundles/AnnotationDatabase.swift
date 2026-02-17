@@ -474,6 +474,23 @@ public final class AnnotationDatabase: @unchecked Sendable {
         return results
     }
 
+    /// Returns all chromosome names present in the annotations table.
+    public func allChromosomes() -> [String] {
+        guard let db else { return [] }
+        let sql = "SELECT DISTINCT chromosome FROM annotations ORDER BY chromosome"
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+
+        var values: [String] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let text = sqlite3_column_text(stmt, 0) {
+                values.append(String(cString: text))
+            }
+        }
+        return values
+    }
+
     // MARK: - Attribute Parsing
 
     /// Parses a GFF3-style attributes string into a dictionary.

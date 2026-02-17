@@ -153,11 +153,27 @@ public final class SequenceExtractionPipeline: @unchecked Sendable {
             for (trackIndex, sourceTrack) in sourceAnnotationTracks.enumerated() {
                 do {
                     let sourceDB = try AnnotationDatabase(url: sourceTrack.databaseURL)
-                    let sourceRecords = sourceDB.queryByRegion(
-                        chromosome: result.chromosome,
-                        start: result.effectiveStart,
-                        end: result.effectiveEnd
+                    let queryChromosomes = Self.annotationChromosomeCandidates(
+                        sourceChromosome: result.chromosome,
+                        sourceBundleChromosomes: sourceBundleChromosomes,
+                        annotationChromosomes: sourceDB.allChromosomes()
                     )
+                    var sourceRecords: [AnnotationDatabaseRecord] = []
+                    var seenAnnotationKeys = Set<String>()
+                    for queryChromosome in queryChromosomes {
+                        // Use a large cap for extraction paths so full-region content is preserved.
+                        let records = sourceDB.queryByRegion(
+                            chromosome: queryChromosome,
+                            start: result.effectiveStart,
+                            end: result.effectiveEnd,
+                            limit: 1_000_000
+                        )
+                        for record in records {
+                            let key = "\(record.name)|\(record.type)|\(record.chromosome)|\(record.start)|\(record.end)|\(record.strand)"
+                            guard seenAnnotationKeys.insert(key).inserted else { continue }
+                            sourceRecords.append(record)
+                        }
+                    }
 
                     let transformed = sourceRecords.compactMap { record -> AnnotationDatabaseRecord? in
                         // Skip "region" annotations that span the entire extraction —
@@ -223,7 +239,8 @@ public final class SequenceExtractionPipeline: @unchecked Sendable {
                     let chromosomeAliases = Self.variantChromosomeAliases(
                         sourceChromosome: result.chromosome,
                         sourceBundleChromosomes: sourceBundleChromosomes,
-                        variantChromosomes: sourceDB.allChromosomes()
+                        variantChromosomes: sourceDB.allChromosomes(),
+                        variantChromosomeMaxPositions: sourceDB.chromosomeMaxPositions()
                     )
                     let sanitizedTrackID = BundleBuildHelpers.sanitizedFilename(sourceTrack.id)
                     let trackID = sanitizedTrackID.isEmpty ? UUID().uuidString : sanitizedTrackID
@@ -321,7 +338,8 @@ public final class SequenceExtractionPipeline: @unchecked Sendable {
     private static func variantChromosomeAliases(
         sourceChromosome: String,
         sourceBundleChromosomes: [ChromosomeInfo],
-        variantChromosomes: [String]
+        variantChromosomes: [String],
+        variantChromosomeMaxPositions: [String: Int]
     ) -> [String] {
         guard !sourceBundleChromosomes.isEmpty, !variantChromosomes.isEmpty else { return [] }
 
@@ -353,6 +371,75 @@ public final class SequenceExtractionPipeline: @unchecked Sendable {
             appendUnique(vcfChromosome)
         }
 
+        // Length-based fallback for bundles where aliases were not populated in manifest.
+        if ordered.isEmpty,
+           let targetChrom = sourceBundleChromosomes.first(where: { $0.name == canonicalBundleChromosome }) {
+            var bestChromosome: String?
+            var bestDelta = Int64.max
+            for (variantChromosome, maxPos) in variantChromosomeMaxPositions {
+                let maxPos64 = Int64(maxPos)
+                guard maxPos64 <= targetChrom.length else { continue }
+                let delta = targetChrom.length - maxPos64
+                let tolerance = targetChrom.length > 1_000_000
+                    ? targetChrom.length / 20   // 5%
+                    : targetChrom.length / 5    // 20%
+                guard delta < tolerance else { continue }
+                if delta < bestDelta {
+                    bestDelta = delta
+                    bestChromosome = variantChromosome
+                }
+            }
+            if let bestChromosome {
+                appendUnique(bestChromosome)
+            }
+        }
+
         return ordered.filter { $0 != sourceChromosome }
+    }
+
+    /// Resolves annotation-track chromosome candidates for extraction queries.
+    private static func annotationChromosomeCandidates(
+        sourceChromosome: String,
+        sourceBundleChromosomes: [ChromosomeInfo],
+        annotationChromosomes: [String]
+    ) -> [String] {
+        guard !annotationChromosomes.isEmpty else { return [sourceChromosome] }
+        let available = Set(annotationChromosomes)
+        var ordered: [String] = []
+        var seen = Set<String>()
+
+        func appendIfAvailable(_ value: String) {
+            guard available.contains(value) else { return }
+            guard seen.insert(value).inserted else { return }
+            ordered.append(value)
+        }
+
+        appendIfAvailable(sourceChromosome)
+
+        // Bundle alias + VCF/bundle mapping helpers.
+        let vcfToBundle = mapVCFChromosomes(annotationChromosomes, toBundleChromosomes: sourceBundleChromosomes)
+        let bundleChromosome = sourceBundleChromosomes.first {
+            $0.name == sourceChromosome || $0.aliases.contains(sourceChromosome)
+        }
+        if let bundleChromosome {
+            for alias in bundleChromosome.aliases {
+                appendIfAvailable(alias)
+            }
+            for (annotationChromosome, mappedBundleChromosome) in vcfToBundle where mappedBundleChromosome == bundleChromosome.name {
+                appendIfAvailable(annotationChromosome)
+            }
+        }
+
+        // Basic normalization fallbacks.
+        if sourceChromosome.hasPrefix("chr") {
+            appendIfAvailable(String(sourceChromosome.dropFirst(3)))
+        } else {
+            appendIfAvailable("chr" + sourceChromosome)
+        }
+        if let dot = sourceChromosome.firstIndex(of: ".") {
+            appendIfAvailable(String(sourceChromosome[..<dot]))
+        }
+
+        return ordered.isEmpty ? [sourceChromosome] : ordered
     }
 }
