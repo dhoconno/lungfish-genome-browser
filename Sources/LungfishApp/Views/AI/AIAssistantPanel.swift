@@ -524,6 +524,10 @@ final class AIAssistantViewController: NSViewController {
                })?.content {
                 logger.warning("AI panel response was empty; using last assistant message chars=\(fallback.count)")
                 responseToDisplay = fallback
+            } else if response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let fallback = "The AI request completed without a displayable response. Please retry, narrow the query, or switch providers in Settings > AI Services."
+                logger.error("AI panel response was empty with no fallback assistant text")
+                responseToDisplay = fallback
             } else {
                 responseToDisplay = response
             }

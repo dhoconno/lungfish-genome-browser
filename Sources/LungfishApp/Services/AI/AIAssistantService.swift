@@ -40,6 +40,7 @@ public final class AIAssistantService {
 
     /// Maximum tool execution rounds per user message (prevents infinite loops).
     private let maxToolRounds = 8
+    private let providerRequestTimeout: TimeInterval = 150
     private let providerValidationTTL: TimeInterval = 300
     private var providerValidationCache: [String: Date] = [:]
 
@@ -110,7 +111,14 @@ public final class AIAssistantService {
 
                 // If no tool calls, we're done
                 if response.toolCalls.isEmpty {
-                    return response.text
+                    let trimmed = response.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        return response.text
+                    }
+                    let fallback = makeEmptyAssistantResponseSummary()
+                    lastError = fallback
+                    logger.error("AI[\(requestID, privacy: .public)] Model returned empty terminal response")
+                    return fallback
                 }
 
                 // Execute tool calls
@@ -164,8 +172,16 @@ public final class AIAssistantService {
                 logger.error("AI[\(requestID, privacy: .public)] Max rounds reached with tool errors: \(summary, privacy: .public)")
                 return summary
             }
+            if let lastNonEmptyAssistantResponse = messages.reversed().first(where: {
+                $0.role == .assistant && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            })?.content {
+                logger.warning("AI[\(requestID, privacy: .public)] Max rounds reached; returning latest non-empty assistant response")
+                return lastNonEmptyAssistantResponse
+            }
             logger.warning("AI[\(requestID, privacy: .public)] Max rounds reached without terminal response")
-            return messages.last { $0.role == .assistant }?.content ?? "I've been working on your request but reached the maximum number of analysis steps. Here's what I found so far."
+            let fallback = "I reached the maximum analysis steps without a final text response. Please try again with a narrower query, fewer requested actions, or a different AI provider."
+            lastError = fallback
+            return fallback
 
         } catch let error as AIProviderError {
             lastError = error.localizedDescription
@@ -256,12 +272,15 @@ public final class AIAssistantService {
         for (idx, provider) in providers.enumerated() {
             do {
                 logger.info("Attempting provider \(provider.name, privacy: .public) model=\(provider.modelId, privacy: .public)")
-                return try await provider.sendMessage(
-                    messages: messages,
-                    systemPrompt: systemPrompt,
-                    tools: tools
-                )
-            } catch let providerError as AIProviderError {
+                return try await withProviderTimeout(seconds: providerRequestTimeout) {
+                    try await provider.sendMessage(
+                        messages: messages,
+                        systemPrompt: systemPrompt,
+                        tools: tools
+                    )
+                }
+            } catch {
+                let providerError = normalizeProviderError(error)
                 if firstError == nil { firstError = providerError }
                 lastError = providerError
                 guard shouldFallback(for: providerError), idx + 1 < providers.count else {
@@ -317,10 +336,57 @@ public final class AIAssistantService {
         }
     }
 
+    private func normalizeProviderError(_ error: Error) -> AIProviderError {
+        if let providerError = error as? AIProviderError {
+            return providerError
+        }
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut:
+                return .networkError("AI request timed out.")
+            case .notConnectedToInternet:
+                return .networkError("No internet connection.")
+            case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
+                return .networkError("Unable to reach AI provider host (\(urlError.code.rawValue)).")
+            case .networkConnectionLost:
+                return .networkError("Network connection was lost.")
+            default:
+                return .networkError("Network error (\(urlError.code.rawValue)): \(urlError.localizedDescription)")
+            }
+        }
+        return .networkError(error.localizedDescription)
+    }
+
+    private func withProviderTimeout<T: Sendable>(
+        seconds: TimeInterval,
+        operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        let nanos = UInt64(max(1, Int(seconds * 1_000_000_000)))
+        return try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask {
+                try await operation()
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: nanos)
+                throw AIProviderError.networkError("AI request timed out after \(Int(seconds)) seconds.")
+            }
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
+        }
+    }
+
     private func makeToolFailureSummary(from failures: [AIToolResult]) -> String {
         let messages = Set(failures.map { $0.content.replacingOccurrences(of: "Error: ", with: "") })
         let joined = messages.prefix(3).joined(separator: " | ")
         return "The requested tools failed repeatedly: \(joined). Please check your network/proxy settings or try a non-PubMed query."
+    }
+
+    private func makeEmptyAssistantResponseSummary() -> String {
+        if let toolSummary = makeRecentToolFailureSummary() {
+            return toolSummary
+        }
+        return "The AI model did not return a final text response. Please retry with a narrower query or switch AI providers in Settings > AI Services."
     }
 
     private func makeRecentToolFailureSummary() -> String? {
@@ -386,6 +452,10 @@ public final class AIAssistantService {
         let dataContext = contextLines.isEmpty
             ? "No genome data is currently loaded."
             : contextLines.joined(separator: "\n")
+        let assayGuidance = speciesAwareAssayAndReagentGuidance(
+            organism: viewerState.organism,
+            assembly: viewerState.assembly
+        )
 
         var prompt = """
         You are a genomics research assistant built into the Lungfish genome browser application. \
@@ -403,6 +473,9 @@ public final class AIAssistantService {
 
         ## Currently Loaded Data
         \(dataContext)
+
+        ## Experimental Follow-Up Guidance
+        \(assayGuidance)
 
         ## Guidelines
         1. **Be approachable**: Explain genomics concepts in clear, accessible language. \
@@ -439,6 +512,12 @@ public final class AIAssistantService {
         10. **For table-focused questions, call table tools first**: If the user asks about \
         selected/visible variants or samples in the UI table, call `get_variant_table_context` \
         and/or `get_sample_table_context` before forming conclusions.
+
+        11. **Suggest assays and reagents**: When discussing a genomic feature (gene, variant, \
+        region), include practical wet-lab follow-up options (e.g., expression assays, protein assays, \
+        functional assays) and species-appropriate reagents. Prefer species-validated monoclonal \
+        antibodies or explicitly note when only cross-reactive antibodies are likely. State that reagent \
+        clone compatibility must be verified against vendor datasheets and recent literature.
         """
 
         let lowered = userMessage.lowercased()
@@ -518,6 +597,60 @@ public final class AIAssistantService {
         }
 
         return prompt
+    }
+
+    private func speciesAwareAssayAndReagentGuidance(organism: String?, assembly: String?) -> String {
+        let organismLower = organism?.lowercased() ?? ""
+        let assemblyLower = assembly?.lowercased() ?? ""
+
+        func containsAny(_ text: String, _ values: [String]) -> Bool {
+            values.contains { text.contains($0) }
+        }
+
+        if containsAny(organismLower, ["macaca mulatta", "rhesus"]) || containsAny(assemblyLower, ["mmul", "rhe"]) {
+            return """
+            Current dataset appears to be **rhesus macaque (Macaca mulatta)**. \
+            Prioritize macaque-validated assays and reagents. \
+            For immunology-focused genes/variants, suggest flow cytometry, ICS, ELISpot, qPCR/RNA-seq, \
+            and protein-level validation with macaque-compatible monoclonal antibodies. \
+            Include rhesus-relevant clone examples where appropriate (for example, CD3 clone SP34-2 and \
+            other documented macaque-compatible clones), and clearly tell the user to verify clone and \
+            epitope compatibility before use.
+            """
+        }
+
+        if containsAny(organismLower, ["homo sapiens", "human"]) || containsAny(assemblyLower, ["grch", "hg"]) {
+            return """
+            Current dataset appears to be **human**. Suggest standard human assays first \
+            (RNA-seq/qPCR, targeted sequencing, western blot, flow cytometry, functional perturbation assays) \
+            and clinically relevant reagents when appropriate. Highlight orthogonal validation strategies.
+            """
+        }
+
+        if containsAny(organismLower, ["mus musculus", "mouse"]) || containsAny(assemblyLower, ["grcm", "mm10", "mm39"]) {
+            return """
+            Current dataset appears to be **mouse**. Favor mouse-validated antibodies and assay panels \
+            (including strain-aware considerations where relevant), and suggest orthogonal validation \
+            at transcript and protein levels.
+            """
+        }
+
+        let speciesDescriptor: String
+        if let organism, !organism.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            speciesDescriptor = organism
+        } else if let assembly, !assembly.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            speciesDescriptor = "assembly \(assembly)"
+        } else {
+            speciesDescriptor = "the loaded dataset"
+        }
+
+        return """
+        Use **species-aware reagent recommendations** based on \(speciesDescriptor). \
+        Suggest assays that match the genomic question (expression, protein abundance, functional impact, \
+        and phenotype association) and prioritize reagents validated in the same species. \
+        If species-matched reagents are limited, explicitly state cross-reactivity uncertainty and propose \
+        validation controls.
+        """
     }
 
     // MARK: - Suggested Queries
