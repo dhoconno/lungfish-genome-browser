@@ -314,7 +314,13 @@ extension SequenceViewerView {
                 extractionLogger.info("Copied protein FASTA to clipboard")
 
             case .newBundle:
-                createExtractionBundle(from: result, bundleName: config.bundleName, concatenateExons: config.concatenateExons)
+                let visibleFilter = computeVisibleSampleFilter()
+                createExtractionBundle(
+                    from: result,
+                    bundleName: config.bundleName,
+                    concatenateExons: config.concatenateExons,
+                    sampleFilter: visibleFilter
+                )
             }
         } catch {
             extractionLogger.error("Extraction failed: \(error.localizedDescription)")
@@ -451,6 +457,36 @@ extension SequenceViewerView {
                 }
             }
         }
+    }
+
+    /// Computes the set of visible sample names from the current variant tracks
+    /// and sample display state. Returns `nil` if there are no hidden samples
+    /// (i.e. all samples should be included).
+    private func computeVisibleSampleFilter() -> Set<String>? {
+        guard sampleDisplayState.hiddenSamples.isEmpty == false,
+              let bundle = currentReferenceBundle else {
+            return nil
+        }
+
+        // Collect all sample names across variant tracks
+        var allSamples: [String] = []
+        var seen = Set<String>()
+        for trackId in bundle.variantTrackIds {
+            guard let trackInfo = bundle.variantTrack(id: trackId),
+                  let dbPath = trackInfo.databasePath else { continue }
+            let dbURL = bundle.url.appendingPathComponent(dbPath)
+            guard let db = try? VariantDatabase(url: dbURL) else { continue }
+            for name in db.sampleNames() where seen.insert(name).inserted {
+                allSamples.append(name)
+            }
+        }
+
+        guard !allSamples.isEmpty else { return nil }
+
+        let visible = sampleDisplayState.visibleSamples(from: allSamples)
+        // If all samples are visible, return nil (no filtering needed)
+        guard visible.count < allSamples.count else { return nil }
+        return Set(visible)
     }
 
     /// Returns the directory for saved extraction bundles.
