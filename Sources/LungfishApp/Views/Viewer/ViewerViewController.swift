@@ -1892,6 +1892,13 @@ public class SequenceViewerView: NSView {
     /// Whether we're currently dragging to select
     private var isSelecting = false
 
+    /// Whether we're dragging a selection edge handle
+    private enum EdgeDragMode { case none, left, right }
+    private var edgeDragMode: EdgeDragMode = .none
+
+    /// Pixel threshold for edge handle hit detection
+    private let edgeHandleHitThreshold: CGFloat = 6
+
     /// Currently selected annotation (nil if no annotation selected).
     /// Internal so the AnnotationDrawer extension can set it from table selection.
     var selectedAnnotation: SequenceAnnotation?
@@ -4390,7 +4397,7 @@ public class SequenceViewerView: NSView {
         drawSequenceInfo(seq, frame: frame, context: context)
     }
 
-    /// Draws the selection highlight overlay
+    /// Draws the selection highlight overlay with edge handles
     private func drawSelectionHighlight(frame: ReferenceFrame, context: CGContext) {
         guard let range = selectionRange else { return }
 
@@ -4400,22 +4407,62 @@ public class SequenceViewerView: NSView {
         // Calculate screen coordinates for selection
         let startX = CGFloat(range.lowerBound - Int(frame.start)) * pixelsPerBase
         let endX = CGFloat(range.upperBound - Int(frame.start)) * pixelsPerBase
-        let selectionRect = CGRect(
+        let selectionWidth = endX - startX
+
+        // Full-height selection highlight (covers sequence + annotation tracks)
+        let fullRect = CGRect(
             x: max(0, startX),
-            y: trackY,
-            width: min(bounds.width - startX, endX - startX),
-            height: trackHeight
+            y: 0,
+            width: min(bounds.width, selectionWidth),
+            height: bounds.height
         )
 
         // Draw selection highlight with blue tint
         context.saveGState()
-        context.setFillColor(NSColor.selectedTextBackgroundColor.withAlphaComponent(0.4).cgColor)
-        context.fill(selectionRect)
+        context.setFillColor(NSColor.selectedTextBackgroundColor.withAlphaComponent(0.15).cgColor)
+        context.fill(fullRect)
+
+        // Sequence track highlight (brighter)
+        let seqRect = CGRect(
+            x: max(0, startX),
+            y: trackY,
+            width: min(bounds.width - max(0, startX), selectionWidth),
+            height: trackHeight
+        )
+        context.setFillColor(NSColor.selectedTextBackgroundColor.withAlphaComponent(0.35).cgColor)
+        context.fill(seqRect)
 
         // Draw selection border
         context.setStrokeColor(NSColor.selectedTextBackgroundColor.cgColor)
         context.setLineWidth(2)
-        context.stroke(selectionRect)
+        context.stroke(seqRect)
+
+        // Draw edge handles (small triangular indicators)
+        let handleColor = NSColor.selectedTextBackgroundColor.cgColor
+        context.setFillColor(handleColor)
+        let handleSize: CGFloat = 5
+        let handleY = trackY + trackHeight
+
+        // Left edge handle
+        if startX >= 0 && startX <= bounds.width {
+            let lx = max(0, startX)
+            context.move(to: CGPoint(x: lx, y: handleY))
+            context.addLine(to: CGPoint(x: lx + handleSize, y: handleY + handleSize))
+            context.addLine(to: CGPoint(x: lx - handleSize, y: handleY + handleSize))
+            context.closePath()
+            context.fillPath()
+        }
+
+        // Right edge handle
+        if endX >= 0 && endX <= bounds.width {
+            let rx = min(bounds.width, endX)
+            context.move(to: CGPoint(x: rx, y: handleY))
+            context.addLine(to: CGPoint(x: rx + handleSize, y: handleY + handleSize))
+            context.addLine(to: CGPoint(x: rx - handleSize, y: handleY + handleSize))
+            context.closePath()
+            context.fillPath()
+        }
+
         context.restoreGState()
     }
 
@@ -5347,7 +5394,37 @@ public class SequenceViewerView: NSView {
         // Continue with existing region selection behavior for sequence track
         let basePosition = basePositionAt(x: location.x, frame: frame)
 
-        // Start selection
+        // Check for edge handle drag on existing selection
+        if let range = selectionRange {
+            let edge = selectionEdgeAtPoint(location, range: range, frame: frame)
+            if edge != .none {
+                edgeDragMode = edge
+                isSelecting = true
+                // Anchor the opposite edge
+                selectionStartBase = (edge == .left) ? range.upperBound - 1 : range.lowerBound
+                return
+            }
+        }
+
+        // Shift-click extends existing selection
+        if event.modifierFlags.contains(.shift), let range = selectionRange {
+            // Extend toward the click position
+            if basePosition < range.lowerBound {
+                selectionRange = basePosition..<range.upperBound
+                selectionStartBase = range.upperBound - 1
+            } else if basePosition >= range.upperBound {
+                selectionRange = range.lowerBound..<(basePosition + 1)
+                selectionStartBase = range.lowerBound
+            }
+            isSelecting = true
+            edgeDragMode = .none
+            setNeedsDisplay(bounds)
+            updateSelectionStatus()
+            return
+        }
+
+        // Start new selection
+        edgeDragMode = .none
         selectionStartBase = basePosition
         selectionRange = basePosition..<(basePosition + 1)
         isSelecting = true
@@ -5375,6 +5452,7 @@ public class SequenceViewerView: NSView {
 
     public override func mouseUp(with event: NSEvent) {
         isSelecting = false
+        edgeDragMode = .none
         // Keep the selection visible
     }
 
@@ -6006,6 +6084,26 @@ public class SequenceViewerView: NSView {
         return max(0, min(seq.length - 1, basePosition))
     }
 
+    /// Converts a base position to screen X coordinate
+    private func screenXForBase(_ base: Int, frame: ReferenceFrame) -> CGFloat {
+        let visibleBases = frame.end - frame.start
+        let pixelsPerBase = bounds.width / CGFloat(max(1, visibleBases))
+        return CGFloat(base - Int(frame.start)) * pixelsPerBase
+    }
+
+    /// Detects whether a point is near a selection edge handle.
+    private func selectionEdgeAtPoint(_ point: CGPoint, range: Range<Int>, frame: ReferenceFrame) -> EdgeDragMode {
+        let leftX = screenXForBase(range.lowerBound, frame: frame)
+        let rightX = screenXForBase(range.upperBound, frame: frame)
+
+        // Only detect edges if the selection is wide enough to have distinct handles
+        guard rightX - leftX > edgeHandleHitThreshold * 3 else { return .none }
+
+        if abs(point.x - leftX) <= edgeHandleHitThreshold { return .left }
+        if abs(point.x - rightX) <= edgeHandleHitThreshold { return .right }
+        return .none
+    }
+
     /// Selects the entire sequence
     public func selectAll() {
         guard let seq = sequence else { return }
@@ -6112,6 +6210,16 @@ public class SequenceViewerView: NSView {
 
     public override func mouseMoved(with event: NSEvent) {
         let location = convert(event.locationInWindow, from: nil)
+
+        // --- Selection edge handle cursor ---
+        if let range = selectionRange, let frame = viewController?.referenceFrame {
+            let edge = selectionEdgeAtPoint(location, range: range, frame: frame)
+            if edge != .none {
+                NSCursor.resizeLeftRight.set()
+                hoverTooltip.hide()
+                return
+            }
+        }
 
         // --- Genotype cell hit-testing ---
         if let genotypeTooltip = genotypeTooltipAtPoint(location) {

@@ -322,12 +322,18 @@ extension SequenceViewerView {
         }
     }
 
-    private func createExtractionBundle(from result: ExtractionResult, bundleName: String, concatenateExons: Bool = false) {
+    func createExtractionBundle(
+        from result: ExtractionResult,
+        bundleName: String,
+        concatenateExons: Bool = false,
+        sampleFilter: Set<String>? = nil
+    ) {
         let sourceBundleName = currentReferenceBundle?.manifest.name
         let outputDir = extractionsDirectory()
 
         // Collect all annotation tracks with SQLite databases from the source bundle.
         var sourceAnnotationTracks: [SequenceExtractionPipeline.SourceAnnotationTrack] = []
+        var sourceVariantTracks: [SequenceExtractionPipeline.SourceVariantTrack] = []
         if let bundle = currentReferenceBundle {
             sourceAnnotationTracks = bundle.annotationTrackIds.compactMap { trackID in
                 guard let trackInfo = bundle.annotationTrack(id: trackID),
@@ -341,9 +347,23 @@ extension SequenceViewerView {
                     annotationType: trackInfo.annotationType
                 )
             }
+
+            // Collect variant tracks with SQLite databases
+            sourceVariantTracks = bundle.variantTrackIds.compactMap { trackID in
+                guard let trackInfo = bundle.variantTrack(id: trackID),
+                      let dbPath = trackInfo.databasePath else {
+                    return nil
+                }
+                return SequenceExtractionPipeline.SourceVariantTrack(
+                    id: trackInfo.id,
+                    name: trackInfo.name,
+                    databaseURL: bundle.url.appendingPathComponent(dbPath),
+                    variantType: trackInfo.variantType
+                )
+            }
         }
 
-        extractionLogger.info("createExtractionBundle: outputDir=\(outputDir.path), bundleName=\(bundleName), annotationTracks=\(sourceAnnotationTracks.count)")
+        extractionLogger.info("createExtractionBundle: outputDir=\(outputDir.path), bundleName=\(bundleName), annotationTracks=\(sourceAnnotationTracks.count), variantTracks=\(sourceVariantTracks.count)")
 
         // Register with DownloadCenter on the main actor, then run bundle building in
         // a detached task. On completion we hop back to the main actor for import/refresh.
@@ -357,6 +377,8 @@ extension SequenceViewerView {
         let capturedSourceBundleName = sourceBundleName
         let capturedBundleName = bundleName
         let capturedSourceAnnotationTracks = sourceAnnotationTracks
+        let capturedSourceVariantTracks = sourceVariantTracks
+        let capturedSampleFilter = sampleFilter
         let capturedConcatenateExons = concatenateExons
 
         Task.detached(priority: .userInitiated) {
@@ -372,6 +394,8 @@ extension SequenceViewerView {
                     sourceBundleName: capturedSourceBundleName,
                     desiredBundleName: capturedBundleName,
                     sourceAnnotationTracks: capturedSourceAnnotationTracks,
+                    sourceVariantTracks: capturedSourceVariantTracks,
+                    sampleFilter: capturedSampleFilter,
                     isConcatenated: capturedConcatenateExons,
                     progressHandler: { progress, message in
                         DispatchQueue.main.async {

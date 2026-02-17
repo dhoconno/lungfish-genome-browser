@@ -2464,6 +2464,281 @@ public final class VariantDatabase: @unchecked Sendable {
         try createFromVCF(vcfURL: vcfURL, outputURL: outputURL, parseGenotypes: true, progressHandler: nil)
     }
 
+    // MARK: - Region Extraction
+
+    /// Extracts variants (and optionally genotypes) from a region into a new database.
+    ///
+    /// Coordinate transform: positions are shifted by `-extractionStart` so the new
+    /// database is zero-based relative to the extracted sub-sequence.
+    ///
+    /// - Parameters:
+    ///   - chromosome: Source chromosome name.
+    ///   - start: 0-based start of extraction region.
+    ///   - end: 0-based exclusive end of extraction region.
+    ///   - outputURL: Where to create the new database.
+    ///   - newChromosome: Chromosome name in the new database (defaults to source name).
+    ///   - sampleFilter: Optional set of sample names to include. `nil` = all samples.
+    /// - Returns: Number of variants written.
+    @discardableResult
+    public func extractRegion(
+        chromosome: String,
+        start: Int,
+        end: Int,
+        outputURL: URL,
+        newChromosome: String? = nil,
+        sampleFilter: Set<String>? = nil
+    ) throws -> Int {
+        guard let sourceDB = self.db else {
+            throw VariantDatabaseError.createFailed("Source database is not open")
+        }
+
+        try? FileManager.default.removeItem(at: outputURL)
+
+        var destDB: OpaquePointer?
+        guard sqlite3_open(outputURL.path, &destDB) == SQLITE_OK, let destDB else {
+            let msg = destDB.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "Unknown error"
+            sqlite3_close(destDB)
+            throw VariantDatabaseError.createFailed(msg)
+        }
+        defer { sqlite3_close(destDB) }
+
+        sqlite3_exec(destDB, "PRAGMA journal_mode = OFF", nil, nil, nil)
+        sqlite3_exec(destDB, "PRAGMA synchronous = OFF", nil, nil, nil)
+
+        let schema = """
+        CREATE TABLE variants (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chromosome TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            end_pos INTEGER NOT NULL,
+            variant_id TEXT NOT NULL,
+            ref TEXT NOT NULL,
+            alt TEXT NOT NULL,
+            variant_type TEXT NOT NULL,
+            quality REAL,
+            filter TEXT,
+            info TEXT,
+            sample_count INTEGER DEFAULT 0
+        );
+        CREATE TABLE genotypes (
+            variant_id INTEGER NOT NULL REFERENCES variants(id),
+            sample_name TEXT NOT NULL,
+            genotype TEXT,
+            allele1 INTEGER,
+            allele2 INTEGER,
+            is_phased INTEGER DEFAULT 0,
+            depth INTEGER,
+            genotype_quality INTEGER,
+            allele_depths TEXT,
+            raw_fields TEXT,
+            PRIMARY KEY (variant_id, sample_name)
+        );
+        CREATE TABLE samples (
+            name TEXT PRIMARY KEY,
+            display_name TEXT,
+            source_file TEXT,
+            metadata TEXT
+        );
+        CREATE TABLE variant_info_defs (
+            key TEXT PRIMARY KEY,
+            type TEXT NOT NULL,
+            number TEXT NOT NULL,
+            description TEXT
+        );
+        CREATE TABLE variant_info (
+            variant_id INTEGER NOT NULL REFERENCES variants(id),
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            PRIMARY KEY (variant_id, key)
+        );
+        CREATE TABLE db_metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        );
+        """
+        var errMsg: UnsafeMutablePointer<CChar>?
+        sqlite3_exec(destDB, schema, nil, nil, &errMsg)
+        if let errMsg {
+            let msg = String(cString: errMsg)
+            sqlite3_free(errMsg)
+            throw VariantDatabaseError.createFailed(msg)
+        }
+
+        sqlite3_exec(destDB, "INSERT INTO db_metadata VALUES ('schema_version', '3')", nil, nil, nil)
+        sqlite3_exec(destDB, "INSERT INTO db_metadata VALUES ('extracted_from_region', '\(chromosome):\(start)-\(end)')", nil, nil, nil)
+
+        sqlite3_exec(destDB, "BEGIN TRANSACTION", nil, nil, nil)
+
+        // Prepare insert statements
+        let insertVariantSQL = """
+        INSERT INTO variants (chromosome, position, end_pos, variant_id, ref, alt, variant_type, quality, filter, info, sample_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        var insertVariantStmt: OpaquePointer?
+        guard sqlite3_prepare_v2(destDB, insertVariantSQL, -1, &insertVariantStmt, nil) == SQLITE_OK else {
+            throw VariantDatabaseError.createFailed("Failed to prepare variant INSERT")
+        }
+        defer { sqlite3_finalize(insertVariantStmt) }
+
+        let insertGenotypeSQL = """
+        INSERT INTO genotypes (variant_id, sample_name, genotype, allele1, allele2, is_phased, depth, genotype_quality, allele_depths, raw_fields)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        var insertGenotypeStmt: OpaquePointer?
+        guard sqlite3_prepare_v2(destDB, insertGenotypeSQL, -1, &insertGenotypeStmt, nil) == SQLITE_OK else {
+            throw VariantDatabaseError.createFailed("Failed to prepare genotype INSERT")
+        }
+        defer { sqlite3_finalize(insertGenotypeStmt) }
+
+        let targetChrom = newChromosome ?? chromosome
+
+        // Query source variants in region
+        let variants = query(chromosome: chromosome, start: start, end: end, limit: 1_000_000)
+        var insertCount = 0
+        var sampleNamesInserted = Set<String>()
+        var sourceToDestVariantIds: [(Int64, Int64)] = []
+
+        for variant in variants {
+            // Shift coordinates relative to extraction start
+            let newPosition = max(0, variant.position - start)
+            let newEnd = min(end - start, variant.end - start)
+            guard newEnd > newPosition || (variant.variantType == "SNP" && newEnd == newPosition) else { continue }
+            let effectiveEnd = max(newPosition + 1, newEnd)
+
+            sqlite3_reset(insertVariantStmt)
+            sqliteBindText(insertVariantStmt, 1, targetChrom)
+            sqlite3_bind_int64(insertVariantStmt, 2, Int64(newPosition))
+            sqlite3_bind_int64(insertVariantStmt, 3, Int64(effectiveEnd))
+            sqliteBindText(insertVariantStmt, 4, variant.variantID)
+            sqliteBindText(insertVariantStmt, 5, variant.ref)
+            sqliteBindText(insertVariantStmt, 6, variant.alt)
+            sqliteBindText(insertVariantStmt, 7, variant.variantType)
+            if let q = variant.quality {
+                sqlite3_bind_double(insertVariantStmt, 8, q)
+            } else {
+                sqlite3_bind_null(insertVariantStmt, 8)
+            }
+            if let f = variant.filter {
+                sqliteBindText(insertVariantStmt, 9, f)
+            } else {
+                sqlite3_bind_null(insertVariantStmt, 9)
+            }
+            if let info = variant.info {
+                sqliteBindText(insertVariantStmt, 10, info)
+            } else {
+                sqlite3_bind_null(insertVariantStmt, 10)
+            }
+            sqlite3_bind_int(insertVariantStmt, 11, Int32(variant.sampleCount))
+
+            guard sqlite3_step(insertVariantStmt) == SQLITE_DONE else { continue }
+            let newVariantId = sqlite3_last_insert_rowid(destDB)
+            insertCount += 1
+
+            // Track source-to-dest ID mapping for variant_info copy
+            if let srcId = variant.id {
+                sourceToDestVariantIds.append((srcId, newVariantId))
+            }
+
+            // Copy genotypes (filtered by sample if requested)
+            guard let sourceVariantId = variant.id else { continue }
+            let genotypes = self.genotypes(forVariantId: sourceVariantId)
+            for gt in genotypes {
+                if let filter = sampleFilter, !filter.contains(gt.sampleName) { continue }
+
+                sqlite3_reset(insertGenotypeStmt)
+                sqlite3_bind_int64(insertGenotypeStmt, 1, newVariantId)
+                sqliteBindText(insertGenotypeStmt, 2, gt.sampleName)
+                if let g = gt.genotype {
+                    sqliteBindText(insertGenotypeStmt, 3, g)
+                } else {
+                    sqlite3_bind_null(insertGenotypeStmt, 3)
+                }
+                sqlite3_bind_int(insertGenotypeStmt, 4, Int32(gt.allele1))
+                sqlite3_bind_int(insertGenotypeStmt, 5, Int32(gt.allele2))
+                sqlite3_bind_int(insertGenotypeStmt, 6, gt.isPhased ? 1 : 0)
+                if let d = gt.depth {
+                    sqlite3_bind_int(insertGenotypeStmt, 7, Int32(d))
+                } else {
+                    sqlite3_bind_null(insertGenotypeStmt, 7)
+                }
+                if let gq = gt.genotypeQuality {
+                    sqlite3_bind_int(insertGenotypeStmt, 8, Int32(gq))
+                } else {
+                    sqlite3_bind_null(insertGenotypeStmt, 8)
+                }
+                if let ad = gt.alleleDepths {
+                    sqliteBindText(insertGenotypeStmt, 9, ad)
+                } else {
+                    sqlite3_bind_null(insertGenotypeStmt, 9)
+                }
+                if let rf = gt.rawFields {
+                    sqliteBindText(insertGenotypeStmt, 10, rf)
+                } else {
+                    sqlite3_bind_null(insertGenotypeStmt, 10)
+                }
+                if sqlite3_step(insertGenotypeStmt) == SQLITE_DONE {
+                    sampleNamesInserted.insert(gt.sampleName)
+                }
+            }
+        }
+
+        // Copy variant_info EAV entries for extracted variants
+        let insertInfoSQL = "INSERT OR REPLACE INTO variant_info (variant_id, key, value) VALUES (?, ?, ?)"
+        var insertInfoStmt: OpaquePointer?
+        if sqlite3_prepare_v2(destDB, insertInfoSQL, -1, &insertInfoStmt, nil) == SQLITE_OK {
+            for (sourceId, newId) in sourceToDestVariantIds {
+                let infoVals = self.infoValues(variantId: sourceId)
+                for (key, value) in infoVals {
+                    sqlite3_reset(insertInfoStmt)
+                    sqlite3_bind_int64(insertInfoStmt, 1, newId)
+                    sqliteBindText(insertInfoStmt, 2, key)
+                    sqliteBindText(insertInfoStmt, 3, value)
+                    sqlite3_step(insertInfoStmt)
+                }
+            }
+        }
+        sqlite3_finalize(insertInfoStmt)
+
+        // Copy variant_info_defs from source
+        let insertInfoDefSQL = "INSERT OR REPLACE INTO variant_info_defs (key, type, number, description) VALUES (?, ?, ?, ?)"
+        var insertInfoDefStmt: OpaquePointer?
+        if sqlite3_prepare_v2(destDB, insertInfoDefSQL, -1, &insertInfoDefStmt, nil) == SQLITE_OK {
+            for def in self.infoKeys() {
+                sqlite3_reset(insertInfoDefStmt)
+                sqliteBindText(insertInfoDefStmt, 1, def.key)
+                sqliteBindText(insertInfoDefStmt, 2, def.type)
+                sqliteBindText(insertInfoDefStmt, 3, def.number)
+                sqliteBindText(insertInfoDefStmt, 4, def.description)
+                sqlite3_step(insertInfoDefStmt)
+            }
+        }
+        sqlite3_finalize(insertInfoDefStmt)
+
+        // Insert sample records
+        let insertSampleSQL = "INSERT OR IGNORE INTO samples (name) VALUES (?)"
+        var insertSampleStmt: OpaquePointer?
+        if sqlite3_prepare_v2(destDB, insertSampleSQL, -1, &insertSampleStmt, nil) == SQLITE_OK {
+            for name in sampleNamesInserted.sorted() {
+                sqlite3_reset(insertSampleStmt)
+                sqliteBindText(insertSampleStmt, 1, name)
+                sqlite3_step(insertSampleStmt)
+            }
+        }
+        sqlite3_finalize(insertSampleStmt)
+
+        sqlite3_exec(destDB, "COMMIT", nil, nil, nil)
+
+        // Create indexes
+        sqlite3_exec(destDB, "CREATE INDEX IF NOT EXISTS idx_variants_chrom_pos ON variants(chromosome, position)", nil, nil, nil)
+        sqlite3_exec(destDB, "CREATE INDEX IF NOT EXISTS idx_variants_chrom_region ON variants(chromosome, position, end_pos)", nil, nil, nil)
+        sqlite3_exec(destDB, "CREATE INDEX IF NOT EXISTS idx_genotypes_sample ON genotypes(sample_name)", nil, nil, nil)
+        sqlite3_exec(destDB, "CREATE INDEX IF NOT EXISTS idx_variant_info_key ON variant_info(key)", nil, nil, nil)
+        sqlite3_exec(destDB, "CREATE INDEX IF NOT EXISTS idx_variant_info_key_value ON variant_info(key, value)", nil, nil, nil)
+
+        variantDBLogger.info("extractRegion: Extracted \(insertCount) variants (\(sampleNamesInserted.count) samples) from \(chromosome):\(start)-\(end)")
+        return insertCount
+    }
+
     // MARK: - VCF Line Streaming
 
     /// Streams lines from a plain-text VCF file using buffered I/O.

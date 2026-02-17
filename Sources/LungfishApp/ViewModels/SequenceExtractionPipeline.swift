@@ -31,6 +31,20 @@ public final class SequenceExtractionPipeline: @unchecked Sendable {
         }
     }
 
+    public struct SourceVariantTrack: Sendable {
+        public let id: String
+        public let name: String
+        public let databaseURL: URL
+        public let variantType: VariantTrackType
+
+        public init(id: String, name: String, databaseURL: URL, variantType: VariantTrackType) {
+            self.id = id
+            self.name = name
+            self.databaseURL = databaseURL
+            self.variantType = variantType
+        }
+    }
+
     private let toolRunner: NativeToolRunner
 
     public init(toolRunner: NativeToolRunner = .shared) {
@@ -53,6 +67,8 @@ public final class SequenceExtractionPipeline: @unchecked Sendable {
         sourceBundleName: String? = nil,
         desiredBundleName: String? = nil,
         sourceAnnotationTracks: [SourceAnnotationTrack] = [],
+        sourceVariantTracks: [SourceVariantTrack] = [],
+        sampleFilter: Set<String>? = nil,
         isConcatenated: Bool = false,
         progressHandler: (@Sendable (Double, String) -> Void)? = nil
     ) async throws -> URL {
@@ -192,8 +208,56 @@ public final class SequenceExtractionPipeline: @unchecked Sendable {
             }
         }
 
+        // Extract variants from source bundle
+        var variantTracks: [VariantTrackInfo] = []
+        if !isConcatenated, !sourceVariantTracks.isEmpty {
+            progressHandler?(0.82, "Extracting variants...")
+            let newChromName = chromosomes.first?.name ?? seqName
+            let variantsDir = bundleURL.appendingPathComponent("variants", isDirectory: true)
+            try fileManager.createDirectory(at: variantsDir, withIntermediateDirectories: true)
+
+            for (trackIndex, sourceTrack) in sourceVariantTracks.enumerated() {
+                do {
+                    let sourceDB = try VariantDatabase(url: sourceTrack.databaseURL)
+                    let sanitizedTrackID = BundleBuildHelpers.sanitizedFilename(sourceTrack.id)
+                    let trackID = sanitizedTrackID.isEmpty ? UUID().uuidString : sanitizedTrackID
+                    let dbFilename = "variants_\(trackIndex)_\(trackID).db"
+                    let dbURL = variantsDir.appendingPathComponent(dbFilename)
+
+                    let variantCount = try sourceDB.extractRegion(
+                        chromosome: result.chromosome,
+                        start: result.effectiveStart,
+                        end: result.effectiveEnd,
+                        outputURL: dbURL,
+                        newChromosome: newChromName,
+                        sampleFilter: sampleFilter
+                    )
+
+                    guard variantCount > 0 else {
+                        try? fileManager.removeItem(at: dbURL)
+                        continue
+                    }
+
+                    let relativePath = "variants/\(dbFilename)"
+                    variantTracks.append(VariantTrackInfo(
+                        id: sourceTrack.id,
+                        name: sourceTrack.name,
+                        description: "Variants extracted from \(result.chromosome):\(result.effectiveStart)-\(result.effectiveEnd)",
+                        path: relativePath,
+                        indexPath: relativePath,
+                        databasePath: relativePath,
+                        variantType: sourceTrack.variantType,
+                        variantCount: variantCount
+                    ))
+                    extractionLogger.info("buildBundle: Extracted \(variantCount) variants for track \(sourceTrack.id)")
+                } catch {
+                    extractionLogger.warning("buildBundle: Variant extraction failed for track \(sourceTrack.id, privacy: .public) (non-fatal): \(error.localizedDescription)")
+                }
+            }
+        }
+
         // Write manifest
-        progressHandler?(0.85, "Writing manifest...")
+        progressHandler?(0.88, "Writing manifest...")
         let coordinateLabel = "\(result.chromosome):\(result.effectiveStart)-\(result.effectiveEnd)"
         let description: String
         if let source = sourceBundleName {
@@ -232,7 +296,8 @@ public final class SequenceExtractionPipeline: @unchecked Sendable {
             description: description,
             source: sourceInfo,
             genome: genomeInfo,
-            annotations: annotationTracks
+            annotations: annotationTracks,
+            variants: variantTracks
         )
 
         try manifest.save(to: bundleURL)
