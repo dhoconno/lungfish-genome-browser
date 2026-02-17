@@ -1951,6 +1951,13 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             return hasBundle
         }
 
+        // Selection-dependent menu items require an active selection
+        if menuItem.action == #selector(copySelectionFASTA(_:)) ||
+           menuItem.action == #selector(extractSelection(_:)) {
+            let hasSelection = mainWindowController?.mainSplitViewController?.viewerController?.viewerView?.selectionRange != nil
+            return hasSelection
+        }
+
         return true
     }
 
@@ -2144,6 +2151,22 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
     @objc func selectRegion(_ sender: Any?) {
         // TODO: Implement region selection
+    }
+
+    @objc func copySelectionFASTA(_ sender: Any?) {
+        guard let viewerView = mainWindowController?.mainSplitViewController?.viewerController?.viewerView else {
+            NSSound.beep()
+            return
+        }
+        viewerView.copySelectionAsFASTA(sender)
+    }
+
+    @objc func extractSelection(_ sender: Any?) {
+        guard let viewerView = mainWindowController?.mainSplitViewController?.viewerController?.viewerView else {
+            NSSound.beep()
+            return
+        }
+        viewerView.extractSelectionSequence(sender)
     }
 
     @objc func addAnnotation(_ sender: Any?) {

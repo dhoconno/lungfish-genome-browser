@@ -481,6 +481,23 @@ public final class MainMenu {
 
         seqMenu.addItem(.separator())
 
+        // Selection extraction operations
+        let copySelFASTAItem = seqMenu.addItem(
+            withTitle: "Copy Selection as FASTA",
+            action: #selector(SequenceMenuActions.copySelectionFASTA(_:)),
+            keyEquivalent: "c"
+        )
+        copySelFASTAItem.keyEquivalentModifierMask = [.command, .shift]
+
+        let extractSelItem = seqMenu.addItem(
+            withTitle: "Extract Selection\u{2026}",
+            action: #selector(SequenceMenuActions.extractSelection(_:)),
+            keyEquivalent: "e"
+        )
+        extractSelItem.keyEquivalentModifierMask = [.command, .shift]
+
+        seqMenu.addItem(.separator())
+
         // Annotation operations
         seqMenu.addItem(
             withTitle: "Add Annotation...",
@@ -747,6 +764,8 @@ public final class MainMenu {
     func translate(_ sender: Any?)
     func goToPosition(_ sender: Any?)
     func selectRegion(_ sender: Any?)
+    func copySelectionFASTA(_ sender: Any?)
+    func extractSelection(_ sender: Any?)
     func addAnnotation(_ sender: Any?)
     func findORFs(_ sender: Any?)
     func findRestrictionSites(_ sender: Any?)
