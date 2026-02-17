@@ -1899,6 +1899,9 @@ public class SequenceViewerView: NSView {
     /// Pixel threshold for edge handle hit detection
     private let edgeHandleHitThreshold: CGFloat = 6
 
+    /// Last logged selection render signature (used to suppress per-frame log spam).
+    private var lastSelectionRenderSignature: String?
+
     /// Currently selected annotation (nil if no annotation selected).
     /// Internal so the AnnotationDrawer extension can set it from table selection.
     var selectedAnnotation: SequenceAnnotation?
@@ -2660,6 +2663,28 @@ public class SequenceViewerView: NSView {
         logger.info("SequenceViewerView.setReferenceBundle: Bundle set, ready for on-demand fetching")
     }
 
+    /// Ensures there is always a visible extraction selection in the current viewport.
+    ///
+    /// If the selection is missing or fully off-screen after navigation, snap it to the
+    /// currently visible region so users always have a visible extraction target.
+    private func ensureVisibleViewportSelection(frame: ReferenceFrame) {
+        let lower = max(0, Int(frame.start))
+        let upper = max(lower + 1, Int(ceil(frame.end)))
+
+        if let range = selectionRange {
+            let isOffscreen = range.upperBound <= lower || range.lowerBound >= upper
+            guard isOffscreen else { return }
+            selectionRange = lower..<upper
+            selectionStartBase = lower
+            logger.info("ensureVisibleViewportSelection: snapped off-screen selection to \(lower)-\(upper) on \(frame.chromosome, privacy: .public)")
+            return
+        }
+
+        selectionRange = lower..<upper
+        selectionStartBase = lower
+        logger.info("ensureVisibleViewportSelection: initialized \(lower)-\(upper) on \(frame.chromosome, privacy: .public)")
+    }
+
     /// Clears the current reference bundle.
     func clearReferenceBundle() {
         logger.info("SequenceViewerView.clearReferenceBundle: Clearing bundle")
@@ -2787,6 +2812,8 @@ public class SequenceViewerView: NSView {
             logger.warning("drawBundleContent: currentReferenceBundle is nil")
             return
         }
+
+        ensureVisibleViewportSelection(frame: frame)
 
         let visibleRegion = GenomicRegion(
             chromosome: frame.chromosome,
@@ -4327,6 +4354,7 @@ public class SequenceViewerView: NSView {
     }
 
     private func drawSequence(_ seq: Sequence, frame: ReferenceFrame, context: CGContext) {
+        ensureVisibleViewportSelection(frame: frame)
         let scale = frame.scale  // bp/pixel
 
         // Decide rendering mode based on zoom level (scale = bp/pixel)
@@ -4416,6 +4444,12 @@ public class SequenceViewerView: NSView {
         let clippedWidth = max(0, clippedEndX - clippedStartX)
         guard clippedWidth > 0 else { return }
 
+        let signature = "\(range.lowerBound)-\(range.upperBound)|\(Int(clippedStartX.rounded()))-\(Int(clippedEndX.rounded()))"
+        if signature != lastSelectionRenderSignature {
+            logger.info("drawSelectionHighlight: range=\(range.lowerBound)-\(range.upperBound), x=\(clippedStartX, format: .fixed(precision: 1))-\(clippedEndX, format: .fixed(precision: 1)), width=\(clippedWidth, format: .fixed(precision: 1))")
+            lastSelectionRenderSignature = signature
+        }
+
         // Full-height selection highlight (covers sequence + annotation + variant areas).
         let fullRect = CGRect(
             x: clippedStartX,
@@ -4428,8 +4462,23 @@ public class SequenceViewerView: NSView {
 
         // Draw selection highlight fill.
         context.saveGState()
-        context.setFillColor(accent.withAlphaComponent(0.14).cgColor)
+        context.setFillColor(accent.withAlphaComponent(0.18).cgColor)
         context.fill(fullRect)
+
+        // Add subtle diagonal hatching so wide selections remain obvious at all zoom levels.
+        context.saveGState()
+        context.clip(to: fullRect)
+        context.setStrokeColor(accent.withAlphaComponent(0.22).cgColor)
+        context.setLineWidth(1)
+        let stripeStep: CGFloat = 14
+        var stripeX = fullRect.minX - fullRect.height
+        while stripeX < fullRect.maxX + fullRect.height {
+            context.move(to: CGPoint(x: stripeX, y: 0))
+            context.addLine(to: CGPoint(x: stripeX + fullRect.height, y: bounds.height))
+            stripeX += stripeStep
+        }
+        context.strokePath()
+        context.restoreGState()
 
         // Sequence track highlight (brighter for immediate visibility).
         let seqRect = CGRect(
@@ -4438,7 +4487,7 @@ public class SequenceViewerView: NSView {
             width: clippedWidth,
             height: trackHeight
         )
-        context.setFillColor(accent.withAlphaComponent(0.30).cgColor)
+        context.setFillColor(accent.withAlphaComponent(0.40).cgColor)
         context.fill(seqRect)
 
         // Draw full-height edge rails.
@@ -4450,6 +4499,35 @@ public class SequenceViewerView: NSView {
         context.addLine(to: CGPoint(x: clippedEndX, y: bounds.height))
         context.strokePath()
 
+        // Draw a high-contrast frame so the selection is visible in light/dark backgrounds.
+        let primaryFrame = fullRect.insetBy(dx: 1.5, dy: 1.5)
+        context.setStrokeColor(NSColor.black.withAlphaComponent(0.35).cgColor)
+        context.setLineWidth(3)
+        context.stroke(primaryFrame)
+        context.setStrokeColor(accent.withAlphaComponent(0.98).cgColor)
+        context.setLineWidth(1.5)
+        context.stroke(primaryFrame.insetBy(dx: 1.5, dy: 1.5))
+
+        // When selection spans the full visible width, vertical rails are hard to perceive at
+        // the clipped edges. Draw top/bottom boundary bars as an explicit extraction frame.
+        let fullWidthSelection = clippedStartX <= 3 && clippedEndX >= bounds.width - 3
+        let wideSelection = fullWidthSelection || clippedWidth >= (bounds.width * 0.85)
+        if wideSelection {
+            context.setStrokeColor(accent.withAlphaComponent(0.95).cgColor)
+            context.setLineWidth(3)
+            context.move(to: CGPoint(x: 0, y: 1.5))
+            context.addLine(to: CGPoint(x: bounds.width, y: 1.5))
+            context.move(to: CGPoint(x: 0, y: bounds.height - 1.5))
+            context.addLine(to: CGPoint(x: bounds.width, y: bounds.height - 1.5))
+            context.strokePath()
+
+            // Add an inset frame to make full-width selections unambiguous.
+            let insetRect = CGRect(x: 2, y: 2, width: max(0, bounds.width - 4), height: max(0, bounds.height - 4))
+            context.setStrokeColor(accent.withAlphaComponent(0.85).cgColor)
+            context.setLineWidth(2)
+            context.stroke(insetRect)
+        }
+
         // Draw visible drag handles on each edge.
         let midHandleWidth: CGFloat = 8
         let midHandleHeight: CGFloat = 22
@@ -4460,13 +4538,43 @@ public class SequenceViewerView: NSView {
 
         context.setFillColor(accent.cgColor)
         for edgeX in [clippedStartX, clippedEndX] where edgeX >= 0 && edgeX <= bounds.width {
-            let midHandle = CGRect(x: edgeX - midHandleWidth / 2, y: midY, width: midHandleWidth, height: midHandleHeight)
-            let topCap = CGRect(x: edgeX - capSize / 2, y: topY, width: capSize, height: capSize)
-            let bottomCap = CGRect(x: edgeX - capSize / 2, y: bottomY, width: capSize, height: capSize)
+            let visibleX = min(bounds.width - midHandleWidth / 2, max(midHandleWidth / 2, edgeX))
+            let midHandle = CGRect(x: visibleX - midHandleWidth / 2, y: midY, width: midHandleWidth, height: midHandleHeight)
+            let topCap = CGRect(x: visibleX - capSize / 2, y: topY, width: capSize, height: capSize)
+            let bottomCap = CGRect(x: visibleX - capSize / 2, y: bottomY, width: capSize, height: capSize)
             context.fillEllipse(in: midHandle)
             context.fillEllipse(in: topCap)
             context.fillEllipse(in: bottomCap)
         }
+
+        // Draw selection coordinate badge near the top edge.
+        let startLabel = NumberFormatter.localizedString(from: NSNumber(value: range.lowerBound + 1), number: .decimal)
+        let endLabel = NumberFormatter.localizedString(from: NSNumber(value: range.upperBound), number: .decimal)
+        let badgeText = "Selection \(startLabel)-\(endLabel)" as NSString
+        let badgeAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+            .foregroundColor: NSColor.labelColor
+        ]
+        let badgeSize = badgeText.size(withAttributes: badgeAttrs)
+        let badgePaddingX: CGFloat = 8
+        let badgePaddingY: CGFloat = 4
+        let badgeWidth = badgeSize.width + (badgePaddingX * 2)
+        let badgeHeight = badgeSize.height + (badgePaddingY * 2)
+        let badgeX = min(max(6, clippedStartX + 8), bounds.width - badgeWidth - 6)
+        let badgeRect = CGRect(x: badgeX, y: 6, width: badgeWidth, height: badgeHeight)
+
+        let badgePath = CGPath(roundedRect: badgeRect, cornerWidth: 6, cornerHeight: 6, transform: nil)
+        context.setFillColor(NSColor.windowBackgroundColor.withAlphaComponent(0.9).cgColor)
+        context.addPath(badgePath)
+        context.fillPath()
+        context.setStrokeColor(accent.withAlphaComponent(0.9).cgColor)
+        context.setLineWidth(1.5)
+        context.addPath(badgePath)
+        context.strokePath()
+        badgeText.draw(
+            at: CGPoint(x: badgeRect.minX + badgePaddingX, y: badgeRect.minY + badgePaddingY),
+            withAttributes: badgeAttrs
+        )
 
         context.restoreGState()
     }
@@ -5311,8 +5419,6 @@ public class SequenceViewerView: NSView {
         if let variant = variantAtPoint(location) {
             selectedAnnotation = variant
             postVariantSelectedNotificationIfNeeded(variant)
-            selectionRange = nil
-            selectionStartBase = nil
             isSelecting = false
             setNeedsDisplay(bounds)
             updateSelectionStatus()
@@ -5325,8 +5431,6 @@ public class SequenceViewerView: NSView {
             if let annotation = bundleAnnotationAtPoint(location) {
                 selectedAnnotation = annotation
                 postAnnotationSelectedNotification(annotation)
-                selectionRange = nil
-                selectionStartBase = nil
                 isSelecting = false
                 setNeedsDisplay(bounds)
                 updateSelectionStatus()
@@ -5342,8 +5446,6 @@ public class SequenceViewerView: NSView {
                 if let annotation = annotationAtPoint(location, forSequence: stackedInfo, frame: frame) {
                     selectedAnnotation = annotation
                     postAnnotationSelectedNotification(annotation)
-                    selectionRange = nil
-                    selectionStartBase = nil
                     isSelecting = false
                     setNeedsDisplay(bounds)
                     updateSelectionStatus()
@@ -5360,8 +5462,6 @@ public class SequenceViewerView: NSView {
             if let annotation = annotationAtPoint(location) {
                 selectedAnnotation = annotation
                 postAnnotationSelectedNotification(annotation)
-                selectionRange = nil
-                selectionStartBase = nil
                 isSelecting = false
                 setNeedsDisplay(bounds)
                 updateSelectionStatus()
@@ -6128,6 +6228,7 @@ public class SequenceViewerView: NSView {
         selectionRange = lower..<upper
         selectionStartBase = lower
         isSelecting = false
+        logger.info("selectVisibleRegion: selected \(lower)-\(upper) on \(frame.chromosome, privacy: .public)")
         setNeedsDisplay(bounds)
         updateSelectionStatus()
     }
