@@ -1899,6 +1899,12 @@ public class SequenceViewerView: NSView {
     /// Pixel threshold for edge handle hit detection
     private let edgeHandleHitThreshold: CGFloat = 6
 
+    /// Width of the edge auto-pan activation zone while dragging selection handles.
+    private let edgeAutoPanZoneWidth: CGFloat = 24
+
+    /// Maximum fraction of visible window to pan per drag event when cursor is at the edge.
+    private let edgeAutoPanMaxWindowFraction: Double = 0.03
+
     /// Last logged selection render signature (used to suppress per-frame log spam).
     private var lastSelectionRenderSignature: String?
 
@@ -5415,6 +5421,19 @@ public class SequenceViewerView: NSView {
         let location = convert(event.locationInWindow, from: nil)
         let isDoubleClick = event.clickCount == 2
 
+        // Handle selection edge drags before annotation/variant hit-testing so resize handles
+        // remain interactive even when annotations overlap the edge positions.
+        if let range = selectionRange {
+            let edge = selectionEdgeAtPoint(location, range: range, frame: frame)
+            if edge != .none {
+                edgeDragMode = edge
+                isSelecting = true
+                // Anchor the opposite edge so drag resizes one side.
+                selectionStartBase = (edge == .left) ? range.upperBound - 1 : range.lowerBound
+                return
+            }
+        }
+
         // Variant track click should route to variant selection instead of annotation selection.
         if let variant = variantAtPoint(location) {
             selectedAnnotation = variant
@@ -5499,18 +5518,6 @@ public class SequenceViewerView: NSView {
         // Continue with existing region selection behavior for sequence track
         let basePosition = basePositionAt(x: location.x, frame: frame)
 
-        // Check for edge handle drag on existing selection
-        if let range = selectionRange {
-            let edge = selectionEdgeAtPoint(location, range: range, frame: frame)
-            if edge != .none {
-                edgeDragMode = edge
-                isSelecting = true
-                // Anchor the opposite edge
-                selectionStartBase = (edge == .left) ? range.upperBound - 1 : range.lowerBound
-                return
-            }
-        }
-
         // Shift-click extends existing selection
         if event.modifierFlags.contains(.shift), let range = selectionRange {
             // Extend toward the click position
@@ -5544,7 +5551,18 @@ public class SequenceViewerView: NSView {
               let frame = viewController?.referenceFrame else { return }
 
         let location = convert(event.locationInWindow, from: nil)
-        let currentBase = basePositionAt(x: location.x, frame: frame)
+
+        // While dragging an edge handle, auto-pan when the cursor approaches a viewport edge.
+        // This lets users extend selections beyond the currently visible region.
+        let activeFrame: ReferenceFrame
+        if edgeDragMode != .none {
+            _ = autoPanDuringEdgeDragIfNeeded(locationX: location.x, frame: frame)
+            activeFrame = viewController?.referenceFrame ?? frame
+        } else {
+            activeFrame = frame
+        }
+
+        let currentBase = basePositionAt(x: location.x, frame: activeFrame)
 
         // Update selection range
         let minBase = min(startBase, currentBase)
@@ -6207,6 +6225,45 @@ public class SequenceViewerView: NSView {
         if abs(point.x - leftX) <= edgeHandleHitThreshold { return .left }
         if abs(point.x - rightX) <= edgeHandleHitThreshold { return .right }
         return .none
+    }
+
+    /// Auto-pans the reference frame during edge-handle drags when the cursor is near edges.
+    ///
+    /// Returns true if panning occurred.
+    @discardableResult
+    private func autoPanDuringEdgeDragIfNeeded(locationX: CGFloat, frame: ReferenceFrame) -> Bool {
+        guard let viewController else { return false }
+        let width = bounds.width
+        guard width > 0 else { return false }
+
+        let zone = edgeAutoPanZoneWidth
+        var direction: Double = 0
+        var depth: CGFloat = 0
+
+        if locationX <= zone {
+            direction = -1
+            depth = zone - locationX
+        } else if locationX >= width - zone {
+            direction = 1
+            depth = locationX - (width - zone)
+        } else {
+            return false
+        }
+
+        let normalized = min(1, max(0, depth / zone))
+        let windowBP = max(1, frame.end - frame.start)
+        let minStepBP: Double = 2
+        let maxStepBP = max(minStepBP, windowBP * edgeAutoPanMaxWindowFraction)
+        let deltaBP = direction * max(minStepBP, maxStepBP * Double(normalized))
+        let previousStart = frame.start
+        frame.pan(by: deltaBP)
+
+        guard frame.start != previousStart else { return false }
+
+        setNeedsDisplay(bounds)
+        viewController.enhancedRulerView.setNeedsDisplay(viewController.enhancedRulerView.bounds)
+        viewController.updateStatusBar()
+        return true
     }
 
     /// Selects the entire sequence
