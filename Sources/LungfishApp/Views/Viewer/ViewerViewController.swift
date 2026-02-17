@@ -3535,6 +3535,19 @@ public class SequenceViewerView: NSView {
     
     /// Draws sequence data from a bundle.
     private func drawBundleSequence(_ sequenceString: String, region: GenomicRegion, frame: ReferenceFrame, context: CGContext) {
+        let clipInset = navigationLeadingInsetPixels
+        if clipInset > 0 {
+            context.saveGState()
+            defer { context.restoreGState() }
+            let clipRect = CGRect(
+                x: min(clipInset, bounds.width),
+                y: trackY,
+                width: max(0, bounds.width - clipInset),
+                height: trackHeight
+            )
+            context.clip(to: clipRect)
+        }
+
         let scale = frame.scale  // bp/pixel
         
         // Calculate the offset within the cached sequence for the visible region
@@ -4351,6 +4364,19 @@ public class SequenceViewerView: NSView {
 
     private func drawSequence(_ seq: Sequence, frame: ReferenceFrame, context: CGContext) {
         ensureVisibleViewportSelection(frame: frame)
+        let clipInset = navigationLeadingInsetPixels
+        if clipInset > 0 {
+            context.saveGState()
+            defer { context.restoreGState() }
+            let clipRect = CGRect(
+                x: min(clipInset, bounds.width),
+                y: trackY,
+                width: max(0, bounds.width - clipInset),
+                height: trackHeight
+            )
+            context.clip(to: clipRect)
+        }
+
         let scale = frame.scale  // bp/pixel
 
         // Decide rendering mode based on zoom level (scale = bp/pixel)
