@@ -138,6 +138,16 @@ final class AIAssistantViewController: NSViewController {
         restoreConversationFromService()
     }
 
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        performMessageLayoutAndDisplayUpdate(scrollToBottom: true)
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        performMessageLayoutAndDisplayUpdate(scrollToBottom: false)
+    }
+
     // MARK: - UI Setup
 
     private func setupUI() {
@@ -356,6 +366,22 @@ final class AIAssistantViewController: NSViewController {
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
+    /// Forces message layout + repaint to avoid stale blank frames until user interaction.
+    private func performMessageLayoutAndDisplayUpdate(scrollToBottom: Bool) {
+        guard scrollView.documentView != nil else { return }
+        updateMessageDocumentHeight()
+        view.layoutSubtreeIfNeeded()
+        scrollView.layoutSubtreeIfNeeded()
+        scrollView.documentView?.layoutSubtreeIfNeeded()
+        if scrollToBottom {
+            scrollMessagesToBottom()
+        }
+        messagesStackView.needsDisplay = true
+        scrollView.contentView.needsDisplay = true
+        scrollView.documentView?.needsDisplay = true
+        scrollView.needsDisplay = true
+    }
+
     // MARK: - Messages
 
     private func addWelcomeMessage() {
@@ -384,7 +410,7 @@ final class AIAssistantViewController: NSViewController {
 
         // Scroll to bottom
         DispatchQueue.main.async { [weak self] in
-            self?.scrollMessagesToBottom()
+            self?.performMessageLayoutAndDisplayUpdate(scrollToBottom: true)
         }
     }
 
@@ -412,7 +438,7 @@ final class AIAssistantViewController: NSViewController {
 
         // Scroll to bottom
         DispatchQueue.main.async { [weak self] in
-            self?.scrollMessagesToBottom()
+            self?.performMessageLayoutAndDisplayUpdate(scrollToBottom: true)
         }
     }
 
@@ -544,6 +570,7 @@ final class AIAssistantViewController: NSViewController {
                     self.sendButton.isEnabled = true
                     self.inputField.isEnabled = true
                     self.view.window?.makeFirstResponder(self.inputField)
+                    self.performMessageLayoutAndDisplayUpdate(scrollToBottom: true)
                 }
             }
         }
@@ -559,7 +586,7 @@ final class AIAssistantViewController: NSViewController {
         }
 
         addWelcomeMessage()
-        updateMessageDocumentHeight()
+        performMessageLayoutAndDisplayUpdate(scrollToBottom: true)
         suggestedQueriesContainer.isHidden = false
         refreshSuggestedQueries()
         statusLabel.stringValue = ""
