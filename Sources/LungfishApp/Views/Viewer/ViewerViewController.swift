@@ -3030,8 +3030,6 @@ public class SequenceViewerView: NSView {
             }
         }
 
-        // Keep selection visible above all bundle rendering content.
-        drawSelectionHighlight(frame: frame, context: context)
     }
 
     /// Fetches annotations asynchronously for the visible region from SQLite annotation databases.
@@ -4406,9 +4404,6 @@ public class SequenceViewerView: NSView {
         if showAnnotations && !annotations.isEmpty {
             drawAnnotations(frame: frame, context: context)
         }
-
-        // Keep selection visible above sequence + annotations.
-        drawSelectionHighlight(frame: frame, context: context)
 
         // Draw sequence info header
         drawSequenceInfo(seq, frame: frame, context: context)
