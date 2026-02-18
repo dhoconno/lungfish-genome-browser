@@ -38,8 +38,8 @@ public enum VariantTrackRenderer {
 
     /// Width of the scroll indicator track.
     private static let scrollIndicatorWidth: CGFloat = 6
-    /// Horizontal area reserved for sample labels.
-    private static let sampleLabelWidth: CGFloat = 150
+    /// Fallback area reserved for sample labels when no sample strings are available yet.
+    private static let sampleLabelFallbackWidth: CGFloat = 150
     /// Visual spacing between sample label area and genotype data area.
     private static let sampleLabelToDataMargin: CGFloat = 12
 
@@ -93,6 +93,43 @@ public enum VariantTrackRenderer {
     /// Returns the summary bar height from display state, or the default.
     public static func summaryBarHeight(state: SampleDisplayState?) -> CGFloat {
         state?.summaryBarHeight ?? defaultSummaryBarHeight
+    }
+
+    /// Returns the horizontal inset reserved for sample labels before genotype data begins.
+    /// Navigation/zoom code uses this to avoid centering targets beneath sample labels.
+    public static func leadingDataInsetPixels(
+        state: SampleDisplayState,
+        sampleNames: [String],
+        sampleDisplayNames: [String: String]
+    ) -> CGFloat {
+        guard state.showGenotypeRows, state.rowHeight >= 8 else { return 0 }
+        let gutterWidth = sampleLabelGutterWidth(
+            samples: sampleNames,
+            sampleDisplayNames: sampleDisplayNames,
+            rowHeight: state.rowHeight
+        )
+        // Include a modest safety pad so jump/zoom targets sit in drawable data area.
+        return gutterWidth + sampleLabelToDataMargin + 10
+    }
+
+    private static func sampleLabelGutterWidth(
+        samples: [String],
+        sampleDisplayNames: [String: String],
+        rowHeight: CGFloat
+    ) -> CGFloat {
+        guard !samples.isEmpty else { return sampleLabelFallbackWidth }
+        let fontSize = max(7, min(rowHeight - 2, 12))
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: fontSize, weight: .regular),
+        ]
+        var maxWidth: CGFloat = 0
+        for sample in samples {
+            let label = sampleDisplayNames[sample] ?? sample
+            let width = (label as NSString).size(withAttributes: attrs).width
+            if width > maxWidth { maxWidth = width }
+        }
+        // Small left/right breathing room for text rendering.
+        return max(24, ceil(maxWidth) + 8)
     }
 
     // MARK: - Summary Bar Rendering
@@ -250,7 +287,10 @@ public enum VariantTrackRenderer {
 
         let showLabels = rowH >= 8
         let totalRows = samples.count
-        let dataStartX = showLabels ? (sampleLabelWidth + sampleLabelToDataMargin) : 0
+        let labelGutterWidth = showLabels
+            ? sampleLabelGutterWidth(samples: samples, sampleDisplayNames: sampleDisplayNames, rowHeight: rowH)
+            : 0
+        let dataStartX = showLabels ? (labelGutterWidth + sampleLabelToDataMargin) : 0
         let dataWidth = max(0, CGFloat(frame.pixelWidth) - dataStartX)
 
         // Compute visible row range from scroll offset
@@ -273,14 +313,14 @@ public enum VariantTrackRenderer {
                     .font: NSFont.systemFont(ofSize: fontSize, weight: .regular),
                     .foregroundColor: NSColor.labelColor,
                 ]
-                context.setFillColor(CGColor(red: 0.96, green: 0.96, blue: 0.96, alpha: 0.92))
-                context.fill(CGRect(x: 0, y: rowY, width: sampleLabelWidth, height: rowH))
+                context.setFillColor(CGColor(red: 0.96, green: 0.96, blue: 0.96, alpha: 0.98))
+                context.fill(CGRect(x: 0, y: rowY, width: labelGutterWidth, height: rowH))
                 // Keep an explicit blank gutter before genotype cells.
-                context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.98))
-                context.fill(CGRect(x: sampleLabelWidth, y: rowY, width: sampleLabelToDataMargin, height: rowH))
+                context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1.0))
+                context.fill(CGRect(x: labelGutterWidth, y: rowY, width: sampleLabelToDataMargin, height: rowH))
                 context.setStrokeColor(CGColor(red: 0.82, green: 0.82, blue: 0.82, alpha: 1.0))
                 context.setLineWidth(0.5)
-                let sepX = sampleLabelWidth + sampleLabelToDataMargin / 2
+                let sepX = labelGutterWidth + sampleLabelToDataMargin / 2
                 context.move(to: CGPoint(x: sepX, y: rowY))
                 context.addLine(to: CGPoint(x: sepX, y: rowY + rowH))
                 context.strokePath()

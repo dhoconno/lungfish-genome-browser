@@ -59,13 +59,13 @@ extension SequenceViewerView {
         menu.addItem(extractItem)
     }
 
-    /// Adds extraction menu items to a selection context menu.
+    /// Adds extraction menu items to a visible-region context menu.
     func addSelectionExtractionMenuItems(to menu: NSMenu) {
         menu.addItem(NSMenuItem.separator())
 
         // Copy as FASTA
         let copyFASTAItem = NSMenuItem(
-            title: "Copy Selection as FASTA",
+            title: "Copy Visible Region as FASTA",
             action: #selector(copySelectionAsFASTA(_:)),
             keyEquivalent: ""
         )
@@ -74,7 +74,7 @@ extension SequenceViewerView {
 
         // Extract Sequence...
         let extractItem = NSMenuItem(
-            title: "Extract Region\u{2026}",
+            title: "Extract Visible Region\u{2026}",
             action: #selector(extractSelectionSequence(_:)),
             keyEquivalent: ""
         )
@@ -155,18 +155,15 @@ extension SequenceViewerView {
     // MARK: - Selection FASTA Action
 
     @objc func copySelectionAsFASTA(_ sender: Any?) {
-        guard let range = selectionRange else {
+        guard let region = currentVisibleViewportRegion() else {
             NSSound.beep()
             return
         }
-        guard let frame = viewController?.referenceFrame else { return }
-
-        let chromosome = frame.chromosome
-        let chromLength = frame.sequenceLength
+        let chromLength = region.chromosomeLength
         let provider = makeRegionSequenceProvider()
 
         let request = ExtractionRequest(
-            source: .region(chromosome: chromosome, start: range.lowerBound, end: range.upperBound)
+            source: .region(chromosome: region.chromosome, start: region.start, end: region.end)
         )
 
         do {
@@ -179,9 +176,9 @@ extension SequenceViewerView {
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
             pasteboard.setString(fasta, forType: .string)
-            extractionLogger.info("Copied selection FASTA (\(result.nucleotideSequence.count) bp) to clipboard")
+            extractionLogger.info("Copied visible-region FASTA (\(result.nucleotideSequence.count) bp) to clipboard")
         } catch {
-            extractionLogger.error("Failed to extract selection for FASTA: \(error.localizedDescription)")
+            extractionLogger.error("Failed to extract visible region for FASTA: \(error.localizedDescription)")
             NSSound.beep()
         }
     }
@@ -194,11 +191,18 @@ extension SequenceViewerView {
     }
 
     @objc func extractSelectionSequence(_ sender: Any?) {
-        guard let range = selectionRange,
-              let frame = viewController?.referenceFrame else { return }
+        guard let region = currentVisibleViewportRegion() else { return }
         presentExtractionSheet(
-            for: .region(chromosome: frame.chromosome, start: range.lowerBound, end: range.upperBound)
+            for: .region(chromosome: region.chromosome, start: region.start, end: region.end)
         )
+    }
+
+    /// Returns the currently visible viewport interval for region-based extraction.
+    private func currentVisibleViewportRegion() -> (chromosome: String, start: Int, end: Int, chromosomeLength: Int)? {
+        guard let frame = viewController?.referenceFrame else { return nil }
+        let start = max(0, Int(frame.start))
+        let end = max(start + 1, Int(ceil(frame.end)))
+        return (frame.chromosome, start, end, frame.sequenceLength)
     }
 
     /// Presents the extraction configuration sheet for the given source.
@@ -314,7 +318,13 @@ extension SequenceViewerView {
                 extractionLogger.info("Copied protein FASTA to clipboard")
 
             case .newBundle:
-                createExtractionBundle(from: result, bundleName: config.bundleName, concatenateExons: config.concatenateExons)
+                let visibleFilter = computeVisibleSampleFilter()
+                createExtractionBundle(
+                    from: result,
+                    bundleName: config.bundleName,
+                    concatenateExons: config.concatenateExons,
+                    sampleFilter: visibleFilter
+                )
             }
         } catch {
             extractionLogger.error("Extraction failed: \(error.localizedDescription)")
@@ -322,13 +332,21 @@ extension SequenceViewerView {
         }
     }
 
-    private func createExtractionBundle(from result: ExtractionResult, bundleName: String, concatenateExons: Bool = false) {
+    func createExtractionBundle(
+        from result: ExtractionResult,
+        bundleName: String,
+        concatenateExons: Bool = false,
+        sampleFilter: Set<String>? = nil
+    ) {
         let sourceBundleName = currentReferenceBundle?.manifest.name
         let outputDir = extractionsDirectory()
 
         // Collect all annotation tracks with SQLite databases from the source bundle.
         var sourceAnnotationTracks: [SequenceExtractionPipeline.SourceAnnotationTrack] = []
+        var sourceVariantTracks: [SequenceExtractionPipeline.SourceVariantTrack] = []
+        var sourceBundleChromosomes: [ChromosomeInfo] = []
         if let bundle = currentReferenceBundle {
+            sourceBundleChromosomes = bundle.manifest.genome.chromosomes
             sourceAnnotationTracks = bundle.annotationTrackIds.compactMap { trackID in
                 guard let trackInfo = bundle.annotationTrack(id: trackID),
                       let dbPath = trackInfo.databasePath else {
@@ -341,9 +359,23 @@ extension SequenceViewerView {
                     annotationType: trackInfo.annotationType
                 )
             }
+
+            // Collect variant tracks with SQLite databases
+            sourceVariantTracks = bundle.variantTrackIds.compactMap { trackID in
+                guard let trackInfo = bundle.variantTrack(id: trackID),
+                      let dbPath = trackInfo.databasePath else {
+                    return nil
+                }
+                return SequenceExtractionPipeline.SourceVariantTrack(
+                    id: trackInfo.id,
+                    name: trackInfo.name,
+                    databaseURL: bundle.url.appendingPathComponent(dbPath),
+                    variantType: trackInfo.variantType
+                )
+            }
         }
 
-        extractionLogger.info("createExtractionBundle: outputDir=\(outputDir.path), bundleName=\(bundleName), annotationTracks=\(sourceAnnotationTracks.count)")
+        extractionLogger.info("createExtractionBundle: outputDir=\(outputDir.path), bundleName=\(bundleName), annotationTracks=\(sourceAnnotationTracks.count), variantTracks=\(sourceVariantTracks.count), sourceChromosomes=\(sourceBundleChromosomes.count)")
 
         // Register with DownloadCenter on the main actor, then run bundle building in
         // a detached task. On completion we hop back to the main actor for import/refresh.
@@ -355,8 +387,11 @@ extension SequenceViewerView {
         let capturedResult = result
         let capturedOutputDir = outputDir
         let capturedSourceBundleName = sourceBundleName
+        let capturedSourceBundleChromosomes = sourceBundleChromosomes
         let capturedBundleName = bundleName
         let capturedSourceAnnotationTracks = sourceAnnotationTracks
+        let capturedSourceVariantTracks = sourceVariantTracks
+        let capturedSampleFilter = sampleFilter
         let capturedConcatenateExons = concatenateExons
 
         Task.detached(priority: .userInitiated) {
@@ -371,7 +406,10 @@ extension SequenceViewerView {
                     outputDirectory: capturedOutputDir,
                     sourceBundleName: capturedSourceBundleName,
                     desiredBundleName: capturedBundleName,
+                    sourceBundleChromosomes: capturedSourceBundleChromosomes,
                     sourceAnnotationTracks: capturedSourceAnnotationTracks,
+                    sourceVariantTracks: capturedSourceVariantTracks,
+                    sampleFilter: capturedSampleFilter,
                     isConcatenated: capturedConcatenateExons,
                     progressHandler: { progress, message in
                         DispatchQueue.main.async {
@@ -427,6 +465,36 @@ extension SequenceViewerView {
                 }
             }
         }
+    }
+
+    /// Computes the set of visible sample names from the current variant tracks
+    /// and sample display state. Returns `nil` if there are no hidden samples
+    /// (i.e. all samples should be included).
+    private func computeVisibleSampleFilter() -> Set<String>? {
+        guard sampleDisplayState.hiddenSamples.isEmpty == false,
+              let bundle = currentReferenceBundle else {
+            return nil
+        }
+
+        // Collect all sample names across variant tracks
+        var allSamples: [String] = []
+        var seen = Set<String>()
+        for trackId in bundle.variantTrackIds {
+            guard let trackInfo = bundle.variantTrack(id: trackId),
+                  let dbPath = trackInfo.databasePath else { continue }
+            let dbURL = bundle.url.appendingPathComponent(dbPath)
+            guard let db = try? VariantDatabase(url: dbURL) else { continue }
+            for name in db.sampleNames() where seen.insert(name).inserted {
+                allSamples.append(name)
+            }
+        }
+
+        guard !allSamples.isEmpty else { return nil }
+
+        let visible = sampleDisplayState.visibleSamples(from: allSamples)
+        // If all samples are visible, return nil (no filtering needed)
+        guard visible.count < allSamples.count else { return nil }
+        return Set(visible)
     }
 
     /// Returns the directory for saved extraction bundles.

@@ -466,18 +466,29 @@ public final class MainMenu {
 
         seqMenu.addItem(.separator())
 
-        // Selection operations (Command-L to avoid conflict with Find Next Command-G)
+        // Navigation operations (Command-L to avoid conflict with Find Next Command-G)
         seqMenu.addItem(
             withTitle: "Go to Position...",
             action: #selector(SequenceMenuActions.goToPosition(_:)),
             keyEquivalent: "l"
         )
 
-        seqMenu.addItem(
-            withTitle: "Select Region...",
-            action: #selector(SequenceMenuActions.selectRegion(_:)),
-            keyEquivalent: ""
+        seqMenu.addItem(.separator())
+
+        // Visible-region extraction operations
+        let copySelFASTAItem = seqMenu.addItem(
+            withTitle: "Copy Visible Region as FASTA",
+            action: #selector(SequenceMenuActions.copySelectionFASTA(_:)),
+            keyEquivalent: "c"
         )
+        copySelFASTAItem.keyEquivalentModifierMask = [.command, .shift]
+
+        let extractSelItem = seqMenu.addItem(
+            withTitle: "Extract Visible Region\u{2026}",
+            action: #selector(SequenceMenuActions.extractSelection(_:)),
+            keyEquivalent: "e"
+        )
+        extractSelItem.keyEquivalentModifierMask = [.command, .shift]
 
         seqMenu.addItem(.separator())
 
@@ -746,7 +757,8 @@ public final class MainMenu {
     func reverseComplement(_ sender: Any?)
     func translate(_ sender: Any?)
     func goToPosition(_ sender: Any?)
-    func selectRegion(_ sender: Any?)
+    func copySelectionFASTA(_ sender: Any?)
+    func extractSelection(_ sender: Any?)
     func addAnnotation(_ sender: Any?)
     func findORFs(_ sender: Any?)
     func findRestrictionSites(_ sender: Any?)
