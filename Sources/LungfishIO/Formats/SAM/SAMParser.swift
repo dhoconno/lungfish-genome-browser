@@ -352,6 +352,10 @@ public enum SAMParser {
         // Optional tags (fields 11+)
         var readGroup: String?
         var mdTag: String?
+        var editDistance: Int?
+        var supplementaryAlignments: String?
+        var numHits: Int?
+        var strandTag: String?
 
         for i in 11..<fields.count {
             let tag = fields[i]
@@ -359,6 +363,14 @@ public enum SAMParser {
                 readGroup = String(tag.dropFirst(5))
             } else if tag.hasPrefix("MD:Z:") {
                 mdTag = String(tag.dropFirst(5))
+            } else if tag.hasPrefix("NM:i:") {
+                editDistance = Int(tag.dropFirst(5))
+            } else if tag.hasPrefix("SA:Z:") {
+                supplementaryAlignments = String(tag.dropFirst(5))
+            } else if tag.hasPrefix("NH:i:") {
+                numHits = Int(tag.dropFirst(5))
+            } else if tag.hasPrefix("XS:A:") {
+                strandTag = String(tag.dropFirst(5))
             }
         }
 
@@ -375,7 +387,11 @@ public enum SAMParser {
             matePosition: matePosition,
             insertSize: insertSize,
             readGroup: readGroup,
-            mdTag: mdTag
+            mdTag: mdTag,
+            editDistance: editDistance,
+            supplementaryAlignments: supplementaryAlignments,
+            numHits: numHits,
+            strandTag: strandTag
         )
     }
 }

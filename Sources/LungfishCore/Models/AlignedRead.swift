@@ -170,6 +170,18 @@ public struct AlignedRead: Sendable, Identifiable {
     /// MD tag string for mismatch detection without reference (nil if not present).
     public let mdTag: String?
 
+    /// Number of mismatches (NM tag, nil if not present).
+    public let editDistance: Int?
+
+    /// Supplementary alignment records (SA tag, nil if not present).
+    public let supplementaryAlignments: String?
+
+    /// Number of reported hits (NH tag, nil if not present).
+    public let numHits: Int?
+
+    /// Strand of gene for RNA-seq (XS tag, nil if not present).
+    public let strandTag: String?
+
     /// Cached length of reference consumed by this alignment (avoids repeated CIGAR reduce).
     public let referenceLength: Int
 
@@ -181,6 +193,54 @@ public struct AlignedRead: Sendable, Identifiable {
     /// Length of the read query sequence.
     public var queryLength: Int {
         cigar.reduce(0) { $0 + ($1.consumesQuery ? $1.length : 0) }
+    }
+
+    /// Insert size classification for paired-end coloring.
+    public enum InsertSizeClass: Sendable {
+        /// Normal insert size (within expected range)
+        case normal
+        /// Insert size smaller than expected (possible deletion in sample)
+        case tooSmall
+        /// Insert size larger than expected (possible insertion in sample)
+        case tooLarge
+        /// Reads mapped to different chromosomes
+        case interchromosomal
+        /// Mate on same strand (unexpected orientation, possible inversion)
+        case abnormalOrientation
+        /// Not applicable (unpaired or unmapped mate)
+        case notApplicable
+    }
+
+    /// Classifies this read's insert size relative to the expected range.
+    ///
+    /// - Parameters:
+    ///   - expectedInsertSize: Expected median insert size
+    ///   - stdDevs: Number of standard deviations for normal range (default: 3)
+    ///   - stdDev: Estimated standard deviation of insert size
+    /// - Returns: Classification of the insert size
+    public func insertSizeClass(expectedInsertSize: Int = 400, stdDev: Int = 100, stdDevs: Double = 3) -> InsertSizeClass {
+        guard isPaired, !isMateUnmapped else { return .notApplicable }
+
+        // Inter-chromosomal
+        if let mateChr = mateChromosome, mateChr != chromosome {
+            return .interchromosomal
+        }
+
+        // Abnormal orientation: both reads on same strand
+        if isReverse == isMateReverse {
+            return .abnormalOrientation
+        }
+
+        let absInsert = abs(insertSize)
+        let lowerBound = max(0, expectedInsertSize - Int(stdDevs * Double(stdDev)))
+        let upperBound = expectedInsertSize + Int(stdDevs * Double(stdDev))
+
+        if absInsert < lowerBound {
+            return .tooSmall
+        } else if absInsert > upperBound {
+            return .tooLarge
+        }
+        return .normal
     }
 
     // MARK: - Flag Properties
@@ -241,7 +301,11 @@ public struct AlignedRead: Sendable, Identifiable {
         matePosition: Int? = nil,
         insertSize: Int = 0,
         readGroup: String? = nil,
-        mdTag: String? = nil
+        mdTag: String? = nil,
+        editDistance: Int? = nil,
+        supplementaryAlignments: String? = nil,
+        numHits: Int? = nil,
+        strandTag: String? = nil
     ) {
         self.id = UUID()
         self.name = name
@@ -257,6 +321,10 @@ public struct AlignedRead: Sendable, Identifiable {
         self.insertSize = insertSize
         self.readGroup = readGroup
         self.mdTag = mdTag
+        self.editDistance = editDistance
+        self.supplementaryAlignments = supplementaryAlignments
+        self.numHits = numHits
+        self.strandTag = strandTag
         // Cache reference length to avoid repeated CIGAR walks (called 4+ times per read per frame)
         let refLen = cigar.reduce(0) { $0 + ($1.consumesReference ? $1.length : 0) }
         self.referenceLength = refLen
@@ -364,5 +432,128 @@ extension AlignedRead {
         }
 
         return result
+    }
+
+    /// Parsed supplementary alignment from the SA tag.
+    public struct SupplementaryAlignment: Sendable {
+        public let chromosome: String
+        public let position: Int  // 0-based
+        public let strand: Strand
+        public let cigarString: String
+        public let mapq: UInt8
+        public let editDistance: Int
+    }
+
+    /// Parses the SA tag into supplementary alignment records.
+    ///
+    /// SA tag format: "chr,pos,strand,CIGAR,mapQ,NM;chr,pos,strand,CIGAR,mapQ,NM;..."
+    public var parsedSupplementaryAlignments: [SupplementaryAlignment] {
+        guard let sa = supplementaryAlignments else { return [] }
+        var results: [SupplementaryAlignment] = []
+        for record in sa.split(separator: ";") where !record.isEmpty {
+            let fields = record.split(separator: ",")
+            guard fields.count >= 6,
+                  let pos = Int(fields[1]), pos > 0,
+                  let mq = UInt8(fields[4]),
+                  let nm = Int(fields[5]) else { continue }
+            let strand: Strand = fields[2] == "-" ? .reverse : .forward
+            results.append(SupplementaryAlignment(
+                chromosome: String(fields[0]),
+                position: pos - 1, // Convert 1-based to 0-based
+                strand: strand,
+                cigarString: String(fields[3]),
+                mapq: mq,
+                editDistance: nm
+            ))
+        }
+        return results
+    }
+
+    /// Whether this read has split-read (chimeric) alignments.
+    public var hasSplitAlignments: Bool {
+        supplementaryAlignments != nil
+    }
+}
+
+// MARK: - Read Sorting
+
+/// Sort mode for aligned reads in the viewer.
+public enum ReadSortMode: String, Sendable, CaseIterable {
+    /// Sort by leftmost mapping position (default, matches samtools output)
+    case position
+    /// Sort by read name (groups mate pairs together)
+    case readName
+    /// Sort by strand (forward reads first, then reverse)
+    case strand
+    /// Sort by mapping quality (highest first)
+    case mappingQuality
+    /// Sort by insert size (smallest first)
+    case insertSize
+    /// Sort by base at a specific position (for variant investigation)
+    case baseAtPosition
+
+    public var displayName: String {
+        switch self {
+        case .position: return "Position"
+        case .readName: return "Read Name"
+        case .strand: return "Strand"
+        case .mappingQuality: return "Mapping Quality"
+        case .insertSize: return "Insert Size"
+        case .baseAtPosition: return "Base at Position"
+        }
+    }
+}
+
+/// Group mode for aligned reads in the viewer.
+public enum ReadGroupMode: String, Sendable, CaseIterable {
+    /// No grouping
+    case none
+    /// Group by read pair (mate pairs displayed together)
+    case readPair
+    /// Group by strand
+    case strand
+    /// Group by read group
+    case readGroup
+    /// Group by first-in-pair / second-in-pair
+    case firstOfPair
+    /// Group by supplementary / primary
+    case supplementaryStatus
+
+    public var displayName: String {
+        switch self {
+        case .none: return "None"
+        case .readPair: return "Read Pair"
+        case .strand: return "Strand"
+        case .readGroup: return "Read Group"
+        case .firstOfPair: return "First of Pair"
+        case .supplementaryStatus: return "Primary/Supplementary"
+        }
+    }
+}
+
+/// Color-by mode for aligned reads.
+public enum ReadColorMode: String, Sendable, CaseIterable {
+    /// Color by strand (default: blue forward, red reverse)
+    case strand
+    /// Color by insert size (red=too large, blue=too small, green=normal)
+    case insertSize
+    /// Color by mapping quality
+    case mappingQuality
+    /// Color by read group
+    case readGroup
+    /// Color by first/second in pair
+    case firstOfPair
+    /// Color by base quality
+    case baseQuality
+
+    public var displayName: String {
+        switch self {
+        case .strand: return "Strand"
+        case .insertSize: return "Insert Size"
+        case .mappingQuality: return "Mapping Quality"
+        case .readGroup: return "Read Group"
+        case .firstOfPair: return "First/Second in Pair"
+        case .baseQuality: return "Base Quality"
+        }
     }
 }

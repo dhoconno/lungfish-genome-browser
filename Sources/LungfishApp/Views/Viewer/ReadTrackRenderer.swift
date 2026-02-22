@@ -82,6 +82,25 @@ public enum ReadTrackRenderer {
     /// Soft-clip indicator color for packed mode (blue-gray).
     static let softClipColor = NSColor(red: 0.5, green: 0.6, blue: 0.75, alpha: 0.6).cgColor
 
+    // Insert size coloring (IGV convention)
+    /// Normal insert size.
+    static let insertNormalColor = NSColor(red: 0.75, green: 0.75, blue: 0.75, alpha: 1.0).cgColor
+    /// Insert size too small (potential deletion).
+    static let insertTooSmallColor = NSColor(red: 0.0, green: 0.0, blue: 0.85, alpha: 1.0).cgColor
+    /// Insert size too large (potential insertion).
+    static let insertTooLargeColor = NSColor(red: 0.85, green: 0.0, blue: 0.0, alpha: 1.0).cgColor
+    /// Inter-chromosomal mates.
+    static let insertInterchromosomalColor = NSColor(red: 0.6, green: 0.0, blue: 0.85, alpha: 1.0).cgColor
+    /// Abnormal orientation (inversion).
+    static let insertAbnormalOrientationColor = NSColor(red: 0.0, green: 0.75, blue: 0.75, alpha: 1.0).cgColor
+
+    // First/Second in pair coloring
+    static let firstInPairColor = NSColor(red: 0.45, green: 0.45, blue: 0.85, alpha: 1.0).cgColor
+    static let secondInPairColor = NSColor(red: 0.85, green: 0.45, blue: 0.45, alpha: 1.0).cgColor
+
+    /// Split-read indicator color (bright orange line connecting chimeric parts).
+    static let splitReadColor = NSColor(red: 1.0, green: 0.5, blue: 0.0, alpha: 0.8).cgColor
+
     // MARK: - Zoom Tier Detection
 
     /// Returns the appropriate zoom tier for the current scale.
@@ -100,6 +119,114 @@ public enum ReadTrackRenderer {
         case coverage
         case packed
         case base
+    }
+
+    // MARK: - Color Mode Support
+
+    /// Returns fill and stroke colors for a read based on the current color mode.
+    static func readColors(
+        for read: AlignedRead,
+        colorMode: ReadColorMode,
+        alpha: CGFloat,
+        expectedInsertSize: Int = 400,
+        insertSizeStdDev: Int = 100,
+        readGroupColorMap: [String: CGColor]? = nil
+    ) -> (fill: CGColor, stroke: CGColor) {
+        switch colorMode {
+        case .strand:
+            let fill = (read.isReverse ? reverseReadColor : forwardReadColor).copy(alpha: alpha)!
+            let stroke = (read.isReverse ? reverseReadStroke : forwardReadStroke).copy(alpha: alpha)!
+            return (fill, stroke)
+
+        case .insertSize:
+            let sizeClass = read.insertSizeClass(expectedInsertSize: expectedInsertSize, stdDev: insertSizeStdDev)
+            let baseColor: CGColor
+            switch sizeClass {
+            case .normal: baseColor = insertNormalColor
+            case .tooSmall: baseColor = insertTooSmallColor
+            case .tooLarge: baseColor = insertTooLargeColor
+            case .interchromosomal: baseColor = insertInterchromosomalColor
+            case .abnormalOrientation: baseColor = insertAbnormalOrientationColor
+            case .notApplicable:
+                let fill = (read.isReverse ? reverseReadColor : forwardReadColor).copy(alpha: alpha)!
+                let stroke = (read.isReverse ? reverseReadStroke : forwardReadStroke).copy(alpha: alpha)!
+                return (fill, stroke)
+            }
+            let fill = baseColor.copy(alpha: alpha)!
+            let stroke = baseColor.copy(alpha: max(alpha - 0.15, 0.1))!
+            return (fill, stroke)
+
+        case .mappingQuality:
+            // Heatmap: blue (low quality) → green (medium) → red (high quality)
+            let mqNorm = CGFloat(read.mapq) / 60.0
+            let clamped = min(max(mqNorm, 0), 1)
+            let r: CGFloat, g: CGFloat, b: CGFloat
+            if clamped < 0.5 {
+                let t = clamped * 2
+                r = 0.2
+                g = 0.2 + 0.6 * t
+                b = 0.8 * (1.0 - t)
+            } else {
+                let t = (clamped - 0.5) * 2
+                r = 0.2 + 0.7 * t
+                g = 0.8 - 0.4 * t
+                b = 0.0
+            }
+            let fill = CGColor(red: r, green: g, blue: b, alpha: alpha)
+            let stroke = CGColor(red: r * 0.8, green: g * 0.8, blue: b * 0.8, alpha: alpha)
+            return (fill, stroke)
+
+        case .readGroup:
+            if let rg = read.readGroup, let color = readGroupColorMap?[rg] {
+                return (color.copy(alpha: alpha)!, color.copy(alpha: max(alpha - 0.15, 0.1))!)
+            }
+            let fill = (read.isReverse ? reverseReadColor : forwardReadColor).copy(alpha: alpha)!
+            let stroke = (read.isReverse ? reverseReadStroke : forwardReadStroke).copy(alpha: alpha)!
+            return (fill, stroke)
+
+        case .firstOfPair:
+            guard read.isPaired else {
+                let fill = (read.isReverse ? reverseReadColor : forwardReadColor).copy(alpha: alpha)!
+                let stroke = (read.isReverse ? reverseReadStroke : forwardReadStroke).copy(alpha: alpha)!
+                return (fill, stroke)
+            }
+            let baseColor = read.isFirstInPair ? firstInPairColor : secondInPairColor
+            return (baseColor.copy(alpha: alpha)!, baseColor.copy(alpha: max(alpha - 0.15, 0.1))!)
+
+        case .baseQuality:
+            // Base quality is per-base; for the read background, use mean quality
+            let meanQ: CGFloat
+            if read.qualities.isEmpty {
+                meanQ = 0.5
+            } else {
+                let sum = read.qualities.reduce(0, { $0 + Int($1) })
+                meanQ = min(CGFloat(sum) / CGFloat(read.qualities.count) / 40.0, 1.0)
+            }
+            // Yellow (low) → Green (high)
+            let fill = CGColor(red: 1.0 - meanQ * 0.7, green: 0.3 + meanQ * 0.5, blue: 0.1, alpha: alpha)
+            let stroke = CGColor(red: (1.0 - meanQ * 0.7) * 0.8, green: (0.3 + meanQ * 0.5) * 0.8, blue: 0.08, alpha: alpha)
+            return (fill, stroke)
+        }
+    }
+
+    /// Pre-assigns colors for read groups found in a set of reads.
+    static func buildReadGroupColorMap(from reads: [AlignedRead]) -> [String: CGColor] {
+        var map: [String: CGColor] = [:]
+        // Collect unique read groups
+        var seen: [String] = []
+        for read in reads {
+            if let rg = read.readGroup, !seen.contains(rg) {
+                seen.append(rg)
+            }
+        }
+        // Assign distinct hues
+        let count = max(seen.count, 1)
+        for (i, rg) in seen.enumerated() {
+            let hue = CGFloat(i) / CGFloat(count)
+            let color = NSColor(hue: hue, saturation: 0.55, brightness: 0.75, alpha: 1.0).cgColor
+            map[rg] = color
+        }
+        return map
     }
 
     // MARK: - Coverage Rendering (Tier 1)
@@ -225,14 +352,35 @@ public enum ReadTrackRenderer {
     ///   - reads: Reads to pack
     ///   - frame: Reference frame for coordinate mapping
     ///   - maxRows: Maximum number of rows
+    ///   - sortMode: How to sort reads before packing
+    ///   - sortPosition: Reference position for baseAtPosition sort mode
     /// - Returns: Array of (row, read) pairs and the overflow count
     public static func packReads(
         _ reads: [AlignedRead],
         frame: ReferenceFrame,
-        maxRows: Int = 75
+        maxRows: Int = 75,
+        sortMode: ReadSortMode = .position,
+        sortPosition: Int? = nil
     ) -> (packed: [(row: Int, read: AlignedRead)], overflow: Int) {
-        // Sort by start position
-        let sorted = reads.sorted { $0.position < $1.position }
+        let sorted: [AlignedRead]
+        switch sortMode {
+        case .position:
+            sorted = reads.sorted { $0.position < $1.position }
+        case .readName:
+            sorted = reads.sorted { $0.name < $1.name }
+        case .strand:
+            sorted = reads.sorted { !$0.isReverse && $1.isReverse }
+        case .mappingQuality:
+            sorted = reads.sorted { $0.mapq > $1.mapq }
+        case .insertSize:
+            sorted = reads.sorted { abs($0.insertSize) < abs($1.insertSize) }
+        case .baseAtPosition:
+            if let pos = sortPosition {
+                sorted = reads.sorted { baseAtRefPos($0, pos: pos) < baseAtRefPos($1, pos: pos) }
+            } else {
+                sorted = reads.sorted { $0.position < $1.position }
+            }
+        }
 
         var rowEndPixels = [CGFloat](repeating: -1, count: maxRows)
         var packed: [(Int, AlignedRead)] = []
@@ -878,6 +1026,276 @@ public enum ReadTrackRenderer {
         case .base:
             return CGFloat(rowCount) * (baseReadHeight + rowGap)
         }
+    }
+
+    // MARK: - Intelligent Downsampling
+
+    /// Downsamples reads for high-coverage regions to keep rendering fast.
+    ///
+    /// Uses reservoir sampling to maintain a representative subset.
+    /// Preserves strand balance and read distribution across the region.
+    ///
+    /// - Parameters:
+    ///   - reads: Input reads
+    ///   - maxReads: Maximum reads to retain
+    ///   - regionStart: Start of the visible region
+    ///   - regionEnd: End of the visible region
+    /// - Returns: Downsampled reads and the total count before sampling
+    public static func downsample(
+        _ reads: [AlignedRead],
+        maxReads: Int = 5_000,
+        regionStart: Int = 0,
+        regionEnd: Int = Int.max
+    ) -> (reads: [AlignedRead], totalCount: Int) {
+        guard reads.count > maxReads else { return (reads, reads.count) }
+
+        let totalCount = reads.count
+
+        // Split by strand to maintain balance
+        var forward: [AlignedRead] = []
+        var reverse: [AlignedRead] = []
+        forward.reserveCapacity(reads.count / 2)
+        reverse.reserveCapacity(reads.count / 2)
+        for read in reads {
+            if read.isReverse {
+                reverse.append(read)
+            } else {
+                forward.append(read)
+            }
+        }
+
+        // Allocate proportionally to each strand
+        let fwdShare = Int(Double(maxReads) * Double(forward.count) / Double(totalCount))
+        let revShare = maxReads - fwdShare
+
+        let sampledFwd = reservoirSample(forward, count: fwdShare)
+        let sampledRev = reservoirSample(reverse, count: revShare)
+
+        var result = sampledFwd + sampledRev
+        result.sort { $0.position < $1.position }
+        return (result, totalCount)
+    }
+
+    /// Reservoir sampling: picks `count` random elements from `source`.
+    private static func reservoirSample(_ source: [AlignedRead], count: Int) -> [AlignedRead] {
+        guard count > 0 else { return [] }
+        guard source.count > count else { return source }
+
+        var reservoir = Array(source.prefix(count))
+        for i in count..<source.count {
+            let j = Int.random(in: 0...i)
+            if j < count {
+                reservoir[j] = source[i]
+            }
+        }
+        return reservoir
+    }
+
+    // MARK: - Base Quality Heatmap
+
+    /// Draws per-base quality shading on a base-level read.
+    ///
+    /// Low quality bases are shaded yellow/red, high quality bases are transparent.
+    /// Used when `ReadColorMode.baseQuality` is active.
+    static func drawBaseQualityOverlay(
+        read: AlignedRead,
+        frame: ReferenceFrame,
+        context: CGContext,
+        y: CGFloat,
+        readHeight: CGFloat
+    ) {
+        guard !read.qualities.isEmpty else { return }
+        let pixelsPerBase = 1.0 / frame.scale
+        let cellWidth = CGFloat(pixelsPerBase)
+
+        var byteIndex = 0
+        var refPos = read.position
+
+        for op in read.cigar {
+            switch op.op {
+            case .match, .seqMatch, .seqMismatch:
+                for _ in 0..<op.length {
+                    guard byteIndex < read.qualities.count else { refPos += 1; byteIndex += 1; continue }
+                    let q = read.qualities[byteIndex]
+                    byteIndex += 1
+
+                    let x = frame.genomicToPixel(Double(refPos))
+                    refPos += 1
+
+                    // Quality threshold: highlight bases below Q20
+                    if q < 20 {
+                        let intensity = CGFloat(20 - q) / 20.0 * 0.4
+                        context.setFillColor(CGColor(red: 1.0, green: 0.8, blue: 0.0, alpha: intensity))
+                        context.fill(CGRect(x: x, y: y, width: cellWidth, height: readHeight))
+                    }
+                }
+
+            case .insertion, .softClip:
+                for _ in 0..<op.length {
+                    byteIndex += 1
+                }
+
+            case .deletion, .skip:
+                refPos += op.length
+
+            case .hardClip, .padding:
+                break
+            }
+        }
+    }
+
+    // MARK: - Split-Read Visualization
+
+    /// Draws connecting lines between a primary alignment and its supplementary alignments (SA tag).
+    ///
+    /// These lines indicate chimeric/split-read alignments, commonly seen at structural
+    /// variant breakpoints. Lines connect from the soft-clipped end of the primary read
+    /// to the supplementary alignment positions.
+    static func drawSplitReadIndicators(
+        read: AlignedRead,
+        frame: ReferenceFrame,
+        context: CGContext,
+        y: CGFloat,
+        readHeight: CGFloat,
+        currentChromosome: String
+    ) {
+        let supps = read.parsedSupplementaryAlignments
+        guard !supps.isEmpty else { return }
+
+        let readMidY = y + readHeight / 2
+
+        context.saveGState()
+        context.setStrokeColor(splitReadColor)
+        context.setLineWidth(1.5)
+        context.setLineDash(phase: 0, lengths: [3, 2])
+
+        for supp in supps {
+            guard supp.chromosome == currentChromosome else { continue }
+
+            // Draw arc connecting primary and supplementary
+            let primaryEndPx: CGFloat
+            if read.isReverse {
+                primaryEndPx = frame.genomicToPixel(Double(read.position))
+            } else {
+                primaryEndPx = frame.genomicToPixel(Double(read.alignmentEnd))
+            }
+
+            let suppStartPx = frame.genomicToPixel(Double(supp.position))
+
+            // Arc height based on distance
+            let dist = abs(suppStartPx - primaryEndPx)
+            let arcHeight = min(dist * 0.15, 20)
+
+            let path = CGMutablePath()
+            path.move(to: CGPoint(x: primaryEndPx, y: readMidY))
+
+            let midX = (primaryEndPx + suppStartPx) / 2
+            path.addQuadCurve(
+                to: CGPoint(x: suppStartPx, y: readMidY),
+                control: CGPoint(x: midX, y: readMidY - arcHeight)
+            )
+
+            context.addPath(path)
+            context.strokePath()
+
+            // Small triangle at supplementary end
+            let triSize: CGFloat = 3
+            let triPath = CGMutablePath()
+            if suppStartPx > primaryEndPx {
+                triPath.move(to: CGPoint(x: suppStartPx, y: readMidY))
+                triPath.addLine(to: CGPoint(x: suppStartPx - triSize, y: readMidY - triSize))
+                triPath.addLine(to: CGPoint(x: suppStartPx - triSize, y: readMidY + triSize))
+            } else {
+                triPath.move(to: CGPoint(x: suppStartPx, y: readMidY))
+                triPath.addLine(to: CGPoint(x: suppStartPx + triSize, y: readMidY - triSize))
+                triPath.addLine(to: CGPoint(x: suppStartPx + triSize, y: readMidY + triSize))
+            }
+            triPath.closeSubpath()
+            context.setFillColor(splitReadColor)
+            context.addPath(triPath)
+            context.fillPath()
+        }
+
+        context.setLineDash(phase: 0, lengths: [])
+        context.restoreGState()
+    }
+
+    // MARK: - Paired-End Linking
+
+    /// Draws connecting lines between mate pairs that are both visible in the viewport.
+    ///
+    /// Finds reads with the same name and draws a thin line connecting them,
+    /// which helps visualize fragment structure and insert sizes.
+    static func drawMatePairLinks(
+        packedReads: [(row: Int, read: AlignedRead)],
+        frame: ReferenceFrame,
+        context: CGContext,
+        rect: CGRect,
+        readHeight: CGFloat
+    ) {
+        // Build lookup of read name -> (row, read) for paired reads
+        var nameLookup: [String: [(row: Int, read: AlignedRead)]] = [:]
+        for (row, read) in packedReads where read.isPaired {
+            nameLookup[read.name, default: []].append((row, read))
+        }
+
+        context.saveGState()
+        context.setStrokeColor(NSColor(white: 0.6, alpha: 0.4).cgColor)
+        context.setLineWidth(0.5)
+
+        for (_, mates) in nameLookup where mates.count == 2 {
+            let (row1, read1) = mates[0]
+            let (row2, read2) = mates[1]
+
+            // Only draw if both are on the same row (typical for properly paired reads)
+            guard row1 == row2 else { continue }
+
+            let y = rect.minY + CGFloat(row1) * (readHeight + rowGap) + readHeight / 2
+
+            let end1 = frame.genomicToPixel(Double(read1.alignmentEnd))
+            let start2 = frame.genomicToPixel(Double(read2.position))
+
+            // Draw connecting line between mates
+            let left = min(end1, start2)
+            let right = max(end1, start2)
+            guard right - left > 2 else { continue } // Skip if overlapping
+
+            context.move(to: CGPoint(x: left, y: y))
+            context.addLine(to: CGPoint(x: right, y: y))
+            context.strokePath()
+        }
+
+        context.restoreGState()
+    }
+
+    // MARK: - Base at Position Helper
+
+    /// Returns a sort key for the base at a reference position in a read.
+    /// Used for base-at-position sorting to investigate variants.
+    private static func baseAtRefPos(_ read: AlignedRead, pos: Int) -> UInt8 {
+        guard pos >= read.position, pos < read.alignmentEnd else { return 255 }
+        let seqBytes = Array(read.sequence.utf8)
+        var byteIndex = 0
+        var refPos = read.position
+        for op in read.cigar {
+            switch op.op {
+            case .match, .seqMatch, .seqMismatch:
+                for _ in 0..<op.length {
+                    if refPos == pos, byteIndex < seqBytes.count {
+                        return seqBytes[byteIndex] & 0xDF // uppercase
+                    }
+                    refPos += 1
+                    byteIndex += 1
+                }
+            case .insertion, .softClip:
+                byteIndex += op.length
+            case .deletion, .skip:
+                refPos += op.length
+            case .hardClip, .padding:
+                break
+            }
+        }
+        return 255 // Position not covered by this read
     }
 }
 
