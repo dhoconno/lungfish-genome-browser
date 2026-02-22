@@ -77,6 +77,10 @@ public enum ReadTrackRenderer {
     static let insertionColor = NSColor(red: 0.8, green: 0, blue: 0.8, alpha: 1.0).cgColor
     /// Deletion line color.
     static let deletionColor = NSColor.gray.cgColor
+    /// Mismatch indicator color for packed mode (bright red).
+    static let mismatchTickColor = NSColor(red: 0.9, green: 0.15, blue: 0.1, alpha: 1.0).cgColor
+    /// Soft-clip indicator color for packed mode (blue-gray).
+    static let softClipColor = NSColor(red: 0.5, green: 0.6, blue: 0.75, alpha: 0.6).cgColor
 
     // MARK: - Zoom Tier Detection
 
@@ -194,6 +198,21 @@ public enum ReadTrackRenderer {
         context.restoreGState()
     }
 
+    // MARK: - Display Settings
+
+    /// Rendering options controllable from the Inspector panel.
+    public struct DisplaySettings {
+        public var showMismatches: Bool = true
+        public var showSoftClips: Bool = true
+        public var showIndels: Bool = true
+
+        public init(showMismatches: Bool = true, showSoftClips: Bool = true, showIndels: Bool = true) {
+            self.showMismatches = showMismatches
+            self.showSoftClips = showSoftClips
+            self.showIndels = showIndels
+        }
+    }
+
     // MARK: - Packed Read Rendering (Tier 2)
 
     /// Packs reads into non-overlapping rows using greedy first-fit algorithm.
@@ -238,22 +257,32 @@ public enum ReadTrackRenderer {
         return (packed, overflow)
     }
 
-    /// Draws packed reads as colored bars with strand indicators.
+    /// Draws packed reads as colored bars with strand indicators, mismatch highlights, and soft clips.
     ///
     /// - Parameters:
     ///   - packedReads: Pre-packed reads with row assignments
     ///   - overflow: Number of reads that didn't fit
     ///   - frame: Reference frame for coordinate mapping
+    ///   - referenceSequence: Optional reference sequence for mismatch detection
+    ///   - referenceStart: 0-based start position of the reference sequence
+    ///   - settings: Display settings controlling mismatch/softclip/indel visibility
     ///   - context: CoreGraphics context
     ///   - rect: Drawing rectangle
     public static func drawPackedReads(
         packedReads: [(row: Int, read: AlignedRead)],
         overflow: Int,
         frame: ReferenceFrame,
+        referenceSequence: String? = nil,
+        referenceStart: Int = 0,
+        settings: DisplaySettings = DisplaySettings(),
         context: CGContext,
         rect: CGRect
     ) {
         context.saveGState()
+
+        // Pre-compute reference characters array once for mismatch detection
+        let refChars: [Character]? = (settings.showMismatches && referenceSequence != nil)
+            ? Array(referenceSequence!.uppercased()) : nil
 
         for (row, read) in packedReads {
             let startPx = frame.genomicToPixel(Double(read.position))
@@ -270,6 +299,11 @@ public enum ReadTrackRenderer {
 
             // MAPQ-based opacity
             let alpha = mapqAlpha(read.mapq)
+
+            // Draw soft-clip extensions (semi-transparent bars extending from read ends)
+            if settings.showSoftClips {
+                drawSoftClipExtensions(read: read, frame: frame, context: context, y: y, readHeight: packedReadHeight, alpha: alpha)
+            }
 
             // Draw read rectangle with pointed end for strand
             let readRect = CGRect(x: startPx, y: y, width: readWidth, height: packedReadHeight)
@@ -310,11 +344,20 @@ public enum ReadTrackRenderer {
                 context.fill(readRect)
             }
 
-            // Draw deletion lines
-            drawDeletions(read: read, frame: frame, context: context, y: y + packedReadHeight / 2, readHeight: packedReadHeight)
+            // Draw mismatch tick marks on top of the read bar
+            if settings.showMismatches, let refChars {
+                drawMismatchTicks(
+                    read: read, frame: frame, refChars: refChars, referenceStart: referenceStart,
+                    context: context, y: y, readHeight: packedReadHeight
+                )
+            }
 
-            // Draw insertion ticks
-            drawInsertionTicks(read: read, frame: frame, context: context, y: y, readHeight: packedReadHeight)
+            // Draw deletion lines
+            if settings.showIndels {
+                drawDeletions(read: read, frame: frame, context: context, y: y + packedReadHeight / 2, readHeight: packedReadHeight)
+                // Draw insertion ticks
+                drawInsertionTicks(read: read, frame: frame, context: context, y: y, readHeight: packedReadHeight)
+            }
         }
 
         // Draw overflow indicator
@@ -335,6 +378,7 @@ public enum ReadTrackRenderer {
     ///   - frame: Reference frame for coordinate mapping
     ///   - referenceSequence: The reference sequence for match/mismatch detection
     ///   - referenceStart: 0-based start position of the reference sequence
+    ///   - settings: Display settings controlling mismatch/softclip/indel visibility
     ///   - context: CoreGraphics context
     ///   - rect: Drawing rectangle
     public static func drawBaseReads(
@@ -343,6 +387,7 @@ public enum ReadTrackRenderer {
         frame: ReferenceFrame,
         referenceSequence: String?,
         referenceStart: Int,
+        settings: DisplaySettings = DisplaySettings(),
         context: CGContext,
         rect: CGRect
     ) {
@@ -357,6 +402,11 @@ public enum ReadTrackRenderer {
             guard y + baseReadHeight <= rect.maxY else { continue }
 
             let alpha = mapqAlpha(read.mapq)
+
+            // Draw soft-clip background extensions
+            if settings.showSoftClips {
+                drawSoftClipExtensions(read: read, frame: frame, context: context, y: y, readHeight: baseReadHeight, alpha: alpha)
+            }
 
             // Draw read background
             let startPx = frame.genomicToPixel(Double(read.position))
@@ -373,6 +423,7 @@ public enum ReadTrackRenderer {
                 frame: frame,
                 referenceSequence: referenceSequence,
                 referenceStart: referenceStart,
+                showMismatches: settings.showMismatches,
                 context: context,
                 y: y,
                 readHeight: baseReadHeight,
@@ -382,10 +433,11 @@ public enum ReadTrackRenderer {
             )
 
             // Draw insertion markers
-            drawInsertionMarkers(read: read, frame: frame, context: context, y: y, readHeight: baseReadHeight)
-
-            // Draw deletion lines
-            drawDeletions(read: read, frame: frame, context: context, y: y + baseReadHeight / 2, readHeight: baseReadHeight)
+            if settings.showIndels {
+                drawInsertionMarkers(read: read, frame: frame, context: context, y: y, readHeight: baseReadHeight)
+                // Draw deletion lines
+                drawDeletions(read: read, frame: frame, context: context, y: y + baseReadHeight / 2, readHeight: baseReadHeight)
+            }
         }
 
         // Draw overflow indicator
@@ -404,6 +456,7 @@ public enum ReadTrackRenderer {
         frame: ReferenceFrame,
         referenceSequence: String?,
         referenceStart: Int,
+        showMismatches: Bool = true,
         context: CGContext,
         y: CGFloat,
         readHeight: CGFloat,
@@ -421,12 +474,12 @@ public enum ReadTrackRenderer {
             // Determine if match or mismatch
             let readChar = Character(String(readBase).uppercased())
             let isMatch: Bool
-            if let refChars, refPos >= referenceStart,
+            if showMismatches, let refChars, refPos >= referenceStart,
                (refPos - referenceStart) < refChars.count {
                 let refChar = refChars[refPos - referenceStart]
                 isMatch = (readChar == Character(String(refChar)))
             } else {
-                // No reference available, treat as match (show dot)
+                // No reference available or mismatches disabled, treat as match (show dot)
                 isMatch = true
             }
 
@@ -458,6 +511,97 @@ public enum ReadTrackRenderer {
             let drawX = x + (cellWidth - size.width) / 2
             let drawY = y + (readHeight - size.height) / 2
             str.draw(at: CGPoint(x: drawX, y: drawY), withAttributes: attrs)
+        }
+    }
+
+    /// Draws colored tick marks at mismatch positions on a packed read bar.
+    ///
+    /// Iterates through aligned bases using `forEachAlignedBase`, comparing each
+    /// read base to the corresponding reference base. Mismatches are drawn as
+    /// vertical red tick marks spanning the full read height, making them visible
+    /// even when individual bases cannot be displayed.
+    ///
+    /// At wider zoom levels where multiple bases map to one pixel, mismatches
+    /// within the same pixel column are coalesced into a single tick.
+    private static func drawMismatchTicks(
+        read: AlignedRead,
+        frame: ReferenceFrame,
+        refChars: [Character],
+        referenceStart: Int,
+        context: CGContext,
+        y: CGFloat,
+        readHeight: CGFloat
+    ) {
+        let pixelsPerBase = 1.0 / frame.scale
+        context.setFillColor(mismatchTickColor)
+
+        // Track last drawn pixel to coalesce multiple mismatches in the same pixel
+        var lastMismatchPixel: Int = Int.min
+
+        read.forEachAlignedBase { readBase, refPos, op in
+            // Skip soft clips — handled separately
+            guard op != .softClip else { return }
+
+            let refIdx = refPos - referenceStart
+            guard refIdx >= 0, refIdx < refChars.count else { return }
+
+            let readChar = Character(String(readBase).uppercased())
+            let refChar = refChars[refIdx]
+
+            guard readChar != refChar else { return }
+            // Skip ambiguous bases
+            guard readChar != "N" && refChar != "N" else { return }
+
+            let x = frame.genomicToPixel(Double(refPos))
+            let px = Int(x)
+
+            // Coalesce: skip if same pixel column as last mismatch
+            guard px != lastMismatchPixel else { return }
+            lastMismatchPixel = px
+
+            // Draw tick: width is max(1, pixelsPerBase) to be visible
+            let tickWidth = max(1.0, min(CGFloat(pixelsPerBase), 3.0))
+            context.fill(CGRect(x: x, y: y, width: tickWidth, height: readHeight))
+        }
+    }
+
+    /// Draws semi-transparent extensions at soft-clipped ends of a read in packed mode.
+    ///
+    /// Soft clips are bases present in the read but not part of the alignment.
+    /// They appear as translucent extensions beyond the aligned portion,
+    /// indicating where the read sequence continues past the alignment boundary.
+    private static func drawSoftClipExtensions(
+        read: AlignedRead,
+        frame: ReferenceFrame,
+        context: CGContext,
+        y: CGFloat,
+        readHeight: CGFloat,
+        alpha: CGFloat
+    ) {
+        guard !read.cigar.isEmpty else { return }
+
+        // Check for leading soft clip
+        if let first = read.cigar.first, first.op == .softClip {
+            let clipBases = first.length
+            let alignStartPx = frame.genomicToPixel(Double(read.position))
+            let clipStartPx = frame.genomicToPixel(Double(read.position - clipBases))
+            let width = alignStartPx - clipStartPx
+            if width >= 1 {
+                context.setFillColor(softClipColor.copy(alpha: alpha * 0.5)!)
+                context.fill(CGRect(x: clipStartPx, y: y, width: width, height: readHeight))
+            }
+        }
+
+        // Check for trailing soft clip
+        if let last = read.cigar.last, last.op == .softClip {
+            let clipBases = last.length
+            let alignEndPx = frame.genomicToPixel(Double(read.alignmentEnd))
+            let clipEndPx = frame.genomicToPixel(Double(read.alignmentEnd + clipBases))
+            let width = clipEndPx - alignEndPx
+            if width >= 1 {
+                context.setFillColor(softClipColor.copy(alpha: alpha * 0.5)!)
+                context.fill(CGRect(x: alignEndPx, y: y, width: width, height: readHeight))
+            }
         }
     }
 

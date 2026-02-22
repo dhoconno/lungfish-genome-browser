@@ -1957,6 +1957,18 @@ public class SequenceViewerView: NSView {
     /// Cached packed reads for hit-testing (updated during draw)
     private var cachedPackedReads: [(row: Int, read: AlignedRead)] = []
 
+    /// Cached packed layout overflow count (from last pack operation)
+    private var cachedPackOverflow: Int = 0
+
+    /// Scale at which the pack layout was computed (recompute if scale changes)
+    private var cachedPackScale: Double = 0
+
+    /// Read data generation when pack layout was computed (recompute if data changes)
+    private var cachedPackDataGeneration: Int = -1
+
+    /// Max rows setting when pack layout was computed
+    private var cachedPackMaxRows: Int = 0
+
     /// The Y offset at which reads were last rendered (for hit-testing)
     private var lastRenderedReadY: CGFloat = 0
 
@@ -2732,6 +2744,10 @@ public class SequenceViewerView: NSView {
         self.isFetchingReads = false
         self.lastVariantBottomY = 0
         self.alignmentChromosomeAliasMap = [:]
+        self.cachedPackedReads = []
+        self.cachedPackOverflow = 0
+        self.cachedPackScale = 0
+        self.cachedPackDataGeneration = -1
 
         // Cache sample count and build chromosome alias map from variant databases
         self.cachedSampleCount = 0
@@ -3210,27 +3226,58 @@ public class SequenceViewerView: NSView {
                 lastRenderedReadY = rY
                 lastRenderedReadTier = tier
 
+                let displaySettings = ReadTrackRenderer.DisplaySettings(
+                    showMismatches: showMismatchesSetting,
+                    showSoftClips: showSoftClipsSetting,
+                    showIndels: showIndelsSetting
+                )
+
+                // Reuse cached pack layout if scale, data, and settings haven't changed.
+                // packReads is O(n·maxRows) and only depends on scale (not pan position),
+                // so we can avoid recomputing during horizontal scrolling.
+                let needsRepack = (scale != cachedPackScale)
+                    || (readFetchGeneration != cachedPackDataGeneration)
+                    || (maxRows != cachedPackMaxRows)
+
                 switch tier {
                 case .coverage:
                     cachedPackedReads = []
                     let rect = CGRect(x: 0, y: rY, width: bounds.width, height: ReadTrackRenderer.coverageTrackHeight)
                     ReadTrackRenderer.drawCoverage(reads: cachedAlignedReads, frame: frame, context: context, rect: rect)
                 case .packed:
-                    let (packed, overflow) = ReadTrackRenderer.packReads(cachedAlignedReads, frame: frame, maxRows: maxRows)
-                    cachedPackedReads = packed
-                    let rowCount = (packed.map(\.row).max() ?? -1) + 1
+                    if needsRepack {
+                        let (packed, overflow) = ReadTrackRenderer.packReads(cachedAlignedReads, frame: frame, maxRows: maxRows)
+                        cachedPackedReads = packed
+                        cachedPackOverflow = overflow
+                        cachedPackScale = scale
+                        cachedPackDataGeneration = readFetchGeneration
+                        cachedPackMaxRows = maxRows
+                    }
+                    let rowCount = (cachedPackedReads.map(\.row).max() ?? -1) + 1
                     let height = ReadTrackRenderer.totalHeight(rowCount: rowCount, tier: .packed)
                     let rect = CGRect(x: 0, y: rY, width: bounds.width, height: height)
-                    ReadTrackRenderer.drawPackedReads(packedReads: packed, overflow: overflow, frame: frame, context: context, rect: rect)
+                    ReadTrackRenderer.drawPackedReads(
+                        packedReads: cachedPackedReads, overflow: cachedPackOverflow, frame: frame,
+                        referenceSequence: cachedBundleSequence, referenceStart: Int(frame.start),
+                        settings: displaySettings,
+                        context: context, rect: rect
+                    )
                 case .base:
-                    let (packed, overflow) = ReadTrackRenderer.packReads(cachedAlignedReads, frame: frame, maxRows: maxRows)
-                    cachedPackedReads = packed
-                    let rowCount = (packed.map(\.row).max() ?? -1) + 1
+                    if needsRepack {
+                        let (packed, overflow) = ReadTrackRenderer.packReads(cachedAlignedReads, frame: frame, maxRows: maxRows)
+                        cachedPackedReads = packed
+                        cachedPackOverflow = overflow
+                        cachedPackScale = scale
+                        cachedPackDataGeneration = readFetchGeneration
+                        cachedPackMaxRows = maxRows
+                    }
+                    let rowCount = (cachedPackedReads.map(\.row).max() ?? -1) + 1
                     let height = ReadTrackRenderer.totalHeight(rowCount: rowCount, tier: .base)
                     let rect = CGRect(x: 0, y: rY, width: bounds.width, height: height)
                     ReadTrackRenderer.drawBaseReads(
-                        packedReads: packed, overflow: overflow, frame: frame,
+                        packedReads: cachedPackedReads, overflow: cachedPackOverflow, frame: frame,
                         referenceSequence: cachedBundleSequence, referenceStart: Int(frame.start),
+                        settings: displaySettings,
                         context: context, rect: rect
                     )
                 }

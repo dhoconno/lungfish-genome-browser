@@ -483,4 +483,324 @@ final class ReadTrackRendererTests: XCTestCase {
         let rows = Set(packed.map(\.row))
         XCTAssertEqual(rows.count, 2)
     }
+
+    // MARK: - Display Settings
+
+    func testDisplaySettingsDefaultValues() {
+        let settings = ReadTrackRenderer.DisplaySettings()
+        XCTAssertTrue(settings.showMismatches)
+        XCTAssertTrue(settings.showSoftClips)
+        XCTAssertTrue(settings.showIndels)
+    }
+
+    func testDisplaySettingsCustomValues() {
+        let settings = ReadTrackRenderer.DisplaySettings(
+            showMismatches: false, showSoftClips: true, showIndels: false
+        )
+        XCTAssertFalse(settings.showMismatches)
+        XCTAssertTrue(settings.showSoftClips)
+        XCTAssertFalse(settings.showIndels)
+    }
+
+    // MARK: - Mismatch Color Constants
+
+    func testMismatchColorConstantsExist() {
+        // Verify the new color constants are present
+        XCTAssertNotNil(ReadTrackRenderer.mismatchTickColor)
+        XCTAssertNotNil(ReadTrackRenderer.softClipColor)
+    }
+
+    // MARK: - Packed Mode Rendering with Reference Sequence
+
+    func testDrawPackedReadsWithMismatchesDoesNotCrash() {
+        // Scale: 2 bp/px (packed mode range)
+        let frame = makeFrame(start: 0, end: 1000, pixelWidth: 500)
+        // Reference is all As, read has mismatches at known positions
+        let refSeq = String(repeating: "A", count: 1000)
+        var readSeqChars = Array(repeating: Character("A"), count: 100)
+        readSeqChars[10] = "T"  // mismatch at position 110
+        readSeqChars[30] = "G"  // mismatch at position 130
+        readSeqChars[50] = "C"  // mismatch at position 150
+        let readSeq = String(readSeqChars)
+
+        let read = AlignedRead(
+            name: "mismatch_read", flag: 99, chromosome: "chr1", position: 100,
+            mapq: 60, cigar: [CIGAROperation(op: .match, length: 100)],
+            sequence: readSeq, qualities: Array(repeating: 30, count: 100)
+        )
+
+        let (packed, overflow) = ReadTrackRenderer.packReads([read], frame: frame)
+        let width = 500, height = 100
+        let context = CGContext(
+            data: nil, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+
+        let rect = CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height))
+        let settings = ReadTrackRenderer.DisplaySettings(showMismatches: true, showSoftClips: true, showIndels: true)
+
+        ReadTrackRenderer.drawPackedReads(
+            packedReads: packed, overflow: overflow, frame: frame,
+            referenceSequence: refSeq, referenceStart: 0, settings: settings,
+            context: context, rect: rect
+        )
+        // No crash = success
+    }
+
+    func testDrawPackedReadsWithMismatchesDisabledDoesNotCrash() {
+        let frame = makeFrame(start: 0, end: 1000, pixelWidth: 500)
+        let refSeq = String(repeating: "A", count: 1000)
+        let read = makeRead(position: 100, cigarLength: 100)
+
+        let (packed, overflow) = ReadTrackRenderer.packReads([read], frame: frame)
+        let width = 500, height = 100
+        let context = CGContext(
+            data: nil, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+
+        let rect = CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height))
+        let settings = ReadTrackRenderer.DisplaySettings(showMismatches: false, showSoftClips: false, showIndels: false)
+
+        ReadTrackRenderer.drawPackedReads(
+            packedReads: packed, overflow: overflow, frame: frame,
+            referenceSequence: refSeq, referenceStart: 0, settings: settings,
+            context: context, rect: rect
+        )
+    }
+
+    func testDrawPackedReadsWithoutReferenceSequence() {
+        // When no reference sequence is available, mismatches should be skipped silently
+        let frame = makeFrame(start: 0, end: 1000, pixelWidth: 500)
+        let read = makeRead(position: 100, cigarLength: 100)
+
+        let (packed, overflow) = ReadTrackRenderer.packReads([read], frame: frame)
+        let width = 500, height = 100
+        let context = CGContext(
+            data: nil, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+
+        let rect = CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height))
+        // No referenceSequence → nil, should skip mismatch drawing gracefully
+        ReadTrackRenderer.drawPackedReads(
+            packedReads: packed, overflow: overflow, frame: frame,
+            referenceSequence: nil, referenceStart: 0,
+            settings: ReadTrackRenderer.DisplaySettings(showMismatches: true),
+            context: context, rect: rect
+        )
+    }
+
+    // MARK: - Soft Clip Rendering
+
+    func testDrawPackedReadsWithSoftClipsDoesNotCrash() {
+        // Read with leading and trailing soft clips: 5S90M5S
+        let frame = makeFrame(start: 0, end: 1000, pixelWidth: 500)
+        let cigar = [
+            CIGAROperation(op: .softClip, length: 5),
+            CIGAROperation(op: .match, length: 90),
+            CIGAROperation(op: .softClip, length: 5),
+        ]
+        let read = AlignedRead(
+            name: "clipped", flag: 99, chromosome: "chr1", position: 100,
+            mapq: 60, cigar: cigar,
+            sequence: String(repeating: "A", count: 100),
+            qualities: Array(repeating: 30, count: 100)
+        )
+
+        let (packed, overflow) = ReadTrackRenderer.packReads([read], frame: frame)
+        let width = 500, height = 100
+        let context = CGContext(
+            data: nil, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+
+        let rect = CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height))
+        ReadTrackRenderer.drawPackedReads(
+            packedReads: packed, overflow: overflow, frame: frame,
+            settings: ReadTrackRenderer.DisplaySettings(showSoftClips: true),
+            context: context, rect: rect
+        )
+    }
+
+    func testDrawPackedReadsWithSoftClipsDisabled() {
+        let frame = makeFrame(start: 0, end: 1000, pixelWidth: 500)
+        let cigar = [
+            CIGAROperation(op: .softClip, length: 5),
+            CIGAROperation(op: .match, length: 90),
+            CIGAROperation(op: .softClip, length: 5),
+        ]
+        let read = AlignedRead(
+            name: "clipped", flag: 99, chromosome: "chr1", position: 100,
+            mapq: 60, cigar: cigar,
+            sequence: String(repeating: "A", count: 100),
+            qualities: Array(repeating: 30, count: 100)
+        )
+
+        let (packed, overflow) = ReadTrackRenderer.packReads([read], frame: frame)
+        let width = 500, height = 100
+        let context = CGContext(
+            data: nil, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+
+        let rect = CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height))
+        ReadTrackRenderer.drawPackedReads(
+            packedReads: packed, overflow: overflow, frame: frame,
+            settings: ReadTrackRenderer.DisplaySettings(showSoftClips: false),
+            context: context, rect: rect
+        )
+    }
+
+    // MARK: - Base Mode with Display Settings
+
+    func testDrawBaseReadsWithSettingsDoesNotCrash() {
+        let frame = makeFrame(start: 0, end: 200, pixelWidth: 1000)
+        let read = makeRead(
+            position: 50, cigarLength: 50,
+            sequence: String(repeating: "ACGT", count: 12) + "AC" // 50 bases
+        )
+        let refSeq = String(repeating: "A", count: 200)
+
+        let (packed, overflow) = ReadTrackRenderer.packReads([read], frame: frame)
+        let width = 1000, height = 100
+        let context = CGContext(
+            data: nil, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+
+        let rect = CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height))
+        let settings = ReadTrackRenderer.DisplaySettings(showMismatches: true, showSoftClips: true, showIndels: true)
+
+        ReadTrackRenderer.drawBaseReads(
+            packedReads: packed, overflow: overflow, frame: frame,
+            referenceSequence: refSeq, referenceStart: 0, settings: settings,
+            context: context, rect: rect
+        )
+    }
+
+    func testDrawBaseReadsWithAllDisabled() {
+        let frame = makeFrame(start: 0, end: 200, pixelWidth: 1000)
+        let cigar = [
+            CIGAROperation(op: .softClip, length: 5),
+            CIGAROperation(op: .match, length: 40),
+            CIGAROperation(op: .insertion, length: 3),
+            CIGAROperation(op: .match, length: 10),
+            CIGAROperation(op: .deletion, length: 2),
+            CIGAROperation(op: .match, length: 5),
+            CIGAROperation(op: .softClip, length: 5),
+        ]
+        let read = AlignedRead(
+            name: "complex", flag: 99, chromosome: "chr1", position: 50,
+            mapq: 60, cigar: cigar,
+            sequence: String(repeating: "A", count: 68), // 5+40+3+10+5+5 = 68
+            qualities: Array(repeating: 30, count: 68)
+        )
+        let refSeq = String(repeating: "A", count: 200)
+
+        let (packed, overflow) = ReadTrackRenderer.packReads([read], frame: frame)
+        let width = 1000, height = 100
+        let context = CGContext(
+            data: nil, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+
+        let rect = CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height))
+        let settings = ReadTrackRenderer.DisplaySettings(showMismatches: false, showSoftClips: false, showIndels: false)
+
+        ReadTrackRenderer.drawBaseReads(
+            packedReads: packed, overflow: overflow, frame: frame,
+            referenceSequence: refSeq, referenceStart: 0, settings: settings,
+            context: context, rect: rect
+        )
+    }
+
+    // MARK: - Mismatch Detection Logic
+
+    func testForEachAlignedBaseDetectsMismatches() {
+        // Read sequence "ACGTA" at position 0 with reference "AAGAA"
+        // Mismatches at positions 1 (C vs A), 2 (G vs G) — match, 3 (T vs A)
+        let read = AlignedRead(
+            name: "test", flag: 0, chromosome: "chr1", position: 0,
+            mapq: 60, cigar: [CIGAROperation(op: .match, length: 5)],
+            sequence: "ACGTA", qualities: []
+        )
+        let reference = "AAGAA"
+        let refChars = Array(reference)
+
+        var mismatches: [(Int, Character, Character)] = []
+        read.forEachAlignedBase { readBase, refPos, _ in
+            let readChar = Character(String(readBase).uppercased())
+            if refPos < refChars.count {
+                let refChar = refChars[refPos]
+                if readChar != refChar {
+                    mismatches.append((refPos, readChar, refChar))
+                }
+            }
+        }
+
+        XCTAssertEqual(mismatches.count, 2)
+        XCTAssertEqual(mismatches[0].0, 1) // position 1: C vs A
+        XCTAssertEqual(mismatches[0].1, "C")
+        XCTAssertEqual(mismatches[1].0, 3) // position 3: T vs A
+        XCTAssertEqual(mismatches[1].1, "T")
+    }
+
+    func testForEachAlignedBaseSkipsDeletions() {
+        // 3M2D3M — deletions don't yield read bases
+        let read = AlignedRead(
+            name: "test", flag: 0, chromosome: "chr1", position: 0,
+            mapq: 60, cigar: [
+                CIGAROperation(op: .match, length: 3),
+                CIGAROperation(op: .deletion, length: 2),
+                CIGAROperation(op: .match, length: 3),
+            ],
+            sequence: "AAATTT", qualities: []
+        )
+
+        var alignedPositions: [Int] = []
+        read.forEachAlignedBase { _, refPos, _ in
+            alignedPositions.append(refPos)
+        }
+
+        // Should yield: 0,1,2 (3M), skip 3,4 (2D), then 5,6,7 (3M)
+        XCTAssertEqual(alignedPositions, [0, 1, 2, 5, 6, 7])
+    }
+
+    func testSoftClipPositionsInForEachAlignedBase() {
+        // 3S5M2S — soft clips don't consume reference
+        let read = AlignedRead(
+            name: "test", flag: 0, chromosome: "chr1", position: 100,
+            mapq: 60, cigar: [
+                CIGAROperation(op: .softClip, length: 3),
+                CIGAROperation(op: .match, length: 5),
+                CIGAROperation(op: .softClip, length: 2),
+            ],
+            sequence: "AAACCCCCGG", qualities: []
+        )
+
+        var matchPositions: [Int] = []
+        read.forEachAlignedBase { _, refPos, op in
+            if op == .match {
+                matchPositions.append(refPos)
+            }
+        }
+
+        // Match bases should be at 100-104
+        XCTAssertEqual(matchPositions, [100, 101, 102, 103, 104])
+    }
 }
