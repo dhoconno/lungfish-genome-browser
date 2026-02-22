@@ -157,6 +157,11 @@ public enum ReadTrackRenderer {
             return (fill, stroke)
 
         case .mappingQuality:
+            // MAPQ 255 = unavailable per SAM spec — show as neutral gray
+            if read.mapq == 255 {
+                let gray = CGColor(gray: 0.65, alpha: alpha)
+                return (gray, CGColor(gray: 0.5, alpha: alpha))
+            }
             // Heatmap: blue (low quality) → green (medium) → red (high quality)
             let mqNorm = CGFloat(read.mapq) / 60.0
             let clamped = min(max(mqNorm, 0), 1)
@@ -212,16 +217,17 @@ public enum ReadTrackRenderer {
     /// Pre-assigns colors for read groups found in a set of reads.
     static func buildReadGroupColorMap(from reads: [AlignedRead]) -> [String: CGColor] {
         var map: [String: CGColor] = [:]
-        // Collect unique read groups
-        var seen: [String] = []
+        // Collect unique read groups with O(1) membership check
+        var seenSet = Set<String>()
+        var orderedGroups: [String] = []
         for read in reads {
-            if let rg = read.readGroup, !seen.contains(rg) {
-                seen.append(rg)
+            if let rg = read.readGroup, seenSet.insert(rg).inserted {
+                orderedGroups.append(rg)
             }
         }
         // Assign distinct hues
-        let count = max(seen.count, 1)
-        for (i, rg) in seen.enumerated() {
+        let count = max(orderedGroups.count, 1)
+        for (i, rg) in orderedGroups.enumerated() {
             let hue = CGFloat(i) / CGFloat(count)
             let color = NSColor(hue: hue, saturation: 0.55, brightness: 0.75, alpha: 1.0).cgColor
             map[rg] = color
@@ -252,14 +258,27 @@ public enum ReadTrackRenderer {
         var reverseBins = [Int](repeating: 0, count: pixelWidth)
 
         for read in reads {
-            let startPx = max(0, Int(frame.genomicToPixel(Double(read.position)) - rect.minX))
-            let endPx = min(pixelWidth - 1, Int(frame.genomicToPixel(Double(read.alignmentEnd)) - rect.minX))
-            guard startPx <= endPx else { continue }
-
-            if read.isReverse {
-                for i in startPx...endPx { reverseBins[i] += 1 }
-            } else {
-                for i in startPx...endPx { forwardBins[i] += 1 }
+            // Walk CIGAR to skip N (intron) and D (deletion) regions for accurate coverage.
+            // Only count bins for reference-consuming, query-consuming operations (M, =, X).
+            var refPos = read.position
+            for op in read.cigar {
+                switch op.op {
+                case .match, .seqMatch, .seqMismatch:
+                    let opStart = max(0, Int(frame.genomicToPixel(Double(refPos)) - rect.minX))
+                    let opEnd = min(pixelWidth - 1, Int(frame.genomicToPixel(Double(refPos + op.length)) - rect.minX))
+                    if opStart <= opEnd {
+                        if read.isReverse {
+                            for i in opStart...opEnd { reverseBins[i] += 1 }
+                        } else {
+                            for i in opStart...opEnd { forwardBins[i] += 1 }
+                        }
+                    }
+                    refPos += op.length
+                case .deletion, .skip:
+                    refPos += op.length
+                case .insertion, .softClip, .hardClip, .padding:
+                    break
+                }
             }
         }
 
@@ -730,23 +749,9 @@ public enum ReadTrackRenderer {
                 }
 
             case .softClip:
+                // Soft clips are rendered by drawSoftClipExtensions; here we just advance the query index
                 for _ in 0..<op.length {
-                    guard byteIndex < seqBytes.count else { continue }
-                    let readByte = seqBytes[byteIndex]
-                    byteIndex += 1
-
-                    // Soft clips shown as lowercase at reduced opacity
-                    let lowerByte = readByte | 0x20
-                    let upperByte = readByte & 0xDF
-                    if let glyph = cache.glyphs[lowerByte] ?? cache.glyphs[upperByte] {
-                        let advance = cache.advances[lowerByte] ?? cache.advances[upperByte] ?? cache.dotAdvance
-                        let softColor = colorForByte(upperByte, a: colorA, t: colorT, c: colorC, g: colorG, n: colorN).copy(alpha: softAlphaFactor)!
-                        context.setFillColor(softColor)
-                        var g = glyph
-                        var pos = CGPoint(x: 0, y: baselineY) // soft clips don't have ref positions; skip rendering
-                        CTFontDrawGlyphs(font, &g, &pos, 1, context)
-                        _ = advance
-                    }
+                    if byteIndex < seqBytes.count { byteIndex += 1 }
                 }
 
             case .insertion:
@@ -884,7 +889,13 @@ public enum ReadTrackRenderer {
         }
     }
 
-    /// Draws deletion connecting lines for a read.
+    /// Intron (splice junction) indicator color — thin gray line, distinct from deletion.
+    static let intronColor = NSColor(white: 0.5, alpha: 0.7).cgColor
+
+    /// Draws deletion and intron (N/skip) connecting lines for a read.
+    ///
+    /// Deletions are shown as dashed dark gray lines; introns are shown as
+    /// thin solid lighter lines (matching IGV convention for RNA-seq data).
     private static func drawDeletions(
         read: AlignedRead,
         frame: ReferenceFrame,
@@ -904,6 +915,15 @@ public enum ReadTrackRenderer {
                 context.addLine(to: CGPoint(x: endPx, y: y))
                 context.strokePath()
                 context.setLineDash(phase: 0, lengths: [])
+            } else if op.op == .skip {
+                // N operations (introns) — thin solid line, distinct from deletions
+                let startPx = frame.genomicToPixel(Double(refPos))
+                let endPx = frame.genomicToPixel(Double(refPos + op.length))
+                context.setStrokeColor(intronColor)
+                context.setLineWidth(0.5)
+                context.move(to: CGPoint(x: startPx, y: y))
+                context.addLine(to: CGPoint(x: endPx, y: y))
+                context.strokePath()
             }
             if op.consumesReference {
                 refPos += op.length
@@ -990,24 +1010,15 @@ public enum ReadTrackRenderer {
     // MARK: - Utility
 
     /// Returns alpha value for a given mapping quality.
+    /// MAPQ 255 means "unavailable" per SAM spec — rendered at slightly reduced opacity.
     private static func mapqAlpha(_ mapq: UInt8) -> CGFloat {
         switch mapq {
-        case 40...255: return 1.0
+        case 255:      return 0.85  // Unavailable quality — distinct from high-quality
+        case 40..<255: return 1.0
         case 20..<40:  return 0.7
         case 10..<20:  return 0.45
         case 1..<10:   return 0.25
         default:       return 0.15
-        }
-    }
-
-    /// Returns the color for a nucleotide base.
-    private static func colorForBase(_ base: Character) -> CGColor {
-        switch base {
-        case "A", "a": return baseA
-        case "T", "t": return baseT
-        case "C", "c": return baseC
-        case "G", "g": return baseG
-        default:        return baseN
         }
     }
 

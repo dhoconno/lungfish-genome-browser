@@ -53,7 +53,7 @@ public final class AlignmentMetadataDatabase: @unchecked Sendable {
     public init(url: URL) throws {
         self.databaseURL = url
         var dbHandle: OpaquePointer?
-        let rc = sqlite3_open_v2(url.path, &dbHandle, SQLITE_OPEN_READONLY, nil)
+        let rc = sqlite3_open_v2(url.path, &dbHandle, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil)
         guard rc == SQLITE_OK, let handle = dbHandle else {
             let msg = dbHandle.map { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
             sqlite3_close(dbHandle)
@@ -66,7 +66,9 @@ public final class AlignmentMetadataDatabase: @unchecked Sendable {
     private init(url: URL, readWrite: Bool) throws {
         self.databaseURL = url
         var dbHandle: OpaquePointer?
-        let flags = readWrite ? (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE) : SQLITE_OPEN_READONLY
+        let flags = readWrite
+            ? (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX)
+            : (SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX)
         let rc = sqlite3_open_v2(url.path, &dbHandle, flags, nil)
         guard rc == SQLITE_OK, let handle = dbHandle else {
             let msg = dbHandle.map { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
@@ -77,7 +79,7 @@ public final class AlignmentMetadataDatabase: @unchecked Sendable {
     }
 
     deinit {
-        sqlite3_close(db)
+        sqlite3_close_v2(db)
     }
 
     // MARK: - Database Creation

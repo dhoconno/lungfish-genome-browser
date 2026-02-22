@@ -221,6 +221,9 @@ public struct AlignedRead: Sendable, Identifiable {
     public func insertSizeClass(expectedInsertSize: Int = 400, stdDev: Int = 100, stdDevs: Double = 3) -> InsertSizeClass {
         guard isPaired, !isMateUnmapped else { return .notApplicable }
 
+        // TLEN=0 means insert size not computable (SAM spec §1.4)
+        guard insertSize != 0 else { return .notApplicable }
+
         // Inter-chromosomal
         if let mateChr = mateChromosome, mateChr != chromosome {
             return .interchromosomal

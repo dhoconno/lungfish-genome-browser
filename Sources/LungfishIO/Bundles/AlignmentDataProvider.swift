@@ -221,6 +221,11 @@ public final class AlignmentDataProvider: @unchecked Sendable {
             var stderrData = Data()
             let group = DispatchGroup()
 
+            // Guard against double-resume: only the first path to set this resumes the continuation.
+            // The timeout path and the normal completion path race; an unfair lock ensures exactly one wins.
+            var resumed = false
+            let lock = NSLock()
+
             group.enter()
             DispatchQueue.global(qos: .userInitiated).async {
                 stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
@@ -241,9 +246,19 @@ public final class AlignmentDataProvider: @unchecked Sendable {
             let timeoutResult = group.wait(timeout: .now() + timeout)
             if timeoutResult == .timedOut {
                 process.terminate()
-                // Wait briefly for cleanup
-                group.wait(timeout: .now() + 2)
-                continuation.resume(throwing: AlignmentFetchError.timeout)
+                // Close pipe read ends to unblock the GCD reader blocks
+                stdoutPipe.fileHandleForReading.closeFile()
+                stderrPipe.fileHandleForReading.closeFile()
+                // Wait for GCD blocks to complete (they will now return quickly since pipes are closed)
+                group.wait(timeout: .now() + 5)
+
+                lock.lock()
+                let shouldResume = !resumed
+                resumed = true
+                lock.unlock()
+                if shouldResume {
+                    continuation.resume(throwing: AlignmentFetchError.timeout)
+                }
                 return
             }
 
@@ -252,7 +267,13 @@ public final class AlignmentDataProvider: @unchecked Sendable {
             let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
             let stderr = String(data: stderrData, encoding: .utf8) ?? ""
 
-            continuation.resume(returning: (process.terminationStatus, stdout, stderr))
+            lock.lock()
+            let shouldResume = !resumed
+            resumed = true
+            lock.unlock()
+            if shouldResume {
+                continuation.resume(returning: (process.terminationStatus, stdout, stderr))
+            }
         }
     }
 

@@ -308,8 +308,7 @@ public final class BAMImportService: @unchecked Sendable {
         progressHandler?(0.05, "Creating index (this may take a few minutes for large files)...")
 
         let runner = NativeToolRunner.shared
-        let indexArg = format == .cram ? "index" : "index"
-        let result = try await runner.run(.samtools, arguments: [indexArg, bamURL.path], timeout: 3600)
+        let result = try await runner.run(.samtools, arguments: ["index", bamURL.path], timeout: 3600)
 
         guard result.isSuccess else {
             throw BAMImportError.indexCreationFailed(result.stderr)
