@@ -1021,6 +1021,46 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         }
     }
 
+    @objc func importBAMToBundle(_ sender: Any?) {
+        debugLog("importBAMToBundle: Menu action triggered")
+
+        // Require a bundle to be loaded
+        guard let viewerController = mainWindowController?.mainSplitViewController?.viewerController,
+              let bundleURL = viewerController.currentBundleURL else {
+            showAlert(title: "No Bundle Loaded", message: "Please open a reference genome bundle before importing alignments.")
+            return
+        }
+
+        guard let window = mainWindowController?.window else {
+            debugLog("importBAMToBundle: No main window available")
+            return
+        }
+
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        var bamTypes: [UTType] = []
+        for ext in ["bam", "cram", "sam"] {
+            if let utType = UTType(filenameExtension: ext) {
+                bamTypes.append(utType)
+            }
+        }
+        panel.allowedContentTypes = bamTypes
+        panel.allowsOtherFileTypes = true
+        panel.message = "Select a BAM, CRAM, or SAM file to import into the current bundle"
+        panel.prompt = "Import"
+
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let bamURL = panel.url else {
+                debugLog("importBAMToBundle: User cancelled")
+                return
+            }
+            debugLog("importBAMToBundle: Selected \(bamURL.lastPathComponent)")
+            self?.performBAMImport(bamURL: bamURL, bundleURL: bundleURL)
+        }
+    }
+
     private func performVCFImport(vcfURL: URL, bundleURL: URL) {
         let cancelFlag = OSAllocatedUnfairLock(initialState: false)
         let selectedImportProfile = selectedVCFImportProfile()
@@ -1369,6 +1409,75 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         let mins = rounded / 60
         let secs = rounded % 60
         return secs == 0 ? "ETA ~\(mins)m" : "ETA ~\(mins)m \(secs)s"
+    }
+
+    // MARK: - BAM/CRAM Import
+
+    private func performBAMImport(bamURL: URL, bundleURL: URL) {
+        let cancelFlag = OSAllocatedUnfairLock(initialState: false)
+        mainWindowController?.mainSplitViewController?.activityIndicator?.show(
+            message: "Importing alignments...",
+            style: .determinate(progress: 0),
+            cancellable: true
+        )
+        mainWindowController?.mainSplitViewController?.activityIndicator?.onCancel = {
+            cancelFlag.withLock { $0 = true }
+        }
+        let importStartedAt = Date()
+
+        Task.detached { [weak self] in
+            let result: Result<BAMImportService.ImportResult, Error>
+            do {
+                let importResult = try await BAMImportService.importBAM(
+                    bamURL: bamURL,
+                    bundleURL: bundleURL,
+                    progressHandler: { [weak self] progress, message in
+                        let clampedProgress = max(0.0, min(1.0, progress))
+                        let etaText = Self.estimatedRemainingText(progress: clampedProgress, startedAt: importStartedAt)
+                        scheduleOnMainRunLoop {
+                            self?.mainWindowController?.mainSplitViewController?.activityIndicator?.updateProgress(clampedProgress)
+                            let displayMessage = etaText.isEmpty ? message : "\(message) • \(etaText)"
+                            self?.mainWindowController?.mainSplitViewController?.activityIndicator?.updateMessage(displayMessage)
+                        }
+                    }
+                )
+                result = .success(importResult)
+            } catch {
+                result = .failure(error)
+            }
+
+            scheduleOnMainRunLoop { [weak self] in
+                self?.mainWindowController?.mainSplitViewController?.activityIndicator?.onCancel = nil
+                self?.mainWindowController?.mainSplitViewController?.activityIndicator?.hide()
+
+                switch result {
+                case .success(let importResult):
+                    guard let viewerController = self?.mainWindowController?.mainSplitViewController?.viewerController else {
+                        debugLog("performBAMImport: No viewer controller")
+                        return
+                    }
+                    do {
+                        try viewerController.displayBundle(at: bundleURL)
+                        let readCount = importResult.mappedReads + importResult.unmappedReads
+                        debugLog("performBAMImport: Bundle reloaded with alignment track (\(readCount) reads)")
+                    } catch {
+                        debugLog("performBAMImport: Bundle reload failed: \(error)")
+                        self?.showAlert(title: "Import Error", message: "Alignments imported but bundle reload failed: \(error.localizedDescription)")
+                    }
+
+                case .failure(let error):
+                    if let bamErr = error as? BAMImportError, case .fileNotFound = bamErr {
+                        debugLog("performBAMImport: File not found")
+                        self?.showAlert(title: "BAM Import Failed", message: error.localizedDescription)
+                    } else if cancelFlag.withLock({ $0 }) {
+                        debugLog("performBAMImport: Cancelled by user")
+                    } else {
+                        debugLog("performBAMImport: Failed: \(error)")
+                        self?.showAlert(title: "BAM Import Failed", message: error.localizedDescription)
+                    }
+                }
+            }
+        }
     }
 
     @objc func exportFASTA(_ sender: Any?) {
@@ -1945,8 +2054,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             return true
         }
 
-        // "Import VCF Variants..." is only enabled when a bundle is loaded
-        if menuItem.action == #selector(importVCFToBundle(_:)) {
+        // "Import VCF Variants..." and "Import BAM/CRAM Alignments..." are only enabled when a bundle is loaded
+        if menuItem.action == #selector(importVCFToBundle(_:)) || menuItem.action == #selector(importBAMToBundle(_:)) {
             let hasBundle = mainWindowController?.mainSplitViewController?.viewerController?.currentBundleURL != nil
             return hasBundle
         }

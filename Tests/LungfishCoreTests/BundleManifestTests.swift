@@ -547,6 +547,140 @@ final class BundleManifestTests: XCTestCase {
         XCTAssertFalse(errors.isEmpty, "Duplicate alignment track IDs should be a validation error")
     }
 
+    // MARK: - Extended Alignment Track Tests
+
+    func testMultipleAlignmentTracksRoundTrip() throws {
+        let bamTrack = AlignmentTrackInfo(
+            id: "aln_bam", name: "sample.bam", format: .bam,
+            sourcePath: "/data/sample.bam", indexPath: "/data/sample.bam.bai",
+            mappedReadCount: 30_000_000, unmappedReadCount: 500_000,
+            sampleNames: ["NA12878"]
+        )
+        let cramTrack = AlignmentTrackInfo(
+            id: "aln_cram", name: "sample.cram", format: .cram,
+            sourcePath: "/data/sample.cram", indexPath: "/data/sample.cram.crai",
+            mappedReadCount: 25_000_000, unmappedReadCount: 300_000,
+            sampleNames: ["HG002"]
+        )
+        let samTrack = AlignmentTrackInfo(
+            id: "aln_sam", name: "sample.sam", format: .sam,
+            sourcePath: "/data/sample.sam", indexPath: "",
+            sampleNames: ["HG003"]
+        )
+
+        var manifest = createValidManifest()
+        manifest = manifest.addingAlignmentTrack(bamTrack)
+        manifest = manifest.addingAlignmentTrack(cramTrack)
+        manifest = manifest.addingAlignmentTrack(samTrack)
+        XCTAssertEqual(manifest.alignments.count, 3)
+
+        // Round-trip through JSON
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(manifest)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(BundleManifest.self, from: data)
+
+        XCTAssertEqual(decoded.alignments.count, 3)
+        XCTAssertEqual(decoded.alignments[0].format, .bam)
+        XCTAssertEqual(decoded.alignments[1].format, .cram)
+        XCTAssertEqual(decoded.alignments[2].format, .sam)
+        XCTAssertEqual(decoded.alignments[0].sampleNames, ["NA12878"])
+        XCTAssertEqual(decoded.alignments[1].sampleNames, ["HG002"])
+        XCTAssertEqual(decoded.alignments[2].sampleNames, ["HG003"])
+        XCTAssertEqual(decoded.alignments[0].mappedReadCount, 30_000_000)
+        XCTAssertEqual(decoded.alignments[1].unmappedReadCount, 300_000)
+    }
+
+    func testAlignmentTrackWithAllOptionalFields() throws {
+        let track = AlignmentTrackInfo(
+            id: "full_track",
+            name: "complete.bam",
+            description: "A fully-populated test track",
+            format: .bam,
+            sourcePath: "/data/complete.bam",
+            sourceBookmark: "c291cmNlYm9va21hcms=",
+            indexPath: "/data/complete.bam.bai",
+            indexBookmark: "aW5kZXhib29rbWFyaw==",
+            metadataDBPath: "alignments/full_track.stats.db",
+            checksumSHA256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            fileSizeBytes: 5_368_709_120,
+            addedDate: Date(),
+            mappedReadCount: 100_000_000,
+            unmappedReadCount: 2_000_000,
+            sampleNames: ["SAMPLE_A", "SAMPLE_B"]
+        )
+
+        XCTAssertNotNil(track.description)
+        XCTAssertNotNil(track.sourceBookmark)
+        XCTAssertNotNil(track.indexBookmark)
+        XCTAssertNotNil(track.metadataDBPath)
+        XCTAssertNotNil(track.checksumSHA256)
+        XCTAssertEqual(track.fileSizeBytes, 5_368_709_120)
+        XCTAssertEqual(track.sampleNames.count, 2)
+
+        // Round-trip
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(track)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(AlignmentTrackInfo.self, from: data)
+
+        XCTAssertEqual(decoded.id, track.id)
+        XCTAssertEqual(decoded.description, track.description)
+        XCTAssertEqual(decoded.sourceBookmark, track.sourceBookmark)
+        XCTAssertEqual(decoded.indexBookmark, track.indexBookmark)
+        XCTAssertEqual(decoded.metadataDBPath, track.metadataDBPath)
+        XCTAssertEqual(decoded.checksumSHA256, track.checksumSHA256)
+        XCTAssertEqual(decoded.fileSizeBytes, track.fileSizeBytes)
+        XCTAssertEqual(decoded.sampleNames, track.sampleNames)
+    }
+
+    func testRemoveNonExistentAlignmentTrack() {
+        let track = AlignmentTrackInfo(
+            id: "existing", name: "existing.bam", format: .bam,
+            sourcePath: "/data/existing.bam", indexPath: "/data/existing.bam.bai"
+        )
+
+        var manifest = createValidManifest()
+        manifest = manifest.addingAlignmentTrack(track)
+        XCTAssertEqual(manifest.alignments.count, 1)
+
+        // Removing a non-existent ID should be a no-op
+        let updated = manifest.removingAlignmentTrack(id: "does_not_exist")
+        XCTAssertEqual(updated.alignments.count, 1)
+        XCTAssertEqual(updated.alignments[0].id, "existing")
+    }
+
+    func testAddAndRemoveMultipleAlignmentTracks() {
+        var manifest = createValidManifest()
+
+        let track1 = AlignmentTrackInfo(
+            id: "track1", name: "a.bam", format: .bam,
+            sourcePath: "/data/a.bam", indexPath: "/data/a.bam.bai"
+        )
+        let track2 = AlignmentTrackInfo(
+            id: "track2", name: "b.cram", format: .cram,
+            sourcePath: "/data/b.cram", indexPath: "/data/b.cram.crai"
+        )
+
+        manifest = manifest.addingAlignmentTrack(track1)
+        manifest = manifest.addingAlignmentTrack(track2)
+        XCTAssertEqual(manifest.alignments.count, 2)
+
+        // Remove first track
+        manifest = manifest.removingAlignmentTrack(id: "track1")
+        XCTAssertEqual(manifest.alignments.count, 1)
+        XCTAssertEqual(manifest.alignments[0].id, "track2")
+
+        // Remove second track
+        manifest = manifest.removingAlignmentTrack(id: "track2")
+        XCTAssertTrue(manifest.alignments.isEmpty)
+    }
+
     // MARK: - Helper Methods
 
     private func createValidManifest() -> BundleManifest {

@@ -494,6 +494,13 @@ public final class ReferenceBundle: Sendable {
         return try? AlignmentMetadataDatabase(url: dbURL)
     }
 
+    /// Returns the absolute path to the reference FASTA within this bundle, if it exists.
+    /// Needed by `AlignmentDataProvider` for CRAM file access.
+    public func referenceFASTAPath() -> String? {
+        let fastaURL = url.appendingPathComponent(manifest.genome.path)
+        return FileManager.default.fileExists(atPath: fastaURL.path) ? fastaURL.path : nil
+    }
+
 }
 
 // MARK: - BundleVariant

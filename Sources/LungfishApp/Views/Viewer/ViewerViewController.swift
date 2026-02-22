@@ -1875,6 +1875,26 @@ public class SequenceViewerView: NSView {
     /// Generation counter for variant fetches — prevents stale results from overwriting newer ones
     private var variantFetchGeneration: Int = 0
 
+    // MARK: - Read Alignment State
+
+    /// Cached aligned reads for the current visible region
+    private var cachedAlignedReads: [AlignedRead] = []
+
+    /// The region for which we have cached read data
+    private var cachedReadRegion: GenomicRegion?
+
+    /// Whether we're currently fetching read data
+    private var isFetchingReads: Bool = false
+
+    /// Generation counter for read fetches — prevents stale results from overwriting newer ones
+    private var readFetchGeneration: Int = 0
+
+    /// Whether to show the read alignment track
+    var showReads: Bool = true
+
+    /// Alignment data providers for each imported alignment track
+    private var alignmentDataProviders: [(trackId: String, provider: AlignmentDataProvider)] = []
+
     /// Whether drag is active (for highlighting)
     private var isDragActive = false
 
@@ -1966,6 +1986,21 @@ public class SequenceViewerView: NSView {
     /// Y offset where variant summary bar starts (below annotations).
     private var variantTrackY: CGFloat {
         max(lastAnnotationBottomY + annotationToVariantPadding, annotationTrackY + annotationToVariantPadding)
+    }
+
+    /// Y position where the variant track ends (updated during variant rendering).
+    private var lastVariantBottomY: CGFloat = 0
+
+    /// Spacing between variant and read tracks.
+    private let variantToReadPadding: CGFloat = 10
+
+    /// Y offset where the read alignment track starts (below variants).
+    private var readTrackY: CGFloat {
+        if showVariants && !filteredVisibleVariantAnnotations.isEmpty {
+            return max(lastVariantBottomY + variantToReadPadding, variantTrackY + variantToReadPadding)
+        }
+        // No variants visible → reads go where variants would
+        return variantTrackY
     }
 
     /// Cached filtered variant annotations. Invalidated by `invalidateFilteredVariantCache()`.
@@ -2111,6 +2146,11 @@ public class SequenceViewerView: NSView {
     /// Built at bundle load time by matching chromosome lengths when names differ.
     /// Empty if all names match or no variant tracks are loaded.
     private var variantChromosomeAliasMap: [String: String] = [:]
+
+    /// Maps reference chromosome names to BAM/CRAM chromosome names.
+    /// Built at bundle load time from AlignmentMetadataDatabase chromosome_stats.
+    /// Empty if all names match or no alignment tracks are loaded.
+    private var alignmentChromosomeAliasMap: [String: String] = [:]
 
     // MARK: - Annotation Color Cache
 
@@ -2618,6 +2658,13 @@ public class SequenceViewerView: NSView {
         self.isFetchingGenotypes = false
         self.genotypeScrollOffset = 0
 
+        // Clear read alignment state
+        self.cachedAlignedReads = []
+        self.cachedReadRegion = nil
+        self.isFetchingReads = false
+        self.lastVariantBottomY = 0
+        self.alignmentChromosomeAliasMap = [:]
+
         // Cache sample count and build chromosome alias map from variant databases
         self.cachedSampleCount = 0
         self.variantChromosomeAliasMap = [:]
@@ -2645,6 +2692,32 @@ public class SequenceViewerView: NSView {
                     if self.cachedSampleCount > 0 { break }
                 }
             }
+        }
+
+        // Initialize alignment data providers from bundle manifest
+        self.alignmentDataProviders = []
+        for trackId in bundle.alignmentTrackIds {
+            if let trackInfo = bundle.alignmentTrack(id: trackId),
+               let resolvedPath = try? bundle.resolveAlignmentPath(trackInfo) {
+                let provider = AlignmentDataProvider(
+                    alignmentPath: resolvedPath,
+                    indexPath: trackInfo.indexPath,
+                    format: trackInfo.format,
+                    referenceFastaPath: bundle.referenceFASTAPath()
+                )
+                self.alignmentDataProviders.append((trackId, provider))
+                logger.info("SequenceViewerView.setReferenceBundle: Initialized alignment provider for '\(trackInfo.name, privacy: .public)'")
+            }
+        }
+
+        // Build alignment chromosome alias map from metadata databases
+        if !alignmentDataProviders.isEmpty {
+            self.alignmentChromosomeAliasMap = Self.buildAlignmentChromosomeAliasMap(
+                bundleChromosomes: bundle.manifest.genome.chromosomes,
+                alignmentTracks: bundle.manifest.alignments,
+                bundleURL: bundle.url,
+                logger: logger
+            )
         }
 
         // Clear rendering caches
@@ -2703,6 +2776,7 @@ public class SequenceViewerView: NSView {
         self.isFetchingGenotypes = false
         self.cachedSampleCount = 0
         self.variantChromosomeAliasMap = [:]
+        self.alignmentChromosomeAliasMap = [:]
         self.sequenceFetchStartTime = nil
         self.annotationFetchStartTime = nil
 
@@ -3040,6 +3114,51 @@ public class SequenceViewerView: NSView {
                     }
                 }
             }
+
+            // Track the bottom Y of the variant track so reads can stack below
+            let totalVariantHeight = VariantTrackRenderer.totalHeight(
+                sampleCount: cachedSampleCount,
+                state: sampleDisplayState
+            )
+            lastVariantBottomY = vY + totalVariantHeight
+        }
+
+        // --- Read alignments below variants ---
+        if !alignmentDataProviders.isEmpty && showReads {
+            let readsCovered = cachedReadRegion?.chromosome == visibleRegion.chromosome
+                && (cachedReadRegion?.start ?? Int.max) <= visibleRegion.start
+                && (cachedReadRegion?.end ?? Int.min) >= visibleRegion.end
+
+            if !readsCovered && !isFetchingReads {
+                fetchReadsAsync(bundle: bundle, region: visibleRegion)
+            }
+
+            if !cachedAlignedReads.isEmpty {
+                let tier = ReadTrackRenderer.zoomTier(scale: scale)
+                let rY = readTrackY
+
+                switch tier {
+                case .coverage:
+                    let rect = CGRect(x: 0, y: rY, width: bounds.width, height: ReadTrackRenderer.coverageTrackHeight)
+                    ReadTrackRenderer.drawCoverage(reads: cachedAlignedReads, frame: frame, context: context, rect: rect)
+                case .packed:
+                    let (packed, overflow) = ReadTrackRenderer.packReads(cachedAlignedReads, frame: frame)
+                    let rowCount = (packed.map(\.row).max() ?? -1) + 1
+                    let height = ReadTrackRenderer.totalHeight(rowCount: rowCount, tier: .packed)
+                    let rect = CGRect(x: 0, y: rY, width: bounds.width, height: height)
+                    ReadTrackRenderer.drawPackedReads(packedReads: packed, overflow: overflow, frame: frame, context: context, rect: rect)
+                case .base:
+                    let (packed, overflow) = ReadTrackRenderer.packReads(cachedAlignedReads, frame: frame)
+                    let rowCount = (packed.map(\.row).max() ?? -1) + 1
+                    let height = ReadTrackRenderer.totalHeight(rowCount: rowCount, tier: .base)
+                    let rect = CGRect(x: 0, y: rY, width: bounds.width, height: height)
+                    ReadTrackRenderer.drawBaseReads(
+                        packedReads: packed, overflow: overflow, frame: frame,
+                        referenceSequence: cachedBundleSequence, referenceStart: Int(frame.start),
+                        context: context, rect: rect
+                    )
+                }
+            }
         }
 
     }
@@ -3243,6 +3362,78 @@ public class SequenceViewerView: NSView {
         return variantChrom
     }
 
+    // MARK: - Alignment Chromosome Aliasing
+
+    /// Translates a reference chromosome name to the BAM/CRAM chromosome name.
+    /// Returns the original name if no alias is needed.
+    private func alignmentChromosomeName(for refChrom: String) -> String {
+        alignmentChromosomeAliasMap[refChrom] ?? refChrom
+    }
+
+    /// Builds a map from reference chromosome names to BAM/CRAM chromosome names.
+    ///
+    /// BAM files often use different chromosome naming from the reference
+    /// (e.g., "MN908947.3" vs "MN908947", or "chr1" vs "1").
+    /// This method reads the AlignmentMetadataDatabase (populated from samtools idxstats
+    /// at import time) and matches chromosomes by exact sequence length.
+    private static func buildAlignmentChromosomeAliasMap(
+        bundleChromosomes: [ChromosomeInfo],
+        alignmentTracks: [AlignmentTrackInfo],
+        bundleURL: URL,
+        logger: Logger
+    ) -> [String: String] {
+        let refChromNames = Set(bundleChromosomes.map(\.name))
+
+        // Collect BAM chromosome names and lengths from metadata databases
+        var bamChromLengths: [String: Int64] = [:]
+        for track in alignmentTracks {
+            guard let dbRelPath = track.metadataDBPath else { continue }
+            let dbURL = bundleURL.appendingPathComponent(dbRelPath)
+            guard let db = try? AlignmentMetadataDatabase(url: dbURL) else { continue }
+            for stat in db.chromosomeStats() {
+                bamChromLengths[stat.chromosome] = stat.length
+            }
+        }
+
+        guard !bamChromLengths.isEmpty else { return [:] }
+
+        let bamChromNames = Set(bamChromLengths.keys)
+
+        // Check if all BAM chromosomes already match reference names
+        let unmatched = bamChromNames.subtracting(refChromNames)
+        if unmatched.isEmpty { return [:] }
+
+        // Build alias map: ref name → BAM name, matching by exact length
+        var aliasMap: [String: String] = [:]
+        var usedBAMChroms = Set<String>()
+
+        for chrom in bundleChromosomes {
+            // Skip if BAM already has this exact name
+            if bamChromNames.contains(chrom.name) { continue }
+
+            // Find a BAM chromosome with matching length
+            var bestMatch: String?
+            for bamChrom in unmatched where !usedBAMChroms.contains(bamChrom) {
+                guard let bamLength = bamChromLengths[bamChrom] else { continue }
+                if bamLength == chrom.length {
+                    bestMatch = bamChrom
+                    break
+                }
+            }
+
+            if let match = bestMatch {
+                aliasMap[chrom.name] = match
+                usedBAMChroms.insert(match)
+            }
+        }
+
+        if !aliasMap.isEmpty {
+            logger.info("buildAlignmentChromosomeAliasMap: Built \(aliasMap.count) aliases (e.g., \(aliasMap.first?.key ?? "") → \(aliasMap.first?.value ?? ""))")
+        }
+
+        return aliasMap
+    }
+
     /// Fetches variant annotations asynchronously from the VariantDatabase.
     /// Runs SQLite queries on a background thread, converts to SequenceAnnotation,
     /// and merges with the annotation rendering pipeline.
@@ -3318,6 +3509,65 @@ public class SequenceViewerView: NSView {
                         "variantCount": count,
                     ]
                 )
+            }
+        }
+    }
+
+    // MARK: - Read Alignment Fetching
+
+    /// Fetches aligned reads asynchronously from samtools for the visible region.
+    /// Uses the same generation counter pattern as other fetch methods.
+    /// AlignmentDataProvider.fetchReads() is async, so we use Task.detached to avoid
+    /// cooperative executor issues (see MEMORY.md), then return via GCD main queue.
+    private func fetchReadsAsync(bundle: ReferenceBundle, region: GenomicRegion) {
+        guard !alignmentDataProviders.isEmpty else { return }
+
+        readFetchGeneration += 1
+        let thisGeneration = readFetchGeneration
+        isFetchingReads = true
+
+        let chromLength = bundle.chromosomeLength(named: region.chromosome) ?? Int64(region.end + 1000)
+        let visibleSpan = region.end - region.start
+        let expandAmount = max(10_000, visibleSpan * 2)
+        let expandedStart = max(0, region.start - expandAmount)
+        let expandedEnd = min(Int(chromLength), region.end + expandAmount)
+        let expandedRegion = GenomicRegion(chromosome: region.chromosome, start: expandedStart, end: expandedEnd)
+
+        let providers = alignmentDataProviders
+        // Translate reference chromosome name to BAM chromosome name (e.g., MN908947 → MN908947.3)
+        let bamChromosome = alignmentChromosomeName(for: region.chromosome)
+
+        logger.info("fetchReadsAsync: gen=\(thisGeneration), Fetching reads for \(expandedRegion.description) (BAM chrom: \(bamChromosome))")
+
+        Task.detached { [weak self] in
+            var allReads: [AlignedRead] = []
+            for (_, provider) in providers {
+                do {
+                    let reads = try await provider.fetchReads(
+                        chromosome: bamChromosome,
+                        start: expandedStart,
+                        end: expandedEnd
+                    )
+                    allReads.append(contentsOf: reads)
+                } catch {
+                    logger.error("fetchReadsAsync: Failed to fetch reads: \(error)")
+                }
+            }
+
+            let count = allReads.count
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let viewer = self else { return }
+                    guard thisGeneration == viewer.readFetchGeneration else {
+                        logger.info("fetchReadsAsync: Discarding stale result gen=\(thisGeneration) (current=\(viewer.readFetchGeneration))")
+                        return
+                    }
+                    viewer.cachedAlignedReads = allReads
+                    viewer.cachedReadRegion = expandedRegion
+                    viewer.isFetchingReads = false
+                    logger.info("fetchReadsAsync: Cached \(count) reads")
+                    viewer.setNeedsDisplay(viewer.bounds)
+                }
             }
         }
     }

@@ -198,6 +198,13 @@ public final class MainMenu {
             keyEquivalent: ""
         )
 
+        // Import BAM/CRAM alignments into the current bundle
+        fileMenu.addItem(
+            withTitle: "Import BAM/CRAM Alignments...",
+            action: #selector(FileMenuActions.importBAMToBundle(_:)),
+            keyEquivalent: ""
+        )
+
         // Export submenu
         let exportItem = NSMenuItem(title: "Export", action: nil, keyEquivalent: "")
         let exportMenu = NSMenu(title: "Export")
@@ -727,6 +734,8 @@ public final class MainMenu {
     func importFiles(_ sender: Any?)
     /// Import VCF variants into the current bundle
     func importVCFToBundle(_ sender: Any?)
+    /// Import BAM/CRAM alignments into the current bundle
+    func importBAMToBundle(_ sender: Any?)
     func exportFASTA(_ sender: Any?)
     func exportGenBank(_ sender: Any?)
     func exportGFF3(_ sender: Any?)
