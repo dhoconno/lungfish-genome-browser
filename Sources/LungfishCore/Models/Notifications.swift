@@ -109,6 +109,13 @@ extension Notification.Name {
     /// Contains userInfo keys: `bundleURL` (URL)
     public static let bundleVariantTracksDeleted = Notification.Name("bundleVariantTracksDeleted")
 
+    /// Posted when alignment/read display settings change in the inspector.
+    ///
+    /// Contains userInfo keys: "showReads" (Bool), "maxReadRows" (Int),
+    /// "minMapQ" (Int), "showMismatches" (Bool), "showSoftClips" (Bool),
+    /// "showIndels" (Bool)
+    public static let readDisplaySettingsChanged = Notification.Name("readDisplaySettingsChanged")
+
 }
 
 // MARK: - Inspector Notifications
@@ -255,4 +262,22 @@ public enum NotificationUserInfoKey {
 
     /// Key for variant database row ID.
     public static let variantRowId = "variantRowId"
+
+    /// Key for read visibility (Bool).
+    public static let showReads = "showReads"
+
+    /// Key for maximum read rows to render (Int).
+    public static let maxReadRows = "maxReadRows"
+
+    /// Key for minimum MAPQ filter (Int).
+    public static let minMapQ = "minMapQ"
+
+    /// Key for mismatch display toggle (Bool).
+    public static let showMismatches = "showMismatches"
+
+    /// Key for soft clip display toggle (Bool).
+    public static let showSoftClips = "showSoftClips"
+
+    /// Key for insertion/deletion display toggle (Bool).
+    public static let showIndels = "showIndels"
 }

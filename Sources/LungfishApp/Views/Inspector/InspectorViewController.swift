@@ -68,6 +68,11 @@ public class InspectorViewController: NSViewController {
         viewModel.sampleSectionViewModel
     }
 
+    /// Public access to the read style section view model for wiring alignment data.
+    public var readStyleSectionViewModel: ReadStyleSectionViewModel {
+        viewModel.readStyleSectionViewModel
+    }
+
     /// Cancellables for Combine subscriptions
     private var cancellables = Set<AnyCancellable>()
 
@@ -422,6 +427,9 @@ public class InspectorViewController: NSViewController {
 
             // Populate sample section with variant database sample data
             updateSampleSection(from: bundle)
+
+            // Populate alignment statistics from metadata databases
+            updateAlignmentSection(from: bundle)
         }
 
         // Auto-select the first chromosome so the Chromosome section is visible immediately
@@ -780,6 +788,30 @@ public class InspectorViewController: NSViewController {
             // Refresh the sample section
             self?.updateSampleSection(from: bundle)
         }
+    }
+
+    /// Populates the read style section with alignment statistics from the bundle's metadata DBs.
+    private func updateAlignmentSection(from bundle: ReferenceBundle) {
+        viewModel.readStyleSectionViewModel.loadStatistics(from: bundle)
+
+        // Wire the settings-changed callback to post notification
+        viewModel.readStyleSectionViewModel.onSettingsChanged = { [weak self] in
+            guard let vm = self?.viewModel.readStyleSectionViewModel else { return }
+            NotificationCenter.default.post(
+                name: .readDisplaySettingsChanged,
+                object: self,
+                userInfo: [
+                    NotificationUserInfoKey.showReads: vm.showReads,
+                    NotificationUserInfoKey.maxReadRows: Int(vm.maxReadRows),
+                    NotificationUserInfoKey.minMapQ: Int(vm.minMapQ),
+                    NotificationUserInfoKey.showMismatches: vm.showMismatches,
+                    NotificationUserInfoKey.showSoftClips: vm.showSoftClips,
+                    NotificationUserInfoKey.showIndels: vm.showIndels,
+                ]
+            )
+        }
+
+        logger.info("updateAlignmentSection: \(bundle.alignmentTrackIds.count) alignment tracks loaded")
     }
 
     /// Updates the quality section with new quality data.

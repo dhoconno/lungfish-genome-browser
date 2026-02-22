@@ -396,6 +396,14 @@ public class ViewerViewController: NSViewController {
             object: nil
         )
 
+        // Observer for read display settings from inspector
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleReadDisplaySettingsChanged(_:)),
+            name: .readDisplaySettingsChanged,
+            object: nil
+        )
+
         // Observer for extraction requests from inspector
         NotificationCenter.default.addObserver(
             self,
@@ -712,6 +720,36 @@ public class ViewerViewController: NSViewController {
         // Refresh the drawer to remove variant data
         if let index = annotationSearchIndex {
             annotationDrawerView?.setSearchIndex(index)
+        }
+
+        viewerView.needsDisplay = true
+    }
+
+    @objc private func handleReadDisplaySettingsChanged(_ notification: Notification) {
+        guard let userInfo = notification.userInfo else { return }
+
+        if let showReads = userInfo[NotificationUserInfoKey.showReads] as? Bool {
+            viewerView.showReads = showReads
+        }
+        if let maxRows = userInfo[NotificationUserInfoKey.maxReadRows] as? Int {
+            viewerView.maxReadRowsSetting = maxRows
+        }
+        if let minQ = userInfo[NotificationUserInfoKey.minMapQ] as? Int {
+            viewerView.minMapQSetting = minQ
+        }
+        if let show = userInfo[NotificationUserInfoKey.showMismatches] as? Bool {
+            viewerView.showMismatchesSetting = show
+        }
+        if let show = userInfo[NotificationUserInfoKey.showSoftClips] as? Bool {
+            viewerView.showSoftClipsSetting = show
+        }
+        if let show = userInfo[NotificationUserInfoKey.showIndels] as? Bool {
+            viewerView.showIndelsSetting = show
+        }
+
+        // Force read refetch if MAPQ filter changed (filters are applied at fetch time)
+        if userInfo[NotificationUserInfoKey.minMapQ] != nil {
+            viewerView.cachedReadRegion = nil
         }
 
         viewerView.needsDisplay = true
@@ -1881,7 +1919,7 @@ public class SequenceViewerView: NSView {
     private var cachedAlignedReads: [AlignedRead] = []
 
     /// The region for which we have cached read data
-    private var cachedReadRegion: GenomicRegion?
+    var cachedReadRegion: GenomicRegion?
 
     /// Whether we're currently fetching read data
     private var isFetchingReads: Bool = false
@@ -1891,6 +1929,21 @@ public class SequenceViewerView: NSView {
 
     /// Whether to show the read alignment track
     var showReads: Bool = true
+
+    /// Maximum read rows (configurable from Inspector)
+    var maxReadRowsSetting: Int = 75
+
+    /// Minimum MAPQ filter (configurable from Inspector)
+    var minMapQSetting: Int = 0
+
+    /// Whether to show mismatches (configurable from Inspector)
+    var showMismatchesSetting: Bool = true
+
+    /// Whether to show soft clips (configurable from Inspector)
+    var showSoftClipsSetting: Bool = true
+
+    /// Whether to show insertions/deletions (configurable from Inspector)
+    var showIndelsSetting: Bool = true
 
     /// Alignment data providers for each imported alignment track
     private var alignmentDataProviders: [(trackId: String, provider: AlignmentDataProvider)] = []
@@ -3136,19 +3189,20 @@ public class SequenceViewerView: NSView {
             if !cachedAlignedReads.isEmpty {
                 let tier = ReadTrackRenderer.zoomTier(scale: scale)
                 let rY = readTrackY
+                let maxRows = maxReadRowsSetting
 
                 switch tier {
                 case .coverage:
                     let rect = CGRect(x: 0, y: rY, width: bounds.width, height: ReadTrackRenderer.coverageTrackHeight)
                     ReadTrackRenderer.drawCoverage(reads: cachedAlignedReads, frame: frame, context: context, rect: rect)
                 case .packed:
-                    let (packed, overflow) = ReadTrackRenderer.packReads(cachedAlignedReads, frame: frame)
+                    let (packed, overflow) = ReadTrackRenderer.packReads(cachedAlignedReads, frame: frame, maxRows: maxRows)
                     let rowCount = (packed.map(\.row).max() ?? -1) + 1
                     let height = ReadTrackRenderer.totalHeight(rowCount: rowCount, tier: .packed)
                     let rect = CGRect(x: 0, y: rY, width: bounds.width, height: height)
                     ReadTrackRenderer.drawPackedReads(packedReads: packed, overflow: overflow, frame: frame, context: context, rect: rect)
                 case .base:
-                    let (packed, overflow) = ReadTrackRenderer.packReads(cachedAlignedReads, frame: frame)
+                    let (packed, overflow) = ReadTrackRenderer.packReads(cachedAlignedReads, frame: frame, maxRows: maxRows)
                     let rowCount = (packed.map(\.row).max() ?? -1) + 1
                     let height = ReadTrackRenderer.totalHeight(rowCount: rowCount, tier: .base)
                     let rect = CGRect(x: 0, y: rY, width: bounds.width, height: height)
@@ -3536,8 +3590,9 @@ public class SequenceViewerView: NSView {
         let providers = alignmentDataProviders
         // Translate reference chromosome name to BAM chromosome name (e.g., MN908947 → MN908947.3)
         let bamChromosome = alignmentChromosomeName(for: region.chromosome)
+        let mapQFilter = minMapQSetting
 
-        logger.info("fetchReadsAsync: gen=\(thisGeneration), Fetching reads for \(expandedRegion.description) (BAM chrom: \(bamChromosome))")
+        logger.info("fetchReadsAsync: gen=\(thisGeneration), Fetching reads for \(expandedRegion.description) (BAM chrom: \(bamChromosome), minMAPQ: \(mapQFilter))")
 
         Task.detached { [weak self] in
             var allReads: [AlignedRead] = []
@@ -3546,7 +3601,8 @@ public class SequenceViewerView: NSView {
                     let reads = try await provider.fetchReads(
                         chromosome: bamChromosome,
                         start: expandedStart,
-                        end: expandedEnd
+                        end: expandedEnd,
+                        minMapQ: mapQFilter
                     )
                     allReads.append(contentsOf: reads)
                 } catch {
