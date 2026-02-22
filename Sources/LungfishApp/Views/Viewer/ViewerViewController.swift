@@ -1975,6 +1975,15 @@ public class SequenceViewerView: NSView {
     /// The zoom tier at which reads were last rendered
     private var lastRenderedReadTier: ReadTrackRenderer.ZoomTier = .coverage
 
+    /// Vertical scroll offset for the read track (when rows exceed available space)
+    var readScrollOffset: CGFloat = 0
+
+    /// Maximum height allocated for the read track before requiring scrolling
+    private let maxReadTrackHeight: CGFloat = 300
+
+    /// Total content height of the packed reads (set during draw)
+    private var readContentHeight: CGFloat = 0
+
     /// Whether drag is active (for highlighting)
     private var isDragActive = false
 
@@ -2748,6 +2757,8 @@ public class SequenceViewerView: NSView {
         self.cachedPackOverflow = 0
         self.cachedPackScale = 0
         self.cachedPackDataGeneration = -1
+        self.readScrollOffset = 0
+        self.readContentHeight = 0
 
         // Cache sample count and build chromosome alias map from variant databases
         self.cachedSampleCount = 0
@@ -3233,8 +3244,6 @@ public class SequenceViewerView: NSView {
                 )
 
                 // Reuse cached pack layout if scale, data, and settings haven't changed.
-                // packReads is O(n·maxRows) and only depends on scale (not pan position),
-                // so we can avoid recomputing during horizontal scrolling.
                 let needsRepack = (scale != cachedPackScale)
                     || (readFetchGeneration != cachedPackDataGeneration)
                     || (maxRows != cachedPackMaxRows)
@@ -3242,9 +3251,10 @@ public class SequenceViewerView: NSView {
                 switch tier {
                 case .coverage:
                     cachedPackedReads = []
+                    readContentHeight = ReadTrackRenderer.coverageTrackHeight
                     let rect = CGRect(x: 0, y: rY, width: bounds.width, height: ReadTrackRenderer.coverageTrackHeight)
                     ReadTrackRenderer.drawCoverage(reads: cachedAlignedReads, frame: frame, context: context, rect: rect)
-                case .packed:
+                case .packed, .base:
                     if needsRepack {
                         let (packed, overflow) = ReadTrackRenderer.packReads(cachedAlignedReads, frame: frame, maxRows: maxRows)
                         cachedPackedReads = packed
@@ -3254,35 +3264,54 @@ public class SequenceViewerView: NSView {
                         cachedPackMaxRows = maxRows
                     }
                     let rowCount = (cachedPackedReads.map(\.row).max() ?? -1) + 1
-                    let height = ReadTrackRenderer.totalHeight(rowCount: rowCount, tier: .packed)
-                    let rect = CGRect(x: 0, y: rY, width: bounds.width, height: height)
-                    ReadTrackRenderer.drawPackedReads(
-                        packedReads: cachedPackedReads, overflow: cachedPackOverflow, frame: frame,
-                        referenceSequence: cachedBundleSequence, referenceStart: Int(frame.start),
-                        settings: displaySettings,
-                        context: context, rect: rect
-                    )
-                case .base:
-                    if needsRepack {
-                        let (packed, overflow) = ReadTrackRenderer.packReads(cachedAlignedReads, frame: frame, maxRows: maxRows)
-                        cachedPackedReads = packed
-                        cachedPackOverflow = overflow
-                        cachedPackScale = scale
-                        cachedPackDataGeneration = readFetchGeneration
-                        cachedPackMaxRows = maxRows
+                    let contentHeight = ReadTrackRenderer.totalHeight(rowCount: rowCount, tier: tier)
+                    readContentHeight = contentHeight
+
+                    // Available vertical space: from rY to bottom of view
+                    let availableHeight = bounds.height - rY
+                    let visibleHeight = min(contentHeight, max(availableHeight, maxReadTrackHeight))
+
+                    // Clamp scroll offset
+                    let maxScroll = max(0, contentHeight - visibleHeight)
+                    if readScrollOffset > maxScroll { readScrollOffset = maxScroll }
+
+                    // Clip to visible read area and translate by scroll offset
+                    let clipRect = CGRect(x: 0, y: rY, width: bounds.width, height: visibleHeight)
+                    context.saveGState()
+                    context.clip(to: clipRect)
+                    context.translateBy(x: 0, y: -readScrollOffset)
+
+                    let drawRect = CGRect(x: 0, y: rY, width: bounds.width, height: contentHeight)
+
+                    if tier == .packed {
+                        ReadTrackRenderer.drawPackedReads(
+                            packedReads: cachedPackedReads, overflow: cachedPackOverflow, frame: frame,
+                            referenceSequence: cachedBundleSequence, referenceStart: Int(frame.start),
+                            settings: displaySettings,
+                            context: context, rect: drawRect
+                        )
+                    } else {
+                        ReadTrackRenderer.drawBaseReads(
+                            packedReads: cachedPackedReads, overflow: cachedPackOverflow, frame: frame,
+                            referenceSequence: cachedBundleSequence, referenceStart: Int(frame.start),
+                            settings: displaySettings,
+                            context: context, rect: drawRect
+                        )
                     }
-                    let rowCount = (cachedPackedReads.map(\.row).max() ?? -1) + 1
-                    let height = ReadTrackRenderer.totalHeight(rowCount: rowCount, tier: .base)
-                    let rect = CGRect(x: 0, y: rY, width: bounds.width, height: height)
-                    ReadTrackRenderer.drawBaseReads(
-                        packedReads: cachedPackedReads, overflow: cachedPackOverflow, frame: frame,
-                        referenceSequence: cachedBundleSequence, referenceStart: Int(frame.start),
-                        settings: displaySettings,
-                        context: context, rect: rect
-                    )
+
+                    context.restoreGState()
+
+                    // Draw scroll indicator if content exceeds visible area
+                    if contentHeight > visibleHeight && maxScroll > 0 {
+                        drawReadScrollIndicator(
+                            context: context, clipRect: clipRect,
+                            contentHeight: contentHeight, scrollOffset: readScrollOffset
+                        )
+                    }
                 }
             } else {
                 cachedPackedReads = []
+                readContentHeight = 0
             }
         }
 
@@ -4682,6 +4711,38 @@ public class SequenceViewerView: NSView {
         )
         
         (message as NSString).draw(in: rect, withAttributes: attributes)
+    }
+
+    /// Draws a macOS-style scroll indicator on the right edge of the read track.
+    private func drawReadScrollIndicator(
+        context: CGContext, clipRect: CGRect,
+        contentHeight: CGFloat, scrollOffset: CGFloat
+    ) {
+        let trackHeight = clipRect.height
+        guard trackHeight > 0, contentHeight > trackHeight else { return }
+
+        let indicatorWidth: CGFloat = 6
+        let indicatorMinHeight: CGFloat = 20
+        let margin: CGFloat = 2
+
+        let fraction = trackHeight / contentHeight
+        let indicatorHeight = max(indicatorMinHeight, trackHeight * fraction)
+        let scrollFraction = scrollOffset / (contentHeight - trackHeight)
+        let indicatorY = clipRect.minY + scrollFraction * (trackHeight - indicatorHeight)
+
+        let indicatorRect = CGRect(
+            x: clipRect.maxX - indicatorWidth - margin,
+            y: indicatorY,
+            width: indicatorWidth,
+            height: indicatorHeight
+        )
+
+        context.saveGState()
+        context.setFillColor(NSColor(white: 0.4, alpha: 0.5).cgColor)
+        let path = CGPath(roundedRect: indicatorRect, cornerWidth: indicatorWidth / 2, cornerHeight: indicatorWidth / 2, transform: nil)
+        context.addPath(path)
+        context.fillPath()
+        context.restoreGState()
     }
 
     private func drawPlaceholder(context: CGContext) {
@@ -6484,7 +6545,27 @@ public class SequenceViewerView: NSView {
                 viewController?.updateStatusBar()
                 viewController?.scheduleViewStateSave()
                 return
-            } else if abs(event.scrollingDeltaX) > 0 || abs(event.scrollingDeltaY) > 0 {
+            }
+
+            // Check if mouse is in read track area for vertical scrolling
+            let rY = readTrackY
+            let readAvailHeight = bounds.height - rY
+            let readVisibleHeight = min(readContentHeight, max(readAvailHeight, maxReadTrackHeight))
+            let inReadArea = !cachedPackedReads.isEmpty && readContentHeight > readVisibleHeight
+                && location.y >= rY && location.y < rY + readVisibleHeight
+
+            if inReadArea && abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX) {
+                // Vertical scroll in read track area — scroll through read rows
+                let maxScroll = max(0, readContentHeight - readVisibleHeight)
+                let deltaScale: CGFloat = event.hasPreciseScrollingDeltas ? 1.0 : 8.0
+                let proposedOffset = max(0, min(maxScroll, readScrollOffset - event.scrollingDeltaY * deltaScale))
+                guard abs(proposedOffset - readScrollOffset) > 0.1 else { return }
+                readScrollOffset = proposedOffset
+                setNeedsDisplay(bounds)
+                return
+            }
+
+            if abs(event.scrollingDeltaX) > 0 || abs(event.scrollingDeltaY) > 0 {
                 if hasLoadedGenotypeRows && abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX) {
                     // Avoid converting pure vertical scroll into horizontal pan in genotype mode.
                     return
@@ -7060,13 +7141,14 @@ public class SequenceViewerView: NSView {
 
         let rY = lastRenderedReadY
 
-        // Check if point is in the read track area
-        let totalRows = (cachedPackedReads.map(\.row).max() ?? -1) + 1
-        let totalHeight = CGFloat(totalRows) * rowHeight
-        guard point.y >= rY && point.y < rY + totalHeight else { return nil }
+        // Check if point is in the visible read track area
+        let availableHeight = bounds.height - rY
+        let visibleHeight = min(readContentHeight, max(availableHeight, maxReadTrackHeight))
+        guard point.y >= rY && point.y < rY + visibleHeight else { return nil }
 
-        // Determine which row the point is in
-        let rowIndex = Int((point.y - rY) / rowHeight)
+        // Account for scroll offset: convert screen Y to content Y
+        let contentY = (point.y - rY) + readScrollOffset
+        let rowIndex = Int(contentY / rowHeight)
 
         // Find reads in this row and check horizontal position
         for (row, read) in cachedPackedReads where row == rowIndex {
