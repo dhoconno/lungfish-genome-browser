@@ -34,6 +34,8 @@ final class ReadStyleSectionViewModelTests: XCTestCase {
         vm.flagStats = [FlagStatEntry(category: "total", qcPass: 169022, qcFail: 0)]
         vm.readGroups = [ReadGroupEntry(id: "RG1", sample: "S1", library: nil, platform: nil)]
         vm.fileInfo = [(key: "source", value: "test.bam")]
+        vm.programRecords = [ProgramRecordEntry(id: "bwa", name: "bwa", version: "0.7", commandLine: nil)]
+        vm.provenanceRecords = [ProvenanceEntry(stepOrder: 1, tool: "lungfish", subcommand: "import", version: nil, command: "import", timestamp: nil, duration: nil)]
         vm.trackNames = ["test.bam"]
 
         vm.clear()
@@ -45,6 +47,8 @@ final class ReadStyleSectionViewModelTests: XCTestCase {
         XCTAssertTrue(vm.flagStats.isEmpty)
         XCTAssertTrue(vm.readGroups.isEmpty)
         XCTAssertTrue(vm.fileInfo.isEmpty)
+        XCTAssertTrue(vm.programRecords.isEmpty)
+        XCTAssertTrue(vm.provenanceRecords.isEmpty)
         XCTAssertTrue(vm.trackNames.isEmpty)
     }
 
@@ -171,5 +175,58 @@ final class ReadStyleSectionViewModelTests: XCTestCase {
         XCTAssertEqual(NotificationUserInfoKey.showMismatches, "showMismatches")
         XCTAssertEqual(NotificationUserInfoKey.showSoftClips, "showSoftClips")
         XCTAssertEqual(NotificationUserInfoKey.showIndels, "showIndels")
+    }
+
+    // MARK: - ProgramRecordEntry
+
+    func testProgramRecordEntryIdentifiable() {
+        let entry = ProgramRecordEntry(id: "bwa", name: "bwa", version: "0.7.17", commandLine: "bwa mem ref.fa r1.fq")
+        XCTAssertEqual(entry.id, "bwa")
+        XCTAssertEqual(entry.name, "bwa")
+        XCTAssertEqual(entry.version, "0.7.17")
+        XCTAssertEqual(entry.commandLine, "bwa mem ref.fa r1.fq")
+    }
+
+    func testProgramRecordEntryOptionalFields() {
+        let entry = ProgramRecordEntry(id: "tool", name: nil, version: nil, commandLine: nil)
+        XCTAssertEqual(entry.id, "tool")
+        XCTAssertNil(entry.name)
+        XCTAssertNil(entry.version)
+        XCTAssertNil(entry.commandLine)
+    }
+
+    // MARK: - ProvenanceEntry
+
+    func testProvenanceEntryIdentifiable() {
+        let entry = ProvenanceEntry(
+            stepOrder: 1, tool: "samtools", subcommand: "idxstats",
+            version: "1.19", command: "samtools idxstats sample.bam",
+            timestamp: "2024-01-15T12:00:00Z", duration: 2.5
+        )
+        XCTAssertEqual(entry.id, 1)
+        XCTAssertEqual(entry.tool, "samtools")
+        XCTAssertEqual(entry.subcommand, "idxstats")
+        XCTAssertEqual(entry.version, "1.19")
+        XCTAssertEqual(entry.duration, 2.5)
+    }
+
+    func testProvenanceEntryOptionalFields() {
+        let entry = ProvenanceEntry(
+            stepOrder: 2, tool: "lungfish", subcommand: nil,
+            version: nil, command: "import bam",
+            timestamp: nil, duration: nil
+        )
+        XCTAssertNil(entry.subcommand)
+        XCTAssertNil(entry.version)
+        XCTAssertNil(entry.timestamp)
+        XCTAssertNil(entry.duration)
+    }
+
+    // MARK: - Default Values Include New Fields
+
+    func testDefaultProgramRecordsEmpty() {
+        let vm = ReadStyleSectionViewModel()
+        XCTAssertTrue(vm.programRecords.isEmpty)
+        XCTAssertTrue(vm.provenanceRecords.isEmpty)
     }
 }

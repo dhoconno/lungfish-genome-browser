@@ -117,6 +117,9 @@ public final class BAMImportService: @unchecked Sendable {
         }
         let readGroups = SAMParser.parseReadGroups(from: headerText)
         let sampleNames = Array(Set(readGroups.compactMap { $0.sample })).sorted()
+        let programRecords = SAMParser.parseProgramRecords(from: headerText)
+        let headerRecord = SAMParser.parseHeaderRecord(from: headerText)
+        let refSeqCount = SAMParser.referenceSequenceCount(from: headerText)
 
         // 8. Create metadata database
         progressHandler?(0.7, "Creating metadata database...")
@@ -134,6 +137,15 @@ public final class BAMImportService: @unchecked Sendable {
         metadataDB.populateFromIdxstats(idxstatsOutput)
         metadataDB.populateFromFlagstat(flagstatOutput)
         metadataDB.populateFromReadGroups(readGroups)
+        metadataDB.populateFromProgramRecords(programRecords)
+
+        // Store header metadata
+        if let hd = headerRecord {
+            if let ver = hd.version { metadataDB.setFileInfo("sam_version", value: ver) }
+            if let so = hd.sortOrder { metadataDB.setFileInfo("sort_order", value: so) }
+            if let go = hd.groupOrder { metadataDB.setFileInfo("group_order", value: go) }
+        }
+        metadataDB.setFileInfo("reference_sequence_count", value: "\(refSeqCount)")
 
         let mappedReads = metadataDB.totalMappedReads()
         let unmappedReads = metadataDB.totalUnmappedReads()

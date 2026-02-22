@@ -65,6 +65,12 @@ public final class ReadStyleSectionViewModel {
     /// File-level metadata key-value pairs.
     public var fileInfo: [(key: String, value: String)] = []
 
+    /// Program records from @PG header lines.
+    public var programRecords: [ProgramRecordEntry] = []
+
+    /// Provenance history from import.
+    public var provenanceRecords: [ProvenanceEntry] = []
+
     /// Alignment track names.
     public var trackNames: [String] = []
 
@@ -92,6 +98,8 @@ public final class ReadStyleSectionViewModel {
         flagStats = []
         readGroups = []
         fileInfo = []
+        programRecords = []
+        provenanceRecords = []
         trackNames = []
     }
 
@@ -112,6 +120,8 @@ public final class ReadStyleSectionViewModel {
         var flagStatsList: [FlagStatEntry] = []
         var readGroupList: [ReadGroupEntry] = []
         var infoList: [(key: String, value: String)] = []
+        var programList: [ProgramRecordEntry] = []
+        var provenanceList: [ProvenanceEntry] = []
 
         for trackId in trackIds {
             guard let trackInfo = bundle.alignmentTrack(id: trackId),
@@ -154,6 +164,29 @@ public final class ReadStyleSectionViewModel {
             for (key, value) in db.allFileInfo().sorted(by: { $0.key < $1.key }) {
                 infoList.append((key: key, value: value))
             }
+
+            // Program records
+            for pg in db.programRecords() {
+                programList.append(ProgramRecordEntry(
+                    id: pg.id,
+                    name: pg.name,
+                    version: pg.version,
+                    commandLine: pg.commandLine
+                ))
+            }
+
+            // Provenance
+            for prov in db.provenanceHistory() {
+                provenanceList.append(ProvenanceEntry(
+                    stepOrder: prov.stepOrder,
+                    tool: prov.tool,
+                    subcommand: prov.subcommand,
+                    version: prov.version,
+                    command: prov.command,
+                    timestamp: prov.timestamp,
+                    duration: prov.duration
+                ))
+            }
         }
 
         totalMappedReads = aggMapped
@@ -162,6 +195,8 @@ public final class ReadStyleSectionViewModel {
         flagStats = flagStatsList
         readGroups = readGroupList
         fileInfo = infoList
+        programRecords = programList
+        provenanceRecords = provenanceList
     }
 }
 
@@ -207,6 +242,34 @@ public struct ReadGroupEntry: Identifiable {
     }
 }
 
+/// Program record entry for display (from @PG header).
+public struct ProgramRecordEntry: Identifiable {
+    public var id: String { pgId }
+    let pgId: String
+    public let name: String?
+    public let version: String?
+    public let commandLine: String?
+
+    init(id: String, name: String?, version: String?, commandLine: String?) {
+        self.pgId = id
+        self.name = name
+        self.version = version
+        self.commandLine = commandLine
+    }
+}
+
+/// Provenance entry for display.
+public struct ProvenanceEntry: Identifiable {
+    public var id: Int { stepOrder }
+    public let stepOrder: Int
+    public let tool: String
+    public let subcommand: String?
+    public let version: String?
+    public let command: String
+    public let timestamp: String?
+    public let duration: TimeInterval?
+}
+
 // MARK: - ReadStyleSection View
 
 /// Inspector section for alignment track settings and statistics.
@@ -224,6 +287,8 @@ public struct ReadStyleSection: View {
     @State private var isReadGroupsExpanded = false
     @State private var isFlagStatsExpanded = false
     @State private var isChromStatsExpanded = false
+    @State private var isProgramRecordsExpanded = false
+    @State private var isProvenanceExpanded = false
 
     public init(viewModel: ReadStyleSectionViewModel) {
         self.viewModel = viewModel
@@ -298,6 +363,30 @@ public struct ReadStyleSection: View {
                         .padding(.top, 4)
                 } label: {
                     Label("Per-Chromosome (\(viewModel.chromosomeStats.count))", systemImage: "list.number")
+                        .font(.headline)
+                }
+            }
+
+            // Program records (processing pipeline)
+            if !viewModel.programRecords.isEmpty {
+                Divider()
+                DisclosureGroup(isExpanded: $isProgramRecordsExpanded) {
+                    programRecordsSection
+                        .padding(.top, 4)
+                } label: {
+                    Label("Processing Pipeline (\(viewModel.programRecords.count))", systemImage: "gear.badge")
+                        .font(.headline)
+                }
+            }
+
+            // Provenance
+            if !viewModel.provenanceRecords.isEmpty {
+                Divider()
+                DisclosureGroup(isExpanded: $isProvenanceExpanded) {
+                    provenanceSection
+                        .padding(.top, 4)
+                } label: {
+                    Label("Import Provenance", systemImage: "clock.arrow.circlepath")
                         .font(.headline)
                 }
             }
@@ -519,6 +608,73 @@ public struct ReadStyleSection: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
+            }
+        }
+    }
+
+    // MARK: - Program Records
+
+    @ViewBuilder
+    private var programRecordsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(viewModel.programRecords) { pg in
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Text(pg.pgId)
+                            .font(.system(.caption, design: .monospaced).bold())
+                        if let name = pg.name {
+                            Text("(\(name))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if let version = pg.version {
+                        inlineField("Version", value: version)
+                    }
+                    if let cmdLine = pg.commandLine {
+                        Text(cmdLine)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        }
+    }
+
+    // MARK: - Provenance
+
+    @ViewBuilder
+    private var provenanceSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(viewModel.provenanceRecords) { prov in
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Text(prov.tool)
+                            .font(.system(.caption, design: .monospaced).bold())
+                        if let sub = prov.subcommand {
+                            Text(sub)
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                        if let ver = prov.version {
+                            Text("v\(ver)")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    if let ts = prov.timestamp {
+                        Text(ts)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let dur = prov.duration {
+                        inlineField("Duration", value: String(format: "%.1fs", dur))
+                    }
+                }
+                .padding(.vertical, 2)
             }
         }
     }

@@ -131,6 +131,14 @@ public final class AlignmentMetadataDatabase: @unchecked Sendable {
             qc_fail  INTEGER NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS program_records (
+            id            TEXT PRIMARY KEY,
+            name          TEXT,
+            version       TEXT,
+            command_line  TEXT,
+            prev_program  TEXT
+        );
+
         CREATE TABLE IF NOT EXISTS provenance (
             step_order  INTEGER PRIMARY KEY,
             tool        TEXT NOT NULL,
@@ -368,6 +376,73 @@ public final class AlignmentMetadataDatabase: @unchecked Sendable {
             ))
         }
         return result
+    }
+
+    // MARK: - Program Records
+
+    /// Program record from the SAM @PG header.
+    public struct ProgramRecord: Sendable {
+        public let id: String
+        public let name: String?
+        public let version: String?
+        public let commandLine: String?
+        public let previousProgram: String?
+    }
+
+    /// Adds a program record from a @PG header line.
+    public func addProgramRecord(
+        id: String,
+        name: String? = nil,
+        version: String? = nil,
+        commandLine: String? = nil,
+        previousProgram: String? = nil
+    ) {
+        let sql = """
+        INSERT OR REPLACE INTO program_records
+            (id, name, version, command_line, prev_program)
+        VALUES (?, ?, ?, ?, ?)
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, nil)
+        bindOptionalText(stmt, 2, name)
+        bindOptionalText(stmt, 3, version)
+        bindOptionalText(stmt, 4, commandLine)
+        bindOptionalText(stmt, 5, previousProgram)
+        sqlite3_step(stmt)
+    }
+
+    /// Returns all program records.
+    public func programRecords() -> [ProgramRecord] {
+        var result: [ProgramRecord] = []
+        let sql = "SELECT id, name, version, command_line, prev_program FROM program_records"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return result }
+        defer { sqlite3_finalize(stmt) }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            result.append(ProgramRecord(
+                id: String(cString: sqlite3_column_text(stmt, 0)),
+                name: optionalText(stmt, 1),
+                version: optionalText(stmt, 2),
+                commandLine: optionalText(stmt, 3),
+                previousProgram: optionalText(stmt, 4)
+            ))
+        }
+        return result
+    }
+
+    /// Populates program records from parsed SAM header @PG records.
+    public func populateFromProgramRecords(_ records: [SAMParser.ProgramRecord]) {
+        for pg in records {
+            addProgramRecord(
+                id: pg.id,
+                name: pg.name,
+                version: pg.version,
+                commandLine: pg.commandLine,
+                previousProgram: pg.previousProgram
+            )
+        }
     }
 
     // MARK: - Provenance

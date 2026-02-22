@@ -322,6 +322,66 @@ final class AlignmentMetadataDatabaseTests: XCTestCase {
         XCTAssertEqual(groups.first { $0.id == "RG2" }?.center, "Wellcome")
     }
 
+    // MARK: - Program Records
+
+    func testAddAndQueryProgramRecords() throws {
+        let db = try makeDatabase()
+        db.addProgramRecord(
+            id: "bwa",
+            name: "bwa",
+            version: "0.7.17",
+            commandLine: "bwa mem -t 8 ref.fa reads.fq",
+            previousProgram: nil
+        )
+        db.addProgramRecord(
+            id: "samtools",
+            name: "samtools",
+            version: "1.19",
+            commandLine: "samtools sort -o sorted.bam",
+            previousProgram: "bwa"
+        )
+
+        let records = db.programRecords()
+        XCTAssertEqual(records.count, 2)
+
+        let bwa = records.first { $0.id == "bwa" }
+        XCTAssertNotNil(bwa)
+        XCTAssertEqual(bwa?.name, "bwa")
+        XCTAssertEqual(bwa?.version, "0.7.17")
+        XCTAssertEqual(bwa?.commandLine, "bwa mem -t 8 ref.fa reads.fq")
+        XCTAssertNil(bwa?.previousProgram)
+
+        let samtools = records.first { $0.id == "samtools" }
+        XCTAssertNotNil(samtools)
+        XCTAssertEqual(samtools?.previousProgram, "bwa")
+    }
+
+    func testPopulateFromProgramRecords() throws {
+        let db = try makeDatabase()
+        let parsed = [
+            SAMParser.ProgramRecord(
+                id: "tool1", name: "Tool One", version: "1.0",
+                commandLine: "tool1 --input file.bam", previousProgram: nil
+            ),
+            SAMParser.ProgramRecord(
+                id: "tool2", name: nil, version: "2.0",
+                commandLine: nil, previousProgram: "tool1"
+            )
+        ]
+        db.populateFromProgramRecords(parsed)
+
+        let records = db.programRecords()
+        XCTAssertEqual(records.count, 2)
+        XCTAssertEqual(records.first { $0.id == "tool1" }?.name, "Tool One")
+        XCTAssertEqual(records.first { $0.id == "tool2" }?.previousProgram, "tool1")
+        XCTAssertNil(records.first { $0.id == "tool2" }?.name)
+    }
+
+    func testProgramRecordsEmpty() throws {
+        let db = try makeDatabase()
+        XCTAssertTrue(db.programRecords().isEmpty)
+    }
+
     // MARK: - Idxstats Edge Cases
 
     func testPopulateFromIdxstatsEmptyOutput() throws {

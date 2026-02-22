@@ -142,4 +142,103 @@ final class SAMParserTests: XCTestCase {
         XCTAssertNotNil(read)
         XCTAssertTrue(read?.qualities.isEmpty ?? false)
     }
+
+    // MARK: - Program Record Parsing
+
+    func testParseProgramRecords() {
+        let header = """
+        @HD\tVN:1.6\tSO:coordinate
+        @PG\tID:bwa\tPN:bwa\tVN:0.7.17-r1188\tCL:bwa mem -t 8 ref.fa reads.fq
+        @PG\tID:samtools\tPN:samtools\tVN:1.19\tCL:samtools sort -o sorted.bam\tPP:bwa
+        """
+        let records = SAMParser.parseProgramRecords(from: header)
+        XCTAssertEqual(records.count, 2)
+
+        XCTAssertEqual(records[0].id, "bwa")
+        XCTAssertEqual(records[0].name, "bwa")
+        XCTAssertEqual(records[0].version, "0.7.17-r1188")
+        XCTAssertEqual(records[0].commandLine, "bwa mem -t 8 ref.fa reads.fq")
+        XCTAssertNil(records[0].previousProgram)
+
+        XCTAssertEqual(records[1].id, "samtools")
+        XCTAssertEqual(records[1].name, "samtools")
+        XCTAssertEqual(records[1].version, "1.19")
+        XCTAssertEqual(records[1].previousProgram, "bwa")
+    }
+
+    func testParseProgramRecordsEmpty() {
+        let records = SAMParser.parseProgramRecords(from: "@HD\tVN:1.6")
+        XCTAssertTrue(records.isEmpty)
+    }
+
+    func testParseProgramRecordsMinimal() {
+        let header = "@PG\tID:tool1"
+        let records = SAMParser.parseProgramRecords(from: header)
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records[0].id, "tool1")
+        XCTAssertNil(records[0].name)
+        XCTAssertNil(records[0].version)
+    }
+
+    // MARK: - Header Record Parsing
+
+    func testParseHeaderRecord() {
+        let header = "@HD\tVN:1.6\tSO:coordinate\tGO:query"
+        let hd = SAMParser.parseHeaderRecord(from: header)
+        XCTAssertNotNil(hd)
+        XCTAssertEqual(hd?.version, "1.6")
+        XCTAssertEqual(hd?.sortOrder, "coordinate")
+        XCTAssertEqual(hd?.groupOrder, "query")
+    }
+
+    func testParseHeaderRecordMinimal() {
+        let header = "@HD\tVN:1.6"
+        let hd = SAMParser.parseHeaderRecord(from: header)
+        XCTAssertNotNil(hd)
+        XCTAssertEqual(hd?.version, "1.6")
+        XCTAssertNil(hd?.sortOrder)
+        XCTAssertNil(hd?.groupOrder)
+    }
+
+    func testParseHeaderRecordMissing() {
+        let header = "@SQ\tSN:chr1\tLN:1000"
+        let hd = SAMParser.parseHeaderRecord(from: header)
+        XCTAssertNil(hd)
+    }
+
+    // MARK: - Reference Sequence Count
+
+    func testReferenceSequenceCount() {
+        let header = """
+        @HD\tVN:1.6
+        @SQ\tSN:chr1\tLN:248956422
+        @SQ\tSN:chr2\tLN:242193529
+        @SQ\tSN:chrM\tLN:16569
+        @RG\tID:RG1\tSM:Sample
+        """
+        XCTAssertEqual(SAMParser.referenceSequenceCount(from: header), 3)
+    }
+
+    func testReferenceSequenceCountEmpty() {
+        XCTAssertEqual(SAMParser.referenceSequenceCount(from: "@HD\tVN:1.6"), 0)
+    }
+
+    // MARK: - Comment Parsing
+
+    func testParseComments() {
+        let header = """
+        @HD\tVN:1.6
+        @CO\tThis is a comment line
+        @CO\tAnother comment
+        @SQ\tSN:chr1\tLN:1000
+        """
+        let comments = SAMParser.parseComments(from: header)
+        XCTAssertEqual(comments.count, 2)
+        XCTAssertEqual(comments[0], "This is a comment line")
+        XCTAssertEqual(comments[1], "Another comment")
+    }
+
+    func testParseCommentsEmpty() {
+        XCTAssertTrue(SAMParser.parseComments(from: "@HD\tVN:1.6").isEmpty)
+    }
 }
