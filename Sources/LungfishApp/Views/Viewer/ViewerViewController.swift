@@ -2157,6 +2157,9 @@ public class SequenceViewerView: NSView {
     /// Internal so the AnnotationDrawer extension can set it from table selection.
     var selectedAnnotation: SequenceAnnotation?
 
+    /// Genomic position under the latest context-menu click.
+    private var contextMenuGenomicPosition: Int?
+
     /// Popover for annotation details on double-click
     private var annotationPopover: NSPopover?
 
@@ -3504,6 +3507,9 @@ public class SequenceViewerView: NSView {
             if tier == .coverage {
                 cachedPackedReads = []
                 readContentHeight = 0
+                if bounds.height - rowsY > 20 {
+                    drawReadZoomHint(context: context, yOffset: rowsY + 2, scale: scale)
+                }
             } else {
                 let readsCovered = cachedReadRegion?.chromosome == visibleRegion.chromosome
                     && (cachedReadRegion?.start ?? Int.max) <= visibleRegion.start
@@ -5457,6 +5463,60 @@ public class SequenceViewerView: NSView {
         context.restoreGState()
     }
 
+    /// Draws a hint when zoom level is too low for per-read rendering.
+    private func drawReadZoomHint(context: CGContext, yOffset: CGFloat, scale: Double) {
+        let threshold = ReadTrackRenderer.coverageThresholdBpPerPx
+        let message = "Zoom in to view individual mapped reads (< \(String(format: "%.1f", threshold)) bp/px)"
+        let detail = "Current zoom: \(String(format: "%.1f", scale)) bp/px"
+        let textAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10, weight: .medium),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        let detailAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 9, weight: .regular),
+            .foregroundColor: NSColor.tertiaryLabelColor,
+        ]
+
+        let title = message as NSString
+        let subtitle = detail as NSString
+        let titleSize = title.size(withAttributes: textAttrs)
+        let subtitleSize = subtitle.size(withAttributes: detailAttrs)
+        let badgeWidth = min(
+            max(220, max(titleSize.width, subtitleSize.width) + 16),
+            max(220, bounds.width - 16)
+        )
+        let badgeHeight: CGFloat = 34
+        let badgeRect = CGRect(x: 8, y: max(0, yOffset), width: badgeWidth, height: badgeHeight)
+
+        context.saveGState()
+        context.setFillColor(NSColor.windowBackgroundColor.withAlphaComponent(0.9).cgColor)
+        context.setStrokeColor(NSColor.separatorColor.withAlphaComponent(0.8).cgColor)
+        context.setLineWidth(0.8)
+        let path = CGPath(roundedRect: badgeRect, cornerWidth: 6, cornerHeight: 6, transform: nil)
+        context.addPath(path)
+        context.drawPath(using: .fillStroke)
+
+        title.draw(
+            in: CGRect(
+                x: badgeRect.minX + 8,
+                y: badgeRect.minY + 6,
+                width: badgeRect.width - 16,
+                height: titleSize.height
+            ),
+            withAttributes: textAttrs
+        )
+        subtitle.draw(
+            in: CGRect(
+                x: badgeRect.minX + 8,
+                y: badgeRect.minY + 18,
+                width: badgeRect.width - 16,
+                height: subtitleSize.height
+            ),
+            withAttributes: detailAttrs
+        )
+        context.restoreGState()
+    }
+
     /// Draws a macOS-style scroll indicator on the right edge of the read track.
     private func drawReadScrollIndicator(
         context: CGContext, clipRect: CGRect,
@@ -6717,6 +6777,7 @@ public class SequenceViewerView: NSView {
     public override func rightMouseDown(with event: NSEvent) {
         guard let frame = viewController?.referenceFrame else { return }
         let location = convert(event.locationInWindow, from: nil)
+        contextMenuGenomicPosition = clampedContextMenuPosition(for: location, frame: frame)
 
         // Check if right-clicking on an annotation — bundle mode, multi-sequence mode, or single-sequence mode
         var clickedAnnotation: SequenceAnnotation?
@@ -6816,6 +6877,8 @@ public class SequenceViewerView: NSView {
         menu.addItem(NSMenuItem.separator())
 
         // --- Navigation ---
+        addCenterViewMenuItem(to: menu)
+
         let zoomItem = NSMenuItem(title: "Zoom to Annotation", action: #selector(zoomToAnnotationAction(_:)), keyEquivalent: "")
         zoomItem.target = self
         zoomItem.representedObject = annotation
@@ -6857,6 +6920,8 @@ public class SequenceViewerView: NSView {
         menu.addItem(NSMenuItem.separator())
 
         // View navigation helper.
+        addCenterViewMenuItem(to: menu)
+
         let zoomItem = NSMenuItem(title: "Zoom to Visible Region", action: #selector(zoomToSelectionAction(_:)), keyEquivalent: "")
         zoomItem.target = self
         menu.addItem(zoomItem)
@@ -6874,6 +6939,8 @@ public class SequenceViewerView: NSView {
         menu.addItem(selectAllItem)
 
         menu.addItem(NSMenuItem.separator())
+
+        addCenterViewMenuItem(to: menu)
 
         // Zoom to Fit
         let zoomFitItem = NSMenuItem(title: "Zoom to Fit", action: #selector(zoomToFitAction(_:)), keyEquivalent: "")
@@ -6913,6 +6980,21 @@ public class SequenceViewerView: NSView {
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
 
+    private func clampedContextMenuPosition(for location: NSPoint, frame: ReferenceFrame) -> Int {
+        let clampedX = max(0, min(location.x, bounds.width))
+        let genomicPos = Int(frame.genomicPosition(for: clampedX).rounded(.down))
+        let maxPos = max(0, frame.sequenceLength - 1)
+        return max(0, min(maxPos, genomicPos))
+    }
+
+    private func addCenterViewMenuItem(to menu: NSMenu) {
+        guard let position = contextMenuGenomicPosition else { return }
+        let item = NSMenuItem(title: "Center View Here", action: #selector(centerViewHereAction(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = NSNumber(value: position)
+        menu.addItem(item)
+    }
+
     // MARK: - Context Menu Actions
 
     @objc private func copySelectionAction(_ sender: Any?) {
@@ -6925,6 +7007,41 @@ public class SequenceViewerView: NSView {
 
     @objc private func zoomToFitAction(_ sender: Any?) {
         viewController?.zoomToFit()
+    }
+
+    @objc private func centerViewHereAction(_ sender: NSMenuItem?) {
+        guard let frame = viewController?.referenceFrame else { return }
+
+        let targetPos: Int
+        if let encodedPos = sender?.representedObject as? NSNumber {
+            targetPos = encodedPos.intValue
+        } else if let cachedPos = contextMenuGenomicPosition {
+            targetPos = cachedPos
+        } else {
+            return
+        }
+
+        let maxPos = max(0, frame.sequenceLength - 1)
+        let clampedPos = max(0, min(maxPos, targetPos))
+        let windowLength = max(1.0, frame.end - frame.start)
+
+        var newStart = Double(clampedPos) - (windowLength / 2.0)
+        var newEnd = newStart + windowLength
+
+        if newStart < 0 {
+            newStart = 0
+            newEnd = min(Double(frame.sequenceLength), windowLength)
+        }
+        if newEnd > Double(frame.sequenceLength) {
+            newEnd = Double(frame.sequenceLength)
+            newStart = max(0, newEnd - windowLength)
+        }
+
+        frame.start = newStart
+        frame.end = newEnd
+        setNeedsDisplay(bounds)
+        viewController?.enhancedRulerView.setNeedsDisplay(viewController?.enhancedRulerView.bounds ?? .zero)
+        viewController?.updateStatusBar()
     }
 
     @objc private func zoomToSelectionAction(_ sender: Any?) {

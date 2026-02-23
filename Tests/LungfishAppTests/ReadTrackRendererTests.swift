@@ -831,6 +831,21 @@ final class ReadTrackRendererTests: XCTestCase {
         XCTAssertEqual(mismatches[1].1, "T")
     }
 
+    func testMismatchPositionsFromMDTagParsesSubstitutionsAndDeletions() {
+        // MD: 5A3^CC2T
+        // start + 5 => mismatch at +5
+        // +3 matches then deletion ^CC consumes two reference bases
+        // +2 matches => mismatch at +13
+        let positions = ReadTrackRenderer.mismatchPositionsFromMDTag("5A3^CC2T", readStart: 100)
+        XCTAssertEqual(positions, Set([105, 113]))
+    }
+
+    func testMismatchPositionsFromMDTagHandlesLeadingZeroMismatch() {
+        // MD: 0T means mismatch at the alignment start.
+        let positions = ReadTrackRenderer.mismatchPositionsFromMDTag("0T9", readStart: 42)
+        XCTAssertEqual(positions, Set([42]))
+    }
+
     func testForEachAlignedBaseSkipsDeletions() {
         // 3M2D3M — deletions don't yield read bases
         let read = AlignedRead(

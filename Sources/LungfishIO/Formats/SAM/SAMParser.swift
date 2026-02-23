@@ -337,8 +337,8 @@ public enum SAMParser {
         // Field 8: TLEN (insert size)
         let insertSize = Int(fields[8]) ?? 0
 
-        // Field 9: SEQ
-        let sequence = String(fields[9])
+        // Field 9: SEQ ("*" means unavailable sequence)
+        let sequence = fields[9] == "*" ? "" : String(fields[9])
 
         // Field 10: QUAL (Phred+33 encoded)
         let qualString = fields[10]

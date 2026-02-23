@@ -40,7 +40,7 @@ public enum ReadTrackRenderer {
     static let packedReadHeightCompact: CGFloat = 4
 
     /// Compact mode base-row height.
-    static let baseReadHeightCompact: CGFloat = 9
+    static let baseReadHeightCompact: CGFloat = 11
 
     /// Compact mode row gap.
     static let rowGapCompact: CGFloat = 1
@@ -873,7 +873,9 @@ public enum ReadTrackRenderer {
         let readHeight = metrics.baseReadHeight
 
         let pixelsPerBase = 1.0 / frame.scale
-        let fontSize = min(13, max(7, CGFloat(pixelsPerBase) * 0.95))
+        let preferredFontSize = min(13, max(7, CGFloat(pixelsPerBase) * 0.95))
+        // Keep glyphs inside compressed rows so mismatch letters remain legible.
+        let fontSize = max(6, min(preferredFontSize, readHeight - 1.5))
         let font = CTFontCreateWithName("Menlo-Bold" as CFString, fontSize, nil)
         let refBytes: [UInt8]? = referenceSequence.map(uppercaseASCIIBytes)
         let cache = GlyphCache(font: font)
@@ -953,8 +955,8 @@ public enum ReadTrackRenderer {
 
         init(font: CTFont) {
             self.font = font
-            // Pre-compute glyphs for A, C, G, T, N, a, c, g, t, n, .
-            let chars: [UInt8] = [65, 67, 71, 84, 78, 97, 99, 103, 116, 110] // A,C,G,T,N,a,c,g,t,n
+            // Pre-compute glyphs for alphabetic bases (A-Z/a-z), covering RNA U and IUPAC codes.
+            let chars = Array(UInt8(65)...UInt8(90)) + Array(UInt8(97)...UInt8(122))
             for byte in chars {
                 var unichars = [UniChar(byte)]
                 var glyph = CGGlyph(0)
@@ -1002,6 +1004,7 @@ public enum ReadTrackRenderer {
         let colorC = baseC.copy(alpha: mismatchAlpha)!
         let colorG = baseG.copy(alpha: mismatchAlpha)!
         let colorN = baseN.copy(alpha: mismatchAlpha)!
+        let mdMismatchPositions = read.mdTag.map { mismatchPositionsFromMDTag($0, readStart: read.position) }
 
         // Baseline offset: center glyph vertically using ascent/descent
         let ascent = CTFontGetAscent(font)
@@ -1050,11 +1053,17 @@ public enum ReadTrackRenderer {
                         let refIdx = refPos - referenceStart
                         if refIdx >= 0, refIdx < refBytes.count {
                             isMatch = isEquivalentBase(upperByte, refBytes[refIdx])
+                        } else if let mdMismatchPositions {
+                            isMatch = !mdMismatchPositions.contains(refPos)
                         } else {
-                            isMatch = true
+                            // No reliable reference context for this base: show identity as letter.
+                            isMatch = false
                         }
+                    } else if let mdMismatchPositions {
+                        isMatch = !mdMismatchPositions.contains(refPos)
                     } else {
-                        isMatch = true
+                        // Without reference or MD tag, surface base identities directly.
+                        isMatch = false
                     }
 
                     let glyph: CGGlyph
@@ -1114,7 +1123,7 @@ public enum ReadTrackRenderer {
     private static func colorForByte(_ byte: UInt8, a: CGColor, t: CGColor, c: CGColor, g: CGColor, n: CGColor) -> CGColor {
         switch byte {
         case 65: return a  // A
-        case 84: return t  // T
+        case 84, 85: return t  // T or U
         case 67: return c  // C
         case 71: return g  // G
         default: return n  // N or other
@@ -1213,6 +1222,67 @@ public enum ReadTrackRenderer {
         if a == b { return true }
         // Treat T and U as equivalent for RNA-vs-DNA views.
         return (a == 0x54 && b == 0x55) || (a == 0x55 && b == 0x54)
+    }
+
+    /// Extracts absolute mismatch positions from an MD tag.
+    ///
+    /// MD syntax:
+    /// - digits: run of matches
+    /// - letters: mismatched reference bases
+    /// - `^` + letters: deletion in read relative to reference
+    ///
+    /// Returned positions are 0-based genomic coordinates.
+    static func mismatchPositionsFromMDTag(_ mdTag: String, readStart: Int) -> Set<Int> {
+        guard !mdTag.isEmpty else { return [] }
+
+        var positions = Set<Int>()
+        positions.reserveCapacity(8)
+
+        let bytes = Array(mdTag.utf8)
+        var i = 0
+        var refPos = readStart
+
+        while i < bytes.count {
+            let byte = bytes[i]
+
+            // Match run count
+            if byte >= 48 && byte <= 57 {
+                var value = 0
+                while i < bytes.count {
+                    let digit = bytes[i]
+                    guard digit >= 48 && digit <= 57 else { break }
+                    value = value * 10 + Int(digit - 48)
+                    i += 1
+                }
+                refPos += value
+                continue
+            }
+
+            // Deletion from read (`^ACG`) consumes reference positions.
+            if byte == 94 { // ^
+                i += 1
+                while i < bytes.count {
+                    let upper = bytes[i] & 0xDF
+                    guard upper >= 65 && upper <= 90 else { break }
+                    refPos += 1
+                    i += 1
+                }
+                continue
+            }
+
+            // Mismatched reference base letter.
+            let upper = byte & 0xDF
+            if upper >= 65 && upper <= 90 {
+                positions.insert(refPos)
+                refPos += 1
+                i += 1
+                continue
+            }
+
+            i += 1
+        }
+
+        return positions
     }
 
     /// Computes visible positions where gaps dominate among spanning reads.

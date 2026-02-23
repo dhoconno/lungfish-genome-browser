@@ -143,6 +143,12 @@ final class SAMParserTests: XCTestCase {
         XCTAssertTrue(read?.qualities.isEmpty ?? false)
     }
 
+    func testStarSequenceParsesAsEmptyString() {
+        let read = SAMParser.parseLine("r\t0\tchr1\t100\t60\t4M\t*\t0\t0\t*\t*")
+        XCTAssertNotNil(read)
+        XCTAssertEqual(read?.sequence, "")
+    }
+
     // MARK: - Program Record Parsing
 
     func testParseProgramRecords() {
