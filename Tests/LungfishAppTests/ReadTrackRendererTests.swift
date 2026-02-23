@@ -249,6 +249,37 @@ final class ReadTrackRendererTests: XCTestCase {
         XCTAssertEqual(ReadTrackRenderer.baseThresholdBpPerPx, 0.5)
     }
 
+    // MARK: - Depth Coverage Helpers
+
+    func testDepthAtFindsMatchingPosition() {
+        let points: [ReadTrackRenderer.CoveragePoint] = [
+            .init(position: 100, depth: 4),
+            .init(position: 101, depth: 7),
+            .init(position: 110, depth: 2),
+        ]
+        XCTAssertEqual(ReadTrackRenderer.depthAt(position: 101, in: points), 7)
+        XCTAssertEqual(ReadTrackRenderer.depthAt(position: 109, in: points), 0)
+    }
+
+    func testSummarizeCoverageUsesSparseDepthOverRegionSpan() {
+        let points: [ReadTrackRenderer.CoveragePoint] = [
+            .init(position: 10, depth: 5),
+            .init(position: 11, depth: 5),
+            .init(position: 15, depth: 2),
+        ]
+        // Span = 10 bases (10..<20), total depth=12, covered bases=3
+        let stats = ReadTrackRenderer.summarizeCoverage(
+            depthPoints: points,
+            regionStart: 10,
+            regionEnd: 20
+        )
+
+        XCTAssertEqual(stats.maxDepth, 5)
+        XCTAssertEqual(stats.coveredBases, 3)
+        XCTAssertEqual(stats.meanDepth, 1.2, accuracy: 0.0001)
+        XCTAssertEqual(stats.span, 10)
+    }
+
     // MARK: - ReferenceFrame Extension
 
     func testGenomicToPixel() {

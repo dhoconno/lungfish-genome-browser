@@ -119,7 +119,8 @@ extension Notification.Name {
     /// Contains userInfo keys: "showReads" (Bool), "maxReadRows" (Int),
     /// "minMapQ" (Int), "showMismatches" (Bool), "showSoftClips" (Bool),
     /// "showIndels" (Bool), "consensusMaskingEnabled" (Bool),
-    /// "consensusGapThresholdPercent" (Int), "consensusMinDepth" (Int)
+    /// "consensusGapThresholdPercent" (Int), "consensusMinDepth" (Int),
+    /// "consensusMinMapQ" (Int), "consensusMinBaseQ" (Int)
     public static let readDisplaySettingsChanged = Notification.Name("readDisplaySettingsChanged")
 
 }
@@ -295,6 +296,12 @@ public enum NotificationUserInfoKey {
 
     /// Key for minimum depth required before a consensus/gap decision is applied.
     public static let consensusMinDepth = "consensusMinDepth"
+
+    /// Key for consensus/depth minimum mapping quality (Int).
+    public static let consensusMinMapQ = "consensusMinMapQ"
+
+    /// Key for consensus/depth minimum base quality (Int).
+    public static let consensusMinBaseQ = "consensusMinBaseQ"
 
     /// Key for the aligned read in read selection notifications.
     public static let alignedRead = "alignedRead"

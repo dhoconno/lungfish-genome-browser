@@ -9,6 +9,24 @@ import os.log
 /// Logger for alignment data operations
 private let alignmentLogger = Logger(subsystem: "com.lungfish.browser", category: "AlignmentDataProvider")
 
+// MARK: - DepthPoint
+
+/// Per-position read depth from `samtools depth`.
+public struct DepthPoint: Sendable, Equatable {
+    /// Chromosome/contig name.
+    public let chromosome: String
+    /// 0-based reference position.
+    public let position: Int
+    /// Depth at the position.
+    public let depth: Int
+
+    public init(chromosome: String, position: Int, depth: Int) {
+        self.chromosome = chromosome
+        self.position = position
+        self.depth = depth
+    }
+}
+
 // MARK: - AlignmentDataProvider
 
 /// Provides read alignment data by shelling out to samtools for region queries.
@@ -175,6 +193,82 @@ public final class AlignmentDataProvider: @unchecked Sendable {
             throw AlignmentFetchError.samtoolsFailed(result.stderr)
         }
         return result.stdout
+    }
+
+    // MARK: - Fetch Depth
+
+    /// Fetches per-position read depth for a genomic region.
+    ///
+    /// Uses `samtools depth` so coverage rendering does not require full SAM read parsing.
+    ///
+    /// - Parameters:
+    ///   - chromosome: Chromosome name.
+    ///   - start: 0-based start position.
+    ///   - end: 0-based exclusive end position.
+    ///   - minMapQ: Minimum mapping quality (`samtools depth -q`).
+    ///   - minBaseQ: Minimum base quality (`samtools depth -Q`).
+    ///   - excludeFlags: Flags to exclude (`samtools depth -G`).
+    /// - Returns: Sparse depth points (positions with depth > 0 by default samtools behavior).
+    public func fetchDepth(
+        chromosome: String,
+        start: Int,
+        end: Int,
+        minMapQ: Int = 0,
+        minBaseQ: Int = 0,
+        excludeFlags: UInt16 = 0x904
+    ) async throws -> [DepthPoint] {
+        guard !chromosome.isEmpty, start >= 0, end > start else {
+            throw AlignmentFetchError.invalidRegion("\(chromosome):\(start)-\(end)")
+        }
+
+        var arguments = ["depth"]
+        if minMapQ > 0 {
+            arguments += ["-q", String(minMapQ)]
+        }
+        if minBaseQ > 0 {
+            arguments += ["-Q", String(minBaseQ)]
+        }
+        if excludeFlags != 0 {
+            arguments += ["-G", String(excludeFlags)]
+        }
+        if format == .cram, let refPath = referenceFastaPath {
+            arguments += ["--reference", refPath]
+        }
+
+        let regionStr = "\(chromosome):\(start + 1)-\(end)"
+        arguments += ["-r", regionStr, alignmentPath]
+
+        alignmentLogger.debug("Fetching depth: samtools \(arguments.joined(separator: " "))")
+        let result = try await runSamtools(arguments: arguments, timeout: 30)
+        guard result.exitCode == 0 else {
+            let errorMsg = result.stderr.isEmpty ? "exit code \(result.exitCode)" : result.stderr
+            throw AlignmentFetchError.samtoolsFailed(errorMsg)
+        }
+        return Self.parseDepthOutput(result.stdout)
+    }
+
+    /// Parses `samtools depth` output into typed depth points.
+    ///
+    /// Expected line format: `<chrom>\t<1-based-pos>\t<depth>`.
+    static func parseDepthOutput(_ output: String) -> [DepthPoint] {
+        guard !output.isEmpty else { return [] }
+        var points: [DepthPoint] = []
+        points.reserveCapacity(max(128, output.count / 20))
+
+        output.enumerateLines { line, _ in
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { return }
+            let fields = trimmed.split(separator: "\t", omittingEmptySubsequences: false)
+            guard fields.count >= 3 else { return }
+
+            let chrom = String(fields[0])
+            guard let pos1 = Int(fields[1]), pos1 > 0,
+                  let depth = Int(fields[2]), depth >= 0 else { return }
+
+            points.append(DepthPoint(chromosome: chrom, position: pos1 - 1, depth: depth))
+        }
+
+        return points
     }
 
     // MARK: - Process Execution

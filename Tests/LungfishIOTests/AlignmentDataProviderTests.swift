@@ -221,6 +221,40 @@ final class AlignmentDataProviderTests: XCTestCase {
         XCTAssertTrue(readGroups.isEmpty)
     }
 
+    // MARK: - Depth Parsing
+
+    func testParseDepthOutputBasic() {
+        let depthOutput = """
+        chr1\t101\t20
+        chr1\t102\t0
+        chr1\t150\t7
+        """
+        let points = AlignmentDataProvider.parseDepthOutput(depthOutput)
+        XCTAssertEqual(points.count, 3)
+        XCTAssertEqual(points[0], DepthPoint(chromosome: "chr1", position: 100, depth: 20))
+        XCTAssertEqual(points[1], DepthPoint(chromosome: "chr1", position: 101, depth: 0))
+        XCTAssertEqual(points[2], DepthPoint(chromosome: "chr1", position: 149, depth: 7))
+    }
+
+    func testParseDepthOutputSkipsInvalidLines() {
+        let depthOutput = """
+        chr1\t100\t10
+        bad-line
+        chr1\tX\t4
+        chr1\t120\tY
+        chr2\t1\t9
+        """
+        let points = AlignmentDataProvider.parseDepthOutput(depthOutput)
+        XCTAssertEqual(points.count, 2)
+        XCTAssertEqual(points[0], DepthPoint(chromosome: "chr1", position: 99, depth: 10))
+        XCTAssertEqual(points[1], DepthPoint(chromosome: "chr2", position: 0, depth: 9))
+    }
+
+    func testParseDepthOutputEmpty() {
+        XCTAssertTrue(AlignmentDataProvider.parseDepthOutput("").isEmpty)
+        XCTAssertTrue(AlignmentDataProvider.parseDepthOutput("\n\n").isEmpty)
+    }
+
     // MARK: - AlignmentMetadataDatabase Parsing (inline data tests)
 
     func testIdxstatsParsingViaMetadataDatabase() throws {

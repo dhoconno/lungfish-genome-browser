@@ -755,6 +755,12 @@ public class ViewerViewController: NSViewController {
         if let minDepth = userInfo[NotificationUserInfoKey.consensusMinDepth] as? Int {
             viewerView.consensusMinDepthSetting = max(1, min(500, minDepth))
         }
+        if let minMapQ = userInfo[NotificationUserInfoKey.consensusMinMapQ] as? Int {
+            viewerView.consensusMinMapQSetting = max(0, min(60, minMapQ))
+        }
+        if let minBaseQ = userInfo[NotificationUserInfoKey.consensusMinBaseQ] as? Int {
+            viewerView.consensusMinBaseQSetting = max(0, min(60, minBaseQ))
+        }
         if let flags = userInfo[NotificationUserInfoKey.excludeFlags] as? UInt16 {
             viewerView.excludeFlagsSetting = flags
         }
@@ -764,9 +770,12 @@ public class ViewerViewController: NSViewController {
 
         // Force read refetch if fetch-time filters changed
         if userInfo[NotificationUserInfoKey.minMapQ] != nil
+            || userInfo[NotificationUserInfoKey.consensusMinMapQ] != nil
+            || userInfo[NotificationUserInfoKey.consensusMinBaseQ] != nil
             || userInfo[NotificationUserInfoKey.excludeFlags] != nil
             || userInfo[NotificationUserInfoKey.selectedReadGroups] != nil {
             viewerView.cachedReadRegion = nil
+            viewerView.cachedDepthRegion = nil
         }
 
         viewerView.needsDisplay = true
@@ -1938,11 +1947,26 @@ public class SequenceViewerView: NSView {
     /// The region for which we have cached read data
     var cachedReadRegion: GenomicRegion?
 
+    /// Cached sparse depth points for the current visible region (coverage tier).
+    private var cachedDepthPoints: [ReadTrackRenderer.CoveragePoint] = []
+
+    /// The region for which we have cached depth data.
+    var cachedDepthRegion: GenomicRegion?
+
     /// Whether we're currently fetching read data
     private var isFetchingReads: Bool = false
 
+    /// Whether we're currently fetching depth data.
+    private var isFetchingDepth: Bool = false
+
     /// Generation counter for read fetches — prevents stale results from overwriting newer ones
     private var readFetchGeneration: Int = 0
+
+    /// Generation counter for depth fetches — prevents stale results from overwriting newer ones.
+    private var depthFetchGeneration: Int = 0
+
+    /// Coverage stats from the currently cached depth points.
+    private var cachedCoverageStats: ReadTrackRenderer.CoverageStats?
 
     /// Whether to show the read alignment track
     var showReads: Bool = true
@@ -1970,6 +1994,12 @@ public class SequenceViewerView: NSView {
 
     /// Minimum spanning depth required before gap masking is applied.
     var consensusMinDepthSetting: Int = 8
+
+    /// Minimum mapping quality used for consensus/depth calculations.
+    var consensusMinMapQSetting: Int = 0
+
+    /// Minimum base quality used for consensus/depth calculations.
+    var consensusMinBaseQSetting: Int = 0
 
     /// Exclude flags bitmask for samtools view (configurable from Inspector)
     /// Default: unmapped(0x4) + secondary(0x100) + dup(0x400) + supplementary(0x800) = 0xD04
@@ -2787,7 +2817,13 @@ public class SequenceViewerView: NSView {
         // Clear read alignment state
         self.cachedAlignedReads = []
         self.cachedReadRegion = nil
+        self.cachedDepthPoints = []
+        self.cachedDepthRegion = nil
+        self.cachedCoverageStats = nil
         self.isFetchingReads = false
+        self.isFetchingDepth = false
+        self.readFetchGeneration = 0
+        self.depthFetchGeneration = 0
         self.lastVariantBottomY = 0
         self.alignmentChromosomeAliasMap = [:]
         self.cachedPackedReads = []
@@ -2904,10 +2940,19 @@ public class SequenceViewerView: NSView {
         self.cachedGenotypeData = nil
         self.cachedGenotypeSampleDisplayNames = [:]
         self.cachedGenotypeRegion = nil
+        self.cachedAlignedReads = []
+        self.cachedReadRegion = nil
+        self.cachedDepthPoints = []
+        self.cachedDepthRegion = nil
+        self.cachedCoverageStats = nil
         self.isFetchingBundleData = false
         self.isFetchingAnnotations = false
         self.isFetchingVariants = false
         self.isFetchingGenotypes = false
+        self.isFetchingReads = false
+        self.isFetchingDepth = false
+        self.readFetchGeneration = 0
+        self.depthFetchGeneration = 0
         self.cachedSampleCount = 0
         self.variantChromosomeAliasMap = [:]
         self.alignmentChromosomeAliasMap = [:]
@@ -3259,51 +3304,68 @@ public class SequenceViewerView: NSView {
 
         // --- Read alignments below variants ---
         if !alignmentDataProviders.isEmpty && showReads {
-            let readsCovered = cachedReadRegion?.chromosome == visibleRegion.chromosome
-                && (cachedReadRegion?.start ?? Int.max) <= visibleRegion.start
-                && (cachedReadRegion?.end ?? Int.min) >= visibleRegion.end
+            let tier = ReadTrackRenderer.zoomTier(scale: scale)
+            let rY = readTrackY
+            let maxRows = maxReadRowsSetting
 
-            if !readsCovered && !isFetchingReads {
-                fetchReadsAsync(bundle: bundle, region: visibleRegion)
-            }
+            // Cache rendering state for hit-testing
+            lastRenderedReadY = rY
+            lastRenderedReadTier = tier
 
-            if !cachedAlignedReads.isEmpty {
-                let tier = ReadTrackRenderer.zoomTier(scale: scale)
-                let rY = readTrackY
-                let maxRows = maxReadRowsSetting
+            let displaySettings = ReadTrackRenderer.DisplaySettings(
+                showMismatches: showMismatchesSetting,
+                showSoftClips: showSoftClipsSetting,
+                showIndels: showIndelsSetting,
+                consensusMaskingEnabled: consensusMaskingEnabledSetting,
+                consensusGapThreshold: Double(consensusGapThresholdPercentSetting) / 100.0,
+                consensusMinDepth: consensusMinDepthSetting
+            )
 
-                // Cache rendering state for hit-testing
-                lastRenderedReadY = rY
-                lastRenderedReadTier = tier
+            if tier == .coverage {
+                let depthCovered = cachedDepthRegion?.chromosome == visibleRegion.chromosome
+                    && (cachedDepthRegion?.start ?? Int.max) <= visibleRegion.start
+                    && (cachedDepthRegion?.end ?? Int.min) >= visibleRegion.end
+                if !depthCovered && !isFetchingDepth {
+                    fetchDepthAsync(bundle: bundle, region: visibleRegion)
+                }
 
-                let displaySettings = ReadTrackRenderer.DisplaySettings(
-                    showMismatches: showMismatchesSetting,
-                    showSoftClips: showSoftClipsSetting,
-                    showIndels: showIndelsSetting,
-                    consensusMaskingEnabled: consensusMaskingEnabledSetting,
-                    consensusGapThreshold: Double(consensusGapThresholdPercentSetting) / 100.0,
-                    consensusMinDepth: consensusMinDepthSetting
+                cachedPackedReads = []
+                readContentHeight = ReadTrackRenderer.coverageTrackHeight
+                let rect = CGRect(
+                    x: 0,
+                    y: rY,
+                    width: bounds.width,
+                    height: ReadTrackRenderer.coverageTrackHeight
                 )
+                ReadTrackRenderer.drawCoverage(
+                    depthPoints: cachedDepthPoints,
+                    regionStart: visibleRegion.start,
+                    regionEnd: visibleRegion.end,
+                    frame: frame,
+                    context: context,
+                    rect: rect
+                )
+            } else {
+                let readsCovered = cachedReadRegion?.chromosome == visibleRegion.chromosome
+                    && (cachedReadRegion?.start ?? Int.max) <= visibleRegion.start
+                    && (cachedReadRegion?.end ?? Int.min) >= visibleRegion.end
+                if !readsCovered && !isFetchingReads {
+                    fetchReadsAsync(bundle: bundle, region: visibleRegion)
+                }
 
-                // Reuse cached pack layout if scale, data, viewport, and settings haven't changed.
-                // Viewport position matters because reads are filtered to near-viewport before
-                // packing — if the user pans significantly, the visible reads change.
-                let viewportShift = abs(visibleRegion.start - cachedPackViewportStart)
-                let viewportSpan = max(1, visibleRegion.end - visibleRegion.start)
-                let scaleChanged = (scale != cachedPackScale)
-                let dataChanged = (readFetchGeneration != cachedPackDataGeneration)
-                let needsRepack = scaleChanged
-                    || dataChanged
-                    || (maxRows != cachedPackMaxRows)
-                    || (viewportShift > viewportSpan / 4) // Repack when panned >25% of viewport
+                if !cachedAlignedReads.isEmpty {
+                    // Reuse cached pack layout if scale, data, viewport, and settings haven't changed.
+                    // Viewport position matters because reads are filtered to near-viewport before
+                    // packing — if the user pans significantly, the visible reads change.
+                    let viewportShift = abs(visibleRegion.start - cachedPackViewportStart)
+                    let viewportSpan = max(1, visibleRegion.end - visibleRegion.start)
+                    let scaleChanged = (scale != cachedPackScale)
+                    let dataChanged = (readFetchGeneration != cachedPackDataGeneration)
+                    let needsRepack = scaleChanged
+                        || dataChanged
+                        || (maxRows != cachedPackMaxRows)
+                        || (viewportShift > viewportSpan / 4) // Repack when panned >25% of viewport
 
-                switch tier {
-                case .coverage:
-                    cachedPackedReads = []
-                    readContentHeight = ReadTrackRenderer.coverageTrackHeight
-                    let rect = CGRect(x: 0, y: rY, width: bounds.width, height: ReadTrackRenderer.coverageTrackHeight)
-                    ReadTrackRenderer.drawCoverage(reads: cachedAlignedReads, frame: frame, context: context, rect: rect)
-                case .packed, .base:
                     if needsRepack {
                         // New zoom/data fetch should snap back to top rows for predictable navigation.
                         if scaleChanged || dataChanged {
@@ -3313,7 +3375,7 @@ public class SequenceViewerView: NSView {
                         // The cached read region can be much wider than the viewport (especially
                         // when zooming in from a wider view). Packing all reads wastes the limited
                         // 75-row budget on far off-screen reads, potentially leaving no rows for
-                        // reads in the visible window. Coverage mode uses all reads (no filtering).
+                        // reads in the visible window.
                         let viewportSpan = visibleRegion.end - visibleRegion.start
                         let packPadding: Int
                         switch tier {
@@ -3419,10 +3481,10 @@ public class SequenceViewerView: NSView {
                             contentHeight: contentHeight, scrollOffset: readScrollOffset
                         )
                     }
+                } else {
+                    cachedPackedReads = []
+                    readContentHeight = 0
                 }
-            } else {
-                cachedPackedReads = []
-                readContentHeight = 0
             }
         }
 
@@ -3779,6 +3841,99 @@ public class SequenceViewerView: NSView {
     }
 
     // MARK: - Read Alignment Fetching
+
+    /// Fetches sparse depth points asynchronously from samtools depth for coverage-tier rendering.
+    ///
+    /// This decouples zoomed-out coverage from full SAM read parsing.
+    private func fetchDepthAsync(bundle: ReferenceBundle, region: GenomicRegion) {
+        guard !alignmentDataProviders.isEmpty else { return }
+
+        depthFetchGeneration += 1
+        let thisGeneration = depthFetchGeneration
+        isFetchingDepth = true
+
+        let chromLength = bundle.chromosomeLength(named: region.chromosome) ?? Int64(region.end + 1000)
+        let visibleSpan = region.end - region.start
+        let expandAmount = max(5_000, visibleSpan) // 1x viewport padding for panning
+        let expandedStart = max(0, region.start - expandAmount)
+        let expandedEnd = min(Int(chromLength), region.end + expandAmount)
+        let expandedRegion = GenomicRegion(chromosome: region.chromosome, start: expandedStart, end: expandedEnd)
+
+        let providers = alignmentDataProviders
+        let bamChromosome = alignmentChromosomeName(for: region.chromosome)
+        let mapQFilter = max(0, max(minMapQSetting, consensusMinMapQSetting))
+        let baseQFilter = max(0, consensusMinBaseQSetting)
+        let excludeFlags = excludeFlagsSetting
+
+        logger.info(
+            "fetchDepthAsync: gen=\(thisGeneration), Fetching depth for \(expandedRegion.description) (BAM chrom: \(bamChromosome), minMAPQ: \(mapQFilter), minBQ: \(baseQFilter), flags: 0x\(String(excludeFlags, radix: 16)))"
+        )
+
+        Task.detached { [weak self] in
+            var depthByPosition: [Int: Int] = [:]
+            depthByPosition.reserveCapacity(8192)
+
+            for (_, provider) in providers {
+                do {
+                    var points = try await provider.fetchDepth(
+                        chromosome: bamChromosome,
+                        start: expandedStart,
+                        end: expandedEnd,
+                        minMapQ: mapQFilter,
+                        minBaseQ: baseQFilter,
+                        excludeFlags: excludeFlags
+                    )
+
+                    if points.isEmpty, bamChromosome != region.chromosome {
+                        let fallback = try await provider.fetchDepth(
+                            chromosome: region.chromosome,
+                            start: expandedStart,
+                            end: expandedEnd,
+                            minMapQ: mapQFilter,
+                            minBaseQ: baseQFilter,
+                            excludeFlags: excludeFlags
+                        )
+                        if !fallback.isEmpty {
+                            logger.info(
+                                "fetchDepthAsync: Fallback chromosome lookup succeeded for '\(region.chromosome, privacy: .public)' after empty alias query '\(bamChromosome, privacy: .public)'"
+                            )
+                            points = fallback
+                        }
+                    }
+
+                    for point in points where point.depth > 0 {
+                        depthByPosition[point.position, default: 0] += point.depth
+                    }
+                } catch {
+                    logger.error("fetchDepthAsync: Failed to fetch depth: \(error)")
+                }
+            }
+
+            let mergedPoints = depthByPosition
+                .map { ReadTrackRenderer.CoveragePoint(position: $0.key, depth: $0.value) }
+                .sorted { $0.position < $1.position }
+
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let viewer = self else { return }
+                    guard thisGeneration == viewer.depthFetchGeneration else {
+                        logger.info("fetchDepthAsync: Discarding stale result gen=\(thisGeneration) (current=\(viewer.depthFetchGeneration))")
+                        return
+                    }
+                    viewer.cachedDepthPoints = mergedPoints
+                    viewer.cachedDepthRegion = expandedRegion
+                    viewer.cachedCoverageStats = ReadTrackRenderer.summarizeCoverage(
+                        depthPoints: mergedPoints,
+                        regionStart: expandedRegion.start,
+                        regionEnd: expandedRegion.end
+                    )
+                    viewer.isFetchingDepth = false
+                    logger.info("fetchDepthAsync: Cached \(mergedPoints.count) depth points")
+                    viewer.setNeedsDisplay(viewer.bounds)
+                }
+            }
+        }
+    }
 
     /// Fetches aligned reads asynchronously from samtools for the visible region.
     /// Uses the same generation counter pattern as other fetch methods.
@@ -6933,6 +7088,23 @@ public class SequenceViewerView: NSView {
         }
         hoveredRead = nil
 
+        // --- Coverage hit-testing (coverage tier) ---
+        if let coverageHit = coverageDepthAtPoint(location) {
+            hoveredAnnotation = nil
+            let tooltip = "Depth\n\(coverageHit.chromosome):\(coverageHit.position + 1)\nDepth: \(coverageHit.depth)x"
+            hoverTooltip.show(text: tooltip, near: location, in: self)
+
+            if let controller = viewController {
+                controller.statusBar.update(
+                    position: controller.statusBar.positionLabel.stringValue,
+                    selection: "Depth: \(coverageHit.depth)x at \(coverageHit.chromosome):\(coverageHit.position + 1)",
+                    scale: controller.referenceFrame?.scale ?? 1.0
+                )
+            }
+            NSCursor.crosshair.set()
+            return
+        }
+
         // --- Annotation hit-testing ---
         let annotation: SequenceAnnotation?
         if currentReferenceBundle != nil {
@@ -7365,6 +7537,21 @@ public class SequenceViewerView: NSView {
         if read.isDuplicate { lines.append("PCR/optical duplicate") }
 
         return lines.joined(separator: "\n")
+    }
+
+    /// Returns coverage depth at a point for coverage-tier hover interactions.
+    private func coverageDepthAtPoint(_ point: NSPoint) -> (chromosome: String, position: Int, depth: Int)? {
+        guard let frame = viewController?.referenceFrame else { return nil }
+        guard lastRenderedReadTier == .coverage else { return nil }
+        guard !cachedDepthPoints.isEmpty else { return nil }
+
+        let rY = lastRenderedReadY
+        let h = ReadTrackRenderer.coverageTrackHeight
+        guard point.y >= rY, point.y <= rY + h else { return nil }
+
+        let pos = Int(frame.genomicPosition(for: point.x))
+        let depth = ReadTrackRenderer.depthAt(position: pos, in: cachedDepthPoints)
+        return (frame.chromosome, pos, depth)
     }
 }
 

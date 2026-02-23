@@ -41,6 +41,12 @@ public final class ReadStyleSectionViewModel {
     /// Minimum spanning depth required before gap masking is applied.
     public var consensusMinDepth: Double = 8
 
+    /// Minimum mapping quality used by consensus/depth calculations.
+    public var consensusMinMapQ: Double = 0
+
+    /// Minimum base quality used by consensus/depth calculations.
+    public var consensusMinBaseQ: Double = 0
+
     /// Minimum mapping quality filter (reads below this are hidden).
     public var minMapQ: Double = 0
 
@@ -123,6 +129,15 @@ public final class ReadStyleSectionViewModel {
 
     /// Called when display settings change; viewer should redraw.
     public var onSettingsChanged: (() -> Void)?
+
+    /// Called to run duplicate marking workflow for loaded alignment tracks.
+    public var onMarkDuplicatesRequested: (() -> Void)?
+
+    /// Called to build a separate deduplicated bundle.
+    public var onCreateDeduplicatedBundleRequested: (() -> Void)?
+
+    /// Whether duplicate workflow is currently running.
+    public var isDuplicateWorkflowRunning: Bool = false
 
     // MARK: - Methods
 
@@ -656,6 +671,56 @@ public struct ReadStyleSection: View {
                     .onChange(of: viewModel.consensusMinDepth) { _, _ in
                         viewModel.onSettingsChanged?()
                     }
+            }
+
+            HStack {
+                Text("Consensus Min MAPQ")
+                Spacer()
+                Text("\(Int(viewModel.consensusMinMapQ))")
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            Slider(value: $viewModel.consensusMinMapQ, in: 0...60, step: 1)
+                .onChange(of: viewModel.consensusMinMapQ) { _, _ in
+                    viewModel.onSettingsChanged?()
+                }
+
+            HStack {
+                Text("Consensus Min BaseQ")
+                Spacer()
+                Text("\(Int(viewModel.consensusMinBaseQ))")
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            Slider(value: $viewModel.consensusMinBaseQ, in: 0...60, step: 1)
+                .onChange(of: viewModel.consensusMinBaseQ) { _, _ in
+                    viewModel.onSettingsChanged?()
+                }
+
+            Divider()
+
+            Text("Duplicate Handling")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Button("Mark Duplicates in Bundle Tracks") {
+                viewModel.onMarkDuplicatesRequested?()
+            }
+            .disabled(viewModel.isDuplicateWorkflowRunning || !viewModel.hasAlignmentTracks)
+
+            Button("Create Deduplicated Bundle") {
+                viewModel.onCreateDeduplicatedBundleRequested?()
+            }
+            .disabled(viewModel.isDuplicateWorkflowRunning || !viewModel.hasAlignmentTracks)
+
+            if viewModel.isDuplicateWorkflowRunning {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                    Text("Running duplicate workflow...")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Divider()

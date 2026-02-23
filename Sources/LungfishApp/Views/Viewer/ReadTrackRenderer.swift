@@ -121,6 +121,30 @@ public enum ReadTrackRenderer {
         case base
     }
 
+    // MARK: - Coverage Models
+
+    /// Sparse coverage point used for depth-based rendering.
+    public struct CoveragePoint: Sendable, Equatable {
+        public let position: Int
+        public let depth: Int
+
+        public init(position: Int, depth: Int) {
+            self.position = position
+            self.depth = depth
+        }
+    }
+
+    /// Summary statistics for a depth profile.
+    public struct CoverageStats: Sendable, Equatable {
+        public let regionStart: Int
+        public let regionEnd: Int
+        public let maxDepth: Int
+        public let meanDepth: Double
+        public let coveredBases: Int
+
+        public var span: Int { max(0, regionEnd - regionStart) }
+    }
+
     // MARK: - Color Mode Support
 
     /// Returns fill and stroke colors for a read based on the current color mode.
@@ -346,6 +370,158 @@ public enum ReadTrackRenderer {
         }
 
         context.restoreGState()
+    }
+
+    /// Draws depth-based coverage from sparse `samtools depth` points.
+    ///
+    /// This path is decoupled from read rendering and is intended for zoomed-out
+    /// coverage visualization where loading full read records is unnecessary.
+    public static func drawCoverage(
+        depthPoints: [CoveragePoint],
+        regionStart: Int,
+        regionEnd: Int,
+        frame: ReferenceFrame,
+        context: CGContext,
+        rect: CGRect
+    ) {
+        let pixelWidth = Int(rect.width)
+        guard pixelWidth > 0, regionEnd > regionStart else { return }
+
+        var bins = [Int](repeating: 0, count: pixelWidth)
+        for point in depthPoints {
+            if point.depth <= 0 { continue }
+            if point.position < regionStart || point.position >= regionEnd { continue }
+            let x = frame.genomicToPixel(Double(point.position))
+            let px = Int(x - rect.minX)
+            if px >= 0, px < pixelWidth {
+                if point.depth > bins[px] {
+                    bins[px] = point.depth
+                }
+            }
+        }
+
+        var maxDepth = 1
+        var sumDepth: Int64 = 0
+        var coveredCols = 0
+        for depth in bins {
+            if depth > maxDepth { maxDepth = depth }
+            sumDepth += Int64(depth)
+            if depth > 0 { coveredCols += 1 }
+        }
+        let meanDepth = Double(sumDepth) / Double(max(1, bins.count))
+        let yScale = (rect.height - 18) / CGFloat(maxDepth)
+
+        context.saveGState()
+
+        // Filled depth area
+        context.setFillColor(forwardCoverageColor)
+        let areaPath = CGMutablePath()
+        areaPath.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+        for px in 0..<pixelWidth {
+            let h = CGFloat(bins[px]) * yScale
+            areaPath.addLine(to: CGPoint(x: rect.minX + CGFloat(px), y: rect.maxY - h))
+        }
+        areaPath.addLine(to: CGPoint(x: rect.minX + CGFloat(pixelWidth - 1), y: rect.maxY))
+        areaPath.closeSubpath()
+        context.addPath(areaPath)
+        context.fillPath()
+
+        // Outline
+        context.setStrokeColor(NSColor(white: 0.33, alpha: 1).cgColor)
+        context.setLineWidth(0.6)
+        let outlinePath = CGMutablePath()
+        outlinePath.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+        for px in 0..<pixelWidth {
+            let h = CGFloat(bins[px]) * yScale
+            outlinePath.addLine(to: CGPoint(x: rect.minX + CGFloat(px), y: rect.maxY - h))
+        }
+        context.addPath(outlinePath)
+        context.strokePath()
+
+        // Legend key
+        let legendRect = CGRect(x: rect.minX + 4, y: rect.minY + 4, width: 10, height: 10)
+        context.setFillColor(forwardCoverageColor)
+        context.fill(legendRect)
+        context.setStrokeColor(NSColor(white: 0.25, alpha: 1).cgColor)
+        context.stroke(legendRect)
+
+        let legendAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 9, weight: .regular),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        ("Depth" as NSString).draw(at: CGPoint(x: legendRect.maxX + 4, y: rect.minY + 3), withAttributes: legendAttrs)
+
+        // Summary labels
+        let rightLabel = "max: \(maxDepth)x  mean: \(String(format: "%.1f", meanDepth))x" as NSString
+        let rightSize = rightLabel.size(withAttributes: legendAttrs)
+        rightLabel.draw(
+            at: CGPoint(x: rect.maxX - rightSize.width - 4, y: rect.minY + 2),
+            withAttributes: legendAttrs
+        )
+
+        let coveragePct = Double(coveredCols) / Double(max(1, bins.count)) * 100
+        let leftDetail = "\(Int(coveragePct.rounded()))% covered" as NSString
+        leftDetail.draw(
+            at: CGPoint(x: legendRect.maxX + 44, y: rect.minY + 3),
+            withAttributes: legendAttrs
+        )
+
+        context.restoreGState()
+    }
+
+    /// Returns depth value for a specific 0-based genomic position.
+    ///
+    /// `depthPoints` should be sorted by position for efficient lookup.
+    public static func depthAt(position: Int, in depthPoints: [CoveragePoint]) -> Int {
+        guard !depthPoints.isEmpty else { return 0 }
+        var low = 0
+        var high = depthPoints.count - 1
+        while low <= high {
+            let mid = (low + high) >> 1
+            let point = depthPoints[mid]
+            if point.position == position {
+                return point.depth
+            } else if point.position < position {
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
+        }
+        return 0
+    }
+
+    /// Computes summary statistics for a depth profile.
+    public static func summarizeCoverage(
+        depthPoints: [CoveragePoint],
+        regionStart: Int,
+        regionEnd: Int
+    ) -> CoverageStats {
+        guard regionEnd > regionStart else {
+            return CoverageStats(regionStart: regionStart, regionEnd: regionEnd, maxDepth: 0, meanDepth: 0, coveredBases: 0)
+        }
+        var maxDepth = 0
+        var coveredBases = 0
+        var totalDepth: Int64 = 0
+
+        // Sparse input contains non-zero positions; missing positions imply depth 0.
+        for point in depthPoints where point.position >= regionStart && point.position < regionEnd {
+            let d = max(0, point.depth)
+            if d > 0 {
+                coveredBases += 1
+                totalDepth += Int64(d)
+                if d > maxDepth { maxDepth = d }
+            }
+        }
+
+        let span = max(1, regionEnd - regionStart)
+        let meanDepth = Double(totalDepth) / Double(span)
+        return CoverageStats(
+            regionStart: regionStart,
+            regionEnd: regionEnd,
+            maxDepth: maxDepth,
+            meanDepth: meanDepth,
+            coveredBases: coveredBases
+        )
     }
 
     // MARK: - Display Settings
