@@ -3342,14 +3342,16 @@ public class SequenceViewerView: NSView {
                     if tier == .packed {
                         ReadTrackRenderer.drawPackedReads(
                             packedReads: cachedPackedReads, overflow: cachedPackOverflow, frame: frame,
-                            referenceSequence: cachedBundleSequence, referenceStart: Int(frame.start),
+                            referenceSequence: cachedBundleSequence,
+                            referenceStart: cachedSequenceRegion?.start ?? Int(frame.start),
                             settings: displaySettings,
                             context: context, rect: drawRect
                         )
                     } else {
                         ReadTrackRenderer.drawBaseReads(
                             packedReads: cachedPackedReads, overflow: cachedPackOverflow, frame: frame,
-                            referenceSequence: cachedBundleSequence, referenceStart: Int(frame.start),
+                            referenceSequence: cachedBundleSequence,
+                            referenceStart: cachedSequenceRegion?.start ?? Int(frame.start),
                             settings: displaySettings,
                             context: context, rect: drawRect
                         )
@@ -3738,7 +3740,22 @@ public class SequenceViewerView: NSView {
 
         let chromLength = bundle.chromosomeLength(named: region.chromosome) ?? Int64(region.end + 1000)
         let visibleSpan = region.end - region.start
-        let expandAmount = max(10_000, visibleSpan * 2)
+        let currentScale = viewController?.referenceFrame?.scale
+            ?? (Double(max(visibleSpan, 1)) / max(Double(max(bounds.width, 1)), 1.0))
+        let tier = ReadTrackRenderer.zoomTier(scale: currentScale)
+        let expandAmount: Int
+        let maxReadsPerTrack: Int
+        switch tier {
+        case .coverage:
+            expandAmount = max(10_000, visibleSpan * 2)
+            maxReadsPerTrack = 300_000
+        case .packed:
+            expandAmount = max(4_000, visibleSpan)
+            maxReadsPerTrack = 120_000
+        case .base:
+            expandAmount = max(1_000, visibleSpan / 2)
+            maxReadsPerTrack = 60_000
+        }
         let expandedStart = max(0, region.start - expandAmount)
         let expandedEnd = min(Int(chromLength), region.end + expandAmount)
         let expandedRegion = GenomicRegion(chromosome: region.chromosome, start: expandedStart, end: expandedEnd)
@@ -3750,20 +3767,36 @@ public class SequenceViewerView: NSView {
         let excludeFlags = excludeFlagsSetting
         let readGroupFilter = selectedReadGroupsSetting
 
-        logger.info("fetchReadsAsync: gen=\(thisGeneration), Fetching reads for \(expandedRegion.description) (BAM chrom: \(bamChromosome), minMAPQ: \(mapQFilter), flags: 0x\(String(excludeFlags, radix: 16)))")
+        logger.info("fetchReadsAsync: gen=\(thisGeneration), Fetching reads for \(expandedRegion.description) (BAM chrom: \(bamChromosome), tier: \(String(describing: tier)), minMAPQ: \(mapQFilter), maxReads/track: \(maxReadsPerTrack), flags: 0x\(String(excludeFlags, radix: 16)))")
 
         Task.detached { [weak self] in
             var allReads: [AlignedRead] = []
             for (_, provider) in providers {
                 do {
-                    let reads = try await provider.fetchReads(
+                    var reads = try await provider.fetchReads(
                         chromosome: bamChromosome,
                         start: expandedStart,
                         end: expandedEnd,
                         excludeFlags: excludeFlags,
                         minMapQ: mapQFilter,
+                        maxReads: maxReadsPerTrack,
                         readGroups: readGroupFilter
                     )
+                    if reads.isEmpty, bamChromosome != region.chromosome {
+                        let fallbackReads = try await provider.fetchReads(
+                            chromosome: region.chromosome,
+                            start: expandedStart,
+                            end: expandedEnd,
+                            excludeFlags: excludeFlags,
+                            minMapQ: mapQFilter,
+                            maxReads: maxReadsPerTrack,
+                            readGroups: readGroupFilter
+                        )
+                        if !fallbackReads.isEmpty {
+                            logger.info("fetchReadsAsync: Fallback chromosome lookup succeeded for '\(region.chromosome, privacy: .public)' after empty alias query '\(bamChromosome, privacy: .public)'")
+                            reads = fallbackReads
+                        }
+                    }
                     allReads.append(contentsOf: reads)
                 } catch {
                     logger.error("fetchReadsAsync: Failed to fetch reads: \(error)")

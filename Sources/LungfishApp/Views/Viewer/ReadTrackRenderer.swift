@@ -456,7 +456,7 @@ public enum ReadTrackRenderer {
 
         // Pre-compute reference as uppercased ASCII bytes (500KB vs 8MB for [Character])
         // Always compute reference bytes — mismatch ticks are always shown when reference is available
-        let refBytes: [UInt8]? = referenceSequence.map { Array($0.uppercased().utf8) }
+        let refBytes: [UInt8]? = referenceSequence.map(uppercaseASCIIBytes)
 
         // Pre-compute CGColor cache for (strand, mapqBin) combinations to avoid per-read allocs.
         // mapqAlpha returns 5 distinct values × 2 strands × 2 (fill/stroke) = 20 cached colors.
@@ -573,6 +573,8 @@ public enum ReadTrackRenderer {
         let pixelsPerBase = 1.0 / frame.scale
         let fontSize = min(12, CGFloat(pixelsPerBase) * 0.85)
         let font = CTFontCreateWithName("Menlo" as CFString, fontSize, nil)
+        let refBytes: [UInt8]? = referenceSequence.map(uppercaseASCIIBytes)
+        let cache = GlyphCache(font: font)
 
         // Pre-compute background colors for each strand to avoid per-read alloc
         let fwdBgTemplate = NSColor(red: 0.94, green: 0.96, blue: 0.97, alpha: 1.0).cgColor
@@ -600,14 +602,14 @@ public enum ReadTrackRenderer {
             drawReadBases(
                 read: read,
                 frame: frame,
-                referenceSequence: referenceSequence,
+                refBytes: refBytes,
                 referenceStart: referenceStart,
                 showMismatches: settings.showMismatches,
                 context: context,
                 y: y,
                 readHeight: baseReadHeight,
                 font: font,
-                fontSize: fontSize,
+                glyphCache: cache,
                 alpha: alpha
             )
 
@@ -664,23 +666,19 @@ public enum ReadTrackRenderer {
     private static func drawReadBases(
         read: AlignedRead,
         frame: ReferenceFrame,
-        referenceSequence: String?,
+        refBytes: [UInt8]?,
         referenceStart: Int,
         showMismatches: Bool = true,
         context: CGContext,
         y: CGFloat,
         readHeight: CGFloat,
         font: CTFont,
-        fontSize: CGFloat,
+        glyphCache: GlyphCache,
         alpha: CGFloat
     ) {
         let pixelsPerBase = 1.0 / frame.scale
         let cellWidth = CGFloat(pixelsPerBase)
-
-        // Pre-compute reference as uppercased ASCII bytes
-        let refBytes: [UInt8]? = referenceSequence.map { Array($0.uppercased().utf8) }
-
-        let cache = GlyphCache(font: font)
+        let cache = glyphCache
 
         // Pre-compute alpha-modulated colors (5 base colors + match dot + soft clip variants)
         let matchDotAlpha = matchDotColor.copy(alpha: alpha)!
@@ -689,7 +687,6 @@ public enum ReadTrackRenderer {
         let colorC = baseC.copy(alpha: alpha)!
         let colorG = baseG.copy(alpha: alpha)!
         let colorN = baseN.copy(alpha: alpha)!
-        let softAlphaFactor = alpha * 0.4
 
         // Baseline offset: center glyph vertically using ascent/descent
         let ascent = CTFontGetAscent(font)
@@ -706,17 +703,16 @@ public enum ReadTrackRenderer {
         context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
 
         // Use UTF-8 view for zero-allocation iteration
-        var byteIndex = 0
-        let seqBytes = Array(read.sequence.utf8)
+        var seqIterator = read.sequence.utf8.makeIterator()
 
         var refPos = read.position
         for op in read.cigar {
             switch op.op {
             case .match, .seqMatch, .seqMismatch:
+                let explicitMatch = (op.op == .seqMatch)
+                let explicitMismatch = (op.op == .seqMismatch)
                 for _ in 0..<op.length {
-                    guard byteIndex < seqBytes.count else { refPos += 1; continue }
-                    let readByte = seqBytes[byteIndex]
-                    byteIndex += 1
+                    guard let readByte = seqIterator.next() else { refPos += 1; continue }
 
                     let x = frame.genomicToPixel(Double(refPos))
 
@@ -727,7 +723,11 @@ public enum ReadTrackRenderer {
                     // always shown. The showMismatches toggle controls whether MATCHES
                     // appear as dots (true, default) or base letters (false).
                     let isMatch: Bool
-                    if let refBytes, refPos >= referenceStart {
+                    if explicitMismatch {
+                        isMatch = false
+                    } else if explicitMatch {
+                        isMatch = true
+                    } else if let refBytes, refPos >= referenceStart {
                         let refIdx = refPos - referenceStart
                         if refIdx >= 0, refIdx < refBytes.count {
                             isMatch = (upperByte == refBytes[refIdx])
@@ -771,12 +771,12 @@ public enum ReadTrackRenderer {
             case .softClip:
                 // Soft clips are rendered by drawSoftClipExtensions; here we just advance the query index
                 for _ in 0..<op.length {
-                    if byteIndex < seqBytes.count { byteIndex += 1 }
+                    _ = seqIterator.next()
                 }
 
             case .insertion:
                 for _ in 0..<op.length {
-                    if byteIndex < seqBytes.count { byteIndex += 1 }
+                    _ = seqIterator.next()
                 }
 
             case .deletion, .skip:
@@ -819,28 +819,35 @@ public enum ReadTrackRenderer {
         context.setFillColor(mismatchTickColor)
 
         var lastMismatchPixel: Int = Int.min
-        let seqBytes = Array(read.sequence.utf8)
-        var byteIndex = 0
+        var seqIterator = read.sequence.utf8.makeIterator()
         var refPos = read.position
 
         for op in read.cigar {
             switch op.op {
             case .match, .seqMatch, .seqMismatch:
+                let explicitMatch = (op.op == .seqMatch)
+                let explicitMismatch = (op.op == .seqMismatch)
                 for _ in 0..<op.length {
-                    guard byteIndex < seqBytes.count else { refPos += 1; continue }
-                    let readByte = seqBytes[byteIndex]
-                    byteIndex += 1
+                    guard let readByte = seqIterator.next() else { refPos += 1; continue }
+                    let upperRead = readByte & 0xDF
 
                     let refIdx = refPos - referenceStart
                     refPos += 1
 
-                    guard refIdx >= 0, refIdx < refBytes.count else { continue }
-                    // Case-insensitive comparison by masking bit 5
-                    let upperRead = readByte & 0xDF
-                    let upperRef = refBytes[refIdx]
-                    guard upperRead != upperRef else { continue }
-                    // Skip ambiguous bases (N = 0x4E)
-                    guard upperRead != 0x4E && upperRef != 0x4E else { continue }
+                    if explicitMatch { continue }
+
+                    let isMismatch: Bool
+                    if explicitMismatch {
+                        isMismatch = true
+                    } else if refIdx >= 0, refIdx < refBytes.count {
+                        let upperRef = refBytes[refIdx]
+                        isMismatch = upperRead != upperRef
+                        guard upperRead != 0x4E && upperRef != 0x4E else { continue }
+                    } else {
+                        continue
+                    }
+                    guard isMismatch else { continue }
+                    guard upperRead != 0x4E else { continue } // Skip ambiguous read base
 
                     let x = frame.genomicToPixel(Double(refPos - 1))
                     let px = Int(x)
@@ -853,12 +860,12 @@ public enum ReadTrackRenderer {
 
             case .insertion:
                 for _ in 0..<op.length {
-                    if byteIndex < seqBytes.count { byteIndex += 1 }
+                    _ = seqIterator.next()
                 }
 
             case .softClip:
                 for _ in 0..<op.length {
-                    if byteIndex < seqBytes.count { byteIndex += 1 }
+                    _ = seqIterator.next()
                 }
 
             case .deletion, .skip:
@@ -868,6 +875,15 @@ public enum ReadTrackRenderer {
                 break
             }
         }
+    }
+
+    /// Uppercases an ASCII nucleotide string in-place as bytes (faster than String.uppercased()).
+    private static func uppercaseASCIIBytes(_ s: String) -> [UInt8] {
+        var bytes = Array(s.utf8)
+        for i in bytes.indices {
+            bytes[i] &= 0xDF
+        }
+        return bytes
     }
 
     /// Draws semi-transparent extensions at soft-clipped ends of a read in packed mode.
