@@ -278,7 +278,7 @@ public final class AlignmentDataProvider: @unchecked Sendable {
         excludeFlags: UInt16 = 0x904,
         useAmbiguity: Bool = false,
         showInsertions: Bool = false
-    ) async throws -> String {
+    ) async throws -> ConsensusFASTAResult {
         guard !chromosome.isEmpty, start >= 0, end > start else {
             throw AlignmentFetchError.invalidRegion("\(chromosome):\(start)-\(end)")
         }
@@ -341,19 +341,51 @@ public final class AlignmentDataProvider: @unchecked Sendable {
         return points
     }
 
-    /// Parses FASTA produced by `samtools consensus` and returns sequence letters.
+    /// Result from parsing a consensus FASTA output.
+    public struct ConsensusFASTAResult: Sendable {
+        /// The consensus sequence (uppercased, concatenated from all non-header lines).
+        public let sequence: String
+        /// 0-based start position parsed from the FASTA header region (e.g., `>chr:101-200` → 100).
+        /// `nil` if the header doesn't contain parseable coordinates.
+        public let headerStart: Int?
+
+        public init(sequence: String, headerStart: Int?) {
+            self.sequence = sequence
+            self.headerStart = headerStart
+        }
+    }
+
+    /// Parses FASTA produced by `samtools consensus` and returns sequence letters
+    /// along with the 0-based start position extracted from the FASTA header.
     ///
-    /// Header lines (`>...`) are ignored. Sequence is uppercased and concatenated.
-    static func parseConsensusFASTA(_ output: String) -> String {
-        guard !output.isEmpty else { return "" }
+    /// The header typically has the format `>chrom:start-end` (1-based inclusive).
+    /// Parsing it allows us to determine the actual start position of the consensus
+    /// output, which may differ from the requested region when samtools clips to
+    /// the data range or when the `-a` flag is unsupported.
+    static func parseConsensusFASTA(_ output: String) -> ConsensusFASTAResult {
+        guard !output.isEmpty else { return ConsensusFASTAResult(sequence: "", headerStart: nil) }
         var sequence = String()
         sequence.reserveCapacity(max(256, output.count))
+        var headerStart: Int?
         output.enumerateLines { line, _ in
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty || trimmed.hasPrefix(">") { return }
+            if trimmed.isEmpty { return }
+            if trimmed.hasPrefix(">") {
+                // Parse region from header: >chrom:start-end (1-based inclusive)
+                if headerStart == nil, let colonIdx = trimmed.firstIndex(of: ":") {
+                    let afterColon = trimmed[trimmed.index(after: colonIdx)...]
+                    if let dashIdx = afterColon.firstIndex(of: "-") {
+                        let startStr = afterColon[afterColon.startIndex..<dashIdx]
+                        if let start1based = Int(startStr), start1based > 0 {
+                            headerStart = start1based - 1  // Convert to 0-based
+                        }
+                    }
+                }
+                return
+            }
             sequence.append(trimmed.uppercased())
         }
-        return sequence
+        return ConsensusFASTAResult(sequence: sequence, headerStart: headerStart)
     }
 
     // MARK: - Process Execution

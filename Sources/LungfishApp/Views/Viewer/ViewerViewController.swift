@@ -4178,9 +4178,9 @@ public class SequenceViewerView: NSView {
         )
 
         Task.detached { [weak self] in
-            var consensus = ""
+            var result = AlignmentDataProvider.ConsensusFASTAResult(sequence: "", headerStart: nil)
             do {
-                consensus = try await provider.fetchConsensus(
+                result = try await provider.fetchConsensus(
                     chromosome: bamChromosome,
                     start: expandedStart,
                     end: expandedEnd,
@@ -4192,7 +4192,7 @@ public class SequenceViewerView: NSView {
                     useAmbiguity: useAmbiguity,
                     showInsertions: false
                 )
-                if consensus.isEmpty, bamChromosome != region.chromosome {
+                if result.sequence.isEmpty, bamChromosome != region.chromosome {
                     let fallback = try await provider.fetchConsensus(
                         chromosome: region.chromosome,
                         start: expandedStart,
@@ -4205,16 +4205,19 @@ public class SequenceViewerView: NSView {
                         useAmbiguity: useAmbiguity,
                         showInsertions: false
                     )
-                    if !fallback.isEmpty {
+                    if !fallback.sequence.isEmpty {
                         logger.info(
                             "fetchConsensusAsync: Fallback chromosome lookup succeeded for '\(region.chromosome, privacy: .public)' after empty alias query '\(bamChromosome, privacy: .public)'"
                         )
-                        consensus = fallback
+                        result = fallback
                     }
                 }
             } catch {
                 logger.error("fetchConsensusAsync: Failed to fetch consensus: \(error)")
             }
+
+            let consensus = result.sequence
+            let headerStart = result.headerStart
 
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
@@ -4224,18 +4227,40 @@ public class SequenceViewerView: NSView {
                         return
                     }
                     viewer.cachedConsensusSequence = consensus.isEmpty ? nil : consensus
-                    // Adjust the cached region end to reflect actual data length.
-                    // samtools consensus truncates trailing uncovered positions so the
-                    // returned string may be shorter than the requested region.
-                    let actualEnd = expandedRegion.start + consensus.count
+
+                    // Determine the actual start position of the consensus output.
+                    // The FASTA header (e.g., ">chr:101-200") tells us the 1-based start.
+                    // If the header start matches our requested start, all is well.
+                    // If it differs, samtools clipped to the data range and we must use
+                    // the actual start to avoid a positional shift in rendering.
+                    let actualStart: Int
+                    if let headerStart {
+                        actualStart = headerStart
+                        if headerStart != expandedStart {
+                            logger.warning(
+                                "fetchConsensusAsync: Header start (\(headerStart)) differs from requested start (\(expandedStart)) — using header value"
+                            )
+                        }
+                    } else {
+                        actualStart = expandedStart
+                    }
+
+                    let expectedLength = expandedEnd - expandedStart
+                    if !consensus.isEmpty && consensus.count != expectedLength {
+                        logger.warning(
+                            "fetchConsensusAsync: Consensus length (\(consensus.count)) differs from expected (\(expectedLength)) for region \(expandedRegion.description)"
+                        )
+                    }
+
+                    let actualEnd = actualStart + consensus.count
                     viewer.cachedConsensusRegion = GenomicRegion(
                         chromosome: expandedRegion.chromosome,
-                        start: expandedRegion.start,
+                        start: actualStart,
                         end: min(expandedRegion.end, actualEnd)
                     )
                     viewer.cachedConsensusOptionsSignature = optionsSignature
                     viewer.isFetchingConsensus = false
-                    logger.info("fetchConsensusAsync: Cached consensus length=\(consensus.count)")
+                    logger.info("fetchConsensusAsync: Cached consensus start=\(actualStart) length=\(consensus.count) headerStart=\(headerStart.map(String.init) ?? "nil")")
                     viewer.setNeedsDisplay(viewer.bounds)
                 }
             }
@@ -4302,7 +4327,10 @@ public class SequenceViewerView: NSView {
 
         if scale < showLettersThreshold {
             let font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-            let pixelsPerBase = bounds.width / CGFloat(max(1, frame.end - frame.start))
+            // Use frame.pixelWidth (not bounds.width) so base widths match
+            // frame.screenPosition() x-coordinates. These must use the same
+            // coordinate system or bases progressively drift relative to reads.
+            let pixelsPerBase = CGFloat(frame.pixelWidth) / CGFloat(max(1, frame.end - frame.start))
             for (index, base) in visibleSequence.enumerated() {
                 let position = visibleStart + index
                 let x = frame.screenPosition(for: Double(position))
@@ -4707,7 +4735,9 @@ public class SequenceViewerView: NSView {
     /// Draws bases with individual letters (high zoom level).
     private func drawBasesWithLetters(_ sequence: String, startPosition: Int, frame: ReferenceFrame, context: CGContext) {
         let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
-        let pixelsPerBase = bounds.width / CGFloat(max(1, frame.end - frame.start))
+        // Use frame.pixelWidth (not bounds.width) so base widths match
+        // frame.screenPosition() x-coordinates used for positioning.
+        let pixelsPerBase = CGFloat(frame.pixelWidth) / CGFloat(max(1, frame.end - frame.start))
         
         for (index, base) in sequence.enumerated() {
             let position = startPosition + index

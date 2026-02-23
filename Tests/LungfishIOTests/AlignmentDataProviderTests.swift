@@ -261,8 +261,31 @@ final class AlignmentDataProviderTests: XCTestCase {
         acgtNN
         tgca
         """
-        let sequence = AlignmentDataProvider.parseConsensusFASTA(fasta)
-        XCTAssertEqual(sequence, "ACGTNNTGCA")
+        let result = AlignmentDataProvider.parseConsensusFASTA(fasta)
+        XCTAssertEqual(result.sequence, "ACGTNNTGCA")
+        // Header ">chr1:1-10" → 1-based start 1 → 0-based start 0
+        XCTAssertEqual(result.headerStart, 0)
+    }
+
+    func testParseConsensusFASTAHeaderWithLargeRegion() {
+        let fasta = ">MN908947.3:5001-10000\nACGTACGT\n"
+        let result = AlignmentDataProvider.parseConsensusFASTA(fasta)
+        XCTAssertEqual(result.sequence, "ACGTACGT")
+        // 1-based start 5001 → 0-based start 5000
+        XCTAssertEqual(result.headerStart, 5000)
+    }
+
+    func testParseConsensusFASTANoRegionInHeader() {
+        let fasta = ">chr1\nACGT\n"
+        let result = AlignmentDataProvider.parseConsensusFASTA(fasta)
+        XCTAssertEqual(result.sequence, "ACGT")
+        XCTAssertNil(result.headerStart)
+    }
+
+    func testParseConsensusFASTAEmpty() {
+        let result = AlignmentDataProvider.parseConsensusFASTA("")
+        XCTAssertTrue(result.sequence.isEmpty)
+        XCTAssertNil(result.headerStart)
     }
 
     // MARK: - AlignmentMetadataDatabase Parsing (inline data tests)
