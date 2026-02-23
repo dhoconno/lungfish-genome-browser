@@ -1984,10 +1984,26 @@ public class SequenceViewerView: NSView {
     private var cachedConsensusOptionsSignature: String = ""
 
     /// Whether we're currently fetching read data
-    private var isFetchingReads: Bool = false
+    private var isFetchingReads: Bool = false {
+        didSet { updateTrackLoadingAnimationState() }
+    }
+
+    /// Timestamp when the current read fetch started.
+    private var readFetchStartTime: Date?
 
     /// Whether we're currently fetching depth data.
-    private var isFetchingDepth: Bool = false
+    private var isFetchingDepth: Bool = false {
+        didSet { updateTrackLoadingAnimationState() }
+    }
+
+    /// Timestamp when the current depth fetch started.
+    private var depthFetchStartTime: Date?
+
+    /// Timer driving the in-track loading badge spinner.
+    private nonisolated(unsafe) var trackLoadingAnimationTimer: Timer?
+
+    /// Current spinner phase in radians.
+    private var trackLoadingAnimationPhase: CGFloat = 0
 
     /// Whether we're currently fetching consensus sequence data.
     private var isFetchingConsensus: Bool = false
@@ -2524,6 +2540,7 @@ public class SequenceViewerView: NSView {
     }
 
     deinit {
+        trackLoadingAnimationTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -2562,6 +2579,34 @@ public class SequenceViewerView: NSView {
 
         needsDisplay = true
         logger.info("SequenceViewerView: Appearance changed, triggering redraw")
+    }
+
+    /// Starts/stops the loading-badge animation timer based on fetch state.
+    private func updateTrackLoadingAnimationState() {
+        let shouldAnimate = isFetchingReads || isFetchingDepth
+        if shouldAnimate {
+            guard trackLoadingAnimationTimer == nil else { return }
+            trackLoadingAnimationPhase = 0
+            let timer = Timer(timeInterval: 1.0 / 18.0, repeats: true) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.trackLoadingAnimationPhase += 0.34
+                    if self.trackLoadingAnimationPhase > .pi * 2 {
+                        self.trackLoadingAnimationPhase -= .pi * 2
+                    }
+                    self.setNeedsDisplay(self.bounds)
+                }
+            }
+            trackLoadingAnimationTimer = timer
+            RunLoop.main.add(timer, forMode: .common)
+            return
+        }
+
+        if let timer = trackLoadingAnimationTimer {
+            timer.invalidate()
+            trackLoadingAnimationTimer = nil
+            trackLoadingAnimationPhase = 0
+        }
     }
 
     // MARK: - Data Setters
@@ -2892,6 +2937,8 @@ public class SequenceViewerView: NSView {
         self.isFetchingReads = false
         self.isFetchingDepth = false
         self.isFetchingConsensus = false
+        self.readFetchStartTime = nil
+        self.depthFetchStartTime = nil
         self.readFetchGeneration = 0
         self.depthFetchGeneration = 0
         self.consensusFetchGeneration = 0
@@ -3026,6 +3073,8 @@ public class SequenceViewerView: NSView {
         self.isFetchingReads = false
         self.isFetchingDepth = false
         self.isFetchingConsensus = false
+        self.readFetchStartTime = nil
+        self.depthFetchStartTime = nil
         self.readFetchGeneration = 0
         self.depthFetchGeneration = 0
         self.consensusFetchGeneration = 0
@@ -3416,6 +3465,16 @@ public class SequenceViewerView: NSView {
                 context: context,
                 rect: coverageRect
             )
+            if isFetchingDepth && cachedDepthPoints.isEmpty {
+                let elapsed = depthFetchStartTime.map { Date().timeIntervalSince($0) } ?? 0
+                if elapsed > 0.15 {
+                    drawTrackLoadingBadge(
+                        context: context,
+                        message: "Loading depth...",
+                        yOffset: coverageRect.minY + 2
+                    )
+                }
+            }
 
             var rowsY = coverageRect.maxY + coverageToConsensusGap
             if showConsensusTrackSetting {
@@ -3574,6 +3633,14 @@ public class SequenceViewerView: NSView {
                 } else {
                     cachedPackedReads = []
                     readContentHeight = 0
+                }
+
+                if isFetchingReads {
+                    let elapsed = readFetchStartTime.map { Date().timeIntervalSince($0) } ?? 0
+                    if elapsed > 0.15 {
+                        let message = cachedAlignedReads.isEmpty ? "Loading mapped reads..." : "Updating mapped reads..."
+                        drawTrackLoadingBadge(context: context, message: message, yOffset: rowsY + 2)
+                    }
                 }
             }
         }
@@ -3941,6 +4008,7 @@ public class SequenceViewerView: NSView {
         depthFetchGeneration += 1
         let thisGeneration = depthFetchGeneration
         isFetchingDepth = true
+        depthFetchStartTime = Date()
 
         let chromLength = bundle.chromosomeLength(named: region.chromosome) ?? Int64(region.end + 1000)
         let visibleSpan = region.end - region.start
@@ -4018,6 +4086,7 @@ public class SequenceViewerView: NSView {
                         regionEnd: expandedRegion.end
                     )
                     viewer.isFetchingDepth = false
+                    viewer.depthFetchStartTime = nil
                     logger.info("fetchDepthAsync: Cached \(mergedPoints.count) depth points")
                     viewer.setNeedsDisplay(viewer.bounds)
                 }
@@ -4254,6 +4323,7 @@ public class SequenceViewerView: NSView {
         readFetchGeneration += 1
         let thisGeneration = readFetchGeneration
         isFetchingReads = true
+        readFetchStartTime = Date()
 
         let chromLength = bundle.chromosomeLength(named: region.chromosome) ?? Int64(region.end + 1000)
         let visibleSpan = region.end - region.start
@@ -4328,6 +4398,7 @@ public class SequenceViewerView: NSView {
                     viewer.cachedAlignedReads = allReads
                     viewer.cachedReadRegion = expandedRegion
                     viewer.isFetchingReads = false
+                    viewer.readFetchStartTime = nil
                     logger.info("fetchReadsAsync: Cached \(count) reads")
                     viewer.setNeedsDisplay(viewer.bounds)
                 }
@@ -5316,8 +5387,74 @@ public class SequenceViewerView: NSView {
             width: size.width,
             height: size.height
         )
-        
+
         (message as NSString).draw(in: rect, withAttributes: attributes)
+    }
+
+    /// Draws a compact loading badge anchored within a track region.
+    private func drawTrackLoadingBadge(context: CGContext, message: String, yOffset: CGFloat) {
+        let textAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10, weight: .medium),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        let text = message as NSString
+        let textSize = text.size(withAttributes: textAttrs)
+
+        let spinnerSize: CGFloat = 10
+        let badgeHeight: CGFloat = 18
+        let horizontalPadding: CGFloat = 8
+        let badgeWidth = min(
+            max(120, spinnerSize + 8 + textSize.width + horizontalPadding * 2),
+            max(120, bounds.width - 16)
+        )
+        let badgeRect = CGRect(
+            x: 8,
+            y: max(0, yOffset),
+            width: badgeWidth,
+            height: badgeHeight
+        )
+
+        context.saveGState()
+        context.setFillColor(NSColor.windowBackgroundColor.withAlphaComponent(0.92).cgColor)
+        context.setStrokeColor(NSColor.separatorColor.withAlphaComponent(0.7).cgColor)
+        context.setLineWidth(0.8)
+        let badgePath = CGPath(roundedRect: badgeRect, cornerWidth: 6, cornerHeight: 6, transform: nil)
+        context.addPath(badgePath)
+        context.drawPath(using: .fillStroke)
+
+        let spinnerRect = CGRect(
+            x: badgeRect.minX + horizontalPadding,
+            y: badgeRect.midY - spinnerSize / 2,
+            width: spinnerSize,
+            height: spinnerSize
+        )
+        context.setStrokeColor(NSColor.tertiaryLabelColor.withAlphaComponent(0.35).cgColor)
+        context.setLineWidth(1.2)
+        context.strokeEllipse(in: spinnerRect)
+
+        context.setStrokeColor(NSColor.controlAccentColor.cgColor)
+        context.setLineWidth(1.8)
+        let center = CGPoint(x: spinnerRect.midX, y: spinnerRect.midY)
+        let radius = spinnerSize / 2 - 1
+        let phase = trackLoadingAnimationPhase
+        let sweep: CGFloat = .pi * 1.1
+        context.addArc(
+            center: center,
+            radius: radius,
+            startAngle: phase,
+            endAngle: phase + sweep,
+            clockwise: false
+        )
+        context.strokePath()
+
+        let textRect = CGRect(
+            x: spinnerRect.maxX + 8,
+            y: badgeRect.midY - textSize.height / 2,
+            width: badgeRect.maxX - spinnerRect.maxX - horizontalPadding - 8,
+            height: textSize.height
+        )
+        text.draw(in: textRect, withAttributes: textAttrs)
+        context.restoreGState()
     }
 
     /// Draws a macOS-style scroll indicator on the right edge of the read track.

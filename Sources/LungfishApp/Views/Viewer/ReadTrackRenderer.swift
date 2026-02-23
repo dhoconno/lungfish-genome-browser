@@ -14,8 +14,8 @@ import LungfishCore
 /// | Tier | Scale (bp/px) | Rendering |
 /// |------|---------------|-----------|
 /// | Coverage | > 10 | Forward/reverse stacked area chart |
-/// | Packed | 0.5 - 10 | Colored bars with strand indicators |
-/// | Base | < 0.5 | Geneious-style dots for matches, letters for mismatches |
+/// | Packed | 0.6 - 10 | Colored bars with strand indicators |
+/// | Base | < 0.6 | Geneious-style dots for matches, letters for mismatches |
 ///
 /// ## Design Notes
 ///
@@ -37,13 +37,13 @@ public enum ReadTrackRenderer {
     static let rowGap: CGFloat = 1
 
     /// Compact mode packed-row height.
-    static let packedReadHeightCompact: CGFloat = 3
+    static let packedReadHeightCompact: CGFloat = 4
 
     /// Compact mode base-row height.
-    static let baseReadHeightCompact: CGFloat = 8
+    static let baseReadHeightCompact: CGFloat = 9
 
     /// Compact mode row gap.
-    static let rowGapCompact: CGFloat = 0
+    static let rowGapCompact: CGFloat = 1
 
     /// Height of the coverage track.
     static let coverageTrackHeight: CGFloat = 60
@@ -56,7 +56,7 @@ public enum ReadTrackRenderer {
 
     /// Zoom tier thresholds.
     static let coverageThresholdBpPerPx: Double = 10
-    static let baseThresholdBpPerPx: Double = 0.5
+    static let baseThresholdBpPerPx: Double = 0.6
 
     // MARK: - Colors
 
@@ -81,7 +81,7 @@ public enum ReadTrackRenderer {
     static let baseG = NSColor(red: 1.0, green: 0.7, blue: 0, alpha: 1.0).cgColor
     static let baseN = NSColor.gray.cgColor
     /// Match dot color.
-    static let matchDotColor = NSColor(white: 0.67, alpha: 0.6).cgColor
+    static let matchDotColor = NSColor(white: 0.48, alpha: 0.82).cgColor
     /// Insertion indicator color (magenta).
     static let insertionColor = NSColor(red: 0.8, green: 0, blue: 0.8, alpha: 1.0).cgColor
     /// Deletion line color.
@@ -419,28 +419,25 @@ public enum ReadTrackRenderer {
         let pixelWidth = Int(rect.width)
         guard pixelWidth > 0, regionEnd > regionStart else { return }
 
-        var bins = [Int](repeating: 0, count: pixelWidth)
-        for point in depthPoints {
-            if point.depth <= 0 { continue }
-            if point.position < regionStart || point.position >= regionEnd { continue }
-            let x = frame.genomicToPixel(Double(point.position))
-            let px = Int(x - rect.minX)
-            if px >= 0, px < pixelWidth {
-                if point.depth > bins[px] {
-                    bins[px] = point.depth
-                }
-            }
-        }
+        let bins = binnedDepthColumns(
+            depthPoints: depthPoints,
+            regionStart: regionStart,
+            regionEnd: regionEnd,
+            frame: frame,
+            rect: rect
+        )
 
-        var maxDepth = 1
-        var sumDepth: Int64 = 0
-        var coveredCols = 0
-        for depth in bins {
-            if depth > maxDepth { maxDepth = depth }
-            sumDepth += Int64(depth)
-            if depth > 0 { coveredCols += 1 }
+        let stats = summarizeCoverage(
+            depthPoints: depthPoints,
+            regionStart: regionStart,
+            regionEnd: regionEnd
+        )
+
+        var maxDepth = max(1, stats.maxDepth)
+        for depth in bins where depth > maxDepth {
+            maxDepth = depth
         }
-        let meanDepth = Double(sumDepth) / Double(max(1, bins.count))
+        let meanDepth = stats.meanDepth
         let yScale = (rect.height - 18) / CGFloat(maxDepth)
 
         context.saveGState()
@@ -491,7 +488,7 @@ public enum ReadTrackRenderer {
             withAttributes: legendAttrs
         )
 
-        let coveragePct = Double(coveredCols) / Double(max(1, bins.count)) * 100
+        let coveragePct = Double(stats.coveredBases) / Double(max(1, stats.span)) * 100
         let leftDetail = "\(Int(coveragePct.rounded()))% covered" as NSString
         leftDetail.draw(
             at: CGPoint(x: legendRect.maxX + 44, y: rect.minY + 3),
@@ -499,6 +496,38 @@ public enum ReadTrackRenderer {
         )
 
         context.restoreGState()
+    }
+
+    /// Bins sparse depth points into pixel columns for coverage rendering.
+    ///
+    /// Each 1bp depth sample is expanded to its full on-screen pixel span so
+    /// zoomed-in views (>1 px/base) do not introduce false zero-depth columns.
+    static func binnedDepthColumns(
+        depthPoints: [CoveragePoint],
+        regionStart: Int,
+        regionEnd: Int,
+        frame: ReferenceFrame,
+        rect: CGRect
+    ) -> [Int] {
+        let pixelWidth = Int(rect.width)
+        guard pixelWidth > 0, regionEnd > regionStart else { return [] }
+
+        var bins = [Int](repeating: 0, count: pixelWidth)
+        for point in depthPoints {
+            if point.depth <= 0 { continue }
+            if point.position < regionStart || point.position >= regionEnd { continue }
+
+            let startX = frame.genomicToPixel(Double(point.position)) - rect.minX
+            let endX = frame.genomicToPixel(Double(point.position + 1)) - rect.minX
+            let startPx = max(0, Int(floor(startX)))
+            let endPxExclusive = min(pixelWidth, max(startPx + 1, Int(ceil(endX))))
+            if startPx >= pixelWidth || endPxExclusive <= 0 { continue }
+
+            for px in startPx..<endPxExclusive where point.depth > bins[px] {
+                bins[px] = point.depth
+            }
+        }
+        return bins
     }
 
     /// Returns depth value for a specific 0-based genomic position.
@@ -844,14 +873,14 @@ public enum ReadTrackRenderer {
         let readHeight = metrics.baseReadHeight
 
         let pixelsPerBase = 1.0 / frame.scale
-        let fontSize = min(12, CGFloat(pixelsPerBase) * 0.85)
-        let font = CTFontCreateWithName("Menlo" as CFString, fontSize, nil)
+        let fontSize = min(13, max(7, CGFloat(pixelsPerBase) * 0.95))
+        let font = CTFontCreateWithName("Menlo-Bold" as CFString, fontSize, nil)
         let refBytes: [UInt8]? = referenceSequence.map(uppercaseASCIIBytes)
         let cache = GlyphCache(font: font)
 
         // Pre-compute background colors for each strand to avoid per-read alloc
-        let fwdBgTemplate = NSColor(red: 0.94, green: 0.96, blue: 0.97, alpha: 1.0).cgColor
-        let revBgTemplate = NSColor(red: 0.97, green: 0.94, blue: 0.94, alpha: 1.0).cgColor
+        let fwdBgTemplate = NSColor(red: 0.84, green: 0.89, blue: 0.95, alpha: 1.0).cgColor
+        let revBgTemplate = NSColor(red: 0.95, green: 0.86, blue: 0.86, alpha: 1.0).cgColor
 
         for (row, read) in packedReads {
             let y = rect.minY + CGFloat(row) * (readHeight + metrics.rowGap)
@@ -867,9 +896,15 @@ public enum ReadTrackRenderer {
             // Draw read background
             let startPx = frame.genomicToPixel(Double(read.position))
             let endPx = frame.genomicToPixel(Double(read.alignmentEnd))
-            let bgColor = (read.isReverse ? revBgTemplate : fwdBgTemplate).copy(alpha: alpha * 0.5)!
+            let readRect = CGRect(x: startPx, y: y, width: endPx - startPx, height: readHeight)
+            let bgAlpha = max(0.35, alpha * 0.72)
+            let bgColor = (read.isReverse ? revBgTemplate : fwdBgTemplate).copy(alpha: bgAlpha)!
             context.setFillColor(bgColor)
-            context.fill(CGRect(x: startPx, y: y, width: endPx - startPx, height: readHeight))
+            context.fill(readRect)
+            let borderColor = (read.isReverse ? reverseReadStroke : forwardReadStroke).copy(alpha: max(0.45, alpha * 0.7))!
+            context.setStrokeColor(borderColor)
+            context.setLineWidth(0.6)
+            context.stroke(readRect.insetBy(dx: 0.25, dy: 0.25))
 
             // Draw bases using CTFont glyph rendering
             drawReadBases(

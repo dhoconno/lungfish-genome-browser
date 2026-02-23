@@ -64,15 +64,16 @@ final class ReadTrackRendererTests: XCTestCase {
     }
 
     func testZoomTierPackedBetweenThresholds() {
-        // 0.5 < scale <= 10 → packed
+        // 0.6 < scale <= 10 → packed
         XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 10.0), .packed)
         XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 5.0), .packed)
         XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 1.0), .packed)
-        XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 0.51), .packed)
+        XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 0.61), .packed)
     }
 
     func testZoomTierBaseAtAndBelowThreshold() {
-        // <= 0.5 → base
+        // <= 0.6 → base
+        XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 0.6), .base)
         XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 0.5), .base)
         XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 0.1), .base)
         XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 0.01), .base)
@@ -80,8 +81,8 @@ final class ReadTrackRendererTests: XCTestCase {
 
     func testZoomTierBoundaryValues() {
         // Test the exact boundary between packed and base
-        XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 0.500001), .packed)
-        XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 0.5), .base)
+        XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 0.600001), .packed)
+        XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 0.6), .base)
     }
 
     // MARK: - Total Height Calculation
@@ -259,7 +260,7 @@ final class ReadTrackRendererTests: XCTestCase {
 
     func testZoomThresholdConstants() {
         XCTAssertEqual(ReadTrackRenderer.coverageThresholdBpPerPx, 10)
-        XCTAssertEqual(ReadTrackRenderer.baseThresholdBpPerPx, 0.5)
+        XCTAssertEqual(ReadTrackRenderer.baseThresholdBpPerPx, 0.6)
     }
 
     func testLayoutMetricsCompressedMode() {
@@ -298,6 +299,25 @@ final class ReadTrackRendererTests: XCTestCase {
         XCTAssertEqual(stats.coveredBases, 3)
         XCTAssertEqual(stats.meanDepth, 1.2, accuracy: 0.0001)
         XCTAssertEqual(stats.span, 10)
+    }
+
+    func testBinnedDepthColumnsFillsZoomedInBaseSpans() {
+        // 10 bp rendered across 20 px => 2 px/base.
+        // With full per-base depth, every pixel column should be covered.
+        let frame = makeFrame(start: 0, end: 10, pixelWidth: 20)
+        let points = (0..<10).map { ReadTrackRenderer.CoveragePoint(position: $0, depth: 8) }
+        let rect = CGRect(x: 0, y: 0, width: 20, height: 60)
+
+        let bins = ReadTrackRenderer.binnedDepthColumns(
+            depthPoints: points,
+            regionStart: 0,
+            regionEnd: 10,
+            frame: frame,
+            rect: rect
+        )
+
+        XCTAssertEqual(bins.count, 20)
+        XCTAssertTrue(bins.allSatisfy { $0 > 0 }, "Expected contiguous non-zero depth across zoomed-in pixel columns")
     }
 
     // MARK: - ReferenceFrame Extension
@@ -419,7 +439,7 @@ final class ReadTrackRendererTests: XCTestCase {
     }
 
     func testDrawBaseReadsDoesNotCrash() {
-        // Scale < 0.5 bp/px for base tier
+        // Scale < 0.6 bp/px for base tier
         let frame = makeFrame(start: 0, end: 200, pixelWidth: 1000)
         let read = makeRead(
             position: 50, cigarLength: 50,
