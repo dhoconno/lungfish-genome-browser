@@ -87,7 +87,7 @@ public final class AlignmentDataProvider: @unchecked Sendable {
         end: Int,
         excludeFlags: UInt16 = 0x904,
         minMapQ: Int = 0,
-        maxReads: Int = 10_000,
+        maxReads: Int = .max,
         readGroups: Set<String> = []
     ) async throws -> [AlignedRead] {
         guard !chromosome.isEmpty, start >= 0, end > start else {
@@ -179,8 +179,9 @@ public final class AlignmentDataProvider: @unchecked Sendable {
 
     // MARK: - Process Execution
 
-    /// Maximum stdout data to buffer before truncating (20 MB).
-    private static let maxStdoutSize = 20 * 1024 * 1024
+    /// Maximum stdout data to buffer before truncating (500 MB).
+    /// Coverage histograms need ALL reads — the 30s timeout is the real safety net.
+    private static let maxStdoutSize = 500 * 1024 * 1024
 
     /// Runs samtools with the given arguments using Process.
     ///

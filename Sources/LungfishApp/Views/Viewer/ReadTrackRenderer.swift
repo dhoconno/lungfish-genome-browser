@@ -352,6 +352,9 @@ public enum ReadTrackRenderer {
 
     /// Rendering options controllable from the Inspector panel.
     public struct DisplaySettings {
+        /// When true (default), matches are shown as dots and mismatches as colored letters.
+        /// When false, all bases are shown as letters (matches in neutral gray, mismatches colored).
+        /// Mismatches are ALWAYS visible regardless of this setting.
         public var showMismatches: Bool = true
         public var showSoftClips: Bool = true
         public var showIndels: Bool = true
@@ -452,8 +455,8 @@ public enum ReadTrackRenderer {
         context.saveGState()
 
         // Pre-compute reference as uppercased ASCII bytes (500KB vs 8MB for [Character])
-        let refBytes: [UInt8]? = (settings.showMismatches && referenceSequence != nil)
-            ? Array(referenceSequence!.uppercased().utf8) : nil
+        // Always compute reference bytes — mismatch ticks are always shown when reference is available
+        let refBytes: [UInt8]? = referenceSequence.map { Array($0.uppercased().utf8) }
 
         // Pre-compute CGColor cache for (strand, mapqBin) combinations to avoid per-read allocs.
         // mapqAlpha returns 5 distinct values × 2 strands × 2 (fill/stroke) = 20 cached colors.
@@ -519,7 +522,8 @@ public enum ReadTrackRenderer {
             }
 
             // Draw mismatch tick marks using ASCII byte comparison (zero allocations)
-            if settings.showMismatches, let refBytes {
+            // Mismatch ticks are always shown when reference sequence is available
+            if let refBytes {
                 drawMismatchTicks(
                     read: read, frame: frame, refBytes: refBytes, referenceStart: referenceStart,
                     context: context, y: y, readHeight: packedReadHeight
@@ -691,9 +695,15 @@ public enum ReadTrackRenderer {
         let ascent = CTFontGetAscent(font)
         let descent = CTFontGetDescent(font)
         let glyphHeight = ascent + descent
-        let baselineY = y + (readHeight - glyphHeight) / 2 + descent
+        let baselineY = y + (readHeight - glyphHeight) / 2 + ascent
 
         context.saveGState()
+
+        // Fix glyph orientation in flipped view (isFlipped=true): CTFontDrawGlyphs renders
+        // upside-down because the CTM flips glyph outlines. Text matrix is NOT part of the
+        // graphics state, so we save/restore it manually.
+        let savedTextMatrix = context.textMatrix
+        context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
 
         // Use UTF-8 view for zero-allocation iteration
         var byteIndex = 0
@@ -713,8 +723,11 @@ public enum ReadTrackRenderer {
                     // Uppercase: mask bit 5 (0x20) to convert lowercase ASCII to uppercase
                     let upperByte = readByte & 0xDF
 
+                    // Always compare to reference when available — mismatches are
+                    // always shown. The showMismatches toggle controls whether MATCHES
+                    // appear as dots (true, default) or base letters (false).
                     let isMatch: Bool
-                    if showMismatches, let refBytes, refPos >= referenceStart {
+                    if let refBytes, refPos >= referenceStart {
                         let refIdx = refPos - referenceStart
                         if refIdx >= 0, refIdx < refBytes.count {
                             isMatch = (upperByte == refBytes[refIdx])
@@ -729,14 +742,21 @@ public enum ReadTrackRenderer {
                     let glyphWidth: CGFloat
                     let color: CGColor
 
-                    if isMatch {
+                    if !isMatch {
+                        // Mismatches: ALWAYS shown as colored base letters
+                        glyph = cache.glyphs[upperByte] ?? cache.dotGlyph
+                        glyphWidth = cache.advances[upperByte]?.width ?? cache.dotAdvance.width
+                        color = colorForByte(upperByte, a: colorA, t: colorT, c: colorC, g: colorG, n: colorN)
+                    } else if showMismatches {
+                        // Mismatch highlight mode (default): matches shown as dots
                         glyph = cache.dotGlyph
                         glyphWidth = cache.dotAdvance.width
                         color = matchDotAlpha
                     } else {
+                        // Full sequence mode: matches shown as neutral-colored letters
                         glyph = cache.glyphs[upperByte] ?? cache.dotGlyph
                         glyphWidth = cache.advances[upperByte]?.width ?? cache.dotAdvance.width
-                        color = colorForByte(upperByte, a: colorA, t: colorT, c: colorC, g: colorG, n: colorN)
+                        color = matchDotAlpha
                     }
 
                     let drawX = x + (cellWidth - glyphWidth) / 2
@@ -767,6 +787,7 @@ public enum ReadTrackRenderer {
             }
         }
 
+        context.textMatrix = savedTextMatrix
         context.restoreGState()
     }
 

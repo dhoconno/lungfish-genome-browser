@@ -3271,9 +3271,24 @@ public class SequenceViewerView: NSView {
                     ReadTrackRenderer.drawCoverage(reads: cachedAlignedReads, frame: frame, context: context, rect: rect)
                 case .packed, .base:
                     if needsRepack {
-                        let (packed, overflow) = ReadTrackRenderer.packReads(cachedAlignedReads, frame: frame, maxRows: maxRows)
+                        // Downsample for packed/base rendering performance while preserving
+                        // strand balance and genome-wide distribution via reservoir sampling.
+                        // Coverage mode uses all reads (no downsampling).
+                        let readsForPacking: [AlignedRead]
+                        let downsampleOverflow: Int
+                        if cachedAlignedReads.count > 10_000 {
+                            let (sampled, total) = ReadTrackRenderer.downsample(
+                                cachedAlignedReads, maxReads: 10_000
+                            )
+                            readsForPacking = sampled
+                            downsampleOverflow = total - sampled.count
+                        } else {
+                            readsForPacking = cachedAlignedReads
+                            downsampleOverflow = 0
+                        }
+                        let (packed, packOverflow) = ReadTrackRenderer.packReads(readsForPacking, frame: frame, maxRows: maxRows)
                         cachedPackedReads = packed
-                        cachedPackOverflow = overflow
+                        cachedPackOverflow = packOverflow + downsampleOverflow
                         cachedPackScale = scale
                         cachedPackDataGeneration = readFetchGeneration
                         cachedPackMaxRows = maxRows
