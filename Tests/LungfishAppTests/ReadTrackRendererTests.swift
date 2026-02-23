@@ -1361,7 +1361,7 @@ final class ReadTrackRendererTests: XCTestCase {
         // scale = (5200-4900)/1000 = 0.3 bp/px → base tier
 
         // Without viewport filtering: pack all 220 reads
-        let (allPacked, allOverflow) = ReadTrackRenderer.packReads(reads, frame: frame, maxRows: 75)
+        let (allPacked, _) = ReadTrackRenderer.packReads(reads, frame: frame, maxRows: 75)
 
         // With viewport filtering: only pack reads near viewport
         let viewportStart = 4900 - 300  // 1 viewport width padding
@@ -1390,5 +1390,113 @@ final class ReadTrackRendererTests: XCTestCase {
         let filteredVisibleCount = filteredPacked.filter { $0.read.position >= 4900 && $0.read.position < 5200 }.count
         XCTAssertGreaterThanOrEqual(filteredVisibleCount, unfileredVisibleCount,
             "Viewport filtering should pack at least as many visible reads as unfiltered")
+    }
+
+    func testPackReadsPrioritizedRegionPreservesVisibleReads() {
+        var reads: [AlignedRead] = []
+        for i in 0..<120 {
+            // Dense off-screen pileup to the left.
+            reads.append(makeRead(name: "left_\(i)", position: 1000 + (i % 5), cigarLength: 180))
+        }
+        for i in 0..<12 {
+            // Reads overlapping the viewport.
+            reads.append(makeRead(name: "visible_\(i)", position: 5000 + (i % 3), cigarLength: 180))
+        }
+
+        let frame = makeFrame(start: 4950, end: 5100, pixelWidth: 900)
+        let visible = 4950..<5100
+
+        let (unprioritized, _) = ReadTrackRenderer.packReads(reads, frame: frame, maxRows: 20)
+        let (prioritized, _) = ReadTrackRenderer.packReads(
+            reads,
+            frame: frame,
+            maxRows: 20,
+            prioritizedRegion: visible
+        )
+
+        let unprioritizedVisible = unprioritized.filter {
+            $0.read.alignmentEnd > visible.lowerBound && $0.read.position < visible.upperBound
+        }.count
+        let prioritizedVisible = prioritized.filter {
+            $0.read.alignmentEnd > visible.lowerBound && $0.read.position < visible.upperBound
+        }.count
+
+        XCTAssertGreaterThan(prioritizedVisible, 0, "Prioritized packing should include visible reads")
+        XCTAssertGreaterThanOrEqual(
+            prioritizedVisible,
+            unprioritizedVisible,
+            "Prioritized packing should not regress visible read inclusion"
+        )
+    }
+
+    func testComputeHighGapMaskedPositionsMasksDeletionDominatedSite() {
+        var packed: [(row: Int, read: AlignedRead)] = []
+
+        // Nine reads have a deletion at reference position 105.
+        for row in 0..<9 {
+            let read = AlignedRead(
+                name: "del_\(row)",
+                flag: 99,
+                chromosome: "chr1",
+                position: 100,
+                mapq: 60,
+                cigar: [
+                    CIGAROperation(op: .match, length: 5),
+                    CIGAROperation(op: .deletion, length: 1),
+                    CIGAROperation(op: .match, length: 4),
+                ],
+                sequence: String(repeating: "A", count: 9),
+                qualities: Array(repeating: 30, count: 9)
+            )
+            packed.append((row, read))
+        }
+
+        // One read aligns through the site with no deletion.
+        let fullRead = AlignedRead(
+            name: "full",
+            flag: 99,
+            chromosome: "chr1",
+            position: 100,
+            mapq: 60,
+            cigar: [CIGAROperation(op: .match, length: 10)],
+            sequence: String(repeating: "A", count: 10),
+            qualities: Array(repeating: 30, count: 10)
+        )
+        packed.append((9, fullRead))
+
+        let masked = ReadTrackRenderer.computeHighGapMaskedPositions(
+            packedReads: packed,
+            visibleRegion: 100..<110,
+            minDepth: 5,
+            gapThreshold: 0.8
+        )
+
+        XCTAssertTrue(masked.contains(105), "Deletion-dominated position should be masked")
+    }
+
+    func testComputeHighGapMaskedPositionsRespectsMinDepth() {
+        // One deletion-only read is not enough to pass minDepth.
+        let read = AlignedRead(
+            name: "shallow",
+            flag: 99,
+            chromosome: "chr1",
+            position: 100,
+            mapq: 60,
+            cigar: [
+                CIGAROperation(op: .match, length: 2),
+                CIGAROperation(op: .deletion, length: 1),
+                CIGAROperation(op: .match, length: 2),
+            ],
+            sequence: "AAAA",
+            qualities: [30, 30, 30, 30]
+        )
+        let masked = ReadTrackRenderer.computeHighGapMaskedPositions(
+            packedReads: [(0, read)],
+            visibleRegion: 100..<105,
+            minDepth: 3,
+            gapThreshold: 0.5
+        )
+
+        XCTAssertTrue(masked.isEmpty, "Sites below minDepth should not be masked")
     }
 }

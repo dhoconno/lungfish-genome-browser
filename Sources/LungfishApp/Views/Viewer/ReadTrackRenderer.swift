@@ -358,11 +358,24 @@ public enum ReadTrackRenderer {
         public var showMismatches: Bool = true
         public var showSoftClips: Bool = true
         public var showIndels: Bool = true
+        public var consensusMaskingEnabled: Bool = false
+        public var consensusGapThreshold: Double = 0.9
+        public var consensusMinDepth: Int = 8
 
-        public init(showMismatches: Bool = true, showSoftClips: Bool = true, showIndels: Bool = true) {
+        public init(
+            showMismatches: Bool = true,
+            showSoftClips: Bool = true,
+            showIndels: Bool = true,
+            consensusMaskingEnabled: Bool = false,
+            consensusGapThreshold: Double = 0.9,
+            consensusMinDepth: Int = 8
+        ) {
             self.showMismatches = showMismatches
             self.showSoftClips = showSoftClips
             self.showIndels = showIndels
+            self.consensusMaskingEnabled = consensusMaskingEnabled
+            self.consensusGapThreshold = consensusGapThreshold
+            self.consensusMinDepth = consensusMinDepth
         }
     }
 
@@ -382,7 +395,8 @@ public enum ReadTrackRenderer {
         frame: ReferenceFrame,
         maxRows: Int = 75,
         sortMode: ReadSortMode = .position,
-        sortPosition: Int? = nil
+        sortPosition: Int? = nil,
+        prioritizedRegion: Range<Int>? = nil
     ) -> (packed: [(row: Int, read: AlignedRead)], overflow: Int) {
         let sorted: [AlignedRead]
         switch sortMode {
@@ -403,12 +417,29 @@ public enum ReadTrackRenderer {
                 sorted = reads.sorted { $0.position < $1.position }
             }
         }
+        let ordered: [AlignedRead]
+        if let prioritizedRegion {
+            var visible: [AlignedRead] = []
+            var nearby: [AlignedRead] = []
+            visible.reserveCapacity(sorted.count / 2)
+            nearby.reserveCapacity(sorted.count / 2)
+            for read in sorted {
+                if read.alignmentEnd > prioritizedRegion.lowerBound && read.position < prioritizedRegion.upperBound {
+                    visible.append(read)
+                } else {
+                    nearby.append(read)
+                }
+            }
+            ordered = visible + nearby
+        } else {
+            ordered = sorted
+        }
 
         var rowEndPixels = [CGFloat](repeating: -1, count: maxRows)
         var packed: [(Int, AlignedRead)] = []
         var overflow = 0
 
-        for read in sorted {
+        for read in ordered {
             let startPx = frame.genomicToPixel(Double(read.position))
             let endPx = frame.genomicToPixel(Double(read.alignmentEnd))
             guard endPx - startPx >= minReadPixels else { continue }
@@ -449,6 +480,7 @@ public enum ReadTrackRenderer {
         referenceSequence: String? = nil,
         referenceStart: Int = 0,
         settings: DisplaySettings = DisplaySettings(),
+        maskedPositions: Set<Int> = [],
         context: CGContext,
         rect: CGRect
     ) {
@@ -526,6 +558,7 @@ public enum ReadTrackRenderer {
             if let refBytes {
                 drawMismatchTicks(
                     read: read, frame: frame, refBytes: refBytes, referenceStart: referenceStart,
+                    maskedPositions: maskedPositions,
                     context: context, y: y, readHeight: packedReadHeight
                 )
             }
@@ -535,6 +568,10 @@ public enum ReadTrackRenderer {
                 drawDeletions(read: read, frame: frame, context: context, y: y + packedReadHeight / 2, readHeight: packedReadHeight)
                 drawInsertionTicks(read: read, frame: frame, context: context, y: y, readHeight: packedReadHeight)
             }
+        }
+
+        if !maskedPositions.isEmpty {
+            drawMaskedColumns(maskedPositions, frame: frame, context: context, rect: rect)
         }
 
         // Draw overflow indicator
@@ -565,6 +602,7 @@ public enum ReadTrackRenderer {
         referenceSequence: String?,
         referenceStart: Int,
         settings: DisplaySettings = DisplaySettings(),
+        maskedPositions: Set<Int> = [],
         context: CGContext,
         rect: CGRect
     ) {
@@ -605,6 +643,7 @@ public enum ReadTrackRenderer {
                 refBytes: refBytes,
                 referenceStart: referenceStart,
                 showMismatches: settings.showMismatches,
+                maskedPositions: maskedPositions,
                 context: context,
                 y: y,
                 readHeight: baseReadHeight,
@@ -618,6 +657,10 @@ public enum ReadTrackRenderer {
                 drawInsertionMarkers(read: read, frame: frame, context: context, y: y, readHeight: baseReadHeight)
                 drawDeletions(read: read, frame: frame, context: context, y: y + baseReadHeight / 2, readHeight: baseReadHeight)
             }
+        }
+
+        if !maskedPositions.isEmpty {
+            drawMaskedColumns(maskedPositions, frame: frame, context: context, rect: rect)
         }
 
         // Draw overflow indicator
@@ -669,6 +712,7 @@ public enum ReadTrackRenderer {
         refBytes: [UInt8]?,
         referenceStart: Int,
         showMismatches: Bool = true,
+        maskedPositions: Set<Int>,
         context: CGContext,
         y: CGFloat,
         readHeight: CGFloat,
@@ -682,11 +726,12 @@ public enum ReadTrackRenderer {
 
         // Pre-compute alpha-modulated colors (5 base colors + match dot + soft clip variants)
         let matchDotAlpha = matchDotColor.copy(alpha: alpha)!
-        let colorA = baseA.copy(alpha: alpha)!
-        let colorT = baseT.copy(alpha: alpha)!
-        let colorC = baseC.copy(alpha: alpha)!
-        let colorG = baseG.copy(alpha: alpha)!
-        let colorN = baseN.copy(alpha: alpha)!
+        let mismatchAlpha = max(alpha, 0.85)
+        let colorA = baseA.copy(alpha: mismatchAlpha)!
+        let colorT = baseT.copy(alpha: mismatchAlpha)!
+        let colorC = baseC.copy(alpha: mismatchAlpha)!
+        let colorG = baseG.copy(alpha: mismatchAlpha)!
+        let colorN = baseN.copy(alpha: mismatchAlpha)!
 
         // Baseline offset: center glyph vertically using ascent/descent
         let ascent = CTFontGetAscent(font)
@@ -713,6 +758,10 @@ public enum ReadTrackRenderer {
                 let explicitMismatch = (op.op == .seqMismatch)
                 for _ in 0..<op.length {
                     guard let readByte = seqIterator.next() else { refPos += 1; continue }
+                    guard !maskedPositions.contains(refPos) else {
+                        refPos += 1
+                        continue
+                    }
 
                     let x = frame.genomicToPixel(Double(refPos))
 
@@ -730,7 +779,7 @@ public enum ReadTrackRenderer {
                     } else if let refBytes, refPos >= referenceStart {
                         let refIdx = refPos - referenceStart
                         if refIdx >= 0, refIdx < refBytes.count {
-                            isMatch = (upperByte == refBytes[refIdx])
+                            isMatch = isEquivalentBase(upperByte, refBytes[refIdx])
                         } else {
                             isMatch = true
                         }
@@ -811,6 +860,7 @@ public enum ReadTrackRenderer {
         frame: ReferenceFrame,
         refBytes: [UInt8],
         referenceStart: Int,
+        maskedPositions: Set<Int>,
         context: CGContext,
         y: CGFloat,
         readHeight: CGFloat
@@ -833,6 +883,8 @@ public enum ReadTrackRenderer {
 
                     let refIdx = refPos - referenceStart
                     refPos += 1
+                    let refPosition = refPos - 1
+                    if maskedPositions.contains(refPosition) { continue }
 
                     if explicitMatch { continue }
 
@@ -841,7 +893,7 @@ public enum ReadTrackRenderer {
                         isMismatch = true
                     } else if refIdx >= 0, refIdx < refBytes.count {
                         let upperRef = refBytes[refIdx]
-                        isMismatch = upperRead != upperRef
+                        isMismatch = !isEquivalentBase(upperRead, upperRef)
                         guard upperRead != 0x4E && upperRef != 0x4E else { continue }
                     } else {
                         continue
@@ -849,7 +901,7 @@ public enum ReadTrackRenderer {
                     guard isMismatch else { continue }
                     guard upperRead != 0x4E else { continue } // Skip ambiguous read base
 
-                    let x = frame.genomicToPixel(Double(refPos - 1))
+                    let x = frame.genomicToPixel(Double(refPosition))
                     let px = Int(x)
                     guard px != lastMismatchPixel else { continue }
                     lastMismatchPixel = px
@@ -884,6 +936,115 @@ public enum ReadTrackRenderer {
             bytes[i] &= 0xDF
         }
         return bytes
+    }
+
+    /// Base-equivalence comparison that treats DNA/RNA thymine-uracil as a match.
+    private static func isEquivalentBase(_ a: UInt8, _ b: UInt8) -> Bool {
+        if a == b { return true }
+        // Treat T and U as equivalent for RNA-vs-DNA views.
+        return (a == 0x54 && b == 0x55) || (a == 0x55 && b == 0x54)
+    }
+
+    /// Computes visible positions where gaps dominate among spanning reads.
+    ///
+    /// A position is masked when:
+    /// - at least `minDepth` reads span the position, and
+    /// - `(spanningReads - alignedBases) / spanningReads >= gapThreshold`.
+    public static func computeHighGapMaskedPositions(
+        packedReads: [(row: Int, read: AlignedRead)],
+        visibleRegion: Range<Int>,
+        minDepth: Int,
+        gapThreshold: Double
+    ) -> Set<Int> {
+        guard !packedReads.isEmpty,
+              visibleRegion.lowerBound < visibleRegion.upperBound else { return [] }
+
+        let threshold = max(0.0, min(1.0, gapThreshold))
+        let depthFloor = max(1, minDepth)
+        let regionStart = visibleRegion.lowerBound
+        let regionEnd = visibleRegion.upperBound
+        let length = regionEnd - regionStart
+        if length > 200_000 { return [] } // Safety bound for pathological draw windows.
+
+        var spanningDiff = [Int](repeating: 0, count: length + 1)
+        var alignedCounts = [Int](repeating: 0, count: length)
+
+        for (_, read) in packedReads {
+            let spanStart = max(regionStart, read.position)
+            let spanEnd = min(regionEnd, read.alignmentEnd)
+            if spanStart < spanEnd {
+                spanningDiff[spanStart - regionStart] += 1
+                spanningDiff[spanEnd - regionStart] -= 1
+            }
+
+            var refPos = read.position
+            for op in read.cigar {
+                switch op.op {
+                case .match, .seqMatch, .seqMismatch:
+                    for _ in 0..<op.length {
+                        if refPos >= regionStart && refPos < regionEnd {
+                            alignedCounts[refPos - regionStart] += 1
+                        }
+                        refPos += 1
+                    }
+                case .deletion, .skip:
+                    refPos += op.length
+                case .insertion, .softClip, .hardClip, .padding:
+                    break
+                }
+            }
+        }
+
+        var masked = Set<Int>()
+        masked.reserveCapacity(length / 4)
+        var spanning = 0
+        for idx in 0..<length {
+            spanning += spanningDiff[idx]
+            guard spanning >= depthFloor else { continue }
+            let aligned = alignedCounts[idx]
+            let gaps = max(0, spanning - aligned)
+            let gapFraction = Double(gaps) / Double(spanning)
+            if gapFraction >= threshold {
+                masked.insert(regionStart + idx)
+            }
+        }
+        return masked
+    }
+
+    /// Draws semi-opaque column overlays for masked (high-gap) positions.
+    private static func drawMaskedColumns(
+        _ maskedPositions: Set<Int>,
+        frame: ReferenceFrame,
+        context: CGContext,
+        rect: CGRect
+    ) {
+        guard !maskedPositions.isEmpty else { return }
+
+        let sorted = maskedPositions.sorted()
+        var runStart = sorted[0]
+        var runEnd = sorted[0]
+
+        context.saveGState()
+        context.setFillColor(NSColor.controlBackgroundColor.withAlphaComponent(0.9).cgColor)
+
+        func fillRun(_ start: Int, _ end: Int) {
+            let x0 = frame.genomicToPixel(Double(start))
+            let x1 = frame.genomicToPixel(Double(end + 1))
+            guard x1 > x0 else { return }
+            context.fill(CGRect(x: x0, y: rect.minY, width: x1 - x0, height: rect.height))
+        }
+
+        for pos in sorted.dropFirst() {
+            if pos == runEnd + 1 {
+                runEnd = pos
+            } else {
+                fillRun(runStart, runEnd)
+                runStart = pos
+                runEnd = pos
+            }
+        }
+        fillRun(runStart, runEnd)
+        context.restoreGState()
     }
 
     /// Draws semi-transparent extensions at soft-clipped ends of a read in packed mode.

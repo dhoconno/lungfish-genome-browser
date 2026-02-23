@@ -746,6 +746,15 @@ public class ViewerViewController: NSViewController {
         if let show = userInfo[NotificationUserInfoKey.showIndels] as? Bool {
             viewerView.showIndelsSetting = show
         }
+        if let enabled = userInfo[NotificationUserInfoKey.consensusMaskingEnabled] as? Bool {
+            viewerView.consensusMaskingEnabledSetting = enabled
+        }
+        if let threshold = userInfo[NotificationUserInfoKey.consensusGapThresholdPercent] as? Int {
+            viewerView.consensusGapThresholdPercentSetting = max(50, min(99, threshold))
+        }
+        if let minDepth = userInfo[NotificationUserInfoKey.consensusMinDepth] as? Int {
+            viewerView.consensusMinDepthSetting = max(1, min(500, minDepth))
+        }
         if let flags = userInfo[NotificationUserInfoKey.excludeFlags] as? UInt16 {
             viewerView.excludeFlagsSetting = flags
         }
@@ -1952,6 +1961,15 @@ public class SequenceViewerView: NSView {
 
     /// Whether to show insertions/deletions (configurable from Inspector)
     var showIndelsSetting: Bool = true
+
+    /// Whether to mask columns that are mostly gaps (consensus-style filtering).
+    var consensusMaskingEnabledSetting: Bool = false
+
+    /// Gap masking threshold in percent (e.g., 90 = hide columns with >=90% gaps).
+    var consensusGapThresholdPercentSetting: Int = 90
+
+    /// Minimum spanning depth required before gap masking is applied.
+    var consensusMinDepthSetting: Int = 8
 
     /// Exclude flags bitmask for samtools view (configurable from Inspector)
     /// Default: unmapped(0x4) + secondary(0x100) + dup(0x400) + supplementary(0x800) = 0xD04
@@ -3261,7 +3279,10 @@ public class SequenceViewerView: NSView {
                 let displaySettings = ReadTrackRenderer.DisplaySettings(
                     showMismatches: showMismatchesSetting,
                     showSoftClips: showSoftClipsSetting,
-                    showIndels: showIndelsSetting
+                    showIndels: showIndelsSetting,
+                    consensusMaskingEnabled: consensusMaskingEnabledSetting,
+                    consensusGapThreshold: Double(consensusGapThresholdPercentSetting) / 100.0,
+                    consensusMinDepth: consensusMinDepthSetting
                 )
 
                 // Reuse cached pack layout if scale, data, viewport, and settings haven't changed.
@@ -3269,10 +3290,12 @@ public class SequenceViewerView: NSView {
                 // packing — if the user pans significantly, the visible reads change.
                 let viewportShift = abs(visibleRegion.start - cachedPackViewportStart)
                 let viewportSpan = max(1, visibleRegion.end - visibleRegion.start)
-                let needsRepack = (scale != cachedPackScale)
-                    || (readFetchGeneration != cachedPackDataGeneration)
+                let scaleChanged = (scale != cachedPackScale)
+                let dataChanged = (readFetchGeneration != cachedPackDataGeneration)
+                let needsRepack = scaleChanged
+                    || dataChanged
                     || (maxRows != cachedPackMaxRows)
-                    || (viewportShift > viewportSpan / 2) // Repack when panned >50% of viewport
+                    || (viewportShift > viewportSpan / 4) // Repack when panned >25% of viewport
 
                 switch tier {
                 case .coverage:
@@ -3282,13 +3305,25 @@ public class SequenceViewerView: NSView {
                     ReadTrackRenderer.drawCoverage(reads: cachedAlignedReads, frame: frame, context: context, rect: rect)
                 case .packed, .base:
                     if needsRepack {
+                        // New zoom/data fetch should snap back to top rows for predictable navigation.
+                        if scaleChanged || dataChanged {
+                            readScrollOffset = 0
+                        }
                         // Filter reads to those overlapping the visible viewport ± 1 screen width.
                         // The cached read region can be much wider than the viewport (especially
                         // when zooming in from a wider view). Packing all reads wastes the limited
                         // 75-row budget on far off-screen reads, potentially leaving no rows for
                         // reads in the visible window. Coverage mode uses all reads (no filtering).
                         let viewportSpan = visibleRegion.end - visibleRegion.start
-                        let packPadding = max(viewportSpan, 1000) // At least 1kb or 1 viewport width
+                        let packPadding: Int
+                        switch tier {
+                        case .base:
+                            packPadding = max(64, viewportSpan / 4)
+                        case .packed:
+                            packPadding = max(200, min(2_000, viewportSpan / 2))
+                        case .coverage:
+                            packPadding = max(viewportSpan, 1_000)
+                        }
                         let packStart = max(0, visibleRegion.start - packPadding)
                         let packEnd = visibleRegion.end + packPadding
 
@@ -3310,7 +3345,12 @@ public class SequenceViewerView: NSView {
                             readsForPacking = viewportReads
                             downsampleOverflow = 0
                         }
-                        let (packed, packOverflow) = ReadTrackRenderer.packReads(readsForPacking, frame: frame, maxRows: maxRows)
+                        let (packed, packOverflow) = ReadTrackRenderer.packReads(
+                            readsForPacking,
+                            frame: frame,
+                            maxRows: maxRows,
+                            prioritizedRegion: visibleRegion.start..<visibleRegion.end
+                        )
                         cachedPackedReads = packed
                         cachedPackOverflow = packOverflow + downsampleOverflow + viewportOverflow
                         cachedPackScale = scale
@@ -3338,6 +3378,17 @@ public class SequenceViewerView: NSView {
                     context.translateBy(x: 0, y: -readScrollOffset)
 
                     let drawRect = CGRect(x: 0, y: rY, width: bounds.width, height: contentHeight)
+                    let maskedPositions: Set<Int>
+                    if displaySettings.consensusMaskingEnabled {
+                        maskedPositions = ReadTrackRenderer.computeHighGapMaskedPositions(
+                            packedReads: cachedPackedReads,
+                            visibleRegion: visibleRegion.start..<visibleRegion.end,
+                            minDepth: displaySettings.consensusMinDepth,
+                            gapThreshold: displaySettings.consensusGapThreshold
+                        )
+                    } else {
+                        maskedPositions = []
+                    }
 
                     if tier == .packed {
                         ReadTrackRenderer.drawPackedReads(
@@ -3345,6 +3396,7 @@ public class SequenceViewerView: NSView {
                             referenceSequence: cachedBundleSequence,
                             referenceStart: cachedSequenceRegion?.start ?? Int(frame.start),
                             settings: displaySettings,
+                            maskedPositions: maskedPositions,
                             context: context, rect: drawRect
                         )
                     } else {
@@ -3353,6 +3405,7 @@ public class SequenceViewerView: NSView {
                             referenceSequence: cachedBundleSequence,
                             referenceStart: cachedSequenceRegion?.start ?? Int(frame.start),
                             settings: displaySettings,
+                            maskedPositions: maskedPositions,
                             context: context, rect: drawRect
                         )
                     }
@@ -3750,11 +3803,11 @@ public class SequenceViewerView: NSView {
             expandAmount = max(10_000, visibleSpan * 2)
             maxReadsPerTrack = 300_000
         case .packed:
-            expandAmount = max(4_000, visibleSpan)
+            expandAmount = max(1_000, visibleSpan / 2)
             maxReadsPerTrack = 120_000
         case .base:
-            expandAmount = max(1_000, visibleSpan / 2)
-            maxReadsPerTrack = 60_000
+            expandAmount = max(128, visibleSpan / 4)
+            maxReadsPerTrack = 80_000
         }
         let expandedStart = max(0, region.start - expandAmount)
         let expandedEnd = min(Int(chromLength), region.end + expandAmount)
@@ -3763,6 +3816,7 @@ public class SequenceViewerView: NSView {
         let providers = alignmentDataProviders
         // Translate reference chromosome name to BAM chromosome name (e.g., MN908947 → MN908947.3)
         let bamChromosome = alignmentChromosomeName(for: region.chromosome)
+        let isCoverageTier = (tier == .coverage)
         let mapQFilter = minMapQSetting
         let excludeFlags = excludeFlagsSetting
         let readGroupFilter = selectedReadGroupsSetting
@@ -3782,11 +3836,28 @@ public class SequenceViewerView: NSView {
                         maxReads: maxReadsPerTrack,
                         readGroups: readGroupFilter
                     )
+                    if !isCoverageTier,
+                       reads.count >= maxReadsPerTrack,
+                       (expandedStart != region.start || expandedEnd != region.end) {
+                        let focusedReads = try await provider.fetchReads(
+                            chromosome: bamChromosome,
+                            start: region.start,
+                            end: region.end,
+                            excludeFlags: excludeFlags,
+                            minMapQ: mapQFilter,
+                            maxReads: maxReadsPerTrack,
+                            readGroups: readGroupFilter
+                        )
+                        if !focusedReads.isEmpty {
+                            logger.info("fetchReadsAsync: Using focused viewport read fetch after capped expanded query")
+                            reads = focusedReads
+                        }
+                    }
                     if reads.isEmpty, bamChromosome != region.chromosome {
                         let fallbackReads = try await provider.fetchReads(
                             chromosome: region.chromosome,
-                            start: expandedStart,
-                            end: expandedEnd,
+                            start: region.start,
+                            end: region.end,
                             excludeFlags: excludeFlags,
                             minMapQ: mapQFilter,
                             maxReads: maxReadsPerTrack,

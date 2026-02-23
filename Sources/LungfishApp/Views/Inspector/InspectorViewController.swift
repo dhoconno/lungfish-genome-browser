@@ -824,6 +824,9 @@ public class InspectorViewController: NSViewController {
                     NotificationUserInfoKey.showMismatches: vm.showMismatches,
                     NotificationUserInfoKey.showSoftClips: vm.showSoftClips,
                     NotificationUserInfoKey.showIndels: vm.showIndels,
+                    NotificationUserInfoKey.consensusMaskingEnabled: vm.consensusMaskingEnabled,
+                    NotificationUserInfoKey.consensusGapThresholdPercent: Int(vm.consensusGapThresholdPercent),
+                    NotificationUserInfoKey.consensusMinDepth: Int(vm.consensusMinDepth),
                     NotificationUserInfoKey.excludeFlags: vm.computedExcludeFlags,
                     NotificationUserInfoKey.selectedReadGroups: vm.selectedReadGroups,
                 ]

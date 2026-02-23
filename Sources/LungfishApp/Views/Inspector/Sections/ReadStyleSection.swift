@@ -32,6 +32,15 @@ public final class ReadStyleSectionViewModel {
     /// Whether to show insertion/deletion markers.
     public var showIndels: Bool = true
 
+    /// Whether to apply consensus-style masking for sites with mostly gaps.
+    public var consensusMaskingEnabled: Bool = false
+
+    /// Hide columns where gaps exceed this percentage among spanning reads.
+    public var consensusGapThresholdPercent: Double = 90
+
+    /// Minimum spanning depth required before gap masking is applied.
+    public var consensusMinDepth: Double = 8
+
     /// Minimum mapping quality filter (reads below this are hidden).
     public var minMapQ: Double = 0
 
@@ -610,6 +619,44 @@ public struct ReadStyleSection: View {
                 .onChange(of: viewModel.showIndels) { _, _ in
                     viewModel.onSettingsChanged?()
                 }
+
+            Divider()
+
+            Text("Consensus (samtools-like)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Toggle("Hide High-Gap Sites", isOn: $viewModel.consensusMaskingEnabled)
+                .onChange(of: viewModel.consensusMaskingEnabled) { _, _ in
+                    viewModel.onSettingsChanged?()
+                }
+                .help("When enabled, columns where most spanning reads are gaps are masked in packed/base views.")
+
+            if viewModel.consensusMaskingEnabled {
+                HStack {
+                    Text("Gap Threshold")
+                    Spacer()
+                    Text("\(Int(viewModel.consensusGapThresholdPercent))%")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                Slider(value: $viewModel.consensusGapThresholdPercent, in: 50...99, step: 1)
+                    .onChange(of: viewModel.consensusGapThresholdPercent) { _, _ in
+                        viewModel.onSettingsChanged?()
+                    }
+
+                HStack {
+                    Text("Min Depth")
+                    Spacer()
+                    Text("\(Int(viewModel.consensusMinDepth))")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                Slider(value: $viewModel.consensusMinDepth, in: 2...50, step: 1)
+                    .onChange(of: viewModel.consensusMinDepth) { _, _ in
+                        viewModel.onSettingsChanged?()
+                    }
+            }
 
             Divider()
 

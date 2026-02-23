@@ -118,7 +118,8 @@ extension Notification.Name {
     ///
     /// Contains userInfo keys: "showReads" (Bool), "maxReadRows" (Int),
     /// "minMapQ" (Int), "showMismatches" (Bool), "showSoftClips" (Bool),
-    /// "showIndels" (Bool)
+    /// "showIndels" (Bool), "consensusMaskingEnabled" (Bool),
+    /// "consensusGapThresholdPercent" (Int), "consensusMinDepth" (Int)
     public static let readDisplaySettingsChanged = Notification.Name("readDisplaySettingsChanged")
 
 }
@@ -285,6 +286,15 @@ public enum NotificationUserInfoKey {
 
     /// Key for insertion/deletion display toggle (Bool).
     public static let showIndels = "showIndels"
+
+    /// Key for enabling consensus-style high-gap masking (Bool).
+    public static let consensusMaskingEnabled = "consensusMaskingEnabled"
+
+    /// Key for high-gap mask threshold as a percent integer (0-100).
+    public static let consensusGapThresholdPercent = "consensusGapThresholdPercent"
+
+    /// Key for minimum depth required before a consensus/gap decision is applied.
+    public static let consensusMinDepth = "consensusMinDepth"
 
     /// Key for the aligned read in read selection notifications.
     public static let alignedRead = "alignedRead"
