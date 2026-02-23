@@ -21,6 +21,12 @@ public final class ReadStyleSectionViewModel {
     /// Maximum number of read rows to display before overflow.
     public var maxReadRows: Double = 75
 
+    /// Whether to enforce `maxReadRows`; off means all rows are retained.
+    public var limitReadRows: Bool = false
+
+    /// Whether to render read rows in compact vertical mode.
+    public var verticallyCompressContig: Bool = true
+
     /// When true, matches are shown as dots and mismatches as colored letters (default).
     /// When false, all bases are shown as letters (matches in gray, mismatches in color).
     /// Mismatches (SNPs) are always displayed regardless of this setting.
@@ -46,6 +52,15 @@ public final class ReadStyleSectionViewModel {
 
     /// Minimum base quality used by consensus/depth calculations.
     public var consensusMinBaseQ: Double = 0
+
+    /// Whether to show consensus sequence beneath the coverage graph.
+    public var showConsensusTrack: Bool = true
+
+    /// Consensus caller mode.
+    public var consensusMode: AlignmentConsensusMode = .bayesian
+
+    /// Whether to emit IUPAC ambiguity codes in consensus output.
+    public var consensusUseAmbiguity: Bool = false
 
     /// Minimum mapping quality filter (reads below this are hidden).
     public var minMapQ: Double = 0
@@ -341,6 +356,7 @@ public struct ReadStyleSection: View {
     @State private var isChromStatsExpanded = false
     @State private var isProgramRecordsExpanded = false
     @State private var isProvenanceExpanded = false
+    @State private var expandedProgramCommandIDs = Set<String>()
 
     public init(viewModel: ReadStyleSectionViewModel) {
         self.viewModel = viewModel
@@ -535,10 +551,24 @@ public struct ReadStyleSection: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
-            Slider(value: $viewModel.maxReadRows, in: 10...200, step: 5)
+            .opacity(viewModel.limitReadRows ? 1.0 : 0.5)
+            Slider(value: $viewModel.maxReadRows, in: 10...2000, step: 10)
+                .disabled(!viewModel.limitReadRows)
                 .onChange(of: viewModel.maxReadRows) { _, _ in
                     viewModel.onSettingsChanged?()
                 }
+
+            Toggle("Limit Visible Rows", isOn: $viewModel.limitReadRows)
+                .onChange(of: viewModel.limitReadRows) { _, _ in
+                    viewModel.onSettingsChanged?()
+                }
+                .help("Off keeps all mapped reads in the active view and enables stable vertical scrolling.")
+
+            Toggle("Vertically Compress Contig", isOn: $viewModel.verticallyCompressContig)
+                .onChange(of: viewModel.verticallyCompressContig) { _, _ in
+                    viewModel.onSettingsChanged?()
+                }
+                .help("Compact mode uses smaller row heights to fit more reads on screen.")
 
             HStack {
                 Text("Min MAPQ")
@@ -640,6 +670,25 @@ public struct ReadStyleSection: View {
             Text("Consensus (samtools-like)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            Toggle("Show Consensus Track", isOn: $viewModel.showConsensusTrack)
+                .onChange(of: viewModel.showConsensusTrack) { _, _ in
+                    viewModel.onSettingsChanged?()
+                }
+
+            Picker("Consensus Mode", selection: $viewModel.consensusMode) {
+                Text("Bayesian").tag(AlignmentConsensusMode.bayesian)
+                Text("Simple").tag(AlignmentConsensusMode.simple)
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: viewModel.consensusMode) { _, _ in
+                viewModel.onSettingsChanged?()
+            }
+
+            Toggle("Use IUPAC Ambiguity", isOn: $viewModel.consensusUseAmbiguity)
+                .onChange(of: viewModel.consensusUseAmbiguity) { _, _ in
+                    viewModel.onSettingsChanged?()
+                }
 
             Toggle("Hide High-Gap Sites", isOn: $viewModel.consensusMaskingEnabled)
                 .onChange(of: viewModel.consensusMaskingEnabled) { _, _ in
@@ -823,9 +872,21 @@ public struct ReadStyleSection: View {
     @ViewBuilder
     private var programRecordsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(viewModel.programRecords) { pg in
+            Text("Commands are collapsed by default. Click “Show command” to view the full invocation.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            ForEach(Array(viewModel.programRecords.enumerated()), id: \.element.id) { index, pg in
+                let step = index + 1
+                let prov = provenanceForStep(step)
+                let isExpanded = expandedProgramCommandIDs.contains(pg.id)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 4) {
+                        Text("Step \(step)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Divider()
+                            .frame(height: 10)
                         Text(pg.pgId)
                             .font(.system(.caption, design: .monospaced).bold())
                         if let name = pg.name {
@@ -837,15 +898,34 @@ public struct ReadStyleSection: View {
                     if let version = pg.version {
                         inlineField("Version", value: version)
                     }
-                    if let cmdLine = pg.commandLine {
-                        Text(cmdLine)
-                            .font(.system(size: 9, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(3)
-                            .textSelection(.enabled)
+                    if let timestamp = prov?.timestamp, !timestamp.isEmpty {
+                        inlineField("When", value: formattedTimestamp(timestamp))
+                    }
+                    if let dur = prov?.duration {
+                        inlineField("Duration", value: String(format: "%.1fs", dur))
+                    }
+                    if let cmdLine = pg.commandLine, !cmdLine.isEmpty {
+                        Button(isExpanded ? "Hide command" : "Show command") {
+                            if isExpanded {
+                                expandedProgramCommandIDs.remove(pg.id)
+                            } else {
+                                expandedProgramCommandIDs.insert(pg.id)
+                            }
+                        }
+                        .buttonStyle(.link)
+                        .font(.caption2)
+
+                        if isExpanded {
+                            Text(cmdLine)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
+                        }
                     }
                 }
                 .padding(.vertical, 2)
+                .padding(.bottom, 2)
             }
         }
     }
@@ -1029,5 +1109,25 @@ public struct ReadStyleSection: View {
             return String(format: "%.1fK", Double(count) / 1_000)
         }
         return "\(count)"
+    }
+
+    private func provenanceForStep(_ step: Int) -> ProvenanceEntry? {
+        if let exact = viewModel.provenanceRecords.first(where: { $0.stepOrder == step }) {
+            return exact
+        }
+        let sorted = viewModel.provenanceRecords.sorted { $0.stepOrder < $1.stepOrder }
+        guard step > 0, step <= sorted.count else { return nil }
+        return sorted[step - 1]
+    }
+
+    private func formattedTimestamp(_ raw: String) -> String {
+        let iso = ISO8601DateFormatter()
+        if let date = iso.date(from: raw) {
+            let formatter = DateFormatter()
+            formatter.dateStyle = .medium
+            formatter.timeStyle = .medium
+            return formatter.string(from: date)
+        }
+        return raw
     }
 }

@@ -36,6 +36,15 @@ public enum ReadTrackRenderer {
     /// Vertical gap between read rows.
     static let rowGap: CGFloat = 1
 
+    /// Compact mode packed-row height.
+    static let packedReadHeightCompact: CGFloat = 3
+
+    /// Compact mode base-row height.
+    static let baseReadHeightCompact: CGFloat = 8
+
+    /// Compact mode row gap.
+    static let rowGapCompact: CGFloat = 0
+
     /// Height of the coverage track.
     static let coverageTrackHeight: CGFloat = 60
 
@@ -119,6 +128,29 @@ public enum ReadTrackRenderer {
         case coverage
         case packed
         case base
+    }
+
+    /// Per-tier row layout metrics.
+    public struct LayoutMetrics: Sendable, Equatable {
+        public let packedReadHeight: CGFloat
+        public let baseReadHeight: CGFloat
+        public let rowGap: CGFloat
+    }
+
+    /// Returns row layout metrics for compressed/non-compressed modes.
+    public static func layoutMetrics(verticalCompress: Bool) -> LayoutMetrics {
+        if verticalCompress {
+            return LayoutMetrics(
+                packedReadHeight: packedReadHeightCompact,
+                baseReadHeight: baseReadHeightCompact,
+                rowGap: rowGapCompact
+            )
+        }
+        return LayoutMetrics(
+            packedReadHeight: packedReadHeight,
+            baseReadHeight: baseReadHeight,
+            rowGap: rowGap
+        )
     }
 
     // MARK: - Coverage Models
@@ -569,7 +601,7 @@ public enum ReadTrackRenderer {
     public static func packReads(
         _ reads: [AlignedRead],
         frame: ReferenceFrame,
-        maxRows: Int = 75,
+        maxRows: Int? = 75,
         sortMode: ReadSortMode = .position,
         sortPosition: Int? = nil,
         prioritizedRegion: Range<Int>? = nil
@@ -611,7 +643,8 @@ public enum ReadTrackRenderer {
             ordered = sorted
         }
 
-        var rowEndPixels = [CGFloat](repeating: -1, count: maxRows)
+        let rowCap = maxRows.flatMap { $0 > 0 ? $0 : nil }
+        var rowEndPixels = rowCap.map { [CGFloat](repeating: -1, count: $0) } ?? []
         var packed: [(Int, AlignedRead)] = []
         var overflow = 0
 
@@ -622,16 +655,34 @@ public enum ReadTrackRenderer {
 
             // Find first available row
             var placed = false
-            for row in 0..<maxRows {
-                if startPx >= rowEndPixels[row] + 2 { // 2px gap
-                    packed.append((row, read))
-                    rowEndPixels[row] = endPx
-                    placed = true
-                    break
+            if let rowCap {
+                for row in 0..<rowCap {
+                    if startPx >= rowEndPixels[row] + 2 { // 2px gap
+                        packed.append((row, read))
+                        rowEndPixels[row] = endPx
+                        placed = true
+                        break
+                    }
                 }
-            }
-            if !placed {
-                overflow += 1
+                if !placed {
+                    overflow += 1
+                }
+            } else {
+                for row in rowEndPixels.indices {
+                    if startPx >= rowEndPixels[row] + 2 {
+                        packed.append((row, read))
+                        rowEndPixels[row] = endPx
+                        placed = true
+                        break
+                    }
+                }
+                if !placed {
+                    // Unlimited rows mode: allocate a new row when no existing row fits.
+                    let newRow = rowEndPixels.count
+                    rowEndPixels.append(endPx)
+                    packed.append((newRow, read))
+                    placed = true
+                }
             }
         }
 
@@ -656,11 +707,15 @@ public enum ReadTrackRenderer {
         referenceSequence: String? = nil,
         referenceStart: Int = 0,
         settings: DisplaySettings = DisplaySettings(),
+        verticalCompress: Bool = false,
+        maxRowsLimit: Int? = nil,
         maskedPositions: Set<Int> = [],
         context: CGContext,
         rect: CGRect
     ) {
         context.saveGState()
+        let metrics = layoutMetrics(verticalCompress: verticalCompress)
+        let readHeight = metrics.packedReadHeight
 
         // Pre-compute reference as uppercased ASCII bytes (500KB vs 8MB for [Character])
         // Always compute reference bytes — mismatch ticks are always shown when reference is available
@@ -682,10 +737,10 @@ public enum ReadTrackRenderer {
         for (row, read) in packedReads {
             let startPx = frame.genomicToPixel(Double(read.position))
             let endPx = frame.genomicToPixel(Double(read.alignmentEnd))
-            let y = rect.minY + CGFloat(row) * (packedReadHeight + rowGap)
+            let y = rect.minY + CGFloat(row) * (readHeight + metrics.rowGap)
             let readWidth = endPx - startPx
 
-            guard y + packedReadHeight <= rect.maxY else { continue }
+            guard y + readHeight <= rect.maxY else { continue }
             guard readWidth >= minReadPixels else { continue }
 
             let alpha = mapqAlpha(read.mapq)
@@ -693,11 +748,11 @@ public enum ReadTrackRenderer {
 
             // Draw soft-clip extensions (semi-transparent bars extending from read ends)
             if settings.showSoftClips {
-                drawSoftClipExtensions(read: read, frame: frame, context: context, y: y, readHeight: packedReadHeight, alpha: alpha)
+                drawSoftClipExtensions(read: read, frame: frame, context: context, y: y, readHeight: readHeight, alpha: alpha)
             }
 
             // Draw read rectangle with pointed end for strand
-            let readRect = CGRect(x: startPx, y: y, width: readWidth, height: packedReadHeight)
+            let readRect = CGRect(x: startPx, y: y, width: readWidth, height: readHeight)
 
             if readWidth > 6 {
                 let path = CGMutablePath()
@@ -735,14 +790,14 @@ public enum ReadTrackRenderer {
                 drawMismatchTicks(
                     read: read, frame: frame, refBytes: refBytes, referenceStart: referenceStart,
                     maskedPositions: maskedPositions,
-                    context: context, y: y, readHeight: packedReadHeight
+                    context: context, y: y, readHeight: readHeight
                 )
             }
 
             // Draw deletion lines
             if settings.showIndels {
-                drawDeletions(read: read, frame: frame, context: context, y: y + packedReadHeight / 2, readHeight: packedReadHeight)
-                drawInsertionTicks(read: read, frame: frame, context: context, y: y, readHeight: packedReadHeight)
+                drawDeletions(read: read, frame: frame, context: context, y: y + readHeight / 2, readHeight: readHeight)
+                drawInsertionTicks(read: read, frame: frame, context: context, y: y, readHeight: readHeight)
             }
         }
 
@@ -752,7 +807,7 @@ public enum ReadTrackRenderer {
 
         // Draw overflow indicator
         if overflow > 0 {
-            drawOverflowIndicator(context: context, rect: rect, overflow: overflow)
+            drawOverflowIndicator(context: context, rect: rect, overflow: overflow, maxRowsLimit: maxRowsLimit)
         }
 
         context.restoreGState()
@@ -778,11 +833,15 @@ public enum ReadTrackRenderer {
         referenceSequence: String?,
         referenceStart: Int,
         settings: DisplaySettings = DisplaySettings(),
+        verticalCompress: Bool = false,
+        maxRowsLimit: Int? = nil,
         maskedPositions: Set<Int> = [],
         context: CGContext,
         rect: CGRect
     ) {
         context.saveGState()
+        let metrics = layoutMetrics(verticalCompress: verticalCompress)
+        let readHeight = metrics.baseReadHeight
 
         let pixelsPerBase = 1.0 / frame.scale
         let fontSize = min(12, CGFloat(pixelsPerBase) * 0.85)
@@ -795,14 +854,14 @@ public enum ReadTrackRenderer {
         let revBgTemplate = NSColor(red: 0.97, green: 0.94, blue: 0.94, alpha: 1.0).cgColor
 
         for (row, read) in packedReads {
-            let y = rect.minY + CGFloat(row) * (baseReadHeight + rowGap)
-            guard y + baseReadHeight <= rect.maxY else { continue }
+            let y = rect.minY + CGFloat(row) * (readHeight + metrics.rowGap)
+            guard y + readHeight <= rect.maxY else { continue }
 
             let alpha = mapqAlpha(read.mapq)
 
             // Draw soft-clip background extensions
             if settings.showSoftClips {
-                drawSoftClipExtensions(read: read, frame: frame, context: context, y: y, readHeight: baseReadHeight, alpha: alpha)
+                drawSoftClipExtensions(read: read, frame: frame, context: context, y: y, readHeight: readHeight, alpha: alpha)
             }
 
             // Draw read background
@@ -810,7 +869,7 @@ public enum ReadTrackRenderer {
             let endPx = frame.genomicToPixel(Double(read.alignmentEnd))
             let bgColor = (read.isReverse ? revBgTemplate : fwdBgTemplate).copy(alpha: alpha * 0.5)!
             context.setFillColor(bgColor)
-            context.fill(CGRect(x: startPx, y: y, width: endPx - startPx, height: baseReadHeight))
+            context.fill(CGRect(x: startPx, y: y, width: endPx - startPx, height: readHeight))
 
             // Draw bases using CTFont glyph rendering
             drawReadBases(
@@ -822,7 +881,7 @@ public enum ReadTrackRenderer {
                 maskedPositions: maskedPositions,
                 context: context,
                 y: y,
-                readHeight: baseReadHeight,
+                readHeight: readHeight,
                 font: font,
                 glyphCache: cache,
                 alpha: alpha
@@ -830,8 +889,8 @@ public enum ReadTrackRenderer {
 
             // Draw insertion markers
             if settings.showIndels {
-                drawInsertionMarkers(read: read, frame: frame, context: context, y: y, readHeight: baseReadHeight)
-                drawDeletions(read: read, frame: frame, context: context, y: y + baseReadHeight / 2, readHeight: baseReadHeight)
+                drawInsertionMarkers(read: read, frame: frame, context: context, y: y, readHeight: readHeight)
+                drawDeletions(read: read, frame: frame, context: context, y: y + readHeight / 2, readHeight: readHeight)
             }
         }
 
@@ -841,7 +900,7 @@ public enum ReadTrackRenderer {
 
         // Draw overflow indicator
         if overflow > 0 {
-            drawOverflowIndicator(context: context, rect: rect, overflow: overflow)
+            drawOverflowIndicator(context: context, rect: rect, overflow: overflow, maxRowsLimit: maxRowsLimit)
         }
 
         context.restoreGState()
@@ -1359,7 +1418,8 @@ public enum ReadTrackRenderer {
     private static func drawOverflowIndicator(
         context: CGContext,
         rect: CGRect,
-        overflow: Int
+        overflow: Int,
+        maxRowsLimit: Int?
     ) {
         let barHeight: CGFloat = 16
         let barRect = CGRect(x: rect.minX, y: rect.maxY - barHeight, width: rect.width, height: barHeight)
@@ -1369,7 +1429,12 @@ public enum ReadTrackRenderer {
         context.fill(barRect)
 
         // Text
-        let text = "+\(overflow) reads not shown (max \(maxReadRows) rows)" as NSString
+        let text: NSString
+        if let maxRowsLimit {
+            text = "+\(overflow) reads not shown (max \(maxRowsLimit) rows)" as NSString
+        } else {
+            text = "+\(overflow) reads not shown" as NSString
+        }
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 9),
             .foregroundColor: NSColor.secondaryLabelColor
@@ -1402,14 +1467,15 @@ public enum ReadTrackRenderer {
     ///   - rowCount: Number of rows used
     ///   - tier: Current zoom tier
     /// - Returns: Total height in pixels
-    public static func totalHeight(rowCount: Int, tier: ZoomTier) -> CGFloat {
+    public static func totalHeight(rowCount: Int, tier: ZoomTier, verticalCompress: Bool = false) -> CGFloat {
+        let metrics = layoutMetrics(verticalCompress: verticalCompress)
         switch tier {
         case .coverage:
             return coverageTrackHeight
         case .packed:
-            return CGFloat(rowCount) * (packedReadHeight + rowGap)
+            return CGFloat(rowCount) * (metrics.packedReadHeight + metrics.rowGap)
         case .base:
-            return CGFloat(rowCount) * (baseReadHeight + rowGap)
+            return CGFloat(rowCount) * (metrics.baseReadHeight + metrics.rowGap)
         }
     }
 

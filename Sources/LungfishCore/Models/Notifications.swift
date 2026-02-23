@@ -120,7 +120,10 @@ extension Notification.Name {
     /// "minMapQ" (Int), "showMismatches" (Bool), "showSoftClips" (Bool),
     /// "showIndels" (Bool), "consensusMaskingEnabled" (Bool),
     /// "consensusGapThresholdPercent" (Int), "consensusMinDepth" (Int),
-    /// "consensusMinMapQ" (Int), "consensusMinBaseQ" (Int)
+    /// "consensusMinMapQ" (Int), "consensusMinBaseQ" (Int),
+    /// "limitReadRows" (Bool), "verticalCompressContig" (Bool),
+    /// "showConsensusTrack" (Bool), "consensusMode" (String),
+    /// "consensusUseAmbiguity" (Bool)
     public static let readDisplaySettingsChanged = Notification.Name("readDisplaySettingsChanged")
 
 }
@@ -302,6 +305,21 @@ public enum NotificationUserInfoKey {
 
     /// Key for consensus/depth minimum base quality (Int).
     public static let consensusMinBaseQ = "consensusMinBaseQ"
+
+    /// Key for whether read rows should be capped by maxReadRows (Bool).
+    public static let limitReadRows = "limitReadRows"
+
+    /// Key for compact vertical read rendering mode (Bool).
+    public static let verticalCompressContig = "verticalCompressContig"
+
+    /// Key for showing/hiding the consensus row beneath coverage (Bool).
+    public static let showConsensusTrack = "showConsensusTrack"
+
+    /// Key for consensus caller mode ("bayesian" or "simple").
+    public static let consensusMode = "consensusMode"
+
+    /// Key for enabling IUPAC ambiguity codes in consensus output (Bool).
+    public static let consensusUseAmbiguity = "consensusUseAmbiguity"
 
     /// Key for the aligned read in read selection notifications.
     public static let alignedRead = "alignedRead"

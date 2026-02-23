@@ -820,6 +820,8 @@ public class InspectorViewController: NSViewController {
                 userInfo: [
                     NotificationUserInfoKey.showReads: vm.showReads,
                     NotificationUserInfoKey.maxReadRows: Int(vm.maxReadRows),
+                    NotificationUserInfoKey.limitReadRows: vm.limitReadRows,
+                    NotificationUserInfoKey.verticalCompressContig: vm.verticallyCompressContig,
                     NotificationUserInfoKey.minMapQ: Int(vm.minMapQ),
                     NotificationUserInfoKey.showMismatches: vm.showMismatches,
                     NotificationUserInfoKey.showSoftClips: vm.showSoftClips,
@@ -829,6 +831,9 @@ public class InspectorViewController: NSViewController {
                     NotificationUserInfoKey.consensusMinDepth: Int(vm.consensusMinDepth),
                     NotificationUserInfoKey.consensusMinMapQ: Int(vm.consensusMinMapQ),
                     NotificationUserInfoKey.consensusMinBaseQ: Int(vm.consensusMinBaseQ),
+                    NotificationUserInfoKey.showConsensusTrack: vm.showConsensusTrack,
+                    NotificationUserInfoKey.consensusMode: vm.consensusMode.rawValue,
+                    NotificationUserInfoKey.consensusUseAmbiguity: vm.consensusUseAmbiguity,
                     NotificationUserInfoKey.excludeFlags: vm.computedExcludeFlags,
                     NotificationUserInfoKey.selectedReadGroups: vm.selectedReadGroups,
                 ]

@@ -27,6 +27,12 @@ public struct DepthPoint: Sendable, Equatable {
     }
 }
 
+/// Consensus caller mode for `samtools consensus`.
+public enum AlignmentConsensusMode: String, Sendable, CaseIterable {
+    case bayesian
+    case simple
+}
+
 // MARK: - AlignmentDataProvider
 
 /// Provides read alignment data by shelling out to samtools for region queries.
@@ -247,6 +253,65 @@ public final class AlignmentDataProvider: @unchecked Sendable {
         return Self.parseDepthOutput(result.stdout)
     }
 
+    /// Fetches a consensus sequence for a region using `samtools consensus`.
+    ///
+    /// - Parameters:
+    ///   - chromosome: Chromosome/contig name.
+    ///   - start: 0-based start position.
+    ///   - end: 0-based exclusive end position.
+    ///   - mode: Consensus model (`bayesian` or `simple`).
+    ///   - minMapQ: Minimum mapping quality.
+    ///   - minBaseQ: Minimum base quality.
+    ///   - minDepth: Minimum depth threshold.
+    ///   - excludeFlags: Flag bits to exclude.
+    ///   - useAmbiguity: Whether to emit IUPAC ambiguity codes.
+    ///   - showInsertions: Whether to include inserted bases in output.
+    /// - Returns: Consensus sequence in uppercase letters.
+    public func fetchConsensus(
+        chromosome: String,
+        start: Int,
+        end: Int,
+        mode: AlignmentConsensusMode = .bayesian,
+        minMapQ: Int = 0,
+        minBaseQ: Int = 0,
+        minDepth: Int = 1,
+        excludeFlags: UInt16 = 0x904,
+        useAmbiguity: Bool = false,
+        showInsertions: Bool = false
+    ) async throws -> String {
+        guard !chromosome.isEmpty, start >= 0, end > start else {
+            throw AlignmentFetchError.invalidRegion("\(chromosome):\(start)-\(end)")
+        }
+
+        var arguments = ["consensus"]
+        let regionStr = "\(chromosome):\(start + 1)-\(end)"
+        arguments += ["-r", regionStr]
+        arguments += ["-f", "FASTA"]
+        arguments += ["-m", mode.rawValue]
+        arguments += ["--min-MQ", String(max(0, minMapQ))]
+        arguments += ["--min-BQ", String(max(0, minBaseQ))]
+        arguments += ["-d", String(max(1, minDepth))]
+        if excludeFlags != 0 {
+            arguments += ["--ff", String(excludeFlags)]
+        }
+        arguments += ["--show-ins", showInsertions ? "yes" : "no"]
+        if useAmbiguity {
+            arguments.append("-A")
+        }
+        if format == .cram, let refPath = referenceFastaPath {
+            arguments += ["--reference", refPath]
+        }
+        arguments.append(alignmentPath)
+
+        alignmentLogger.debug("Fetching consensus: samtools \(arguments.joined(separator: " "))")
+        let result = try await runSamtools(arguments: arguments, timeout: 45)
+        guard result.exitCode == 0 else {
+            let errorMsg = result.stderr.isEmpty ? "exit code \(result.exitCode)" : result.stderr
+            throw AlignmentFetchError.samtoolsFailed(errorMsg)
+        }
+        return Self.parseConsensusFASTA(result.stdout)
+    }
+
     /// Parses `samtools depth` output into typed depth points.
     ///
     /// Expected line format: `<chrom>\t<1-based-pos>\t<depth>`.
@@ -269,6 +334,21 @@ public final class AlignmentDataProvider: @unchecked Sendable {
         }
 
         return points
+    }
+
+    /// Parses FASTA produced by `samtools consensus` and returns sequence letters.
+    ///
+    /// Header lines (`>...`) are ignored. Sequence is uppercased and concatenated.
+    static func parseConsensusFASTA(_ output: String) -> String {
+        guard !output.isEmpty else { return "" }
+        var sequence = String()
+        sequence.reserveCapacity(max(256, output.count))
+        output.enumerateLines { line, _ in
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty || trimmed.hasPrefix(">") { return }
+            sequence.append(trimmed.uppercased())
+        }
+        return sequence
     }
 
     // MARK: - Process Execution

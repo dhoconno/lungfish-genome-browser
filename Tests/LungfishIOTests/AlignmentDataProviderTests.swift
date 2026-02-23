@@ -255,6 +255,16 @@ final class AlignmentDataProviderTests: XCTestCase {
         XCTAssertTrue(AlignmentDataProvider.parseDepthOutput("\n\n").isEmpty)
     }
 
+    func testParseConsensusFASTA() {
+        let fasta = """
+        >chr1:1-10
+        acgtNN
+        tgca
+        """
+        let sequence = AlignmentDataProvider.parseConsensusFASTA(fasta)
+        XCTAssertEqual(sequence, "ACGTNNTGCA")
+    }
+
     // MARK: - AlignmentMetadataDatabase Parsing (inline data tests)
 
     func testIdxstatsParsingViaMetadataDatabase() throws {

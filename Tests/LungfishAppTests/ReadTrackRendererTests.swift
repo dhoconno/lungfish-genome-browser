@@ -232,6 +232,19 @@ final class ReadTrackRendererTests: XCTestCase {
         XCTAssertEqual(overflow, 1)
     }
 
+    func testPackReadsUnlimitedRowsShowsAllReads() {
+        let frame = makeFrame(start: 0, end: 1000, pixelWidth: 1000)
+        var reads: [AlignedRead] = []
+        for i in 0..<120 {
+            reads.append(makeRead(name: "r\(i)", position: 100, cigarLength: 150))
+        }
+
+        let (packed, overflow) = ReadTrackRenderer.packReads(reads, frame: frame, maxRows: nil)
+        XCTAssertEqual(packed.count, 120)
+        XCTAssertEqual(overflow, 0)
+        XCTAssertEqual((packed.map(\.row).max() ?? -1) + 1, 120)
+    }
+
     // MARK: - Layout Constants
 
     func testLayoutConstants() {
@@ -247,6 +260,13 @@ final class ReadTrackRendererTests: XCTestCase {
     func testZoomThresholdConstants() {
         XCTAssertEqual(ReadTrackRenderer.coverageThresholdBpPerPx, 10)
         XCTAssertEqual(ReadTrackRenderer.baseThresholdBpPerPx, 0.5)
+    }
+
+    func testLayoutMetricsCompressedMode() {
+        let compact = ReadTrackRenderer.layoutMetrics(verticalCompress: true)
+        let normal = ReadTrackRenderer.layoutMetrics(verticalCompress: false)
+        XCTAssertLessThan(compact.packedReadHeight, normal.packedReadHeight)
+        XCTAssertLessThan(compact.baseReadHeight, normal.baseReadHeight)
     }
 
     // MARK: - Depth Coverage Helpers
