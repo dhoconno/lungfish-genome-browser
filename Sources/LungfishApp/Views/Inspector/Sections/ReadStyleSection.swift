@@ -21,7 +21,9 @@ public final class ReadStyleSectionViewModel {
     /// Maximum number of read rows to display before overflow.
     public var maxReadRows: Double = 75
 
-    /// Whether to highlight mismatches relative to the reference.
+    /// When true, matches are shown as dots and mismatches as colored letters (default).
+    /// When false, all bases are shown as letters (matches in gray, mismatches in color).
+    /// Mismatches (SNPs) are always displayed regardless of this setting.
     public var showMismatches: Bool = true
 
     /// Whether to show soft-clipped regions at reduced opacity.
@@ -593,10 +595,11 @@ public struct ReadStyleSection: View {
 
             Divider()
 
-            Toggle("Show Mismatches", isOn: $viewModel.showMismatches)
+            Toggle("Show Bases as Dots", isOn: $viewModel.showMismatches)
                 .onChange(of: viewModel.showMismatches) { _, _ in
                     viewModel.onSettingsChanged?()
                 }
+                .help("When on, matching bases are shown as dots and mismatches as colored letters. When off, all bases are shown as letters. Mismatches (SNPs) are always highlighted.")
 
             Toggle("Show Soft Clips", isOn: $viewModel.showSoftClips)
                 .onChange(of: viewModel.showSoftClips) { _, _ in

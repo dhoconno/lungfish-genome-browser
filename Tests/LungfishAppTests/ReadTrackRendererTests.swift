@@ -1333,4 +1333,62 @@ final class ReadTrackRendererTests: XCTestCase {
             y: 10, readHeight: 14
         )
     }
+
+    // MARK: - Viewport Filtering for Deep Coverage
+
+    /// Verifies that filtering reads to the viewport before packing
+    /// ensures visible reads are packed even with deep off-screen coverage.
+    ///
+    /// Regression test: without filtering, reads far from the visible window
+    /// consume all 75 row slots, leaving no rows for visible reads.
+    func testPackReadsWithViewportFilteringPreservesVisibleReads() {
+        // Simulate deep coverage: 200 reads at position 1000 (far from viewport)
+        // plus 20 reads at position 5000 (in the viewport)
+        var reads: [AlignedRead] = []
+
+        // Off-screen reads (positions 1000-1050, deep coverage)
+        for i in 0..<200 {
+            reads.append(makeRead(name: "offscreen_\(i)", position: 1000 + (i % 50), cigarLength: 150))
+        }
+
+        // On-screen reads (positions 5000-5050, moderate coverage)
+        for i in 0..<20 {
+            reads.append(makeRead(name: "visible_\(i)", position: 5000 + (i % 10), cigarLength: 150))
+        }
+
+        // Frame zoomed into the on-screen region (base zoom level)
+        let frame = makeFrame(start: 4900, end: 5200, pixelWidth: 1000)
+        // scale = (5200-4900)/1000 = 0.3 bp/px → base tier
+
+        // Without viewport filtering: pack all 220 reads
+        let (allPacked, allOverflow) = ReadTrackRenderer.packReads(reads, frame: frame, maxRows: 75)
+
+        // With viewport filtering: only pack reads near viewport
+        let viewportStart = 4900 - 300  // 1 viewport width padding
+        let viewportEnd = 5200 + 300
+        let viewportReads = reads.filter { $0.alignmentEnd > viewportStart && $0.position < viewportEnd }
+        let (filteredPacked, filteredOverflow) = ReadTrackRenderer.packReads(viewportReads, frame: frame, maxRows: 75)
+
+        // Viewport filtering should include the 20 visible reads
+        XCTAssertEqual(viewportReads.count, 20, "Only on-screen reads should pass viewport filter")
+
+        // Filtered packing should pack all 20 visible reads (they easily fit in 75 rows)
+        XCTAssertEqual(filteredPacked.count, 20, "All viewport reads should be packed")
+        XCTAssertEqual(filteredOverflow, 0, "No overflow expected for 20 reads in 75 rows")
+
+        // Verify visible reads have valid pixel positions
+        for (_, read) in filteredPacked {
+            let startPx = frame.genomicToPixel(Double(read.position))
+            let endPx = frame.genomicToPixel(Double(read.alignmentEnd))
+            // Reads near viewport should have reasonable pixel positions
+            XCTAssertGreaterThan(endPx, -1000, "Read should be near visible area")
+            XCTAssertLessThan(startPx, 2000, "Read should be near visible area")
+        }
+
+        // The unfiltered pack may have fewer visible reads packed due to row exhaustion
+        let unfileredVisibleCount = allPacked.filter { $0.read.position >= 4900 && $0.read.position < 5200 }.count
+        let filteredVisibleCount = filteredPacked.filter { $0.read.position >= 4900 && $0.read.position < 5200 }.count
+        XCTAssertGreaterThanOrEqual(filteredVisibleCount, unfileredVisibleCount,
+            "Viewport filtering should pack at least as many visible reads as unfiltered")
+    }
 }

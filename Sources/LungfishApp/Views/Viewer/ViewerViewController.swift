@@ -1984,6 +1984,10 @@ public class SequenceViewerView: NSView {
     /// Max rows setting when pack layout was computed
     private var cachedPackMaxRows: Int = 0
 
+    /// Viewport region when pack layout was computed (repack when panned significantly)
+    private var cachedPackViewportStart: Int = 0
+    private var cachedPackViewportEnd: Int = 0
+
     /// The Y offset at which reads were last rendered (for hit-testing)
     private var lastRenderedReadY: CGFloat = 0
 
@@ -2772,6 +2776,8 @@ public class SequenceViewerView: NSView {
         self.cachedPackOverflow = 0
         self.cachedPackScale = 0
         self.cachedPackDataGeneration = -1
+        self.cachedPackViewportStart = 0
+        self.cachedPackViewportEnd = 0
         self.readScrollOffset = 0
         self.readContentHeight = 0
 
@@ -3258,10 +3264,15 @@ public class SequenceViewerView: NSView {
                     showIndels: showIndelsSetting
                 )
 
-                // Reuse cached pack layout if scale, data, and settings haven't changed.
+                // Reuse cached pack layout if scale, data, viewport, and settings haven't changed.
+                // Viewport position matters because reads are filtered to near-viewport before
+                // packing — if the user pans significantly, the visible reads change.
+                let viewportShift = abs(visibleRegion.start - cachedPackViewportStart)
+                let viewportSpan = max(1, visibleRegion.end - visibleRegion.start)
                 let needsRepack = (scale != cachedPackScale)
                     || (readFetchGeneration != cachedPackDataGeneration)
                     || (maxRows != cachedPackMaxRows)
+                    || (viewportShift > viewportSpan / 2) // Repack when panned >50% of viewport
 
                 switch tier {
                 case .coverage:
@@ -3271,27 +3282,42 @@ public class SequenceViewerView: NSView {
                     ReadTrackRenderer.drawCoverage(reads: cachedAlignedReads, frame: frame, context: context, rect: rect)
                 case .packed, .base:
                     if needsRepack {
-                        // Downsample for packed/base rendering performance while preserving
-                        // strand balance and genome-wide distribution via reservoir sampling.
-                        // Coverage mode uses all reads (no downsampling).
+                        // Filter reads to those overlapping the visible viewport ± 1 screen width.
+                        // The cached read region can be much wider than the viewport (especially
+                        // when zooming in from a wider view). Packing all reads wastes the limited
+                        // 75-row budget on far off-screen reads, potentially leaving no rows for
+                        // reads in the visible window. Coverage mode uses all reads (no filtering).
+                        let viewportSpan = visibleRegion.end - visibleRegion.start
+                        let packPadding = max(viewportSpan, 1000) // At least 1kb or 1 viewport width
+                        let packStart = max(0, visibleRegion.start - packPadding)
+                        let packEnd = visibleRegion.end + packPadding
+
+                        let viewportReads = cachedAlignedReads.filter { read in
+                            read.alignmentEnd > packStart && read.position < packEnd
+                        }
+                        let viewportOverflow = cachedAlignedReads.count - viewportReads.count
+
+                        // Downsample if still too many reads for rendering performance
                         let readsForPacking: [AlignedRead]
                         let downsampleOverflow: Int
-                        if cachedAlignedReads.count > 10_000 {
+                        if viewportReads.count > 10_000 {
                             let (sampled, total) = ReadTrackRenderer.downsample(
-                                cachedAlignedReads, maxReads: 10_000
+                                viewportReads, maxReads: 10_000
                             )
                             readsForPacking = sampled
                             downsampleOverflow = total - sampled.count
                         } else {
-                            readsForPacking = cachedAlignedReads
+                            readsForPacking = viewportReads
                             downsampleOverflow = 0
                         }
                         let (packed, packOverflow) = ReadTrackRenderer.packReads(readsForPacking, frame: frame, maxRows: maxRows)
                         cachedPackedReads = packed
-                        cachedPackOverflow = packOverflow + downsampleOverflow
+                        cachedPackOverflow = packOverflow + downsampleOverflow + viewportOverflow
                         cachedPackScale = scale
                         cachedPackDataGeneration = readFetchGeneration
                         cachedPackMaxRows = maxRows
+                        cachedPackViewportStart = visibleRegion.start
+                        cachedPackViewportEnd = visibleRegion.end
                     }
                     let rowCount = (cachedPackedReads.map(\.row).max() ?? -1) + 1
                     let contentHeight = ReadTrackRenderer.totalHeight(rowCount: rowCount, tier: tier)
