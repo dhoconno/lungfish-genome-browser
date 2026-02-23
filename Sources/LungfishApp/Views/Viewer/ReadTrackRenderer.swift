@@ -57,6 +57,8 @@ public enum ReadTrackRenderer {
     /// Zoom tier thresholds.
     static let coverageThresholdBpPerPx: Double = 10
     static let baseThresholdBpPerPx: Double = 0.6
+    /// In base tier, switch from dot-mode matches to letter-mode matches once bases are clearly legible.
+    static let matchLetterThresholdPxPerBase: Double = 4.0
 
     // MARK: - Colors
 
@@ -1029,6 +1031,7 @@ public enum ReadTrackRenderer {
         let pixelsPerBase = 1.0 / frame.scale
         let cellWidth = CGFloat(pixelsPerBase)
         let cache = glyphCache
+        let renderMatchesAsDots = shouldRenderMatchAsDot(showMismatches: showMismatches, pixelsPerBase: pixelsPerBase)
 
         // Pre-compute alpha-modulated colors (5 base colors + match dot + soft clip variants)
         let matchDotAlpha = matchDotColor.copy(alpha: alpha)!
@@ -1109,7 +1112,7 @@ public enum ReadTrackRenderer {
                         glyph = cache.glyphs[upperByte] ?? cache.dotGlyph
                         glyphWidth = cache.advances[upperByte]?.width ?? cache.dotAdvance.width
                         color = colorForByte(upperByte, a: colorA, t: colorT, c: colorC, g: colorG, n: colorN)
-                    } else if showMismatches {
+                    } else if renderMatchesAsDots {
                         // Mismatch highlight mode (default): matches shown as dots
                         glyph = cache.dotGlyph
                         glyphWidth = cache.dotAdvance.width
@@ -1164,6 +1167,12 @@ public enum ReadTrackRenderer {
         }
     }
 
+    /// Determines whether matched bases should be rendered as dots or letters in base-tier drawing.
+    /// When bases are sufficiently wide, letters improve SNP readability.
+    static func shouldRenderMatchAsDot(showMismatches: Bool, pixelsPerBase: Double) -> Bool {
+        showMismatches && pixelsPerBase < matchLetterThresholdPxPerBase
+    }
+
     /// Draws colored tick marks at mismatch positions on a packed read bar.
     ///
     /// Uses ASCII byte comparison (zero allocations) instead of Character/String conversion.
@@ -1179,7 +1188,13 @@ public enum ReadTrackRenderer {
         readHeight: CGFloat
     ) {
         let pixelsPerBase = 1.0 / frame.scale
-        context.setFillColor(mismatchTickColor)
+        // Geneious-style cue in packed mode: mismatch ticks use nucleotide colors.
+        let tickAlpha: CGFloat = 0.92
+        let colorA = baseA.copy(alpha: tickAlpha)!
+        let colorT = baseT.copy(alpha: tickAlpha)!
+        let colorC = baseC.copy(alpha: tickAlpha)!
+        let colorG = baseG.copy(alpha: tickAlpha)!
+        let colorN = baseN.copy(alpha: tickAlpha)!
 
         var lastMismatchPixel: Int = Int.min
         var seqIterator = read.sequence.utf8.makeIterator()
@@ -1219,7 +1234,9 @@ public enum ReadTrackRenderer {
                     guard px != lastMismatchPixel else { continue }
                     lastMismatchPixel = px
 
-                    let tickWidth = max(1.0, min(CGFloat(pixelsPerBase), 3.0))
+                    let tickWidth = max(1.0, min(CGFloat(pixelsPerBase), 3.2))
+                    let tickColor = colorForByte(upperRead, a: colorA, t: colorT, c: colorC, g: colorG, n: colorN)
+                    context.setFillColor(tickColor)
                     context.fill(CGRect(x: x, y: y, width: tickWidth, height: readHeight))
                 }
 

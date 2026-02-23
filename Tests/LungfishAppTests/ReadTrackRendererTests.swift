@@ -261,6 +261,20 @@ final class ReadTrackRendererTests: XCTestCase {
     func testZoomThresholdConstants() {
         XCTAssertEqual(ReadTrackRenderer.coverageThresholdBpPerPx, 10)
         XCTAssertEqual(ReadTrackRenderer.baseThresholdBpPerPx, 0.6)
+        XCTAssertEqual(ReadTrackRenderer.matchLetterThresholdPxPerBase, 4.0)
+    }
+
+    func testShouldRenderMatchAsDotWhenZoomIsTight() {
+        XCTAssertTrue(ReadTrackRenderer.shouldRenderMatchAsDot(showMismatches: true, pixelsPerBase: 2.5))
+    }
+
+    func testShouldRenderMatchAsDotWhenZoomIsWideEnoughForLetters() {
+        XCTAssertFalse(ReadTrackRenderer.shouldRenderMatchAsDot(showMismatches: true, pixelsPerBase: 4.0))
+        XCTAssertFalse(ReadTrackRenderer.shouldRenderMatchAsDot(showMismatches: true, pixelsPerBase: 8.0))
+    }
+
+    func testShouldRenderMatchAsDotWhenMismatchModeDisabled() {
+        XCTAssertFalse(ReadTrackRenderer.shouldRenderMatchAsDot(showMismatches: false, pixelsPerBase: 1.0))
     }
 
     func testLayoutMetricsCompressedMode() {
