@@ -4226,8 +4226,6 @@ public class SequenceViewerView: NSView {
                         logger.info("fetchConsensusAsync: Discarding stale result gen=\(thisGeneration) (current=\(viewer.consensusFetchGeneration))")
                         return
                     }
-                    viewer.cachedConsensusSequence = consensus.isEmpty ? nil : consensus
-
                     // Determine the actual start position of the consensus output.
                     // The FASTA header (e.g., ">chr:101-200") tells us the 1-based start.
                     // If the header start matches our requested start, all is well.
@@ -4252,15 +4250,28 @@ public class SequenceViewerView: NSView {
                         )
                     }
 
-                    let actualEnd = actualStart + consensus.count
+                    if consensus.isEmpty {
+                        viewer.cachedConsensusSequence = nil
+                    } else {
+                        // Normalize to the requested window so consensus and reference rows
+                        // always span identical genomic widths in the viewport.
+                        viewer.cachedConsensusSequence = viewer.normalizedConsensusSequence(
+                            consensus,
+                            sourceStart: actualStart,
+                            targetStart: expandedStart,
+                            targetEnd: expandedEnd
+                        )
+                    }
                     viewer.cachedConsensusRegion = GenomicRegion(
                         chromosome: expandedRegion.chromosome,
-                        start: actualStart,
-                        end: min(expandedRegion.end, actualEnd)
+                        start: expandedStart,
+                        end: expandedEnd
                     )
                     viewer.cachedConsensusOptionsSignature = optionsSignature
                     viewer.isFetchingConsensus = false
-                    logger.info("fetchConsensusAsync: Cached consensus start=\(actualStart) length=\(consensus.count) headerStart=\(headerStart.map(String.init) ?? "nil")")
+                    logger.info(
+                        "fetchConsensusAsync: Cached consensus sourceStart=\(actualStart) sourceLength=\(consensus.count) normalizedLength=\(viewer.cachedConsensusSequence?.count ?? 0) headerStart=\(headerStart.map(String.init) ?? "nil")"
+                    )
                     viewer.setNeedsDisplay(viewer.bounds)
                 }
             }
@@ -4295,16 +4306,18 @@ public class SequenceViewerView: NSView {
             return
         }
 
-        let visibleStart = Int(frame.start)
-        let visibleEnd = Int(frame.end)
-        let offsetInCache = visibleStart - region.start
-        guard offsetInCache >= 0, offsetInCache < sequenceString.count else { return }
-
-        let startIndex = sequenceString.index(sequenceString.startIndex, offsetBy: max(0, offsetInCache))
-        let span = min(visibleEnd - visibleStart, sequenceString.count - offsetInCache)
-        let endIndex = sequenceString.index(startIndex, offsetBy: max(0, span), limitedBy: sequenceString.endIndex) ?? sequenceString.endIndex
-        let visibleSequence = String(sequenceString[startIndex..<endIndex])
-        guard !visibleSequence.isEmpty else { return }
+        guard let slice = visibleSequenceSlice(
+            sequenceString: sequenceString,
+            cachedRegion: region,
+            frame: frame
+        ) else {
+            context.setStrokeColor(NSColor.systemGray.withAlphaComponent(0.55).cgColor)
+            context.setLineWidth(1)
+            context.move(to: CGPoint(x: rect.minX, y: rect.midY))
+            context.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+            context.strokePath()
+            return
+        }
 
         let scale = frame.scale
         let clipInset = navigationLeadingInsetPixels
@@ -4326,59 +4339,23 @@ public class SequenceViewerView: NSView {
         }
 
         if scale < showLettersThreshold {
-            let font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-            // Use frame.pixelWidth (not bounds.width) so base widths match
-            // frame.screenPosition() x-coordinates. These must use the same
-            // coordinate system or bases progressively drift relative to reads.
-            let pixelsPerBase = CGFloat(frame.pixelWidth) / CGFloat(max(1, frame.end - frame.start))
-            for (index, base) in visibleSequence.enumerated() {
-                let position = visibleStart + index
-                let x = frame.screenPosition(for: Double(position))
-                let baseWidth = pixelsPerBase
-                let color = BaseColors.color(for: base)
-                context.setFillColor(color.cgColor)
-                context.fill(CGRect(x: x, y: rect.minY, width: max(1, baseWidth), height: rect.height))
-
-                if baseWidth >= 8 {
-                    let displayChar = isRNAMode && base.uppercased() == "T" ? "U" : String(base).uppercased()
-                    let attributes: [NSAttributedString.Key: Any] = [
-                        .font: font,
-                        .foregroundColor: NSColor.white,
-                    ]
-                    let size = (displayChar as NSString).size(withAttributes: attributes)
-                    let letterRect = CGRect(
-                        x: x + (baseWidth - size.width) / 2,
-                        y: rect.minY + (rect.height - size.height) / 2,
-                        width: size.width,
-                        height: size.height
-                    )
-                    (displayChar as NSString).draw(in: letterRect, withAttributes: attributes)
-                }
-            }
+            drawBasesWithLetters(
+                slice.sequence,
+                startPosition: slice.startPosition,
+                frame: frame,
+                context: context,
+                rowRect: rect,
+                font: NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+            )
         } else if scale < showLineThreshold {
             // Zoomed out: render as simple colored blocks aggregated by base runs.
-            var currentBase: Character?
-            var blockStart = visibleStart
-            for (index, base) in visibleSequence.enumerated() {
-                let position = visibleStart + index
-                if base != currentBase {
-                    if let prevBase = currentBase {
-                        let x = frame.screenPosition(for: Double(blockStart))
-                        let width = frame.screenPosition(for: Double(position)) - x
-                        context.setFillColor(BaseColors.color(for: prevBase).cgColor)
-                        context.fill(CGRect(x: x, y: rect.minY, width: max(1, width), height: rect.height))
-                    }
-                    currentBase = base
-                    blockStart = position
-                }
-            }
-            if let prevBase = currentBase {
-                let x = frame.screenPosition(for: Double(blockStart))
-                let endX = frame.screenPosition(for: Double(visibleStart + visibleSequence.count))
-                let width = endX - x
-                context.setFillColor(BaseColors.color(for: prevBase).cgColor)
-                context.fill(CGRect(x: x, y: rect.minY, width: max(1, width), height: rect.height))
-            }
+            drawColoredBlocks(
+                slice.sequence,
+                startPosition: slice.startPosition,
+                frame: frame,
+                context: context,
+                rowRect: rect
+            )
         } else {
             context.setStrokeColor(NSColor.systemGray.withAlphaComponent(0.55).cgColor)
             context.setLineWidth(1)
@@ -4708,49 +4685,134 @@ public class SequenceViewerView: NSView {
         }
 
         let scale = frame.scale  // bp/pixel
-        
-        // Calculate the offset within the cached sequence for the visible region
-        let visibleStart = Int(frame.start)
-        let visibleEnd = Int(frame.end)
-        let offsetInCache = visibleStart - region.start
-        
-        // Extract the visible portion of the sequence
-        let startIndex = sequenceString.index(sequenceString.startIndex, offsetBy: max(0, offsetInCache))
-        let endIndex = sequenceString.index(startIndex, offsetBy: min(visibleEnd - visibleStart, sequenceString.count - offsetInCache), limitedBy: sequenceString.endIndex) ?? sequenceString.endIndex
-        let visibleSequence = String(sequenceString[startIndex..<endIndex])
+        guard let slice = visibleSequenceSlice(
+            sequenceString: sequenceString,
+            cachedRegion: region,
+            frame: frame
+        ) else { return }
+
+        let sequenceRect = CGRect(x: 0, y: trackY, width: bounds.width, height: trackHeight)
         
         // Draw based on zoom level
         if scale < showLettersThreshold {
             // High zoom: draw individual bases with letters
-            drawBasesWithLetters(visibleSequence, startPosition: visibleStart, frame: frame, context: context)
+            drawBasesWithLetters(
+                slice.sequence,
+                startPosition: slice.startPosition,
+                frame: frame,
+                context: context,
+                rowRect: sequenceRect,
+                font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+            )
         } else if scale < showLineThreshold {
             // Medium zoom: draw colored blocks
-            drawColoredBlocks(visibleSequence, startPosition: visibleStart, frame: frame, context: context)
+            drawColoredBlocks(
+                slice.sequence,
+                startPosition: slice.startPosition,
+                frame: frame,
+                context: context,
+                rowRect: sequenceRect
+            )
         } else {
             // Low zoom: draw simple line
             drawSequenceLine(frame: frame, context: context)
         }
     }
     
+    /// Slice of sequence that overlaps the visible viewport.
+    private struct VisibleSequenceSlice {
+        let sequence: String
+        let startPosition: Int
+    }
+
+    /// Extracts the visible base window from cached sequence data.
+    /// Uses the same overlap logic for both reference and consensus rows.
+    private func visibleSequenceSlice(
+        sequenceString: String,
+        cachedRegion: GenomicRegion,
+        frame: ReferenceFrame
+    ) -> VisibleSequenceSlice? {
+        let visibleStart = Int(floor(frame.start))
+        let visibleEnd = Int(ceil(frame.end))
+        guard visibleEnd > visibleStart else { return nil }
+
+        let overlapStart = max(visibleStart, cachedRegion.start)
+        let overlapEnd = min(visibleEnd, cachedRegion.end)
+        guard overlapEnd > overlapStart else { return nil }
+
+        let offsetInCache = overlapStart - cachedRegion.start
+        guard offsetInCache >= 0, offsetInCache < sequenceString.count else { return nil }
+
+        let span = min(overlapEnd - overlapStart, sequenceString.count - offsetInCache)
+        guard span > 0 else { return nil }
+
+        let startIndex = sequenceString.index(sequenceString.startIndex, offsetBy: offsetInCache)
+        let endIndex = sequenceString.index(startIndex, offsetBy: span)
+        return VisibleSequenceSlice(
+            sequence: String(sequenceString[startIndex..<endIndex]),
+            startPosition: overlapStart
+        )
+    }
+
+    /// Converts a source consensus string into a fixed target genomic window.
+    private func normalizedConsensusSequence(
+        _ rawSequence: String,
+        sourceStart: Int,
+        targetStart: Int,
+        targetEnd: Int
+    ) -> String {
+        let targetLength = max(0, targetEnd - targetStart)
+        guard targetLength > 0 else { return "" }
+        var normalized = Array(repeating: Character("N"), count: targetLength)
+        guard !rawSequence.isEmpty else { return String(normalized) }
+
+        let sourceBases = Array(rawSequence)
+        let sourceEnd = sourceStart + sourceBases.count
+        let overlapStart = max(sourceStart, targetStart)
+        let overlapEnd = min(sourceEnd, targetEnd)
+        guard overlapEnd > overlapStart else { return String(normalized) }
+
+        let sourceOffset = overlapStart - sourceStart
+        let targetOffset = overlapStart - targetStart
+        let copyLength = overlapEnd - overlapStart
+        for i in 0..<copyLength {
+            normalized[targetOffset + i] = sourceBases[sourceOffset + i]
+        }
+        return String(normalized)
+    }
+
+    /// Pixel rect for one genomic base using the frame's exact transform.
+    private func baseCellRect(position: Int, frame: ReferenceFrame, rowRect: CGRect) -> CGRect {
+        let x = frame.screenPosition(for: Double(position))
+        let nextX = frame.screenPosition(for: Double(position + 1))
+        return CGRect(
+            x: x,
+            y: rowRect.minY,
+            width: max(1, nextX - x),
+            height: rowRect.height
+        )
+    }
+
     /// Draws bases with individual letters (high zoom level).
-    private func drawBasesWithLetters(_ sequence: String, startPosition: Int, frame: ReferenceFrame, context: CGContext) {
-        let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
-        // Use frame.pixelWidth (not bounds.width) so base widths match
-        // frame.screenPosition() x-coordinates used for positioning.
-        let pixelsPerBase = CGFloat(frame.pixelWidth) / CGFloat(max(1, frame.end - frame.start))
-        
+    private func drawBasesWithLetters(
+        _ sequence: String,
+        startPosition: Int,
+        frame: ReferenceFrame,
+        context: CGContext,
+        rowRect: CGRect,
+        font: NSFont
+    ) {
         for (index, base) in sequence.enumerated() {
             let position = startPosition + index
-            let x = frame.screenPosition(for: Double(position))
-            let baseWidth = pixelsPerBase
-            
+            let cellRect = baseCellRect(position: position, frame: frame, rowRect: rowRect)
+
             // Draw background
             let color = BaseColors.color(for: base)
             context.setFillColor(color.cgColor)
-            let rect = CGRect(x: x, y: trackY, width: baseWidth, height: trackHeight)
-            context.fill(rect)
+            context.fill(cellRect)
             
             // Draw letter if space permits
+            let baseWidth = cellRect.width
             if baseWidth >= 8 {
                 let displayChar = isRNAMode && base.uppercased() == "T" ? "U" : String(base).uppercased()
                 let attributes: [NSAttributedString.Key: Any] = [
@@ -4759,8 +4821,8 @@ public class SequenceViewerView: NSView {
                 ]
                 let size = (displayChar as NSString).size(withAttributes: attributes)
                 let letterRect = CGRect(
-                    x: x + (baseWidth - size.width) / 2,
-                    y: trackY + (trackHeight - size.height) / 2,
+                    x: cellRect.minX + (baseWidth - size.width) / 2,
+                    y: rowRect.minY + (rowRect.height - size.height) / 2,
                     width: size.width,
                     height: size.height
                 )
@@ -4770,7 +4832,13 @@ public class SequenceViewerView: NSView {
     }
     
     /// Draws colored blocks for bases (medium zoom level).
-    private func drawColoredBlocks(_ sequence: String, startPosition: Int, frame: ReferenceFrame, context: CGContext) {
+    private func drawColoredBlocks(
+        _ sequence: String,
+        startPosition: Int,
+        frame: ReferenceFrame,
+        context: CGContext,
+        rowRect: CGRect
+    ) {
         // Group consecutive bases of the same type for efficient drawing
         var currentBase: Character?
         var blockStart = startPosition
@@ -4785,7 +4853,7 @@ public class SequenceViewerView: NSView {
                     let width = frame.screenPosition(for: Double(position)) - x
                     let color = BaseColors.color(for: prevBase)
                     context.setFillColor(color.cgColor)
-                    let rect = CGRect(x: x, y: trackY, width: max(1, width), height: trackHeight)
+                    let rect = CGRect(x: x, y: rowRect.minY, width: max(1, width), height: rowRect.height)
                     context.fill(rect)
                 }
                 
@@ -4801,7 +4869,7 @@ public class SequenceViewerView: NSView {
             let width = endX - x
             let color = BaseColors.color(for: prevBase)
             context.setFillColor(color.cgColor)
-            let rect = CGRect(x: x, y: trackY, width: max(1, width), height: trackHeight)
+            let rect = CGRect(x: x, y: rowRect.minY, width: max(1, width), height: rowRect.height)
             context.fill(rect)
         }
     }
