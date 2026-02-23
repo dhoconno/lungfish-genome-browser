@@ -669,9 +669,9 @@ public struct SignalTrackInfo: Codable, Sendable, Equatable, Identifiable {
 
 /// Information about an alignment track (BAM/CRAM) referenced by the bundle.
 ///
-/// Alignment files are stored externally (not copied into the bundle) due to their
-/// potentially large size (10-100 GB). The bundle stores a lightweight sidecar with
-/// metadata, a path to the external file, and an optional SQLite metadata database.
+/// Alignment files may be either bundle-relative (preferred, copied into `alignments/`)
+/// or legacy absolute external paths. The track stores metadata, alignment/index paths,
+/// and an optional SQLite metadata sidecar.
 ///
 /// ## External File References
 ///
@@ -692,13 +692,17 @@ public struct AlignmentTrackInfo: Codable, Sendable, Equatable, Identifiable {
     /// File format.
     public let format: AlignmentFormat
 
-    /// Absolute path to the alignment file (BAM/CRAM/SAM).
+    /// Path to the alignment file (BAM/CRAM/SAM).
+    /// Preferred format: bundle-relative path (e.g., `alignments/aln_123.sorted.bam`).
+    /// Legacy manifests may contain absolute external paths.
     public let sourcePath: String
 
     /// Base64-encoded security-scoped Finder bookmark for relocatable files.
     public let sourceBookmark: String?
 
-    /// Absolute path to the index file (.bai / .csi / .crai).
+    /// Path to the index file (.bai / .csi / .crai).
+    /// Preferred format: bundle-relative path aligned with `sourcePath`.
+    /// Legacy manifests may contain absolute external paths.
     public let indexPath: String
 
     /// Base64-encoded bookmark for the index file.

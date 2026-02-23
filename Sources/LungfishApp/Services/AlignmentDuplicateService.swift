@@ -109,7 +109,7 @@ public final class AlignmentDuplicateService: @unchecked Sendable {
             let nextProgress = Double(index + 1) / Double(max(1, tracks.count))
             progressHandler?(baseProgress, "Preparing \(track.name)...")
 
-            guard let sourcePath = resolveAlignmentPath(for: track) else {
+            guard let sourcePath = resolveAlignmentPath(for: track, bundleURL: bundleURL) else {
                 throw AlignmentDuplicateError.sourcePathNotFound(track.sourcePath)
             }
 
@@ -146,13 +146,17 @@ public final class AlignmentDuplicateService: @unchecked Sendable {
                     progressHandler?(mapped, "\(track.name): \(stageMessage)")
                 }
             )
+            // The intermediate markdup output has been re-imported into the bundle's
+            // normalized alignment storage; remove the transient file pair.
+            try? FileManager.default.removeItem(at: outputURL)
+            try? FileManager.default.removeItem(at: outputIndexURL)
             createdTrackIds.append(importResult.trackInfo.id)
         }
 
         return createdTrackIds
     }
 
-    /// Removes old alignment tracks from manifest and prunes their metadata DB files.
+    /// Removes old alignment tracks from manifest and prunes their sidecar files.
     private static func removeAlignmentTracks(_ tracks: [AlignmentTrackInfo], from bundleURL: URL) throws {
         var manifest = try BundleManifest.load(from: bundleURL)
         for track in tracks {
@@ -161,14 +165,25 @@ public final class AlignmentDuplicateService: @unchecked Sendable {
                 let dbURL = bundleURL.appendingPathComponent(dbPath)
                 try? FileManager.default.removeItem(at: dbURL)
             }
+            if let sourceURL = resolveBundleOrAbsoluteURL(track.sourcePath, bundleURL: bundleURL),
+               FileManager.default.fileExists(atPath: sourceURL.path),
+               sourceURL.path.hasPrefix(bundleURL.path + "/") {
+                try? FileManager.default.removeItem(at: sourceURL)
+            }
+            if let indexURL = resolveBundleOrAbsoluteURL(track.indexPath, bundleURL: bundleURL),
+               FileManager.default.fileExists(atPath: indexURL.path),
+               indexURL.path.hasPrefix(bundleURL.path + "/") {
+                try? FileManager.default.removeItem(at: indexURL)
+            }
         }
         try manifest.save(to: bundleURL)
     }
 
     /// Resolves stale alignment source paths via bookmark if needed.
-    private static func resolveAlignmentPath(for track: AlignmentTrackInfo) -> String? {
-        if FileManager.default.fileExists(atPath: track.sourcePath) {
-            return track.sourcePath
+    private static func resolveAlignmentPath(for track: AlignmentTrackInfo, bundleURL: URL) -> String? {
+        if let directURL = resolveBundleOrAbsoluteURL(track.sourcePath, bundleURL: bundleURL),
+           FileManager.default.fileExists(atPath: directURL.path) {
+            return directURL.path
         }
         guard let bookmarkString = track.sourceBookmark,
               let bookmarkData = Data(base64Encoded: bookmarkString) else {
@@ -184,6 +199,13 @@ public final class AlignmentDuplicateService: @unchecked Sendable {
             return resolvedURL.path
         }
         return nil
+    }
+
+    private static func resolveBundleOrAbsoluteURL(_ path: String, bundleURL: URL) -> URL? {
+        if path.hasPrefix("/") {
+            return URL(fileURLWithPath: path)
+        }
+        return bundleURL.appendingPathComponent(path)
     }
 
     /// Builds a unique output URL for a deduplicated sibling bundle.
@@ -306,4 +328,3 @@ public enum AlignmentDuplicateError: Error, LocalizedError, Sendable {
         }
     }
 }
-

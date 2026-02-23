@@ -453,13 +453,16 @@ public final class ReferenceBundle: Sendable {
         !manifest.alignments.isEmpty
     }
 
-    /// Resolves the path to an alignment file, using bookmarks if the path is stale.
+    /// Resolves the path to an alignment file.
+    ///
+    /// Supports both legacy absolute external paths and bundle-relative paths
+    /// (for in-bundle copied alignments).
     ///
     /// - Parameter trackInfo: Alignment track information from the manifest
     /// - Returns: The resolved path to the alignment file
     /// - Throws: If the file cannot be found
     public func resolveAlignmentPath(_ trackInfo: AlignmentTrackInfo) throws -> String {
-        let sourcePath = trackInfo.sourcePath
+        let sourcePath = resolveBundleRelativePath(trackInfo.sourcePath)
 
         // Check if file exists at original path
         if FileManager.default.fileExists(atPath: sourcePath) {
@@ -480,7 +483,33 @@ public final class ReferenceBundle: Sendable {
             }
         }
 
-        throw ReferenceBundleError.missingFile(sourcePath)
+        throw ReferenceBundleError.missingFile(trackInfo.sourcePath)
+    }
+
+    /// Resolves the path to an alignment index file.
+    ///
+    /// Supports both legacy absolute external paths and bundle-relative paths.
+    public func resolveAlignmentIndexPath(_ trackInfo: AlignmentTrackInfo) throws -> String {
+        let indexPath = resolveBundleRelativePath(trackInfo.indexPath)
+
+        if FileManager.default.fileExists(atPath: indexPath) {
+            return indexPath
+        }
+
+        if let bookmarkString = trackInfo.indexBookmark,
+           let bookmarkData = Data(base64Encoded: bookmarkString) {
+            var isStale = false
+            if let resolved = try? URL(resolvingBookmarkData: bookmarkData,
+                                       options: [.withoutUI, .withSecurityScope],
+                                       relativeTo: nil,
+                                       bookmarkDataIsStale: &isStale),
+               FileManager.default.fileExists(atPath: resolved.path) {
+                logger.info("Resolved stale alignment index path via bookmark: \(resolved.path)")
+                return resolved.path
+            }
+        }
+
+        throw ReferenceBundleError.missingFile(trackInfo.indexPath)
     }
 
     /// Returns the alignment metadata database for a track, if available.
@@ -499,6 +528,13 @@ public final class ReferenceBundle: Sendable {
     public func referenceFASTAPath() -> String? {
         let fastaURL = url.appendingPathComponent(manifest.genome.path)
         return FileManager.default.fileExists(atPath: fastaURL.path) ? fastaURL.path : nil
+    }
+
+    private func resolveBundleRelativePath(_ path: String) -> String {
+        if URL(fileURLWithPath: path).isFileURL && path.hasPrefix("/") {
+            return path
+        }
+        return url.appendingPathComponent(path).path
     }
 
 }

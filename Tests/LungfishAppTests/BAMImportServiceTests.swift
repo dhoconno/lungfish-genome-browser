@@ -157,10 +157,12 @@ final class BAMImportServiceTests: XCTestCase {
         }
     }
 
-    // MARK: - SAM Format Rejection
+    // MARK: - SAM Handling
 
-    func testImportSAMFileThrowsUnsupportedFormat() async {
-        // SAM files need conversion to BAM — import should reject them early
+    func testImportSAMFileIsNotRejectedAsUnsupportedFormat() async {
+        // SAM input is supported by normalizing to sorted BAM during import.
+        // This test uses an invalid SAM payload and only verifies we do not fail
+        // with the old "unsupported format" guard.
         let samURL = tempDir.appendingPathComponent("test.sam")
         try? "@HD\tVN:1.6\tSO:coordinate\n".write(to: samURL, atomically: true, encoding: .utf8)
 
@@ -172,16 +174,13 @@ final class BAMImportServiceTests: XCTestCase {
                 bamURL: samURL,
                 bundleURL: bundleURL
             )
-            XCTFail("Expected BAMImportError for SAM files")
+            XCTFail("Expected import to fail for invalid test data")
         } catch let error as BAMImportError {
-            if case .unsupportedFormat(let msg) = error {
-                XCTAssertTrue(msg.contains("SAM"), "Should mention SAM: \(msg)")
-                XCTAssertTrue(msg.contains("BAM"), "Should mention BAM conversion: \(msg)")
-            } else {
-                XCTFail("Expected .unsupportedFormat but got \(error)")
+            if case .unsupportedFormat = error {
+                XCTFail("SAM should not be rejected as unsupported format: \(error)")
             }
         } catch {
-            // Other errors are acceptable (e.g., if samtools is invoked before format check)
+            // Non-BAMImportError failures are acceptable for invalid SAM fixture.
         }
     }
 

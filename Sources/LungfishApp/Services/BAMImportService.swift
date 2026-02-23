@@ -16,15 +16,15 @@ private let importLogger = Logger(subsystem: "com.lungfish.browser", category: "
 /// Service for importing BAM/CRAM alignment files into `.lungfishref` bundles.
 ///
 /// The import process:
-/// 1. Validates the alignment file exists and has an index
-/// 2. Runs samtools idxstats to get per-chromosome statistics
-/// 3. Runs samtools flagstat for QC metrics
-/// 4. Parses @RG headers for read group/sample info
+/// 1. Validates the alignment file exists
+/// 2. Materializes a normalized, coordinate-sorted alignment copy inside `alignments/`
+/// 3. Creates an index for the in-bundle alignment copy
+/// 4. Runs samtools idxstats/flagstat and parses @RG headers
 /// 5. Creates an `AlignmentMetadataDatabase` in the bundle's `alignments/` directory
 /// 6. Creates an `AlignmentTrackInfo` sidecar and updates the manifest
 ///
-/// The BAM/CRAM file itself is NOT copied into the bundle — it is referenced
-/// by path with an optional security-scoped bookmark for file relocation.
+/// Alignments are stored inside the bundle to ensure reproducible access and avoid
+/// stale external path/bookmark issues.
 public final class BAMImportService: @unchecked Sendable {
 
     // MARK: - Import Result
@@ -39,9 +39,9 @@ public final class BAMImportService: @unchecked Sendable {
         public let unmappedReads: Int64
         /// Sample names found in @RG headers.
         public let sampleNames: [String]
-        /// Whether the index was pre-existing or had to be created.
+        /// Whether the in-bundle index file was created during import.
         public let indexWasCreated: Bool
-        /// Whether the BAM file had to be coordinate-sorted before indexing.
+        /// Whether a coordinate-sort step was performed during normalization.
         public let wasSorted: Bool
     }
 
@@ -73,19 +73,28 @@ public final class BAMImportService: @unchecked Sendable {
         }
 
         // 1. Detect format
-        let format = detectFormat(bamURL)
+        let sourceFormat = detectFormat(bamURL)
+        let trackId = "aln_\(UUID().uuidString.prefix(8))"
 
-        // 2. Validate index exists (or create it); may sort if unsorted
-        let indexResult = try await ensureIndex(bamURL: bamURL, format: format, progressHandler: progressHandler)
-        let effectiveBAMURL = indexResult.bamURL
-        let indexPath = indexResult.indexPath
-        let indexCreated = indexResult.wasCreated
-        let wasSorted = indexResult.wasSorted
-        progressHandler?(0.15, "Index validated.")
-
-        // 3. Create alignments directory in bundle
+        // 2. Create alignments directory in bundle
         let alignmentsDir = bundleURL.appendingPathComponent("alignments")
         try FileManager.default.createDirectory(at: alignmentsDir, withIntermediateDirectories: true)
+
+        // 3. Create sorted/indexed alignment copy in the bundle
+        let materialized = try await materializeAlignmentIntoBundle(
+            sourceURL: bamURL,
+            sourceFormat: sourceFormat,
+            bundleURL: bundleURL,
+            alignmentsDir: alignmentsDir,
+            trackId: trackId,
+            progressHandler: progressHandler
+        )
+        let effectiveBAMURL = materialized.alignmentURL
+        let indexPath = materialized.indexURL.path
+        let format = materialized.format
+        let indexCreated = materialized.indexWasCreated
+        let wasSorted = materialized.wasSorted
+        progressHandler?(0.20, "Alignment prepared.")
 
         // 4. Create data provider for stats collection
         let provider = AlignmentDataProvider(
@@ -96,7 +105,7 @@ public final class BAMImportService: @unchecked Sendable {
         )
 
         // 5. Run samtools idxstats
-        progressHandler?(0.2, "Collecting chromosome statistics...")
+        progressHandler?(0.25, "Collecting chromosome statistics...")
         let idxstatsOutput: String
         do {
             idxstatsOutput = try await provider.fetchIdxstats()
@@ -105,7 +114,7 @@ public final class BAMImportService: @unchecked Sendable {
         }
 
         // 6. Run samtools flagstat
-        progressHandler?(0.4, "Collecting alignment statistics...")
+        progressHandler?(0.45, "Collecting alignment statistics...")
         let flagstatOutput: String
         do {
             flagstatOutput = try await provider.fetchFlagstat()
@@ -114,7 +123,7 @@ public final class BAMImportService: @unchecked Sendable {
         }
 
         // 7. Parse header for read groups
-        progressHandler?(0.6, "Parsing read group information...")
+        progressHandler?(0.62, "Parsing read group information...")
         let headerText: String
         do {
             headerText = try await provider.fetchHeader()
@@ -130,19 +139,18 @@ public final class BAMImportService: @unchecked Sendable {
         let inferredRef = ReferenceInference.infer(from: refSequences)
 
         // 8. Create metadata database
-        progressHandler?(0.7, "Creating metadata database...")
-        let trackId = "aln_\(UUID().uuidString.prefix(8))"
+        progressHandler?(0.74, "Creating metadata database...")
         let dbFileName = "\(trackId).stats.db"
         let dbURL = alignmentsDir.appendingPathComponent(dbFileName)
 
         let metadataDB = try AlignmentMetadataDatabase.create(at: dbURL)
         metadataDB.setFileInfo("source_path", value: effectiveBAMURL.path)
-        if wasSorted {
-            metadataDB.setFileInfo("original_source_path", value: bamURL.path)
-        }
+        metadataDB.setFileInfo("source_path_in_bundle", value: "alignments/\(effectiveBAMURL.lastPathComponent)")
+        metadataDB.setFileInfo("original_source_path", value: bamURL.path)
+        metadataDB.setFileInfo("original_source_format", value: sourceFormat.rawValue)
         metadataDB.setFileInfo("format", value: format.rawValue)
         metadataDB.setFileInfo("import_date", value: ISO8601DateFormatter().string(from: Date()))
-        metadataDB.setFileInfo("file_name", value: fileName)
+        metadataDB.setFileInfo("file_name", value: effectiveBAMURL.lastPathComponent)
 
         // Populate from samtools output
         metadataDB.populateFromIdxstats(idxstatsOutput)
@@ -204,43 +212,18 @@ public final class BAMImportService: @unchecked Sendable {
             fileSize = nil
         }
 
-        // 10. Create bookmark for file relocation
-        let bookmark: String?
-        do {
-            let bookmarkData = try effectiveBAMURL.bookmarkData(
-                options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            )
-            bookmark = bookmarkData.base64EncodedString()
-        } catch {
-            importLogger.warning("Could not create bookmark for \(effectiveBAMURL.path): \(error)")
-            bookmark = nil
-        }
-
-        let indexBookmark: String?
-        do {
-            let indexURL = URL(fileURLWithPath: indexPath)
-            let bookmarkData = try indexURL.bookmarkData(
-                options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            )
-            indexBookmark = bookmarkData.base64EncodedString()
-        } catch {
-            indexBookmark = nil
-        }
-
         // 11. Create AlignmentTrackInfo
         progressHandler?(0.9, "Updating manifest...")
+        let relativeSourcePath = "alignments/\(effectiveBAMURL.lastPathComponent)"
+        let relativeIndexPath = "alignments/\(URL(fileURLWithPath: indexPath).lastPathComponent)"
         let trackInfo = AlignmentTrackInfo(
             id: trackId,
             name: name ?? fileName,
             format: format,
-            sourcePath: effectiveBAMURL.path,
-            sourceBookmark: bookmark,
-            indexPath: indexPath,
-            indexBookmark: indexBookmark,
+            sourcePath: relativeSourcePath,
+            sourceBookmark: nil,
+            indexPath: relativeIndexPath,
+            indexBookmark: nil,
             metadataDBPath: "alignments/\(dbFileName)",
             fileSizeBytes: fileSize,
             addedDate: Date(),
@@ -283,119 +266,115 @@ public final class BAMImportService: @unchecked Sendable {
         }
     }
 
-    /// Result of the index-ensuring step, which may also sort the BAM.
-    private struct EnsureIndexResult {
-        let bamURL: URL
-        let indexPath: String
-        let wasCreated: Bool
+    /// Result of alignment materialization into the bundle.
+    private struct MaterializedAlignmentResult {
+        let alignmentURL: URL
+        let indexURL: URL
+        let format: AlignmentFormat
+        let indexWasCreated: Bool
         let wasSorted: Bool
     }
 
-    /// Ensures an index exists for the alignment file.
+    /// Creates a normalized, sorted and indexed alignment file inside the bundle.
     ///
-    /// If the BAM is not coordinate-sorted (detected when `samtools index` fails with
-    /// "nsorted" in stderr), automatically creates a sorted copy and indexes that instead.
-    private static func ensureIndex(
-        bamURL: URL,
-        format: AlignmentFormat,
+    /// All imported inputs are converted into an in-bundle coordinate-sorted alignment:
+    /// - BAM -> sorted BAM + BAI/CSI
+    /// - CRAM -> sorted CRAM + CRAI
+    /// - SAM -> sorted BAM + BAI/CSI
+    private static func materializeAlignmentIntoBundle(
+        sourceURL: URL,
+        sourceFormat: AlignmentFormat,
+        bundleURL: URL,
+        alignmentsDir: URL,
+        trackId: String,
         progressHandler: (@Sendable (Double, String) -> Void)?
-    ) async throws -> EnsureIndexResult {
-        // Check for existing index
-        let possibleIndexes: [String]
-        switch format {
-        case .bam:
-            possibleIndexes = [
-                bamURL.path + ".bai",
-                bamURL.deletingPathExtension().path + ".bai",
-                bamURL.path + ".csi"
-            ]
-        case .cram:
-            possibleIndexes = [
-                bamURL.path + ".crai"
-            ]
+    ) async throws -> MaterializedAlignmentResult {
+        let outputFormat: AlignmentFormat
+        let outputExt: String
+        switch sourceFormat {
         case .sam:
-            throw BAMImportError.unsupportedFormat("SAM files must be converted to BAM before import")
+            // Normalize SAM input to BAM for indexed random access.
+            outputFormat = .bam
+            outputExt = "bam"
+        case .bam:
+            outputFormat = .bam
+            outputExt = "bam"
+        case .cram:
+            outputFormat = .cram
+            outputExt = "cram"
         }
 
-        for indexPath in possibleIndexes {
-            if FileManager.default.fileExists(atPath: indexPath) {
-                return EnsureIndexResult(bamURL: bamURL, indexPath: indexPath, wasCreated: false, wasSorted: false)
-            }
-        }
-
-        // No index found — try to create one
-        importLogger.info("No index found for \(bamURL.lastPathComponent), creating one...")
-        progressHandler?(0.05, "Creating index (this may take a few minutes for large files)...")
-
+        let outputURL = alignmentsDir.appendingPathComponent("\(trackId).sorted.\(outputExt)")
         let runner = NativeToolRunner.shared
-        let result = try await runner.run(.samtools, arguments: ["index", bamURL.path], timeout: 3600)
-
-        if result.isSuccess {
-            // Determine which index was created
-            let expectedIndex = format == .cram ? bamURL.path + ".crai" : bamURL.path + ".bai"
-            guard FileManager.default.fileExists(atPath: expectedIndex) else {
-                throw BAMImportError.indexCreationFailed("Index file not found after creation")
-            }
-            return EnsureIndexResult(bamURL: bamURL, indexPath: expectedIndex, wasCreated: true, wasSorted: false)
+        let referenceFasta = findReferenceFASTA(in: bundleURL)
+        if sourceFormat == .cram && referenceFasta == nil {
+            throw BAMImportError.unsupportedFormat("CRAM import requires a reference FASTA in the target bundle")
         }
 
-        // Index creation failed — check if the file is unsorted
-        let isUnsorted = result.stderr.contains("nsorted") || result.stderr.contains("not coordinate sorted")
-        guard isUnsorted else {
-            throw BAMImportError.indexCreationFailed(result.stderr)
+        progressHandler?(0.05, "Sorting alignment into bundle...")
+        let inputSize = (try? FileManager.default.attributesOfItem(atPath: sourceURL.path)[.size] as? Int64) ?? 0
+        let sortTimeout = max(600, Double(inputSize) / 10_000_000)
+
+        var sortArgs = ["sort"]
+        if outputFormat == .cram {
+            sortArgs += ["-O", "CRAM"]
         }
+        sortArgs += ["-o", outputURL.path]
+        if sourceFormat == .cram || outputFormat == .cram, let referenceFasta {
+            sortArgs += ["--reference", referenceFasta]
+        }
+        sortArgs.append(sourceURL.path)
 
-        // File is unsorted — sort it first
-        importLogger.info("BAM is unsorted, creating coordinate-sorted copy...")
-        progressHandler?(0.05, "Sorting BAM file (this may take several minutes for large files)...")
-
-        let sortedURL = sortedBAMURL(for: bamURL)
-
-        // Dynamic timeout based on file size (same lesson as NativeToolRunner/bgzip)
-        let fileSizeBytes: Int64 = (try? FileManager.default.attributesOfItem(atPath: bamURL.path))?[.size] as? Int64 ?? 0
-        let sortTimeout = max(600, Double(fileSizeBytes) / 10_000_000)
-
-        let sortResult = try await runner.run(
-            .samtools,
-            arguments: ["sort", "-o", sortedURL.path, bamURL.path],
-            timeout: sortTimeout
-        )
-
+        let sortResult = try await runner.run(.samtools, arguments: sortArgs, timeout: sortTimeout)
         guard sortResult.isSuccess else {
-            throw BAMImportError.indexCreationFailed("Failed to sort BAM: \(sortResult.stderr)")
+            throw BAMImportError.indexCreationFailed("Failed to sort alignment: \(sortResult.stderr)")
+        }
+        guard FileManager.default.fileExists(atPath: outputURL.path) else {
+            throw BAMImportError.indexCreationFailed("Sorted alignment file not found after sorting")
         }
 
-        guard FileManager.default.fileExists(atPath: sortedURL.path) else {
-            throw BAMImportError.indexCreationFailed("Sorted BAM file not found after sorting")
+        progressHandler?(0.12, "Indexing sorted alignment...")
+        var indexArgs = ["index", outputURL.path]
+        if outputFormat == .cram, let referenceFasta {
+            indexArgs = ["index", "--reference", referenceFasta, outputURL.path]
         }
-
-        importLogger.info("Sorted BAM created at \(sortedURL.lastPathComponent), now indexing...")
-        progressHandler?(0.10, "Indexing sorted BAM file...")
-
-        let indexResult = try await runner.run(
-            .samtools,
-            arguments: ["index", sortedURL.path],
-            timeout: 3600
-        )
-
+        let indexResult = try await runner.run(.samtools, arguments: indexArgs, timeout: 3600)
         guard indexResult.isSuccess else {
-            throw BAMImportError.indexCreationFailed("Failed to index sorted BAM: \(indexResult.stderr)")
+            throw BAMImportError.indexCreationFailed("Failed to index sorted alignment: \(indexResult.stderr)")
         }
 
-        let sortedIndex = sortedURL.path + ".bai"
-        guard FileManager.default.fileExists(atPath: sortedIndex) else {
-            throw BAMImportError.indexCreationFailed("Index file not found after indexing sorted BAM")
-        }
-
-        importLogger.info("Sorted and indexed successfully: \(sortedURL.lastPathComponent)")
-        return EnsureIndexResult(bamURL: sortedURL, indexPath: sortedIndex, wasCreated: true, wasSorted: true)
+        let indexURL = try resolveCreatedIndexURL(alignmentURL: outputURL, format: outputFormat)
+        return MaterializedAlignmentResult(
+            alignmentURL: outputURL,
+            indexURL: indexURL,
+            format: outputFormat,
+            indexWasCreated: true,
+            wasSorted: true
+        )
     }
 
-    /// Computes the sorted BAM URL by inserting `.sorted` before the `.bam` extension.
-    private static func sortedBAMURL(for bamURL: URL) -> URL {
-        let dir = bamURL.deletingLastPathComponent()
-        let stem = bamURL.deletingPathExtension().lastPathComponent
-        return dir.appendingPathComponent("\(stem).sorted.bam")
+    /// Resolves whichever index extension samtools created for the alignment.
+    private static func resolveCreatedIndexURL(alignmentURL: URL, format: AlignmentFormat) throws -> URL {
+        let candidates: [String]
+        switch format {
+        case .bam:
+            candidates = [
+                alignmentURL.path + ".bai",
+                alignmentURL.deletingPathExtension().path + ".bai",
+                alignmentURL.path + ".csi",
+            ]
+        case .cram:
+            candidates = [
+                alignmentURL.path + ".crai",
+                alignmentURL.path + ".csi",
+            ]
+        case .sam:
+            throw BAMImportError.unsupportedFormat("SAM output is not supported for indexed bundle tracks")
+        }
+        if let existing = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) {
+            return URL(fileURLWithPath: existing)
+        }
+        throw BAMImportError.indexCreationFailed("Index file not found after creation for \(alignmentURL.lastPathComponent)")
     }
 
     /// Finds the reference FASTA path within a bundle (needed for CRAM).

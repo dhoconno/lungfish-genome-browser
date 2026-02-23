@@ -3014,10 +3014,11 @@ public class SequenceViewerView: NSView {
         self.alignmentDataProviders = []
         for trackId in bundle.alignmentTrackIds {
             if let trackInfo = bundle.alignmentTrack(id: trackId),
-               let resolvedPath = try? bundle.resolveAlignmentPath(trackInfo) {
+               let resolvedPath = try? bundle.resolveAlignmentPath(trackInfo),
+               let resolvedIndexPath = try? bundle.resolveAlignmentIndexPath(trackInfo) {
                 let provider = AlignmentDataProvider(
                     alignmentPath: resolvedPath,
-                    indexPath: trackInfo.indexPath,
+                    indexPath: resolvedIndexPath,
                     format: trackInfo.format,
                     referenceFastaPath: bundle.referenceFASTAPath()
                 )
