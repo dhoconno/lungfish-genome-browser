@@ -201,9 +201,9 @@ public enum ReferenceInference {
             }
 
             // Check naming pattern match
-            if sig.ucscNames.first.map({ names.contains($0) }) == true {
+            if let firstName = sig.ucscNames.first, names.contains(firstName) {
                 score += 2
-            } else if sig.ensemblNames.first.map({ names.contains($0) }) == true {
+            } else if let firstName = sig.ensemblNames.first, names.contains(firstName) {
                 score += 2
             }
 

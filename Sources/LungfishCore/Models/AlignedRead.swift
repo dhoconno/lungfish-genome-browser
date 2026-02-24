@@ -62,7 +62,7 @@ public struct CIGAROperation: Sendable, Equatable {
     }
 
     /// Maximum operation length to prevent DoS from malformed CIGAR strings.
-    public static let maxOperationLength = 1_000_000_000
+    static let maxOperationLength = 1_000_000_000
 
     public init(op: Op, length: Int) {
         self.op = op

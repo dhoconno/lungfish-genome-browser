@@ -12,8 +12,6 @@ import Combine
 @MainActor
 final class OperationsPanelController: NSWindowController {
 
-    private var cancellables = Set<AnyCancellable>()
-
     init() {
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 500, height: 400),

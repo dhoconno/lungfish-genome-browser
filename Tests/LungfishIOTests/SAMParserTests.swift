@@ -229,32 +229,6 @@ final class SAMParserTests: XCTestCase {
         XCTAssertEqual(SAMParser.referenceSequenceCount(from: "@HD\tVN:1.6"), 0)
     }
 
-    // MARK: - Comment Parsing
-
-    func testParseComments() {
-        let header = """
-        @HD\tVN:1.6
-        @CO\tThis is a comment line
-        @CO\tAnother comment
-        @SQ\tSN:chr1\tLN:1000
-        """
-        let comments = SAMParser.parseComments(from: header)
-        XCTAssertEqual(comments.count, 2)
-        XCTAssertEqual(comments[0], "This is a comment line")
-        XCTAssertEqual(comments[1], "Another comment")
-    }
-
-    func testParseCommentsEmpty() {
-        XCTAssertTrue(SAMParser.parseComments(from: "@HD\tVN:1.6").isEmpty)
-    }
-
-    func testParseCommentsRequiresTab() {
-        // @CO without tab delimiter should NOT be parsed as a comment
-        let header = "@CONTENT\tSome data"
-        let comments = SAMParser.parseComments(from: header)
-        XCTAssertTrue(comments.isEmpty, "@CO prefix without tab should not match")
-    }
-
     // MARK: - Optional Tag Extraction (NM, SA, NH, XS)
 
     func testParseNMTag() {

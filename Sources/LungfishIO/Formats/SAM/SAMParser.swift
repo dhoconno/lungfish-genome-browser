@@ -252,13 +252,6 @@ public enum SAMParser {
         return sequences
     }
 
-    /// Extracts @CO (comment) lines from the header.
-    public static func parseComments(from headerText: String) -> [String] {
-        headerText.split(separator: "\n", omittingEmptySubsequences: true)
-            .filter { $0.hasPrefix("@CO\t") }
-            .map { String($0.dropFirst(4)) } // Drop "@CO\t"
-    }
-
     // MARK: - Read Parsing
 
     /// Parses SAM text into an array of aligned reads.
