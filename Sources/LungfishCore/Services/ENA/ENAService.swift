@@ -322,13 +322,17 @@ public actor ENAService: DatabaseService {
         case 200...299:
             return data
         case 400:
-            throw DatabaseServiceError.invalidQuery(reason: "Bad request")
+            let body = String(data: data, encoding: .utf8) ?? ""
+            let detail = body.isEmpty ? url.absoluteString : "\(body.prefix(200)) (URL: \(url.absoluteString))"
+            throw DatabaseServiceError.invalidQuery(reason: detail)
         case 404:
             throw DatabaseServiceError.notFound(accession: url.lastPathComponent)
         case 429:
             throw DatabaseServiceError.rateLimitExceeded
         case 500...599:
-            throw DatabaseServiceError.serverError(message: "HTTP \(httpResponse.statusCode)")
+            let body = String(data: data, encoding: .utf8) ?? ""
+            let detail = body.isEmpty ? "HTTP \(httpResponse.statusCode)" : "HTTP \(httpResponse.statusCode): \(body.prefix(200))"
+            throw DatabaseServiceError.serverError(message: detail)
         default:
             throw DatabaseServiceError.invalidResponse(statusCode: httpResponse.statusCode)
         }

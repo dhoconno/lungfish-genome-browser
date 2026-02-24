@@ -1126,24 +1126,64 @@ public class DatabaseBrowserViewModel: ObservableObject {
                         }
 
                     case .ena:
-                        let dbRecord = try await ena.fetch(accession: record.accession)
-                        let tempDir = FileManager.default.temporaryDirectory
-                        let filename = "\(dbRecord.accession).fasta"
-                        fileURL = tempDir.appendingPathComponent(filename)
+                        // SRA run accessions (SRR/ERR/DRR) must be downloaded as FASTQ
+                        // files, NOT fetched as nucleotide sequences. The ENA source in
+                        // the database browser is exclusively used for SRA read searches
+                        // via searchReads(), so all records here are SRA runs.
+                        logger.info("performBatchDownload: Downloading FASTQ for SRA run \(record.accession, privacy: .public)")
+                        performOnMainRunLoop {
+                            DownloadCenter.shared.update(
+                                id: downloadCenterTaskID,
+                                progress: progressFraction,
+                                detail: "Fetching FASTQ URLs for \(record.accession)..."
+                            )
+                        }
 
-                        var fastaContent = ">\(dbRecord.accession)"
-                        if !dbRecord.title.isEmpty {
-                            fastaContent += " \(dbRecord.title)"
+                        // Query ENA for verified FASTQ download URLs
+                        let readRecords = try await ena.searchReads(term: record.accession, limit: 1)
+                        guard let readRecord = readRecords.first else {
+                            throw DatabaseServiceError.notFound(accession: record.accession)
                         }
-                        fastaContent += "\n"
-                        let sequence = dbRecord.sequence
-                        var idx = sequence.startIndex
-                        while idx < sequence.endIndex {
-                            let endIdx = sequence.index(idx, offsetBy: 80, limitedBy: sequence.endIndex) ?? sequence.endIndex
-                            fastaContent += String(sequence[idx..<endIdx]) + "\n"
-                            idx = endIdx
+
+                        let fastqURLs = readRecord.fastqHTTPURLs
+                        guard !fastqURLs.isEmpty else {
+                            throw DatabaseServiceError.invalidQuery(
+                                reason: "No FASTQ files available for \(record.accession). "
+                                    + "The data may not yet be processed by ENA."
+                            )
                         }
-                        try fastaContent.write(to: fileURL, atomically: true, encoding: .utf8)
+
+                        // Download each FASTQ file to the batch directory
+                        var firstDownloaded: URL?
+                        for (fileIdx, fastqURL) in fastqURLs.enumerated() {
+                            let filename = fastqURL.lastPathComponent
+                            let localPath = batchDir.appendingPathComponent(filename)
+                            logger.info("performBatchDownload: Downloading \(fastqURL.absoluteString, privacy: .public)")
+                            performOnMainRunLoop {
+                                DownloadCenter.shared.update(
+                                    id: downloadCenterTaskID,
+                                    progress: progressFraction,
+                                    detail: "Downloading \(filename) (\(fileIdx + 1)/\(fastqURLs.count))..."
+                                )
+                            }
+
+                            var request = URLRequest(url: fastqURL)
+                            request.setValue("Lungfish Genome Browser", forHTTPHeaderField: "User-Agent")
+                            request.timeoutInterval = 600
+
+                            let (data, response) = try await URLSession.shared.data(for: request)
+                            guard let httpResponse = response as? HTTPURLResponse,
+                                  (200...299).contains(httpResponse.statusCode) else {
+                                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                                throw DatabaseServiceError.serverError(
+                                    message: "Failed to download \(filename) (HTTP \(statusCode))"
+                                )
+                            }
+                            try data.write(to: localPath)
+                            logger.info("performBatchDownload: Saved \(filename) (\(data.count) bytes)")
+                            if firstDownloaded == nil { firstDownloaded = localPath }
+                        }
+                        fileURL = firstDownloaded ?? batchDir
 
                     case .pathoplexus:
                         // Pathoplexus downloads as FASTA
@@ -1175,8 +1215,16 @@ public class DatabaseBrowserViewModel: ObservableObject {
                     logger.info("Downloaded \(record.accession, privacy: .public)")
 
                 } catch {
-                    logger.error("Failed to download \(record.accession, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    logger.error("Failed to download \(record.accession, privacy: .public): \(error, privacy: .public)")
                     failedCount += 1
+                    // Store the last error detail for the DownloadCenter failure message
+                    performOnMainRunLoop {
+                        DownloadCenter.shared.update(
+                            id: downloadCenterTaskID,
+                            progress: Double(index + 1) / Double(totalCount),
+                            detail: "Failed: \(record.accession) — \(error.localizedDescription)"
+                        )
+                    }
                 }
             }
 
