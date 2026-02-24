@@ -181,6 +181,14 @@ public class InspectorViewController: NSViewController {
             object: nil
         )
 
+        // Listen for FASTQ dataset loaded to show statistics in Document tab.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleFASTQDatasetLoaded(_:)),
+            name: .fastqDatasetLoaded,
+            object: nil
+        )
+
         hasRegisteredNotificationObservers = true
     }
 
@@ -471,6 +479,19 @@ public class InspectorViewController: NSViewController {
         if chromosome != nil {
             viewModel.selectedTab = .document
         }
+    }
+
+    @objc private func handleFASTQDatasetLoaded(_ notification: Notification) {
+        guard let stats = notification.userInfo?["statistics"] as? FASTQDatasetStatistics else { return }
+        viewModel.documentSectionViewModel.updateFASTQStatistics(stats)
+
+        let sra = notification.userInfo?["sraRunInfo"] as? SRARunInfo
+        let ena = notification.userInfo?["enaReadRecord"] as? ENAReadRecord
+        if sra != nil || ena != nil {
+            viewModel.documentSectionViewModel.updateSRAMetadata(sra: sra, ena: ena)
+        }
+
+        viewModel.selectedTab = .document
     }
 
     /// Applies inspector tab selection from notification userInfo if provided.

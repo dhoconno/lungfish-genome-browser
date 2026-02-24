@@ -199,6 +199,12 @@ extension Notification.Name {
     /// - `"operationID"`: The `UUID` of the affected operation.
     /// - `"operationState"`: The state as a raw `String` ("running", "completed", "failed").
     public static let operationStateChanged = Notification.Name("operationStateChanged")
+
+    /// Posted when a FASTQ dataset has been loaded and its statistics dashboard is displayed.
+    ///
+    /// The `userInfo` dictionary contains:
+    /// - `"statistics"`: The `FASTQDatasetStatistics` object.
+    public static let fastqDatasetLoaded = Notification.Name("fastqDatasetLoaded")
 }
 
 // MARK: - Notification UserInfo Keys

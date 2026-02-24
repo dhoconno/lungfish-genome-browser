@@ -315,6 +315,9 @@ final class DocumentLoaderTests: XCTestCase {
     // MARK: - FASTQ Loading Tests
 
     func testLoadFASTQFile() async throws {
+        // FASTQ files are now handled by the streaming statistics dashboard
+        // (MainSplitViewController.loadFASTQDatasetInBackground), not DocumentLoader.
+        // DocumentLoader returns an empty marker document for FASTQ files.
         let fqURL = tempDir.appendingPathComponent("test.fastq")
         let fqContent = """
         @read1
@@ -330,9 +333,8 @@ final class DocumentLoaderTests: XCTestCase {
 
         let result = try await DocumentLoader.loadFile(at: fqURL, type: .fastq)
 
-        XCTAssertEqual(result.sequences.count, 2)
-        XCTAssertEqual(result.sequences[0].name, "read1")
-        XCTAssertEqual(result.sequences[1].name, "read2")
+        // FASTQ files return empty sequences (streaming dashboard handles display)
+        XCTAssertTrue(result.sequences.isEmpty)
         XCTAssertTrue(result.annotations.isEmpty)
         XCTAssertNil(result.error)
     }

@@ -7,6 +7,7 @@
 import AppKit
 import SwiftUI
 import LungfishCore
+import LungfishIO
 import LungfishWorkflow
 import os.log
 
@@ -1184,6 +1185,16 @@ public class DatabaseBrowserViewModel: ObservableObject {
                             if firstDownloaded == nil { firstDownloaded = localPath }
                         }
                         fileURL = firstDownloaded ?? batchDir
+
+                        // Save ENA metadata sidecar alongside each downloaded FASTQ
+                        if let localURL = firstDownloaded {
+                            let metadata = PersistedFASTQMetadata(
+                                enaReadRecord: readRecord,
+                                downloadDate: Date(),
+                                downloadSource: "ENA"
+                            )
+                            FASTQMetadataStore.save(metadata, for: localURL)
+                        }
 
                     case .pathoplexus:
                         // Pathoplexus downloads as FASTA

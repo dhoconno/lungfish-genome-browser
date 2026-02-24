@@ -913,6 +913,12 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
     /// Display genomics file - cache-first, then load via DocumentManager.
     private func displayGenomicsFile(url: URL) {
+        // FASTQ files use the streaming statistics dashboard (not bulk loading)
+        if isFASTQFile(url) {
+            loadFASTQDatasetInBackground(url: url)
+            return
+        }
+
         // Check if already loaded
         if let existingDocument = DocumentManager.shared.documents.first(where: { $0.url == url }) {
             let isFullyLoaded = !existingDocument.sequences.isEmpty || !existingDocument.annotations.isEmpty
@@ -927,6 +933,130 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
         // Not cached - load via DocumentManager using GCD wrapper
         loadGenomicsFileInBackground(url: url)
+    }
+
+    /// Returns true if the URL points to a FASTQ file (by extension).
+    private func isFASTQFile(_ url: URL) -> Bool {
+        var checkURL = url
+        if checkURL.pathExtension.lowercased() == "gz" {
+            checkURL = checkURL.deletingPathExtension()
+        }
+        let ext = checkURL.pathExtension.lowercased()
+        return ext == "fastq" || ext == "fq"
+    }
+
+    /// Loads FASTQ file using the streaming statistics collector, then displays the dashboard.
+    ///
+    /// Checks for cached statistics in the sidecar metadata file first. If found,
+    /// uses them directly (still loads sample records for the table). Otherwise,
+    /// computes statistics in a single streaming pass and caches them.
+    private func loadFASTQDatasetInBackground(url: URL) {
+        logger.info("loadFASTQDatasetInBackground: Loading '\(url.lastPathComponent, privacy: .public)'")
+
+        guard let viewerController = self.viewerController else {
+            logger.warning("loadFASTQDatasetInBackground: Viewer controller not available")
+            return
+        }
+
+        // Check for cached metadata
+        let cachedMeta = FASTQMetadataStore.load(for: url)
+        if let cachedStats = cachedMeta?.computedStatistics {
+            logger.info("loadFASTQDatasetInBackground: Using cached statistics (\(cachedStats.readCount) reads)")
+            viewerController.showProgress("Loading FASTQ sample records...")
+
+            // Still need to load sample records for the table
+            Task.detached(priority: .userInitiated) {
+                do {
+                    let reader = FASTQReader()
+                    var sampleRecords: [FASTQRecord] = []
+                    sampleRecords.reserveCapacity(10_000)
+                    var count = 0
+                    for try await record in reader.records(from: url) {
+                        if count < 10_000 { sampleRecords.append(record) }
+                        count += 1
+                        if count >= 10_000 { break }
+                    }
+
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated {
+                            viewerController.hideProgress()
+                            viewerController.displayFASTQDataset(
+                                statistics: cachedStats,
+                                records: sampleRecords,
+                                sraRunInfo: cachedMeta?.sraRunInfo,
+                                enaReadRecord: cachedMeta?.enaReadRecord
+                            )
+                            logger.info("loadFASTQDatasetInBackground: Displayed from cache with \(sampleRecords.count) sample records")
+                        }
+                    }
+                } catch {
+                    let errorMessage = "\(error)"
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated {
+                            viewerController.hideProgress()
+                            logger.error("loadFASTQDatasetInBackground: Failed to load samples - \(errorMessage)")
+                        }
+                    }
+                }
+            }
+            return
+        }
+
+        viewerController.showProgress("Computing FASTQ statistics...")
+
+        Task.detached(priority: .userInitiated) {
+            do {
+                let reader = FASTQReader()
+                let (statistics, sampleRecords) = try await reader.computeStatistics(
+                    from: url,
+                    sampleLimit: 10_000,
+                    progress: { count in
+                        DispatchQueue.main.async {
+                            MainActor.assumeIsolated {
+                                viewerController.showProgress(
+                                    "Computing FASTQ statistics... \(count) reads processed"
+                                )
+                            }
+                        }
+                    }
+                )
+
+                // Cache the computed statistics for next time
+                var metadata = cachedMeta ?? PersistedFASTQMetadata()
+                metadata.computedStatistics = statistics
+                FASTQMetadataStore.save(metadata, for: url)
+
+                let sraRunInfo = metadata.sraRunInfo
+                let enaReadRecord = metadata.enaReadRecord
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        viewerController.hideProgress()
+                        viewerController.displayFASTQDataset(
+                            statistics: statistics,
+                            records: sampleRecords,
+                            sraRunInfo: sraRunInfo,
+                            enaReadRecord: enaReadRecord
+                        )
+                        logger.info("loadFASTQDatasetInBackground: Dashboard displayed with \(statistics.readCount) total reads, \(sampleRecords.count) in table")
+                    }
+                }
+            } catch {
+                let errorMessage = "\(error)"
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        viewerController.hideProgress()
+                        logger.error("loadFASTQDatasetInBackground: Failed - \(errorMessage)")
+
+                        let alert = NSAlert()
+                        alert.messageText = "Failed to Analyze FASTQ File"
+                        alert.informativeText = errorMessage
+                        alert.alertStyle = .warning
+                        alert.addButton(withTitle: "OK")
+                        alert.runModal()
+                    }
+                }
+            }
+        }
     }
 
     /// Loads a genomics file in the background using structured concurrency.

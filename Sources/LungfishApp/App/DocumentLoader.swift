@@ -132,26 +132,10 @@ public enum DocumentLoader {
             logger.info("loadFile: FASTA loaded \(sequences.count) sequences")
 
         case .fastq:
-            let reader = FASTQReader()
-            var count = 0
-            for try await record in reader.records(from: url) {
-                let qualityValues = Array(record.quality)
-                let sequence = try Sequence(
-                    name: record.identifier,
-                    description: record.description,
-                    alphabet: .dna,
-                    bases: record.sequence,
-                    qualityScores: qualityValues
-                )
-                sequences.append(sequence)
-                count += 1
-                // Limit for memory
-                if count >= 10000 {
-                    logger.info("loadFile: FASTQ reached 10000 record limit")
-                    break
-                }
-            }
-            logger.info("loadFile: FASTQ loaded \(sequences.count) sequences")
+            // FASTQ files are handled by the streaming statistics dashboard
+            // (MainSplitViewController.loadFASTQDatasetInBackground).
+            // Return a lightweight marker document so the sidebar shows the file.
+            logger.info("loadFile: FASTQ file detected — streaming dashboard will handle display")
 
         case .genbank:
             let reader = try GenBankReader(url: url)

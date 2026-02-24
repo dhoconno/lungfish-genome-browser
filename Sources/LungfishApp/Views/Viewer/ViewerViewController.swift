@@ -118,6 +118,9 @@ public class ViewerViewController: NSViewController {
     /// URL currently being previewed with QuickLook or PDFKit
     private var quickLookURL: URL?
 
+    /// FASTQ dataset dashboard (shown in place of sequence viewer for FASTQ files)
+    private var fastqDatasetController: FASTQDatasetViewController?
+
     // MARK: - State
 
     /// Current reference frame for coordinate mapping
@@ -820,6 +823,71 @@ public class ViewerViewController: NSViewController {
         logger.info("hideProgress: Hiding progress overlay")
         progressOverlay.stopAnimating()
         progressOverlay.isHidden = true
+    }
+
+    // MARK: - FASTQ Dataset Display
+
+    /// Displays the FASTQ dataset dashboard in place of the normal sequence viewer.
+    ///
+    /// Hides the ruler, viewer, and header; adds the FASTQDatasetViewController
+    /// as a child view controller filling the content area.
+    public func displayFASTQDataset(
+        statistics: FASTQDatasetStatistics,
+        records: [FASTQRecord],
+        sraRunInfo: SRARunInfo? = nil,
+        enaReadRecord: ENAReadRecord? = nil
+    ) {
+        hideQuickLookPreview()
+        hideFASTQDatasetView()
+
+        let controller = FASTQDatasetViewController()
+        addChild(controller)
+
+        let dashView = controller.view
+        dashView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(dashView)
+
+        NSLayoutConstraint.activate([
+            dashView.topAnchor.constraint(equalTo: view.topAnchor),
+            dashView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            dashView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            dashView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+
+        controller.configure(statistics: statistics, records: records)
+        fastqDatasetController = controller
+
+        // Hide normal genomic viewer components
+        enhancedRulerView.isHidden = true
+        viewerView.isHidden = true
+        headerView.isHidden = true
+        statusBar.isHidden = true
+        geneTabBarView.isHidden = true
+
+        // Post notification for inspector (includes metadata if available)
+        var userInfo: [String: Any] = ["statistics": statistics]
+        if let sra = sraRunInfo { userInfo["sraRunInfo"] = sra }
+        if let ena = enaReadRecord { userInfo["enaReadRecord"] = ena }
+        NotificationCenter.default.post(
+            name: .fastqDatasetLoaded,
+            object: self,
+            userInfo: userInfo
+        )
+
+        logger.info("displayFASTQDataset: Showing dashboard with \(statistics.readCount) reads")
+    }
+
+    /// Removes the FASTQ dataset dashboard and restores normal viewer components.
+    public func hideFASTQDatasetView() {
+        guard let controller = fastqDatasetController else { return }
+        controller.view.removeFromSuperview()
+        controller.removeFromParent()
+        fastqDatasetController = nil
+
+        // Restore normal viewer components
+        enhancedRulerView.isHidden = false
+        viewerView.isHidden = false
+        statusBar.isHidden = false
     }
 
     /// Invalidates the offscreen annotation tile so it will be re-rendered

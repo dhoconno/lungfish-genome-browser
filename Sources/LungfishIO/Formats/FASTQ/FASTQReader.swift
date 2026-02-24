@@ -331,6 +331,44 @@ public final class FASTQReader: Sendable {
         return count
     }
 
+    // MARK: - Streaming Statistics
+
+    /// Computes comprehensive statistics by streaming through the entire FASTQ file.
+    ///
+    /// Processes every record for accurate statistics but only retains the first
+    /// `sampleLimit` records for display in a table view. This allows computing
+    /// statistics over millions of reads without exhausting memory.
+    ///
+    /// - Parameters:
+    ///   - url: URL of the FASTQ file (supports .gz)
+    ///   - sampleLimit: Maximum number of records to retain (default 10,000)
+    ///   - progress: Optional callback reporting the number of records processed so far
+    /// - Returns: Tuple of computed statistics and a sample of records for display
+    public func computeStatistics(
+        from url: URL,
+        sampleLimit: Int = 10_000,
+        progress: (@Sendable (Int) -> Void)? = nil
+    ) async throws -> (statistics: FASTQDatasetStatistics, sampleRecords: [FASTQRecord]) {
+        let collector = FASTQStatisticsCollector()
+        var sampleRecords: [FASTQRecord] = []
+        sampleRecords.reserveCapacity(min(sampleLimit, 10_000))
+        var count = 0
+
+        for try await record in records(from: url) {
+            collector.process(record)
+            if count < sampleLimit {
+                sampleRecords.append(record)
+            }
+            count += 1
+            if count % 10_000 == 0 {
+                progress?(count)
+            }
+        }
+
+        progress?(count)
+        return (collector.finalize(), sampleRecords)
+    }
+
     // MARK: - Helpers
 
     private func parseHeader(_ header: String) -> (identifier: String, description: String?) {

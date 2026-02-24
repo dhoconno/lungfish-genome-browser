@@ -4,6 +4,7 @@
 
 import SwiftUI
 import LungfishCore
+import LungfishIO
 
 // MARK: - DocumentSectionViewModel
 
@@ -41,6 +42,32 @@ public final class DocumentSectionViewModel {
     func selectChromosome(_ chromosome: ChromosomeInfo?) {
         self.selectedChromosome = chromosome
     }
+
+    // MARK: - FASTQ Statistics
+
+    /// FASTQ dataset statistics (shown when a FASTQ file is loaded).
+    var fastqStatistics: FASTQDatasetStatistics?
+
+    /// SRA run info metadata (set when available from download or sidecar).
+    var sraRunInfo: SRARunInfo?
+
+    /// ENA read record metadata (set when available from download or sidecar).
+    var enaReadRecord: ENAReadRecord?
+
+    /// Updates the view model with FASTQ dataset statistics.
+    func updateFASTQStatistics(_ stats: FASTQDatasetStatistics) {
+        self.fastqStatistics = stats
+        // Clear bundle-related data since this is a standalone FASTQ
+        self.manifest = nil
+        self.bundleURL = nil
+        self.selectedChromosome = nil
+    }
+
+    /// Updates the view model with SRA/ENA metadata.
+    func updateSRAMetadata(sra: SRARunInfo?, ena: ENAReadRecord?) {
+        self.sraRunInfo = sra
+        self.enaReadRecord = ena
+    }
 }
 
 // MARK: - DocumentSection
@@ -56,6 +83,9 @@ public struct DocumentSection: View {
     @State private var isSourceExpanded = true
     @State private var isGenomeExpanded = true
     @State private var isChromosomeExpanded = true
+    @State private var isFASTQStatsExpanded = true
+    @State private var isSRAMetadataExpanded = true
+    @State private var isENAMetadataExpanded = true
     @State private var expandedMetadataGroups: Set<String> = []
     @State private var trackedManifestName: String?
 
@@ -76,6 +106,8 @@ public struct DocumentSection: View {
                         trackedManifestName = manifest.name
                     }
                 }
+        } else if let stats = viewModel.fastqStatistics {
+            fastqContent(stats)
         } else {
             noDocumentView
         }
@@ -294,6 +326,181 @@ public struct DocumentSection: View {
         }
     }
 
+    // MARK: - FASTQ Content
+
+    @ViewBuilder
+    private func fastqContent(_ stats: FASTQDatasetStatistics) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Header
+            VStack(alignment: .leading, spacing: 4) {
+                Text("FASTQ Dataset")
+                    .font(.headline)
+                Text("\(formatCount(stats.readCount)) reads")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            Divider()
+
+            // Statistics
+            fastqStatisticsSection(stats)
+
+            // SRA Metadata
+            if let sra = viewModel.sraRunInfo {
+                Divider()
+                sraMetadataSection(sra)
+            }
+
+            // ENA Metadata
+            if let ena = viewModel.enaReadRecord {
+                Divider()
+                enaMetadataSection(ena)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func fastqStatisticsSection(_ stats: FASTQDatasetStatistics) -> some View {
+        DisclosureGroup(isExpanded: $isFASTQStatsExpanded) {
+            VStack(alignment: .leading, spacing: 6) {
+                metadataRow(label: "Read Count", value: formatCount(stats.readCount))
+                metadataRow(label: "Base Count", value: formatBases(stats.baseCount))
+                metadataRow(label: "Mean Length", value: String(format: "%.1f bp", stats.meanReadLength))
+                metadataRow(label: "Min Length", value: "\(stats.minReadLength) bp")
+                metadataRow(label: "Max Length", value: "\(stats.maxReadLength) bp")
+                metadataRow(label: "Median Length", value: "\(stats.medianReadLength) bp")
+                metadataRow(label: "N50", value: "\(stats.n50ReadLength) bp")
+
+                Divider()
+
+                metadataRow(label: "Mean Quality", value: String(format: "%.1f", stats.meanQuality))
+                metadataRow(label: "Q20 Bases", value: String(format: "%.1f%%", stats.q20Percentage))
+                metadataRow(label: "Q30 Bases", value: String(format: "%.1f%%", stats.q30Percentage))
+                metadataRow(label: "GC Content", value: String(format: "%.1f%%", stats.gcContent * 100))
+            }
+            .padding(.top, 4)
+        } label: {
+            Text("Dataset Statistics")
+                .font(.headline)
+        }
+    }
+
+    @ViewBuilder
+    private func sraMetadataSection(_ sra: SRARunInfo) -> some View {
+        DisclosureGroup(isExpanded: $isSRAMetadataExpanded) {
+            VStack(alignment: .leading, spacing: 6) {
+                metadataRow(label: "Run", value: sra.accession)
+                if let exp = sra.experiment, !exp.isEmpty {
+                    metadataRow(label: "Experiment", value: exp)
+                }
+                if let sample = sra.sample, !sample.isEmpty {
+                    metadataRow(label: "Sample", value: sample)
+                }
+                if let study = sra.study, !study.isEmpty {
+                    metadataRow(label: "Study", value: study)
+                }
+                if let bp = sra.bioproject, !bp.isEmpty {
+                    metadataRow(label: "BioProject", value: bp)
+                }
+                if let bs = sra.biosample, !bs.isEmpty {
+                    metadataRow(label: "BioSample", value: bs)
+                }
+
+                Divider()
+
+                if let org = sra.organism, !org.isEmpty {
+                    metadataRow(label: "Organism", value: org)
+                }
+                if let platform = sra.platform, !platform.isEmpty {
+                    metadataRow(label: "Platform", value: platform)
+                }
+                if let strategy = sra.libraryStrategy, !strategy.isEmpty {
+                    metadataRow(label: "Strategy", value: strategy)
+                }
+                if let source = sra.librarySource, !source.isEmpty {
+                    metadataRow(label: "Source", value: source)
+                }
+                if let layout = sra.libraryLayout, !layout.isEmpty {
+                    metadataRow(label: "Layout", value: layout)
+                }
+
+                Divider()
+
+                if let spots = sra.spots {
+                    metadataRow(label: "Spots", value: formatCount(spots))
+                }
+                if let bases = sra.bases {
+                    metadataRow(label: "Bases", value: formatBases(Int64(bases)))
+                }
+                if let avgLen = sra.avgLength {
+                    metadataRow(label: "Avg Length", value: "\(avgLen) bp")
+                }
+                if let size = sra.size, size > 0 {
+                    metadataRow(label: "File Size", value: sra.sizeString)
+                }
+                if let date = sra.releaseDate {
+                    metadataRow(label: "Released", value: formatDate(date))
+                }
+            }
+            .padding(.top, 4)
+        } label: {
+            Text("SRA Metadata")
+                .font(.headline)
+        }
+    }
+
+    @ViewBuilder
+    private func enaMetadataSection(_ ena: ENAReadRecord) -> some View {
+        DisclosureGroup(isExpanded: $isENAMetadataExpanded) {
+            VStack(alignment: .leading, spacing: 6) {
+                metadataRow(label: "Run", value: ena.runAccession)
+                if let exp = ena.experimentAccession, !exp.isEmpty {
+                    metadataRow(label: "Experiment", value: exp)
+                }
+                if let sample = ena.sampleAccession, !sample.isEmpty {
+                    metadataRow(label: "Sample", value: sample)
+                }
+                if let study = ena.studyAccession, !study.isEmpty {
+                    metadataRow(label: "Study", value: study)
+                }
+                if let title = ena.experimentTitle, !title.isEmpty {
+                    metadataRow(label: "Title", value: title)
+                }
+
+                Divider()
+
+                if let layout = ena.libraryLayout, !layout.isEmpty {
+                    metadataRow(label: "Layout", value: layout)
+                }
+                if let source = ena.librarySource, !source.isEmpty {
+                    metadataRow(label: "Source", value: source)
+                }
+                if let strategy = ena.libraryStrategy, !strategy.isEmpty {
+                    metadataRow(label: "Strategy", value: strategy)
+                }
+                if let platform = ena.instrumentPlatform, !platform.isEmpty {
+                    metadataRow(label: "Platform", value: platform)
+                }
+
+                Divider()
+
+                if let count = ena.readCount, count > 0 {
+                    metadataRow(label: "Read Count", value: formatCount(count))
+                }
+                if let bases = ena.baseCount, bases > 0 {
+                    metadataRow(label: "Base Count", value: formatBases(Int64(bases)))
+                }
+                if let date = ena.firstPublic {
+                    metadataRow(label: "Published", value: formatDate(date))
+                }
+            }
+            .padding(.top, 4)
+        } label: {
+            Text("ENA Metadata")
+                .font(.headline)
+        }
+    }
+
     // MARK: - No Document View
 
     @ViewBuilder
@@ -355,6 +562,19 @@ public struct DocumentSection: View {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         return formatter.string(from: NSNumber(value: count)) ?? "\(count)"
+    }
+
+    /// Formats a file size in bytes to a human-readable string.
+    private func formatFileSize(_ bytes: Int64) -> String {
+        if bytes >= 1_073_741_824 {
+            return String(format: "%.1f GB", Double(bytes) / 1_073_741_824.0)
+        } else if bytes >= 1_048_576 {
+            return String(format: "%.1f MB", Double(bytes) / 1_048_576.0)
+        } else if bytes >= 1_024 {
+            return String(format: "%.1f KB", Double(bytes) / 1_024.0)
+        } else {
+            return "\(bytes) bytes"
+        }
     }
 
     /// Formats a date for display.

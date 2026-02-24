@@ -7,6 +7,7 @@
 import AppKit
 import SwiftUI
 import LungfishCore
+import LungfishIO
 import os.log
 
 /// Logger for SRA browser operations
@@ -246,6 +247,17 @@ public class SRABrowserViewModel: ObservableObject {
                 }
 
                 let fileCount = files.count
+
+                // Save SRA metadata sidecar alongside first downloaded FASTQ
+                if let firstFile = files.first {
+                    let metadata = PersistedFASTQMetadata(
+                        sraRunInfo: run,
+                        downloadDate: Date(),
+                        downloadSource: "SRA"
+                    )
+                    FASTQMetadataStore.save(metadata, for: firstFile)
+                }
+
                 self.objectWillChange.send()
                 self.downloadProgress = 1.0
                 self.statusMessage = "Downloaded \(fileCount) files for \(run.accession)"

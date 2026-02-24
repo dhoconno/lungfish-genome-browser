@@ -478,7 +478,7 @@ public struct SRASearchResults: Sendable {
 // MARK: - SRA Run Info
 
 /// Information about an SRA run.
-public struct SRARunInfo: Sendable, Identifiable, Equatable {
+public struct SRARunInfo: Sendable, Identifiable, Equatable, Codable {
     public var id: String { accession }
 
     /// Run accession (SRR...)
