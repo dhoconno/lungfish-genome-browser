@@ -243,11 +243,16 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     /// Scope of the last variant query, for status label display.
     private enum VariantQueryScope {
         case global
+        case chromosome
         case viewport
         case annotations
         case annotation
         case placeholder
     }
+
+    /// Database size threshold (1 GB) above which filtered queries are automatically
+    /// scoped to the current chromosome for performance.
+    private static let chromosomeScopeThreshold: UInt64 = 1_000_000_000
 
     /// Last variant query match count used for status labeling (especially capped result sets).
     private var lastVariantQueryMatchCount: Int?
@@ -2105,14 +2110,30 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         let effectiveRegion: (chromosome: String, start: Int, end: Int)?
         var regionScope: VariantQueryScope = .global
 
+        // For large databases (>1 GB), scope filtered queries to the current chromosome
+        // instead of scanning genome-wide, which would be prohibitively slow.
+        var filterChromosome: String?
+        let isLargeDatabase: Bool = {
+            var total: UInt64 = 0
+            for url in variantTrackDatabaseURLs {
+                total += (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? UInt64) ?? 0
+            }
+            return total >= Self.chromosomeScopeThreshold
+        }()
+
         if activeGeneList != nil {
             // Gene list path — region is not used
             effectiveRegion = nil
             regionScope = .global
         } else if hasGlobalOverrideFilters {
-            // Active filters/tokens force initial genome-wide query.
             effectiveRegion = nil
-            regionScope = viewportPostFilterRegion != nil ? .viewport : .global
+            if isLargeDatabase, let vp = viewportRegion, viewportSyncEnabled {
+                // Large database — scope to chromosome for performance
+                filterChromosome = vp.chromosome
+                regionScope = .chromosome
+            } else {
+                regionScope = viewportPostFilterRegion != nil ? .viewport : .global
+            }
         } else if let selected = selectedAnnotationRegion {
             effectiveRegion = selected
             regionScope = .annotation
@@ -2138,6 +2159,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         } else {
             effectiveRegion = nil
         }
+
+        // Freeze filterChromosome for safe capture in the @Sendable dispatch closure.
+        let frozenFilterChromosome = filterChromosome
 
         // Filtered/tokenized queries intentionally start genome-wide; otherwise
         // let explicit advanced-region clauses tighten/override the region.
@@ -2358,8 +2382,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                     }
 
                 } else {
-                    // Global query — no region constraint.
+                    // Global query — optionally scoped to current chromosome for performance.
                     let count = ctx.queryVariantCount(
+                        chromosome: frozenFilterChromosome,
                         nameFilter: frozenQuery.nameFilter, types: frozenTypeFilter,
                         infoFilters: mergedInfoFilters,
                         sampleNames: selectedSamples,
@@ -2369,12 +2394,13 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                     if count > maxDisplay && !usePostFiltering {
                         results = []
                         matchCount = count
-                        queryScope = viewportPostFilterRegion != nil ? .viewport : .global
+                        queryScope = frozenFilterChromosome != nil ? .chromosome : (viewportPostFilterRegion != nil ? .viewport : .global)
                         let nf = NumberFormatter()
                         nf.numberStyle = .decimal
                         let total = nf.string(from: NSNumber(value: count)) ?? "\(count)"
                         let max = nf.string(from: NSNumber(value: maxDisplay)) ?? "\(maxDisplay)"
-                        tooManyMessage = "\(total) variants match — use the search field or type filters to narrow to \(max) or fewer"
+                        let scopeHint = frozenFilterChromosome != nil ? " on this chromosome" : ""
+                        tooManyMessage = "\(total) variants match\(scopeHint) — use the search field or type filters to narrow to \(max) or fewer"
                     } else {
                         let initialLimit = usePostFiltering ? max(maxDisplay * 3, maxDisplay) : maxDisplay
                         let filtered = fetchVariantsAdaptive(
@@ -2384,6 +2410,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                             applyPostFiltering: usePostFiltering,
                             fetch: { limit in
                                 ctx.queryVariantsOnly(
+                                    chromosome: frozenFilterChromosome,
                                     nameFilter: frozenQuery.nameFilter, types: frozenTypeFilter,
                                     infoFilters: mergedInfoFilters,
                                     sampleNames: selectedSamples,
@@ -2410,7 +2437,11 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                             results = filtered
                             matchCount = usePostFiltering ? filtered.count : count
                         }
-                        queryScope = viewportPostFilterRegion != nil ? .viewport : .global
+                        if frozenFilterChromosome != nil {
+                            queryScope = .chromosome
+                        } else {
+                            queryScope = viewportPostFilterRegion != nil ? .viewport : .global
+                        }
                         tooManyMessage = nil
                     }
                 }
@@ -2532,6 +2563,10 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                 let count = lastVariantQueryMatchCount ?? displayedAnnotations.count
                 let shown = numberFormatter.string(from: NSNumber(value: count)) ?? "\(count)"
                 countLabel.stringValue = "\(shown) overlapping (\(total) total)"
+            case .chromosome:
+                let count = lastVariantQueryMatchCount ?? displayedAnnotations.count
+                let shown = numberFormatter.string(from: NSNumber(value: count)) ?? "\(count)"
+                countLabel.stringValue = "\(shown) on chromosome (\(total) total)"
             case .viewport:
                 let count = lastVariantQueryMatchCount ?? displayedAnnotations.count
                 let shown = numberFormatter.string(from: NSNumber(value: count)) ?? "\(count)"
@@ -5744,6 +5779,7 @@ private struct VariantQueryContext: @unchecked Sendable {
     }
 
     func queryVariantsOnly(
+        chromosome: String? = nil,
         nameFilter: String = "", types: Set<String> = [],
         infoFilters: [VariantDatabase.InfoFilter] = [],
         sampleNames: Set<String> = [],
@@ -5758,7 +5794,13 @@ private struct VariantQueryContext: @unchecked Sendable {
             let variantTypes = Set(handle.db.allTypes())
             let requestedVariantTypes = types.isEmpty ? variantTypes : types.intersection(variantTypes)
             guard !requestedVariantTypes.isEmpty || types.isEmpty else { continue }
+            // Resolve the chromosome name for this track's database
+            let dbChromosome: String? = chromosome.flatMap { chrom in
+                let candidates = resolvedChromosomeCandidates(for: chrom, trackId: handle.trackId)
+                return candidates.first
+            }
             let records = handle.db.queryForTable(
+                chromosome: dbChromosome,
                 nameFilter: nameFilter,
                 types: types.isEmpty ? [] : requestedVariantTypes,
                 infoFilters: infoFilters, sampleNames: sampleNames, limit: remaining
@@ -5769,6 +5811,7 @@ private struct VariantQueryContext: @unchecked Sendable {
     }
 
     func queryVariantCount(
+        chromosome: String? = nil,
         nameFilter: String = "", types: Set<String> = [],
         infoFilters: [VariantDatabase.InfoFilter] = [],
         sampleNames: Set<String> = [],
@@ -5780,7 +5823,12 @@ private struct VariantQueryContext: @unchecked Sendable {
             let variantTypes = Set(handle.db.allTypes())
             let requestedVariantTypes = types.isEmpty ? variantTypes : types.intersection(variantTypes)
             if !requestedVariantTypes.isEmpty || types.isEmpty {
+                let dbChromosome: String? = chromosome.flatMap { chrom in
+                    let candidates = resolvedChromosomeCandidates(for: chrom, trackId: handle.trackId)
+                    return candidates.first
+                }
                 count += handle.db.queryCountForTable(
+                    chromosome: dbChromosome,
                     nameFilter: nameFilter,
                     types: requestedVariantTypes,
                     infoFilters: infoFilters,

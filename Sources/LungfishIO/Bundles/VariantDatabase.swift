@@ -266,6 +266,7 @@ public enum VCFImportProfile: String, Sendable, Codable, CaseIterable {
     case auto
     case lowMemory = "low-memory"
     case fast
+    case ultraLowMemory = "ultra-low-memory"
 }
 
 /// Reads variant data from a SQLite database embedded in a .lungfishref bundle.
@@ -300,9 +301,28 @@ public final class VariantDatabase: @unchecked Sendable {
     private struct ImportTuning {
         let workerThreads: Int
         let cacheKB: Int
+        let pageSizeKB: Int
         let writeBudget: Int
         let shrinkEveryCommits: Int
         let shrinkEveryCommit: Bool
+        /// When true, create indexes on empty tables before inserts begin so they are
+        /// maintained incrementally.  This avoids the multi-GB sort required by bulk
+        /// CREATE INDEX on tables with billions of rows.
+        let createIndexesUpFront: Bool
+        /// Maximum number of INFO key-value pairs to store per variant in the
+        /// `variant_info` EAV table.  0 = unlimited.  Limiting this dramatically
+        /// reduces the size of `variant_info` for VCFs with VEP/CSQ annotations.
+        let maxVariantInfoKeysPerVariant: Int
+        /// When true, skip the variant_info EAV table entirely and store the raw
+        /// INFO string in variants.info instead.  This eliminates billions of rows
+        /// and 2 indexes for large VCFs, reducing DB size by ~50-70%.
+        let skipVariantInfo: Bool
+        /// When true, use PRAGMA synchronous = NORMAL instead of OFF.  This causes
+        /// fsync at each commit, preventing dirty page accumulation in the macOS UBC.
+        let syncNormal: Bool
+        /// If > 0, close and reopen the SQLite connection after this many variant
+        /// inserts to fight malloc fragmentation.  0 = never reset.
+        let connectionResetInterval: Int
     }
 
     private static let expectedSchemaVersion = 3
@@ -425,6 +445,14 @@ public final class VariantDatabase: @unchecked Sendable {
 
     // MARK: - Metadata Queries
 
+    /// Whether this database was imported with `skipVariantInfo = true`, meaning the
+    /// `variant_info` EAV table is empty and the raw INFO string is stored in
+    /// `variants.info` instead.  Returns `false` for standard imports.
+    public lazy var variantInfoSkipped: Bool = {
+        guard let db else { return false }
+        return Self.readMetadataValue(db, key: "skip_variant_info") == "true"
+    }()
+
     /// Returns the total number of variants in the database.
     public func totalCount() -> Int {
         guard let db else { return 0 }
@@ -483,6 +511,27 @@ public final class VariantDatabase: @unchecked Sendable {
                 let chrom = String(cString: cStr)
                 let maxPos = Int(sqlite3_column_int64(stmt, 1))
                 result[chrom] = maxPos
+            }
+        }
+        return result
+    }
+
+    /// Returns contig lengths from VCF `##contig` header lines stored during import.
+    ///
+    /// These provide exact chromosome lengths for reliable alias matching when
+    /// VCF chromosome names differ from the reference (e.g., "1" vs "NC_048383.1").
+    /// Returns an empty dictionary if contig lengths were not stored (older databases).
+    public func contigLengths() -> [String: Int64] {
+        guard let db else { return [:] }
+        guard let jsonString = Self.readMetadataValue(db, key: "contig_lengths") else { return [:] }
+        guard let data = jsonString.data(using: String.Encoding.utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return [:] }
+
+        var result: [String: Int64] = [:]
+        for (key, value) in dict {
+            if let num = value as? NSNumber {
+                result[key] = num.int64Value
             }
         }
         return result
@@ -649,6 +698,7 @@ public final class VariantDatabase: @unchecked Sendable {
 
     /// Queries variants with optional type filter, name filter, and INFO filters.
     public func queryForTable(
+        chromosome: String? = nil,
         nameFilter: String = "",
         types: Set<String> = [],
         infoFilters: [InfoFilter] = [],
@@ -662,6 +712,12 @@ public final class VariantDatabase: @unchecked Sendable {
         var conditions: [String] = []
         var bindings: [(Int32, String)] = []
         var paramIndex: Int32 = 1
+
+        if let chromosome {
+            conditions.append("chromosome = ?")
+            bindings.append((paramIndex, chromosome))
+            paramIndex += 1
+        }
 
         if !nameFilter.isEmpty {
             conditions.append("variant_id LIKE ?")
@@ -712,6 +768,7 @@ public final class VariantDatabase: @unchecked Sendable {
 
     /// Returns variant count matching optional filters.
     public func queryCountForTable(
+        chromosome: String? = nil,
         nameFilter: String = "",
         types: Set<String> = [],
         infoFilters: [InfoFilter] = [],
@@ -724,6 +781,12 @@ public final class VariantDatabase: @unchecked Sendable {
         var conditions: [String] = []
         var bindings: [(Int32, String)] = []
         var paramIndex: Int32 = 1
+
+        if let chromosome {
+            conditions.append("chromosome = ?")
+            bindings.append((paramIndex, chromosome))
+            paramIndex += 1
+        }
 
         if !nameFilter.isEmpty {
             conditions.append("variant_id LIKE ?")
@@ -1315,9 +1378,25 @@ public final class VariantDatabase: @unchecked Sendable {
         return sqlite3_step(stmt) == SQLITE_ROW
     }
 
-    /// Returns all INFO key-value pairs for a specific variant from the variant_info EAV table.
+    /// Returns all INFO key-value pairs for a specific variant.
+    ///
+    /// For standard imports, reads from the `variant_info` EAV table.
+    /// For `skipVariantInfo` imports, parses the raw INFO string from `variants.info`.
     public func infoValues(variantId: Int64) -> [String: String] {
         guard let db else { return [:] }
+
+        if variantInfoSkipped {
+            // Parse raw INFO string from the variants table.
+            let sql = "SELECT info FROM variants WHERE id = ?"
+            var stmt: OpaquePointer?
+            defer { sqlite3_finalize(stmt) }
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [:] }
+            sqlite3_bind_int64(stmt, 1, variantId)
+            guard sqlite3_step(stmt) == SQLITE_ROW,
+                  let cStr = sqlite3_column_text(stmt, 0) else { return [:] }
+            return Self.parseRawINFOString(String(cString: cStr))
+        }
+
         let sql = "SELECT key, value FROM variant_info WHERE variant_id = ?"
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
@@ -1332,6 +1411,21 @@ public final class VariantDatabase: @unchecked Sendable {
         return result
     }
 
+    /// Parses a raw VCF INFO string (e.g. "AC=2;AF=0.5;DP=100") into key-value pairs.
+    private static func parseRawINFOString(_ info: String) -> [String: String] {
+        guard info != "." else { return [:] }
+        var result: [String: String] = [:]
+        for field in info.split(separator: ";") {
+            let parts = field.split(separator: "=", maxSplits: 1)
+            if parts.count == 2 {
+                result[String(parts[0])] = String(parts[1])
+            } else if parts.count == 1 {
+                result[String(parts[0])] = "true"
+            }
+        }
+        return result
+    }
+
     /// Batch-fetches INFO dictionaries for multiple variant IDs.
     ///
     /// More efficient than calling `infoValues(variantId:)` per-variant.
@@ -1341,6 +1435,29 @@ public final class VariantDatabase: @unchecked Sendable {
         var result: [Int64: [String: String]] = [:]
         let uniqueIds = Array(Set(variantIds))
         let chunkSize = 500 // Keep well below SQLite bind-variable limits.
+
+        if variantInfoSkipped {
+            // Parse raw INFO from the variants table.
+            for chunkStart in stride(from: 0, to: uniqueIds.count, by: chunkSize) {
+                let chunkEnd = min(chunkStart + chunkSize, uniqueIds.count)
+                let chunk = Array(uniqueIds[chunkStart..<chunkEnd])
+                let placeholders = chunk.map { _ in "?" }.joined(separator: ",")
+                let sql = "SELECT id, info FROM variants WHERE id IN (\(placeholders))"
+                var stmt: OpaquePointer?
+                defer { sqlite3_finalize(stmt) }
+                guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { continue }
+                for (i, id) in chunk.enumerated() {
+                    sqlite3_bind_int64(stmt, Int32(i + 1), id)
+                }
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    let variantId = sqlite3_column_int64(stmt, 0)
+                    if let cStr = sqlite3_column_text(stmt, 1) {
+                        result[variantId] = Self.parseRawINFOString(String(cString: cStr))
+                    }
+                }
+            }
+            return result
+        }
 
         for chunkStart in stride(from: 0, to: uniqueIds.count, by: chunkSize) {
             let chunkEnd = min(chunkStart + chunkSize, uniqueIds.count)
@@ -1827,11 +1944,30 @@ public final class VariantDatabase: @unchecked Sendable {
         guard requested == .auto else { return requested }
         let physicalRAMGiB = Double(ProcessInfo.processInfo.physicalMemory) / Double(1 << 30)
         let inputGiB = Double(max(0, inputFileSize)) / Double(1 << 30)
+        // Very large files or large-ish files on limited RAM: ultra-low-memory with
+        // upfront indexes to avoid multi-GB sorts during post-insert index creation.
+        if inputGiB >= 5.0 || (inputGiB >= 2.0 && physicalRAMGiB <= 16) {
+            return .ultraLowMemory
+        }
         if physicalRAMGiB <= 12 || inputGiB >= 1.5 {
             return .lowMemory
         }
         return .fast
     }
+
+    /// All index statements used by `createFromVCF`, ordered from cheapest to most
+    /// expensive.  The ordering ensures that if index creation is interrupted, the
+    /// most important indexes (variants region) will already exist.
+    private static let allIndexStatements: [(name: String, sql: String)] = [
+        ("idx_variants_region", "CREATE INDEX IF NOT EXISTS idx_variants_region ON variants(chromosome, position, end_pos)"),
+        ("idx_variants_type", "CREATE INDEX IF NOT EXISTS idx_variants_type ON variants(variant_type)"),
+        ("idx_variants_id", "CREATE INDEX IF NOT EXISTS idx_variants_id ON variants(variant_id COLLATE NOCASE)"),
+        ("idx_samples_name", "CREATE INDEX IF NOT EXISTS idx_samples_name ON samples(name)"),
+        ("idx_genotypes_variant", "CREATE INDEX IF NOT EXISTS idx_genotypes_variant ON genotypes(variant_id)"),
+        ("idx_genotypes_sample", "CREATE INDEX IF NOT EXISTS idx_genotypes_sample ON genotypes(sample_name)"),
+        ("idx_variant_info_key", "CREATE INDEX IF NOT EXISTS idx_variant_info_key ON variant_info(key)"),
+        ("idx_variant_info_key_value", "CREATE INDEX IF NOT EXISTS idx_variant_info_key_value ON variant_info(key, value)"),
+    ]
 
     private static func importTuning(for profile: VCFImportProfile) -> ImportTuning {
         switch profile {
@@ -1839,17 +1975,51 @@ public final class VariantDatabase: @unchecked Sendable {
             return ImportTuning(
                 workerThreads: 1,
                 cacheKB: 4 * 1024,
+                pageSizeKB: 4,
                 writeBudget: 8_000,
                 shrinkEveryCommits: 1,
-                shrinkEveryCommit: true
+                shrinkEveryCommit: true,
+                createIndexesUpFront: false,
+                maxVariantInfoKeysPerVariant: 0,
+                skipVariantInfo: false,
+                syncNormal: false,
+                connectionResetInterval: 0
             )
         case .fast:
             return ImportTuning(
                 workerThreads: max(1, min(6, ProcessInfo.processInfo.activeProcessorCount - 1)),
                 cacheKB: 32 * 1024,
+                pageSizeKB: 4,
                 writeBudget: 80_000,
                 shrinkEveryCommits: 6,
-                shrinkEveryCommit: false
+                shrinkEveryCommit: false,
+                createIndexesUpFront: false,
+                maxVariantInfoKeysPerVariant: 0,
+                skipVariantInfo: false,
+                syncNormal: false,
+                connectionResetInterval: 0
+            )
+        case .ultraLowMemory:
+            // Designed for multi-GB VCFs that produce 50GB+ databases.
+            // Key differences from other profiles:
+            //  - NO indexes during insert (deferred to a separate phase/process)
+            //  - NO variant_info EAV table (raw INFO stored in variants.info)
+            //  - synchronous = NORMAL to prevent dirty page accumulation in macOS UBC
+            //  - Periodic connection reset to fight malloc fragmentation
+            //  - 32KB page size to reduce B-tree depth
+            //  - Large write budget (no index overhead = fast commits)
+            return ImportTuning(
+                workerThreads: 1,
+                cacheKB: 4 * 1024,
+                pageSizeKB: 32,
+                writeBudget: 50_000,
+                shrinkEveryCommits: 2,
+                shrinkEveryCommit: false,
+                createIndexesUpFront: false,
+                maxVariantInfoKeysPerVariant: 0,
+                skipVariantInfo: true,
+                syncNormal: true,
+                connectionResetInterval: 10_000_000
             )
         case .auto:
             // Auto is resolved before this method is called.
@@ -1894,8 +2064,23 @@ public final class VariantDatabase: @unchecked Sendable {
         // Performance pragmas — FK enforcement OFF during bulk import (we control insert order;
         // variants are always inserted before genotypes). Enabling FKs here would force SQLite to
         // validate every genotype INSERT against the variants table, adding significant overhead.
+
+        // page_size MUST be set before any tables are created. A larger page size (32KB) reduces
+        // B-tree depth by 1-2 levels, which means fewer pages pinned simultaneously during inserts.
+        if tuning.pageSizeKB != 4 {
+            sqlite3_exec(db, "PRAGMA page_size = \(tuning.pageSizeKB * 1024)", nil, nil, nil)
+        }
+
         sqlite3_exec(db, "PRAGMA journal_mode = OFF", nil, nil, nil)
-        sqlite3_exec(db, "PRAGMA synchronous = OFF", nil, nil, nil)
+        // synchronous = NORMAL forces fsync at each COMMIT, which prevents dirty page accumulation
+        // in the macOS Unified Buffer Cache (UBC). With synchronous = OFF on multi-hour imports,
+        // the UBC can accumulate tens of GB of dirty pages that the jetsam OOM killer counts
+        // against the process, leading to SIGKILL.  NORMAL adds ~5% overhead but bounds memory.
+        if tuning.syncNormal {
+            sqlite3_exec(db, "PRAGMA synchronous = NORMAL", nil, nil, nil)
+        } else {
+            sqlite3_exec(db, "PRAGMA synchronous = OFF", nil, nil, nil)
+        }
         sqlite3_exec(db, "PRAGMA locking_mode = EXCLUSIVE", nil, nil, nil)
         sqlite3_exec(db, "PRAGMA threads = \(tuning.workerThreads)", nil, nil, nil)
 
@@ -1972,6 +2157,31 @@ public final class VariantDatabase: @unchecked Sendable {
         // Insert metadata flags for v3 import optimizations.
         sqlite3_exec(db, "INSERT INTO db_metadata VALUES ('schema_version', '3')", nil, nil, nil)
         sqlite3_exec(db, "INSERT INTO db_metadata VALUES ('omit_homref', 'true')", nil, nil, nil)
+        sqlite3_exec(db, "INSERT INTO db_metadata VALUES ('import_state', 'inserting')", nil, nil, nil)
+        sqlite3_exec(db, "INSERT INTO db_metadata VALUES ('import_source', '\(vcfURL.lastPathComponent)')", nil, nil, nil)
+        sqlite3_exec(db, "INSERT INTO db_metadata VALUES ('import_profile', '\(resolvedProfile.rawValue)')", nil, nil, nil)
+        if tuning.skipVariantInfo {
+            sqlite3_exec(db, "INSERT INTO db_metadata VALUES ('skip_variant_info', 'true')", nil, nil, nil)
+        }
+
+        // For ultra-low-memory profile: cap SQLite heap and create indexes upfront so
+        // they are maintained incrementally during inserts, avoiding multi-GB sorts.
+        if resolvedProfile == .ultraLowMemory {
+            sqlite3_soft_heap_limit64(256 * 1024 * 1024)
+        }
+
+        if tuning.createIndexesUpFront {
+            for (name, sql) in Self.allIndexStatements {
+                var idxErr: UnsafeMutablePointer<CChar>?
+                sqlite3_exec(db, sql, nil, nil, &idxErr)
+                if let idxErr {
+                    let msg = String(cString: idxErr)
+                    sqlite3_free(idxErr)
+                    variantDBLogger.warning("createFromVCF: Upfront index '\(name)' failed: \(msg)")
+                }
+            }
+            variantDBLogger.info("createFromVCF: Created \(Self.allIndexStatements.count) indexes upfront for incremental maintenance")
+        }
 
         var txnErr: UnsafeMutablePointer<CChar>?
         sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, &txnErr)
@@ -2008,19 +2218,25 @@ public final class VariantDatabase: @unchecked Sendable {
         }
         defer { sqlite3_finalize(insertSampleStmt) }
 
-        let insertInfoDefSQL = "INSERT OR REPLACE INTO variant_info_defs (key, type, number, description) VALUES (?, ?, ?, ?)"
+        // variant_info statements are only needed when NOT skipping variant_info.
+        // For ultraLowMemory, we skip the EAV table entirely and store raw INFO in variants.info.
         var insertInfoDefStmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, insertInfoDefSQL, -1, &insertInfoDefStmt, nil) == SQLITE_OK else {
-            throw VariantDatabaseError.createFailed("Failed to prepare info def INSERT statement")
-        }
-        defer { sqlite3_finalize(insertInfoDefStmt) }
-
-        let insertInfoSQL = "INSERT OR REPLACE INTO variant_info (variant_id, key, value) VALUES (?, ?, ?)"
         var insertInfoStmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, insertInfoSQL, -1, &insertInfoStmt, nil) == SQLITE_OK else {
-            throw VariantDatabaseError.createFailed("Failed to prepare info INSERT statement")
+        if !tuning.skipVariantInfo {
+            let insertInfoDefSQL = "INSERT OR REPLACE INTO variant_info_defs (key, type, number, description) VALUES (?, ?, ?, ?)"
+            guard sqlite3_prepare_v2(db, insertInfoDefSQL, -1, &insertInfoDefStmt, nil) == SQLITE_OK else {
+                throw VariantDatabaseError.createFailed("Failed to prepare info def INSERT statement")
+            }
+
+            let insertInfoSQL = "INSERT OR REPLACE INTO variant_info (variant_id, key, value) VALUES (?, ?, ?)"
+            guard sqlite3_prepare_v2(db, insertInfoSQL, -1, &insertInfoStmt, nil) == SQLITE_OK else {
+                throw VariantDatabaseError.createFailed("Failed to prepare info INSERT statement")
+            }
         }
-        defer { sqlite3_finalize(insertInfoStmt) }
+        defer {
+            sqlite3_finalize(insertInfoDefStmt)
+            sqlite3_finalize(insertInfoStmt)
+        }
 
         let updateSampleCountSQL = "UPDATE variants SET sample_count = ? WHERE id = ?"
         var updateSampleCountStmt: OpaquePointer?
@@ -2040,10 +2256,14 @@ public final class VariantDatabase: @unchecked Sendable {
         // Track all structured INFO fields with pipe-delimited sub-fields (key → sub-field names)
         var structuredInfoFields: [String: [String]] = [:]
 
+        // Collect contig lengths from ##contig header lines for chromosome alias mapping
+        var contigLengths: [String: Int64] = [:]
+
         let profileLabel: String = switch resolvedProfile {
         case .lowMemory: "Low Memory"
         case .fast: "Fast"
         case .auto: "Auto"
+        case .ultraLowMemory: "Ultra Low Memory"
         }
         progressHandler?(0.05, "Parsing VCF (\(profileLabel) profile)...")
 
@@ -2058,6 +2278,27 @@ public final class VariantDatabase: @unchecked Sendable {
             if forceShrink {
                 sqlite3_exec(db, "PRAGMA shrink_memory", nil, nil, nil)
             }
+        }
+
+        /// Force commit + shrink if the process's resident memory exceeds a
+        /// safe fraction of physical RAM.  Uses mach_task_info since
+        /// os_proc_available_memory() is unavailable on macOS.
+        func memoryPressureFlush() {
+            var info = mach_task_basic_info()
+            var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
+            let result = withUnsafeMutablePointer(to: &info) {
+                $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                    task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+                }
+            }
+            guard result == KERN_SUCCESS else { return }
+            let residentBytes = UInt64(info.resident_size)
+            let physicalRAM = ProcessInfo.processInfo.physicalMemory
+            // Flush if resident memory exceeds 75% of physical RAM.
+            let threshold = physicalRAM * 3 / 4
+            guard residentBytes > threshold else { return }
+            commitImportTransaction(reopen: true, forceShrink: true)
+            variantDBLogger.warning("createFromVCF: Memory pressure (resident \(residentBytes / (1024 * 1024)) MB / \(physicalRAM / (1024 * 1024)) MB), forced commit+shrink")
         }
 
         func commitImportTransaction(reopen: Bool, forceShrink: Bool = false) {
@@ -2099,41 +2340,65 @@ public final class VariantDatabase: @unchecked Sendable {
 
             // Parse ##INFO=<...> header lines for structured INFO definitions
             if line.hasPrefix("##INFO=") {
-                let content = line.dropFirst(7)
-                if let def = parseINFODefinition(content) {
-                    sqlite3_reset(insertInfoDefStmt)
-                    sqliteBindText(insertInfoDefStmt, 1, def.id)
-                    sqliteBindText(insertInfoDefStmt, 2, def.type)
-                    sqliteBindText(insertInfoDefStmt, 3, def.number)
-                    sqliteBindText(insertInfoDefStmt, 4, def.description)
-                    sqlite3_step(insertInfoDefStmt)
-                    writesSinceCommit += 1
+                // When skipping variant_info, we don't need to parse or store INFO defs
+                if !tuning.skipVariantInfo, let insertInfoDefStmt {
+                    let content = line.dropFirst(7)
+                    if let def = parseINFODefinition(content) {
+                        sqlite3_reset(insertInfoDefStmt)
+                        sqliteBindText(insertInfoDefStmt, 1, def.id)
+                        sqliteBindText(insertInfoDefStmt, 2, def.type)
+                        sqliteBindText(insertInfoDefStmt, 3, def.number)
+                        sqliteBindText(insertInfoDefStmt, 4, def.description)
+                        sqlite3_step(insertInfoDefStmt)
+                        writesSinceCommit += 1
 
-                    // Detect structured fields with pipe-delimited sub-fields from Description
-                    // e.g., CSQ: "...Format: Allele|Consequence|IMPACT|SYMBOL|Gene|..."
-                    if let formatRange = def.description.range(of: "Format: ", options: .caseInsensitive) {
-                        let formatStr = String(def.description[formatRange.upperBound...])
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
-                            .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-                        let subFields = formatStr.split(separator: "|").map(String.init)
-                        if subFields.count >= 2 {
-                            structuredInfoFields[def.id] = subFields
-                            // Register each sub-field as a separate info def
-                            for subField in subFields {
-                                let subKey = "\(def.id)_\(subField)"
-                                sqlite3_reset(insertInfoDefStmt)
-                                sqliteBindText(insertInfoDefStmt, 1, subKey)
-                                sqliteBindText(insertInfoDefStmt, 2, "String")
-                                sqliteBindText(insertInfoDefStmt, 3, ".")
-                                sqliteBindText(insertInfoDefStmt, 4, "\(def.id) sub-field: \(subField)")
-                                sqlite3_step(insertInfoDefStmt)
-                                writesSinceCommit += 1
+                        // Detect structured fields with pipe-delimited sub-fields from Description
+                        // e.g., CSQ: "...Format: Allele|Consequence|IMPACT|SYMBOL|Gene|..."
+                        if let formatRange = def.description.range(of: "Format: ", options: .caseInsensitive) {
+                            let formatStr = String(def.description[formatRange.upperBound...])
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                                .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                            let subFields = formatStr.split(separator: "|").map(String.init)
+                            if subFields.count >= 2 {
+                                structuredInfoFields[def.id] = subFields
+                                // Register each sub-field as a separate info def
+                                for subField in subFields {
+                                    let subKey = "\(def.id)_\(subField)"
+                                    sqlite3_reset(insertInfoDefStmt)
+                                    sqliteBindText(insertInfoDefStmt, 1, subKey)
+                                    sqliteBindText(insertInfoDefStmt, 2, "String")
+                                    sqliteBindText(insertInfoDefStmt, 3, ".")
+                                    sqliteBindText(insertInfoDefStmt, 4, "\(def.id) sub-field: \(subField)")
+                                    sqlite3_step(insertInfoDefStmt)
+                                    writesSinceCommit += 1
+                                }
+                                variantDBLogger.info("createFromVCF: Found structured INFO field '\(def.id)' with \(subFields.count) sub-fields")
                             }
-                            variantDBLogger.info("createFromVCF: Found structured INFO field '\(def.id)' with \(subFields.count) sub-fields")
                         }
                     }
+                    rotateImportTransactionIfNeeded()
                 }
-                rotateImportTransactionIfNeeded()
+                return
+            }
+
+            // Parse ##contig=<ID=...,length=...> lines for chromosome length info
+            if line.hasPrefix("##contig=") {
+                let content = line.dropFirst(9)
+                // Parse <ID=chr1,length=248956422> format
+                let inner = content.trimmingCharacters(in: CharacterSet(charactersIn: "<>"))
+                var id: String?
+                var length: Int64?
+                for part in inner.split(separator: ",") {
+                    let kv = part.split(separator: "=", maxSplits: 1)
+                    guard kv.count == 2 else { continue }
+                    let key = kv[0].trimmingCharacters(in: .whitespaces)
+                    let val = kv[1].trimmingCharacters(in: .whitespaces)
+                    if key.lowercased() == "id" { id = val }
+                    else if key.lowercased() == "length" { length = Int64(val) }
+                }
+                if let id, let length {
+                    contigLengths[id] = length
+                }
                 return
             }
 
@@ -2157,6 +2422,20 @@ public final class VariantDatabase: @unchecked Sendable {
                     }
                     variantDBLogger.info("createFromVCF: Found \(sampleNames.count) samples")
                 }
+
+                // Store contig lengths from ##contig header lines for chromosome alias mapping.
+                // These provide exact chromosome lengths for reliable matching when VCF chromosome
+                // names differ from the reference (e.g., "1" vs "NC_048383.1").
+                if !contigLengths.isEmpty {
+                    if let jsonData = try? JSONSerialization.data(withJSONObject: contigLengths.mapValues { NSNumber(value: $0) }),
+                       let jsonString = String(data: jsonData, encoding: .utf8) {
+                        let escapedJSON = jsonString.replacingOccurrences(of: "'", with: "''")
+                        sqlite3_exec(db, "INSERT OR REPLACE INTO db_metadata VALUES ('contig_lengths', '\(escapedJSON)')", nil, nil, nil)
+                        writesSinceCommit += 1
+                        variantDBLogger.info("createFromVCF: Stored \(contigLengths.count) contig lengths from VCF header")
+                    }
+                }
+
                 rotateImportTransactionIfNeeded()
                 return
             }
@@ -2206,8 +2485,13 @@ public final class VariantDatabase: @unchecked Sendable {
                 sqlite3_bind_null(insertVariantStmt, 8)
             }
             sqliteBindTextOrNull(insertVariantStmt, 9, filter)
-            // v3: Don't store raw INFO string (redundant with variant_info EAV table).
-            sqlite3_bind_null(insertVariantStmt, 10)
+            // When skipVariantInfo is true, store raw INFO string in variants.info since
+            // the EAV table is not populated.  Otherwise leave NULL (redundant with EAV).
+            if tuning.skipVariantInfo, let infoStr {
+                sqliteBindText(insertVariantStmt, 10, String(infoStr))
+            } else {
+                sqlite3_bind_null(insertVariantStmt, 10)
+            }
             sqlite3_bind_int(insertVariantStmt, 11, 0)
 
             guard sqlite3_step(insertVariantStmt) == SQLITE_DONE else {
@@ -2218,59 +2502,92 @@ public final class VariantDatabase: @unchecked Sendable {
             insertCount += 1
             writesSinceCommit += 1
 
-            // Insert structured INFO key-value pairs into variant_info EAV table
-            if let infoStr, infoStr != "." {
-                for field in infoStr.split(separator: ";") {
-                    let parts = field.split(separator: "=", maxSplits: 1)
-                    let key: String
-                    let value: Substring
-                    if parts.count == 2 {
-                        key = String(parts[0])
-                        value = parts[1]
-                    } else if parts.count == 1 {
-                        key = String(parts[0])
-                        value = "true"
-                    } else {
-                        continue
-                    }
+            // Periodic memory pressure check (every 10K variants).
+            if insertCount % 10_000 == 0 {
+                memoryPressureFlush()
+            }
 
-                    // Check if this is a structured field with pipe-delimited sub-fields (e.g., CSQ)
-                    if let subFieldNames = structuredInfoFields[key] {
-                        // Split by comma for multiple entries (e.g., multiple transcripts)
-                        let entries = value.split(separator: ",")
-                        // Use only the first entry for the primary sub-field values
-                        // (store the full raw value too for completeness)
-                        if let firstEntry = entries.first {
-                            let subValues = firstEntry.split(separator: "|", omittingEmptySubsequences: false)
-                            for (idx, subFieldName) in subFieldNames.enumerated() {
-                                let subValue = idx < subValues.count ? subValues[idx] : ""
-                                guard !subValue.isEmpty else { continue }
-                                let subKey = "\(key)_\(subFieldName)"
+            // Periodic deep memory reset to fight malloc fragmentation over long imports.
+            // Commits the current transaction, releases all SQLite memory, and asks the OS
+            // allocator to return freed pages to the kernel.
+            if tuning.connectionResetInterval > 0,
+               insertCount % tuning.connectionResetInterval == 0 {
+                commitImportTransaction(reopen: false, forceShrink: true)
+                // On Darwin, ask all malloc zones to return freed pages to the kernel.
+                // This fights heap fragmentation from billions of small alloc/free cycles.
+                malloc_zone_pressure_relief(nil, 0)
+                variantDBLogger.info("createFromVCF: Deep memory reset at \(insertCount) variants")
+                // Reopen transaction.
+                var beginErr: UnsafeMutablePointer<CChar>?
+                sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, &beginErr)
+                if let beginErr {
+                    let msg = String(cString: beginErr)
+                    sqlite3_free(beginErr)
+                    variantDBLogger.warning("createFromVCF: BEGIN TRANSACTION after reset failed: \(msg)")
+                }
+            }
+
+            // Insert structured INFO key-value pairs into variant_info EAV table.
+            // Skipped entirely for ultraLowMemory — raw INFO is stored in variants.info instead.
+            if !tuning.skipVariantInfo, let insertInfoStmt {
+                let infoKeyLimit = tuning.maxVariantInfoKeysPerVariant
+                if let infoStr, infoStr != "." {
+                    var infoKeysInserted = 0
+                    for field in infoStr.split(separator: ";") {
+                        if infoKeyLimit > 0 && infoKeysInserted >= infoKeyLimit { break }
+
+                        let parts = field.split(separator: "=", maxSplits: 1)
+                        let key: String
+                        let value: Substring
+                        if parts.count == 2 {
+                            key = String(parts[0])
+                            value = parts[1]
+                        } else if parts.count == 1 {
+                            key = String(parts[0])
+                            value = "true"
+                        } else {
+                            continue
+                        }
+
+                        // Check if this is a structured field with pipe-delimited sub-fields (e.g., CSQ)
+                        if let subFieldNames = structuredInfoFields[key] {
+                            // Split by comma for multiple entries (e.g., multiple transcripts)
+                            let entries = value.split(separator: ",")
+                            // Use only the first entry for the primary sub-field values
+                            // (store the full raw value too for completeness)
+                            if let firstEntry = entries.first {
+                                let subValues = firstEntry.split(separator: "|", omittingEmptySubsequences: false)
+                                for (idx, subFieldName) in subFieldNames.enumerated() {
+                                    let subValue = idx < subValues.count ? subValues[idx] : ""
+                                    guard !subValue.isEmpty else { continue }
+                                    let subKey = "\(key)_\(subFieldName)"
+                                    sqlite3_reset(insertInfoStmt)
+                                    sqlite3_bind_int64(insertInfoStmt, 1, variantRowId)
+                                    sqliteBindText(insertInfoStmt, 2, subKey)
+                                    sqliteBindText(insertInfoStmt, 3, String(subValue))
+                                    sqlite3_step(insertInfoStmt)
+                                    writesSinceCommit += 1
+                                }
+                            }
+                            // Also store entry count if multiple transcripts
+                            if entries.count > 1 {
                                 sqlite3_reset(insertInfoStmt)
                                 sqlite3_bind_int64(insertInfoStmt, 1, variantRowId)
-                                sqliteBindText(insertInfoStmt, 2, subKey)
-                                sqliteBindText(insertInfoStmt, 3, String(subValue))
+                                sqliteBindText(insertInfoStmt, 2, "\(key)_entries")
+                                sqliteBindText(insertInfoStmt, 3, String(entries.count))
                                 sqlite3_step(insertInfoStmt)
                                 writesSinceCommit += 1
                             }
-                        }
-                        // Also store entry count if multiple transcripts
-                        if entries.count > 1 {
+                        } else {
+                            // Standard scalar INFO field
                             sqlite3_reset(insertInfoStmt)
                             sqlite3_bind_int64(insertInfoStmt, 1, variantRowId)
-                            sqliteBindText(insertInfoStmt, 2, "\(key)_entries")
-                            sqliteBindText(insertInfoStmt, 3, String(entries.count))
+                            sqliteBindText(insertInfoStmt, 2, key)
+                            sqliteBindText(insertInfoStmt, 3, String(value))
                             sqlite3_step(insertInfoStmt)
                             writesSinceCommit += 1
                         }
-                    } else {
-                        // Standard scalar INFO field
-                        sqlite3_reset(insertInfoStmt)
-                        sqlite3_bind_int64(insertInfoStmt, 1, variantRowId)
-                        sqliteBindText(insertInfoStmt, 2, key)
-                        sqliteBindText(insertInfoStmt, 3, String(value))
-                        sqlite3_step(insertInfoStmt)
-                        writesSinceCommit += 1
+                        infoKeysInserted += 1
                     }
                 }
             }
@@ -2419,38 +2736,54 @@ public final class VariantDatabase: @unchecked Sendable {
         // Finalize all parsed rows before index creation, then explicitly release heap/cache.
         commitImportTransaction(reopen: false, forceShrink: true)
 
-        progressHandler?(0.92, "Creating indexes...")
+        // Record variant count and transition to indexing state.
+        sqlite3_exec(db, "INSERT OR REPLACE INTO db_metadata VALUES ('import_variant_count', '\(insertCount)')", nil, nil, nil)
+        sqlite3_exec(db, "UPDATE db_metadata SET value = 'indexing' WHERE key = 'import_state'", nil, nil, nil)
 
-        // Build indexes outside the long-running import transaction and shrink between each.
-        let indexStatements = [
-            "CREATE INDEX idx_variants_region ON variants(chromosome, position, end_pos)",
-            "CREATE INDEX idx_variants_type ON variants(variant_type)",
-            "CREATE INDEX idx_variants_id ON variants(variant_id COLLATE NOCASE)",
-            "CREATE INDEX idx_genotypes_sample ON genotypes(sample_name)",
-            "CREATE INDEX idx_genotypes_variant ON genotypes(variant_id)",
-            "CREATE INDEX idx_samples_name ON samples(name)",
-            "CREATE INDEX idx_variant_info_key ON variant_info(key)",
-            "CREATE INDEX idx_variant_info_key_value ON variant_info(key, value)",
-        ]
-        for indexSQL in indexStatements {
-            if isCancelled() {
-                wasCancelled = true
-                break
-            }
-            var idxErr: UnsafeMutablePointer<CChar>?
-            sqlite3_exec(db, indexSQL, nil, nil, &idxErr)
-            if let idxErr {
-                let msg = String(cString: idxErr)
-                sqlite3_free(idxErr)
-                variantDBLogger.warning("createFromVCF: Index creation failed: \(msg)")
-            }
-            releaseSQLiteMemory(forceShrink: true)
-        }
+        if !tuning.createIndexesUpFront {
+            // Filter out variant_info indexes when the EAV table was skipped.
+            let indexesToBuild = tuning.skipVariantInfo
+                ? Self.allIndexStatements.filter { !$0.name.contains("variant_info") }
+                : Self.allIndexStatements
 
-        if wasCancelled {
-            throw VariantDatabaseError.cancelled
+            if !indexesToBuild.isEmpty {
+                progressHandler?(0.92, "Creating indexes...")
+
+                // Reduce cache before bulk index creation to leave more RAM for SQLite's
+                // sort algorithm (sorts spill to temp files via temp_store = FILE).
+                sqlite3_exec(db, "PRAGMA cache_size = -1024", nil, nil, nil)
+                releaseSQLiteMemory(forceShrink: true)
+
+                // Build indexes outside the long-running import transaction and shrink between each.
+                // Uses IF NOT EXISTS + ordered cheapest-first so a resume after crash
+                // skips already-created indexes and the most important ones exist first.
+                for (i, (name, sql)) in indexesToBuild.enumerated() {
+                    if isCancelled() {
+                        wasCancelled = true
+                        break
+                    }
+                    let indexProgress = 0.92 + (Double(i) / Double(indexesToBuild.count)) * 0.07
+                    progressHandler?(indexProgress, "Creating index \(i + 1) of \(indexesToBuild.count)...")
+                    var idxErr: UnsafeMutablePointer<CChar>?
+                    sqlite3_exec(db, sql, nil, nil, &idxErr)
+                    if let idxErr {
+                        let msg = String(cString: idxErr)
+                        sqlite3_free(idxErr)
+                        variantDBLogger.warning("createFromVCF: Index '\(name)' creation failed: \(msg)")
+                    }
+                    sqlite3_exec(db, "INSERT OR REPLACE INTO db_metadata VALUES ('idx_\(name)', 'created')", nil, nil, nil)
+                    releaseSQLiteMemory(forceShrink: true)
+                }
+
+                if wasCancelled {
+                    throw VariantDatabaseError.cancelled
+                }
+            }
         }
         releaseSQLiteMemory(forceShrink: true)
+
+        // Mark import complete.
+        sqlite3_exec(db, "UPDATE db_metadata SET value = 'complete' WHERE key = 'import_state'", nil, nil, nil)
 
         progressHandler?(1.0, "Done (\(insertCount) variants, \(sampleNames.count) samples)")
 
@@ -2462,6 +2795,356 @@ public final class VariantDatabase: @unchecked Sendable {
     @discardableResult
     public static func createFromVCF(vcfURL: URL, outputURL: URL) throws -> Int {
         try createFromVCF(vcfURL: vcfURL, outputURL: outputURL, parseGenotypes: true, progressHandler: nil)
+    }
+
+    // MARK: - Resume Interrupted Import
+
+    /// Read a metadata value from an existing variant database without opening
+    /// a full `VariantDatabase` instance.
+    /// Returns `nil` if the database doesn't exist, can't be opened, or lacks the key.
+    public static func metadataValue(at dbURL: URL, key: String) -> String? {
+        guard FileManager.default.fileExists(atPath: dbURL.path) else { return nil }
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(dbURL.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let db else {
+            sqlite3_close(db)
+            return nil
+        }
+        defer { sqlite3_close(db) }
+        return readMetadataValue(db, key: key)
+    }
+
+    /// Read the `import_state` value from an existing variant database.
+    /// Returns `nil` if the database doesn't exist or has no `import_state` key.
+    public static func importState(at dbURL: URL) -> String? {
+        guard FileManager.default.fileExists(atPath: dbURL.path) else { return nil }
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(dbURL.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let db else {
+            sqlite3_close(db)
+            return nil
+        }
+        defer { sqlite3_close(db) }
+        return readMetadataValue(db, key: "import_state")
+    }
+
+    /// Resume an interrupted VCF import by creating any missing indexes.
+    ///
+    /// When `createFromVCF` is killed (e.g. by the OOM killer) the database may
+    /// contain all variant data but lack some or all indexes.  This method reads
+    /// `import_state` from `db_metadata`, determines which indexes already exist,
+    /// and creates the missing ones with conservative memory settings.
+    ///
+    /// - Returns: The variant count from the database, or 0 if unknown.
+    @discardableResult
+    public static func resumeImport(
+        existingDBURL: URL,
+        progressHandler: (@Sendable (Double, String) -> Void)? = nil,
+        shouldCancel: (@Sendable () -> Bool)? = nil
+    ) throws -> Int {
+        var db: OpaquePointer?
+        guard sqlite3_open(existingDBURL.path, &db) == SQLITE_OK, let db else {
+            let msg = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "Unknown error"
+            sqlite3_close(db)
+            throw VariantDatabaseError.createFailed("Failed to open database for resume: \(msg)")
+        }
+        defer { sqlite3_close(db) }
+
+        let state = readMetadataValue(db, key: "import_state")
+        guard state == "inserting" || state == "indexing" else {
+            if state == "complete" {
+                let count = Int(readMetadataValue(db, key: "import_variant_count") ?? "0") ?? 0
+                return count
+            }
+            throw VariantDatabaseError.invalidSchema("Cannot resume: import_state is '\(state ?? "nil")'")
+        }
+
+        variantDBLogger.info("resumeImport: Resuming from state '\(state ?? "?")', building missing indexes")
+
+        // Conservative PRAGMAs for index creation.
+        sqlite3_exec(db, "PRAGMA cache_size = -1024", nil, nil, nil)
+        sqlite3_exec(db, "PRAGMA temp_store = FILE", nil, nil, nil)
+        sqlite3_exec(db, "PRAGMA mmap_size = 0", nil, nil, nil)
+        sqlite3_exec(db, "PRAGMA locking_mode = EXCLUSIVE", nil, nil, nil)
+        sqlite3_exec(db, "PRAGMA threads = 1", nil, nil, nil)
+        sqlite3_soft_heap_limit64(256 * 1024 * 1024)
+
+        // Determine which indexes already exist.
+        let existingIndexes = listExistingIndexes(db)
+
+        // If variant_info was skipped during import, don't try to create its indexes.
+        let skipVariantInfo = readMetadataValue(db, key: "skip_variant_info") == "true"
+        let applicableIndexes = skipVariantInfo
+            ? allIndexStatements.filter { !$0.name.contains("variant_info") }
+            : allIndexStatements
+        let neededIndexes = applicableIndexes.filter { !existingIndexes.contains($0.name) }
+        if neededIndexes.isEmpty {
+            variantDBLogger.info("resumeImport: All indexes already exist")
+            sqlite3_exec(db, "UPDATE db_metadata SET value = 'complete' WHERE key = 'import_state'", nil, nil, nil)
+            let count = Int(readMetadataValue(db, key: "import_variant_count") ?? "0") ?? 0
+            return count
+        }
+
+        for (i, (name, sql)) in neededIndexes.enumerated() {
+            if shouldCancel?() == true {
+                throw VariantDatabaseError.cancelled
+            }
+            let fraction = Double(i) / Double(neededIndexes.count)
+            progressHandler?(fraction, "Creating index \(i + 1) of \(neededIndexes.count) (\(name))...")
+            var idxErr: UnsafeMutablePointer<CChar>?
+            sqlite3_exec(db, sql, nil, nil, &idxErr)
+            if let idxErr {
+                let msg = String(cString: idxErr)
+                sqlite3_free(idxErr)
+                variantDBLogger.warning("resumeImport: Index '\(name)' failed: \(msg)")
+            }
+            sqlite3_exec(db, "INSERT OR REPLACE INTO db_metadata VALUES ('idx_\(name)', 'created')", nil, nil, nil)
+            _ = sqlite3_db_release_memory(db)
+            sqlite3_exec(db, "PRAGMA shrink_memory", nil, nil, nil)
+        }
+
+        sqlite3_exec(db, "UPDATE db_metadata SET value = 'complete' WHERE key = 'import_state'", nil, nil, nil)
+        let count = Int(readMetadataValue(db, key: "import_variant_count") ?? "0") ?? 0
+        progressHandler?(1.0, "Resume complete (\(count) variants)")
+        variantDBLogger.info("resumeImport: Complete, \(count) variants")
+        return count
+    }
+
+    private static func readMetadataValue(_ db: OpaquePointer, key: String) -> String? {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT value FROM db_metadata WHERE key = ?", -1, &stmt, nil) == SQLITE_OK else {
+            return nil
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqliteBindText(stmt, 1, key)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        guard let cStr = sqlite3_column_text(stmt, 0) else { return nil }
+        return String(cString: cStr)
+    }
+
+    private static func listExistingIndexes(_ db: OpaquePointer) -> Set<String> {
+        var result = Set<String>()
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT name FROM sqlite_master WHERE type = 'index'", -1, &stmt, nil) == SQLITE_OK else {
+            return result
+        }
+        defer { sqlite3_finalize(stmt) }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let cStr = sqlite3_column_text(stmt, 0) {
+                result.insert(String(cString: cStr))
+            }
+        }
+        return result
+    }
+
+    // MARK: - Post-Import EAV Materialization
+
+    /// Materializes the `variant_info` EAV table from raw INFO strings stored in
+    /// `variants.info`.  Designed for databases created with the `ultraLowMemory`
+    /// profile where `skipVariantInfo` was true.
+    ///
+    /// Runs in bounded memory: reads variants in batches by rowid cursor, parses
+    /// each INFO string, and batch-inserts into `variant_info`.  Progress is
+    /// tracked in `db_metadata` for independent resumability.
+    ///
+    /// After all rows are materialized, populates `variant_info_defs` with inferred
+    /// field definitions, creates the `variant_info` indexes, and clears the
+    /// `skip_variant_info` flag so downstream code switches to EAV queries.
+    ///
+    /// - Parameters:
+    ///   - existingDBURL: URL to the existing variant database
+    ///   - progressHandler: Optional progress callback (fraction, message)
+    ///   - shouldCancel: Optional cancellation check
+    /// - Returns: Number of EAV rows inserted
+    @discardableResult
+    public static func materializeVariantInfo(
+        existingDBURL: URL,
+        progressHandler: (@Sendable (Double, String) -> Void)? = nil,
+        shouldCancel: (@Sendable () -> Bool)? = nil
+    ) throws -> Int {
+        var db: OpaquePointer?
+        guard sqlite3_open(existingDBURL.path, &db) == SQLITE_OK, let db else {
+            let msg = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "Unknown error"
+            sqlite3_close(db)
+            throw VariantDatabaseError.createFailed("Failed to open database for materialization: \(msg)")
+        }
+        defer { sqlite3_close(db) }
+
+        // Preconditions.
+        let importState = readMetadataValue(db, key: "import_state")
+        guard importState == "complete" else {
+            throw VariantDatabaseError.invalidSchema(
+                "Cannot materialize: import_state is '\(importState ?? "nil")' (expected 'complete')")
+        }
+        let skipFlag = readMetadataValue(db, key: "skip_variant_info")
+        guard skipFlag == "true" else {
+            // Not a skipVariantInfo database — EAV was already populated during import.
+            return 0
+        }
+        // Idempotent: if already materialized, return immediately.
+        if readMetadataValue(db, key: "materialize_state") == "complete" {
+            return 0
+        }
+
+        // Conservative PRAGMAs for bounded memory.
+        sqlite3_exec(db, "PRAGMA cache_size = -1024", nil, nil, nil)
+        sqlite3_exec(db, "PRAGMA temp_store = FILE", nil, nil, nil)
+        sqlite3_exec(db, "PRAGMA mmap_size = 0", nil, nil, nil)
+        sqlite3_exec(db, "PRAGMA synchronous = NORMAL", nil, nil, nil)
+        sqlite3_exec(db, "PRAGMA locking_mode = EXCLUSIVE", nil, nil, nil)
+        sqlite3_exec(db, "PRAGMA threads = 1", nil, nil, nil)
+        sqlite3_soft_heap_limit64(256 * 1024 * 1024)
+
+        // Resume point: read cursor from previous run if any.
+        let lastIdStr = readMetadataValue(db, key: "materialize_last_variant_id")
+        var lastProcessedId: Int64 = Int64(lastIdStr ?? "0") ?? 0
+
+        // Total variant count for progress reporting (MAX(id) is O(1) on rowid).
+        var maxIdStmt: OpaquePointer?
+        defer { sqlite3_finalize(maxIdStmt) }
+        guard sqlite3_prepare_v2(db, "SELECT MAX(id) FROM variants", -1, &maxIdStmt, nil) == SQLITE_OK,
+              sqlite3_step(maxIdStmt) == SQLITE_ROW else {
+            throw VariantDatabaseError.createFailed("Failed to query MAX(id) for materialization")
+        }
+        let maxId = sqlite3_column_int64(maxIdStmt, 0)
+        sqlite3_finalize(maxIdStmt)
+        maxIdStmt = nil
+
+        guard maxId > 0 else {
+            // Empty database — nothing to materialize.
+            sqlite3_exec(db, "INSERT OR REPLACE INTO db_metadata VALUES ('materialize_state', 'complete')", nil, nil, nil)
+            sqlite3_exec(db, "UPDATE db_metadata SET value = 'false' WHERE key = 'skip_variant_info'", nil, nil, nil)
+            return 0
+        }
+
+        // Mark state.
+        sqlite3_exec(db, "INSERT OR REPLACE INTO db_metadata VALUES ('materialize_state', 'materializing')", nil, nil, nil)
+
+        variantDBLogger.info("materializeVariantInfo: Starting from id \(lastProcessedId), maxId \(maxId)")
+        progressHandler?(0.0, "Materializing INFO fields...")
+
+        // Prepare statements.
+        let selectSQL = """
+            SELECT id, info FROM variants
+            WHERE id > ? AND info IS NOT NULL AND info != '.'
+            ORDER BY id ASC
+            LIMIT 5000
+            """
+        var selectStmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, selectSQL, -1, &selectStmt, nil) == SQLITE_OK else {
+            throw VariantDatabaseError.createFailed("Failed to prepare SELECT for materialization")
+        }
+        defer { sqlite3_finalize(selectStmt) }
+
+        let insertInfoSQL = "INSERT OR REPLACE INTO variant_info (variant_id, key, value) VALUES (?, ?, ?)"
+        var insertInfoStmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, insertInfoSQL, -1, &insertInfoStmt, nil) == SQLITE_OK else {
+            throw VariantDatabaseError.createFailed("Failed to prepare INSERT for materialization")
+        }
+        defer { sqlite3_finalize(insertInfoStmt) }
+
+        var totalEAVRows = 0
+        var distinctKeys = Set<String>()
+        let batchSize = 5000
+
+        // Batch loop.
+        while true {
+            if shouldCancel?() == true {
+                throw VariantDatabaseError.cancelled
+            }
+
+            sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil)
+
+            sqlite3_reset(selectStmt)
+            sqlite3_bind_int64(selectStmt, 1, lastProcessedId)
+
+            var batchCount = 0
+            var batchLastId: Int64 = lastProcessedId
+
+            while sqlite3_step(selectStmt) == SQLITE_ROW {
+                let variantId = sqlite3_column_int64(selectStmt, 0)
+                guard let infoCStr = sqlite3_column_text(selectStmt, 1) else { continue }
+                let infoString = String(cString: infoCStr)
+
+                let parsed = parseRawINFOString(infoString)
+                for (key, value) in parsed {
+                    sqlite3_reset(insertInfoStmt)
+                    sqlite3_bind_int64(insertInfoStmt, 1, variantId)
+                    sqliteBindText(insertInfoStmt, 2, key)
+                    sqliteBindText(insertInfoStmt, 3, value)
+                    sqlite3_step(insertInfoStmt)
+                    totalEAVRows += 1
+                    distinctKeys.insert(key)
+                }
+
+                batchLastId = variantId
+                batchCount += 1
+            }
+
+            // No more rows — exit loop.
+            if batchCount == 0 {
+                sqlite3_exec(db, "COMMIT", nil, nil, nil)
+                break
+            }
+
+            // Update cursor and commit.
+            lastProcessedId = batchLastId
+            sqlite3_exec(db, "INSERT OR REPLACE INTO db_metadata VALUES ('materialize_last_variant_id', '\(lastProcessedId)')", nil, nil, nil)
+            sqlite3_exec(db, "COMMIT", nil, nil, nil)
+
+            // Release memory.
+            _ = sqlite3_db_release_memory(db)
+            sqlite3_exec(db, "PRAGMA shrink_memory", nil, nil, nil)
+
+            // Progress.
+            let fraction = min(0.90, Double(lastProcessedId) / Double(maxId) * 0.90)
+            progressHandler?(fraction, "Materializing INFO fields (\(totalEAVRows) rows)...")
+        }
+
+        variantDBLogger.info("materializeVariantInfo: Inserted \(totalEAVRows) EAV rows, \(distinctKeys.count) distinct keys")
+
+        // Populate variant_info_defs from discovered keys.
+        progressHandler?(0.90, "Recording INFO field definitions...")
+        let insertDefSQL = "INSERT OR REPLACE INTO variant_info_defs (key, type, number, description) VALUES (?, 'String', '.', 'Inferred from data')"
+        var insertDefStmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, insertDefSQL, -1, &insertDefStmt, nil) == SQLITE_OK else {
+            throw VariantDatabaseError.createFailed("Failed to prepare info_defs INSERT for materialization")
+        }
+        defer { sqlite3_finalize(insertDefStmt) }
+        sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil)
+        for key in distinctKeys.sorted() {
+            sqlite3_reset(insertDefStmt)
+            sqliteBindText(insertDefStmt, 1, key)
+            sqlite3_step(insertDefStmt)
+        }
+        sqlite3_exec(db, "COMMIT", nil, nil, nil)
+
+        // Create variant_info indexes.
+        progressHandler?(0.92, "Creating variant_info indexes...")
+        let variantInfoIndexes = allIndexStatements.filter { $0.name.contains("variant_info") }
+        for (i, (name, sql)) in variantInfoIndexes.enumerated() {
+            if shouldCancel?() == true {
+                throw VariantDatabaseError.cancelled
+            }
+            let indexProgress = 0.92 + (Double(i) / Double(max(1, variantInfoIndexes.count))) * 0.06
+            progressHandler?(indexProgress, "Creating index \(name)...")
+            var idxErr: UnsafeMutablePointer<CChar>?
+            sqlite3_exec(db, sql, nil, nil, &idxErr)
+            if let idxErr {
+                let msg = String(cString: idxErr)
+                sqlite3_free(idxErr)
+                variantDBLogger.warning("materializeVariantInfo: Index '\(name)' failed: \(msg)")
+            }
+            _ = sqlite3_db_release_memory(db)
+            sqlite3_exec(db, "PRAGMA shrink_memory", nil, nil, nil)
+        }
+
+        // Finalize: mark complete, clear cursor, flip skip flag.
+        sqlite3_exec(db, "INSERT OR REPLACE INTO db_metadata VALUES ('materialize_state', 'complete')", nil, nil, nil)
+        sqlite3_exec(db, "DELETE FROM db_metadata WHERE key = 'materialize_last_variant_id'", nil, nil, nil)
+        sqlite3_exec(db, "UPDATE db_metadata SET value = 'false' WHERE key = 'skip_variant_info'", nil, nil, nil)
+
+        progressHandler?(1.0, "Materialization complete (\(totalEAVRows) INFO rows, \(distinctKeys.count) keys)")
+        variantDBLogger.info("materializeVariantInfo: Complete — \(totalEAVRows) rows, \(distinctKeys.count) keys")
+        return totalEAVRows
     }
 
     // MARK: - Region Extraction

@@ -479,11 +479,34 @@ private class ChromosomeCellView: NSTableCellView {
 
     func configure(with chromosome: ChromosomeInfo) {
         nameLabel.stringValue = chromosome.name
-        lengthLabel.stringValue = Self.formatLength(chromosome.length)
-        setAccessibilityLabel("\(chromosome.name), \(Self.formatLength(chromosome.length))")
+
+        // Show length, with aliases appended in a lighter font
+        let lengthStr = Self.formatLength(chromosome.length)
+        if !chromosome.aliases.isEmpty {
+            let aliasStr = chromosome.aliases.joined(separator: ", ")
+            let attributed = NSMutableAttributedString(
+                string: lengthStr,
+                attributes: [
+                    .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .regular),
+                    .foregroundColor: NSColor.secondaryLabelColor,
+                ]
+            )
+            attributed.append(NSAttributedString(
+                string: "  \(aliasStr)",
+                attributes: [
+                    .font: NSFont.monospacedSystemFont(ofSize: 9, weight: .regular),
+                    .foregroundColor: NSColor.tertiaryLabelColor,
+                ]
+            ))
+            lengthLabel.attributedStringValue = attributed
+        } else {
+            lengthLabel.stringValue = lengthStr
+        }
+
+        setAccessibilityLabel("\(chromosome.name), \(lengthStr)")
 
         // Build tooltip with full chromosome info
-        var tip = "\(chromosome.name)\n\(Self.formatLength(chromosome.length))"
+        var tip = "\(chromosome.name)\n\(lengthStr)"
         if let desc = chromosome.fastaDescription, !desc.isEmpty {
             tip += "\n\(desc)"
         }

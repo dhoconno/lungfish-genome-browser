@@ -3946,8 +3946,15 @@ public class SequenceViewerView: NSView {
         let unmatched = vcfChroms.subtracting(refChromNames)
         if unmatched.isEmpty { return [:] }
 
-        // Get max positions from variant DB for unmatched chromosomes
-        let vcfMaxPositions = variantDB.chromosomeMaxPositions()
+        // Prefer exact contig lengths from VCF ##contig header lines.
+        // Fall back to MAX(end_pos) per chromosome if contig lengths are unavailable.
+        let vcfContigLengths = variantDB.contigLengths()
+        let vcfMaxPositions: [String: Int]
+        if vcfContigLengths.isEmpty {
+            vcfMaxPositions = variantDB.chromosomeMaxPositions()
+        } else {
+            vcfMaxPositions = [:]  // Not needed when contig lengths are available
+        }
 
         // For each unmatched VCF chromosome, find the reference chromosome
         // whose length is closest to (and >= ) the VCF max position
@@ -3963,20 +3970,31 @@ public class SequenceViewerView: NSView {
             var bestDelta = Int64.max
 
             for vcfChrom in unmatched where !usedVCFChroms.contains(vcfChrom) {
-                guard let maxPos = vcfMaxPositions[vcfChrom] else { continue }
-                let maxPos64 = Int64(maxPos)
-                // The max variant position must be <= reference length
-                guard maxPos64 <= chrom.length else { continue }
-                // Must be within a reasonable fraction of the reference length.
-                // Large chromosomes (>1Mb): 5% tolerance; small ones: 20%
-                let delta = chrom.length - maxPos64
-                let tolerance = chrom.length > 1_000_000
-                    ? chrom.length / 20   // 5% for large chromosomes
-                    : chrom.length / 5    // 20% for small scaffolds
-                guard delta < tolerance else { continue }
-                if delta < bestDelta {
-                    bestDelta = delta
-                    bestMatch = vcfChrom
+                if let contigLength = vcfContigLengths[vcfChrom] {
+                    // Contig lengths from VCF header — exact match expected
+                    let delta = abs(chrom.length - contigLength)
+                    // Allow exact match or very small rounding differences
+                    guard delta == 0 else { continue }
+                    if delta < bestDelta {
+                        bestDelta = delta
+                        bestMatch = vcfChrom
+                    }
+                } else if let maxPos = vcfMaxPositions[vcfChrom] {
+                    // Fallback: use max variant position (less reliable)
+                    let maxPos64 = Int64(maxPos)
+                    // The max variant position must be <= reference length
+                    guard maxPos64 <= chrom.length else { continue }
+                    // Must be within a reasonable fraction of the reference length.
+                    // Large chromosomes (>1Mb): 5% tolerance; small ones: 20%
+                    let delta = chrom.length - maxPos64
+                    let tolerance = chrom.length > 1_000_000
+                        ? chrom.length / 20   // 5% for large chromosomes
+                        : chrom.length / 5    // 20% for small scaffolds
+                    guard delta < tolerance else { continue }
+                    if delta < bestDelta {
+                        bestDelta = delta
+                        bestMatch = vcfChrom
+                    }
                 }
             }
 
@@ -3987,7 +4005,7 @@ public class SequenceViewerView: NSView {
         }
 
         if !aliasMap.isEmpty {
-            logger.info("buildVariantChromosomeAliasMap: Built \(aliasMap.count) chromosome aliases (e.g., \(aliasMap.first?.key ?? "") → \(aliasMap.first?.value ?? ""))")
+            logger.info("buildVariantChromosomeAliasMap: Built \(aliasMap.count) chromosome aliases via \(vcfContigLengths.isEmpty ? "max-position" : "contig-length") matching (e.g., \(aliasMap.first?.key ?? "") → \(aliasMap.first?.value ?? ""))")
         }
 
         return aliasMap

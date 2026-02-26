@@ -1105,35 +1105,106 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 // Create variants directory if needed
                 try FileManager.default.createDirectory(at: variantsDir, withIntermediateDirectories: true)
 
-                // Remove existing database if re-importing
-                if FileManager.default.fileExists(atPath: dbURL.path) {
-                    try FileManager.default.removeItem(at: dbURL)
-                }
+                let variantCount: Int
 
-                debugLog("performVCFImport: Creating variant database at \(dbURL.lastPathComponent) via helper")
+                // Check if there's a resumable incomplete import from a previous crash.
+                if let importState = VariantDatabase.importState(at: dbURL),
+                   importState != "complete" {
+                    debugLog("performVCFImport: Found incomplete import (state=\(importState)), resuming via helper")
+                    variantCount = try Self.runVCFResumeViaHelper(
+                        outputDBURL: dbURL,
+                        shouldCancel: isCancelled,
+                        progressHandler: { progress, message in
+                            let clampedProgress = max(0.0, min(1.0, progress))
+                            let etaText = Self.estimatedRemainingText(progress: clampedProgress, startedAt: importStartedAt)
+                            let displayMessage = etaText.isEmpty ? message : "\(message) • \(etaText)"
+                            scheduleOnMainRunLoop {
+                                OperationCenter.shared.update(id: opID, progress: clampedProgress, detail: displayMessage)
+                            }
+                        }
+                    )
+                } else if VariantDatabase.metadataValue(at: dbURL, key: "materialize_state") == "materializing" {
+                    // Import is complete but materialization was interrupted — resume it.
+                    debugLog("performVCFImport: Found incomplete materialization, resuming via helper")
+                    let importedDB = try VariantDatabase(url: dbURL)
+                    variantCount = importedDB.totalCount()
 
-                let variantCount = try Self.runVCFImportViaHelper(
-                    vcfURL: vcfURL,
-                    outputDBURL: dbURL,
-                    sourceFile: vcfURL.lastPathComponent,
-                    importProfile: selectedImportProfile,
-                    shouldCancel: isCancelled,
-                    progressHandler: { progress, message in
-                        let clampedProgress = max(0.0, min(1.0, progress))
-                        let etaText = Self.estimatedRemainingText(progress: clampedProgress, startedAt: importStartedAt)
-                        let displayMessage = etaText.isEmpty ? message : "\(message) • \(etaText)"
-                        scheduleOnMainRunLoop {
-                            OperationCenter.shared.update(id: opID, progress: clampedProgress, detail: displayMessage)
+                    let materializeStartedAt = Date()
+                    try Self.runVCFMaterializeViaHelper(
+                        outputDBURL: dbURL,
+                        shouldCancel: isCancelled,
+                        progressHandler: { progress, message in
+                            let clampedProgress = max(0.0, min(1.0, progress))
+                            let etaText = Self.estimatedRemainingText(progress: clampedProgress, startedAt: materializeStartedAt)
+                            let displayMessage = etaText.isEmpty ? message : "\(message) • \(etaText)"
+                            scheduleOnMainRunLoop {
+                                OperationCenter.shared.update(id: opID, progress: clampedProgress, detail: displayMessage)
+                            }
+                        }
+                    )
+                    debugLog("performVCFImport: Materialization resume complete")
+                } else {
+                    // Remove existing database if re-importing a complete one
+                    if FileManager.default.fileExists(atPath: dbURL.path) {
+                        try FileManager.default.removeItem(at: dbURL)
+                    }
+
+                    debugLog("performVCFImport: Creating variant database at \(dbURL.lastPathComponent) via helper")
+
+                    do {
+                        variantCount = try Self.runVCFImportViaHelper(
+                            vcfURL: vcfURL,
+                            outputDBURL: dbURL,
+                            sourceFile: vcfURL.lastPathComponent,
+                            importProfile: selectedImportProfile,
+                            shouldCancel: isCancelled,
+                            progressHandler: { progress, message in
+                                let clampedProgress = max(0.0, min(1.0, progress))
+                                let etaText = Self.estimatedRemainingText(progress: clampedProgress, startedAt: importStartedAt)
+                                let displayMessage = etaText.isEmpty ? message : "\(message) • \(etaText)"
+                                scheduleOnMainRunLoop {
+                                    OperationCenter.shared.update(id: opID, progress: clampedProgress, detail: displayMessage)
+                                }
+                            }
+                        )
+                    } catch {
+                        // If the helper crashed during the indexing phase (e.g. OOM killed),
+                        // the variant data is intact but indexes are missing.  Automatically
+                        // resume in a fresh helper process with conservative memory settings
+                        // instead of requiring the user to re-import manually.
+                        if let importState = VariantDatabase.importState(at: dbURL),
+                           importState == "indexing" || importState == "inserting" {
+                            debugLog("performVCFImport: Helper failed during '\(importState)' phase, auto-resuming index creation...")
+                            let resumeStartedAt = Date()
+                            variantCount = try Self.runVCFResumeViaHelper(
+                                outputDBURL: dbURL,
+                                shouldCancel: isCancelled,
+                                progressHandler: { progress, message in
+                                    let clampedProgress = max(0.0, min(1.0, progress))
+                                    let etaText = Self.estimatedRemainingText(progress: clampedProgress, startedAt: resumeStartedAt)
+                                    let displayMessage = etaText.isEmpty ? message : "\(message) • \(etaText)"
+                                    scheduleOnMainRunLoop {
+                                        OperationCenter.shared.update(id: opID, progress: clampedProgress, detail: displayMessage)
+                                    }
+                                }
+                            )
+                            debugLog("performVCFImport: Auto-resume complete with \(variantCount) variants")
+                        } else {
+                            throw error
                         }
                     }
-                )
+                }
 
                 debugLog("performVCFImport: Created database with \(variantCount) variants")
                 if isCancelled() {
                     throw VariantDatabaseError.cancelled
                 }
 
-                // Normalize chromosome names to match the bundle
+                // Normalize chromosome names to match the bundle.
+                // Only performs name-based mapping (aliases, chr prefix, version suffix).
+                // Length-based matching is deferred to the runtime alias map which uses
+                // contig lengths stored in the database — this avoids slow UPDATE statements
+                // on very large databases.
                 let currentManifestForChrom = try BundleManifest.load(from: bundleURL)
                 let rwDB = try VariantDatabase(url: dbURL, readWrite: true)
                 let vcfChroms = rwDB.allChromosomes()
@@ -1144,6 +1215,29 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 }
                 if isCancelled() {
                     throw VariantDatabaseError.cancelled
+                }
+
+                // Materialize variant_info EAV table if it was skipped during
+                // ultraLowMemory import.  This runs as a separate helper process
+                // with a fresh address space so it cannot OOM the GUI.
+                if rwDB.variantInfoSkipped {
+                    debugLog("performVCFImport: Variant info was skipped — launching materialization helper")
+                    let materializeStartedAt = Date()
+                    try Self.runVCFMaterializeViaHelper(
+                        outputDBURL: dbURL,
+                        shouldCancel: isCancelled,
+                        progressHandler: { progress, message in
+                            // Map materialization progress to the tail end of the operation
+                            let displayProgress = 0.95 + progress * 0.05
+                            let clampedProgress = max(0.0, min(1.0, displayProgress))
+                            let etaText = Self.estimatedRemainingText(progress: progress, startedAt: materializeStartedAt)
+                            let displayMessage = etaText.isEmpty ? message : "\(message) • \(etaText)"
+                            scheduleOnMainRunLoop {
+                                OperationCenter.shared.update(id: opID, progress: clampedProgress, detail: displayMessage)
+                            }
+                        }
+                    )
+                    debugLog("performVCFImport: Materialization complete")
                 }
 
                 // Create VariantTrackInfo
@@ -1240,6 +1334,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             return .fast
         case "lowmemory", "low-memory", "low_memory":
             return .lowMemory
+        case "ultra-low-memory", "ultra_low_memory", "ultralow":
+            return .ultraLowMemory
         default:
             return .auto
         }
@@ -1253,6 +1349,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             return "Low Memory"
         case .fast:
             return "Fast"
+        case .ultraLowMemory:
+            return "Ultra Low Memory"
         }
     }
 
@@ -1399,6 +1497,239 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         let importedDB = try VariantDatabase(url: outputDBURL)
         return importedDB.totalCount()
+    }
+
+    /// Launch the helper process in `--vcf-resume-helper` mode to finish an
+    /// interrupted import (creates missing indexes on an existing database).
+    private nonisolated static func runVCFResumeViaHelper(
+        outputDBURL: URL,
+        shouldCancel: @escaping @Sendable () -> Bool,
+        progressHandler: @escaping @Sendable (Double, String) -> Void
+    ) throws -> Int {
+        guard let executablePath = CommandLine.arguments.first, !executablePath.isEmpty else {
+            throw VariantDatabaseError.createFailed("Could not locate application executable for helper resume")
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executablePath)
+        process.arguments = [
+            "--vcf-resume-helper",
+            "--output-db-path", outputDBURL.path,
+        ]
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        struct HelperParseState: Sendable {
+            var stdoutBuffer = Data()
+            var helperError: String?
+            var variantCount: Int?
+            var wasCancelled = false
+        }
+        let parseState = OSAllocatedUnfairLock(initialState: HelperParseState())
+
+        let handleEventLine: @Sendable (Data) -> Void = { line in
+            guard !line.isEmpty else { return }
+            guard let event = try? JSONDecoder().decode(VCFImportHelperEvent.self, from: line) else { return }
+            switch event.event {
+            case "progress":
+                if let progress = event.progress {
+                    progressHandler(progress, event.message ?? "Resuming...")
+                }
+            case "done":
+                if let variantCount = event.variantCount {
+                    parseState.withLock { $0.variantCount = variantCount }
+                }
+            case "error":
+                let message = event.error ?? event.message ?? "VCF resume helper failed"
+                parseState.withLock { $0.helperError = message }
+            case "cancelled":
+                parseState.withLock { $0.wasCancelled = true }
+            default:
+                break
+            }
+        }
+
+        let consumeStdoutData: @Sendable (Data) -> Void = { data in
+            guard !data.isEmpty else { return }
+            let lines = parseState.withLock { state -> [Data] in
+                var parsed: [Data] = []
+                state.stdoutBuffer.append(data)
+                while let newlineIndex = state.stdoutBuffer.firstIndex(of: 0x0A) {
+                    let line = Data(state.stdoutBuffer.prefix(upTo: newlineIndex))
+                    state.stdoutBuffer.removeSubrange(...newlineIndex)
+                    parsed.append(line)
+                }
+                return parsed
+            }
+            for line in lines {
+                handleEventLine(line)
+            }
+        }
+
+        let stdoutHandle = stdoutPipe.fileHandleForReading
+        stdoutHandle.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            consumeStdoutData(data)
+        }
+
+        try process.run()
+
+        while process.isRunning {
+            if shouldCancel() {
+                process.terminate()
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        process.waitUntilExit()
+
+        stdoutHandle.readabilityHandler = nil
+        consumeStdoutData(stdoutHandle.readDataToEndOfFile())
+
+        if let trailing = parseState.withLock({ state -> Data? in
+            guard !state.stdoutBuffer.isEmpty else { return nil }
+            defer { state.stdoutBuffer.removeAll(keepingCapacity: false) }
+            return state.stdoutBuffer
+        }) {
+            handleEventLine(trailing)
+        }
+
+        let helperCancelled = parseState.withLock { $0.wasCancelled }
+        if shouldCancel() || helperCancelled {
+            throw VariantDatabaseError.cancelled
+        }
+
+        guard process.terminationStatus == 0 else {
+            let helperError = parseState.withLock { $0.helperError }
+            let message = helperError ?? "VCF resume helper exited with status \(process.terminationStatus)"
+            throw VariantDatabaseError.createFailed(message)
+        }
+
+        if let variantCount = parseState.withLock({ $0.variantCount }) {
+            return variantCount
+        }
+
+        let resumedDB = try VariantDatabase(url: outputDBURL)
+        return resumedDB.totalCount()
+    }
+
+    /// Launch the helper process in `--vcf-materialize-helper` mode to populate
+    /// the variant_info EAV table from raw INFO strings stored during
+    /// ultraLowMemory import.
+    @discardableResult
+    private nonisolated static func runVCFMaterializeViaHelper(
+        outputDBURL: URL,
+        shouldCancel: @escaping @Sendable () -> Bool,
+        progressHandler: @escaping @Sendable (Double, String) -> Void
+    ) throws -> Int {
+        guard let executablePath = CommandLine.arguments.first, !executablePath.isEmpty else {
+            throw VariantDatabaseError.createFailed("Could not locate application executable for helper materialize")
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executablePath)
+        process.arguments = [
+            "--vcf-materialize-helper",
+            "--output-db-path", outputDBURL.path,
+        ]
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        struct HelperParseState: Sendable {
+            var stdoutBuffer = Data()
+            var helperError: String?
+            var variantCount: Int?
+            var wasCancelled = false
+        }
+        let parseState = OSAllocatedUnfairLock(initialState: HelperParseState())
+
+        let handleEventLine: @Sendable (Data) -> Void = { line in
+            guard !line.isEmpty else { return }
+            guard let event = try? JSONDecoder().decode(VCFImportHelperEvent.self, from: line) else { return }
+            switch event.event {
+            case "progress":
+                if let progress = event.progress {
+                    progressHandler(progress, event.message ?? "Materializing...")
+                }
+            case "done":
+                if let variantCount = event.variantCount {
+                    parseState.withLock { $0.variantCount = variantCount }
+                }
+            case "error":
+                let message = event.error ?? event.message ?? "VCF materialize helper failed"
+                parseState.withLock { $0.helperError = message }
+            case "cancelled":
+                parseState.withLock { $0.wasCancelled = true }
+            default:
+                break
+            }
+        }
+
+        let consumeStdoutData: @Sendable (Data) -> Void = { data in
+            guard !data.isEmpty else { return }
+            let lines = parseState.withLock { state -> [Data] in
+                var parsed: [Data] = []
+                state.stdoutBuffer.append(data)
+                while let newlineIndex = state.stdoutBuffer.firstIndex(of: 0x0A) {
+                    let line = Data(state.stdoutBuffer.prefix(upTo: newlineIndex))
+                    state.stdoutBuffer.removeSubrange(...newlineIndex)
+                    parsed.append(line)
+                }
+                return parsed
+            }
+            for line in lines {
+                handleEventLine(line)
+            }
+        }
+
+        let stdoutHandle = stdoutPipe.fileHandleForReading
+        stdoutHandle.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            consumeStdoutData(data)
+        }
+
+        try process.run()
+
+        while process.isRunning {
+            if shouldCancel() {
+                process.terminate()
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        process.waitUntilExit()
+
+        stdoutHandle.readabilityHandler = nil
+        consumeStdoutData(stdoutHandle.readDataToEndOfFile())
+
+        if let trailing = parseState.withLock({ state -> Data? in
+            guard !state.stdoutBuffer.isEmpty else { return nil }
+            defer { state.stdoutBuffer.removeAll(keepingCapacity: false) }
+            return state.stdoutBuffer
+        }) {
+            handleEventLine(trailing)
+        }
+
+        let helperCancelled = parseState.withLock { $0.wasCancelled }
+        if shouldCancel() || helperCancelled {
+            throw VariantDatabaseError.cancelled
+        }
+
+        guard process.terminationStatus == 0 else {
+            let helperError = parseState.withLock { $0.helperError }
+            let message = helperError ?? "VCF materialize helper exited with status \(process.terminationStatus)"
+            throw VariantDatabaseError.createFailed(message)
+        }
+
+        return parseState.withLock { $0.variantCount } ?? 0
     }
 
     private nonisolated static func estimatedRemainingText(progress: Double, startedAt: Date) -> String {

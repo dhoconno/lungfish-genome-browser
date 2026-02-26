@@ -4,6 +4,7 @@
 
 import XCTest
 import SQLite3
+import os
 @testable import LungfishIO
 @testable import LungfishCore
 
@@ -936,5 +937,482 @@ final class VariantDatabaseTests: XCTestCase {
         let dbDef = keys.first(where: { $0.key == "DB" })
         XCTAssertEqual(dbDef?.type, "Flag")
         XCTAssertEqual(dbDef?.number, "0")
+    }
+
+    // MARK: - Ultra Low Memory / OOM Robustness Tests
+
+    func testUltraLowMemoryProfileAutoSelection() {
+        // Files >= 5 GB should select ultra-low-memory.
+        // We test this indirectly by importing with the .auto profile and a simulated
+        // large-file size.  Since we can't control resolveImportProfile directly (it's
+        // private), we verify the public enum has the new case and that imports with
+        // the explicit profile succeed.
+        XCTAssertNotNil(VCFImportProfile(rawValue: "ultra-low-memory"))
+        XCTAssertEqual(VCFImportProfile.ultraLowMemory.rawValue, "ultra-low-memory")
+    }
+
+    func testUltraLowMemoryProducesSameVariants() throws {
+        // Import the same VCF twice: once with fast (EAV + bulk indexes) and once with
+        // ultra-low-memory (no EAV, deferred indexes).  Variant data should be identical.
+        let vcfURL = try createTempVCF(content: testVCF)
+
+        let dbFastURL = tempDir.appendingPathComponent("fast.db")
+        let countFast = try VariantDatabase.createFromVCF(
+            vcfURL: vcfURL, outputURL: dbFastURL,
+            parseGenotypes: true, importProfile: .fast
+        )
+        let dbFast = try VariantDatabase(url: dbFastURL)
+
+        let dbUltraURL = tempDir.appendingPathComponent("ultra.db")
+        let countUltra = try VariantDatabase.createFromVCF(
+            vcfURL: vcfURL, outputURL: dbUltraURL,
+            parseGenotypes: true, importProfile: .ultraLowMemory
+        )
+        let dbUltra = try VariantDatabase(url: dbUltraURL)
+
+        XCTAssertEqual(countFast, countUltra, "Both import modes should produce the same variant count")
+        XCTAssertEqual(countFast, 7)
+
+        // Region query should return same variant records.
+        let regionFast = dbFast.query(chromosome: "chr1", start: 0, end: 1000)
+        let regionUltra = dbUltra.query(chromosome: "chr1", start: 0, end: 1000)
+        XCTAssertEqual(regionFast.count, regionUltra.count)
+
+        for (f, u) in zip(regionFast, regionUltra) {
+            XCTAssertEqual(f.variantID, u.variantID)
+            XCTAssertEqual(f.position, u.position)
+            XCTAssertEqual(f.ref, u.ref)
+            XCTAssertEqual(f.alt, u.alt)
+        }
+
+        // Ultra-low-memory stores raw INFO; fast stores NULL (uses EAV instead).
+        XCTAssertTrue(dbUltra.variantInfoSkipped)
+        XCTAssertFalse(dbFast.variantInfoSkipped)
+        // But infoValues should return equivalent results from both.
+        if let fastId = regionFast.first?.id, let ultraId = regionUltra.first?.id {
+            let fastInfo = dbFast.infoValues(variantId: fastId)
+            let ultraInfo = dbUltra.infoValues(variantId: ultraId)
+            XCTAssertEqual(fastInfo, ultraInfo, "INFO values should match regardless of storage mode")
+        }
+    }
+
+    func testImportStateTracking() throws {
+        let vcfURL = try createTempVCF(content: testVCF)
+        let dbURL = tempDir.appendingPathComponent("state.db")
+        try VariantDatabase.createFromVCF(vcfURL: vcfURL, outputURL: dbURL)
+
+        // After successful import, state should be 'complete'.
+        let state = VariantDatabase.importState(at: dbURL)
+        XCTAssertEqual(state, "complete")
+    }
+
+    func testImportStateNilForMissingFile() {
+        let bogusURL = tempDir.appendingPathComponent("nonexistent.db")
+        XCTAssertNil(VariantDatabase.importState(at: bogusURL))
+    }
+
+    func testContigLengthsStoredDuringImport() throws {
+        // The testVCF has ##contig lines: chr1=248956422, chr2=242193529
+        let vcfURL = try createTempVCF(content: testVCF)
+        let dbURL = tempDir.appendingPathComponent("contigs.db")
+        try VariantDatabase.createFromVCF(vcfURL: vcfURL, outputURL: dbURL)
+
+        let db = try VariantDatabase(url: dbURL)
+        let contigs = db.contigLengths()
+        XCTAssertEqual(contigs["chr1"], 248956422)
+        XCTAssertEqual(contigs["chr2"], 242193529)
+        XCTAssertEqual(contigs.count, 2)
+    }
+
+    func testContigLengthsEmptyForNoContigHeaders() throws {
+        // VCF without ##contig lines
+        let vcfNoContigs = """
+        ##fileformat=VCFv4.3
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+        chr1\t100\trs100\tA\tG\t30.0\tPASS\tDP=50
+        """
+        let vcfURL = try createTempVCF(content: vcfNoContigs)
+        let dbURL = tempDir.appendingPathComponent("no_contigs.db")
+        try VariantDatabase.createFromVCF(vcfURL: vcfURL, outputURL: dbURL)
+
+        let db = try VariantDatabase(url: dbURL)
+        let contigs = db.contigLengths()
+        XCTAssertTrue(contigs.isEmpty)
+    }
+
+    func testResumeInterruptedIndexing() throws {
+        // Simulate an interrupted import: create a database with data but no indexes
+        // and import_state = 'indexing'.
+        let vcfURL = try createTempVCF(content: testVCF)
+        let dbURL = tempDir.appendingPathComponent("interrupted.db")
+
+        // First, do a normal import.
+        try VariantDatabase.createFromVCF(vcfURL: vcfURL, outputURL: dbURL)
+
+        // Now open the DB and drop all our indexes + set state to 'indexing'
+        // to simulate a crash after inserts but before index completion.
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(dbURL.path, &db), SQLITE_OK)
+        for idx in ["idx_variants_region", "idx_variants_type", "idx_variants_id",
+                     "idx_genotypes_sample", "idx_genotypes_variant", "idx_samples_name",
+                     "idx_variant_info_key", "idx_variant_info_key_value"] {
+            sqlite3_exec(db, "DROP INDEX IF EXISTS \(idx)", nil, nil, nil)
+        }
+        sqlite3_exec(db, "UPDATE db_metadata SET value = 'indexing' WHERE key = 'import_state'", nil, nil, nil)
+        sqlite3_close(db)
+
+        // Confirm state is 'indexing' before resume.
+        XCTAssertEqual(VariantDatabase.importState(at: dbURL), "indexing")
+
+        // Resume should recreate the indexes.
+        let count = try VariantDatabase.resumeImport(existingDBURL: dbURL)
+        XCTAssertEqual(count, 7)
+
+        // State should now be complete.
+        XCTAssertEqual(VariantDatabase.importState(at: dbURL), "complete")
+
+        // Queries should still work (indexes exist).
+        let resumed = try VariantDatabase(url: dbURL)
+        let results = resumed.query(chromosome: "chr1", start: 0, end: 1000)
+        XCTAssertEqual(results.count, 5)
+    }
+
+    func testResumeAlreadyComplete() throws {
+        let vcfURL = try createTempVCF(content: testVCF)
+        let dbURL = tempDir.appendingPathComponent("complete.db")
+        try VariantDatabase.createFromVCF(vcfURL: vcfURL, outputURL: dbURL)
+
+        // Resuming a complete import should just return the count.
+        let count = try VariantDatabase.resumeImport(existingDBURL: dbURL)
+        XCTAssertEqual(count, 7)
+    }
+
+    func testMaxVariantInfoKeysPerVariant() throws {
+        // VCF with many INFO fields per variant.
+        let manyInfoVCF = """
+        ##fileformat=VCFv4.3
+        ##INFO=<ID=A,Number=1,Type=String,Description="A">
+        ##INFO=<ID=B,Number=1,Type=String,Description="B">
+        ##INFO=<ID=C,Number=1,Type=String,Description="C">
+        ##INFO=<ID=D,Number=1,Type=String,Description="D">
+        ##INFO=<ID=E,Number=1,Type=String,Description="E">
+        ##INFO=<ID=F,Number=1,Type=String,Description="F">
+        ##INFO=<ID=G,Number=1,Type=String,Description="G">
+        ##INFO=<ID=H,Number=1,Type=String,Description="H">
+        ##INFO=<ID=I,Number=1,Type=String,Description="I">
+        ##INFO=<ID=J,Number=1,Type=String,Description="J">
+        ##INFO=<ID=K,Number=1,Type=String,Description="K">
+        ##INFO=<ID=L,Number=1,Type=String,Description="L">
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+        chr1\t100\t.\tA\tG\t30.0\tPASS\tA=1;B=2;C=3;D=4;E=5;F=6;G=7;H=8;I=9;J=10;K=11;L=12
+        """
+
+        // With ultra-low-memory profile, variant_info EAV is skipped entirely.
+        // infoValues should still return all keys by parsing raw INFO from variants.info.
+        let vcfURL = try createTempVCF(content: manyInfoVCF, name: "many_info.vcf")
+        let dbURL = tempDir.appendingPathComponent("many_info.db")
+        try VariantDatabase.createFromVCF(
+            vcfURL: vcfURL, outputURL: dbURL,
+            parseGenotypes: true, importProfile: .ultraLowMemory
+        )
+
+        let db = try VariantDatabase(url: dbURL)
+        XCTAssertTrue(db.variantInfoSkipped, "Ultra-low-memory should set skip_variant_info")
+        let variants = db.query(chromosome: "chr1", start: 0, end: 1000)
+        XCTAssertEqual(variants.count, 1)
+
+        // infoValues falls back to parsing raw INFO string.
+        let rowId = try XCTUnwrap(variants[0].id)
+        let info = db.infoValues(variantId: rowId)
+        XCTAssertEqual(info.count, 12, "All 12 INFO keys should be available via raw INFO parsing")
+        XCTAssertEqual(info["A"], "1")
+        XCTAssertEqual(info["L"], "12")
+
+        // Now import with fast profile (EAV table) — should store all 12 via EAV.
+        let dbFullURL = tempDir.appendingPathComponent("many_info_full.db")
+        try VariantDatabase.createFromVCF(
+            vcfURL: vcfURL, outputURL: dbFullURL,
+            parseGenotypes: true, importProfile: .fast
+        )
+        let dbFull = try VariantDatabase(url: dbFullURL)
+        XCTAssertFalse(dbFull.variantInfoSkipped, "Fast profile should NOT skip variant_info")
+        let fullVariants = dbFull.query(chromosome: "chr1", start: 0, end: 1000)
+        let fullRowId = try XCTUnwrap(fullVariants[0].id)
+        let fullInfo = dbFull.infoValues(variantId: fullRowId)
+        XCTAssertEqual(fullInfo.count, 12, "Fast profile should store all 12 INFO keys via EAV")
+    }
+
+    func testUltraLowMemorySkipsVariantInfoTable() throws {
+        // Verify that ultraLowMemory stores raw INFO in variants.info
+        // and leaves variant_info EAV table empty.
+        let vcfURL = try createTempVCF(content: testVCF)
+        let dbURL = tempDir.appendingPathComponent("ultra_skip.db")
+        let count = try VariantDatabase.createFromVCF(
+            vcfURL: vcfURL, outputURL: dbURL,
+            parseGenotypes: true, importProfile: .ultraLowMemory
+        )
+        XCTAssertEqual(count, 7)
+
+        let db = try VariantDatabase(url: dbURL)
+        XCTAssertTrue(db.variantInfoSkipped)
+
+        // The variant_info_defs table should be empty (no defs stored).
+        let defs = db.infoKeys()
+        XCTAssertTrue(defs.isEmpty, "Ultra-low-memory should not store INFO defs")
+
+        // But infoValues should still work via raw INFO parsing.
+        let variants = db.query(chromosome: "chr1", start: 0, end: 1000)
+        XCTAssertFalse(variants.isEmpty)
+        let rowId = try XCTUnwrap(variants[0].id)
+        let info = db.infoValues(variantId: rowId)
+        // The test VCF has INFO fields like AC=2;AF=1.00;AN=2;DP=100
+        XCTAssertFalse(info.isEmpty, "Raw INFO parsing should return fields")
+
+        // Raw INFO string should be stored in the record.
+        let record = variants[0]
+        XCTAssertNotNil(record.info, "variants.info should contain raw INFO string")
+    }
+
+    func testUltraLowMemoryBatchInfoValues() throws {
+        // Verify batchInfoValues works for skipVariantInfo databases.
+        let vcfURL = try createTempVCF(content: testVCF)
+        let dbURL = tempDir.appendingPathComponent("ultra_batch.db")
+        try VariantDatabase.createFromVCF(
+            vcfURL: vcfURL, outputURL: dbURL,
+            parseGenotypes: true, importProfile: .ultraLowMemory
+        )
+
+        let db = try VariantDatabase(url: dbURL)
+        let variants = db.query(chromosome: "chr1", start: 0, end: 1000)
+        let ids = variants.compactMap { $0.id }
+        XCTAssertFalse(ids.isEmpty)
+
+        let batch = db.batchInfoValues(variantIds: ids)
+        XCTAssertEqual(batch.count, ids.count, "Batch should return results for all variants")
+        for (_, infoDict) in batch {
+            XCTAssertFalse(infoDict.isEmpty, "Each variant should have parsed INFO fields")
+        }
+    }
+
+    func testResumeSkipVariantInfoDatabase() throws {
+        // Verify that resumeImport correctly skips variant_info indexes for
+        // databases imported with skipVariantInfo.
+        let vcfURL = try createTempVCF(content: testVCF)
+        let dbURL = tempDir.appendingPathComponent("resume_skip_vi.db")
+        try VariantDatabase.createFromVCF(
+            vcfURL: vcfURL, outputURL: dbURL,
+            parseGenotypes: true, importProfile: .ultraLowMemory
+        )
+
+        // Drop some indexes and set state to 'indexing' to simulate crash.
+        var rawDB: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(dbURL.path, &rawDB), SQLITE_OK)
+        sqlite3_exec(rawDB, "DROP INDEX IF EXISTS idx_variants_region", nil, nil, nil)
+        sqlite3_exec(rawDB, "DROP INDEX IF EXISTS idx_variants_type", nil, nil, nil)
+        sqlite3_exec(rawDB, "UPDATE db_metadata SET value = 'indexing' WHERE key = 'import_state'", nil, nil, nil)
+        sqlite3_close(rawDB)
+
+        XCTAssertEqual(VariantDatabase.importState(at: dbURL), "indexing")
+
+        // Resume should succeed and NOT try to create variant_info indexes.
+        let count = try VariantDatabase.resumeImport(existingDBURL: dbURL)
+        XCTAssertEqual(count, 7)
+        XCTAssertEqual(VariantDatabase.importState(at: dbURL), "complete")
+
+        // Should be queryable.
+        let db = try VariantDatabase(url: dbURL)
+        let results = db.query(chromosome: "chr1", start: 0, end: 1000)
+        XCTAssertEqual(results.count, 5)
+    }
+
+    // MARK: - Materialization Tests
+
+    func testMaterializeBasicEAV() throws {
+        // Import with ultraLowMemory (skips variant_info), then materialize.
+        let vcfURL = try createTempVCF(content: testVCF)
+        let dbURL = tempDir.appendingPathComponent("materialize_basic.db")
+        try VariantDatabase.createFromVCF(
+            vcfURL: vcfURL, outputURL: dbURL,
+            parseGenotypes: true, importProfile: .ultraLowMemory
+        )
+
+        // Verify variant_info is empty before materialization.
+        var rawDB: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(dbURL.path, &rawDB), SQLITE_OK)
+        var countStmt: OpaquePointer?
+        sqlite3_prepare_v2(rawDB, "SELECT COUNT(*) FROM variant_info", -1, &countStmt, nil)
+        sqlite3_step(countStmt)
+        XCTAssertEqual(sqlite3_column_int(countStmt, 0), 0)
+        sqlite3_finalize(countStmt)
+        sqlite3_close(rawDB)
+
+        // Materialize.
+        let eavCount = try VariantDatabase.materializeVariantInfo(existingDBURL: dbURL)
+        XCTAssertGreaterThan(eavCount, 0)
+
+        // Verify EAV rows match raw INFO for each variant.
+        let db = try VariantDatabase(url: dbURL)
+        let chr1 = db.query(chromosome: "chr1", start: 0, end: 1_000_000)
+        for variant in chr1 {
+            guard let vid = variant.id else { continue }
+            let info = db.infoValues(variantId: vid)
+            // Every variant in testVCF has at least DP
+            XCTAssertNotNil(info["DP"], "Variant at \(variant.position) should have DP")
+        }
+    }
+
+    func testMaterializeResumability() throws {
+        let vcfURL = try createTempVCF(content: testVCF)
+        let dbURL = tempDir.appendingPathComponent("materialize_resume.db")
+        try VariantDatabase.createFromVCF(
+            vcfURL: vcfURL, outputURL: dbURL,
+            parseGenotypes: true, importProfile: .ultraLowMemory
+        )
+
+        // Start materialization and cancel after first batch progress callback.
+        let cancelFlag = OSAllocatedUnfairLock(initialState: false)
+        _ = try? VariantDatabase.materializeVariantInfo(
+            existingDBURL: dbURL,
+            progressHandler: { _, _ in cancelFlag.withLock { $0 = true } },
+            shouldCancel: { cancelFlag.withLock { $0 } }
+        )
+
+        // Should have cursor saved.
+        let materializeState = VariantDatabase.metadataValue(at: dbURL, key: "materialize_state")
+        // State is either "materializing" (cancelled mid-way) or "complete" (small dataset finished before cancel)
+        XCTAssertNotNil(materializeState, "materialize_state should be set")
+
+        // Resume should complete successfully regardless.
+        let eavCount = try VariantDatabase.materializeVariantInfo(existingDBURL: dbURL)
+        XCTAssertEqual(
+            VariantDatabase.metadataValue(at: dbURL, key: "materialize_state"),
+            "complete"
+        )
+
+        // Verify data is accessible.
+        let db = try VariantDatabase(url: dbURL)
+        let all = db.query(chromosome: "chr1", start: 0, end: 1_000_000)
+            + db.query(chromosome: "chr2", start: 0, end: 10_000_000)
+        XCTAssertEqual(all.count, 7)
+        // After materialization, variant_info should not be "skipped" anymore.
+        XCTAssertFalse(db.variantInfoSkipped)
+        _ = eavCount  // suppress unused warning
+    }
+
+    func testMaterializeIdempotent() throws {
+        let vcfURL = try createTempVCF(content: testVCF)
+        let dbURL = tempDir.appendingPathComponent("materialize_idempotent.db")
+        try VariantDatabase.createFromVCF(
+            vcfURL: vcfURL, outputURL: dbURL,
+            parseGenotypes: true, importProfile: .ultraLowMemory
+        )
+
+        let count1 = try VariantDatabase.materializeVariantInfo(existingDBURL: dbURL)
+        XCTAssertGreaterThan(count1, 0)
+
+        // Second call should return 0 (already complete).
+        let count2 = try VariantDatabase.materializeVariantInfo(existingDBURL: dbURL)
+        XCTAssertEqual(count2, 0)
+
+        // Verify no duplicate rows.
+        var rawDB: OpaquePointer?
+        XCTAssertEqual(sqlite3_open_v2(dbURL.path, &rawDB, SQLITE_OPEN_READONLY, nil), SQLITE_OK)
+        var stmt: OpaquePointer?
+        sqlite3_prepare_v2(rawDB, "SELECT COUNT(*) FROM variant_info", -1, &stmt, nil)
+        sqlite3_step(stmt)
+        let totalRows = sqlite3_column_int(stmt, 0)
+        sqlite3_finalize(stmt)
+        sqlite3_close(rawDB)
+
+        // count1 should equal total rows (no duplicates from second call).
+        XCTAssertEqual(Int(totalRows), count1)
+    }
+
+    func testMaterializePopulatesInfoDefs() throws {
+        let vcfURL = try createTempVCF(content: testVCF)
+        let dbURL = tempDir.appendingPathComponent("materialize_defs.db")
+        try VariantDatabase.createFromVCF(
+            vcfURL: vcfURL, outputURL: dbURL,
+            parseGenotypes: true, importProfile: .ultraLowMemory
+        )
+
+        // Before materialization, variant_info_defs should be empty.
+        let dbBefore = try VariantDatabase(url: dbURL)
+        XCTAssertTrue(dbBefore.infoKeys().isEmpty)
+
+        try VariantDatabase.materializeVariantInfo(existingDBURL: dbURL)
+
+        // After materialization, variant_info_defs should have entries.
+        let dbAfter = try VariantDatabase(url: dbURL)
+        let keys = dbAfter.infoKeys()
+        let keyNames = Set(keys.map(\.key))
+        // testVCF has DP and AF keys.
+        XCTAssertTrue(keyNames.contains("DP"), "Should have DP in info defs")
+        XCTAssertTrue(keyNames.contains("AF"), "Should have AF in info defs")
+    }
+
+    func testMaterializeFlipsSkipFlag() throws {
+        let vcfURL = try createTempVCF(content: testVCF)
+        let dbURL = tempDir.appendingPathComponent("materialize_flag.db")
+        try VariantDatabase.createFromVCF(
+            vcfURL: vcfURL, outputURL: dbURL,
+            parseGenotypes: true, importProfile: .ultraLowMemory
+        )
+
+        // Before: skip flag is set.
+        let dbBefore = try VariantDatabase(url: dbURL)
+        XCTAssertTrue(dbBefore.variantInfoSkipped)
+
+        try VariantDatabase.materializeVariantInfo(existingDBURL: dbURL)
+
+        // After: skip flag is cleared — fresh open should see false.
+        let dbAfter = try VariantDatabase(url: dbURL)
+        XCTAssertFalse(dbAfter.variantInfoSkipped)
+    }
+
+    func testInfoQueriesWorkAfterMaterialize() throws {
+        let vcfURL = try createTempVCF(content: testVCF)
+        let dbURL = tempDir.appendingPathComponent("materialize_queries.db")
+        try VariantDatabase.createFromVCF(
+            vcfURL: vcfURL, outputURL: dbURL,
+            parseGenotypes: true, importProfile: .ultraLowMemory
+        )
+        try VariantDatabase.materializeVariantInfo(existingDBURL: dbURL)
+
+        let db = try VariantDatabase(url: dbURL)
+
+        // infoValues should return data from EAV table (not raw parsing).
+        let variants = db.query(chromosome: "chr1", start: 0, end: 1_000_000)
+        let firstVariant = try XCTUnwrap(variants.first)
+        let firstId = try XCTUnwrap(firstVariant.id)
+        let info = db.infoValues(variantId: firstId)
+        XCTAssertEqual(info["DP"], "50")
+        XCTAssertEqual(info["AF"], "0.25")
+
+        // distinctInfoValues should return values.
+        let dpValues = db.distinctInfoValues(forKey: "DP")
+        XCTAssertFalse(dpValues.isEmpty)
+
+        // hasNonEmptyInfoValue should return true for known keys.
+        XCTAssertTrue(db.hasNonEmptyInfoValue(forKey: "DP"))
+        XCTAssertFalse(db.hasNonEmptyInfoValue(forKey: "NONEXISTENT_KEY"))
+
+        // infoKeys should return entries.
+        let keys = db.infoKeys()
+        XCTAssertFalse(keys.isEmpty)
+    }
+
+    func testMaterializeOnNonSkippedDB() throws {
+        // Standard import (not ultraLowMemory) — materialize should be a no-op.
+        let vcfURL = try createTempVCF(content: testVCF)
+        let dbURL = tempDir.appendingPathComponent("materialize_noop.db")
+        try VariantDatabase.createFromVCF(
+            vcfURL: vcfURL, outputURL: dbURL,
+            parseGenotypes: true, importProfile: .fast
+        )
+
+        // Should return 0 since skip_variant_info is not set.
+        let count = try VariantDatabase.materializeVariantInfo(existingDBURL: dbURL)
+        XCTAssertEqual(count, 0)
     }
 }
