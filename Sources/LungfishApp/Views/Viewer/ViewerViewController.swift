@@ -40,6 +40,63 @@ final class QuickLookItem: NSObject, QLPreviewItem {
 /// Logger for viewer operations
 private let logger = Logger(subsystem: "com.lungfish.browser", category: "ViewerViewController")
 
+/// Canonicalizes chromosome labels for loose matching (e.g. `chr1` == `1`, `NC_000001.11` == `NC_000001`).
+func canonicalVariantChromosomeLookupKey(_ name: String) -> String {
+    var value = name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    if value.hasPrefix("chr") {
+        value = String(value.dropFirst(3))
+    }
+    if let dot = value.firstIndex(of: ".") {
+        value = String(value[..<dot])
+    }
+    return value
+}
+
+/// Resolves the ordered list of chromosome query candidates for a track database.
+///
+/// Order is:
+/// 1) Requested chromosome (exact) when present in the database
+/// 2) Alias-map forward/reverse matches
+/// 3) Canonicalized fallback matches
+/// 4) Requested chromosome as final fallback (for legacy databases with unknown chromosome sets)
+func resolveVariantChromosomeCandidates(
+    requestedChromosome: String,
+    availableChromosomes: Set<String>,
+    aliasMap: [String: String]
+) -> [String] {
+    if availableChromosomes.isEmpty {
+        return [requestedChromosome]
+    }
+
+    var ordered: [String] = []
+    if availableChromosomes.contains(requestedChromosome) {
+        ordered.append(requestedChromosome)
+    }
+
+    if let aliased = aliasMap[requestedChromosome], availableChromosomes.contains(aliased) {
+        ordered.append(aliased)
+    }
+
+    for (refName, vcfName) in aliasMap where vcfName == requestedChromosome {
+        if availableChromosomes.contains(refName) {
+            ordered.append(refName)
+        }
+    }
+
+    let canonical = canonicalVariantChromosomeLookupKey(requestedChromosome)
+    for candidate in availableChromosomes {
+        if canonicalVariantChromosomeLookupKey(candidate) == canonical {
+            ordered.append(candidate)
+        }
+    }
+
+    if ordered.isEmpty {
+        ordered.append(requestedChromosome)
+    }
+
+    return Array(NSOrderedSet(array: ordered)) as? [String] ?? ordered
+}
+
 // MARK: - Base Colors (IGV Standard)
 
 /// Standard IGV-like base colors for DNA visualization
@@ -2542,6 +2599,8 @@ public class SequenceViewerView: NSView {
     /// Built at bundle load time by matching chromosome lengths when names differ.
     /// Empty if all names match or no variant tracks are loaded.
     private var variantChromosomeAliasMap: [String: String] = [:]
+    /// Cached per-track chromosome name sets from variant databases.
+    private var variantTrackChromosomeMap: [String: Set<String>] = [:]
 
     /// Maps reference chromosome names to BAM/CRAM chromosome names.
     /// Built at bundle load time from AlignmentMetadataDatabase chromosome_stats.
@@ -3111,9 +3170,11 @@ public class SequenceViewerView: NSView {
         self.readScrollOffset = 0
         self.readContentHeight = 0
 
-        // Cache sample count and build chromosome alias map from variant databases
+        // Cache sample count and build a fast chromosome alias map from variant databases.
+        // Skip expensive MAX(position) scans on the main thread; those are warmed asynchronously.
         self.cachedSampleCount = 0
         self.variantChromosomeAliasMap = [:]
+        self.variantTrackChromosomeMap = [:]
         for trackId in bundle.variantTrackIds {
             if let trackInfo = bundle.variantTrack(id: trackId),
                let dbPath = trackInfo.databasePath {
@@ -3121,26 +3182,43 @@ public class SequenceViewerView: NSView {
                 if let db = try? VariantDatabase(url: dbURL) {
                     let count = db.sampleCount()
                     if count > 0 {
-                        self.cachedSampleCount = count
+                        self.cachedSampleCount = max(self.cachedSampleCount, count)
                         logger.info("SequenceViewerView.setReferenceBundle: Found \(count) samples in variant track '\(trackId, privacy: .public)'")
                     }
 
-                    // Build chromosome alias map by matching lengths
-                    if self.variantChromosomeAliasMap.isEmpty {
-                        let aliasMap = Self.buildVariantChromosomeAliasMap(
-                            bundleChromosomes: bundle.manifest.genome.chromosomes,
-                            variantDB: db,
-                            logger: logger
-                        )
-                        self.variantChromosomeAliasMap = aliasMap
-                        // Share alias map with the annotation drawer for gene-based queries.
-                        if let vc = self.viewController {
-                            vc.annotationDrawerView?.variantChromosomeAliasMap = aliasMap
+                    let trackChromosomes = Set(db.allChromosomes())
+                    self.variantTrackChromosomeMap[trackId] = trackChromosomes
+
+                    // Fast path: name/alias/contig-length matching only.
+                    let aliasMap = Self.buildVariantChromosomeAliasMap(
+                        bundleChromosomes: bundle.manifest.genome.chromosomes,
+                        variantDB: db,
+                        logger: logger,
+                        includeMaxPositionFallback: false
+                    )
+                    if !aliasMap.isEmpty {
+                        for (refChrom, dbChrom) in aliasMap where self.variantChromosomeAliasMap[refChrom] == nil {
+                            self.variantChromosomeAliasMap[refChrom] = dbChrom
                         }
                     }
-
-                    if self.cachedSampleCount > 0 { break }
                 }
+            }
+        }
+        if let vc = self.viewController {
+            vc.annotationDrawerView?.variantChromosomeAliasMap = self.variantChromosomeAliasMap
+        }
+
+        // Warm expensive length-from-positions alias inference in the background so bundle
+        // selection returns immediately even for very large variant databases.
+        Self.warmVariantChromosomeAliasesAsync(
+            bundle: bundle,
+            initialAliasMap: self.variantChromosomeAliasMap
+        ) { [weak self] mergedAliasMap in
+            guard let self else { return }
+            guard self.currentReferenceBundle?.url.standardizedFileURL == bundle.url.standardizedFileURL else { return }
+            self.variantChromosomeAliasMap = mergedAliasMap
+            if let vc = self.viewController {
+                vc.annotationDrawerView?.variantChromosomeAliasMap = mergedAliasMap
             }
         }
 
@@ -3245,6 +3323,7 @@ public class SequenceViewerView: NSView {
         self.consensusFetchGeneration = 0
         self.cachedSampleCount = 0
         self.variantChromosomeAliasMap = [:]
+        self.variantTrackChromosomeMap = [:]
         self.alignmentChromosomeAliasMap = [:]
         self.sequenceFetchStartTime = nil
         self.annotationFetchStartTime = nil
@@ -3954,10 +4033,11 @@ public class SequenceViewerView: NSView {
     /// this method matches chromosomes by comparing reference lengths to variant
     /// database max positions. A VCF chromosome matches a reference chromosome
     /// if its max variant position is within 1% of the reference length.
-    private static func buildVariantChromosomeAliasMap(
+    nonisolated private static func buildVariantChromosomeAliasMap(
         bundleChromosomes: [ChromosomeInfo],
         variantDB: VariantDatabase,
-        logger: Logger
+        logger: Logger,
+        includeMaxPositionFallback: Bool = true
     ) -> [String: String] {
         let vcfChroms = Set(variantDB.allChromosomes())
         let refChromNames = Set(bundleChromosomes.map(\.name))
@@ -3981,13 +4061,13 @@ public class SequenceViewerView: NSView {
             }
         }
 
-        // Strategy 2: Length-based matching for any remaining unmatched chromosomes
-        // Uses VCF ##contig header lengths or MAX(end_pos) as fallback
+        // Strategy 2: Length-based matching for any remaining unmatched chromosomes.
+        // Uses VCF ##contig header lengths and optionally MAX(end_pos) as fallback.
         let afterNameMatching = unmatched.subtracting(usedVCFChroms)
         if !afterNameMatching.isEmpty {
             let vcfContigLengths = variantDB.contigLengths()
             let vcfMaxPositions: [String: Int]
-            if vcfContigLengths.isEmpty {
+            if includeMaxPositionFallback && vcfContigLengths.isEmpty {
                 vcfMaxPositions = variantDB.chromosomeMaxPositions()
             } else {
                 vcfMaxPositions = [:]
@@ -4041,10 +4121,54 @@ public class SequenceViewerView: NSView {
         if !aliasMap.isEmpty {
             let nameMatchCount = nameMap.count
             let lengthMatchCount = aliasMap.count - nameMatchCount
-            logger.info("buildVariantChromosomeAliasMap: Built \(aliasMap.count) chromosome aliases (\(nameMatchCount) name-based, \(lengthMatchCount) length-based) (e.g., \(aliasMap.first?.key ?? "") → \(aliasMap.first?.value ?? ""))")
+            let mode = includeMaxPositionFallback ? "full" : "fast"
+            logger.info("buildVariantChromosomeAliasMap[\(mode, privacy: .public)]: Built \(aliasMap.count) chromosome aliases (\(nameMatchCount) name-based, \(lengthMatchCount) length-based) (e.g., \(aliasMap.first?.key ?? "") → \(aliasMap.first?.value ?? ""))")
         }
 
         return aliasMap
+    }
+
+    nonisolated private static let variantAliasWarmupQueue = DispatchQueue(
+        label: "com.lungfish.variantAliasWarmup",
+        qos: .utility
+    )
+
+    /// Computes expensive variant chromosome aliases off the main thread and merges them with fast aliases.
+    nonisolated private static func warmVariantChromosomeAliasesAsync(
+        bundle: ReferenceBundle,
+        initialAliasMap: [String: String],
+        onComplete: @escaping @MainActor @Sendable ([String: String]) -> Void
+    ) {
+        guard !bundle.variantTrackIds.isEmpty else { return }
+        let bundleChromosomes = bundle.manifest.genome.chromosomes
+        let initial = initialAliasMap
+
+        variantAliasWarmupQueue.async {
+            var merged = initial
+            for trackId in bundle.variantTrackIds {
+                guard let trackInfo = bundle.variantTrack(id: trackId),
+                      let dbPath = trackInfo.databasePath else { continue }
+                let dbURL = bundle.url.appendingPathComponent(dbPath)
+                guard let db = try? VariantDatabase(url: dbURL) else { continue }
+
+                let aliasMap = Self.buildVariantChromosomeAliasMap(
+                    bundleChromosomes: bundleChromosomes,
+                    variantDB: db,
+                    logger: logger,
+                    includeMaxPositionFallback: true
+                )
+                for (refChrom, dbChrom) in aliasMap where merged[refChrom] == nil {
+                    merged[refChrom] = dbChrom
+                }
+            }
+
+            guard merged != initial else { return }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    onComplete(merged)
+                }
+            }
+        }
     }
 
     /// Translates a reference chromosome name to the variant DB chromosome name.
@@ -4163,20 +4287,59 @@ public class SequenceViewerView: NSView {
         let expandedEnd = min(Int(chromLength), region.end + expandAmount)
         let expandedRegion = GenomicRegion(chromosome: region.chromosome, start: expandedStart, end: expandedEnd)
 
-        // Translate chromosome name for variant DB query (e.g., NC_041760.1 → 7)
-        let queryChrom = variantDBChromosomeName(for: region.chromosome)
-        let queryRegion = (queryChrom != region.chromosome)
-            ? GenomicRegion(chromosome: queryChrom, start: expandedStart, end: expandedEnd)
-            : expandedRegion
+        let aliasMapSnapshot = variantChromosomeAliasMap
+        let trackChromosomeMapSnapshot = variantTrackChromosomeMap
 
-        logger.info("fetchVariantsAsync: gen=\(thisGeneration), Fetching variants for \(expandedRegion.description) (query chrom: \(queryChrom))")
+        logger.info("fetchVariantsAsync: gen=\(thisGeneration), Fetching variants for \(expandedRegion.description)")
 
         Self.variantFetchQueue.async { [weak self] in
             var allVariantAnnotations: [SequenceAnnotation] = []
             for trackId in variantTrackIds {
+                guard let trackInfo = bundle.variantTrack(id: trackId),
+                      let dbPath = trackInfo.databasePath else { continue }
+                let dbURL = bundle.url.appendingPathComponent(dbPath)
+                guard FileManager.default.fileExists(atPath: dbURL.path) else { continue }
+
                 do {
-                    let annotations = try bundle.getVariantAnnotations(trackId: trackId, region: queryRegion)
-                    allVariantAnnotations.append(contentsOf: annotations)
+                    let db = try VariantDatabase(url: dbURL)
+                    let availableChromosomes = trackChromosomeMapSnapshot[trackId] ?? Set(db.allChromosomes())
+                    let queryChromosomes = resolveVariantChromosomeCandidates(
+                        requestedChromosome: region.chromosome,
+                        availableChromosomes: availableChromosomes,
+                        aliasMap: aliasMapSnapshot
+                    )
+
+                    var records: [VariantDatabaseRecord] = []
+                    var resolvedChromosome = region.chromosome
+                    for queryChrom in queryChromosomes {
+                        let queried = db.query(
+                            chromosome: queryChrom,
+                            start: expandedStart,
+                            end: expandedEnd
+                        )
+                        if !queried.isEmpty {
+                            records = queried
+                            resolvedChromosome = queryChrom
+                            break
+                        }
+                    }
+
+                    if resolvedChromosome != region.chromosome {
+                        logger.info(
+                            "fetchVariantsAsync: Track \(trackId, privacy: .public) resolved chromosome '\(region.chromosome, privacy: .public)' -> '\(resolvedChromosome, privacy: .public)'"
+                        )
+                    }
+
+                    if !records.isEmpty {
+                        let annotations = records.map { record -> SequenceAnnotation in
+                            var annotation = record.toAnnotation()
+                            // Keep rendering coordinates in the active reference chromosome namespace.
+                            annotation.chromosome = region.chromosome
+                            annotation.qualifiers["variant_track_id"] = AnnotationQualifier(trackId)
+                            return annotation
+                        }
+                        allVariantAnnotations.append(contentsOf: annotations)
+                    }
                 } catch {
                     logger.error("fetchVariantsAsync: Failed to fetch variants for track \(trackId): \(error.localizedDescription)")
                 }
@@ -4204,14 +4367,13 @@ public class SequenceViewerView: NSView {
                 logger.info("fetchVariantsAsync: Cached \(count) variant annotations in \(elapsed, format: .fixed(precision: 3))s")
                 viewer.setNeedsDisplay(viewer.bounds)
 
-                // Notify variant table drawer of updated viewport variants
-                // Use the VCF chromosome name so the table can query the variant DB directly
-                let vcfChrom = viewer.variantDBChromosomeName(for: region.chromosome)
+                // Notify variant table drawer of updated viewport variants.
+                // Send the reference chromosome label; drawer-side query logic resolves DB aliases.
                 NotificationCenter.default.post(
                     name: .viewportVariantsUpdated,
                     object: viewer,
                     userInfo: [
-                        NotificationUserInfoKey.chromosome: vcfChrom,
+                        NotificationUserInfoKey.chromosome: region.chromosome,
                         NotificationUserInfoKey.start: region.start,
                         NotificationUserInfoKey.end: region.end,
                         "variantCount": count,
@@ -4668,13 +4830,13 @@ public class SequenceViewerView: NSView {
         let expandedRegion = GenomicRegion(chromosome: region.chromosome, start: expandedStart, end: expandedEnd)
         let displayState = sampleDisplayState
 
-        // Translate chromosome name for variant DB query
-        let queryChrom = variantDBChromosomeName(for: region.chromosome)
+        let aliasMapSnapshot = variantChromosomeAliasMap
+        let trackChromosomeMapSnapshot = variantTrackChromosomeMap
 
         // Capture bundle URL and track info for background thread
         let bundleURL = bundle.url
 
-        logger.info("fetchGenotypesAsync: gen=\(thisGeneration), Fetching genotypes for \(expandedRegion.description) (query chrom: \(queryChrom))")
+        logger.info("fetchGenotypesAsync: gen=\(thisGeneration), Fetching genotypes for \(expandedRegion.description)")
 
         Self.genotypeFetchQueue.async { [weak self] in
             var allSites: [VariantSite] = []
@@ -4700,12 +4862,34 @@ public class SequenceViewerView: NSView {
                         merged.merge(entry.metadata) { current, _ in current }
                         sampleMetadata[entry.name] = merged
                     }
-                    let regionData = db.genotypesInRegion(
-                        chromosome: queryChrom,
-                        start: expandedRegion.start,
-                        end: expandedRegion.end,
-                        limit: 5_000  // Cap for performance
+
+                    let availableChromosomes = trackChromosomeMapSnapshot[trackId] ?? Set(db.allChromosomes())
+                    let queryChromosomes = resolveVariantChromosomeCandidates(
+                        requestedChromosome: region.chromosome,
+                        availableChromosomes: availableChromosomes,
+                        aliasMap: aliasMapSnapshot
                     )
+                    var regionData: [(variant: VariantDatabaseRecord, genotypes: [GenotypeRecord])] = []
+                    var resolvedChromosome = region.chromosome
+                    for queryChrom in queryChromosomes {
+                        let queried = db.genotypesInRegion(
+                            chromosome: queryChrom,
+                            start: expandedRegion.start,
+                            end: expandedRegion.end,
+                            limit: 5_000
+                        )
+                        if !queried.isEmpty {
+                            regionData = queried
+                            resolvedChromosome = queryChrom
+                            break
+                        }
+                    }
+                    if resolvedChromosome != region.chromosome {
+                        logger.info(
+                            "fetchGenotypesAsync: Track \(trackId, privacy: .public) resolved chromosome '\(region.chromosome, privacy: .public)' -> '\(resolvedChromosome, privacy: .public)'"
+                        )
+                    }
+
                     for (variant, genotypes) in regionData {
                         var gtMap: [String: GenotypeDisplayCall] = [:]
                         // Hom-ref genotypes are omitted from the DB; pre-fill all samples

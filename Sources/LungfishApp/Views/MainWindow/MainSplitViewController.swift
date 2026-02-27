@@ -907,17 +907,28 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
         logger.info("displayReferenceBundle: Opening '\(url.lastPathComponent, privacy: .public)'")
 
-        do {
-            try viewerController.displayBundle(at: url)
-            logger.info("displayReferenceBundle: Bundle displayed successfully")
-        } catch {
-            logger.error("displayReferenceBundle: Failed - \(error.localizedDescription, privacy: .public)")
-            let alert = NSAlert()
-            alert.messageText = "Failed to Open Reference Bundle"
-            alert.informativeText = error.localizedDescription
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "OK")
-            alert.runModal()
+        activityIndicator.show(
+            message: "Loading \(url.lastPathComponent)...",
+            style: .indeterminate
+        )
+
+        // Defer execution to the next runloop so the loading indicator paints immediately.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            defer { self.activityIndicator.hide() }
+
+            do {
+                try self.viewerController.displayBundle(at: url)
+                logger.info("displayReferenceBundle: Bundle displayed successfully")
+            } catch {
+                logger.error("displayReferenceBundle: Failed - \(error.localizedDescription, privacy: .public)")
+                let alert = NSAlert()
+                alert.messageText = "Failed to Open Reference Bundle"
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            }
         }
     }
 

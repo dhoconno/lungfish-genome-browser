@@ -1056,7 +1056,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
               let refChromosome = userInfo[NotificationUserInfoKey.chromosome] as? String,
               let start = userInfo[NotificationUserInfoKey.start] as? Int,
               let end = userInfo[NotificationUserInfoKey.end] as? Int else { return }
-        let queryChromosome = (userInfo[NotificationUserInfoKey.variantChromosome] as? String) ?? refChromosome
+        let queryChromosome = refChromosome
         let nextRegion = (chromosome: queryChromosome, start: start, end: end)
         viewportRegion = nextRegion
         if hasActiveSearchFilters && viewportSyncEnabled && shouldArmViewportExploration(for: nextRegion) {
@@ -5758,39 +5758,11 @@ private struct VariantQueryContext: @unchecked Sendable {
 
     func resolvedChromosomeCandidates(for chromosome: String, trackId: String) -> [String] {
         let available = trackChromosomes[trackId] ?? []
-        if available.isEmpty || available.contains(chromosome) { return [chromosome] }
-
-        var ordered: [String] = [chromosome]
-
-        // 1) Check the variant chromosome alias map (ref name → VCF name).
-        if let aliased = variantAliasMap[chromosome], available.contains(aliased) {
-            ordered.append(aliased)
-        }
-        // Reverse lookup: if chromosome is a VCF name, find what ref name maps to it.
-        for (refName, vcfName) in variantAliasMap where vcfName == chromosome {
-            if available.contains(refName) {
-                ordered.append(refName)
-            }
-        }
-
-        // 2) Canonical matching fallback.
-        let canonical = canonicalChromosomeName(chromosome)
-        for candidate in available {
-            if canonicalChromosomeName(candidate) == canonical {
-                ordered.append(candidate)
-            }
-        }
-        if ordered.count > 1 {
-            return Array(NSOrderedSet(array: ordered)) as? [String] ?? ordered
-        }
-        return [chromosome]
-    }
-
-    private func canonicalChromosomeName(_ name: String) -> String {
-        var value = name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        if value.hasPrefix("chr") { value = String(value.dropFirst(3)) }
-        if let dot = value.firstIndex(of: ".") { value = String(value[..<dot]) }
-        return value
+        return resolveVariantChromosomeCandidates(
+            requestedChromosome: chromosome,
+            availableChromosomes: available,
+            aliasMap: variantAliasMap
+        )
     }
 
     func variantRecordsToSearchResults(

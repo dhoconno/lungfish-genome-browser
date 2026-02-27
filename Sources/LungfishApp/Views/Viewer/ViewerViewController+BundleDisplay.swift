@@ -79,8 +79,10 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
         view.layoutSubtreeIfNeeded()
         let effectiveWidth = max(800, Int(viewerView.bounds.width))
 
-        // Show loading indicator — Core Animation spinner animates even during synchronous work
+        // Show loading indicator and flush layout before synchronous bundle setup.
         showProgress("Loading genome\u{2026}")
+        view.layoutSubtreeIfNeeded()
+        view.displayIfNeeded()
 
         // Set up the viewer with bundle and apply view state
         viewerView.setReferenceBundle(bundle)
@@ -103,6 +105,7 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
         let sortedChroms = naturalChromosomeSort(manifest.genome.chromosomes)
         guard let firstChrom = sortedChroms.first else {
             bundleLogger.error("displayBundle: No chromosomes in bundle")
+            hideProgress()
             showNoSequenceSelected()
             return
         }
