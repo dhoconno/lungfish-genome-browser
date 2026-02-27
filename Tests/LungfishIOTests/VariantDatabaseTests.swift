@@ -1087,6 +1087,48 @@ final class VariantDatabaseTests: XCTestCase {
         XCTAssertEqual(count, 7)
     }
 
+    func testResumeRejectsInsertingState() throws {
+        let vcfURL = try createTempVCF(content: testVCF)
+        let dbURL = tempDir.appendingPathComponent("inserting.db")
+        try VariantDatabase.createFromVCF(vcfURL: vcfURL, outputURL: dbURL)
+
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(dbURL.path, &db), SQLITE_OK)
+        sqlite3_exec(db, "UPDATE db_metadata SET value = 'inserting' WHERE key = 'import_state'", nil, nil, nil)
+        sqlite3_close(db)
+
+        XCTAssertThrowsError(try VariantDatabase.resumeImport(existingDBURL: dbURL)) { error in
+            guard case VariantDatabaseError.invalidSchema(let message) = error else {
+                XCTFail("Expected invalidSchema, got \(error)")
+                return
+            }
+            XCTAssertTrue(message.contains("inserting"))
+            XCTAssertTrue(message.contains("restart full import"))
+        }
+        XCTAssertEqual(VariantDatabase.importState(at: dbURL), "inserting")
+    }
+
+    func testResumeRejectsMissingImportState() throws {
+        let vcfURL = try createTempVCF(content: testVCF)
+        let dbURL = tempDir.appendingPathComponent("missing_state.db")
+        try VariantDatabase.createFromVCF(vcfURL: vcfURL, outputURL: dbURL)
+
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(dbURL.path, &db), SQLITE_OK)
+        sqlite3_exec(db, "DELETE FROM db_metadata WHERE key = 'import_state'", nil, nil, nil)
+        sqlite3_close(db)
+
+        XCTAssertThrowsError(try VariantDatabase.resumeImport(existingDBURL: dbURL)) { error in
+            guard case VariantDatabaseError.invalidSchema(let message) = error else {
+                XCTFail("Expected invalidSchema, got \(error)")
+                return
+            }
+            XCTAssertTrue(message.contains("missing import_state"))
+            XCTAssertTrue(message.contains("restart full import"))
+        }
+        XCTAssertNil(VariantDatabase.importState(at: dbURL))
+    }
+
     func testMaxVariantInfoKeysPerVariant() throws {
         // VCF with many INFO fields per variant.
         let manyInfoVCF = """

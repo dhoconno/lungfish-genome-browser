@@ -1115,8 +1115,57 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 let dbExists = FileManager.default.fileExists(atPath: dbURL.path)
                 debugLog("performVCFImport: dbExists=\(dbExists), importState=\(detectedImportState ?? "nil"), path=\(dbURL.lastPathComponent)")
 
-                if let importState = detectedImportState, importState != "complete" {
-                    debugLog("performVCFImport: Found incomplete import (state=\(importState)), resuming via helper")
+                func runFreshImport(startedAt: Date) throws -> Int {
+                    if FileManager.default.fileExists(atPath: dbURL.path) {
+                        try FileManager.default.removeItem(at: dbURL)
+                    }
+
+                    debugLog("performVCFImport: Creating variant database at \(dbURL.lastPathComponent) via helper")
+
+                    do {
+                        return try Self.runVCFImportViaHelper(
+                            vcfURL: vcfURL,
+                            outputDBURL: dbURL,
+                            sourceFile: vcfURL.lastPathComponent,
+                            importProfile: selectedImportProfile,
+                            shouldCancel: isCancelled,
+                            progressHandler: { progress, message in
+                                let clampedProgress = max(0.0, min(1.0, progress))
+                                let etaText = Self.estimatedRemainingText(progress: clampedProgress, startedAt: startedAt)
+                                let displayMessage = etaText.isEmpty ? message : "\(message) • \(etaText)"
+                                scheduleOnMainRunLoop {
+                                    OperationCenter.shared.update(id: opID, progress: clampedProgress, detail: displayMessage)
+                                }
+                            }
+                        )
+                    } catch {
+                        // If helper failed during indexing, inserts are complete and only
+                        // index creation needs recovery in a fresh process.
+                        if let importState = VariantDatabase.importState(at: dbURL),
+                           importState == "indexing" {
+                            debugLog("performVCFImport: Helper failed during indexing, auto-resuming index creation...")
+                            let resumeStartedAt = Date()
+                            let resumedCount = try Self.runVCFResumeViaHelper(
+                                outputDBURL: dbURL,
+                                shouldCancel: isCancelled,
+                                progressHandler: { progress, message in
+                                    let clampedProgress = max(0.0, min(1.0, progress))
+                                    let etaText = Self.estimatedRemainingText(progress: clampedProgress, startedAt: resumeStartedAt)
+                                    let displayMessage = etaText.isEmpty ? message : "\(message) • \(etaText)"
+                                    scheduleOnMainRunLoop {
+                                        OperationCenter.shared.update(id: opID, progress: clampedProgress, detail: displayMessage)
+                                    }
+                                }
+                            )
+                            debugLog("performVCFImport: Auto-resume complete with \(resumedCount) variants")
+                            return resumedCount
+                        }
+                        throw error
+                    }
+                }
+
+                if detectedImportState == "indexing" {
+                    debugLog("performVCFImport: Found interrupted indexing phase, resuming via helper")
                     variantCount = try Self.runVCFResumeViaHelper(
                         outputDBURL: dbURL,
                         shouldCancel: isCancelled,
@@ -1129,6 +1178,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                             }
                         }
                     )
+                } else if detectedImportState == "inserting" {
+                    // Partial row ingest cannot be resumed safely without replaying the VCF.
+                    debugLog("performVCFImport: Found interrupted inserting phase, restarting full import from source VCF")
+                    variantCount = try runFreshImport(startedAt: importStartedAt)
                 } else if VariantDatabase.metadataValue(at: dbURL, key: "materialize_state") == "materializing" {
                     // Import is complete but materialization was interrupted — resume it.
                     debugLog("performVCFImport: Found incomplete materialization, resuming via helper")
@@ -1152,71 +1205,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 } else if dbExists, detectedImportState == nil,
                           VariantDatabase.hasVariantsTable(at: dbURL) {
                     // DB file exists with a variants table but import_state is unreadable
-                    // (likely corrupted metadata from a crash with journal_mode=OFF).
-                    // Attempt to resume rather than discard tens of GB of imported data.
-                    debugLog("performVCFImport: DB exists with variants table but no readable import_state — attempting resume")
-                    variantCount = try Self.runVCFResumeViaHelper(
-                        outputDBURL: dbURL,
-                        shouldCancel: isCancelled,
-                        progressHandler: { progress, message in
-                            let clampedProgress = max(0.0, min(1.0, progress))
-                            let etaText = Self.estimatedRemainingText(progress: clampedProgress, startedAt: importStartedAt)
-                            let displayMessage = etaText.isEmpty ? message : "\(message) • \(etaText)"
-                            scheduleOnMainRunLoop {
-                                OperationCenter.shared.update(id: opID, progress: clampedProgress, detail: displayMessage)
-                            }
-                        }
-                    )
+                    // (likely corrupted metadata from a crash). We cannot prove inserts
+                    // completed, so rebuild from source VCF.
+                    debugLog("performVCFImport: DB has variants table but missing import_state, restarting full import from source VCF")
+                    variantCount = try runFreshImport(startedAt: importStartedAt)
                 } else {
-                    // Remove existing database if re-importing a complete one
-                    if dbExists {
-                        try FileManager.default.removeItem(at: dbURL)
-                    }
-
-                    debugLog("performVCFImport: Creating variant database at \(dbURL.lastPathComponent) via helper")
-
-                    do {
-                        variantCount = try Self.runVCFImportViaHelper(
-                            vcfURL: vcfURL,
-                            outputDBURL: dbURL,
-                            sourceFile: vcfURL.lastPathComponent,
-                            importProfile: selectedImportProfile,
-                            shouldCancel: isCancelled,
-                            progressHandler: { progress, message in
-                                let clampedProgress = max(0.0, min(1.0, progress))
-                                let etaText = Self.estimatedRemainingText(progress: clampedProgress, startedAt: importStartedAt)
-                                let displayMessage = etaText.isEmpty ? message : "\(message) • \(etaText)"
-                                scheduleOnMainRunLoop {
-                                    OperationCenter.shared.update(id: opID, progress: clampedProgress, detail: displayMessage)
-                                }
-                            }
-                        )
-                    } catch {
-                        // If the helper crashed during the indexing phase (e.g. OOM killed),
-                        // the variant data is intact but indexes are missing.  Automatically
-                        // resume in a fresh helper process with conservative memory settings
-                        // instead of requiring the user to re-import manually.
-                        if let importState = VariantDatabase.importState(at: dbURL),
-                           importState == "indexing" || importState == "inserting" {
-                            debugLog("performVCFImport: Helper failed during '\(importState)' phase, auto-resuming index creation...")
-                            let resumeStartedAt = Date()
-                            variantCount = try Self.runVCFResumeViaHelper(
-                                outputDBURL: dbURL,
-                                shouldCancel: isCancelled,
-                                progressHandler: { progress, message in
-                                    let clampedProgress = max(0.0, min(1.0, progress))
-                                    let etaText = Self.estimatedRemainingText(progress: clampedProgress, startedAt: resumeStartedAt)
-                                    let displayMessage = etaText.isEmpty ? message : "\(message) • \(etaText)"
-                                    scheduleOnMainRunLoop {
-                                        OperationCenter.shared.update(id: opID, progress: clampedProgress, detail: displayMessage)
-                                    }
-                                }
-                            )
-                            debugLog("performVCFImport: Auto-resume complete with \(variantCount) variants")
-                        } else {
-                            throw error
-                        }
-                    }
+                    variantCount = try runFreshImport(startedAt: importStartedAt)
                 }
 
                 debugLog("performVCFImport: Created database with \(variantCount) variants")

@@ -3657,20 +3657,23 @@ public final class VariantDatabase: @unchecked Sendable {
         defer { sqlite3_close(db) }
 
         let state = readMetadataValue(db, key: "import_state")
-        guard state == "inserting" || state == "indexing" || state == nil else {
-            if state == "complete" {
-                let count = Int(readMetadataValue(db, key: "import_variant_count") ?? "0") ?? 0
-                return count
+        guard state == "indexing" else {
+            switch state {
+            case "complete":
+                return currentVariantCount(db)
+            case "inserting":
+                // At this stage we cannot know whether all variant rows were inserted.
+                // Resuming by only building indexes can silently produce truncated DBs.
+                throw VariantDatabaseError.invalidSchema(
+                    "Cannot resume while import_state is 'inserting'; restart full import from source VCF"
+                )
+            case nil:
+                throw VariantDatabaseError.invalidSchema(
+                    "Cannot resume with missing import_state metadata; restart full import from source VCF"
+                )
+            default:
+                throw VariantDatabaseError.invalidSchema("Cannot resume: import_state is '\(state ?? "nil")'")
             }
-            throw VariantDatabaseError.invalidSchema("Cannot resume: import_state is '\(state ?? "nil")'")
-        }
-
-        // If import_state is nil (e.g. corrupted metadata from a crash with journal_mode=OFF),
-        // try to fix the metadata table so we can mark completion when done.
-        if state == nil {
-            variantDBLogger.info("resumeImport: import_state is nil — metadata may be corrupted, attempting recovery")
-            sqlite3_exec(db, "CREATE TABLE IF NOT EXISTS db_metadata (key TEXT PRIMARY KEY, value TEXT)", nil, nil, nil)
-            sqlite3_exec(db, "INSERT OR REPLACE INTO db_metadata VALUES ('import_state', 'indexing')", nil, nil, nil)
         }
 
         variantDBLogger.info("resumeImport: Resuming from state '\(state ?? "nil")', building missing indexes")
@@ -3695,8 +3698,7 @@ public final class VariantDatabase: @unchecked Sendable {
         if neededIndexes.isEmpty {
             variantDBLogger.info("resumeImport: All indexes already exist")
             sqlite3_exec(db, "UPDATE db_metadata SET value = 'complete' WHERE key = 'import_state'", nil, nil, nil)
-            let count = Int(readMetadataValue(db, key: "import_variant_count") ?? "0") ?? 0
-            return count
+            return currentVariantCount(db)
         }
 
         for (i, (name, sql)) in neededIndexes.enumerated() {
@@ -3718,10 +3720,25 @@ public final class VariantDatabase: @unchecked Sendable {
         }
 
         sqlite3_exec(db, "UPDATE db_metadata SET value = 'complete' WHERE key = 'import_state'", nil, nil, nil)
-        let count = Int(readMetadataValue(db, key: "import_variant_count") ?? "0") ?? 0
+        let count = currentVariantCount(db)
         progressHandler?(1.0, "Resume complete (\(count) variants)")
         variantDBLogger.info("resumeImport: Complete, \(count) variants")
         return count
+    }
+
+    private static func currentVariantCount(_ db: OpaquePointer) -> Int {
+        if let metadataCount = readMetadataValue(db, key: "import_variant_count"),
+           let parsed = Int(metadataCount),
+           parsed >= 0 {
+            return parsed
+        }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM variants", -1, &stmt, nil) == SQLITE_OK else {
+            return 0
+        }
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
+        return Int(sqlite3_column_int64(stmt, 0))
     }
 
     private static func readMetadataValue(_ db: OpaquePointer, key: String) -> String? {
