@@ -73,7 +73,8 @@ public enum VCFImportHelper {
                     ))
                 },
                 shouldCancel: nil,
-                importProfile: requestedProfile
+                importProfile: requestedProfile,
+                deferIndexBuild: true
             )
 
             emit(Event(

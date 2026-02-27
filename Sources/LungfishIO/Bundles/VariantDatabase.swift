@@ -303,8 +303,15 @@ public final class VariantDatabase: @unchecked Sendable {
         let cacheKB: Int
         let pageSizeKB: Int
         let writeBudget: Int
+        let minWriteBudget: Int
         let shrinkEveryCommits: Int
         let shrinkEveryCommit: Bool
+        /// Number of inserted variants between memory-pressure probes.
+        let memoryProbeVariantInterval: Int
+        /// Trigger forced COMMIT+shrink when resident set exceeds this fraction of RAM.
+        let memoryPressureThresholdFraction: Double
+        /// Return threshold for expanding the adaptive write budget again.
+        let memoryPressureRelaxFraction: Double
         /// When true, create indexes on empty tables before inserts begin so they are
         /// maintained incrementally.  This avoids the multi-GB sort required by bulk
         /// CREATE INDEX on tables with billions of rows.
@@ -2647,8 +2654,12 @@ public final class VariantDatabase: @unchecked Sendable {
                 cacheKB: 4 * 1024,
                 pageSizeKB: 4,
                 writeBudget: 8_000,
+                minWriteBudget: 2_000,
                 shrinkEveryCommits: 1,
                 shrinkEveryCommit: true,
+                memoryProbeVariantInterval: 5_000,
+                memoryPressureThresholdFraction: 0.62,
+                memoryPressureRelaxFraction: 0.42,
                 createIndexesUpFront: false,
                 maxVariantInfoKeysPerVariant: 0,
                 skipVariantInfo: false,
@@ -2660,8 +2671,12 @@ public final class VariantDatabase: @unchecked Sendable {
                 cacheKB: 32 * 1024,
                 pageSizeKB: 4,
                 writeBudget: 80_000,
+                minWriteBudget: 8_000,
                 shrinkEveryCommits: 6,
                 shrinkEveryCommit: false,
+                memoryProbeVariantInterval: 10_000,
+                memoryPressureThresholdFraction: 0.70,
+                memoryPressureRelaxFraction: 0.50,
                 createIndexesUpFront: false,
                 maxVariantInfoKeysPerVariant: 0,
                 skipVariantInfo: false,
@@ -2680,13 +2695,17 @@ public final class VariantDatabase: @unchecked Sendable {
                 workerThreads: 1,
                 cacheKB: 4 * 1024,
                 pageSizeKB: 32,
-                writeBudget: 50_000,
-                shrinkEveryCommits: 2,
-                shrinkEveryCommit: false,
+                writeBudget: 12_000,
+                minWriteBudget: 1_500,
+                shrinkEveryCommits: 1,
+                shrinkEveryCommit: true,
+                memoryProbeVariantInterval: 2_000,
+                memoryPressureThresholdFraction: 0.55,
+                memoryPressureRelaxFraction: 0.38,
                 createIndexesUpFront: false,
                 maxVariantInfoKeysPerVariant: 0,
                 skipVariantInfo: true,
-                connectionResetInterval: 10_000_000
+                connectionResetInterval: 2_000_000
             )
         case .auto:
             // Auto is resolved before this method is called.
@@ -2711,7 +2730,8 @@ public final class VariantDatabase: @unchecked Sendable {
         sourceFile: String? = nil,
         progressHandler: (@Sendable (Double, String) -> Void)? = nil,
         shouldCancel: (@Sendable () -> Bool)? = nil,
-        importProfile: VCFImportProfile = .auto
+        importProfile: VCFImportProfile = .auto,
+        deferIndexBuild: Bool = false
     ) throws -> Int {
         try? FileManager.default.removeItem(at: outputURL)
 
@@ -2915,7 +2935,8 @@ public final class VariantDatabase: @unchecked Sendable {
 
         var insertCount = 0
         var sampleNames: [String] = []
-        let transactionWriteBudget = tuning.writeBudget
+        var adaptiveWriteBudget = tuning.writeBudget
+        let adaptiveWriteBudgetStep = max(500, tuning.writeBudget / 10)
         let shrinkEveryCommits = max(1, tuning.shrinkEveryCommits)
         var wasCancelled = false
         var writesSinceCommit = 0
@@ -2948,9 +2969,10 @@ public final class VariantDatabase: @unchecked Sendable {
             }
         }
 
-        /// Force commit + shrink if the process's resident memory exceeds a
-        /// safe fraction of physical RAM.  Uses mach_task_info since
-        /// os_proc_available_memory() is unavailable on macOS.
+        /// Adaptive memory-pressure controller:
+        /// - Force COMMIT+shrink when RSS crosses a high watermark.
+        /// - Reduce write budget under pressure (more frequent commits).
+        /// - Gradually relax budget once RSS drops.
         func memoryPressureFlush() {
             var info = mach_task_basic_info()
             var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
@@ -2962,11 +2984,21 @@ public final class VariantDatabase: @unchecked Sendable {
             guard result == KERN_SUCCESS else { return }
             let residentBytes = UInt64(info.resident_size)
             let physicalRAM = ProcessInfo.processInfo.physicalMemory
-            // Flush if resident memory exceeds 75% of physical RAM.
-            let threshold = physicalRAM * 3 / 4
-            guard residentBytes > threshold else { return }
-            commitImportTransaction(reopen: true, forceShrink: true)
-            variantDBLogger.warning("createFromVCF: Memory pressure (resident \(residentBytes / (1024 * 1024)) MB / \(physicalRAM / (1024 * 1024)) MB), forced commit+shrink")
+            let highThreshold = UInt64(Double(physicalRAM) * tuning.memoryPressureThresholdFraction)
+            let relaxThreshold = UInt64(Double(physicalRAM) * tuning.memoryPressureRelaxFraction)
+
+            if residentBytes > highThreshold {
+                adaptiveWriteBudget = max(tuning.minWriteBudget, adaptiveWriteBudget / 2)
+                commitImportTransaction(reopen: true, forceShrink: true)
+                variantDBLogger.warning(
+                    "createFromVCF: Memory pressure (resident \(residentBytes / (1024 * 1024)) MB / \(physicalRAM / (1024 * 1024)) MB), budget=\(adaptiveWriteBudget), forced commit+shrink"
+                )
+                return
+            }
+
+            if residentBytes < relaxThreshold, adaptiveWriteBudget < tuning.writeBudget {
+                adaptiveWriteBudget = min(tuning.writeBudget, adaptiveWriteBudget + adaptiveWriteBudgetStep)
+            }
         }
 
         func commitImportTransaction(reopen: Bool, forceShrink: Bool = false) {
@@ -2999,7 +3031,7 @@ public final class VariantDatabase: @unchecked Sendable {
 
         @inline(__always)
         func rotateImportTransactionIfNeeded() {
-            guard writesSinceCommit >= transactionWriteBudget else { return }
+            guard writesSinceCommit >= adaptiveWriteBudget else { return }
             commitImportTransaction(reopen: true)
         }
 
@@ -3170,8 +3202,8 @@ public final class VariantDatabase: @unchecked Sendable {
             insertCount += 1
             writesSinceCommit += 1
 
-            // Periodic memory pressure check (every 10K variants).
-            if insertCount % 10_000 == 0 {
+            // Periodic adaptive memory pressure check.
+            if insertCount % tuning.memoryProbeVariantInterval == 0 {
                 memoryPressureFlush()
             }
 
@@ -3408,6 +3440,13 @@ public final class VariantDatabase: @unchecked Sendable {
         sqlite3_exec(db, "INSERT OR REPLACE INTO db_metadata VALUES ('import_variant_count', '\(insertCount)')", nil, nil, nil)
         sqlite3_exec(db, "UPDATE db_metadata SET value = 'indexing' WHERE key = 'import_state'", nil, nil, nil)
 
+        if deferIndexBuild && resolvedProfile == .ultraLowMemory {
+            sqlite3_exec(db, "INSERT OR REPLACE INTO db_metadata VALUES ('index_build_deferred', 'true')", nil, nil, nil)
+            progressHandler?(0.92, "Insert phase complete, deferring index build...")
+            variantDBLogger.info("createFromVCF: Deferred index build for ultra-low-memory staged import")
+            return insertCount
+        }
+
         if !tuning.createIndexesUpFront {
             // Filter out variant_info indexes when the EAV table was skipped.
             let indexesToBuild = tuning.skipVariantInfo
@@ -3467,6 +3506,29 @@ public final class VariantDatabase: @unchecked Sendable {
 
         variantDBLogger.info("Created variant database with \(insertCount) variants, \(sampleNames.count) samples at \(outputURL.lastPathComponent)")
         return insertCount
+    }
+
+    /// Backward-compatible overload retained to preserve cross-module symbol compatibility.
+    @discardableResult
+    public static func createFromVCF(
+        vcfURL: URL,
+        outputURL: URL,
+        parseGenotypes: Bool,
+        sourceFile: String?,
+        progressHandler: (@Sendable (Double, String) -> Void)?,
+        shouldCancel: (@Sendable () -> Bool)?,
+        importProfile: VCFImportProfile
+    ) throws -> Int {
+        try createFromVCF(
+            vcfURL: vcfURL,
+            outputURL: outputURL,
+            parseGenotypes: parseGenotypes,
+            sourceFile: sourceFile,
+            progressHandler: progressHandler,
+            shouldCancel: shouldCancel,
+            importProfile: importProfile,
+            deferIndexBuild: false
+        )
     }
 
     /// Backward-compatible overload without genotype parsing or progress.

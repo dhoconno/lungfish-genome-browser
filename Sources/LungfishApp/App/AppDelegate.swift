@@ -1123,7 +1123,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     debugLog("performVCFImport: Creating variant database at \(dbURL.lastPathComponent) via helper")
 
                     do {
-                        return try Self.runVCFImportViaHelper(
+                        var importedCount = try Self.runVCFImportViaHelper(
                             vcfURL: vcfURL,
                             outputDBURL: dbURL,
                             sourceFile: vcfURL.lastPathComponent,
@@ -1138,6 +1138,28 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                                 }
                             }
                         )
+
+                        // Staged ultra-low-memory imports intentionally return after insert
+                        // phase with import_state=indexing so indexing runs in a fresh process.
+                        if VariantDatabase.importState(at: dbURL) == "indexing" {
+                            debugLog("performVCFImport: Insert phase complete, launching phase-2 index build helper")
+                            let resumeStartedAt = Date()
+                            importedCount = try Self.runVCFResumeViaHelper(
+                                outputDBURL: dbURL,
+                                shouldCancel: isCancelled,
+                                progressHandler: { progress, message in
+                                    let clampedProgress = max(0.0, min(1.0, progress))
+                                    let etaText = Self.estimatedRemainingText(progress: clampedProgress, startedAt: resumeStartedAt)
+                                    let displayMessage = etaText.isEmpty ? message : "\(message) • \(etaText)"
+                                    scheduleOnMainRunLoop {
+                                        OperationCenter.shared.update(id: opID, progress: clampedProgress, detail: displayMessage)
+                                    }
+                                }
+                            )
+                            debugLog("performVCFImport: Phase-2 index build complete with \(importedCount) variants")
+                        }
+
+                        return importedCount
                     } catch {
                         // If helper failed during indexing, inserts are complete and only
                         // index creation needs recovery in a fresh process.

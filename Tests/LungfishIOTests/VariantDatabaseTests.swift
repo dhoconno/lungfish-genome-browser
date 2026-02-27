@@ -996,6 +996,32 @@ final class VariantDatabaseTests: XCTestCase {
         }
     }
 
+    func testUltraLowMemoryDeferredIndexBuildThenResume() throws {
+        let vcfURL = try createTempVCF(content: testVCF, name: "ultra_deferred.vcf")
+        let dbURL = tempDir.appendingPathComponent("ultra_deferred.db")
+
+        let inserted = try VariantDatabase.createFromVCF(
+            vcfURL: vcfURL,
+            outputURL: dbURL,
+            parseGenotypes: true,
+            importProfile: .ultraLowMemory,
+            deferIndexBuild: true
+        )
+        XCTAssertEqual(inserted, 7)
+        XCTAssertEqual(VariantDatabase.importState(at: dbURL), "indexing")
+
+        // Insert phase should still produce queryable rows even before indexes.
+        let preResumeDB = try VariantDatabase(url: dbURL)
+        XCTAssertEqual(preResumeDB.query(chromosome: "chr1", start: 0, end: 1000).count, 5)
+
+        let resumedCount = try VariantDatabase.resumeImport(existingDBURL: dbURL)
+        XCTAssertEqual(resumedCount, 7)
+        XCTAssertEqual(VariantDatabase.importState(at: dbURL), "complete")
+
+        let db = try VariantDatabase(url: dbURL)
+        XCTAssertEqual(db.query(chromosome: "chr1", start: 0, end: 1000).count, 5)
+    }
+
     func testImportStateTracking() throws {
         let vcfURL = try createTempVCF(content: testVCF)
         let dbURL = tempDir.appendingPathComponent("state.db")
