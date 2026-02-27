@@ -597,6 +597,66 @@ public actor NCBIService: DatabaseService {
         }
     }
 
+    /// Gets information about the assembly report file for an assembly.
+    ///
+    /// The assembly report is a small (~50 KB) tab-delimited text file containing
+    /// the authoritative mapping between chromosome naming conventions (RefSeq accession,
+    /// GenBank accession, UCSC name, assigned molecule number, etc.). This enables
+    /// reliable VCF-to-reference chromosome matching.
+    ///
+    /// - Parameter summary: The assembly summary containing FTP paths
+    /// - Returns: Information about the downloadable assembly report, or `nil` if unavailable
+    public func getAssemblyReportInfo(for summary: NCBIAssemblySummary) async throws -> GenomeFileInfo? {
+        guard let ftpPath = summary.ftpPathRefSeq ?? summary.ftpPathGenBank else {
+            return nil
+        }
+
+        guard let assemblyDirName = extractAssemblyDirName(from: ftpPath) else {
+            return nil
+        }
+
+        // Format: {assembly_name}_assembly_report.txt
+        let reportFilename = "\(assemblyDirName)_assembly_report.txt"
+        let httpPath = convertFTPToHTTP(ftpPath)
+
+        let fileURLString = "\(httpPath)/\(reportFilename)"
+        guard let fileURL = URL(string: fileURLString) else {
+            logger.warning("getAssemblyReportInfo: Could not construct URL for \(reportFilename)")
+            return nil
+        }
+
+        var request = URLRequest(url: fileURL)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 15
+
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                return nil
+            }
+
+            guard httpResponse.statusCode == 200 else {
+                logger.info("getAssemblyReportInfo: Assembly report not available for \(summary.assemblyAccession ?? summary.uid, privacy: .public) (HTTP \(httpResponse.statusCode))")
+                return nil
+            }
+
+            let fileSize = httpResponse.expectedContentLength > 0 ? httpResponse.expectedContentLength : nil
+
+            logger.info("getAssemblyReportInfo: Found assembly report for \(summary.assemblyAccession ?? summary.uid, privacy: .public), size=\(fileSize ?? -1)")
+
+            return GenomeFileInfo(
+                url: fileURL,
+                filename: reportFilename,
+                estimatedSize: fileSize,
+                assemblyAccession: summary.assemblyAccession ?? summary.uid
+            )
+        } catch {
+            logger.warning("getAssemblyReportInfo: Failed to check assembly report availability: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
     // MARK: - NCBI Datasets API
 
     /// Result of downloading via the NCBI Datasets API.

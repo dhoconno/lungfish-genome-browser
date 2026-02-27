@@ -257,9 +257,34 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
 
         let faiURL = compressedFASTA.appendingPathExtension("fai")
         let gziURL = compressedFASTA.appendingPathExtension("gzi")
-        let chromosomes = try BundleBuildHelpers.parseFai(at: faiURL)
+        var chromosomes = try BundleBuildHelpers.parseFai(at: faiURL)
         let totalLength = chromosomes.reduce(Int64(0)) { $0 + $1.length }
         logger.info("downloadAndBuild: Indexed \(chromosomes.count) chromosomes, total \(totalLength) bp")
+
+        // Step 7b: Download assembly report for chromosome aliases (non-fatal)
+        var assemblyReportMetadata: [MetadataItem] = []
+        var assemblyReportTempURL: URL?
+
+        progressHandler?(0.72, "Downloading assembly report...")
+        if let reportInfo = try? await ncbiService.getAssemblyReportInfo(for: assembly) {
+            let reportDest = tempDir.appendingPathComponent(reportInfo.filename)
+            do {
+                _ = try await ncbiService.downloadGenomeFile(reportInfo, to: reportDest) { _, _ in }
+                if let entries = try? BundleBuildHelpers.parseAssemblyReport(at: reportDest) {
+                    chromosomes = BundleBuildHelpers.augmentChromosomesWithAssemblyReport(
+                        chromosomes, report: entries
+                    )
+                    let aliasCount = chromosomes.filter { !$0.aliases.isEmpty }.count
+                    logger.info("downloadAndBuild: Augmented \(aliasCount) chromosomes with assembly report aliases")
+                }
+                assemblyReportMetadata = (try? BundleBuildHelpers.parseAssemblyReportHeader(at: reportDest)) ?? []
+                assemblyReportTempURL = reportDest
+            } catch {
+                logger.warning("downloadAndBuild: Assembly report download failed (non-fatal): \(error.localizedDescription)")
+            }
+        } else {
+            logger.info("downloadAndBuild: No assembly report available")
+        }
 
         // Step 8: Process GFF3 annotations directly to SQLite (no BigBed intermediate)
         let chromosomeSizes = chromosomes.map { ($0.name, $0.length) }
@@ -336,7 +361,18 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
         let bundleIdentifier = "org.ncbi.assembly.\(accession.lowercased().replacingOccurrences(of: ".", with: "-"))"
 
         // Convert assembly summary to metadata groups for rich metadata storage
-        let metadataGroups = assembly.toMetadataGroups()
+        var metadataGroups = assembly.toMetadataGroups()
+
+        // Add assembly report metadata if available
+        if !assemblyReportMetadata.isEmpty {
+            metadataGroups.append(MetadataGroup(name: "Assembly Report", items: assemblyReportMetadata))
+        }
+
+        // Copy raw assembly report into bundle for Inspector and future use
+        if let reportTempURL = assemblyReportTempURL {
+            let bundleReportDest = bundleURL.appendingPathComponent("assembly_report.txt")
+            try? fileManager.copyItem(at: reportTempURL, to: bundleReportDest)
+        }
 
         let manifest = BundleManifest(
             name: "\(organismName) - \(assemblyName)",

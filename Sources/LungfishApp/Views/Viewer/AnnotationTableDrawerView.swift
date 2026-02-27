@@ -161,6 +161,10 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     }
     private var variantPresetLoadState: VariantPresetLoadState = .idle
     private var variantTrackDatabaseURLs: [URL] = []
+    /// Maps reference chromosome names to variant DB chromosome names (from contig length matching).
+    var variantChromosomeAliasMap: [String: String] = [:]
+    /// Pre-computed SmartToken counts from cache warming.
+    private var smartTokenCounts: [String: Int] = [:]
     /// Active preset-chip selections (single selected value per INFO key).
     private var selectedVariantPresetByKey: [String: String] = [:]
     /// Whether preset chips are expanded in the variants tab.
@@ -1116,7 +1120,35 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         presetFiltersToggleButton.isHidden = !showVariants || infoColumnKeys.isEmpty
         presetFiltersToggleButton.title = showVariantPresetChips ? "Presets ▾" : "Presets ▸"
         presetFiltersToggleButton.isEnabled = variantPresetLoadState != .loading
+        // Gate Query Builder on database size — hide for large databases unless zoomed to a small region.
+        let queryBuilderVisible: Bool = {
+            guard showVariants else { return false }
+            var totalDBSize: UInt64 = 0
+            for url in variantTrackDatabaseURLs {
+                totalDBSize += (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? UInt64) ?? 0
+            }
+            if totalDBSize >= Self.chromosomeScopeThreshold {
+                // Large database: only show if viewport is < 10 Mb
+                if let vp = viewportRegion {
+                    return (vp.end - vp.start) < 10_000_000
+                }
+                return false
+            }
+            return true
+        }()
+        // Show button whenever variants tab is active; disable when query would be too slow
         searchBuilderButton.isHidden = !showVariants
+        searchBuilderButton.isEnabled = queryBuilderVisible
+        if !queryBuilderVisible && showVariants {
+            var totalDBSize: UInt64 = 0
+            for url in variantTrackDatabaseURLs {
+                totalDBSize += (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? UInt64) ?? 0
+            }
+            let dbSizeMB = totalDBSize / 1_000_000
+            searchBuilderButton.toolTip = "Database is large (\(dbSizeMB) MB). Zoom in to a region < 10 Mb to enable Query Builder."
+        } else {
+            searchBuilderButton.toolTip = nil
+        }
         let showTypeControls = activeTab != .samples && !availableTypes.isEmpty
         allTypesButton.isHidden = !showTypeControls
         noneTypesButton.isHidden = !showTypeControls
@@ -1163,7 +1195,11 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     }
 
     private func makeSmartTokenChipButton(token: SmartToken) -> NSButton {
-        let button = NSButton(title: token.label, target: self, action: #selector(smartTokenToggled(_:)))
+        var label = token.label
+        if let count = smartTokenCounts[token.rawValue], count > 0 {
+            label += " (\(Self.formatCompactCount(count)))"
+        }
+        let button = NSButton(title: label, target: self, action: #selector(smartTokenToggled(_:)))
         button.font = .systemFont(ofSize: 10, weight: .medium)
         button.controlSize = .small
         button.bezelStyle = token.exclusivityGroupKey == nil ? .recessed : .rounded
@@ -1172,11 +1208,26 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         button.state = activeSmartTokens.contains(token) ? .on : .off
         button.translatesAutoresizingMaskIntoConstraints = false
         var toolTip = "\(token.uiSection.title): \(token.label)"
+        if let count = smartTokenCounts[token.rawValue] {
+            toolTip += " — \(Self.formatCompactCount(count)) variants"
+        }
         if token.exclusivityGroupKey != nil {
             toolTip += " (mutually exclusive)"
         }
         button.toolTip = toolTip
         return button
+    }
+
+    /// Formats a count into a compact human-readable string (e.g., 1234567 → "1.2M").
+    private static func formatCompactCount(_ count: Int) -> String {
+        if count >= 1_000_000 {
+            let millions = Double(count) / 1_000_000
+            return millions >= 10 ? String(format: "%.0fM", millions) : String(format: "%.1fM", millions)
+        } else if count >= 1_000 {
+            let thousands = Double(count) / 1_000
+            return thousands >= 10 ? String(format: "%.0fK", thousands) : String(format: "%.1fK", thousands)
+        }
+        return "\(count)"
     }
 
     private func updateVariantLogicSummary() {
@@ -1610,6 +1661,28 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             updateDisplayedAnnotations()
         }
         drawerLogger.info("AnnotationTableDrawerView: Connected to index with \(self.totalAnnotationCount) annotations, \(self.totalVariantCount) variants, \(self.allSampleNames.count) samples")
+
+        // Load pre-built SmartToken cache state (counts from persistent tables, instant).
+        loadSmartTokenCounts(from: index)
+    }
+
+    /// Reads pre-built token cache counts from variant databases (instant — no table scans).
+    ///
+    /// Token tables are built during import and persisted in the database file.
+    /// This just reads their row counts to populate chip labels.
+    private func loadSmartTokenCounts(from index: AnnotationSearchIndex) {
+        let handles = index.variantDatabaseHandles
+        guard !handles.isEmpty else { return }
+
+        var aggregatedCounts: [String: Int] = [:]
+        for handle in handles {
+            let state = handle.db.tokenCacheState
+            for (key, value) in state where value.ready {
+                aggregatedCounts[key, default: 0] += value.count
+            }
+        }
+        smartTokenCounts = aggregatedCounts
+        rebuildChipButtons()
     }
 
     /// Legacy entry point for when no search index is available (fallback).
@@ -1667,17 +1740,12 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             let variantTypeSet = Set(availableVariantTypes)
             let hasGT = !allSampleNames.isEmpty
             for section in SmartToken.UISection.allCases {
-                let sectionTokens = SmartToken.allCases.filter {
-                    $0.uiSection == section
-                        && $0.isAvailable(
-                            infoKeys: infoKeySet,
-                            variantTypes: variantTypeSet,
-                            hasGenotypes: hasGT,
-                            hasBookmarks: hasBookmarks,
-                            isHaploidOrganism: isHaploidOrganism
-                        )
+                let sectionTokens = SmartToken.allCases.filter { $0.uiSection == section }
+                // Only show section if at least one token is available
+                let anyAvailable = sectionTokens.contains {
+                    $0.isAvailable(infoKeys: infoKeySet, variantTypes: variantTypeSet, hasGenotypes: hasGT, hasBookmarks: hasBookmarks, isHaploidOrganism: isHaploidOrganism)
                 }
-                guard !sectionTokens.isEmpty else { continue }
+                guard anyAvailable else { continue }
                 if hasSmartTokens {
                     let spacer = NSView(frame: NSRect(x: 0, y: 0, width: 10, height: 1))
                     spacer.translatesAutoresizingMaskIntoConstraints = false
@@ -1689,7 +1757,13 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                 label.textColor = .tertiaryLabelColor
                 chipStackView.addArrangedSubview(label)
                 for token in sectionTokens {
+                    let isTokenAvailable = token.isAvailable(infoKeys: infoKeySet, variantTypes: variantTypeSet, hasGenotypes: hasGT, hasBookmarks: hasBookmarks, isHaploidOrganism: isHaploidOrganism)
                     let chip = makeSmartTokenChipButton(token: token)
+                    if !isTokenAvailable {
+                        chip.isEnabled = false
+                        chip.alphaValue = 0.4
+                        chip.toolTip = token.unavailabilityReason(infoKeys: infoKeySet, variantTypes: variantTypeSet, hasGenotypes: hasGT, hasBookmarks: hasBookmarks, isHaploidOrganism: isHaploidOrganism)
+                    }
                     chipStackView.addArrangedSubview(chip)
                     smartTokenButtons[token] = chip
                     smartTokenPayloads[ObjectIdentifier(chip)] = token
@@ -2053,6 +2127,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
         let mergedInfoFilters = query.infoFilters + chipInfoFilters + smartComposed.infoFilters
         let selectedSamples = selectedSamplesForVariantQuery()
+        // Capture active SmartToken raw values for pre-materialized cache JOINs.
+        let frozenActiveTokens = Set(activeSmartTokens.map(\.rawValue))
 
         // Build effective query with smart token overlays
         var effectiveQuery = query
@@ -2185,7 +2261,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             trackNames: trackNameSnapshot,
             trackChromosomes: index.variantTrackChromosomeMap,
             annotationDatabases: index.annotationDatabaseHandles,
-            infoKeys: infoKeySet
+            infoKeys: infoKeySet,
+            variantAliasMap: variantChromosomeAliasMap
         )
         let maxDisplay = Self.maxDisplayCount
 
@@ -2271,6 +2348,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                         types: frozenTypeFilter,
                         infoFilters: mergedInfoFilters,
                         sampleNames: selectedSamples,
+                        activeTokens: frozenActiveTokens,
                         limit: max(initialLimit, maxDisplay),
                         shouldCancel: shouldCancel
                     )
@@ -2290,6 +2368,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                                 types: frozenTypeFilter,
                                 infoFilters: mergedInfoFilters,
                                 sampleNames: selectedSamples,
+                                activeTokens: frozenActiveTokens,
                                 limit: max(limit, maxDisplay),
                                 shouldCancel: shouldCancel
                             ).results
@@ -2323,127 +2402,97 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                     tooManyMessage = nil
 
                 } else if let region = requestedRegion {
-                    // Region-scoped query.
-                    let count = ctx.queryVariantCountInRegion(
-                        chromosome: region.chromosome, start: region.start, end: region.end,
-                        nameFilter: frozenQuery.nameFilter, types: frozenTypeFilter,
-                        infoFilters: mergedInfoFilters,
-                        sampleNames: selectedSamples,
+                    // Region-scoped query — probe fetch pattern (no separate COUNT).
+                    let probeLimit = usePostFiltering ? max(maxDisplay * 3, maxDisplay) : maxDisplay + 1
+                    let filtered = fetchVariantsAdaptive(
+                        maxDisplayCount: maxDisplay,
+                        initialFetchLimit: probeLimit,
+                        totalSQLMatchCount: nil,
+                        applyPostFiltering: usePostFiltering,
+                        fetch: { limit in
+                            ctx.queryVariantsInRegion(
+                                chromosome: region.chromosome, start: region.start, end: region.end,
+                                nameFilter: frozenQuery.nameFilter, types: frozenTypeFilter,
+                                infoFilters: mergedInfoFilters,
+                                sampleNames: selectedSamples,
+                                activeTokens: frozenActiveTokens,
+                                limit: limit,
+                                shouldCancel: shouldCancel
+                            )
+                        },
+                        postFilter: applyAllPostFilters,
                         shouldCancel: shouldCancel
                     )
                     if shouldCancel() { return }
-                    if count > maxDisplay && !usePostFiltering {
-                        results = []
-                        matchCount = count
-                        queryScope = frozenRegionScope
-                        let nf = NumberFormatter()
-                        nf.numberStyle = .decimal
-                        let total = nf.string(from: NSNumber(value: count)) ?? "\(count)"
-                        let max = nf.string(from: NSNumber(value: maxDisplay)) ?? "\(maxDisplay)"
-                        let hint = frozenRegionScope == .viewport ? "zoom in" : "filter"
-                        tooManyMessage = "\(total) variants in region — \(hint) to show \(max) or fewer"
-                    } else {
-                        let initialLimit = usePostFiltering ? max(maxDisplay * 3, maxDisplay) : maxDisplay
-                        let filtered = fetchVariantsAdaptive(
-                            maxDisplayCount: maxDisplay,
-                            initialFetchLimit: initialLimit,
-                            totalSQLMatchCount: count,
-                            applyPostFiltering: usePostFiltering,
-                            fetch: { limit in
-                                ctx.queryVariantsInRegion(
-                                    chromosome: region.chromosome, start: region.start, end: region.end,
-                                    nameFilter: frozenQuery.nameFilter, types: frozenTypeFilter,
-                                    infoFilters: mergedInfoFilters,
-                                    sampleNames: selectedSamples,
-                                    limit: limit,
-                                    shouldCancel: shouldCancel
-                                )
-                            },
-                            postFilter: applyAllPostFilters,
-                            shouldCancel: shouldCancel
+                    if let viewportPostFilterRegion {
+                        results = Array(
+                            filterVariantsToRegionOffMain(
+                                filtered,
+                                chromosome: viewportPostFilterRegion.chromosome,
+                                start: viewportPostFilterRegion.start,
+                                end: viewportPostFilterRegion.end
+                            ).prefix(maxDisplay)
                         )
-                        if shouldCancel() { return }
-                        if let viewportPostFilterRegion {
-                            results = Array(
-                                filterVariantsToRegionOffMain(
-                                    filtered,
-                                    chromosome: viewportPostFilterRegion.chromosome,
-                                    start: viewportPostFilterRegion.start,
-                                    end: viewportPostFilterRegion.end
-                                ).prefix(maxDisplay)
-                            )
-                            matchCount = results.count
-                        } else {
-                            results = filtered
-                            matchCount = usePostFiltering ? filtered.count : count
-                        }
-                        queryScope = frozenRegionScope
-                        tooManyMessage = nil
+                        matchCount = results.count
+                    } else if filtered.count > maxDisplay {
+                        // Probe returned more than maxDisplay — show first maxDisplay with "N+" count
+                        results = Array(filtered.prefix(maxDisplay))
+                        matchCount = nil  // signals "more than displayed" for N+ label
+                    } else {
+                        results = filtered
+                        matchCount = filtered.count
                     }
+                    queryScope = frozenRegionScope
+                    tooManyMessage = nil
 
                 } else {
-                    // Global query — optionally scoped to current chromosome for performance.
-                    let count = ctx.queryVariantCount(
-                        chromosome: frozenFilterChromosome,
-                        nameFilter: frozenQuery.nameFilter, types: frozenTypeFilter,
-                        infoFilters: mergedInfoFilters,
-                        sampleNames: selectedSamples,
+                    // Global query — probe fetch pattern (no separate COUNT).
+                    let probeLimit = usePostFiltering ? max(maxDisplay * 3, maxDisplay) : maxDisplay + 1
+                    let filtered = fetchVariantsAdaptive(
+                        maxDisplayCount: maxDisplay,
+                        initialFetchLimit: probeLimit,
+                        totalSQLMatchCount: nil,
+                        applyPostFiltering: usePostFiltering,
+                        fetch: { limit in
+                            ctx.queryVariantsOnly(
+                                chromosome: frozenFilterChromosome,
+                                nameFilter: frozenQuery.nameFilter, types: frozenTypeFilter,
+                                infoFilters: mergedInfoFilters,
+                                sampleNames: selectedSamples,
+                                activeTokens: frozenActiveTokens,
+                                limit: limit,
+                                shouldCancel: shouldCancel
+                            )
+                        },
+                        postFilter: applyAllPostFilters,
                         shouldCancel: shouldCancel
                     )
                     if shouldCancel() { return }
-                    if count > maxDisplay && !usePostFiltering {
-                        results = []
-                        matchCount = count
-                        queryScope = frozenFilterChromosome != nil ? .chromosome : (viewportPostFilterRegion != nil ? .viewport : .global)
-                        let nf = NumberFormatter()
-                        nf.numberStyle = .decimal
-                        let total = nf.string(from: NSNumber(value: count)) ?? "\(count)"
-                        let max = nf.string(from: NSNumber(value: maxDisplay)) ?? "\(maxDisplay)"
-                        let scopeHint = frozenFilterChromosome != nil ? " on this chromosome" : ""
-                        tooManyMessage = "\(total) variants match\(scopeHint) — use the search field or type filters to narrow to \(max) or fewer"
-                    } else {
-                        let initialLimit = usePostFiltering ? max(maxDisplay * 3, maxDisplay) : maxDisplay
-                        let filtered = fetchVariantsAdaptive(
-                            maxDisplayCount: maxDisplay,
-                            initialFetchLimit: initialLimit,
-                            totalSQLMatchCount: count,
-                            applyPostFiltering: usePostFiltering,
-                            fetch: { limit in
-                                ctx.queryVariantsOnly(
-                                    chromosome: frozenFilterChromosome,
-                                    nameFilter: frozenQuery.nameFilter, types: frozenTypeFilter,
-                                    infoFilters: mergedInfoFilters,
-                                    sampleNames: selectedSamples,
-                                    limit: limit,
-                                    shouldCancel: shouldCancel
-                                )
-                            },
-                            postFilter: applyAllPostFilters,
-                            shouldCancel: shouldCancel
+                    globalRowsForCache = filtered
+                    if let viewportPostFilterRegion {
+                        results = Array(
+                            filterVariantsToRegionOffMain(
+                                filtered,
+                                chromosome: viewportPostFilterRegion.chromosome,
+                                start: viewportPostFilterRegion.start,
+                                end: viewportPostFilterRegion.end
+                            ).prefix(maxDisplay)
                         )
-                        if shouldCancel() { return }
-                        globalRowsForCache = filtered
-                        if let viewportPostFilterRegion {
-                            results = Array(
-                                filterVariantsToRegionOffMain(
-                                    filtered,
-                                    chromosome: viewportPostFilterRegion.chromosome,
-                                    start: viewportPostFilterRegion.start,
-                                    end: viewportPostFilterRegion.end
-                                ).prefix(maxDisplay)
-                            )
-                            matchCount = results.count
-                        } else {
-                            results = filtered
-                            matchCount = usePostFiltering ? filtered.count : count
-                        }
-                        if frozenFilterChromosome != nil {
-                            queryScope = .chromosome
-                        } else {
-                            queryScope = viewportPostFilterRegion != nil ? .viewport : .global
-                        }
-                        tooManyMessage = nil
+                        matchCount = results.count
+                    } else if filtered.count > maxDisplay {
+                        // Probe returned more than maxDisplay — show first maxDisplay with "N+" count
+                        results = Array(filtered.prefix(maxDisplay))
+                        matchCount = nil  // signals "more than displayed" for N+ label
+                    } else {
+                        results = filtered
+                        matchCount = filtered.count
                     }
+                    if frozenFilterChromosome != nil {
+                        queryScope = .chromosome
+                    } else {
+                        queryScope = viewportPostFilterRegion != nil ? .viewport : .global
+                    }
+                    tooManyMessage = nil
                 }
 
                 // Deliver results on main thread.
@@ -2554,34 +2603,51 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         if isLoading {
             countLabel.stringValue = "Building annotation index (scanning all chromosomes)..."
         } else if activeTab == .variants {
-            // Unified variant count label using tracked scope and match count
+            // Unified variant count label using tracked scope and match count.
+            // matchCount == nil signals "more than displayed" (probe fetch overflow) → show "N+" format.
             let total = numberFormatter.string(from: NSNumber(value: totalVariantCount)) ?? "\(totalVariantCount)"
+            let displayCount = displayedAnnotations.count
+            let displayCountStr = numberFormatter.string(from: NSNumber(value: displayCount)) ?? "\(displayCount)"
             switch lastVariantQueryScope {
             case .placeholder:
                 countLabel.stringValue = "\(total) variants total"
             case .annotation:
-                let count = lastVariantQueryMatchCount ?? displayedAnnotations.count
-                let shown = numberFormatter.string(from: NSNumber(value: count)) ?? "\(count)"
-                countLabel.stringValue = "\(shown) overlapping (\(total) total)"
+                if let count = lastVariantQueryMatchCount {
+                    let shown = numberFormatter.string(from: NSNumber(value: count)) ?? "\(count)"
+                    countLabel.stringValue = "\(shown) overlapping (\(total) total)"
+                } else {
+                    countLabel.stringValue = "\(displayCountStr)+ overlapping (\(total) total)"
+                }
             case .chromosome:
-                let count = lastVariantQueryMatchCount ?? displayedAnnotations.count
-                let shown = numberFormatter.string(from: NSNumber(value: count)) ?? "\(count)"
-                countLabel.stringValue = "\(shown) on chromosome (\(total) total)"
+                if let count = lastVariantQueryMatchCount {
+                    let shown = numberFormatter.string(from: NSNumber(value: count)) ?? "\(count)"
+                    countLabel.stringValue = "\(shown) on chromosome (\(total) total)"
+                } else {
+                    countLabel.stringValue = "\(displayCountStr)+ on chromosome (\(total) total)"
+                }
             case .viewport:
-                let count = lastVariantQueryMatchCount ?? displayedAnnotations.count
-                let shown = numberFormatter.string(from: NSNumber(value: count)) ?? "\(count)"
-                countLabel.stringValue = "\(shown) in viewport (\(total) total)"
+                if let count = lastVariantQueryMatchCount {
+                    let shown = numberFormatter.string(from: NSNumber(value: count)) ?? "\(count)"
+                    countLabel.stringValue = "\(shown) in viewport (\(total) total)"
+                } else {
+                    countLabel.stringValue = "\(displayCountStr)+ in viewport (\(total) total)"
+                }
             case .annotations:
-                let count = lastVariantQueryMatchCount ?? displayedAnnotations.count
-                let shown = numberFormatter.string(from: NSNumber(value: count)) ?? "\(count)"
-                countLabel.stringValue = "\(shown) near annotations (\(total) total)"
+                if let count = lastVariantQueryMatchCount {
+                    let shown = numberFormatter.string(from: NSNumber(value: count)) ?? "\(count)"
+                    countLabel.stringValue = "\(shown) near annotations (\(total) total)"
+                } else {
+                    countLabel.stringValue = "\(displayCountStr)+ near annotations (\(total) total)"
+                }
             case .global:
                 if !tooManyLabel.isHidden {
                     countLabel.stringValue = "\(total) total — filter to browse"
-                } else if displayedAnnotations.count == totalVariantCount {
+                } else if let count = lastVariantQueryMatchCount, count == totalVariantCount {
                     countLabel.stringValue = "\(total) variants"
+                } else if lastVariantQueryMatchCount == nil {
+                    countLabel.stringValue = "\(displayCountStr)+ of \(total)"
                 } else {
-                    let shown = numberFormatter.string(from: NSNumber(value: displayedAnnotations.count)) ?? "\(displayedAnnotations.count)"
+                    let shown = numberFormatter.string(from: NSNumber(value: displayCount)) ?? "\(displayCount)"
                     countLabel.stringValue = "\(shown) of \(total)"
                 }
             }
@@ -5687,12 +5753,28 @@ private struct VariantQueryContext: @unchecked Sendable {
     let trackChromosomes: [String: Set<String>]
     let annotationDatabases: [(trackId: String, db: AnnotationDatabase)]
     let infoKeys: Set<String>
+    /// Maps reference chromosome names → VCF chromosome names (from contig length matching).
+    let variantAliasMap: [String: String]
 
     func resolvedChromosomeCandidates(for chromosome: String, trackId: String) -> [String] {
         let available = trackChromosomes[trackId] ?? []
         if available.isEmpty || available.contains(chromosome) { return [chromosome] }
-        let canonical = canonicalChromosomeName(chromosome)
+
         var ordered: [String] = [chromosome]
+
+        // 1) Check the variant chromosome alias map (ref name → VCF name).
+        if let aliased = variantAliasMap[chromosome], available.contains(aliased) {
+            ordered.append(aliased)
+        }
+        // Reverse lookup: if chromosome is a VCF name, find what ref name maps to it.
+        for (refName, vcfName) in variantAliasMap where vcfName == chromosome {
+            if available.contains(refName) {
+                ordered.append(refName)
+            }
+        }
+
+        // 2) Canonical matching fallback.
+        let canonical = canonicalChromosomeName(chromosome)
         for candidate in available {
             if canonicalChromosomeName(candidate) == canonical {
                 ordered.append(candidate)
@@ -5731,6 +5813,7 @@ private struct VariantQueryContext: @unchecked Sendable {
         nameFilter: String = "", types: Set<String> = [],
         infoFilters: [VariantDatabase.InfoFilter] = [],
         sampleNames: Set<String> = [],
+        activeTokens: Set<String> = [],
         limit: Int = 5000,
         shouldCancel: (() -> Bool)? = nil
     ) -> [AnnotationSearchIndex.SearchResult] {
@@ -5739,6 +5822,8 @@ private struct VariantQueryContext: @unchecked Sendable {
             if shouldCancel?() == true { break }
             let remaining = limit - results.count
             guard remaining > 0 else { break }
+            handle.db.installQueryTimeout(seconds: 5.0, cancelCheck: shouldCancel)
+            defer { handle.db.removeQueryTimeout() }
             for queryChrom in resolvedChromosomeCandidates(for: chromosome, trackId: handle.trackId) {
                 if shouldCancel?() == true { break }
                 let chunkLimit = limit - results.count
@@ -5746,7 +5831,8 @@ private struct VariantQueryContext: @unchecked Sendable {
                 let records = handle.db.queryForTableInRegion(
                     chromosome: queryChrom, start: start, end: end,
                     nameFilter: nameFilter, types: types,
-                    infoFilters: infoFilters, sampleNames: sampleNames, limit: chunkLimit
+                    infoFilters: infoFilters, sampleNames: sampleNames,
+                    activeTokens: activeTokens, limit: chunkLimit
                 )
                 if !records.isEmpty {
                     results.append(contentsOf: variantRecordsToSearchResults(records, db: handle.db, trackId: handle.trackId))
@@ -5766,6 +5852,8 @@ private struct VariantQueryContext: @unchecked Sendable {
         var count = 0
         for handle in databases {
             if shouldCancel?() == true { break }
+            handle.db.installQueryTimeout(seconds: 5.0, cancelCheck: shouldCancel)
+            defer { handle.db.removeQueryTimeout() }
             for queryChrom in resolvedChromosomeCandidates(for: chromosome, trackId: handle.trackId) {
                 if shouldCancel?() == true { break }
                 count += handle.db.queryCountInRegion(
@@ -5783,6 +5871,7 @@ private struct VariantQueryContext: @unchecked Sendable {
         nameFilter: String = "", types: Set<String> = [],
         infoFilters: [VariantDatabase.InfoFilter] = [],
         sampleNames: Set<String> = [],
+        activeTokens: Set<String> = [],
         limit: Int = 5000,
         shouldCancel: (() -> Bool)? = nil
     ) -> [AnnotationSearchIndex.SearchResult] {
@@ -5799,11 +5888,14 @@ private struct VariantQueryContext: @unchecked Sendable {
                 let candidates = resolvedChromosomeCandidates(for: chrom, trackId: handle.trackId)
                 return candidates.first
             }
+            handle.db.installQueryTimeout(seconds: 5.0, cancelCheck: shouldCancel)
+            defer { handle.db.removeQueryTimeout() }
             let records = handle.db.queryForTable(
                 chromosome: dbChromosome,
                 nameFilter: nameFilter,
                 types: types.isEmpty ? [] : requestedVariantTypes,
-                infoFilters: infoFilters, sampleNames: sampleNames, limit: remaining
+                infoFilters: infoFilters, sampleNames: sampleNames,
+                activeTokens: activeTokens, limit: remaining
             )
             results.append(contentsOf: variantRecordsToSearchResults(records, db: handle.db, trackId: handle.trackId))
         }
@@ -5827,6 +5919,8 @@ private struct VariantQueryContext: @unchecked Sendable {
                     let candidates = resolvedChromosomeCandidates(for: chrom, trackId: handle.trackId)
                     return candidates.first
                 }
+                handle.db.installQueryTimeout(seconds: 5.0, cancelCheck: shouldCancel)
+                defer { handle.db.removeQueryTimeout() }
                 count += handle.db.queryCountForTable(
                     chromosome: dbChromosome,
                     nameFilter: nameFilter,
@@ -5844,6 +5938,7 @@ private struct VariantQueryContext: @unchecked Sendable {
         types: Set<String> = [],
         infoFilters: [VariantDatabase.InfoFilter] = [],
         sampleNames: Set<String> = [],
+        activeTokens: Set<String> = [],
         limit: Int = 5000,
         shouldCancel: (() -> Bool)? = nil
     ) -> (results: [AnnotationSearchIndex.SearchResult], resolvedRegions: [GeneRegion]) {
@@ -5862,6 +5957,7 @@ private struct VariantQueryContext: @unchecked Sendable {
                 types: types,
                 infoFilters: infoFilters,
                 sampleNames: sampleNames,
+                activeTokens: activeTokens,
                 limit: limit - results.count,
                 shouldCancel: shouldCancel
             )
@@ -5887,6 +5983,7 @@ private struct VariantQueryContext: @unchecked Sendable {
                     types: types,
                     infoFilters: mergedFilters,
                     sampleNames: sampleNames,
+                    activeTokens: activeTokens,
                     limit: limit - results.count,
                     shouldCancel: shouldCancel
                 )

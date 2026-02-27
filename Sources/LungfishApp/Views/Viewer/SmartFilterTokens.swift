@@ -146,6 +146,44 @@ enum SmartToken: String, CaseIterable, Sendable {
         }
     }
 
+    /// Returns a human-readable reason why this token is unavailable, or nil if available.
+    func unavailabilityReason(
+        infoKeys: Set<String>,
+        variantTypes: Set<String>,
+        hasGenotypes: Bool,
+        hasBookmarks: Bool = false,
+        isHaploidOrganism: Bool = false
+    ) -> String? {
+        guard !isAvailable(infoKeys: infoKeys, variantTypes: variantTypes, hasGenotypes: hasGenotypes, hasBookmarks: hasBookmarks, isHaploidOrganism: isHaploidOrganism) else {
+            return nil
+        }
+        switch self {
+        case .passOnly, .qualityGE30:
+            return nil // Always available
+        case .snv:
+            return "No SNV/SNP variants in this database"
+        case .indel:
+            return "No Indel/INS/DEL variants in this database"
+        case .highImpact, .moderateImpact:
+            return "Requires SnpEff/VEP annotation (IMPACT field not found)"
+        case .rareVariant:
+            return "Requires allele frequency annotation (AF field not found)"
+        case .depthGE10:
+            return "Requires DP field in INFO"
+        case .clinvarPathogenic:
+            return "Requires ClinVar annotation (CLNSIG field not found)"
+        case .heterozygous:
+            return "Genotype filtering not yet supported"
+        case .bookmarked:
+            return "No bookmarked variants"
+        case .minorVariant, .mixedInfection, .dominantMutation:
+            if !isHaploidOrganism {
+                return "Only available for haploid organisms"
+            }
+            return "Requires genotype data"
+        }
+    }
+
     /// Recognized INFO keys for allele frequency.
     static let afKeys: Set<String> = [
         "AF", "af", "gnomAD_AF", "ExAC_AF", "1000G_AF", "MAX_AF",

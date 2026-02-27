@@ -79,6 +79,9 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
         view.layoutSubtreeIfNeeded()
         let effectiveWidth = max(800, Int(viewerView.bounds.width))
 
+        // Show loading indicator — Core Animation spinner animates even during synchronous work
+        showProgress("Loading genome\u{2026}")
+
         // Set up the viewer with bundle and apply view state
         viewerView.setReferenceBundle(bundle)
         viewerView.showAnnotations = viewState.showAnnotations
@@ -168,6 +171,9 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
             self.enhancedRulerView.needsDisplay = true
             self.headerView.needsDisplay = true
         }
+
+        // Hide loading indicator
+        hideProgress()
 
         // Notify that bundle has been loaded (for annotation search index building, toolbar updates, inspector)
         NotificationCenter.default.post(

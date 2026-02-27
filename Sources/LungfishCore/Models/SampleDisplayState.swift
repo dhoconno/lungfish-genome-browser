@@ -33,7 +33,7 @@ public struct SampleDisplayState: Sendable, Codable, Equatable {
     public var showGenotypeRows: Bool = true
 
     /// Whether to show the variant summary bar (density histogram).
-    public var showSummaryBar: Bool = false
+    public var showSummaryBar: Bool = true
 
     /// Height per genotype row in pixels (2–30). Default 12.
     public var rowHeight: CGFloat = Self.defaultRowHeight
@@ -61,7 +61,7 @@ public struct SampleDisplayState: Sendable, Codable, Equatable {
         filters: [SampleFilter] = [],
         hiddenSamples: Set<String> = [],
         showGenotypeRows: Bool = true,
-        showSummaryBar: Bool = false,
+        showSummaryBar: Bool = true,
         rowHeight: CGFloat = Self.defaultRowHeight,
         summaryBarHeight: CGFloat = Self.defaultSummaryBarHeight,
         sampleOrder: [String]? = nil,
@@ -100,7 +100,7 @@ public struct SampleDisplayState: Sendable, Codable, Equatable {
         filters = try container.decodeIfPresent([SampleFilter].self, forKey: .filters) ?? []
         hiddenSamples = try container.decodeIfPresent(Set<String>.self, forKey: .hiddenSamples) ?? []
         showGenotypeRows = try container.decodeIfPresent(Bool.self, forKey: .showGenotypeRows) ?? true
-        showSummaryBar = try container.decodeIfPresent(Bool.self, forKey: .showSummaryBar) ?? false
+        showSummaryBar = try container.decodeIfPresent(Bool.self, forKey: .showSummaryBar) ?? true
         let decodedSummary = try container.decodeIfPresent(CGFloat.self, forKey: .summaryBarHeight) ?? Self.defaultSummaryBarHeight
         summaryBarHeight = Self.clampSummaryBarHeight(decodedSummary)
         sampleOrder = try container.decodeIfPresent([String].self, forKey: .sampleOrder)

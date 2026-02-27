@@ -269,9 +269,14 @@ private struct RuleRowView: View {
                     }
                 }
 
-                // Field picker
+                // Field picker — always include current selection to prevent SwiftUI
+                // tag warnings during category transitions.
                 Picker("", selection: $rule.field) {
-                    ForEach(effectiveFields(for: rule.category), id: \.self) { field in
+                    let fields = effectiveFields(for: rule.category)
+                    if !rule.field.isEmpty, !fields.contains(rule.field) {
+                        Text(rule.field).tag(rule.field)
+                    }
+                    ForEach(fields, id: \.self) { field in
                         Text(field).tag(field)
                     }
                 }
@@ -284,9 +289,14 @@ private struct RuleRowView: View {
                 }
 
                 if rule.field != "Gene List" {
-                    // Operator picker
+                    // Operator picker — always include current selection to prevent
+                    // tag warnings during field transitions.
                     Picker("", selection: $rule.op) {
-                        ForEach(rule.category.operators(for: rule.field), id: \.self) { op in
+                        let ops = rule.category.operators(for: rule.field)
+                        if !ops.contains(rule.op) {
+                            Text(rule.op).tag(rule.op)
+                        }
+                        ForEach(ops, id: \.self) { op in
                             Text(op).tag(op)
                         }
                     }

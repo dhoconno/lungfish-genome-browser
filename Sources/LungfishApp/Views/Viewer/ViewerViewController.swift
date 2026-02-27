@@ -3133,6 +3133,10 @@ public class SequenceViewerView: NSView {
                             logger: logger
                         )
                         self.variantChromosomeAliasMap = aliasMap
+                        // Share alias map with the annotation drawer for gene-based queries.
+                        if let vc = self.viewController {
+                            vc.annotationDrawerView?.variantChromosomeAliasMap = aliasMap
+                        }
                     }
 
                     if self.cachedSampleCount > 0 { break }
@@ -3541,6 +3545,10 @@ public class SequenceViewerView: NSView {
             }
 
             if filteredVariants.count > variantDisplayCap {
+                // Auto-enable summary bar so density histogram is always visible at zoomed-out views
+                if !sampleDisplayState.showSummaryBar {
+                    sampleDisplayState.showSummaryBar = true
+                }
                 // Too many variants for genotype display — show zoom-in message
                 let msg = "Zoom in to display genotypes (\(filteredVariants.count) variants visible)" as NSString
                 let msgAttrs: [NSAttributedString.Key: Any] = [
@@ -3586,6 +3594,18 @@ public class SequenceViewerView: NSView {
                 state: sampleDisplayState
             )
             lastVariantBottomY = vY + totalVariantHeight
+        } else if showVariants && !bundle.variantTrackIds.isEmpty {
+            // Variant tracks exist but nothing to display — show status badge
+            let vY = variantTrackY
+            let message: String
+            if isFetchingVariants {
+                message = "Fetching variants\u{2026}"
+            } else if cachedVariantAnnotations.isEmpty {
+                message = "No variants in this region"
+            } else {
+                message = "All \(cachedVariantAnnotations.count) variants filtered out"
+            }
+            drawTrackLoadingBadge(context: context, message: message, yOffset: vY + 2)
         }
 
         // --- Read alignments below variants ---
@@ -3946,66 +3966,82 @@ public class SequenceViewerView: NSView {
         let unmatched = vcfChroms.subtracting(refChromNames)
         if unmatched.isEmpty { return [:] }
 
-        // Prefer exact contig lengths from VCF ##contig header lines.
-        // Fall back to MAX(end_pos) per chromosome if contig lengths are unavailable.
-        let vcfContigLengths = variantDB.contigLengths()
-        let vcfMaxPositions: [String: Int]
-        if vcfContigLengths.isEmpty {
-            vcfMaxPositions = variantDB.chromosomeMaxPositions()
-        } else {
-            vcfMaxPositions = [:]  // Not needed when contig lengths are available
-        }
-
-        // For each unmatched VCF chromosome, find the reference chromosome
-        // whose length is closest to (and >= ) the VCF max position
         var aliasMap: [String: String] = [:]  // ref name → VCF name
         var usedVCFChroms = Set<String>()
 
-        for chrom in bundleChromosomes {
-            // Skip if this reference chromosome name already exists in VCF
-            if vcfChroms.contains(chrom.name) { continue }
-
-            // Find the best matching VCF chromosome by length
-            var bestMatch: String?
-            var bestDelta = Int64.max
-
-            for vcfChrom in unmatched where !usedVCFChroms.contains(vcfChrom) {
-                if let contigLength = vcfContigLengths[vcfChrom] {
-                    // Contig lengths from VCF header — exact match expected
-                    let delta = abs(chrom.length - contigLength)
-                    // Allow exact match or very small rounding differences
-                    guard delta == 0 else { continue }
-                    if delta < bestDelta {
-                        bestDelta = delta
-                        bestMatch = vcfChrom
-                    }
-                } else if let maxPos = vcfMaxPositions[vcfChrom] {
-                    // Fallback: use max variant position (less reliable)
-                    let maxPos64 = Int64(maxPos)
-                    // The max variant position must be <= reference length
-                    guard maxPos64 <= chrom.length else { continue }
-                    // Must be within a reasonable fraction of the reference length.
-                    // Large chromosomes (>1Mb): 5% tolerance; small ones: 20%
-                    let delta = chrom.length - maxPos64
-                    let tolerance = chrom.length > 1_000_000
-                        ? chrom.length / 20   // 5% for large chromosomes
-                        : chrom.length / 5    // 20% for small scaffolds
-                    guard delta < tolerance else { continue }
-                    if delta < bestDelta {
-                        bestDelta = delta
-                        bestMatch = vcfChrom
-                    }
-                }
-            }
-
-            if let match = bestMatch {
-                aliasMap[chrom.name] = match
-                usedVCFChroms.insert(match)
+        // Strategy 1: Name-based matching (fast, reliable with populated aliases)
+        // mapVCFChromosomes checks: exact match, aliases, version stripping, chr prefix,
+        // fuzzy prefix, and FASTA description matching
+        let nameMap = mapVCFChromosomes(Array(unmatched), toBundleChromosomes: bundleChromosomes)
+        // nameMap is [vcfChrom: bundleName] — invert to [bundleName: vcfChrom]
+        for (vcfChrom, bundleName) in nameMap {
+            if aliasMap[bundleName] == nil {
+                aliasMap[bundleName] = vcfChrom
+                usedVCFChroms.insert(vcfChrom)
             }
         }
 
+        // Strategy 2: Length-based matching for any remaining unmatched chromosomes
+        // Uses VCF ##contig header lengths or MAX(end_pos) as fallback
+        let afterNameMatching = unmatched.subtracting(usedVCFChroms)
+        if !afterNameMatching.isEmpty {
+            let vcfContigLengths = variantDB.contigLengths()
+            let vcfMaxPositions: [String: Int]
+            if vcfContigLengths.isEmpty {
+                vcfMaxPositions = variantDB.chromosomeMaxPositions()
+            } else {
+                vcfMaxPositions = [:]
+            }
+
+            for chrom in bundleChromosomes {
+                if vcfChroms.contains(chrom.name) { continue }
+                if aliasMap[chrom.name] != nil { continue }  // Already matched by name
+
+                var bestMatch: String?
+                var bestDelta = Int64.max
+
+                for vcfChrom in afterNameMatching where !usedVCFChroms.contains(vcfChrom) {
+                    if let contigLength = vcfContigLengths[vcfChrom] {
+                        let delta = abs(chrom.length - contigLength)
+                        guard delta <= 10 else { continue }
+                        if delta < bestDelta {
+                            bestDelta = delta
+                            bestMatch = vcfChrom
+                        }
+                    } else if let maxPos = vcfMaxPositions[vcfChrom] {
+                        let maxPos64 = Int64(maxPos)
+                        guard maxPos64 <= chrom.length else { continue }
+                        let delta = chrom.length - maxPos64
+                        let tolerance = chrom.length > 1_000_000
+                            ? chrom.length / 20
+                            : chrom.length / 5
+                        guard delta < tolerance else { continue }
+                        if delta < bestDelta {
+                            bestDelta = delta
+                            bestMatch = vcfChrom
+                        }
+                    }
+                }
+
+                if let match = bestMatch {
+                    aliasMap[chrom.name] = match
+                    usedVCFChroms.insert(match)
+                }
+            }
+        }
+
+        // Warn if we still have unmatched chromosomes
+        let finalUnmatched = unmatched.subtracting(usedVCFChroms)
+        if aliasMap.isEmpty && !finalUnmatched.isEmpty {
+            let vcfSample = Array(finalUnmatched.prefix(3)).joined(separator: ", ")
+            let refSample = Array(bundleChromosomes.prefix(3).map(\.name)).joined(separator: ", ")
+            logger.warning("buildVariantChromosomeAliasMap: Could not match VCF chromosomes [\(vcfSample)] to reference chromosomes [\(refSample)] — variant queries may return empty results")
+        }
+
         if !aliasMap.isEmpty {
-            logger.info("buildVariantChromosomeAliasMap: Built \(aliasMap.count) chromosome aliases via \(vcfContigLengths.isEmpty ? "max-position" : "contig-length") matching (e.g., \(aliasMap.first?.key ?? "") → \(aliasMap.first?.value ?? ""))")
+            let nameMatchCount = nameMap.count
+            let lengthMatchCount = aliasMap.count - nameMatchCount
+            logger.info("buildVariantChromosomeAliasMap: Built \(aliasMap.count) chromosome aliases (\(nameMatchCount) name-based, \(lengthMatchCount) length-based) (e.g., \(aliasMap.first?.key ?? "") → \(aliasMap.first?.value ?? ""))")
         }
 
         return aliasMap

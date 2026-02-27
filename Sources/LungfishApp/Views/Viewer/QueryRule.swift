@@ -23,7 +23,9 @@ public struct QueryRule: Codable, Sendable, Identifiable {
     ) {
         self.id = id
         self.category = category
-        self.field = field
+        // Use the first built-in field for the category when no field is specified,
+        // so that SwiftUI Picker always has a valid initial selection.
+        self.field = field.isEmpty ? (category.fields.first ?? "") : field
         self.op = op
         self.value = value
     }

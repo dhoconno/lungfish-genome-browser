@@ -149,4 +149,206 @@ enum BundleBuildHelpers {
     static func formatBytes(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
+
+    // MARK: - Assembly Report Parsing
+
+    /// A single row from an NCBI assembly report file.
+    ///
+    /// The assembly report maps between all chromosome naming conventions:
+    /// RefSeq accession, GenBank accession, UCSC name, and assigned molecule number.
+    struct AssemblyReportEntry {
+        /// Sequence name from the assembly (col 0, e.g., "chr1", "random_chr1_000743F_qpd_obj")
+        let sequenceName: String
+        /// Role of this sequence (col 1, e.g., "assembled-molecule", "unlocalized-scaffold", "unplaced-scaffold")
+        let sequenceRole: String
+        /// Assigned molecule name (col 2, e.g., "1", "X", "MT", "na")
+        let assignedMolecule: String
+        /// Molecule location type (col 3, e.g., "Chromosome", "Mitochondrion", "na")
+        let moleculeType: String
+        /// GenBank accession (col 4, e.g., "CM018917.1")
+        let genBankAccession: String
+        /// RefSeq accession (col 6, e.g., "NC_048383.1")
+        let refSeqAccession: String
+        /// Sequence length in base pairs (col 8)
+        let sequenceLength: Int64?
+        /// UCSC-style name (col 9, nil if "na")
+        let ucscName: String?
+    }
+
+    /// Parses an NCBI assembly report text file.
+    ///
+    /// The report is tab-delimited with 10 columns, preceded by `#` header lines.
+    /// Columns: Sequence-Name, Sequence-Role, Assigned-Molecule, Assigned-Molecule-loc/type,
+    /// GenBank-Accn, Relationship, RefSeq-Accn, Assembly-Unit, Sequence-Length, UCSC-style-name
+    ///
+    /// - Parameter url: Path to the assembly report file.
+    /// - Returns: Array of parsed entries.
+    static func parseAssemblyReport(at url: URL) throws -> [AssemblyReportEntry] {
+        let content = try String(contentsOf: url, encoding: .utf8)
+        let lines = content.components(separatedBy: .newlines)
+
+        var entries: [AssemblyReportEntry] = []
+        for line in lines {
+            // Skip comment/header lines and empty lines
+            if line.isEmpty || line.hasPrefix("#") { continue }
+
+            let fields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            // Need at least 9 columns (UCSC name in col 9 is optional in some reports)
+            guard fields.count >= 9 else { continue }
+
+            let ucsc: String? = fields.count > 9 && fields[9] != "na" ? fields[9] : nil
+            let seqLength = Int64(fields[8])
+
+            entries.append(AssemblyReportEntry(
+                sequenceName: fields[0],
+                sequenceRole: fields[1],
+                assignedMolecule: fields[2],
+                moleculeType: fields[3],
+                genBankAccession: fields[4],
+                refSeqAccession: fields[6],
+                sequenceLength: seqLength,
+                ucscName: ucsc
+            ))
+        }
+
+        return entries
+    }
+
+    /// Parses metadata from the `#` header lines of an assembly report.
+    ///
+    /// Extracts key-value pairs like "Assembly method", "Genome coverage", "Sequencing technology"
+    /// for display in the Inspector panel.
+    ///
+    /// - Parameter url: Path to the assembly report file.
+    /// - Returns: Array of metadata items, or empty if parsing fails.
+    static func parseAssemblyReportHeader(at url: URL) throws -> [MetadataItem] {
+        let content = try String(contentsOf: url, encoding: .utf8)
+        let lines = content.components(separatedBy: .newlines)
+
+        var items: [MetadataItem] = []
+        for line in lines {
+            guard line.hasPrefix("# ") else {
+                // Stop at first non-comment line (data starts)
+                if !line.isEmpty && !line.hasPrefix("#") { break }
+                continue
+            }
+
+            // Format: "# Key:  Value" or "# Key: Value"
+            let stripped = String(line.dropFirst(2)) // Remove "# "
+            guard let colonIndex = stripped.firstIndex(of: ":") else { continue }
+            let label = stripped[stripped.startIndex..<colonIndex].trimmingCharacters(in: .whitespaces)
+            let value = stripped[stripped.index(after: colonIndex)...].trimmingCharacters(in: .whitespaces)
+
+            guard !label.isEmpty, !value.isEmpty else { continue }
+
+            // Skip redundant header lines (e.g., section markers)
+            let skipLabels: Set<String> = ["Assembly-Units"]
+            if skipLabels.contains(label) { continue }
+
+            items.append(MetadataItem(label: label, value: value))
+        }
+
+        return items
+    }
+
+    /// Enriches chromosome info from `.fai` parsing with aliases from the assembly report.
+    ///
+    /// For each chromosome, finds the matching assembly report entry (by RefSeq accession,
+    /// GenBank accession, or sequence name) and populates `aliases`, `fastaDescription`,
+    /// `isPrimary`, and `isMitochondrial` fields.
+    ///
+    /// - Parameters:
+    ///   - chromosomes: Chromosomes from `parseFai()`.
+    ///   - report: Parsed assembly report entries.
+    /// - Returns: Enriched chromosome info array with populated aliases.
+    static func augmentChromosomesWithAssemblyReport(
+        _ chromosomes: [ChromosomeInfo],
+        report: [AssemblyReportEntry]
+    ) -> [ChromosomeInfo] {
+        // Build lookup maps by the various name columns
+        var byRefSeq: [String: AssemblyReportEntry] = [:]
+        var byGenBank: [String: AssemblyReportEntry] = [:]
+        var bySeqName: [String: AssemblyReportEntry] = [:]
+
+        for entry in report {
+            if entry.refSeqAccession != "na" {
+                byRefSeq[entry.refSeqAccession] = entry
+            }
+            if entry.genBankAccession != "na" {
+                byGenBank[entry.genBankAccession] = entry
+            }
+            bySeqName[entry.sequenceName] = entry
+        }
+
+        return chromosomes.map { chrom in
+            // Match by RefSeq accession first (most common for NCBI downloads),
+            // then GenBank accession, then sequence name
+            let entry = byRefSeq[chrom.name]
+                ?? byGenBank[chrom.name]
+                ?? bySeqName[chrom.name]
+
+            guard let entry else { return chrom }
+
+            // Collect all alternative names, excluding the chromosome's own name
+            var aliasSet = Set<String>()
+
+            let isAssembledMolecule = entry.sequenceRole == "assembled-molecule"
+
+            // Assigned molecule number (e.g., "1", "X", "MT") — only for assembled molecules.
+            // Unlocalized/unplaced scaffolds report the chromosome they're assigned to,
+            // which is NOT an alias for the scaffold itself.
+            if isAssembledMolecule && entry.assignedMolecule != "na" {
+                aliasSet.insert(entry.assignedMolecule)
+                // UCSC convention: "chr" + molecule
+                aliasSet.insert("chr\(entry.assignedMolecule)")
+            }
+
+            // Sequence name from the assembly (e.g., "chr1")
+            aliasSet.insert(entry.sequenceName)
+
+            // GenBank accession (e.g., "CM018917.1")
+            if entry.genBankAccession != "na" {
+                aliasSet.insert(entry.genBankAccession)
+            }
+
+            // RefSeq accession (e.g., "NC_048383.1")
+            if entry.refSeqAccession != "na" {
+                aliasSet.insert(entry.refSeqAccession)
+            }
+
+            // UCSC name if present
+            if let ucsc = entry.ucscName {
+                aliasSet.insert(ucsc)
+            }
+
+            // Remove the chromosome's own name — it's not an "alias"
+            aliasSet.remove(chrom.name)
+            // Also merge with any pre-existing aliases
+            let finalAliases = Array(aliasSet.union(chrom.aliases)).sorted()
+
+            // Build a useful fastaDescription
+            let description: String?
+            if entry.assignedMolecule != "na" && entry.moleculeType != "na" {
+                description = "\(entry.moleculeType) \(entry.assignedMolecule)"
+            } else {
+                description = chrom.fastaDescription
+            }
+
+            let isPrimary = entry.sequenceRole == "assembled-molecule"
+            let isMito = entry.moleculeType.lowercased() == "mitochondrion"
+                || entry.assignedMolecule.uppercased() == "MT"
+
+            return ChromosomeInfo(
+                name: chrom.name,
+                length: chrom.length,
+                offset: chrom.offset,
+                lineBases: chrom.lineBases,
+                lineWidth: chrom.lineWidth,
+                aliases: finalAliases,
+                isPrimary: isPrimary,
+                isMitochondrial: isMito,
+                fastaDescription: description
+            )
+        }
+    }
 }

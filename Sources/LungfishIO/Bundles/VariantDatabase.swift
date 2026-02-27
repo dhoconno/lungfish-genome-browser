@@ -343,6 +343,66 @@ public final class VariantDatabase: @unchecked Sendable {
     /// Whether the database is opened read-only.
     private let isReadOnly: Bool
 
+    // MARK: - Query Timeout (sqlite3_progress_handler)
+
+    /// Context object for the sqlite3_progress_handler callback.
+    /// Stored as a strong reference to keep it alive for the Unmanaged pointer.
+    private var progressContext: QueryProgressContext?
+
+    private final class QueryProgressContext {
+        let startTime: CFAbsoluteTime
+        let timeoutSeconds: TimeInterval
+        let cancelCheck: (() -> Bool)?
+
+        init(timeoutSeconds: TimeInterval, cancelCheck: (() -> Bool)? = nil) {
+            self.startTime = CFAbsoluteTimeGetCurrent()
+            self.timeoutSeconds = timeoutSeconds
+            self.cancelCheck = cancelCheck
+        }
+
+        var isExpired: Bool {
+            CFAbsoluteTimeGetCurrent() - startTime > timeoutSeconds
+        }
+    }
+
+    /// Installs a progress handler that aborts queries exceeding the timeout.
+    /// The callback is invoked every ~1000 virtual machine opcodes (~0.5-2ms).
+    /// If the callback returns non-zero, the current query aborts with SQLITE_INTERRUPT.
+    public func installQueryTimeout(seconds: TimeInterval, cancelCheck: (() -> Bool)? = nil) {
+        guard let db else { return }
+        let ctx = QueryProgressContext(timeoutSeconds: seconds, cancelCheck: cancelCheck)
+        self.progressContext = ctx
+        let rawPtr = Unmanaged.passUnretained(ctx).toOpaque()
+        sqlite3_progress_handler(db, 1000, { rawPtr in
+            guard let rawPtr else { return 0 }
+            let ctx = Unmanaged<QueryProgressContext>.fromOpaque(rawPtr).takeUnretainedValue()
+            if ctx.isExpired { return 1 }
+            if ctx.cancelCheck?() == true { return 1 }
+            return 0
+        }, rawPtr)
+    }
+
+    /// Removes the progress handler.  Call after query completes.
+    public func removeQueryTimeout() {
+        guard let db else { return }
+        sqlite3_progress_handler(db, 0, nil, nil)
+        self.progressContext = nil
+    }
+
+    // MARK: - Metadata Cache
+
+    private var _cachedTotalCount: Int?
+    private var _cachedAllTypes: [String]?
+    private var _cachedAllChromosomes: [String]?
+    private var _cachedChromosomeMaxPositions: [String: Int]?
+    private var _cachedChromosomeCounts: [String: Int]?
+    /// Whether the high-impact temp table has been created.
+    private var _highImpactCacheReady = false
+    /// Cached INFO keys discovered from raw INFO strings (for skipVariantInfo databases).
+    private var _cachedDiscoveredInfoKeys: [(key: String, type: String, number: String, description: String)]?
+    /// Per-SmartToken cache state: token name → (ready, count).
+    private var _tokenCacheState: [String: (ready: Bool, count: Int)] = [:]
+
     /// Opens an existing variant database for reading.
     ///
     /// - Parameter url: URL to the SQLite database file
@@ -367,6 +427,8 @@ public final class VariantDatabase: @unchecked Sendable {
         // Enforce FK constraints so genotype rows cannot be orphaned.
         sqlite3_exec(db, "PRAGMA foreign_keys = ON", nil, nil, nil)
         try Self.validateSchema(db: db)
+        // Load pre-built token filter tables (created during import) — instant.
+        loadTokenCacheState()
         variantDBLogger.info("Opened variant database: \(url.lastPathComponent)")
     }
 
@@ -451,7 +513,15 @@ public final class VariantDatabase: @unchecked Sendable {
     }()
 
     /// Returns the total number of variants in the database.
+    /// Result is cached on first call for read-only databases.
     public func totalCount() -> Int {
+        if let cached = _cachedTotalCount { return cached }
+        let result = computeTotalCount()
+        if isReadOnly { _cachedTotalCount = result }
+        return result
+    }
+
+    private func computeTotalCount() -> Int {
         guard let db else { return 0 }
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
@@ -461,7 +531,15 @@ public final class VariantDatabase: @unchecked Sendable {
     }
 
     /// Returns all distinct variant type strings (SNP, INS, DEL, MNP, COMPLEX, REF).
+    /// Result is cached on first call for read-only databases.
     public func allTypes() -> [String] {
+        if let cached = _cachedAllTypes { return cached }
+        let result = computeAllTypes()
+        if isReadOnly { _cachedAllTypes = result }
+        return result
+    }
+
+    private func computeAllTypes() -> [String] {
         guard let db else { return [] }
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
@@ -477,7 +555,15 @@ public final class VariantDatabase: @unchecked Sendable {
     }
 
     /// Returns all distinct chromosome names in the database.
+    /// Result is cached on first call for read-only databases.
     public func allChromosomes() -> [String] {
+        if let cached = _cachedAllChromosomes { return cached }
+        let result = computeAllChromosomes()
+        if isReadOnly { _cachedAllChromosomes = result }
+        return result
+    }
+
+    private func computeAllChromosomes() -> [String] {
         guard let db else { return [] }
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
@@ -493,10 +579,15 @@ public final class VariantDatabase: @unchecked Sendable {
     }
 
     /// Returns the maximum end position per chromosome.
-    ///
-    /// Used for chromosome name alias matching by comparing max variant positions
-    /// against reference chromosome lengths.
+    /// Result is cached on first call for read-only databases.
     public func chromosomeMaxPositions() -> [String: Int] {
+        if let cached = _cachedChromosomeMaxPositions { return cached }
+        let result = computeChromosomeMaxPositions()
+        if isReadOnly { _cachedChromosomeMaxPositions = result }
+        return result
+    }
+
+    private func computeChromosomeMaxPositions() -> [String: Int] {
         guard let db else { return [:] }
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
@@ -510,6 +601,24 @@ public final class VariantDatabase: @unchecked Sendable {
                 result[chrom] = maxPos
             }
         }
+        return result
+    }
+
+    /// Returns per-chromosome variant counts.
+    /// Result is cached on first call for read-only databases.
+    public func chromosomeVariantCounts() -> [String: Int] {
+        if let cached = _cachedChromosomeCounts { return cached }
+        guard let db else { return [:] }
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, "SELECT chromosome, COUNT(*) FROM variants GROUP BY chromosome", -1, &stmt, nil) == SQLITE_OK else { return [:] }
+        var result: [String: Int] = [:]
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let cStr = sqlite3_column_text(stmt, 0) {
+                result[String(cString: cStr)] = Int(sqlite3_column_int64(stmt, 1))
+            }
+        }
+        if isReadOnly { _cachedChromosomeCounts = result }
         return result
     }
 
@@ -693,38 +802,62 @@ public final class VariantDatabase: @unchecked Sendable {
         }
     }
 
-    /// Queries variants with optional type filter, name filter, and INFO filters.
+    /// Queries variants with optional type filter, name filter, INFO filters, and pre-materialized token caches.
+    ///
+    /// When `activeTokens` is non-empty, matching pre-materialized temp tables are used
+    /// via INNER JOIN for instant filtering, and redundant WHERE clauses are skipped.
     public func queryForTable(
         chromosome: String? = nil,
         nameFilter: String = "",
         types: Set<String> = [],
         infoFilters: [InfoFilter] = [],
         sampleNames: Set<String> = [],
+        activeTokens: Set<String> = [],
         limit: Int = 5000
     ) -> [VariantDatabaseRecord] {
         guard let db else { return [] }
-        // All infoFilters are resolved via variant_info EAV table
 
-        var sql = "SELECT id, chromosome, position, end_pos, variant_id, ref, alt, variant_type, quality, filter, info, sample_count FROM variants"
+        // Collect token JOINs and determine which WHERE clauses they supersede.
+        var tokenJoins: [String] = []
+        var supersededFilters = SupersededFilters()
+        for token in activeTokens {
+            if let join = tokenJoinSQL(for: token) {
+                tokenJoins.append(join)
+                supersededFilters.add(token)
+            }
+        }
+
+        // Fall back to legacy high-impact JOIN for sole IMPACT=HIGH filter when no token cache.
+        let useHighImpactJoin = tokenJoins.isEmpty && isHighImpactOnlyFilter(infoFilters)
+        let effectiveInfoFilters = useHighImpactJoin ? [] : supersededFilters.filterInfoFilters(infoFilters)
+
+        let useQualifiedCols = !tokenJoins.isEmpty || useHighImpactJoin
+        let selectCols = useQualifiedCols
+            ? "variants.id, variants.chromosome, variants.position, variants.end_pos, variants.variant_id, variants.ref, variants.alt, variants.variant_type, variants.quality, variants.filter, variants.info, variants.sample_count"
+            : "id, chromosome, position, end_pos, variant_id, ref, alt, variant_type, quality, filter, info, sample_count"
+        var sql = "SELECT \(selectCols) FROM variants"
+        for join in tokenJoins { sql += " \(join)" }
+        if useHighImpactJoin { sql += " \(highImpactJoinSQL())" }
+
         var conditions: [String] = []
         var bindings: [(Int32, String)] = []
         var paramIndex: Int32 = 1
 
         if let chromosome {
-            conditions.append("chromosome = ?")
+            conditions.append("variants.chromosome = ?")
             bindings.append((paramIndex, chromosome))
             paramIndex += 1
         }
 
         if !nameFilter.isEmpty {
-            conditions.append("variant_id LIKE ?")
+            conditions.append("variants.variant_id LIKE ?")
             bindings.append((paramIndex, "%\(nameFilter)%"))
             paramIndex += 1
         }
 
-        if !types.isEmpty {
+        if !types.isEmpty && !supersededFilters.typesSuperseded {
             let placeholders = types.map { _ in "?" }.joined(separator: ",")
-            conditions.append("variant_type IN (\(placeholders))")
+            conditions.append("variants.variant_type IN (\(placeholders))")
             for t in types.sorted() {
                 bindings.append((paramIndex, t))
                 paramIndex += 1
@@ -741,16 +874,20 @@ public final class VariantDatabase: @unchecked Sendable {
             }
         }
 
-        for filter in infoFilters {
+        for filter in effectiveInfoFilters {
             let (filterSQL, filterBindings) = filter.sqlCondition(paramIndex: &paramIndex)
             conditions.append(filterSQL)
             bindings.append(contentsOf: filterBindings)
         }
 
+        if !supersededFilters.qualitySuperseded {
+            // Quality filter not handled by token JOIN
+        }
+
         if !conditions.isEmpty {
             sql += " WHERE " + conditions.joined(separator: " AND ")
         }
-        sql += " ORDER BY chromosome, position LIMIT \(limit)"
+        sql += " ORDER BY variants.chromosome, variants.position LIMIT \(limit)"
 
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
@@ -763,37 +900,88 @@ public final class VariantDatabase: @unchecked Sendable {
         return readVariantRows(stmt: stmt!)
     }
 
+    /// Tracks which WHERE clauses are superseded by pre-materialized token JOINs.
+    private struct SupersededFilters {
+        var typesSuperseded = false
+        var qualitySuperseded = false
+        var filterColumnSuperseded = false
+        var supersededInfoKeys: Set<String> = []
+
+        mutating func add(_ tokenName: String) {
+            switch tokenName {
+            case "passOnly": filterColumnSuperseded = true
+            case "snv", "indel": typesSuperseded = true
+            case "qualityGE30": qualitySuperseded = true
+            case "depthGE10": supersededInfoKeys.insert("DP")
+            case "rareVariant":
+                for key in ["AF", "af", "gnomAD_AF", "ExAC_AF", "1000G_AF", "MAX_AF", "gnomADe_AF", "gnomADg_AF"] {
+                    supersededInfoKeys.insert(key)
+                }
+            case "highImpact":
+                for key in ["IMPACT", "impact", "ANN_IMPACT", "CSQ_IMPACT"] {
+                    supersededInfoKeys.insert(key)
+                }
+            case "clinvarPathogenic":
+                for key in ["CLNSIG", "ClinVar_SIG", "clinvar_sig", "CLNDN"] {
+                    supersededInfoKeys.insert(key)
+                }
+            default: break
+            }
+        }
+
+        /// Removes InfoFilters that are already handled by token JOINs.
+        func filterInfoFilters(_ filters: [InfoFilter]) -> [InfoFilter] {
+            filters.filter { !supersededInfoKeys.contains($0.key) }
+        }
+    }
+
     /// Returns variant count matching optional filters.
     public func queryCountForTable(
         chromosome: String? = nil,
         nameFilter: String = "",
         types: Set<String> = [],
         infoFilters: [InfoFilter] = [],
-        sampleNames: Set<String> = []
+        sampleNames: Set<String> = [],
+        activeTokens: Set<String> = []
     ) -> Int {
         guard let db else { return 0 }
-        // All infoFilters are resolved via variant_info EAV table
+
+        // Collect token JOINs and determine which WHERE clauses they supersede.
+        var tokenJoins: [String] = []
+        var supersededFilters = SupersededFilters()
+        for token in activeTokens {
+            if let join = tokenJoinSQL(for: token) {
+                tokenJoins.append(join)
+                supersededFilters.add(token)
+            }
+        }
+
+        let useHighImpactJoin = tokenJoins.isEmpty && isHighImpactOnlyFilter(infoFilters)
+        let effectiveInfoFilters = useHighImpactJoin ? [] : supersededFilters.filterInfoFilters(infoFilters)
 
         var sql = "SELECT COUNT(*) FROM variants"
+        for join in tokenJoins { sql += " \(join)" }
+        if useHighImpactJoin { sql += " \(highImpactJoinSQL())" }
+
         var conditions: [String] = []
         var bindings: [(Int32, String)] = []
         var paramIndex: Int32 = 1
 
         if let chromosome {
-            conditions.append("chromosome = ?")
+            conditions.append("variants.chromosome = ?")
             bindings.append((paramIndex, chromosome))
             paramIndex += 1
         }
 
         if !nameFilter.isEmpty {
-            conditions.append("variant_id LIKE ?")
+            conditions.append("variants.variant_id LIKE ?")
             bindings.append((paramIndex, "%\(nameFilter)%"))
             paramIndex += 1
         }
 
-        if !types.isEmpty {
+        if !types.isEmpty && !supersededFilters.typesSuperseded {
             let placeholders = types.map { _ in "?" }.joined(separator: ",")
-            conditions.append("variant_type IN (\(placeholders))")
+            conditions.append("variants.variant_type IN (\(placeholders))")
             for t in types.sorted() {
                 bindings.append((paramIndex, t))
                 paramIndex += 1
@@ -810,7 +998,7 @@ public final class VariantDatabase: @unchecked Sendable {
             }
         }
 
-        for filter in infoFilters {
+        for filter in effectiveInfoFilters {
             let (filterSQL, filterBindings) = filter.sqlCondition(paramIndex: &paramIndex)
             conditions.append(filterSQL)
             bindings.append(contentsOf: filterBindings)
@@ -842,26 +1030,47 @@ public final class VariantDatabase: @unchecked Sendable {
         types: Set<String> = [],
         infoFilters: [InfoFilter] = [],
         sampleNames: Set<String> = [],
+        activeTokens: Set<String> = [],
         limit: Int = 5000
     ) -> [VariantDatabaseRecord] {
         guard let db else { return [] }
-        // All infoFilters are resolved via variant_info EAV table
 
-        var sql = "SELECT id, chromosome, position, end_pos, variant_id, ref, alt, variant_type, quality, filter, info, sample_count FROM variants"
-        var conditions: [String] = ["chromosome = ?1", "position < ?2", "end_pos > ?3"]
+        // Collect token JOINs and determine which WHERE clauses they supersede.
+        var tokenJoins: [String] = []
+        var supersededFilters = SupersededFilters()
+        for token in activeTokens {
+            if let join = tokenJoinSQL(for: token) {
+                tokenJoins.append(join)
+                supersededFilters.add(token)
+            }
+        }
+
+        let useHighImpactJoin = tokenJoins.isEmpty && isHighImpactOnlyFilter(infoFilters)
+        let effectiveInfoFilters = useHighImpactJoin ? [] : supersededFilters.filterInfoFilters(infoFilters)
+
+        let useQualifiedCols = !tokenJoins.isEmpty || useHighImpactJoin
+        let selectCols = useQualifiedCols
+            ? "variants.id, variants.chromosome, variants.position, variants.end_pos, variants.variant_id, variants.ref, variants.alt, variants.variant_type, variants.quality, variants.filter, variants.info, variants.sample_count"
+            : "id, chromosome, position, end_pos, variant_id, ref, alt, variant_type, quality, filter, info, sample_count"
+        var sql = "SELECT \(selectCols) FROM variants"
+        for join in tokenJoins { sql += " \(join)" }
+        if useHighImpactJoin { sql += " \(highImpactJoinSQL())" }
+
+        let colPrefix = useQualifiedCols ? "variants." : ""
+        var conditions: [String] = ["\(colPrefix)chromosome = ?1", "\(colPrefix)position < ?2", "\(colPrefix)end_pos > ?3"]
         var textBindings: [(Int32, String)] = [(1, chromosome)]
-        var intBindings: [(Int32, Int)] = [(2, end), (3, start)]
+        let intBindings: [(Int32, Int)] = [(2, end), (3, start)]
         var paramIndex: Int32 = 4
 
         if !nameFilter.isEmpty {
-            conditions.append("variant_id LIKE ?\(paramIndex)")
+            conditions.append("\(colPrefix)variant_id LIKE ?\(paramIndex)")
             textBindings.append((paramIndex, "%\(nameFilter)%"))
             paramIndex += 1
         }
 
-        if !types.isEmpty {
+        if !types.isEmpty && !supersededFilters.typesSuperseded {
             let placeholders = types.enumerated().map { "?\(paramIndex + Int32($0.offset))" }.joined(separator: ",")
-            conditions.append("variant_type IN (\(placeholders))")
+            conditions.append("\(colPrefix)variant_type IN (\(placeholders))")
             for t in types.sorted() {
                 textBindings.append((paramIndex, t))
                 paramIndex += 1
@@ -878,14 +1087,14 @@ public final class VariantDatabase: @unchecked Sendable {
             }
         }
 
-        for filter in infoFilters {
+        for filter in effectiveInfoFilters {
             let (filterSQL, filterBindings) = filter.sqlCondition(paramIndex: &paramIndex)
             conditions.append(filterSQL)
             textBindings.append(contentsOf: filterBindings)
         }
 
         sql += " WHERE " + conditions.joined(separator: " AND ")
-        sql += " ORDER BY chromosome, position LIMIT \(limit)"
+        sql += " ORDER BY \(colPrefix)chromosome, \(colPrefix)position LIMIT \(limit)"
 
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
@@ -909,26 +1118,41 @@ public final class VariantDatabase: @unchecked Sendable {
         nameFilter: String = "",
         types: Set<String> = [],
         infoFilters: [InfoFilter] = [],
-        sampleNames: Set<String> = []
+        sampleNames: Set<String> = [],
+        activeTokens: Set<String> = []
     ) -> Int {
         guard let db else { return 0 }
-        // All infoFilters are resolved via variant_info EAV table
+
+        var tokenJoins: [String] = []
+        var supersededFilters = SupersededFilters()
+        for token in activeTokens {
+            if let join = tokenJoinSQL(for: token) {
+                tokenJoins.append(join)
+                supersededFilters.add(token)
+            }
+        }
+
+        let useHighImpactJoin = tokenJoins.isEmpty && isHighImpactOnlyFilter(infoFilters)
+        let effectiveInfoFilters = useHighImpactJoin ? [] : supersededFilters.filterInfoFilters(infoFilters)
 
         var sql = "SELECT COUNT(*) FROM variants"
-        var conditions: [String] = ["chromosome = ?1", "position < ?2", "end_pos > ?3"]
+        for join in tokenJoins { sql += " \(join)" }
+        if useHighImpactJoin { sql += " \(highImpactJoinSQL())" }
+
+        var conditions: [String] = ["variants.chromosome = ?1", "variants.position < ?2", "variants.end_pos > ?3"]
         var textBindings: [(Int32, String)] = [(1, chromosome)]
-        var intBindings: [(Int32, Int)] = [(2, end), (3, start)]
+        let intBindings: [(Int32, Int)] = [(2, end), (3, start)]
         var paramIndex: Int32 = 4
 
         if !nameFilter.isEmpty {
-            conditions.append("variant_id LIKE ?\(paramIndex)")
+            conditions.append("variants.variant_id LIKE ?\(paramIndex)")
             textBindings.append((paramIndex, "%\(nameFilter)%"))
             paramIndex += 1
         }
 
-        if !types.isEmpty {
+        if !types.isEmpty && !supersededFilters.typesSuperseded {
             let placeholders = types.enumerated().map { "?\(paramIndex + Int32($0.offset))" }.joined(separator: ",")
-            conditions.append("variant_type IN (\(placeholders))")
+            conditions.append("variants.variant_type IN (\(placeholders))")
             for t in types.sorted() {
                 textBindings.append((paramIndex, t))
                 paramIndex += 1
@@ -945,7 +1169,7 @@ public final class VariantDatabase: @unchecked Sendable {
             }
         }
 
-        for filter in infoFilters {
+        for filter in effectiveInfoFilters {
             let (filterSQL, filterBindings) = filter.sqlCondition(paramIndex: &paramIndex)
             conditions.append(filterSQL)
             textBindings.append(contentsOf: filterBindings)
@@ -982,6 +1206,377 @@ public final class VariantDatabase: @unchecked Sendable {
 
         return readVariantRows(stmt: stmt!)
     }
+
+    // MARK: - High-Impact Variant Cache
+
+    /// Known INFO keys for the IMPACT field.
+    private static let impactInfoKeys = ["IMPACT", "impact", "ANN_IMPACT", "CSQ_IMPACT"]
+
+    /// Creates a temp table of variant IDs with IMPACT=HIGH for instant filtering.
+    /// Runs once per connection; protected by the progress handler timeout.
+    /// Returns true if the cache was created successfully.
+    @discardableResult
+    public func warmHighImpactCache(timeoutSeconds: TimeInterval = 30) -> Bool {
+        guard let db, !_highImpactCacheReady else { return _highImpactCacheReady }
+
+        // Install a timeout so the initial scan doesn't block forever.
+        let ctx = QueryProgressContext(timeoutSeconds: timeoutSeconds)
+        let savedCtx = progressContext
+        progressContext = ctx
+        let rawPtr = Unmanaged.passUnretained(ctx).toOpaque()
+        sqlite3_progress_handler(db, 1000, { rawPtr in
+            guard let rawPtr else { return 0 }
+            let c = Unmanaged<QueryProgressContext>.fromOpaque(rawPtr).takeUnretainedValue()
+            return c.isExpired ? 1 : 0
+        }, rawPtr)
+
+        defer {
+            // Restore previous progress handler state.
+            if let savedCtx {
+                progressContext = savedCtx
+                let rawPtr = Unmanaged.passUnretained(savedCtx).toOpaque()
+                sqlite3_progress_handler(db, 1000, { rawPtr in
+                    guard let rawPtr else { return 0 }
+                    let c = Unmanaged<QueryProgressContext>.fromOpaque(rawPtr).takeUnretainedValue()
+                    if c.isExpired { return 1 }
+                    if c.cancelCheck?() == true { return 1 }
+                    return 0
+                }, rawPtr)
+            } else {
+                sqlite3_progress_handler(db, 0, nil, nil)
+                progressContext = nil
+            }
+        }
+
+        let keyList = Self.impactInfoKeys.map { "'\($0)'" }.joined(separator: ",")
+        let sql = """
+        CREATE TABLE IF NOT EXISTS _high_impact AS
+        SELECT DISTINCT variant_id FROM variant_info
+        WHERE key IN (\(keyList))
+        AND value = 'HIGH'
+        """
+        var err: UnsafeMutablePointer<CChar>?
+        let rc = sqlite3_exec(db, sql, nil, nil, &err)
+        if let err {
+            let msg = String(cString: err)
+            sqlite3_free(err)
+            if rc == SQLITE_INTERRUPT {
+                variantDBLogger.info("warmHighImpactCache: timed out after \(timeoutSeconds)s")
+            } else {
+                variantDBLogger.warning("warmHighImpactCache: failed: \(msg)")
+            }
+            return false
+        }
+        // Create index on the temp table for fast JOINs.
+        sqlite3_exec(db, "CREATE INDEX IF NOT EXISTS _idx_hi ON _high_impact(variant_id)", nil, nil, nil)
+        _highImpactCacheReady = true
+
+        var countStmt: OpaquePointer?
+        defer { sqlite3_finalize(countStmt) }
+        if sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM _high_impact", -1, &countStmt, nil) == SQLITE_OK,
+           sqlite3_step(countStmt) == SQLITE_ROW {
+            let count = sqlite3_column_int64(countStmt, 0)
+            variantDBLogger.info("warmHighImpactCache: cached \(count) high-impact variants")
+        }
+        return true
+    }
+
+    /// Whether the high-impact temp table is ready for fast queries.
+    public var highImpactCacheReady: Bool { _highImpactCacheReady }
+
+    /// Returns the current SmartToken cache state (token rawValue → ready status and count).
+    public var tokenCacheState: [String: (ready: Bool, count: Int)] { _tokenCacheState }
+
+    // MARK: - SmartToken Pre-Materialization
+
+    /// Token names used as keys for the cache state dictionary and temp table naming.
+    private struct TokenDef {
+        let name: String
+        let tableName: String
+        let sql: String
+        let idColumn: String  // "id" for variants-table queries, "variant_id" for EAV queries
+        let requiresEAV: Bool
+    }
+
+    /// Builds the list of token definitions that can be pre-materialized.
+    private func tokenDefinitions(availableInfoKeys: Set<String>) -> [TokenDef] {
+        var defs: [TokenDef] = []
+
+        // Column-based tokens (always available)
+        defs.append(TokenDef(
+            name: "passOnly",
+            tableName: "_tok_pass",
+            sql: "SELECT id FROM variants WHERE filter = 'PASS'",
+            idColumn: "id",
+            requiresEAV: false
+        ))
+        defs.append(TokenDef(
+            name: "snv",
+            tableName: "_tok_snv",
+            sql: "SELECT id FROM variants WHERE variant_type IN ('SNV','snv','SNP','snp')",
+            idColumn: "id",
+            requiresEAV: false
+        ))
+        defs.append(TokenDef(
+            name: "indel",
+            tableName: "_tok_indel",
+            sql: "SELECT id FROM variants WHERE variant_type IN ('Indel','indel','INS','DEL','Insertion','Deletion')",
+            idColumn: "id",
+            requiresEAV: false
+        ))
+        defs.append(TokenDef(
+            name: "qualityGE30",
+            tableName: "_tok_qual30",
+            sql: "SELECT id FROM variants WHERE quality >= 30",
+            idColumn: "id",
+            requiresEAV: false
+        ))
+
+        // EAV-based tokens (only for databases with variant_info populated)
+        if !variantInfoSkipped {
+            if availableInfoKeys.contains("DP") {
+                defs.append(TokenDef(
+                    name: "depthGE10",
+                    tableName: "_tok_dp10",
+                    sql: "SELECT DISTINCT variant_id FROM variant_info WHERE key = 'DP' AND CAST(value AS REAL) >= 10",
+                    idColumn: "variant_id",
+                    requiresEAV: true
+                ))
+            }
+
+            let afKey = ["AF", "af", "gnomAD_AF", "ExAC_AF", "1000G_AF", "MAX_AF", "gnomADe_AF", "gnomADg_AF"]
+                .first { availableInfoKeys.contains($0) }
+            if let afKey {
+                defs.append(TokenDef(
+                    name: "rareVariant",
+                    tableName: "_tok_rare",
+                    sql: "SELECT DISTINCT variant_id FROM variant_info WHERE key = '\(afKey)' AND CAST(value AS REAL) < 0.01",
+                    idColumn: "variant_id",
+                    requiresEAV: true
+                ))
+            }
+
+            // High impact is handled separately by warmHighImpactCache()
+            // but we track its state here too.
+
+            let clinvarKey = ["CLNSIG", "ClinVar_SIG", "clinvar_sig", "CLNDN"]
+                .first { availableInfoKeys.contains($0) }
+            if let clinvarKey {
+                defs.append(TokenDef(
+                    name: "clinvarPathogenic",
+                    tableName: "_tok_clinvar",
+                    sql: "SELECT DISTINCT variant_id FROM variant_info WHERE key = '\(clinvarKey)' AND value LIKE '%athogenic%'",
+                    idColumn: "variant_id",
+                    requiresEAV: true
+                ))
+            }
+        }
+
+        return defs
+    }
+
+    /// Pre-materializes all applicable SmartToken filters as persistent indexed tables.
+    ///
+    /// Creates permanent `_tok_*` tables during import so that opening the database
+    /// later only needs a fast `loadTokenCacheState()` call (row counts, no scans).
+    ///
+    /// - Parameters:
+    ///   - availableInfoKeys: Set of INFO keys present in this database
+    ///   - timeoutPerToken: Maximum seconds allowed per table creation
+    /// - Returns: Token cache state dictionary
+    @discardableResult
+    public func warmSmartTokenCaches(
+        availableInfoKeys: Set<String>,
+        timeoutPerToken: TimeInterval = 30
+    ) -> [String: (ready: Bool, count: Int)] {
+        guard let db else { return _tokenCacheState }
+
+        let defs = tokenDefinitions(availableInfoKeys: availableInfoKeys)
+
+        for def in defs {
+            // Skip if already cached (e.g. loaded from persistent table)
+            if _tokenCacheState[def.name]?.ready == true { continue }
+
+            // Install per-token timeout
+            let ctx = QueryProgressContext(timeoutSeconds: timeoutPerToken)
+            let savedCtx = progressContext
+            progressContext = ctx
+            let rawPtr = Unmanaged.passUnretained(ctx).toOpaque()
+            sqlite3_progress_handler(db, 1000, { rawPtr in
+                guard let rawPtr else { return 0 }
+                let c = Unmanaged<QueryProgressContext>.fromOpaque(rawPtr).takeUnretainedValue()
+                return c.isExpired ? 1 : 0
+            }, rawPtr)
+
+            // Persistent table (not TEMP) — survives database close/reopen.
+            let createSQL = "CREATE TABLE IF NOT EXISTS \(def.tableName) AS \(def.sql)"
+            var err: UnsafeMutablePointer<CChar>?
+            let rc = sqlite3_exec(db, createSQL, nil, nil, &err)
+
+            // Restore progress handler
+            if let savedCtx {
+                progressContext = savedCtx
+                let rawPtr = Unmanaged.passUnretained(savedCtx).toOpaque()
+                sqlite3_progress_handler(db, 1000, { rawPtr in
+                    guard let rawPtr else { return 0 }
+                    let c = Unmanaged<QueryProgressContext>.fromOpaque(rawPtr).takeUnretainedValue()
+                    if c.isExpired { return 1 }
+                    if c.cancelCheck?() == true { return 1 }
+                    return 0
+                }, rawPtr)
+            } else {
+                sqlite3_progress_handler(db, 0, nil, nil)
+                progressContext = nil
+            }
+
+            if let err {
+                let msg = String(cString: err)
+                sqlite3_free(err)
+                if rc == SQLITE_INTERRUPT {
+                    variantDBLogger.info("warmSmartTokenCaches: \(def.name) timed out after \(timeoutPerToken)s")
+                } else {
+                    variantDBLogger.warning("warmSmartTokenCaches: \(def.name) failed: \(msg)")
+                }
+                _tokenCacheState[def.name] = (ready: false, count: 0)
+                continue
+            }
+
+            // Create index on the persistent table
+            let indexSQL = "CREATE INDEX IF NOT EXISTS _idx_\(def.tableName) ON \(def.tableName)(\(def.idColumn))"
+            sqlite3_exec(db, indexSQL, nil, nil, nil)
+
+            // Count rows
+            var count = 0
+            var countStmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM \(def.tableName)", -1, &countStmt, nil) == SQLITE_OK,
+               sqlite3_step(countStmt!) == SQLITE_ROW {
+                count = Int(sqlite3_column_int64(countStmt!, 0))
+            }
+            sqlite3_finalize(countStmt)
+
+            _tokenCacheState[def.name] = (ready: true, count: count)
+            variantDBLogger.info("warmSmartTokenCaches: \(def.name) cached \(count) variants in \(def.tableName)")
+        }
+
+        // Also create persistent high-impact table if not already done
+        if !_highImpactCacheReady && !variantInfoSkipped {
+            let hasImpactKey = !availableInfoKeys.isDisjoint(with: Set(Self.impactInfoKeys))
+            if hasImpactKey {
+                warmHighImpactCache(timeoutSeconds: timeoutPerToken)
+                if _highImpactCacheReady {
+                    var countStmt: OpaquePointer?
+                    var hiCount = 0
+                    if sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM _high_impact", -1, &countStmt, nil) == SQLITE_OK,
+                       sqlite3_step(countStmt!) == SQLITE_ROW {
+                        hiCount = Int(sqlite3_column_int64(countStmt!, 0))
+                    }
+                    sqlite3_finalize(countStmt)
+                    _tokenCacheState["highImpact"] = (ready: true, count: hiCount)
+                }
+            }
+        }
+
+        return _tokenCacheState
+    }
+
+    /// Loads token cache state from pre-existing persistent `_tok_*` tables.
+    ///
+    /// This is fast (no full table scans — just checks table existence and reads row counts).
+    /// Called during database open so SmartToken chips are available instantly.
+    public func loadTokenCacheState() {
+        guard let db else { return }
+
+        // All known persistent token tables and their token names.
+        let knownTables: [(name: String, tableName: String)] = [
+            ("passOnly", "_tok_pass"),
+            ("snv", "_tok_snv"),
+            ("indel", "_tok_indel"),
+            ("qualityGE30", "_tok_qual30"),
+            ("depthGE10", "_tok_dp10"),
+            ("rareVariant", "_tok_rare"),
+            ("clinvarPathogenic", "_tok_clinvar"),
+            ("highImpact", "_high_impact"),
+        ]
+
+        for (name, tableName) in knownTables {
+            // Check if the table exists.
+            var checkStmt: OpaquePointer?
+            let checkSQL = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?"
+            guard sqlite3_prepare_v2(db, checkSQL, -1, &checkStmt, nil) == SQLITE_OK else { continue }
+            sqlite3_bind_text(checkStmt, 1, tableName, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+            let exists: Bool
+            if sqlite3_step(checkStmt!) == SQLITE_ROW {
+                exists = sqlite3_column_int64(checkStmt!, 0) > 0
+            } else {
+                exists = false
+            }
+            sqlite3_finalize(checkStmt)
+            guard exists else { continue }
+
+            // Read row count (instant — SQLite caches this).
+            var countStmt: OpaquePointer?
+            var count = 0
+            if sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM \(tableName)", -1, &countStmt, nil) == SQLITE_OK,
+               sqlite3_step(countStmt!) == SQLITE_ROW {
+                count = Int(sqlite3_column_int64(countStmt!, 0))
+            }
+            sqlite3_finalize(countStmt)
+
+            _tokenCacheState[name] = (ready: true, count: count)
+            if name == "highImpact" {
+                _highImpactCacheReady = true
+            }
+        }
+
+        if !_tokenCacheState.isEmpty {
+            let loadedCount = _tokenCacheState.count
+            variantDBLogger.info("loadTokenCacheState: loaded \(loadedCount) pre-built token tables")
+        }
+    }
+
+    /// Returns the temp table JOIN fragment for a SmartToken, or nil if not cached.
+    ///
+    /// The JOIN links `variants.id` to the temp table's id/variant_id column.
+    /// Used by query methods to replace WHERE/EXISTS clauses with fast JOINs.
+    func tokenJoinSQL(for tokenName: String) -> String? {
+        guard _tokenCacheState[tokenName]?.ready == true else { return nil }
+        // Map token names to their table definitions
+        let tableName: String
+        let idColumn: String
+        switch tokenName {
+        case "passOnly": tableName = "_tok_pass"; idColumn = "id"
+        case "snv": tableName = "_tok_snv"; idColumn = "id"
+        case "indel": tableName = "_tok_indel"; idColumn = "id"
+        case "qualityGE30": tableName = "_tok_qual30"; idColumn = "id"
+        case "depthGE10": tableName = "_tok_dp10"; idColumn = "variant_id"
+        case "rareVariant": tableName = "_tok_rare"; idColumn = "variant_id"
+        case "clinvarPathogenic": tableName = "_tok_clinvar"; idColumn = "variant_id"
+        case "highImpact": tableName = "_high_impact"; idColumn = "variant_id"
+        default: return nil
+        }
+        let joinColumn = idColumn == "id" ? "variants.id" : "variants.id"
+        let targetColumn = "\(tableName).\(idColumn)"
+        return "INNER JOIN \(tableName) ON \(joinColumn) = \(targetColumn)"
+    }
+
+    /// Detects whether a set of InfoFilters is a sole IMPACT=HIGH filter
+    /// that can be served from the pre-cached temp table.
+    private func isHighImpactOnlyFilter(_ infoFilters: [InfoFilter]) -> Bool {
+        guard _highImpactCacheReady else { return false }
+        guard infoFilters.count == 1 else { return false }
+        let f = infoFilters[0]
+        return f.op == .eq
+            && f.value == "HIGH"
+            && Self.impactInfoKeys.contains(where: { $0.caseInsensitiveCompare(f.key) == .orderedSame })
+    }
+
+    /// Replaces the EXISTS subquery for IMPACT=HIGH with a JOIN on the temp table.
+    /// Returns the SQL fragment and whether it was substituted.
+    private func highImpactJoinSQL() -> String {
+        "INNER JOIN _high_impact _hi ON variants.id = _hi.variant_id"
+    }
+
+    // MARK: - Variant Row Reader
 
     /// Reads variant rows from a prepared statement.
     ///
@@ -1347,6 +1942,8 @@ public final class VariantDatabase: @unchecked Sendable {
     /// Returns INFO field definitions from the variant_info_defs table.
     ///
     /// These are parsed from VCF `##INFO=<...>` header lines during import.
+    /// For `skipVariantInfo` databases where the defs table is empty, falls back
+    /// to discovering keys by sampling raw INFO strings from the variants table.
     public func infoKeys() -> [(key: String, type: String, number: String, description: String)] {
         guard let db else { return [] }
         let sql = "SELECT key, type, number, description FROM variant_info_defs ORDER BY key"
@@ -1361,7 +1958,83 @@ public final class VariantDatabase: @unchecked Sendable {
             let desc = sqlite3_column_text(stmt, 3).map { String(cString: $0) } ?? ""
             results.append((key: key, type: type, number: number, description: desc))
         }
+        // For skipVariantInfo databases, discover keys from raw INFO strings.
+        if results.isEmpty && variantInfoSkipped {
+            return discoverInfoKeysFromRawInfo()
+        }
         return results
+    }
+
+    /// Discovers INFO keys by sampling raw INFO strings from the variants table.
+    ///
+    /// Used for databases imported with `skipVariantInfo = true` where the EAV
+    /// `variant_info` and `variant_info_defs` tables are empty. Samples rows
+    /// from start, middle, and end of the table to capture all keys.
+    public func discoverInfoKeysFromRawInfo(sampleSize: Int = 500) -> [(key: String, type: String, number: String, description: String)] {
+        if let cached = _cachedDiscoveredInfoKeys { return cached }
+        guard let db else { return [] }
+
+        // Sample from three regions of the table for diverse key coverage.
+        var maxId: Int64 = 0
+        var maxStmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, "SELECT MAX(id) FROM variants", -1, &maxStmt, nil) == SQLITE_OK,
+           sqlite3_step(maxStmt!) == SQLITE_ROW {
+            maxId = sqlite3_column_int64(maxStmt!, 0)
+        }
+        sqlite3_finalize(maxStmt)
+        guard maxId > 0 else { return [] }
+
+        let perRegion = max(sampleSize / 3, 50)
+        let boundaries: [(Int64, Int64)] = [
+            (0, maxId / 3),
+            (maxId / 3, 2 * maxId / 3),
+            (2 * maxId / 3, maxId),
+        ]
+
+        var allKeys: [String: (values: [String], count: Int)] = [:]
+
+        for (lo, hi) in boundaries {
+            let sql = "SELECT info FROM variants WHERE id > ? AND id <= ? AND info IS NOT NULL AND info != '' AND info != '.' LIMIT ?"
+            var stmt: OpaquePointer?
+            defer { sqlite3_finalize(stmt) }
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { continue }
+            sqlite3_bind_int64(stmt, 1, lo)
+            sqlite3_bind_int64(stmt, 2, hi)
+            sqlite3_bind_int(stmt, 3, Int32(perRegion))
+
+            while sqlite3_step(stmt!) == SQLITE_ROW {
+                guard let cStr = sqlite3_column_text(stmt!, 0) else { continue }
+                let infoStr = String(cString: cStr)
+                for field in infoStr.split(separator: ";") {
+                    let pair = field.split(separator: "=", maxSplits: 1)
+                    let key = String(pair[0])
+                    let value = pair.count > 1 ? String(pair[1]) : ""
+                    var entry = allKeys[key] ?? (values: [], count: 0)
+                    entry.count += 1
+                    if entry.values.count < 5 { entry.values.append(value) }
+                    allKeys[key] = entry
+                }
+            }
+        }
+
+        let results: [(key: String, type: String, number: String, description: String)] = allKeys.keys.sorted().map { key in
+            let entry = allKeys[key]!
+            let inferredType = Self.inferInfoType(from: entry.values)
+            return (key: key, type: inferredType, number: ".", description: "")
+        }
+        _cachedDiscoveredInfoKeys = results
+        return results
+    }
+
+    /// Infers the VCF INFO type from a sample of values.
+    private static func inferInfoType(from values: [String]) -> String {
+        let nonEmpty = values.filter { !$0.isEmpty }
+        if nonEmpty.isEmpty { return "Flag" }
+        let allInteger = nonEmpty.allSatisfy { Int($0) != nil }
+        if allInteger { return "Integer" }
+        let allNumeric = nonEmpty.allSatisfy { Double($0) != nil }
+        if allNumeric { return "Float" }
+        return "String"
     }
 
     /// Returns true if the given INFO key has at least one non-empty value in `variant_info`.
@@ -2777,6 +3450,16 @@ public final class VariantDatabase: @unchecked Sendable {
         }
         releaseSQLiteMemory(forceShrink: true)
 
+        // Build persistent SmartToken filter tables for instant chip loading on open.
+        if !wasCancelled {
+            progressHandler?(0.99, "Building filter indexes...")
+            Self.createSmartTokenTables(
+                db: db,
+                skipVariantInfo: tuning.skipVariantInfo
+            )
+            releaseSQLiteMemory(forceShrink: true)
+        }
+
         // Mark import complete.
         sqlite3_exec(db, "UPDATE db_metadata SET value = 'complete' WHERE key = 'import_state'", nil, nil, nil)
 
@@ -2790,6 +3473,116 @@ public final class VariantDatabase: @unchecked Sendable {
     @discardableResult
     public static func createFromVCF(vcfURL: URL, outputURL: URL) throws -> Int {
         try createFromVCF(vcfURL: vcfURL, outputURL: outputURL, parseGenotypes: true, progressHandler: nil)
+    }
+
+    /// Creates persistent SmartToken filter tables during import.
+    ///
+    /// Column-based tables (PASS, SNV, Indel, Quality≥30) are always created.
+    /// EAV-based tables (DP≥10, Rare, ClinVar, High Impact) are only created when
+    /// `variant_info` is populated (i.e. not `skipVariantInfo`).
+    private static func createSmartTokenTables(db: OpaquePointer, skipVariantInfo: Bool) {
+        struct TableDef {
+            let name: String
+            let sql: String
+            let idColumn: String
+            let indexSQL: String
+        }
+
+        var tables: [TableDef] = [
+            TableDef(
+                name: "_tok_pass",
+                sql: "CREATE TABLE IF NOT EXISTS _tok_pass AS SELECT id FROM variants WHERE filter = 'PASS'",
+                idColumn: "id",
+                indexSQL: "CREATE INDEX IF NOT EXISTS _idx__tok_pass ON _tok_pass(id)"
+            ),
+            TableDef(
+                name: "_tok_snv",
+                sql: "CREATE TABLE IF NOT EXISTS _tok_snv AS SELECT id FROM variants WHERE variant_type IN ('SNV','snv','SNP','snp')",
+                idColumn: "id",
+                indexSQL: "CREATE INDEX IF NOT EXISTS _idx__tok_snv ON _tok_snv(id)"
+            ),
+            TableDef(
+                name: "_tok_indel",
+                sql: "CREATE TABLE IF NOT EXISTS _tok_indel AS SELECT id FROM variants WHERE variant_type IN ('Indel','indel','INS','DEL','Insertion','Deletion')",
+                idColumn: "id",
+                indexSQL: "CREATE INDEX IF NOT EXISTS _idx__tok_indel ON _tok_indel(id)"
+            ),
+            TableDef(
+                name: "_tok_qual30",
+                sql: "CREATE TABLE IF NOT EXISTS _tok_qual30 AS SELECT id FROM variants WHERE quality >= 30",
+                idColumn: "id",
+                indexSQL: "CREATE INDEX IF NOT EXISTS _idx__tok_qual30 ON _tok_qual30(id)"
+            ),
+        ]
+
+        if !skipVariantInfo {
+            // Check which INFO keys are available from variant_info_defs
+            var availableKeys: Set<String> = []
+            var keyStmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, "SELECT key FROM variant_info_defs", -1, &keyStmt, nil) == SQLITE_OK {
+                while sqlite3_step(keyStmt!) == SQLITE_ROW {
+                    if let cStr = sqlite3_column_text(keyStmt!, 0) {
+                        availableKeys.insert(String(cString: cStr))
+                    }
+                }
+            }
+            sqlite3_finalize(keyStmt)
+
+            if availableKeys.contains("DP") {
+                tables.append(TableDef(
+                    name: "_tok_dp10",
+                    sql: "CREATE TABLE IF NOT EXISTS _tok_dp10 AS SELECT DISTINCT variant_id FROM variant_info WHERE key = 'DP' AND CAST(value AS REAL) >= 10",
+                    idColumn: "variant_id",
+                    indexSQL: "CREATE INDEX IF NOT EXISTS _idx__tok_dp10 ON _tok_dp10(variant_id)"
+                ))
+            }
+
+            let afKeys = ["AF", "af", "gnomAD_AF", "ExAC_AF", "1000G_AF", "MAX_AF"]
+            if let afKey = afKeys.first(where: { availableKeys.contains($0) }) {
+                tables.append(TableDef(
+                    name: "_tok_rare",
+                    sql: "CREATE TABLE IF NOT EXISTS _tok_rare AS SELECT DISTINCT variant_id FROM variant_info WHERE key = '\(afKey)' AND CAST(value AS REAL) < 0.01",
+                    idColumn: "variant_id",
+                    indexSQL: "CREATE INDEX IF NOT EXISTS _idx__tok_rare ON _tok_rare(variant_id)"
+                ))
+            }
+
+            let clinvarKeys = ["CLNSIG", "ClinVar_SIG", "clinvar_sig", "CLNDN"]
+            if let clinvarKey = clinvarKeys.first(where: { availableKeys.contains($0) }) {
+                tables.append(TableDef(
+                    name: "_tok_clinvar",
+                    sql: "CREATE TABLE IF NOT EXISTS _tok_clinvar AS SELECT DISTINCT variant_id FROM variant_info WHERE key = '\(clinvarKey)' AND value LIKE '%athogenic%'",
+                    idColumn: "variant_id",
+                    indexSQL: "CREATE INDEX IF NOT EXISTS _idx__tok_clinvar ON _tok_clinvar(variant_id)"
+                ))
+            }
+
+            // High impact
+            let impactKeys = impactInfoKeys
+            let hasImpactKey = !impactKeys.allSatisfy { !availableKeys.contains($0) }
+            if hasImpactKey {
+                let keyList = impactKeys.map { "'\($0)'" }.joined(separator: ",")
+                tables.append(TableDef(
+                    name: "_high_impact",
+                    sql: "CREATE TABLE IF NOT EXISTS _high_impact AS SELECT DISTINCT variant_id FROM variant_info WHERE key IN (\(keyList)) AND value = 'HIGH'",
+                    idColumn: "variant_id",
+                    indexSQL: "CREATE INDEX IF NOT EXISTS _idx_hi ON _high_impact(variant_id)"
+                ))
+            }
+        }
+
+        for table in tables {
+            var err: UnsafeMutablePointer<CChar>?
+            sqlite3_exec(db, table.sql, nil, nil, &err)
+            if let err {
+                let msg = String(cString: err)
+                sqlite3_free(err)
+                variantDBLogger.warning("createSmartTokenTables: \(table.name) failed: \(msg)")
+                continue
+            }
+            sqlite3_exec(db, table.indexSQL, nil, nil, nil)
+            variantDBLogger.info("createSmartTokenTables: created \(table.name)")
+        }
     }
 
     // MARK: - Resume Interrupted Import

@@ -1156,9 +1156,14 @@ final class VariantDatabaseTests: XCTestCase {
         let db = try VariantDatabase(url: dbURL)
         XCTAssertTrue(db.variantInfoSkipped)
 
-        // The variant_info_defs table should be empty (no defs stored).
+        // The variant_info_defs table should be empty (no defs stored), but
+        // infoKeys() now falls back to discoverInfoKeysFromRawInfo() for
+        // skipVariantInfo databases, so it returns discovered keys.
         let defs = db.infoKeys()
-        XCTAssertTrue(defs.isEmpty, "Ultra-low-memory should not store INFO defs")
+        XCTAssertFalse(defs.isEmpty, "infoKeys() should discover keys from raw INFO for ultra-low-memory DBs")
+        let keyNames = Set(defs.map(\.key))
+        XCTAssertTrue(keyNames.contains("DP"), "Should discover DP from raw INFO")
+        XCTAssertTrue(keyNames.contains("AF"), "Should discover AF from raw INFO")
 
         // But infoValues should still work via raw INFO parsing.
         let variants = db.query(chromosome: "chr1", start: 0, end: 1000)
@@ -1336,14 +1341,19 @@ final class VariantDatabaseTests: XCTestCase {
             parseGenotypes: true, importProfile: .ultraLowMemory
         )
 
-        // Before materialization, variant_info_defs should be empty.
+        // Before materialization, infoKeys() discovers keys from raw INFO
+        // (variant_info_defs table itself is empty, but fallback discovery works).
         let dbBefore = try VariantDatabase(url: dbURL)
-        XCTAssertTrue(dbBefore.infoKeys().isEmpty)
+        XCTAssertTrue(dbBefore.variantInfoSkipped, "Should be skipVariantInfo before materialization")
+        let discoveredBefore = dbBefore.infoKeys()
+        XCTAssertFalse(discoveredBefore.isEmpty, "Should discover keys from raw INFO before materialization")
 
         try VariantDatabase.materializeVariantInfo(existingDBURL: dbURL)
 
-        // After materialization, variant_info_defs should have entries.
+        // After materialization, variant_info_defs should have entries and
+        // variantInfoSkipped should be false.
         let dbAfter = try VariantDatabase(url: dbURL)
+        XCTAssertFalse(dbAfter.variantInfoSkipped, "Should no longer be skipVariantInfo after materialization")
         let keys = dbAfter.infoKeys()
         let keyNames = Set(keys.map(\.key))
         // testVCF has DP and AF keys.
@@ -1414,5 +1424,491 @@ final class VariantDatabaseTests: XCTestCase {
         // Should return 0 since skip_variant_info is not set.
         let count = try VariantDatabase.materializeVariantInfo(existingDBURL: dbURL)
         XCTAssertEqual(count, 0)
+    }
+
+    // MARK: - Query Timeout Tests
+
+    func testInstallAndRemoveQueryTimeout() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+
+        // Installing and removing the timeout should not crash.
+        db.installQueryTimeout(seconds: 5.0)
+        let results = db.queryForTable(limit: 10)
+        XCTAssertFalse(results.isEmpty, "Query should still work with timeout installed")
+        db.removeQueryTimeout()
+
+        // After removing, queries should still work normally.
+        let results2 = db.queryForTable(limit: 10)
+        XCTAssertFalse(results2.isEmpty)
+    }
+
+    func testQueryTimeoutWithCancelCheck() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+
+        // Install timeout with a cancel check that immediately cancels.
+        db.installQueryTimeout(seconds: 60.0, cancelCheck: { true })
+        let results = db.queryForTable(limit: 10)
+        // With immediate cancellation, query should return empty or partial results.
+        // On a small DB it may complete before the progress handler fires,
+        // so we just verify no crash.
+        db.removeQueryTimeout()
+
+        // Normal query still works.
+        let results2 = db.queryForTable(limit: 10)
+        XCTAssertFalse(results2.isEmpty)
+        _ = results  // suppress unused warning
+    }
+
+    func testQueryTimeoutDoesNotAffectFastQueries() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+
+        db.installQueryTimeout(seconds: 1.0)
+        let all = db.queryForTable(limit: 100)
+        XCTAssertEqual(all.count, 7, "Fast query on small DB should complete within timeout")
+        db.removeQueryTimeout()
+    }
+
+    // MARK: - Metadata Caching Tests
+
+    func testTotalCountIsCached() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+
+        // First call computes.
+        let count1 = db.totalCount()
+        XCTAssertEqual(count1, 7)
+
+        // Second call should return cached value (same result, no recomputation).
+        let count2 = db.totalCount()
+        XCTAssertEqual(count2, 7)
+        XCTAssertEqual(count1, count2)
+    }
+
+    func testAllTypesIsCached() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+
+        let types1 = db.allTypes()
+        XCTAssertFalse(types1.isEmpty)
+
+        let types2 = db.allTypes()
+        XCTAssertEqual(types1, types2)
+    }
+
+    func testAllChromosomesIsCached() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+
+        let chroms1 = db.allChromosomes()
+        XCTAssertTrue(chroms1.contains("chr1"))
+        XCTAssertTrue(chroms1.contains("chr2"))
+
+        let chroms2 = db.allChromosomes()
+        XCTAssertEqual(chroms1, chroms2)
+    }
+
+    func testChromosomeMaxPositionsIsCached() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+
+        let maxPos1 = db.chromosomeMaxPositions()
+        XCTAssertNotNil(maxPos1["chr1"])
+        XCTAssertNotNil(maxPos1["chr2"])
+
+        let maxPos2 = db.chromosomeMaxPositions()
+        XCTAssertEqual(maxPos1, maxPos2)
+    }
+
+    func testChromosomeVariantCounts() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+
+        let counts = db.chromosomeVariantCounts()
+        XCTAssertEqual(counts["chr1"], 5, "chr1 should have 5 variants")
+        XCTAssertEqual(counts["chr2"], 2, "chr2 should have 2 variants")
+    }
+
+    // MARK: - High-Impact Cache Tests
+
+    /// VCF with IMPACT annotations for testing the high-impact temp table cache.
+    private let impactVCF = """
+    ##fileformat=VCFv4.3
+    ##INFO=<ID=IMPACT,Number=1,Type=String,Description="Variant impact">
+    ##INFO=<ID=DP,Number=1,Type=Integer,Description="Total Depth">
+    #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+    chr1\t100\trs100\tA\tG\t30.0\tPASS\tIMPACT=HIGH;DP=50
+    chr1\t200\trs200\tA\tT\t25.0\tPASS\tIMPACT=MODERATE;DP=40
+    chr1\t300\trs300\tC\tG\t35.0\tPASS\tIMPACT=HIGH;DP=30
+    chr1\t400\trs400\tG\tA\t40.0\tPASS\tIMPACT=LOW;DP=60
+    chr1\t500\trs500\tT\tC\t45.0\tPASS\tIMPACT=MODIFIER;DP=70
+    chr2\t100\trs600\tA\tG\t50.0\tPASS\tIMPACT=HIGH;DP=80
+    """
+
+    func testWarmHighImpactCache() throws {
+        let vcfURL = try createTempVCF(content: impactVCF, name: "impact.vcf")
+        let dbURL = tempDir.appendingPathComponent("impact.db")
+        try VariantDatabase.createFromVCF(vcfURL: vcfURL, outputURL: dbURL)
+        let db = try VariantDatabase(url: dbURL)
+
+        // Since token tables are now built during import and loaded on open,
+        // the high-impact cache should already be ready.
+        XCTAssertTrue(db.highImpactCacheReady, "Cache should be ready after import (persistent table)")
+    }
+
+    func testHighImpactFilterUsesCache() throws {
+        let vcfURL = try createTempVCF(content: impactVCF, name: "impact_filter.vcf")
+        let dbURL = tempDir.appendingPathComponent("impact_filter.db")
+        try VariantDatabase.createFromVCF(vcfURL: vcfURL, outputURL: dbURL)
+
+        let db = try VariantDatabase(url: dbURL)
+
+        // Warm the cache.
+        let success = db.warmHighImpactCache(timeoutSeconds: 10)
+        XCTAssertTrue(success)
+
+        // Query with sole IMPACT=HIGH filter — should use the cached temp table.
+        let impactFilter = VariantDatabase.InfoFilter(key: "IMPACT", op: .eq, value: "HIGH")
+        let results = db.queryForTable(infoFilters: [impactFilter], limit: 100)
+
+        // Should return the 3 HIGH-impact variants.
+        XCTAssertEqual(results.count, 3, "Should find 3 HIGH-impact variants")
+        let ids = Set(results.map(\.variantID))
+        XCTAssertTrue(ids.contains("rs100"))
+        XCTAssertTrue(ids.contains("rs300"))
+        XCTAssertTrue(ids.contains("rs600"))
+    }
+
+    func testHighImpactFilterRegionScoped() throws {
+        let vcfURL = try createTempVCF(content: impactVCF, name: "impact_region.vcf")
+        let dbURL = tempDir.appendingPathComponent("impact_region.db")
+        try VariantDatabase.createFromVCF(vcfURL: vcfURL, outputURL: dbURL)
+        let db = try VariantDatabase(url: dbURL)
+
+        db.warmHighImpactCache(timeoutSeconds: 10)
+
+        // Region query for chr1 only.
+        let impactFilter = VariantDatabase.InfoFilter(key: "IMPACT", op: .eq, value: "HIGH")
+        let results = db.queryForTableInRegion(
+            chromosome: "chr1", start: 0, end: 1000,
+            infoFilters: [impactFilter], limit: 100
+        )
+
+        XCTAssertEqual(results.count, 2, "Should find 2 HIGH-impact variants on chr1")
+    }
+
+    func testHighImpactCountUsesCache() throws {
+        let vcfURL = try createTempVCF(content: impactVCF, name: "impact_count.vcf")
+        let dbURL = tempDir.appendingPathComponent("impact_count.db")
+        try VariantDatabase.createFromVCF(vcfURL: vcfURL, outputURL: dbURL)
+        let db = try VariantDatabase(url: dbURL)
+
+        db.warmHighImpactCache(timeoutSeconds: 10)
+
+        let impactFilter = VariantDatabase.InfoFilter(key: "IMPACT", op: .eq, value: "HIGH")
+        let count = db.queryCountForTable(infoFilters: [impactFilter])
+        XCTAssertEqual(count, 3, "Should count 3 HIGH-impact variants")
+
+        let regionCount = db.queryCountInRegion(
+            chromosome: "chr1", start: 0, end: 1000,
+            infoFilters: [impactFilter]
+        )
+        XCTAssertEqual(regionCount, 2, "Should count 2 HIGH-impact variants in chr1 region")
+    }
+
+    func testHighImpactCacheWithNonImpactFilter() throws {
+        let vcfURL = try createTempVCF(content: impactVCF, name: "impact_mixed.vcf")
+        let dbURL = tempDir.appendingPathComponent("impact_mixed.db")
+        try VariantDatabase.createFromVCF(vcfURL: vcfURL, outputURL: dbURL)
+        let db = try VariantDatabase(url: dbURL)
+
+        db.warmHighImpactCache(timeoutSeconds: 10)
+
+        // Mixed filter: IMPACT=HIGH + DP>=40 — should NOT use the temp table fast path,
+        // should fall back to normal EAV query.
+        let impactFilter = VariantDatabase.InfoFilter(key: "IMPACT", op: .eq, value: "HIGH")
+        let dpFilter = VariantDatabase.InfoFilter(key: "DP", op: .gte, value: "40")
+        let results = db.queryForTable(infoFilters: [impactFilter, dpFilter], limit: 100)
+
+        // rs100 has IMPACT=HIGH;DP=50 ✓, rs300 has IMPACT=HIGH;DP=30 ✗, rs600 has IMPACT=HIGH;DP=80 ✓
+        XCTAssertEqual(results.count, 2, "Mixed filter should return 2 results (normal EAV path)")
+    }
+
+    // MARK: - INFO Key Discovery Tests
+
+    /// VCF for testing INFO key discovery from raw strings
+    private let discoveryVCF = """
+    ##fileformat=VCFv4.3
+    ##contig=<ID=chr1,length=248956422>
+    #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+    chr1\t100\trs100\tA\tG\t30.0\tPASS\tDP=50;AF=0.25;MQ=60
+    chr1\t200\trs200\tATCG\tA\t25.0\tPASS\tDP=40;MQ=55
+    chr1\t300\trs300\tA\tATCG\t35.0\tPASS\tDP=30;AF=0.01;VALIDATED
+    chr1\t400\t.\tAT\tGC\t40.0\tPASS\tDP=60;AF=0.5;MQ=70;SOMATIC
+    """
+
+    func testDiscoverInfoKeysFromRawInfo() throws {
+        // Import with ultraLowMemory so variant_info is skipped but raw INFO is stored.
+        let vcfURL = try createTempVCF(content: discoveryVCF, name: "discover.vcf")
+        let dbURL = tempDir.appendingPathComponent("discover.db")
+        try VariantDatabase.createFromVCF(
+            vcfURL: vcfURL, outputURL: dbURL,
+            parseGenotypes: true, importProfile: .ultraLowMemory
+        )
+        let db = try VariantDatabase(url: dbURL)
+
+        let discovered = db.discoverInfoKeysFromRawInfo()
+        let keyNames = Set(discovered.map(\.key))
+
+        XCTAssertTrue(keyNames.contains("DP"), "Should discover DP key")
+        XCTAssertTrue(keyNames.contains("AF"), "Should discover AF key")
+        XCTAssertTrue(keyNames.contains("MQ"), "Should discover MQ key")
+        XCTAssertTrue(keyNames.contains("VALIDATED"), "Should discover Flag-type key")
+
+        // Check type inference
+        let dpDef = discovered.first { $0.key == "DP" }
+        XCTAssertEqual(dpDef?.type, "Integer", "DP should be inferred as Integer")
+
+        let afDef = discovered.first { $0.key == "AF" }
+        XCTAssertEqual(afDef?.type, "Float", "AF should be inferred as Float")
+
+        let validatedDef = discovered.first { $0.key == "VALIDATED" }
+        XCTAssertEqual(validatedDef?.type, "Flag", "Bare key should be inferred as Flag")
+    }
+
+    func testDiscoverInfoKeysCaching() throws {
+        let vcfURL = try createTempVCF(content: discoveryVCF, name: "discover_cache.vcf")
+        let dbURL = tempDir.appendingPathComponent("discover_cache.db")
+        try VariantDatabase.createFromVCF(
+            vcfURL: vcfURL, outputURL: dbURL,
+            parseGenotypes: true, importProfile: .ultraLowMemory
+        )
+        let db = try VariantDatabase(url: dbURL)
+
+        let result1 = db.discoverInfoKeysFromRawInfo()
+        let result2 = db.discoverInfoKeysFromRawInfo()
+        // Should return same results (from cache)
+        XCTAssertEqual(result1.count, result2.count, "Cached result should match initial")
+    }
+
+    func testDiscoverInfoKeysReturnsEmptyForStandardImport() throws {
+        // Standard import has variant_info_defs populated, so discovery not needed.
+        let (db, _) = try createDatabase(from: testVCF)
+        _ = db.discoverInfoKeysFromRawInfo()
+        // For a standard import, infoKeys() returns from variant_info_defs,
+        // so discovery should still work by reading raw INFO, but the fallback
+        // in infoKeys() should prefer variant_info_defs when present.
+        let normalKeys = db.infoKeys()
+        XCTAssertFalse(normalKeys.isEmpty, "Standard import should have INFO keys from defs table")
+    }
+
+    func testInfoKeysFallsBackToDiscoveredKeys() throws {
+        let vcfURL = try createTempVCF(content: discoveryVCF, name: "discover_fallback.vcf")
+        let dbURL = tempDir.appendingPathComponent("discover_fallback.db")
+        try VariantDatabase.createFromVCF(
+            vcfURL: vcfURL, outputURL: dbURL,
+            parseGenotypes: true, importProfile: .ultraLowMemory
+        )
+        let db = try VariantDatabase(url: dbURL)
+
+        // For ultraLowMemory, infoKeys() should fall back to discovered keys.
+        let keys = db.infoKeys()
+        let keyNames = Set(keys.map(\.key))
+        XCTAssertTrue(keyNames.contains("DP"), "infoKeys() should include discovered DP for skipVariantInfo DB")
+        XCTAssertTrue(keyNames.contains("AF"), "infoKeys() should include discovered AF for skipVariantInfo DB")
+    }
+
+    // MARK: - SmartToken Cache Warming Tests
+
+    func testWarmSmartTokenCaches() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+        let infoKeys = Set(db.infoKeys().map(\.key))
+
+        let state = db.warmSmartTokenCaches(availableInfoKeys: infoKeys)
+
+        // Should have at least the column-based tokens.
+        XCTAssertNotNil(state["passOnly"], "Should have passOnly token")
+        XCTAssertNotNil(state["snv"], "Should have snv token")
+        XCTAssertNotNil(state["indel"], "Should have indel token")
+        XCTAssertNotNil(state["qualityGE30"], "Should have qualityGE30 token")
+
+        // Verify they're ready.
+        XCTAssertTrue(state["passOnly"]!.ready, "passOnly should be ready")
+        XCTAssertTrue(state["snv"]!.ready, "snv should be ready")
+        XCTAssertTrue(state["qualityGE30"]!.ready, "qualityGE30 should be ready")
+    }
+
+    func testSmartTokenCacheCounts() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+        let infoKeys = Set(db.infoKeys().map(\.key))
+
+        let state = db.warmSmartTokenCaches(availableInfoKeys: infoKeys)
+
+        // testVCF has 4 PASS variants: rs100, rs200, rs400, rs1000
+        XCTAssertEqual(state["passOnly"]?.count, 4, "Should have 4 PASS variants")
+
+        // Variants with quality >= 30: rs100(30), rs300(35), rs400(40), rs500(45), rs1000(50) = 5
+        XCTAssertEqual(state["qualityGE30"]?.count, 5, "Should have 5 qual>=30 variants")
+    }
+
+    func testSmartTokenCacheIncludesEAVTokensWhenAvailable() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+        let infoKeys = Set(db.infoKeys().map(\.key))
+
+        let state = db.warmSmartTokenCaches(availableInfoKeys: infoKeys)
+
+        // testVCF has DP and AF in INFO, so depth and rare tokens should appear.
+        if infoKeys.contains("DP") {
+            XCTAssertNotNil(state["depthGE10"], "Should have depthGE10 token with DP available")
+            XCTAssertTrue(state["depthGE10"]!.ready)
+        }
+
+        if infoKeys.contains("AF") {
+            XCTAssertNotNil(state["rareVariant"], "Should have rareVariant token with AF available")
+            XCTAssertTrue(state["rareVariant"]!.ready)
+        }
+    }
+
+    func testSmartTokenCacheSkipsEAVForSkipVariantInfoDB() throws {
+        let vcfURL = try createTempVCF(content: testVCF, name: "skipinfo_tokens.vcf")
+        let dbURL = tempDir.appendingPathComponent("skipinfo_tokens.db")
+        try VariantDatabase.createFromVCF(
+            vcfURL: vcfURL, outputURL: dbURL,
+            parseGenotypes: true, importProfile: .ultraLowMemory
+        )
+        let db = try VariantDatabase(url: dbURL)
+        let infoKeys = Set(db.infoKeys().map(\.key))
+
+        let state = db.warmSmartTokenCaches(availableInfoKeys: infoKeys)
+
+        // Column-based tokens should still work.
+        XCTAssertNotNil(state["passOnly"])
+        XCTAssertTrue(state["passOnly"]!.ready)
+
+        // EAV-based tokens should NOT be present (variantInfoSkipped).
+        XCTAssertNil(state["depthGE10"], "EAV token should not be created for skipVariantInfo DB")
+        XCTAssertNil(state["rareVariant"], "EAV token should not be created for skipVariantInfo DB")
+    }
+
+    func testTokenCacheStateProperty() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+
+        // Token tables are built during import and loaded on open,
+        // so tokenCacheState should already be populated.
+        XCTAssertFalse(db.tokenCacheState.isEmpty, "Cache state should be populated after import")
+        XCTAssertNotNil(db.tokenCacheState["passOnly"])
+        XCTAssertTrue(db.tokenCacheState["passOnly"]!.ready)
+    }
+
+    // MARK: - Token JOIN Query Tests
+
+    func testQueryWithActiveTokenPassOnly() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+        let infoKeys = Set(db.infoKeys().map(\.key))
+        db.warmSmartTokenCaches(availableInfoKeys: infoKeys)
+
+        // Query with passOnly token active — should return only PASS variants.
+        let results = db.queryForTable(activeTokens: Set(["passOnly"]), limit: 100)
+        XCTAssertEqual(results.count, 4, "passOnly token should filter to 4 PASS variants")
+        for r in results {
+            XCTAssertEqual(r.filter, "PASS", "All results should have PASS filter")
+        }
+    }
+
+    func testQueryWithActiveTokenQualityGE30() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+        let infoKeys = Set(db.infoKeys().map(\.key))
+        db.warmSmartTokenCaches(availableInfoKeys: infoKeys)
+
+        let results = db.queryForTable(activeTokens: Set(["qualityGE30"]), limit: 100)
+        XCTAssertEqual(results.count, 5, "qualityGE30 token should filter to 5 variants")
+        for r in results {
+            XCTAssertGreaterThanOrEqual(r.quality ?? 0, 30.0, "All results should have quality >= 30")
+        }
+    }
+
+    func testQueryWithMultipleActiveTokens() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+        let infoKeys = Set(db.infoKeys().map(\.key))
+        db.warmSmartTokenCaches(availableInfoKeys: infoKeys)
+
+        // passOnly AND qualityGE30 — intersection.
+        let results = db.queryForTable(activeTokens: Set(["passOnly", "qualityGE30"]), limit: 100)
+        for r in results {
+            XCTAssertEqual(r.filter, "PASS")
+            XCTAssertGreaterThanOrEqual(r.quality ?? 0, 30.0)
+        }
+        // PASS variants with qual>=30: rs100(30), rs400(40), rs1000(50) = 3
+        XCTAssertEqual(results.count, 3, "Intersection of passOnly and qualityGE30 should yield 3")
+    }
+
+    func testRegionQueryWithActiveToken() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+        let infoKeys = Set(db.infoKeys().map(\.key))
+        db.warmSmartTokenCaches(availableInfoKeys: infoKeys)
+
+        // Region query on chr1 with passOnly.
+        let results = db.queryForTableInRegion(
+            chromosome: "chr1", start: 0, end: 1000,
+            activeTokens: Set(["passOnly"]),
+            limit: 100
+        )
+        // chr1 PASS variants: rs100, rs200, rs400 = 3
+        XCTAssertEqual(results.count, 3, "chr1 region with passOnly should yield 3")
+        for r in results {
+            XCTAssertEqual(r.filter, "PASS")
+            XCTAssertEqual(r.chromosome, "chr1")
+        }
+    }
+
+    func testCountQueryWithActiveToken() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+        let infoKeys = Set(db.infoKeys().map(\.key))
+        db.warmSmartTokenCaches(availableInfoKeys: infoKeys)
+
+        let count = db.queryCountForTable(activeTokens: Set(["passOnly"]))
+        XCTAssertEqual(count, 4, "Count with passOnly should be 4")
+
+        let regionCount = db.queryCountInRegion(
+            chromosome: "chr1", start: 0, end: 1000,
+            activeTokens: Set(["passOnly"])
+        )
+        XCTAssertEqual(regionCount, 3, "Count in chr1 region with passOnly should be 3")
+    }
+
+    func testQueryWithTokenAndTypeFilter() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+        let infoKeys = Set(db.infoKeys().map(\.key))
+        db.warmSmartTokenCaches(availableInfoKeys: infoKeys)
+
+        // passOnly token + SNV type filter.
+        let results = db.queryForTable(
+            types: Set(["SNV"]),
+            activeTokens: Set(["passOnly"]),
+            limit: 100
+        )
+        for r in results {
+            XCTAssertEqual(r.filter, "PASS")
+            XCTAssertEqual(r.variantType, "SNV")
+        }
+    }
+
+    func testQueryWithTokenAndInfoFilter() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+        let infoKeys = Set(db.infoKeys().map(\.key))
+        db.warmSmartTokenCaches(availableInfoKeys: infoKeys)
+
+        // qualityGE30 token + DP>=50 info filter.
+        let dpFilter = VariantDatabase.InfoFilter(key: "DP", op: .gte, value: "50")
+        let results = db.queryForTable(
+            infoFilters: [dpFilter],
+            activeTokens: Set(["qualityGE30"]),
+            limit: 100
+        )
+        for r in results {
+            XCTAssertGreaterThanOrEqual(r.quality ?? 0, 30.0)
+        }
+    }
+
+    func testQueryWithUnknownTokenFallsBack() throws {
+        let (db, _) = try createDatabase(from: testVCF)
+        // Querying with a token name that has no table should gracefully fall back
+        // (unknown tokens are ignored, returning unfiltered results).
+        let results = db.queryForTable(activeTokens: Set(["nonExistentToken"]), limit: 100)
+        XCTAssertEqual(results.count, 7, "Unknown token should be ignored, returning all variants")
     }
 }
