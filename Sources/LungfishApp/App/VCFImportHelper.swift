@@ -15,6 +15,10 @@ import Darwin
 /// passing import parameters as command-line options.  Also supports
 /// `--vcf-resume-helper` to finish an interrupted import (index creation only).
 public enum VCFImportHelper {
+    private static func phaseMessage(_ phase: Int, _ total: Int, _ message: String) -> String {
+        "Phase \(phase)/\(total): \(message)"
+    }
+
     private struct Event: Codable {
         let event: String
         let progress: Double?
@@ -132,7 +136,7 @@ public enum VCFImportHelper {
         emit(Event(
             event: "started",
             progress: 0.0,
-            message: "Starting helper import",
+            message: phaseMessage(1, 4, "Starting helper import"),
             variantCount: nil,
             error: nil,
             profile: requestedProfile.rawValue
@@ -195,7 +199,7 @@ public enum VCFImportHelper {
             emit(Event(
                 event: "done",
                 progress: 1.0,
-                message: "Import complete",
+                message: phaseMessage(4, 4, "Import complete"),
                 variantCount: variantCount,
                 error: nil,
                 profile: requestedProfile.rawValue
@@ -286,9 +290,9 @@ public enum VCFImportHelper {
                 guard emitProgress else { return }
                 let msg: String
                 if let chromosome {
-                    msg = "[\(chromosome)] \(message)"
+                    msg = phaseMessage(2, 4, "[\(chromosome)] \(message)")
                 } else {
-                    msg = message
+                    msg = phaseMessage(2, 4, message)
                 }
                 emit(Event(
                     event: "progress",
@@ -374,7 +378,7 @@ public enum VCFImportHelper {
         emit(Event(
             event: "progress",
             progress: 0.01,
-            message: "Preparing indexed source VCF...",
+            message: phaseMessage(1, 4, "Preparing indexed source VCF..."),
             variantCount: nil,
             error: nil,
             profile: nil
@@ -409,7 +413,7 @@ public enum VCFImportHelper {
             emit(Event(
                 event: "progress",
                 progress: max(0.0, min(1.0, splitProgress)),
-                message: "Creating shard \(chromosomeIndex + 1) of \(chromosomes.count): \(chromosome)",
+                message: phaseMessage(1, 4, "Creating shard \(chromosomeIndex + 1) of \(chromosomes.count): \(chromosome)"),
                 variantCount: nil,
                 error: nil,
                 profile: nil
@@ -440,7 +444,7 @@ public enum VCFImportHelper {
                 emit(Event(
                     event: "progress",
                     progress: max(0.0, min(1.0, splitProgress)),
-                    message: "Skipping empty chromosome shard: \(chromosome)",
+                    message: phaseMessage(1, 4, "Skipping empty chromosome shard: \(chromosome)"),
                     variantCount: nil,
                     error: nil,
                     profile: nil
@@ -465,7 +469,7 @@ public enum VCFImportHelper {
                 emit(Event(
                     event: "progress",
                     progress: max(0.0, min(1.0, importStart)),
-                    message: "Importing chromosome \(chromosome) (\(variantCount) variants)",
+                    message: phaseMessage(2, 4, "Importing chromosome \(chromosome) (\(variantCount) variants)"),
                     variantCount: nil,
                     error: nil,
                     profile: nil
@@ -491,7 +495,7 @@ public enum VCFImportHelper {
                             emit(Event(
                                 event: "progress",
                                 progress: max(0.0, min(1.0, mapped)),
-                                message: "[\(chromosome)] \(childMessage)",
+                                message: phaseMessage(2, 4, "[\(chromosome)] \(childMessage)"),
                                 variantCount: nil,
                                 error: nil,
                                 profile: nil
@@ -517,7 +521,7 @@ public enum VCFImportHelper {
                     emit(Event(
                         event: "progress",
                         progress: max(0.0, min(1.0, finished)),
-                        message: "Imported chromosome \(chromosome)",
+                        message: phaseMessage(2, 4, "Imported chromosome \(chromosome)"),
                         variantCount: nil,
                         error: nil,
                         profile: nil
@@ -557,6 +561,14 @@ public enum VCFImportHelper {
         }
 
         try setMetadataValue(at: outputDBURL, key: "import_state", value: "indexing")
+        emit(Event(
+            event: "progress",
+            progress: 0.95,
+            message: phaseMessage(3, 4, "Insert phase complete; preparing SQLite index build..."),
+            variantCount: nil,
+            error: nil,
+            profile: nil
+        ))
         let importedTotal = state.totalImportedCount()
         if let final = try? VariantDatabase(url: outputDBURL).totalCount(),
            (final > 0 || importedTotal == 0) {
@@ -883,7 +895,7 @@ public enum VCFImportHelper {
             "chromosome-child-launch chrom=\(chromosomeLabel) inputVCF=\(vcfURL.lastPathComponent) outputDB=\(outputDBURL.lastPathComponent)",
             debugLogURL: debugLogURL
         )
-        progressHandler(0.0, "Launching helper subprocess")
+        progressHandler(0.0, phaseMessage(2, 4, "Launching helper subprocess"))
 
         try process.run()
         process.waitUntilExit()
@@ -916,7 +928,7 @@ public enum VCFImportHelper {
                 case "progress":
                     progressHandler(
                         max(0.0, min(1.0, event.progress ?? 0.0)),
-                        event.message ?? "Importing..."
+                        event.message ?? phaseMessage(2, 4, "Importing...")
                     )
                 case "done":
                     if let count = event.variantCount {
@@ -955,7 +967,7 @@ public enum VCFImportHelper {
         }
 
         if let variantCount {
-            progressHandler(1.0, "Helper subprocess complete")
+            progressHandler(1.0, phaseMessage(2, 4, "Helper subprocess complete"))
             return variantCount
         }
         return (try? VariantDatabase(url: outputDBURL).totalCount()) ?? 0
@@ -1024,7 +1036,7 @@ public enum VCFImportHelper {
         emit(Event(
             event: "started",
             progress: 0.0,
-            message: "Resuming interrupted import",
+            message: phaseMessage(3, 4, "Resuming interrupted import"),
             variantCount: nil,
             error: nil,
             profile: nil
@@ -1037,7 +1049,7 @@ public enum VCFImportHelper {
                     emit(Event(
                         event: "progress",
                         progress: max(0.0, min(1.0, progress)),
-                        message: message,
+                        message: phaseMessage(3, 4, message),
                         variantCount: nil,
                         error: nil,
                         profile: nil
@@ -1049,7 +1061,7 @@ public enum VCFImportHelper {
             emit(Event(
                 event: "done",
                 progress: 1.0,
-                message: "Resume complete",
+                message: phaseMessage(3, 4, "Resume complete"),
                 variantCount: variantCount,
                 error: nil,
                 profile: nil
@@ -1086,7 +1098,7 @@ public enum VCFImportHelper {
         emit(Event(
             event: "started",
             progress: 0.0,
-            message: "Materializing INFO fields",
+            message: phaseMessage(4, 4, "Materializing INFO fields"),
             variantCount: nil,
             error: nil,
             profile: nil
@@ -1099,7 +1111,7 @@ public enum VCFImportHelper {
                     emit(Event(
                         event: "progress",
                         progress: max(0.0, min(1.0, progress)),
-                        message: message,
+                        message: phaseMessage(4, 4, message),
                         variantCount: nil,
                         error: nil,
                         profile: nil
@@ -1111,7 +1123,7 @@ public enum VCFImportHelper {
             emit(Event(
                 event: "done",
                 progress: 1.0,
-                message: "Materialization complete",
+                message: phaseMessage(4, 4, "Materialization complete"),
                 variantCount: eavCount,
                 error: nil,
                 profile: nil

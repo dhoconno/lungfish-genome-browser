@@ -1394,6 +1394,27 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         }
     }
 
+    private nonisolated static func signalName(forTerminationStatus status: Int32) -> String? {
+        switch status {
+        case 9:
+            return "SIGKILL"
+        case 15:
+            return "SIGTERM"
+        case 6:
+            return "SIGABRT"
+        case 11:
+            return "SIGSEGV"
+        case 10:
+            return "SIGBUS"
+        case 5:
+            return "SIGTRAP"
+        case 2:
+            return "SIGINT"
+        default:
+            return nil
+        }
+    }
+
     private nonisolated static func runVCFImportViaHelper(
         vcfURL: URL,
         outputDBURL: URL,
@@ -1406,6 +1427,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             throw VariantDatabaseError.createFailed("Could not locate application executable for helper import")
         }
 
+        let debugLogURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lungfish-vcf-import-\(UUID().uuidString).log")
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executablePath)
         process.arguments = [
@@ -1414,7 +1438,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             "--output-db-path", outputDBURL.path,
             "--source-file", sourceFile,
             "--import-profile", importProfile.rawValue,
+            "--debug-log-path", debugLogURL.path,
         ]
+        debugLog(
+            "runVCFImportViaHelper: launch helper=\(executablePath) vcf=\(vcfURL.lastPathComponent) db=\(outputDBURL.lastPathComponent) profile=\(importProfile.rawValue) debugLog=\(debugLogURL.path)"
+        )
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -1434,6 +1462,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             guard !line.isEmpty else { return }
             guard let event = try? JSONDecoder().decode(VCFImportHelperEvent.self, from: line) else {
                 if let text = String(data: line, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                    debugLog("runVCFImportViaHelper: raw-stdout '\(String(text.prefix(300)))'")
                     parseState.withLock { state in
                         if state.helperError == nil {
                             state.helperError = text
@@ -1446,18 +1475,24 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             switch event.event {
             case "progress":
                 if let progress = event.progress {
+                    let msg = event.message ?? "Importing VCF..."
+                    debugLog("runVCFImportViaHelper: event=progress p=\(String(format: "%.4f", progress)) msg='\(String(msg.prefix(220)))'")
                     progressHandler(progress, event.message ?? "Importing VCF...")
                 }
             case "done":
                 if let variantCount = event.variantCount {
+                    debugLog("runVCFImportViaHelper: event=done variantCount=\(variantCount)")
                     parseState.withLock { $0.variantCount = variantCount }
                 }
             case "error":
                 let message = event.error ?? event.message ?? "VCF helper import failed"
+                debugLog("runVCFImportViaHelper: event=error '\(String(message.prefix(320)))'")
                 parseState.withLock { $0.helperError = message }
             case "cancelled":
+                debugLog("runVCFImportViaHelper: event=cancelled")
                 parseState.withLock { $0.wasCancelled = true }
             default:
+                debugLog("runVCFImportViaHelper: event=\(event.event)")
                 break
             }
         }
@@ -1491,6 +1526,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             let data = handle.availableData
             guard !data.isEmpty else { return }
             stderrState.withLock { $0.append(data) }
+            if let text = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               !text.isEmpty {
+                debugLog("runVCFImportViaHelper: stderr '\(String(text.prefix(300)))'")
+            }
         }
 
         try process.run()
@@ -1503,6 +1543,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             Thread.sleep(forTimeInterval: 0.1)
         }
         process.waitUntilExit()
+        debugLog(
+            "runVCFImportViaHelper: process-exit status=\(process.terminationStatus) reason=\(process.terminationReason == .uncaughtSignal ? "signal" : "exit")"
+        )
 
         stdoutHandle.readabilityHandler = nil
         stderrHandle.readabilityHandler = nil
@@ -1518,6 +1561,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         let helperCancelled = parseState.withLock { $0.wasCancelled }
         if shouldCancel() || helperCancelled {
+            debugLog("runVCFImportViaHelper: cancelled by caller/helper")
             throw VariantDatabaseError.cancelled
         }
 
@@ -1527,7 +1571,17 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 String(data: data, encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             }
-            let message = helperError ?? (stderrMessage.isEmpty ? "VCF helper exited with status \(process.terminationStatus)" : stderrMessage)
+            let signalSuffix: String
+            if process.terminationReason == .uncaughtSignal {
+                let signalName = signalName(forTerminationStatus: process.terminationStatus)
+                signalSuffix = " (signal \(process.terminationStatus)\(signalName.map { " \($0)" } ?? ""))"
+            } else {
+                signalSuffix = ""
+            }
+            let defaultMessage = "VCF helper exited with status \(process.terminationStatus)\(signalSuffix)"
+            let baseMessage = helperError ?? (stderrMessage.isEmpty ? defaultMessage : stderrMessage)
+            debugLog("runVCFImportViaHelper: failure '\(String(baseMessage.prefix(320)))'")
+            let message = "\(baseMessage)\nDebug log: \(debugLogURL.path)"
             throw VariantDatabaseError.createFailed(message)
         }
 
@@ -1556,6 +1610,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             "--vcf-resume-helper",
             "--output-db-path", outputDBURL.path,
         ]
+        debugLog("runVCFResumeViaHelper: launch helper=\(executablePath) db=\(outputDBURL.lastPathComponent)")
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -1572,22 +1627,35 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         let handleEventLine: @Sendable (Data) -> Void = { line in
             guard !line.isEmpty else { return }
-            guard let event = try? JSONDecoder().decode(VCFImportHelperEvent.self, from: line) else { return }
+            guard let event = try? JSONDecoder().decode(VCFImportHelperEvent.self, from: line) else {
+                if let text = String(data: line, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                   !text.isEmpty {
+                    debugLog("runVCFResumeViaHelper: raw-stdout '\(String(text.prefix(300)))'")
+                }
+                return
+            }
             switch event.event {
             case "progress":
                 if let progress = event.progress {
+                    let msg = event.message ?? "Resuming..."
+                    debugLog("runVCFResumeViaHelper: event=progress p=\(String(format: "%.4f", progress)) msg='\(String(msg.prefix(220)))'")
                     progressHandler(progress, event.message ?? "Resuming...")
                 }
             case "done":
                 if let variantCount = event.variantCount {
+                    debugLog("runVCFResumeViaHelper: event=done variantCount=\(variantCount)")
                     parseState.withLock { $0.variantCount = variantCount }
                 }
             case "error":
                 let message = event.error ?? event.message ?? "VCF resume helper failed"
+                debugLog("runVCFResumeViaHelper: event=error '\(String(message.prefix(320)))'")
                 parseState.withLock { $0.helperError = message }
             case "cancelled":
+                debugLog("runVCFResumeViaHelper: event=cancelled")
                 parseState.withLock { $0.wasCancelled = true }
             default:
+                debugLog("runVCFResumeViaHelper: event=\(event.event)")
                 break
             }
         }
@@ -1626,6 +1694,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             Thread.sleep(forTimeInterval: 0.1)
         }
         process.waitUntilExit()
+        debugLog(
+            "runVCFResumeViaHelper: process-exit status=\(process.terminationStatus) reason=\(process.terminationReason == .uncaughtSignal ? "signal" : "exit")"
+        )
 
         stdoutHandle.readabilityHandler = nil
         consumeStdoutData(stdoutHandle.readDataToEndOfFile())
@@ -1640,12 +1711,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         let helperCancelled = parseState.withLock { $0.wasCancelled }
         if shouldCancel() || helperCancelled {
+            debugLog("runVCFResumeViaHelper: cancelled by caller/helper")
             throw VariantDatabaseError.cancelled
         }
 
         guard process.terminationStatus == 0 else {
             let helperError = parseState.withLock { $0.helperError }
             let message = helperError ?? "VCF resume helper exited with status \(process.terminationStatus)"
+            debugLog("runVCFResumeViaHelper: failure '\(String(message.prefix(320)))'")
             throw VariantDatabaseError.createFailed(message)
         }
 
@@ -1676,6 +1749,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             "--vcf-materialize-helper",
             "--output-db-path", outputDBURL.path,
         ]
+        debugLog("runVCFMaterializeViaHelper: launch helper=\(executablePath) db=\(outputDBURL.lastPathComponent)")
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -1692,22 +1766,35 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         let handleEventLine: @Sendable (Data) -> Void = { line in
             guard !line.isEmpty else { return }
-            guard let event = try? JSONDecoder().decode(VCFImportHelperEvent.self, from: line) else { return }
+            guard let event = try? JSONDecoder().decode(VCFImportHelperEvent.self, from: line) else {
+                if let text = String(data: line, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                   !text.isEmpty {
+                    debugLog("runVCFMaterializeViaHelper: raw-stdout '\(String(text.prefix(300)))'")
+                }
+                return
+            }
             switch event.event {
             case "progress":
                 if let progress = event.progress {
+                    let msg = event.message ?? "Materializing..."
+                    debugLog("runVCFMaterializeViaHelper: event=progress p=\(String(format: "%.4f", progress)) msg='\(String(msg.prefix(220)))'")
                     progressHandler(progress, event.message ?? "Materializing...")
                 }
             case "done":
                 if let variantCount = event.variantCount {
+                    debugLog("runVCFMaterializeViaHelper: event=done variantCount=\(variantCount)")
                     parseState.withLock { $0.variantCount = variantCount }
                 }
             case "error":
                 let message = event.error ?? event.message ?? "VCF materialize helper failed"
+                debugLog("runVCFMaterializeViaHelper: event=error '\(String(message.prefix(320)))'")
                 parseState.withLock { $0.helperError = message }
             case "cancelled":
+                debugLog("runVCFMaterializeViaHelper: event=cancelled")
                 parseState.withLock { $0.wasCancelled = true }
             default:
+                debugLog("runVCFMaterializeViaHelper: event=\(event.event)")
                 break
             }
         }
@@ -1746,6 +1833,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             Thread.sleep(forTimeInterval: 0.1)
         }
         process.waitUntilExit()
+        debugLog(
+            "runVCFMaterializeViaHelper: process-exit status=\(process.terminationStatus) reason=\(process.terminationReason == .uncaughtSignal ? "signal" : "exit")"
+        )
 
         stdoutHandle.readabilityHandler = nil
         consumeStdoutData(stdoutHandle.readDataToEndOfFile())
@@ -1760,12 +1850,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         let helperCancelled = parseState.withLock { $0.wasCancelled }
         if shouldCancel() || helperCancelled {
+            debugLog("runVCFMaterializeViaHelper: cancelled by caller/helper")
             throw VariantDatabaseError.cancelled
         }
 
         guard process.terminationStatus == 0 else {
             let helperError = parseState.withLock { $0.helperError }
             let message = helperError ?? "VCF materialize helper exited with status \(process.terminationStatus)"
+            debugLog("runVCFMaterializeViaHelper: failure '\(String(message.prefix(320)))'")
             throw VariantDatabaseError.createFailed(message)
         }
 
