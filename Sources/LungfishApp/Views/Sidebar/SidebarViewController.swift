@@ -1771,6 +1771,10 @@ extension SidebarViewController: NSMenuDelegate {
             getInfoItem.target = self
             menu.addItem(getInfoItem)
 
+            let importMetadataItem = NSMenuItem(title: "Import Sample Metadata…", action: #selector(contextMenuImportSampleMetadata(_:)), keyEquivalent: "")
+            importMetadataItem.target = self
+            menu.addItem(importMetadataItem)
+
             // Delete Variant Tracks — only if bundle has variant tracks
             if let url = items.first?.url, bundleHasVariantTracks(url) {
                 menu.addItem(NSMenuItem.separator())
@@ -1968,6 +1972,15 @@ extension SidebarViewController: NSMenuDelegate {
                 alert.runModal()
             }
         }
+    }
+
+    @objc private func contextMenuImportSampleMetadata(_ sender: Any?) {
+        let items = selectedItems()
+        guard let item = items.first, item.type == .referenceBundle, let bundleURL = item.url else { return }
+
+        logger.info("contextMenuImportSampleMetadata: Importing metadata into '\(item.title, privacy: .public)'")
+        guard let appDelegate = NSApp.delegate as? AppDelegate else { return }
+        appDelegate.presentMetadataImportPanel(for: bundleURL, presentingWindow: view.window)
     }
 
     /// Checks if a bundle URL has variant tracks by reading its manifest.

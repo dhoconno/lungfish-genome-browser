@@ -19,6 +19,7 @@ protocol AnnotationTableDrawerDelegate: AnyObject {
     func annotationDrawer(_ drawer: AnnotationTableDrawerView, didSelectAnnotation result: AnnotationSearchIndex.SearchResult)
     func annotationDrawer(_ drawer: AnnotationTableDrawerView, didDeleteVariants count: Int)
     func annotationDrawer(_ drawer: AnnotationTableDrawerView, didResolveGeneRegions regions: [GeneRegion])
+    func annotationDrawer(_ drawer: AnnotationTableDrawerView, didUpdateVisibleVariantRenderKeys keys: Set<String>?)
 }
 
 private extension String {
@@ -317,8 +318,10 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     private let noneTypesButton = NSButton()
     private let presetFiltersToggleButton = NSButton()
     private let searchBuilderButton = NSButton()
+    private let localVariantFilterBadgeLabel = NSTextField(labelWithString: "Local: Visible Rows")
     private let clearFilterButton = NSButton()
     private let downloadTemplateButton = NSButton()
+    private let importMetadataButton = NSButton()
     let exportButton = NSButton()
     let columnConfigButton = NSButton()
     let profileButton = NSPopUpButton(frame: .zero, pullsDown: true)
@@ -401,6 +404,12 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     private var sampleTokenPayloads: [ObjectIdentifier: SampleSmartToken] = [:]
     /// Bookmarked variant keys (`trackId:variantRowId`) for star column display.
     var bookmarkedVariantKeys: Set<String> = []
+    /// Base result set from the last variant SQL query before local column filters.
+    private var baseDisplayedVariantAnnotations: [AnnotationSearchIndex.SearchResult] = []
+    /// Header-driven local filters applied only to currently loaded variant rows.
+    private var variantColumnFilterClauses: [VariantColumnFilterClause] = []
+    /// Last local variant key set emitted to the viewer for viewport render syncing.
+    private var lastEmittedVisibleVariantRenderKeys: Set<String>?
     /// Column configuration popover (gear menu).
     var columnConfigPopover: NSPopover?
 
@@ -575,6 +584,19 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         searchBuilderButton.isHidden = true
         searchBar.addSubview(searchBuilderButton)
 
+        localVariantFilterBadgeLabel.font = .systemFont(ofSize: 9, weight: .semibold)
+        localVariantFilterBadgeLabel.textColor = .systemBlue
+        localVariantFilterBadgeLabel.alignment = .center
+        localVariantFilterBadgeLabel.translatesAutoresizingMaskIntoConstraints = false
+        localVariantFilterBadgeLabel.isHidden = true
+        localVariantFilterBadgeLabel.wantsLayer = true
+        localVariantFilterBadgeLabel.layer?.cornerRadius = 7
+        localVariantFilterBadgeLabel.layer?.borderWidth = 1
+        localVariantFilterBadgeLabel.layer?.borderColor = NSColor.systemBlue.withAlphaComponent(0.35).cgColor
+        localVariantFilterBadgeLabel.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.08).cgColor
+        localVariantFilterBadgeLabel.toolTip = "Column header filters apply only to currently loaded rows in the visible/table scope."
+        searchBar.addSubview(localVariantFilterBadgeLabel)
+
         clearFilterButton.title = "Clear"
         clearFilterButton.font = .systemFont(ofSize: 10, weight: .medium)
         clearFilterButton.controlSize = .small
@@ -643,6 +665,16 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         downloadTemplateButton.action = #selector(downloadSampleTemplateAction(_:))
         downloadTemplateButton.isHidden = true
         searchBar.addSubview(downloadTemplateButton)
+
+        importMetadataButton.title = "Import Metadata..."
+        importMetadataButton.controlSize = .small
+        importMetadataButton.bezelStyle = .rounded
+        importMetadataButton.font = .systemFont(ofSize: 10, weight: .medium)
+        importMetadataButton.translatesAutoresizingMaskIntoConstraints = false
+        importMetadataButton.target = self
+        importMetadataButton.action = #selector(importMetadataAction(_:))
+        importMetadataButton.isHidden = true
+        searchBar.addSubview(importMetadataButton)
 
         // Tab segmented control (Annotations | Variants | Samples)
         tabControl.segmentCount = 3
@@ -843,7 +875,10 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             profileButton.widthAnchor.constraint(lessThanOrEqualToConstant: 120),
 
             clearFilterButton.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
-            clearFilterButton.trailingAnchor.constraint(equalTo: searchBuilderButton.leadingAnchor, constant: -4),
+            clearFilterButton.trailingAnchor.constraint(equalTo: localVariantFilterBadgeLabel.leadingAnchor, constant: -6),
+
+            localVariantFilterBadgeLabel.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
+            localVariantFilterBadgeLabel.trailingAnchor.constraint(equalTo: searchBuilderButton.leadingAnchor, constant: -6),
 
             sampleFilterField.widthAnchor.constraint(equalToConstant: 0),
             sampleFilterField.heightAnchor.constraint(equalToConstant: 0),
@@ -877,7 +912,10 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             addSampleFieldButton.trailingAnchor.constraint(equalTo: sampleGroupsButton.leadingAnchor, constant: -6),
 
             sampleGroupsButton.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
-            sampleGroupsButton.trailingAnchor.constraint(equalTo: downloadTemplateButton.leadingAnchor, constant: -6),
+            sampleGroupsButton.trailingAnchor.constraint(equalTo: importMetadataButton.leadingAnchor, constant: -6),
+
+            importMetadataButton.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
+            importMetadataButton.trailingAnchor.constraint(equalTo: downloadTemplateButton.leadingAnchor, constant: -6),
 
             downloadTemplateButton.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
             downloadTemplateButton.trailingAnchor.constraint(equalTo: searchBar.trailingAnchor, constant: -8),
@@ -1120,6 +1158,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         sampleFilterField.isHidden = true  // Samples use Query Builder; free-text field hidden to reduce toolbar density
         addSampleFieldButton.isHidden = !showSamples
         sampleGroupsButton.isHidden = !showSamples
+        importMetadataButton.isHidden = !showSamples
         downloadTemplateButton.isHidden = !showSamples
         sampleQueryBuilderButton.isHidden = !showSamples
         sampleGroupPresetButton.isHidden = !showSamples
@@ -1149,6 +1188,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         // Show button whenever variants tab is active; disable when query would be too slow
         searchBuilderButton.isHidden = !showVariants
         searchBuilderButton.isEnabled = queryBuilderVisible
+        localVariantFilterBadgeLabel.isHidden = !showVariants
         if !queryBuilderVisible && showVariants {
             let dbSizeMB = totalVariantDBSize / 1_000_000
             if isMaterializedOnlyDatabase {
@@ -2307,6 +2347,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                 // Connected to a viewer but no region yet — show placeholder
                 lastVariantQueryMatchCount = nil
                 lastVariantQueryScope = .placeholder
+                baseDisplayedVariantAnnotations = []
                 displayedAnnotations = []
                 tableView.reloadData()
                 scrollView.isHidden = true
@@ -2360,7 +2401,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                 start: viewportPostFilterRegion.start,
                 end: viewportPostFilterRegion.end
             )
-            displayedAnnotations = Array(filtered.prefix(maxDisplay))
+            setVariantBaseResults(Array(filtered.prefix(maxDisplay)))
             lastVariantQueryMatchCount = displayedAnnotations.count
             lastVariantQueryScope = .viewport
             tableView.reloadData()
@@ -2591,7 +2632,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
                               self.variantQueryGeneration == thisGeneration,
                               self.activeTab == .variants else { return }
                         self.hideVariantQueryProgress()
-                        self.displayedAnnotations = results
+                        self.setVariantBaseResults(results)
                         self.lastVariantQueryMatchCount = matchCount
                         self.lastVariantQueryScope = queryScope
                         self.activeVariantQueryCancelToken = nil
@@ -2666,6 +2707,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     }
 
     func updateCountLabel() {
+        defer { emitVisibleVariantRenderKeyUpdateIfNeeded() }
         if activeTab == .variants && activeVariantSubtab == .genotypes {
             let count = displayedGenotypes.count
             countLabel.stringValue = "\(count) genotype\(count == 1 ? "" : "s")"
@@ -2694,6 +2736,12 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         } else if activeTab == .variants {
             // Unified variant count label using tracked scope and match count.
             // matchCount == nil signals "more than displayed" (probe fetch overflow) → show "N+" format.
+            if !variantColumnFilterClauses.isEmpty {
+                let shown = numberFormatter.string(from: NSNumber(value: displayedAnnotations.count)) ?? "\(displayedAnnotations.count)"
+                let base = numberFormatter.string(from: NSNumber(value: baseDisplayedVariantAnnotations.count)) ?? "\(baseDisplayedVariantAnnotations.count)"
+                countLabel.stringValue = "\(shown) of \(base) shown (local column filters)"
+                return
+            }
             let total = numberFormatter.string(from: NSNumber(value: totalVariantCount)) ?? "\(totalVariantCount)"
             let displayCount = displayedAnnotations.count
             let displayCountStr = numberFormatter.string(from: NSNumber(value: displayCount)) ?? "\(displayCount)"
@@ -2821,6 +2869,12 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         var sourceFilter: (op: String, value: String)?
         var visibility: Bool?
         var metadataFilters: [(field: String, op: String, value: String)] = []
+    }
+
+    private struct VariantColumnFilterClause {
+        var key: String
+        var op: String
+        var value: String
     }
 
     private struct ParsedSearchClause {
@@ -4418,9 +4472,14 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     }
 
     public func tableView(_ tableView: NSTableView, didClick tableColumn: NSTableColumn) {
-        guard activeTab == .samples else { return }
         guard let columnIndex = tableView.tableColumns.firstIndex(of: tableColumn) else { return }
-        showSampleColumnHeaderFilterMenu(column: columnIndex)
+        if activeTab == .samples {
+            showSampleColumnHeaderFilterMenu(column: columnIndex)
+            return
+        }
+        if activeTab == .variants && activeVariantSubtab == .calls {
+            showVariantColumnHeaderFilterMenu(column: columnIndex)
+        }
     }
 }
 
@@ -4461,6 +4520,11 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
 
         // Genotype subtab: no context menu yet (defer to Calls subtab for variant actions)
         if activeTab == .variants && activeVariantSubtab == .genotypes {
+            return
+        }
+
+        if activeTab == .variants && tableView.clickedColumn >= 0 && tableView.clickedRow < 0 {
+            buildVariantColumnHeaderContextMenu(menu, column: tableView.clickedColumn)
             return
         }
 
@@ -4645,6 +4709,185 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         let deleteAllItem = NSMenuItem(title: "Delete All Variants...", action: #selector(deleteAllVariantsAction(_:)), keyEquivalent: "")
         deleteAllItem.target = self
         menu.addItem(deleteAllItem)
+    }
+
+    private func variantFilterKey(forColumnIdentifier columnId: String) -> String? {
+        switch columnId {
+        case Self.variantIdColumn.rawValue: return "variant_id"
+        case Self.variantTypeColumn.rawValue: return "variant_type"
+        case Self.variantChromColumn.rawValue: return "chromosome"
+        case Self.positionColumn.rawValue: return "position"
+        case Self.refColumn.rawValue: return "ref"
+        case Self.altColumn.rawValue: return "alt"
+        case Self.qualityColumn.rawValue: return "quality"
+        case Self.filterColumn.rawValue: return "filter"
+        case Self.samplesColumn.rawValue: return "samples"
+        case Self.sourceColumn.rawValue: return "source"
+        default:
+            if columnId.hasPrefix("info_") { return columnId }
+            return nil
+        }
+    }
+
+    private func isVariantFilterNumericKey(_ key: String) -> Bool {
+        switch key {
+        case "position", "quality", "samples":
+            return true
+        default:
+            if key.hasPrefix("info_") {
+                let infoKey = String(key.dropFirst(5))
+                return isNumericInfoKey(infoKey)
+            }
+            return false
+        }
+    }
+
+    private func addVariantColumnFilterItem(
+        to menu: NSMenu,
+        title: String,
+        key: String,
+        op: String,
+        value: String
+    ) {
+        let item = NSMenuItem(title: title, action: #selector(applyVariantColumnFilterAction(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = ["key": key, "op": op, "value": value]
+        menu.addItem(item)
+    }
+
+    @objc private func applyVariantColumnFilterAction(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? [String: String],
+              let key = payload["key"],
+              let op = payload["op"],
+              let value = payload["value"] else { return }
+        variantColumnFilterClauses.append(VariantColumnFilterClause(key: key, op: op, value: value))
+        applyVariantColumnFiltersFromBase()
+    }
+
+    @objc private func promptVariantColumnFilterAction(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? [String: String],
+              let key = payload["key"],
+              let op = payload["op"],
+              let window = self.window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Add Variant Column Filter"
+        alert.informativeText = "Enter a value for \(key)."
+        alert.addButton(withTitle: "Apply")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = "Filter value"
+        alert.accessoryView = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let self, !value.isEmpty else { return }
+            self.variantColumnFilterClauses.append(VariantColumnFilterClause(key: key, op: op, value: value))
+            self.applyVariantColumnFiltersFromBase()
+        }
+    }
+
+    @objc private func clearVariantColumnFilters(_ sender: Any?) {
+        variantColumnFilterClauses.removeAll()
+        applyVariantColumnFiltersFromBase()
+    }
+
+    private func buildVariantColumnHeaderContextMenu(_ menu: NSMenu, column: Int) {
+        guard column >= 0, column < tableView.tableColumns.count else { return }
+        let tableColumn = tableView.tableColumns[column]
+        guard let key = variantFilterKey(forColumnIdentifier: tableColumn.identifier.rawValue) else { return }
+        let displayName = tableColumn.title.isEmpty ? "Column" : tableColumn.title
+
+        if isVariantFilterNumericKey(key) {
+            let equalsItem = NSMenuItem(
+                title: "Filter \(displayName) Equals\u{2026}",
+                action: #selector(promptVariantColumnFilterAction(_:)),
+                keyEquivalent: ""
+            )
+            equalsItem.target = self
+            equalsItem.representedObject = ["key": key, "op": "="]
+            menu.addItem(equalsItem)
+
+            let gteItem = NSMenuItem(
+                title: "Filter \(displayName) \u{2265}\u{2026}",
+                action: #selector(promptVariantColumnFilterAction(_:)),
+                keyEquivalent: ""
+            )
+            gteItem.target = self
+            gteItem.representedObject = ["key": key, "op": ">="]
+            menu.addItem(gteItem)
+
+            let gtItem = NSMenuItem(
+                title: "Filter \(displayName) >\u{2026}",
+                action: #selector(promptVariantColumnFilterAction(_:)),
+                keyEquivalent: ""
+            )
+            gtItem.target = self
+            gtItem.representedObject = ["key": key, "op": ">"]
+            menu.addItem(gtItem)
+
+            let lteItem = NSMenuItem(
+                title: "Filter \(displayName) \u{2264}\u{2026}",
+                action: #selector(promptVariantColumnFilterAction(_:)),
+                keyEquivalent: ""
+            )
+            lteItem.target = self
+            lteItem.representedObject = ["key": key, "op": "<="]
+            menu.addItem(lteItem)
+
+            let ltItem = NSMenuItem(
+                title: "Filter \(displayName) <\u{2026}",
+                action: #selector(promptVariantColumnFilterAction(_:)),
+                keyEquivalent: ""
+            )
+            ltItem.target = self
+            ltItem.representedObject = ["key": key, "op": "<"]
+            menu.addItem(ltItem)
+        } else {
+            let containsItem = NSMenuItem(
+                title: "Filter \(displayName) Contains\u{2026}",
+                action: #selector(promptVariantColumnFilterAction(_:)),
+                keyEquivalent: ""
+            )
+            containsItem.target = self
+            containsItem.representedObject = ["key": key, "op": "~"]
+            menu.addItem(containsItem)
+
+            let equalsItem = NSMenuItem(
+                title: "Filter \(displayName) Equals\u{2026}",
+                action: #selector(promptVariantColumnFilterAction(_:)),
+                keyEquivalent: ""
+            )
+            equalsItem.target = self
+            equalsItem.representedObject = ["key": key, "op": "="]
+            menu.addItem(equalsItem)
+
+            let beginsWithItem = NSMenuItem(
+                title: "Filter \(displayName) Begins With\u{2026}",
+                action: #selector(promptVariantColumnFilterAction(_:)),
+                keyEquivalent: ""
+            )
+            beginsWithItem.target = self
+            beginsWithItem.representedObject = ["key": key, "op": "^="]
+            menu.addItem(beginsWithItem)
+
+            let endsWithItem = NSMenuItem(
+                title: "Filter \(displayName) Ends With\u{2026}",
+                action: #selector(promptVariantColumnFilterAction(_:)),
+                keyEquivalent: ""
+            )
+            endsWithItem.target = self
+            endsWithItem.representedObject = ["key": key, "op": "$="]
+            menu.addItem(endsWithItem)
+        }
+
+        menu.addItem(NSMenuItem.separator())
+        addVariantColumnFilterItem(to: menu, title: "Filter \(displayName) Is Empty", key: key, op: "=", value: "")
+        addVariantColumnFilterItem(to: menu, title: "Filter \(displayName) Is Not Empty", key: key, op: "!=", value: "")
+        menu.addItem(NSMenuItem.separator())
+
+        let clearItem = NSMenuItem(title: "Clear Local Variant Column Filters", action: #selector(clearVariantColumnFilters(_:)), keyEquivalent: "")
+        clearItem.target = self
+        menu.addItem(clearItem)
     }
 
     // MARK: - Delete Actions
@@ -4953,6 +5196,115 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
             if normalizedExpected.isEmpty { return true }
             return normalizedActual.localizedCaseInsensitiveContains(normalizedExpected)
         }
+    }
+
+    private func variantColumnValue(_ row: AnnotationSearchIndex.SearchResult, key: String) -> String {
+        switch key {
+        case "variant_id":
+            return row.name
+        case "variant_type":
+            return row.type
+        case "chromosome":
+            return row.chromosome
+        case "position":
+            return String(row.start + 1)
+        case "ref":
+            return row.ref ?? ""
+        case "alt":
+            return row.alt ?? ""
+        case "quality":
+            return row.quality.map { String($0) } ?? ""
+        case "filter":
+            return row.filter ?? ""
+        case "samples":
+            return row.sampleCount.map { String($0) } ?? ""
+        case "source":
+            return row.sourceFile ?? ""
+        default:
+            if key.hasPrefix("info_") {
+                let infoKey = String(key.dropFirst(5))
+                return row.infoDict?[infoKey] ?? ""
+            }
+            return ""
+        }
+    }
+
+    private func variantColumnMatches(actual: String, op: String, expected: String, key: String) -> Bool {
+        let normalizedActual = actual.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedExpected = expected.trimmingCharacters(in: .whitespacesAndNewlines)
+        let numericKeys = Set(["position", "quality", "samples"])
+        if numericKeys.contains(key), let lhs = Double(normalizedActual), let rhs = Double(normalizedExpected) {
+            switch op {
+            case ">": return lhs > rhs
+            case ">=": return lhs >= rhs
+            case "<": return lhs < rhs
+            case "<=": return lhs <= rhs
+            case "=": return lhs == rhs
+            case "!=": return lhs != rhs
+            default: break
+            }
+        }
+        return sampleStringMatches(actual: normalizedActual, op: op, expected: normalizedExpected)
+    }
+
+    private func applyVariantColumnFilters(to rows: [AnnotationSearchIndex.SearchResult]) -> [AnnotationSearchIndex.SearchResult] {
+        guard !variantColumnFilterClauses.isEmpty else { return rows }
+        return rows.filter { row in
+            variantColumnFilterClauses.allSatisfy { clause in
+                let actual = variantColumnValue(row, key: clause.key)
+                return variantColumnMatches(actual: actual, op: clause.op, expected: clause.value, key: clause.key)
+            }
+        }
+    }
+
+    private func setVariantBaseResults(_ rows: [AnnotationSearchIndex.SearchResult]) {
+        baseDisplayedVariantAnnotations = rows
+        displayedAnnotations = applyVariantColumnFilters(to: rows)
+    }
+
+    private func applyVariantColumnFiltersFromBase() {
+        displayedAnnotations = applyVariantColumnFilters(to: baseDisplayedVariantAnnotations)
+        tableView.reloadData()
+        scrollView.isHidden = false
+        tooManyLabel.isHidden = true
+        updateCountLabel()
+        if activeVariantSubtab == .genotypes {
+            buildGenotypeRows()
+        }
+    }
+
+    private func emitVisibleVariantRenderKeyUpdateIfNeeded() {
+        // During async query churn, keep the last stable viewport sync set only
+        // while there are no stable rows to mirror yet.
+        if activeTab == .variants && isVariantQuerying && (scrollView.isHidden || displayedAnnotations.isEmpty) {
+            return
+        }
+        if activeTab == .variants && isVariantQuerying && !scrollView.isHidden && !displayedAnnotations.isEmpty {
+            // Safety: if rows are visible, query progress should no longer block sync.
+            hideVariantQueryProgress()
+        }
+
+        let keysToEmit: Set<String>?
+        if activeTab == .variants {
+            if scrollView.isHidden {
+                // Placeholder / too-many state: no stable table rows to mirror.
+                // Clear sync filter so zooming back in can recover naturally.
+                keysToEmit = nil
+            } else {
+                keysToEmit = Set(displayedAnnotations.compactMap { result in
+                    guard let rowId = result.variantRowId, !result.trackId.isEmpty else { return nil }
+                    return "\(result.trackId):\(rowId)"
+                })
+            }
+        } else {
+            keysToEmit = nil
+        }
+        localVariantFilterBadgeLabel.stringValue = variantColumnFilterClauses.isEmpty
+            ? "Table Sync: Visible Rows"
+            : "Local: Visible Rows"
+        guard keysToEmit != lastEmittedVisibleVariantRenderKeys else { return }
+        lastEmittedVisibleVariantRenderKeys = keysToEmit
+        delegate?.annotationDrawer(self, didUpdateVisibleVariantRenderKeys: keysToEmit)
     }
 
     /// Returns sample names in effective display order (persisted order + any new samples).
@@ -5493,6 +5845,15 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         let clearItem = NSMenuItem(title: "Clear Sample Filters", action: #selector(clearSampleFilter(_:)), keyEquivalent: "")
         clearItem.target = self
         menu.addItem(clearItem)
+
+        if tableColumn.identifier.rawValue.hasPrefix("meta_") {
+            let metaKey = String(tableColumn.identifier.rawValue.dropFirst(5))
+            menu.addItem(NSMenuItem.separator())
+            let removeItem = NSMenuItem(title: "Delete Column\u{2026}", action: #selector(deleteSampleMetadataFieldAction(_:)), keyEquivalent: "")
+            removeItem.target = self
+            removeItem.representedObject = metaKey
+            menu.addItem(removeItem)
+        }
     }
 
     // MARK: - Multi-Selection Visibility Actions
@@ -5569,6 +5930,76 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         menu.popUp(positioning: nil, at: anchorPoint, in: headerView)
     }
 
+    private func showVariantColumnHeaderFilterMenu(column: Int) {
+        guard column >= 0, column < tableView.tableColumns.count else { return }
+        guard let headerView = tableView.headerView else { return }
+        let menu = NSMenu()
+        buildVariantColumnHeaderContextMenu(menu, column: column)
+        let rect = headerView.headerRect(ofColumn: column)
+        let anchorPoint = NSPoint(x: rect.minX + 8, y: rect.minY - 2)
+        menu.popUp(positioning: nil, at: anchorPoint, in: headerView)
+    }
+
+    @objc private func deleteSampleMetadataFieldAction(_ sender: NSMenuItem) {
+        guard let fieldName = sender.representedObject as? String,
+              !fieldName.isEmpty,
+              sampleMetadataFields.contains(fieldName),
+              let window = self.window else { return }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Delete Metadata Column?"
+        alert.informativeText = "Delete '\(fieldName)' from all samples and variant databases? This cannot be undone."
+        alert.addButton(withTitle: "Delete Column")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn else { return }
+            guard let searchIndex = self.searchIndex else { return }
+
+            let fieldToRemove = fieldName
+            let sampleNames = self.allSampleNames
+            let metadataSnapshot = self.sampleMetadata
+            let dbURLs = searchIndex.variantDatabaseHandles.map(\.db.databaseURL)
+
+            DispatchQueue.global(qos: .userInitiated).async {
+                var firstError: Error?
+                for dbURL in dbURLs {
+                    do {
+                        let rwDB = try VariantDatabase(url: dbURL, readWrite: true)
+                        for sampleName in sampleNames {
+                            var updated = metadataSnapshot[sampleName] ?? [:]
+                            updated.removeValue(forKey: fieldToRemove)
+                            try rwDB.updateSampleMetadata(name: sampleName, metadata: updated)
+                        }
+                    } catch {
+                        if firstError == nil { firstError = error }
+                    }
+                }
+
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        if let error = firstError {
+                            let errorAlert = NSAlert()
+                            errorAlert.alertStyle = .warning
+                            errorAlert.messageText = "Could Not Delete Column"
+                            errorAlert.informativeText = error.localizedDescription
+                            errorAlert.beginSheetModal(for: window)
+                            return
+                        }
+
+                        self.sampleMetadataFields.removeAll { $0 == fieldToRemove }
+                        self.populateSampleData(from: searchIndex)
+                        self.configureColumnsForTab(.samples)
+                        self.updateDisplayedSamples()
+                        drawerLogger.info("deleteSampleMetadataFieldAction: Removed metadata field '\(fieldToRemove, privacy: .public)'")
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Import Metadata
 
     @objc private func downloadSampleTemplateAction(_ sender: Any?) {
@@ -5607,7 +6038,7 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         }
     }
 
-    @objc private func importMetadataAction(_ sender: NSMenuItem) {
+    @objc private func importMetadataAction(_ sender: Any?) {
         guard let searchIndex else { return }
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [

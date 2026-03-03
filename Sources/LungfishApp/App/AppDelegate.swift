@@ -1064,6 +1064,102 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         }
     }
 
+    @objc func importSampleMetadataToBundle(_ sender: Any?) {
+        debugLog("importSampleMetadataToBundle: Menu action triggered")
+
+        guard let viewerController = mainWindowController?.mainSplitViewController?.viewerController,
+              let bundleURL = viewerController.currentBundleURL else {
+            showAlert(title: "No Bundle Loaded", message: "Please open a reference genome bundle before importing sample metadata.")
+            return
+        }
+
+        presentMetadataImportPanel(for: bundleURL, presentingWindow: mainWindowController?.window)
+    }
+
+    func presentMetadataImportPanel(for bundleURL: URL, presentingWindow: NSWindow?) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [
+            .init(filenameExtension: "tsv")!,
+            .init(filenameExtension: "csv")!,
+            .init(filenameExtension: "txt")!,
+        ]
+        panel.message = "Select a TSV or CSV file with sample metadata"
+        panel.prompt = "Import Metadata"
+
+        let handleSelection: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard response == .OK, let metadataURL = panel.url else {
+                debugLog("presentMetadataImportPanel: User cancelled")
+                return
+            }
+            self?.performSampleMetadataImport(metadataURL: metadataURL, bundleURL: bundleURL)
+        }
+
+        if let window = presentingWindow {
+            panel.beginSheetModal(for: window, completionHandler: handleSelection)
+        } else {
+            handleSelection(panel.runModal())
+        }
+    }
+
+    private func performSampleMetadataImport(metadataURL: URL, bundleURL: URL) {
+        debugLog("performSampleMetadataImport: Starting import of \(metadataURL.lastPathComponent) into \(bundleURL.lastPathComponent)")
+        let format: MetadataFormat = metadataURL.pathExtension.lowercased() == "csv" ? .csv : .tsv
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                let manifest = try BundleManifest.load(from: bundleURL)
+                guard !manifest.variants.isEmpty else {
+                    throw NSError(
+                        domain: "Lungfish",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "This bundle has no variant tracks to apply metadata to."]
+                    )
+                }
+
+                var totalUpdated = 0
+                var updatedTracks = 0
+
+                for track in manifest.variants {
+                    guard let databasePath = track.databasePath else {
+                        debugLog("performSampleMetadataImport: Skipping track '\(track.name)' (no databasePath)")
+                        continue
+                    }
+                    let dbURL = bundleURL.appendingPathComponent(databasePath)
+                    let rwDB = try VariantDatabase(url: dbURL, readWrite: true)
+                    let updated = try rwDB.importSampleMetadata(from: metadataURL, format: format)
+                    totalUpdated += updated
+                    updatedTracks += 1
+                    debugLog("performSampleMetadataImport: Track '\(track.name)' updated \(updated) rows")
+                }
+
+                scheduleOnMainRunLoop { [weak self] in
+                    guard let self else { return }
+                    debugLog("performSampleMetadataImport: Completed; tracks=\(updatedTracks), rows=\(totalUpdated)")
+                    if let viewerController = self.mainWindowController?.mainSplitViewController?.viewerController,
+                       viewerController.currentBundleURL?.standardizedFileURL == bundleURL.standardizedFileURL {
+                        do {
+                            try viewerController.displayBundle(at: bundleURL)
+                        } catch {
+                            debugLog("performSampleMetadataImport: Bundle reload failed: \(error.localizedDescription)")
+                        }
+                    }
+                    self.showAlert(
+                        title: "Metadata Imported",
+                        message: "Updated \(totalUpdated.formatted()) sample metadata values across \(updatedTracks) variant track(s)."
+                    )
+                }
+            } catch {
+                scheduleOnMainRunLoop { [weak self] in
+                    debugLog("performSampleMetadataImport: Failed: \(error.localizedDescription)")
+                    self?.showAlert(title: "Metadata Import Failed", message: error.localizedDescription)
+                }
+            }
+        }
+    }
+
     private func performVCFImport(vcfURL: URL, bundleURL: URL) {
         guard OperationCenter.shared.canStartOperation(on: bundleURL) else {
             if let holder = OperationCenter.shared.activeLockHolder(for: bundleURL) {
@@ -2529,7 +2625,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         }
 
         // "Import VCF Variants..." and "Import BAM/CRAM Alignments..." are only enabled when a bundle is loaded
-        if menuItem.action == #selector(importVCFToBundle(_:)) || menuItem.action == #selector(importBAMToBundle(_:)) {
+        if menuItem.action == #selector(importVCFToBundle(_:))
+            || menuItem.action == #selector(importBAMToBundle(_:))
+            || menuItem.action == #selector(importSampleMetadataToBundle(_:)) {
             let hasBundle = mainWindowController?.mainSplitViewController?.viewerController?.currentBundleURL != nil
             return hasBundle
         }

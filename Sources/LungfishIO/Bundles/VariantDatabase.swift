@@ -2061,6 +2061,36 @@ public final class VariantDatabase: @unchecked Sendable {
             let desc = sqlite3_column_text(stmt, 3).map { String(cString: $0) } ?? ""
             results.append((key: key, type: type, number: number, description: desc))
         }
+        if !results.isEmpty {
+            var seen = Set(results.map(\.key))
+            if seen.contains("CSQ") {
+                for subField in Self.csqSubFieldTemplate {
+                    let subKey = "CSQ_\(subField)"
+                    if !seen.contains(subKey) {
+                        results.append((key: subKey, type: "String", number: ".", description: "CSQ sub-field: \(subField)"))
+                        seen.insert(subKey)
+                    }
+                }
+                if !seen.contains("CSQ_entries") {
+                    results.append((key: "CSQ_entries", type: "Integer", number: "1", description: "Number of CSQ transcript entries"))
+                    seen.insert("CSQ_entries")
+                }
+            }
+            if seen.contains("ANN") {
+                for subField in Self.annSubFieldTemplate {
+                    let subKey = "ANN_\(subField)"
+                    if !seen.contains(subKey) {
+                        results.append((key: subKey, type: "String", number: ".", description: "ANN sub-field: \(subField)"))
+                        seen.insert(subKey)
+                    }
+                }
+                for alias in ["ANN_Consequence", "ANN_IMPACT", "ANN_Gene", "ANN_entries"] where !seen.contains(alias) {
+                    results.append((key: alias, type: "String", number: ".", description: "ANN compatibility alias"))
+                    seen.insert(alias)
+                }
+            }
+            results.sort { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
+        }
         // For skipVariantInfo databases, discover keys from raw INFO strings.
         if results.isEmpty && variantInfoSkipped {
             return discoverInfoKeysFromRawInfo()
@@ -2108,10 +2138,7 @@ public final class VariantDatabase: @unchecked Sendable {
             while sqlite3_step(stmt!) == SQLITE_ROW {
                 guard let cStr = sqlite3_column_text(stmt!, 0) else { continue }
                 let infoStr = String(cString: cStr)
-                for field in infoStr.split(separator: ";") {
-                    let pair = field.split(separator: "=", maxSplits: 1)
-                    let key = String(pair[0])
-                    let value = pair.count > 1 ? String(pair[1]) : ""
+                for (key, value) in Self.parseRawINFOString(infoStr) {
                     var entry = allKeys[key] ?? (values: [], count: 0)
                     entry.count += 1
                     if entry.values.count < 5 { entry.values.append(value) }
@@ -2148,7 +2175,26 @@ public final class VariantDatabase: @unchecked Sendable {
         defer { sqlite3_finalize(stmt) }
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
         sqliteBindText(stmt, 1, key)
-        return sqlite3_step(stmt) == SQLITE_ROW
+        if sqlite3_step(stmt) == SQLITE_ROW {
+            return true
+        }
+
+        // Compatibility for structured raw keys present as CSQ/ANN without expanded sub-fields.
+        if key.hasPrefix("CSQ_") {
+            var csqStmt: OpaquePointer?
+            defer { sqlite3_finalize(csqStmt) }
+            guard sqlite3_prepare_v2(db, sql, -1, &csqStmt, nil) == SQLITE_OK else { return false }
+            sqliteBindText(csqStmt, 1, "CSQ")
+            return sqlite3_step(csqStmt) == SQLITE_ROW
+        }
+        if key.hasPrefix("ANN_") {
+            var annStmt: OpaquePointer?
+            defer { sqlite3_finalize(annStmt) }
+            guard sqlite3_prepare_v2(db, sql, -1, &annStmt, nil) == SQLITE_OK else { return false }
+            sqliteBindText(annStmt, 1, "ANN")
+            return sqlite3_step(annStmt) == SQLITE_ROW
+        }
+        return false
     }
 
     /// Returns all INFO key-value pairs for a specific variant.
@@ -2180,6 +2226,7 @@ public final class VariantDatabase: @unchecked Sendable {
             let key = sqlite3_column_text(stmt, 0).map { String(cString: $0) } ?? ""
             let value = sqlite3_column_text(stmt, 1).map { String(cString: $0) } ?? ""
             result[key] = value
+            Self.expandStructuredINFOFieldIfNeeded(key: key, value: value, into: &result)
         }
         return result
     }
@@ -2191,12 +2238,78 @@ public final class VariantDatabase: @unchecked Sendable {
         for field in info.split(separator: ";") {
             let parts = field.split(separator: "=", maxSplits: 1)
             if parts.count == 2 {
-                result[String(parts[0])] = String(parts[1])
+                let key = String(parts[0])
+                let value = String(parts[1])
+                result[key] = value
+                expandStructuredINFOFieldIfNeeded(key: key, value: value, into: &result)
             } else if parts.count == 1 {
                 result[String(parts[0])] = "true"
             }
         }
         return result
+    }
+
+    /// Common VEP CSQ sub-field order.
+    private static let csqSubFieldTemplate: [String] = [
+        "Allele", "Consequence", "IMPACT", "SYMBOL", "Gene", "Feature_type", "Feature",
+        "BIOTYPE", "EXON", "INTRON", "HGVSc", "HGVSp", "cDNA_position", "CDS_position",
+        "Protein_position", "Amino_acids", "Codons", "Existing_variation", "DISTANCE",
+        "STRAND", "FLAGS", "SYMBOL_SOURCE", "HGNC_ID",
+    ]
+
+    /// Common SnpEff ANN sub-field order.
+    private static let annSubFieldTemplate: [String] = [
+        "Allele", "Annotation", "Annotation_Impact", "Gene_Name", "Gene_ID", "Feature_Type",
+        "Feature_ID", "Transcript_BioType", "Rank", "HGVS_c", "HGVS_p", "cDNA_pos_len",
+        "CDS_pos_len", "AA_pos_len", "Distance", "ERRORS_WARNINGS_INFO",
+    ]
+
+    /// Expands raw CSQ/ANN entries into synthetic `CSQ_*` / `ANN_*` keys.
+    ///
+    /// This keeps high-value fields such as IMPACT/Consequence/Gene available even when
+    /// databases were built from raw INFO strings instead of pre-expanded EAV rows.
+    private static func expandStructuredINFOFieldIfNeeded(
+        key: String,
+        value: String,
+        into result: inout [String: String]
+    ) {
+        let template: [String]
+        switch key {
+        case "CSQ":
+            template = csqSubFieldTemplate
+        case "ANN":
+            template = annSubFieldTemplate
+        default:
+            return
+        }
+
+        let entries = value.split(separator: ",", omittingEmptySubsequences: true)
+        guard let firstEntry = entries.first else { return }
+        let subValues = firstEntry.split(separator: "|", omittingEmptySubsequences: false)
+        guard !subValues.isEmpty else { return }
+
+        for (index, fieldName) in template.enumerated() where index < subValues.count {
+            let trimmed = String(subValues[index]).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            result["\(key)_\(fieldName)"] = trimmed
+        }
+
+        if entries.count > 1 {
+            result["\(key)_entries"] = String(entries.count)
+        }
+
+        // Compatibility aliases used by smart tokens/query UI.
+        if key == "ANN" {
+            if let consequence = result["ANN_Annotation"] {
+                result["ANN_Consequence"] = consequence
+            }
+            if let impact = result["ANN_Annotation_Impact"] {
+                result["ANN_IMPACT"] = impact
+            }
+            if let gene = result["ANN_Gene_Name"] {
+                result["ANN_Gene"] = gene
+            }
+        }
     }
 
     /// Batch-fetches INFO dictionaries for multiple variant IDs.
@@ -2248,6 +2361,9 @@ public final class VariantDatabase: @unchecked Sendable {
                 let key = sqlite3_column_text(stmt, 1).map { String(cString: $0) } ?? ""
                 let value = sqlite3_column_text(stmt, 2).map { String(cString: $0) } ?? ""
                 result[variantId, default: [:]][key] = value
+                var expanded = result[variantId, default: [:]]
+                Self.expandStructuredINFOFieldIfNeeded(key: key, value: value, into: &expanded)
+                result[variantId] = expanded
             }
         }
         return result

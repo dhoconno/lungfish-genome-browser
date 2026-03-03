@@ -208,6 +208,13 @@ public final class MainMenu {
             keyEquivalent: ""
         )
 
+        // Import sample metadata into the current bundle
+        fileMenu.addItem(
+            withTitle: "Import Sample Metadata...",
+            action: #selector(FileMenuActions.importSampleMetadataToBundle(_:)),
+            keyEquivalent: ""
+        )
+
         // Export submenu
         let exportItem = NSMenuItem(title: "Export", action: nil, keyEquivalent: "")
         let exportMenu = NSMenu(title: "Export")
@@ -785,6 +792,8 @@ public final class MainMenu {
     func importVCFToBundle(_ sender: Any?)
     /// Import BAM/CRAM alignments into the current bundle
     func importBAMToBundle(_ sender: Any?)
+    /// Import sample metadata into the current bundle
+    func importSampleMetadataToBundle(_ sender: Any?)
     func exportFASTA(_ sender: Any?)
     func exportGenBank(_ sender: Any?)
     func exportGFF3(_ sender: Any?)

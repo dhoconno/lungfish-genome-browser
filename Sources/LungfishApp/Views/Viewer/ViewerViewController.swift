@@ -2458,10 +2458,36 @@ public class SequenceViewerView: NSView {
 
     /// Cached filtered variant annotations. Invalidated by `invalidateFilteredVariantCache()`.
     private var _cachedFilteredVariants: [SequenceAnnotation]?
+    /// Viewport signature used to validate `_cachedFilteredVariants`.
+    private var filteredVariantCacheViewportSignature: (chromosome: String, start: Int, end: Int)?
+
+    /// Optional row-level variant render filter from the drawer (`trackId:variantRowId`).
+    /// `nil` means render all variants that pass inspector filters.
+    private var localVariantRenderFilterKeys: Set<String>?
+    /// Cached genotype dataset after applying table-synced row filtering.
+    private var _cachedFilteredGenotypeData: GenotypeDisplayData?
 
     /// Variant annotations after applying current type/text filters.
     /// Caches the result to avoid re-filtering on every access during a draw cycle.
     private var filteredVisibleVariantAnnotations: [SequenceAnnotation] {
+        let currentViewportSignature: (chromosome: String, start: Int, end: Int)?
+        if let frame = viewController?.referenceFrame {
+            currentViewportSignature = (
+                chromosome: frame.chromosome,
+                start: Int(frame.start),
+                end: Int(ceil(frame.end))
+            )
+        } else {
+            currentViewportSignature = nil
+        }
+
+        if filteredVariantCacheViewportSignature?.chromosome != currentViewportSignature?.chromosome
+            || filteredVariantCacheViewportSignature?.start != currentViewportSignature?.start
+            || filteredVariantCacheViewportSignature?.end != currentViewportSignature?.end {
+            _cachedFilteredVariants = nil
+            filteredVariantCacheViewportSignature = currentViewportSignature
+        }
+
         if let cached = _cachedFilteredVariants { return cached }
         guard showVariants else {
             _cachedFilteredVariants = []
@@ -2478,13 +2504,72 @@ public class SequenceViewerView: NSView {
             let lower = variantFilterText.lowercased()
             variants = variants.filter { $0.name.lowercased().contains(lower) }
         }
+        if let localKeys = localVariantRenderFilterKeys {
+            variants = variants.filter { annotation in
+                guard let trackId = annotation.qualifiers["variant_track_id"]?.values.first,
+                      let rowId = annotation.qualifiers["variant_row_id"]?.values.first else { return false }
+                return localKeys.contains("\(trackId):\(rowId)")
+            }
+        }
+        if let frame = viewController?.referenceFrame {
+            let visibleStart = Int(frame.start)
+            let visibleEnd = Int(frame.end)
+            let visibleChromosome = frame.chromosome
+            variants = variants.filter { annotation in
+                annotation.chromosome == visibleChromosome
+                    && annotation.end > visibleStart
+                    && annotation.start < visibleEnd
+            }
+        }
         _cachedFilteredVariants = variants
         return variants
+    }
+
+    /// Genotype data after applying the optional drawer-local render filter (`trackId:rowId`).
+    private func filteredVisibleGenotypeData() -> GenotypeDisplayData? {
+        guard let genotypeData = cachedGenotypeData else { return nil }
+        guard let localKeys = localVariantRenderFilterKeys else { return genotypeData }
+        if let cached = _cachedFilteredGenotypeData { return cached }
+        let filteredSites = genotypeData.sites.filter { site in
+            guard let trackId = site.sourceTrackId, let rowId = site.databaseRowId else { return false }
+            return localKeys.contains("\(trackId):\(rowId)")
+        }
+        let filtered = GenotypeDisplayData(sampleNames: genotypeData.sampleNames, sites: filteredSites, region: genotypeData.region)
+        _cachedFilteredGenotypeData = filtered
+        return filtered
     }
 
     /// Invalidates the filtered variant cache so it's recomputed on next access.
     func invalidateFilteredVariantCache() {
         _cachedFilteredVariants = nil
+        filteredVariantCacheViewportSignature = nil
+    }
+
+    /// Updates the optional drawer-local variant render filter and invalidates cached filtering.
+    func setLocalVariantRenderFilterKeys(_ keys: Set<String>?) {
+        guard localVariantRenderFilterKeys != keys else { return }
+        localVariantRenderFilterKeys = keys
+        _cachedFilteredGenotypeData = nil
+
+        // If the current genotype cache does not contain any of the newly-selected
+        // table-synced variant keys, force a genotype refetch on next draw. This
+        // recovers from zoom churn where a broad cached genotype window "covers"
+        // the region but was limited/truncated and misses current visible rows.
+        if let keys, !keys.isEmpty, let genotypeData = cachedGenotypeData {
+            let hasOverlap = genotypeData.sites.contains { site in
+                guard let trackId = site.sourceTrackId, let rowId = site.databaseRowId else { return false }
+                return keys.contains("\(trackId):\(rowId)")
+            }
+            if !hasOverlap {
+                cachedGenotypeRegion = nil
+                logger.info("setLocalVariantRenderFilterKeys: No overlap with cached genotype sites; scheduling refetch")
+            }
+        }
+
+        lastHoveredGenotypeCell = nil
+        lastHoveredGenotypeTooltipText = nil
+        lastHoveredGenotypeStatusText = nil
+        invalidateFilteredVariantCache()
     }
 
     /// Total height of the translation track area.
@@ -2533,7 +2618,9 @@ public class SequenceViewerView: NSView {
     }
 
     /// Cached genotype display data for the visible region.
-    private var cachedGenotypeData: GenotypeDisplayData?
+    private var cachedGenotypeData: GenotypeDisplayData? {
+        didSet { _cachedFilteredGenotypeData = nil }
+    }
 
     /// Optional display labels per sample for genotype row rendering.
     private var cachedGenotypeSampleDisplayNames: [String: String] = [:]
@@ -3126,6 +3213,7 @@ public class SequenceViewerView: NSView {
         self.cachedAnnotationRegion = nil
         self.cachedVariantAnnotations = []
         self.cachedVariantRegion = nil
+        self.localVariantRenderFilterKeys = nil
         self.invalidateFilteredVariantCache()
         self.isFetchingBundleData = false
         self.isFetchingAnnotations = false
@@ -3297,6 +3385,7 @@ public class SequenceViewerView: NSView {
         self.cachedAnnotationRegion = nil
         self.cachedVariantAnnotations = []
         self.cachedVariantRegion = nil
+        self.localVariantRenderFilterKeys = nil
         self.invalidateFilteredVariantCache()
         self.cachedGenotypeData = nil
         self.cachedGenotypeSampleDisplayNames = [:]
@@ -3638,7 +3727,7 @@ public class SequenceViewerView: NSView {
                 msg.draw(at: CGPoint(x: 4, y: msgY), withAttributes: msgAttrs)
             } else {
                 // Draw per-sample genotype rows if available and enabled
-                if let genotypeData = cachedGenotypeData, cachedSampleCount > 0,
+                if let genotypeData = filteredVisibleGenotypeData(), cachedSampleCount > 0,
                    sampleDisplayState.showGenotypeRows {
                     clampGenotypeScrollOffset(frame: frame)
                     let genotypeY = vY + effectiveSummaryBarHeight + effectiveSummaryToRowGap
@@ -7870,7 +7959,7 @@ public class SequenceViewerView: NSView {
             let genotypeTopY = variantTrackY + effectiveSummaryBarHeight + effectiveSummaryToRowGap
             let hasLoadedGenotypeRows = {
                 guard sampleDisplayState.showGenotypeRows,
-                      let data = cachedGenotypeData else { return false }
+                      let data = filteredVisibleGenotypeData() else { return false }
                 return !data.sampleNames.isEmpty && !data.sites.isEmpty
             }()
             let inGenotypeArea = showVariants && hasLoadedGenotypeRows
@@ -8255,7 +8344,7 @@ public class SequenceViewerView: NSView {
     private func genotypeTooltipAtPoint(_ point: NSPoint) -> GenotypeTooltipResult? {
         guard showVariants,
               cachedSampleCount > 0,
-              let genotypeData = cachedGenotypeData,
+              let genotypeData = filteredVisibleGenotypeData(),
               !genotypeData.sampleNames.isEmpty,
               !genotypeData.sites.isEmpty,
               let frame = viewController?.referenceFrame else { return nil }
