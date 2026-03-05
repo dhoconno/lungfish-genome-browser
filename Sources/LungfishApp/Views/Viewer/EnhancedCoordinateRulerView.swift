@@ -569,6 +569,7 @@ public class EnhancedCoordinateRulerView: NSView {
         let minorTickTop = rulerY + Self.rulerHeight - 4  // Minor ticks are shorter
 
         context.setStrokeColor(NSColor.tertiaryLabelColor.cgColor)
+        let rightEdge = bounds.width - frame.trailingInset
 
         // Draw minor ticks
         context.setLineWidth(0.5)
@@ -577,7 +578,6 @@ public class EnhancedCoordinateRulerView: NSView {
             // Skip positions that will have major ticks
             if minorPos.truncatingRemainder(dividingBy: tickInterval) != 0 {
                 let x = frame.leadingInset + CGFloat((minorPos - frame.start) * Double(pixelsPerBase))
-                let rightEdge = bounds.width - frame.trailingInset
                 if x >= frame.leadingInset && x <= rightEdge {
                     context.move(to: CGPoint(x: x, y: minorTickTop))
                     context.addLine(to: CGPoint(x: x, y: majorTickBottom))
@@ -597,7 +597,6 @@ public class EnhancedCoordinateRulerView: NSView {
         while majorPos <= frame.end {
             let x = frame.leadingInset + CGFloat((majorPos - frame.start) * Double(pixelsPerBase))
 
-            let rightEdge = bounds.width - frame.trailingInset
             if x >= frame.leadingInset && x <= rightEdge {
                 // Major tick mark
                 context.move(to: CGPoint(x: x, y: majorTickTop))

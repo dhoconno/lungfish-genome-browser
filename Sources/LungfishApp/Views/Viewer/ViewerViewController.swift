@@ -357,6 +357,8 @@ public class ViewerViewController: NSViewController {
     /// (fetch callbacks) a chance to execute.
     private var layoutSettleWorkItem: DispatchWorkItem?
     private var deferredRedrawWorkItem: DispatchWorkItem?
+    /// Debounced drawer height save to avoid 60+ UserDefaults writes/sec during drag.
+    var _drawerHeightSaveWorkItem: DispatchWorkItem?
 
     public override func viewDidLayout() {
         super.viewDidLayout()
@@ -367,7 +369,7 @@ public class ViewerViewController: NSViewController {
         if let frame = referenceFrame, viewerView.bounds.width > 0 {
             frame.pixelWidth = Int(viewerView.bounds.width)
             frame.leadingInset = viewerView.variantDataStartX
-            frame.trailingInset = 12
+            frame.trailingInset = ReferenceFrame.defaultTrailingInset
             logger.debug("viewDidLayout: Updated referenceFrame width to \(frame.pixelWidth) inset=\(frame.leadingInset)")
         }
 
@@ -399,7 +401,7 @@ public class ViewerViewController: NSViewController {
                 if let frame = self.referenceFrame, self.viewerView.bounds.width > 0 {
                     frame.pixelWidth = Int(self.viewerView.bounds.width)
                     frame.leadingInset = self.viewerView.variantDataStartX
-                    frame.trailingInset = 12
+                    frame.trailingInset = ReferenceFrame.defaultTrailingInset
                 }
                 if syncStackedSequences,
                    let stackedSeqs = self.viewerView.multiSequenceState?.stackedSequences,
@@ -1059,7 +1061,7 @@ public class ViewerViewController: NSViewController {
         if let frame = referenceFrame, viewerView.bounds.width > 0 {
             frame.pixelWidth = Int(viewerView.bounds.width)
             frame.leadingInset = viewerView.variantDataStartX
-            frame.trailingInset = 12
+            frame.trailingInset = ReferenceFrame.defaultTrailingInset
         }
 
         // Invalidate the pre-rendered tile — its dimensions are stale
@@ -2675,7 +2677,9 @@ public class SequenceViewerView: NSView {
         var state = SampleDisplayState()
         state.colorThemeName = AppSettings.shared.variantColorThemeName
         return state
-    }()
+    }() {
+        didSet { invalidateGutterWidth() }
+    }
 
     /// Whether the user is dragging the sample gutter edge.
     private var isDraggingGutterEdge: Bool = false
@@ -2684,20 +2688,29 @@ public class SequenceViewerView: NSView {
     private var cachedSampleCount: Int = 0
 
     /// Horizontal inset used by genotype labels before data cells begin.
-    /// Used to keep navigation targets away from the label column.
+    /// Adds a 10px safety pad beyond `variantDataStartX` to keep navigation targets
+    /// away from the label column edge.
     var navigationLeadingInsetPixels: CGFloat {
-        let sampleNames = cachedGenotypeData?.sampleNames ?? []
-        if sampleNames.isEmpty && cachedSampleCount <= 0 { return 0 }
-        return VariantTrackRenderer.leadingDataInsetPixels(
-            state: sampleDisplayState,
-            sampleNames: sampleNames,
-            sampleDisplayNames: cachedGenotypeSampleDisplayNames
-        )
+        let base = variantDataStartX
+        return base > 0 ? base + 10 : 0
     }
+
+    /// Cached value of the gutter width. Updated by `invalidateGutterWidth()`.
+    private var _cachedVariantDataStartX: CGFloat?
 
     /// The X pixel where variant data begins (after sample gutter + margin).
     /// Returns 0 when genotype rows are hidden or no samples exist.
+    /// Cached to avoid per-frame text measurement in draw().
     var variantDataStartX: CGFloat {
+        if let cached = _cachedVariantDataStartX { return cached }
+        let value = computeVariantDataStartX()
+        _cachedVariantDataStartX = value
+        return value
+    }
+
+    /// Recomputes the gutter width from current state. Call when sample names,
+    /// display names, row height, or gutter override change.
+    private func computeVariantDataStartX() -> CGFloat {
         guard sampleDisplayState.showGenotypeRows, sampleDisplayState.rowHeight >= 8 else { return 0 }
         let sampleNames = cachedGenotypeData?.sampleNames ?? []
         guard !sampleNames.isEmpty else { return 0 }
@@ -2708,6 +2721,11 @@ public class SequenceViewerView: NSView {
             override: sampleDisplayState.sampleGutterWidthOverride
         )
         return gutterW + VariantTrackRenderer.sampleLabelToDataMargin
+    }
+
+    /// Invalidates the cached gutter width, forcing recomputation on next access.
+    func invalidateGutterWidth() {
+        _cachedVariantDataStartX = nil
     }
 
     /// Vertical scroll offset for genotype rows (in pixels).
@@ -3229,6 +3247,7 @@ public class SequenceViewerView: NSView {
         cachedGenotypeSampleDisplayNames = [:]
         cachedGenotypeRegion = nil
         isFetchingGenotypes = false
+        invalidateGutterWidth()
     }
 
     /// Enables multi-frame translation mode for the specified reading frames.
@@ -3288,6 +3307,7 @@ public class SequenceViewerView: NSView {
         self.cachedGenotypeRegion = nil
         self.isFetchingGenotypes = false
         self.genotypeScrollOffset = 0
+        self.invalidateGutterWidth()
 
         // Clear read alignment state
         self.cachedAlignedReads = []
@@ -3449,6 +3469,7 @@ public class SequenceViewerView: NSView {
         self.cachedGenotypeData = nil
         self.cachedGenotypeSampleDisplayNames = [:]
         self.cachedGenotypeRegion = nil
+        self.invalidateGutterWidth()
         self.cachedAlignedReads = []
         self.cachedReadRegion = nil
         self.cachedDepthPoints = []
@@ -3545,9 +3566,9 @@ public class SequenceViewerView: NSView {
         logger.debug("SequenceViewerView.draw: hasVC=\(hasVC), hasFrame=\(hasFrame), hasBundle=\(hasBundle), bounds=\(self.bounds.width)x\(self.bounds.height)")
         
         if let frame = viewController?.referenceFrame {
-            // Update leading inset for sample name gutter (affects all coordinate mapping)
-            frame.leadingInset = variantDataStartX
-            frame.trailingInset = 12
+            // Insets are set in viewDidLayout/scheduleDeferredRedraw/handleViewResize.
+            // draw() should not mutate frame state — just ensure consistency.
+
 
             if shouldDrawMultiSequence, let state = multiSequenceState {
                 // Multi-sequence mode: draw stacked sequences with per-sequence annotations
@@ -4072,10 +4093,10 @@ public class SequenceViewerView: NSView {
 
         if gutterInset > 0 && contentHeight > 0 {
             // Left gutter background
-            context.setFillColor(CGColor(red: 0.96, green: 0.96, blue: 0.96, alpha: 1.0))
+            context.setFillColor(VariantTrackRenderer.gutterBackgroundColor)
             context.fill(CGRect(x: 0, y: contentTop, width: gutterInset, height: contentHeight))
             // Left vertical separator
-            context.setStrokeColor(CGColor(red: 0.82, green: 0.82, blue: 0.82, alpha: 1.0))
+            context.setStrokeColor(VariantTrackRenderer.gutterSeparatorColor)
             context.setLineWidth(0.5)
             let sepX = gutterInset - VariantTrackRenderer.sampleLabelToDataMargin / 2
             context.move(to: CGPoint(x: sepX, y: contentTop))
@@ -4091,7 +4112,7 @@ public class SequenceViewerView: NSView {
             context.setFillColor(NSColor.windowBackgroundColor.cgColor)
             context.fill(CGRect(x: rightX, y: 0, width: trailingInset, height: bounds.height))
             // Right vertical separator
-            context.setStrokeColor(CGColor(red: 0.82, green: 0.82, blue: 0.82, alpha: 1.0))
+            context.setStrokeColor(VariantTrackRenderer.gutterSeparatorColor)
             context.setLineWidth(0.5)
             context.move(to: CGPoint(x: rightX + 0.5, y: 0))
             context.addLine(to: CGPoint(x: rightX + 0.5, y: bounds.height))
@@ -5135,6 +5156,11 @@ public class SequenceViewerView: NSView {
                 viewer.cachedGenotypeData = displayData
                 viewer.cachedGenotypeSampleDisplayNames = sampleDisplayNames
                 viewer.cachedGenotypeRegion = expandedRegion
+                viewer.invalidateGutterWidth()
+                // Eagerly repopulate frame.leadingInset so draw() uses the correct value
+                if let frame = viewer.viewController?.referenceFrame {
+                    frame.leadingInset = viewer.variantDataStartX
+                }
                 viewer.clampGenotypeScrollOffset()
                 viewer.isFetchingGenotypes = false
                 viewer.invalidateAnnotationTile()
@@ -7300,17 +7326,11 @@ public class SequenceViewerView: NSView {
     // MARK: - Gutter Edge Drag
 
     /// Returns the X position of the gutter right edge, or nil if no genotype rows are showing.
+    /// Uses `variantDataStartX` (cached) minus the label-to-data margin.
     private func gutterEdgeX() -> CGFloat? {
-        guard sampleDisplayState.showGenotypeRows, sampleDisplayState.rowHeight >= 8 else { return nil }
-        let samples = cachedGenotypeData?.sampleNames ?? []
-        guard !samples.isEmpty else { return nil }
-        let gutterWidth = VariantTrackRenderer.sampleLabelGutterWidth(
-            samples: samples,
-            sampleDisplayNames: cachedGenotypeSampleDisplayNames,
-            rowHeight: sampleDisplayState.rowHeight,
-            override: sampleDisplayState.sampleGutterWidthOverride
-        )
-        return gutterWidth
+        let dataStartX = variantDataStartX
+        guard dataStartX > 0 else { return nil }
+        return dataStartX - VariantTrackRenderer.sampleLabelToDataMargin
     }
 
     /// Returns true if the point is within 6px of the gutter right edge and in the genotype area.
@@ -7348,6 +7368,7 @@ public class SequenceViewerView: NSView {
         if isNearGutterEdge(at: location) {
             if event.clickCount == 2 {
                 sampleDisplayState.sampleGutterWidthOverride = nil
+                invalidateGutterWidth()
                 setNeedsDisplay(bounds)
                 viewController?.scheduleViewStateSave()
             } else {
@@ -7483,6 +7504,7 @@ public class SequenceViewerView: NSView {
             let location = convert(event.locationInWindow, from: nil)
             let newWidth = max(40, min(400, location.x))
             sampleDisplayState.sampleGutterWidthOverride = newWidth
+            invalidateGutterWidth()
             // Update frame inset immediately so ruler stays in sync
             if let frame = viewController?.referenceFrame {
                 frame.leadingInset = variantDataStartX
@@ -9804,6 +9826,9 @@ public class ReferenceFrame {
     /// When > 0, genomic content is rendered to the right of this inset.
     /// All coordinate mapping (screenPosition, genomicPosition, scale) respects this.
     public var leadingInset: CGFloat = 0
+
+    /// Default trailing inset to keep content from touching the right edge.
+    public static let defaultTrailingInset: CGFloat = 12
 
     /// Trailing inset in pixels to keep content from touching the right edge.
     public var trailingInset: CGFloat = 0

@@ -43,6 +43,12 @@ public enum VariantTrackRenderer {
     /// Visual spacing between sample label area and genotype data area.
     static let sampleLabelToDataMargin: CGFloat = 12
 
+    /// Background color for the sample name gutter area.
+    static let gutterBackgroundColor = CGColor(red: 0.96, green: 0.96, blue: 0.96, alpha: 1.0)
+
+    /// Separator line color at the gutter edge.
+    static let gutterSeparatorColor = CGColor(red: 0.82, green: 0.82, blue: 0.82, alpha: 1.0)
+
     // MARK: - Color Palette
 
     /// Converts a ThemeColor to CGColor.
@@ -93,24 +99,6 @@ public enum VariantTrackRenderer {
     /// Returns the summary bar height from display state, or the default.
     public static func summaryBarHeight(state: SampleDisplayState?) -> CGFloat {
         state?.summaryBarHeight ?? defaultSummaryBarHeight
-    }
-
-    /// Returns the horizontal inset reserved for sample labels before genotype data begins.
-    /// Navigation/zoom code uses this to avoid centering targets beneath sample labels.
-    public static func leadingDataInsetPixels(
-        state: SampleDisplayState,
-        sampleNames: [String],
-        sampleDisplayNames: [String: String]
-    ) -> CGFloat {
-        guard state.showGenotypeRows, state.rowHeight >= 8 else { return 0 }
-        let gutterWidth = sampleLabelGutterWidth(
-            samples: sampleNames,
-            sampleDisplayNames: sampleDisplayNames,
-            rowHeight: state.rowHeight,
-            override: state.sampleGutterWidthOverride
-        )
-        // Include a modest safety pad so jump/zoom targets sit in drawable data area.
-        return gutterWidth + sampleLabelToDataMargin + 10
     }
 
     /// Computes the width of the sample label gutter.
@@ -177,7 +165,7 @@ public enum VariantTrackRenderer {
 
         // Gutter background (opaque, matches genotype row gutter)
         if inset > 0 {
-            context.setFillColor(CGColor(red: 0.96, green: 0.96, blue: 0.96, alpha: 1.0))
+            context.setFillColor(VariantTrackRenderer.gutterBackgroundColor)
             context.fill(CGRect(x: 0, y: yOffset, width: inset, height: barHeight))
         }
 
@@ -365,13 +353,13 @@ public enum VariantTrackRenderer {
                     .paragraphStyle: truncationStyle,
                 ]
                 // Fully opaque gutter background to cover any variant cells beneath
-                context.setFillColor(CGColor(red: 0.96, green: 0.96, blue: 0.96, alpha: 1.0))
+                context.setFillColor(VariantTrackRenderer.gutterBackgroundColor)
                 context.fill(CGRect(x: 0, y: rowY, width: labelGutterWidth, height: rowH))
                 // Opaque margin between labels and data
                 context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1.0))
                 context.fill(CGRect(x: labelGutterWidth, y: rowY, width: sampleLabelToDataMargin, height: rowH))
                 // Vertical separator
-                context.setStrokeColor(CGColor(red: 0.82, green: 0.82, blue: 0.82, alpha: 1.0))
+                context.setStrokeColor(VariantTrackRenderer.gutterSeparatorColor)
                 context.setLineWidth(0.5)
                 let sepX = labelGutterWidth + sampleLabelToDataMargin / 2
                 context.move(to: CGPoint(x: sepX, y: rowY))

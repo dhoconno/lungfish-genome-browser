@@ -101,6 +101,12 @@ final class DrawerDividerView: NSView {
             drawer.delegate?.annotationDrawerDidDragDivider(drawer, deltaY: delta)
         }
     }
+
+    override func mouseUp(with event: NSEvent) {
+        if let drawer = superview as? AnnotationTableDrawerView {
+            drawer.delegate?.annotationDrawerDidFinishDraggingDivider(drawer)
+        }
+    }
 }
 
 // MARK: - AnnotationTableDrawerDelegate
@@ -113,6 +119,7 @@ protocol AnnotationTableDrawerDelegate: AnyObject {
     func annotationDrawer(_ drawer: AnnotationTableDrawerView, didResolveGeneRegions regions: [GeneRegion])
     func annotationDrawer(_ drawer: AnnotationTableDrawerView, didUpdateVisibleVariantRenderKeys keys: Set<String>?)
     func annotationDrawerDidDragDivider(_ drawer: AnnotationTableDrawerView, deltaY: CGFloat)
+    func annotationDrawerDidFinishDraggingDivider(_ drawer: AnnotationTableDrawerView)
 }
 
 private extension String {
@@ -6846,42 +6853,6 @@ private func filterModerateOrHigherImpactOffMain(
             guard let raw = info[key], !raw.isEmpty else { continue }
             let value = raw.uppercased()
             if value.contains("HIGH") || value.contains("MODERATE") { return true }
-        }
-        return false
-    }
-}
-
-/// Pure biological high-impact filter (free function, safe to call from any thread).
-///
-/// Matches either explicit `IMPACT=HIGH` style fields, or severe consequence terms.
-private func filterBiologicalHighImpactOffMain(
-    _ results: [AnnotationSearchIndex.SearchResult]
-) -> [AnnotationSearchIndex.SearchResult] {
-    let impactKeys = SmartToken.impactKeys
-    let consequenceKeys = SmartToken.consequenceKeys
-    let highConsequenceTerms = [
-        "transcript_ablation",
-        "splice_acceptor_variant",
-        "splice_donor_variant",
-        "stop_gained",
-        "stop_lost",
-        "start_lost",
-        "frameshift_variant",
-        "exon_loss_variant",
-        "rare_amino_acid_variant",
-    ]
-    return results.filter { result in
-        guard let info = result.infoDict else { return false }
-        for key in impactKeys {
-            guard let raw = info[key], !raw.isEmpty else { continue }
-            if raw.uppercased().contains("HIGH") { return true }
-        }
-        for key in consequenceKeys {
-            guard let raw = info[key], !raw.isEmpty else { continue }
-            let lower = raw.lowercased()
-            if highConsequenceTerms.contains(where: { lower.contains($0) }) {
-                return true
-            }
         }
         return false
     }

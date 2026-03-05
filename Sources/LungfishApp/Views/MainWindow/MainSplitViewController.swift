@@ -1000,7 +1000,10 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                let genomesDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+                guard let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+                    throw DocumentLoadError.fileNotFound(URL(fileURLWithPath: NSHomeDirectory()))
+                }
+                let genomesDir = documentsDir
                     .appendingPathComponent("Genomes", isDirectory: true)
                 try? FileManager.default.createDirectory(at: genomesDir, withIntermediateDirectories: true)
 
@@ -1313,7 +1316,10 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                     DownloadCenter.shared.update(id: downloadID, progress: 0.15, detail: "Downloading genome files...")
                 }
 
-                let genomesDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+                guard let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+                    throw DocumentLoadError.fileNotFound(URL(fileURLWithPath: NSHomeDirectory()))
+                }
+                let genomesDir = documentsDir
                     .appendingPathComponent("Genomes", isDirectory: true)
                 try? FileManager.default.createDirectory(at: genomesDir, withIntermediateDirectories: true)
 

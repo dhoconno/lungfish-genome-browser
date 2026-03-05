@@ -306,8 +306,4 @@ public enum VCFAutoIngestor {
         }
         return "VCF Variants"
     }
-
-    private static func makeBundleName(vcfURL: URL, inferredRef: ReferenceInference.Result) -> String {
-        makeBundleName(vcfURLs: [vcfURL], inferredRef: inferredRef)
-    }
 }

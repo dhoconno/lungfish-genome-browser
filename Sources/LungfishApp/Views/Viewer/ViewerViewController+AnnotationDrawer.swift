@@ -227,7 +227,24 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         heightConstraint.constant = newHeight
         annotationDrawerBottomConstraint?.constant = 0  // Keep visible while dragging
         view.layoutSubtreeIfNeeded()
-        UserDefaults.standard.set(Double(newHeight), forKey: "annotationDrawerHeight")
+        // Defer UserDefaults write — mouseDragged fires at 60+ Hz
+        _drawerHeightSaveWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            let height = self.annotationDrawerHeightConstraint?.constant ?? 250
+            UserDefaults.standard.set(Double(height), forKey: "annotationDrawerHeight")
+        }
+        _drawerHeightSaveWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)
+    }
+
+    public func annotationDrawerDidFinishDraggingDivider(_ drawer: AnnotationTableDrawerView) {
+        // Flush the debounced save immediately on drag end
+        _drawerHeightSaveWorkItem?.cancel()
+        _drawerHeightSaveWorkItem = nil
+        if let height = annotationDrawerHeightConstraint?.constant {
+            UserDefaults.standard.set(Double(height), forKey: "annotationDrawerHeight")
+        }
     }
 
     public func annotationDrawer(_ drawer: AnnotationTableDrawerView, didResolveGeneRegions regions: [GeneRegion]) {
