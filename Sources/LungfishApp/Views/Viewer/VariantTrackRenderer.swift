@@ -324,7 +324,8 @@ public enum VariantTrackRenderer {
             // Uses frame.screenPosition() which includes leadingInset, aligning cells
             // with all other genomic content (sequence, annotations, ruler).
             for site in genotypeData.sites {
-                let call = site.genotypes[sampleName] ?? .noCall
+                // Skip sites where this sample has no data (from a different source VCF)
+                guard let call = site.genotypes[sampleName] else { continue }
                 let color = colorForCall(call, theme: theme)
 
                 let startPx = frame.screenPosition(for: Double(site.position))

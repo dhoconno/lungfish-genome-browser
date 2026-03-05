@@ -2427,6 +2427,45 @@ public final class VariantDatabase: @unchecked Sendable {
         return result
     }
 
+    /// Returns display names for all samples that have a custom display_name set.
+    /// Only returns entries where display_name differs from the sample name.
+    public func allDisplayNames() -> [String: String] {
+        guard let db else { return [:] }
+        let sql = "SELECT name, display_name FROM samples WHERE display_name IS NOT NULL AND display_name != name ORDER BY name"
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [:] }
+        var result: [String: String] = [:]
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let name = sqlite3_column_text(stmt, 0).map { String(cString: $0) } ?? ""
+            let displayName = sqlite3_column_text(stmt, 1).map { String(cString: $0) }
+            if let displayName, !name.isEmpty, !displayName.isEmpty {
+                result[name] = displayName
+            }
+        }
+        return result
+    }
+
+    /// Sets or clears the display name for a sample.
+    /// Pass nil or the sample's own name to clear the override.
+    public func setDisplayName(forSample name: String, displayName: String?) {
+        guard let db else { return }
+        let effectiveName = displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let valueToStore: String
+        if let eff = effectiveName, !eff.isEmpty, eff != name {
+            valueToStore = eff
+        } else {
+            valueToStore = name
+        }
+        let sql = "UPDATE samples SET display_name = ? WHERE name = ?"
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        sqliteBindText(stmt, 1, valueToStore)
+        sqliteBindText(stmt, 2, name)
+        sqlite3_step(stmt)
+    }
+
     // MARK: - Sample Metadata Queries
 
     /// Returns metadata for a specific sample as a dictionary.

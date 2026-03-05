@@ -2435,6 +2435,10 @@ public class SequenceViewerView: NSView {
     /// Pre-computed CDS translation result (set when user clicks "Translate" on a CDS annotation).
     var activeTranslationResult: TranslationResult?
 
+    /// Cached per-annotation CDS translations for auto-CDS display in expanded mode.
+    /// Keyed by annotation UUID. Invalidated on chromosome/sequence change.
+    var cachedCDSTranslations: [UUID: TranslationResult] = [:]
+
     /// Color scheme for amino acid rendering.
     var translationColorScheme: AminoAcidColorScheme = .zappo
 
@@ -3291,6 +3295,7 @@ public class SequenceViewerView: NSView {
         self.cachedAnnotationRegion = nil
         self.cachedVariantAnnotations = []
         self.cachedVariantRegion = nil
+        self.cachedCDSTranslations = [:]
         self.localVariantRenderFilterKeys = nil
         self.invalidateFilteredVariantCache()
         self.isFetchingBundleData = false
@@ -3464,6 +3469,7 @@ public class SequenceViewerView: NSView {
         self.cachedAnnotationRegion = nil
         self.cachedVariantAnnotations = []
         self.cachedVariantRegion = nil
+        self.cachedCDSTranslations = [:]
         self.localVariantRenderFilterKeys = nil
         self.invalidateFilteredVariantCache()
         self.cachedGenotypeData = nil
@@ -5065,6 +5071,7 @@ public class SequenceViewerView: NSView {
                     for name in db.sampleNames() where sampleNameSet.insert(name).inserted {
                         sampleNames.append(name)
                     }
+                    let trackSampleNames = Set(db.allSourceFiles().keys)
                     for entry in db.allSampleMetadata() {
                         var merged = sampleMetadata[entry.name] ?? [:]
                         merged.merge(entry.metadata) { current, _ in current }
@@ -5100,9 +5107,10 @@ public class SequenceViewerView: NSView {
 
                     for (variant, genotypes) in regionData {
                         var gtMap: [String: GenotypeDisplayCall] = [:]
-                        // Hom-ref genotypes are omitted from the DB; pre-fill all samples
-                        // as .homRef so absent entries are treated correctly.
-                        for name in sampleNames {
+                        // Only pre-fill .homRef for samples that belong to this track.
+                        // Samples from other tracks have no data at this site and should
+                        // not be highlighted (absent = no entry in gtMap).
+                        for name in sampleNames where trackSampleNames.contains(name) {
                             gtMap[name] = .homRef
                         }
                         for gt in genotypes {
@@ -5128,8 +5136,17 @@ public class SequenceViewerView: NSView {
             enrichSitesWithCSQImpact(&allSites, variantDatabasesByTrackId: variantDBByTrackId)
 
             let visibleOrderedSamples = displayState.visibleSamples(from: sampleNames, metadata: sampleMetadata)
-            let displayField = displayState.displayNameField?.trimmingCharacters(in: .whitespacesAndNewlines)
             var sampleDisplayNames: [String: String] = [:]
+
+            // Layer 1: DB display_name column
+            for (_, db) in variantDBByTrackId {
+                for (name, displayName) in db.allDisplayNames() {
+                    sampleDisplayNames[name] = displayName
+                }
+            }
+
+            // Layer 2: displayNameField metadata lookup (overrides DB)
+            let displayField = displayState.displayNameField?.trimmingCharacters(in: .whitespacesAndNewlines)
             if let field = displayField, !field.isEmpty {
                 for sampleName in visibleOrderedSamples {
                     if let label = sampleMetadata[sampleName]?[field]?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -5137,6 +5154,11 @@ public class SequenceViewerView: NSView {
                         sampleDisplayNames[sampleName] = label
                     }
                 }
+            }
+
+            // Layer 3: Explicit per-sample overrides (highest priority)
+            for (name, override) in displayState.sampleDisplayNameOverrides {
+                sampleDisplayNames[name] = override
             }
 
             let displayData = GenotypeDisplayData(
@@ -5607,7 +5629,9 @@ public class SequenceViewerView: NSView {
 
         renderAnnotationsDirect(displayAnnotations, frame: frame, context: context)
 
-        // Compute annotation track bottom for variant positioning
+        // Compute annotation track bottom for variant positioning.
+        // For expanded mode, drawAnnotationsExpanded sets lastAnnotationBottomY directly
+        // (including CDS translation sub-track heights), so only compute here for other modes.
         let scale = frame.scale
         let maxSquishedFeatures = 5_000
         let useDensityMode = scale > annotationDensityThreshold
@@ -5615,11 +5639,11 @@ public class SequenceViewerView: NSView {
 
         if useDensityMode {
             lastAnnotationBottomY = annotationTrackY + 30 + annotationLabelClearance  // density histogram + label
-        } else {
+        } else if scale > annotationSquishedThreshold {
             let (rows, _) = packAnnotationsLayered(displayAnnotations, frame: frame)
-            let rowH: CGFloat = scale > annotationSquishedThreshold ? 7 : (annotationHeight + annotationRowSpacing)
-            lastAnnotationBottomY = annotationTrackY + CGFloat(rows.count) * rowH + annotationLabelClearance
+            lastAnnotationBottomY = annotationTrackY + CGFloat(rows.count) * 7 + annotationLabelClearance
         }
+        // else: expanded mode — lastAnnotationBottomY was set inside drawAnnotationsExpanded
 
         context.restoreGState()
     }
@@ -5891,8 +5915,49 @@ public class SequenceViewerView: NSView {
         let (rows, overflow) = packAnnotationsLayered(annotations, frame: frame)
         let rowCount = rows.count
 
+        // Determine if auto-CDS translation should be rendered beneath CDS annotations.
+        let autoCDS = frame.scale < showLettersThreshold
+            && cachedBundleSequence != nil
+            && cachedSequenceRegion != nil
+            && !showTranslationTrack  // don't double-render with manual translation
+
+        // Build sequence provider from cached data (no I/O in draw loop)
+        let sequenceProvider: ((Int, Int) -> String?)?
+        if autoCDS, let seq = cachedBundleSequence, let region = cachedSequenceRegion {
+            sequenceProvider = { start, end in
+                let clampedStart = max(region.start, start)
+                let clampedEnd = min(region.end, end)
+                guard clampedStart < clampedEnd else { return nil }
+                let offsetStart = clampedStart - region.start
+                let offsetEnd = clampedEnd - region.start
+                guard offsetStart >= 0, offsetEnd <= seq.count else { return nil }
+                let startIdx = seq.index(seq.startIndex, offsetBy: offsetStart)
+                let endIdx = seq.index(seq.startIndex, offsetBy: offsetEnd)
+                return String(seq[startIdx..<endIdx])
+            }
+        } else {
+            sequenceProvider = nil
+        }
+
+        let cdsTrackH = TranslationTrackRenderer.cdsTrackHeight() + 2
+
+        // First pass: determine which rows contain CDS annotations needing translation sub-tracks.
+        // Compute per-row Y offsets with accumulated CDS translation space.
+        var rowYOffsets = [CGFloat](repeating: 0, count: rows.count)
+        var cumulativeExtra: CGFloat = 0
         for (rowIndex, row) in rows.enumerated() {
-            let y = annotationTrackY + CGFloat(rowIndex) * (annotationHeight + annotationRowSpacing)
+            rowYOffsets[rowIndex] = annotationTrackY + CGFloat(rowIndex) * (annotationHeight + annotationRowSpacing) + cumulativeExtra
+            if autoCDS {
+                let hasCDS = row.contains { $0.type == .cds }
+                if hasCDS {
+                    cumulativeExtra += cdsTrackH
+                }
+            }
+        }
+
+        // Second pass: draw annotations and CDS translations.
+        for (rowIndex, row) in rows.enumerated() {
+            let y = rowYOffsets[rowIndex]
 
             for annot in row {
                 let startX = frame.screenPosition(for: Double(annot.start))
@@ -5988,8 +6053,32 @@ public class SequenceViewerView: NSView {
                 if let selected = selectedAnnotation, selected.id == annot.id {
                     drawAnnotationSelectionHighlight(rect: boundingRect, context: context)
                 }
+
+                // Draw CDS translation beneath CDS annotations in auto mode
+                if autoCDS, annot.type == .cds, let provider = sequenceProvider {
+                    if cachedCDSTranslations[annot.id] == nil {
+                        cachedCDSTranslations[annot.id] = TranslationEngine.translateCDS(
+                            annotation: annot,
+                            sequenceProvider: provider
+                        )
+                    }
+                    if let result = cachedCDSTranslations[annot.id] {
+                        TranslationTrackRenderer.drawCDSTranslation(
+                            result: result,
+                            frame: frame,
+                            context: context,
+                            yOffset: y + annotationHeight + 1,
+                            colorScheme: translationColorScheme,
+                            showStopCodons: translationShowStopCodons
+                        )
+                    }
+                }
             }
         }
+
+        // Update lastAnnotationBottomY to include CDS translation heights
+        let totalHeight = CGFloat(rows.count) * (annotationHeight + annotationRowSpacing) + cumulativeExtra
+        lastAnnotationBottomY = annotationTrackY + totalHeight + annotationLabelClearance
 
         if overflow > 0 {
             drawOverflowIndicator(rowCount: rows.count, height: annotationHeight + annotationRowSpacing,
@@ -8613,7 +8702,13 @@ public class SequenceViewerView: NSView {
 
         let sampleName = genotypeData.sampleNames[sampleIdx]
         let site = genotypeData.sites[siteIdx]
-        let call = site.genotypes[sampleName] ?? .noCall
+
+        // No tooltip for samples without data at this site
+        guard let call = site.genotypes[sampleName] else {
+            lastHoveredGenotypeTooltipText = nil
+            lastHoveredGenotypeStatusText = nil
+            return nil
+        }
 
         // Build tooltip
         let callLabel: String

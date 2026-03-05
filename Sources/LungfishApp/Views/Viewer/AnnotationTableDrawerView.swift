@@ -170,6 +170,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         let sourceFile: String
         var isVisible: Bool
         var metadata: [String: String]
+        var displayName: String?
     }
 
     // MARK: - Properties
@@ -330,6 +331,9 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
     /// Source file/track per sample.
     private var sampleSourceFiles: [String: String] = [:]
+
+    /// Display name overrides per sample (keyed by row key).
+    private var sampleDisplayNamesCache: [String: String] = [:]
 
     /// Available metadata field names (union of all sample metadata keys).
     private var sampleMetadataFields: [String] = []
@@ -546,6 +550,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     // Sample column identifiers (internal for extension access)
     static let sampleVisibleColumn = NSUserInterfaceItemIdentifier("SampleVisibleColumn")
     static let sampleNameColumn = NSUserInterfaceItemIdentifier("SampleNameColumn")
+    static let sampleDisplayNameColumn = NSUserInterfaceItemIdentifier("SampleDisplayNameColumn")
     static let sampleSourceColumn = NSUserInterfaceItemIdentifier("SampleSourceColumn")
 
     /// Number formatter for genomic coordinates.
@@ -1493,6 +1498,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     private static let sampleColumnDefs: [(NSUserInterfaceItemIdentifier, String, CGFloat, CGFloat, String)] = [
         (sampleVisibleColumn, "", 30, 30, "visible"),
         (sampleNameColumn, "Sample", 180, 80, "sample_name"),
+        (sampleDisplayNameColumn, "Display Name", 150, 80, "display_name"),
         (sampleSourceColumn, "Source", 140, 60, "source_file"),
     ]
 
@@ -5192,6 +5198,7 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         sampleNameByRowKey = [:]
         sampleMetadata = [:]
         sampleSourceFiles = [:]
+        sampleDisplayNamesCache = [:]
         var metadataKeySet = Set<String>()
         var seenSampleNames = Set<String>()
         var seenRowKeys = Set<String>()
@@ -5199,6 +5206,7 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         for handle in index.variantDatabaseHandles {
             let db = handle.db
             let sourceBySample = db.allSourceFiles()
+            let displayNames = db.allDisplayNames()
 
             let samples = db.allSampleMetadata()
             for (name, metadata) in samples {
@@ -5211,6 +5219,7 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
                 allSampleRowKeys.append(rowKey)
                 sampleNameByRowKey[rowKey] = name
                 sampleSourceFiles[rowKey] = sourceFile
+                if let dn = displayNames[name] { sampleDisplayNamesCache[rowKey] = dn }
                 if !metadata.isEmpty {
                     sampleMetadata[rowKey] = metadata
                     for key in metadata.keys {
@@ -5282,7 +5291,8 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
                 return nil
             }
 
-            return SampleDisplayRow(rowKey: rowKey, name: name, sourceFile: sourceFile, isVisible: isVisible, metadata: metadata)
+            let displayName = sampleDisplayNamesCache[rowKey]
+            return SampleDisplayRow(rowKey: rowKey, name: name, sourceFile: sourceFile, isVisible: isVisible, metadata: metadata, displayName: displayName)
         }
 
         // Propagate query-filtered sample subset to viewer genotype row visibility.
@@ -5536,6 +5546,7 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         }
 
         let isMetaColumn = identifier.rawValue.hasPrefix("meta_")
+        let isEditableColumn = isMetaColumn || identifier == Self.sampleDisplayNameColumn
 
         // Text cell for all other columns
         let cellView: NSTableCellView
@@ -5545,8 +5556,8 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
             cellView = NSTableCellView()
             cellView.identifier = identifier
             let tf: NSTextField
-            if isMetaColumn {
-                // Editable text field for metadata columns
+            if isEditableColumn {
+                // Editable text field for metadata and display name columns
                 tf = NSTextField(string: "")
                 tf.isBordered = false
                 tf.drawsBackground = false
@@ -5574,6 +5585,10 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         case Self.sampleNameColumn:
             tf.stringValue = sample.name
             tf.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
+            tf.textColor = sample.isVisible ? .labelColor : .tertiaryLabelColor
+        case Self.sampleDisplayNameColumn:
+            tf.stringValue = sample.displayName ?? ""
+            tf.placeholderString = sample.name
             tf.textColor = sample.isVisible ? .labelColor : .tertiaryLabelColor
         case Self.sampleSourceColumn:
             tf.stringValue = sample.sourceFile
@@ -5847,6 +5862,8 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         switch columnId {
         case Self.sampleNameColumn.rawValue:
             return "name"
+        case Self.sampleDisplayNameColumn.rawValue:
+            return "display_name"
         case Self.sampleSourceColumn.rawValue:
             return "source"
         case Self.sampleVisibleColumn.rawValue:
@@ -5863,6 +5880,8 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         switch columnId {
         case Self.sampleNameColumn.rawValue:
             return sample.name
+        case Self.sampleDisplayNameColumn.rawValue:
+            return sample.displayName ?? ""
         case Self.sampleSourceColumn.rawValue:
             return sample.sourceFile
         case Self.sampleVisibleColumn.rawValue:
@@ -6360,14 +6379,43 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
         let row = tf.tag
         guard row >= 0, row < displayedSamples.count else { return }
 
-        let columnId = tableView.tableColumns[column].identifier.rawValue
-        guard columnId.hasPrefix("meta_") else { return }
-
-        let metaKey = String(columnId.dropFirst(5))
+        let columnId = tableView.tableColumns[column].identifier
         let newValue = tf.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let sampleName = displayedSamples[row].name
         let sampleSourceFile = displayedSamples[row].sourceFile
         let sampleRowKey = displayedSamples[row].rowKey
+
+        // Handle Display Name column edits
+        if columnId == Self.sampleDisplayNameColumn {
+            let displayName = newValue.isEmpty ? nil : newValue
+            displayedSamples[row].displayName = displayName
+            // Persist to DB
+            if let searchIndex {
+                for handle in searchIndex.variantDatabaseHandles {
+                    do {
+                        let rwDB = try VariantDatabase(url: handle.db.databaseURL, readWrite: true)
+                        let dbSources = Set(rwDB.allSourceFiles().values)
+                        if !sampleSourceFile.isEmpty && !dbSources.contains(sampleSourceFile) { continue }
+                        rwDB.setDisplayName(forSample: sampleName, displayName: displayName)
+                    } catch {
+                        drawerLogger.warning("Display name edit failed: \(error.localizedDescription)")
+                    }
+                }
+            }
+            // Update state and notify viewport
+            if let displayName {
+                currentSampleDisplayState.sampleDisplayNameOverrides[sampleName] = displayName
+            } else {
+                currentSampleDisplayState.sampleDisplayNameOverrides.removeValue(forKey: sampleName)
+            }
+            postSampleDisplayStateChange()
+            return
+        }
+
+        // Handle metadata column edits
+        guard columnId.rawValue.hasPrefix("meta_") else { return }
+
+        let metaKey = String(columnId.rawValue.dropFirst(5))
 
         // Update local model
         if newValue.isEmpty {

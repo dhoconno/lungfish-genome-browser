@@ -55,6 +55,10 @@ public struct SampleDisplayState: Sendable, Codable, Equatable {
     /// When nil, the gutter auto-sizes to fit the longest sample name.
     public var sampleGutterWidthOverride: CGFloat?
 
+    /// Per-sample display name overrides. Keys are sample names, values are display labels.
+    /// Overrides `displayNameField` when both are set.
+    public var sampleDisplayNameOverrides: [String: String] = [:]
+
     /// Named groups of samples for comparison analysis.
     public var sampleGroups: [SampleGroup] = []
 
@@ -95,7 +99,7 @@ public struct SampleDisplayState: Sendable, Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case sortFields, filters, hiddenSamples, showGenotypeRows, showSummaryBar
         case rowHeight, summaryBarHeight, sampleOrder, displayNameField, colorThemeName
-        case sampleGroups, sampleGutterWidthOverride
+        case sampleGroups, sampleGutterWidthOverride, sampleDisplayNameOverrides
     }
 
     public init(from decoder: Decoder) throws {
@@ -112,6 +116,7 @@ public struct SampleDisplayState: Sendable, Codable, Equatable {
         colorThemeName = try container.decodeIfPresent(String.self, forKey: .colorThemeName) ?? VariantColorTheme.modern.name
         sampleGroups = try container.decodeIfPresent([SampleGroup].self, forKey: .sampleGroups) ?? []
         sampleGutterWidthOverride = try container.decodeIfPresent(CGFloat.self, forKey: .sampleGutterWidthOverride)
+        sampleDisplayNameOverrides = try container.decodeIfPresent([String: String].self, forKey: .sampleDisplayNameOverrides) ?? [:]
 
         let decodedHeight = try container.decodeIfPresent(CGFloat.self, forKey: .rowHeight) ?? Self.defaultRowHeight
         rowHeight = Self.clampRowHeight(decodedHeight)
@@ -133,6 +138,9 @@ public struct SampleDisplayState: Sendable, Codable, Equatable {
             try container.encode(sampleGroups, forKey: .sampleGroups)
         }
         try container.encodeIfPresent(sampleGutterWidthOverride, forKey: .sampleGutterWidthOverride)
+        if !sampleDisplayNameOverrides.isEmpty {
+            try container.encode(sampleDisplayNameOverrides, forKey: .sampleDisplayNameOverrides)
+        }
     }
 
     /// Returns the ordered, filtered list of sample names to display.
@@ -149,8 +157,16 @@ public struct SampleDisplayState: Sendable, Codable, Equatable {
         var samples: [String]
         if let order = sampleOrder {
             let allSet = Set(allSamples)
-            // Ordered samples first, then any new samples not in order
-            var ordered = order.filter { allSet.contains($0) }
+            // sampleOrder may contain compound keys ("name|source") from the drawer.
+            // Extract the plain sample name for matching against allSamples.
+            var ordered: [String] = []
+            var seen = Set<String>()
+            for key in order {
+                let name = key.split(separator: "|", maxSplits: 1).first.map(String.init) ?? key
+                if allSet.contains(name), seen.insert(name).inserted {
+                    ordered.append(name)
+                }
+            }
             let orderedSet = Set(ordered)
             ordered.append(contentsOf: allSamples.filter { !orderedSet.contains($0) })
             samples = ordered
