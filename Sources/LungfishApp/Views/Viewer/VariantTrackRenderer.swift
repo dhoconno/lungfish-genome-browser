@@ -276,6 +276,7 @@ public enum VariantTrackRenderer {
         context: CGContext,
         yOffset: CGFloat,
         state: SampleDisplayState,
+        useHaploidAFShading: Bool = false,
         sampleDisplayNames: [String: String] = [:],
         scrollOffset: CGFloat = 0,
         availableHeight: CGFloat = .greatestFiniteMagnitude,
@@ -326,7 +327,11 @@ public enum VariantTrackRenderer {
             for site in genotypeData.sites {
                 // Skip sites where this sample has no data (from a different source VCF)
                 guard let call = site.genotypes[sampleName] else { continue }
-                let color = colorForCall(call, theme: theme)
+                let color = colorForCall(
+                    call,
+                    theme: theme,
+                    haploidAF: useHaploidAFShading ? site.sampleAlleleFractions[sampleName] : nil
+                )
 
                 let startPx = frame.screenPosition(for: Double(site.position))
                 let endPx = frame.screenPosition(for: Double(site.position + max(1, site.ref.count)))
@@ -433,8 +438,20 @@ public enum VariantTrackRenderer {
     // MARK: - Color Helpers
 
     /// Returns the CGColor for a genotype call using the given theme.
-    private static func colorForCall(_ call: GenotypeDisplayCall, theme: VariantColorTheme) -> CGColor {
-        cgColor(from: call.themeColor(from: theme))
+    private static func colorForCall(_ call: GenotypeDisplayCall, theme: VariantColorTheme, haploidAF: Double? = nil) -> CGColor {
+        if let af = haploidAF, call == .het || call == .homAlt {
+            let clamped = max(0.0, min(1.0, af))
+            // Keep low-AF alternates subtle; make >=5% clearly visible and darken with AF.
+            let alpha: CGFloat
+            if clamped < 0.05 {
+                alpha = 0.08
+            } else {
+                alpha = CGFloat(0.35 + ((clamped - 0.05) / 0.95) * 0.65)
+            }
+            return cgColor(from: call.themeColor(from: theme)).copy(alpha: alpha)
+                ?? cgColor(from: call.themeColor(from: theme))
+        }
+        return cgColor(from: call.themeColor(from: theme))
     }
 
     /// Returns the CGColor for a genotype call, applying impact-based coloring

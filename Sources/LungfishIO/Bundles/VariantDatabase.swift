@@ -1753,6 +1753,33 @@ public final class VariantDatabase: @unchecked Sendable {
         return names
     }
 
+    /// Returns sample names that have at least one non-homRef genotype on a chromosome.
+    ///
+    /// Useful for multi-VCF imports where each source contributes variants to only a
+    /// subset of chromosomes/contigs.
+    public func sampleNames(chromosome: String) -> [String] {
+        guard let db else { return [] }
+        let sql = """
+            SELECT DISTINCT g.sample_name
+            FROM genotypes g
+            INNER JOIN variants v ON v.id = g.variant_id
+            WHERE v.chromosome = ?
+            ORDER BY g.sample_name
+            """
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        sqliteBindText(stmt, 1, chromosome)
+
+        var names: [String] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let cStr = sqlite3_column_text(stmt, 0) {
+                names.append(String(cString: cStr))
+            }
+        }
+        return names
+    }
+
     /// Returns the number of samples in the database.
     public func sampleCount() -> Int {
         guard let db else { return 0 }

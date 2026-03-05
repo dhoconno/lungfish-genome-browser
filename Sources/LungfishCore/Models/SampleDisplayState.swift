@@ -62,6 +62,9 @@ public struct SampleDisplayState: Sendable, Codable, Equatable {
     /// Named groups of samples for comparison analysis.
     public var sampleGroups: [SampleGroup] = []
 
+    /// Whether haploid genomes should shade alternate calls by AF intensity.
+    public var useHaploidAFShading: Bool = false
+
     public init() {}
 
     public init(
@@ -99,7 +102,7 @@ public struct SampleDisplayState: Sendable, Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case sortFields, filters, hiddenSamples, showGenotypeRows, showSummaryBar
         case rowHeight, summaryBarHeight, sampleOrder, displayNameField, colorThemeName
-        case sampleGroups, sampleGutterWidthOverride, sampleDisplayNameOverrides
+        case sampleGroups, sampleGutterWidthOverride, sampleDisplayNameOverrides, useHaploidAFShading
     }
 
     public init(from decoder: Decoder) throws {
@@ -117,6 +120,7 @@ public struct SampleDisplayState: Sendable, Codable, Equatable {
         sampleGroups = try container.decodeIfPresent([SampleGroup].self, forKey: .sampleGroups) ?? []
         sampleGutterWidthOverride = try container.decodeIfPresent(CGFloat.self, forKey: .sampleGutterWidthOverride)
         sampleDisplayNameOverrides = try container.decodeIfPresent([String: String].self, forKey: .sampleDisplayNameOverrides) ?? [:]
+        useHaploidAFShading = try container.decodeIfPresent(Bool.self, forKey: .useHaploidAFShading) ?? false
 
         let decodedHeight = try container.decodeIfPresent(CGFloat.self, forKey: .rowHeight) ?? Self.defaultRowHeight
         rowHeight = Self.clampRowHeight(decodedHeight)
@@ -140,6 +144,9 @@ public struct SampleDisplayState: Sendable, Codable, Equatable {
         try container.encodeIfPresent(sampleGutterWidthOverride, forKey: .sampleGutterWidthOverride)
         if !sampleDisplayNameOverrides.isEmpty {
             try container.encode(sampleDisplayNameOverrides, forKey: .sampleDisplayNameOverrides)
+        }
+        if useHaploidAFShading {
+            try container.encode(useHaploidAFShading, forKey: .useHaploidAFShading)
         }
     }
 
@@ -367,6 +374,10 @@ public struct VariantSite: Sendable {
     /// Per-sample genotype calls keyed by sample name.
     public let genotypes: [String: GenotypeDisplayCall]
 
+    /// Per-sample alternate allele fractions keyed by sample name (0...1).
+    /// Populated when allele depth information is available.
+    public var sampleAlleleFractions: [String: Double]
+
     /// Database row ID for looking up INFO/CSQ fields (nil for legacy data).
     public let databaseRowId: Int64?
 
@@ -388,12 +399,13 @@ public struct VariantSite: Sendable {
     /// Gene symbol associated with this variant (from CSQ or annotation overlap).
     public var geneSymbol: String?
 
-    public init(position: Int, ref: String, alt: String, variantType: String, genotypes: [String: GenotypeDisplayCall], databaseRowId: Int64? = nil, variantID: String? = nil, sourceTrackId: String? = nil, impact: VariantImpact? = nil, aminoAcidChange: String? = nil, shortAAChange: String? = nil, geneSymbol: String? = nil) {
+    public init(position: Int, ref: String, alt: String, variantType: String, genotypes: [String: GenotypeDisplayCall], sampleAlleleFractions: [String: Double] = [:], databaseRowId: Int64? = nil, variantID: String? = nil, sourceTrackId: String? = nil, impact: VariantImpact? = nil, aminoAcidChange: String? = nil, shortAAChange: String? = nil, geneSymbol: String? = nil) {
         self.position = position
         self.ref = ref
         self.alt = alt
         self.variantType = variantType
         self.genotypes = genotypes
+        self.sampleAlleleFractions = sampleAlleleFractions
         self.databaseRowId = databaseRowId
         self.variantID = variantID
         self.sourceTrackId = sourceTrackId

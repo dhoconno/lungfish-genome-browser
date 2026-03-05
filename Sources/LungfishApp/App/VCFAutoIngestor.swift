@@ -51,36 +51,82 @@ public enum VCFAutoIngestor {
     public static func ingest(
         vcfURLs: [URL],
         outputDirectory: URL,
+        preferredBundleName: String? = nil,
+        replaceExistingBundle: Bool = false,
         progressHandler: (@Sendable (Double, String) -> Void)? = nil,
         shouldCancel: (@Sendable () -> Bool)? = nil
     ) async throws -> IngestResult {
-        guard let firstURL = vcfURLs.first else {
+        guard !vcfURLs.isEmpty else {
             throw CocoaError(.fileNoSuchFile)
         }
 
-        let fileCount = vcfURLs.count
-        logger.info("ingest: Starting auto-ingestion of \(fileCount) VCF file(s)")
+        logger.info("ingest: Starting auto-ingestion of \(vcfURLs.count) VCF file(s)")
 
-        // Phase 1: Probe first VCF header for reference inference
-        progressHandler?(0.02, "Analyzing VCF file\u{2026}")
-        let probeResult = try await probeVCF(url: firstURL)
-        logger.info("ingest: Found \(probeResult.chromosomeNames.count) chromosomes: \(probeResult.chromosomeNames.sorted().joined(separator: ", "), privacy: .public)")
+        // Phase 1: Probe files to gather reference hints and skip unusable empties.
+        progressHandler?(0.02, "Analyzing VCF files\u{2026}")
+        var probes: [(url: URL, probe: ProbeResult)] = []
+        probes.reserveCapacity(vcfURLs.count)
+        for (index, url) in vcfURLs.enumerated() {
+            if shouldCancel?() == true { throw CancellationError() }
+            let probe = try await probeVCF(url: url)
+            probes.append((url, probe))
+            let fraction = 0.02 + (Double(index + 1) / Double(max(vcfURLs.count, 1))) * 0.08
+            progressHandler?(fraction, "Analyzing VCF files (\(index + 1)/\(vcfURLs.count))\u{2026}")
+        }
+
+        let ignoredEmptyNoReference = probes.filter { candidate in
+            !candidate.probe.hasVariantRecords && !candidate.probe.hasReferenceHint
+        }.map { $0.url }
+        if !ignoredEmptyNoReference.isEmpty {
+            logger.warning(
+                "ingest: Ignoring \(ignoredEmptyNoReference.count) empty VCF file(s) with no reference hint: \(ignoredEmptyNoReference.map(\.lastPathComponent).joined(separator: ", "), privacy: .public)"
+            )
+        }
+
+        let acceptedProbes = probes.filter { candidate in
+            candidate.probe.hasVariantRecords || candidate.probe.hasReferenceHint
+        }
+        let importProbes = acceptedProbes.filter { $0.probe.hasVariantRecords }
+        guard let firstImportURL = importProbes.first?.url else {
+            throw VariantDatabaseError.createFailed("No variants were found in the selected VCF file(s).")
+        }
+        let importURLs = importProbes.map { $0.url }
+        let fileCount = importURLs.count
 
         // Phase 2: Infer reference assembly
-        progressHandler?(0.05, "Inferring reference genome\u{2026}")
+        progressHandler?(0.11, "Inferring reference genome\u{2026}")
+        let referenceProbe = importProbes.first?.probe ?? acceptedProbes.first?.probe ?? probes[0].probe
+        var combinedChromosomeNames = Set<String>()
+        var combinedMaxPositions: [String: Int] = [:]
+        for candidate in acceptedProbes {
+            combinedChromosomeNames.formUnion(candidate.probe.chromosomeNames)
+            for (chromosome, maxPos) in candidate.probe.maxPositions {
+                combinedMaxPositions[chromosome] = max(combinedMaxPositions[chromosome] ?? 0, maxPos)
+            }
+        }
         let inferredRef = VCFReferenceInference.infer(
-            from: probeResult.header,
-            chromosomeMaxPositions: probeResult.maxPositions
+            from: referenceProbe.header,
+            chromosomeMaxPositions: combinedMaxPositions
         )
-        let accessions = VCFReferenceInference.extractNCBIAccessions(from: probeResult.chromosomeNames)
+        let accessions = VCFReferenceInference.extractNCBIAccessions(from: combinedChromosomeNames)
         logger.info("ingest: Inferred assembly=\(inferredRef.assembly ?? "unknown", privacy: .public), organism=\(inferredRef.organism ?? "unknown", privacy: .public), confidence=\(String(describing: inferredRef.confidence), privacy: .public), accessions=\(accessions, privacy: .public)")
 
         // Phase 3: Create bundle directory structure
-        progressHandler?(0.08, "Creating bundle\u{2026}")
-        let bundleName = makeBundleName(vcfURLs: vcfURLs, inferredRef: inferredRef)
+        progressHandler?(0.14, "Creating bundle\u{2026}")
+        let defaultBundleName = makeBundleName(vcfURLs: importURLs, inferredRef: inferredRef)
+        let bundleName = normalizedBundleName(preferredBundleName ?? defaultBundleName)
         let bundleURL = outputDirectory.appendingPathComponent("\(bundleName).lungfishref", isDirectory: true)
 
         let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: bundleURL.path) {
+            if replaceExistingBundle {
+                try fileManager.removeItem(at: bundleURL)
+            } else {
+                throw CocoaError(.fileWriteFileExists, userInfo: [
+                    NSFilePathErrorKey: bundleURL.path,
+                ])
+            }
+        }
         try fileManager.createDirectory(at: bundleURL, withIntermediateDirectories: true)
 
         let variantsDir = bundleURL.appendingPathComponent("variants", isDirectory: true)
@@ -97,15 +143,14 @@ public enum VCFAutoIngestor {
         var totalVariantCount = 0
 
         if fileCount == 1 {
-            // Single file — use createFromVCF directly
-            progressHandler?(0.10, "Importing variants\u{2026}")
+            progressHandler?(0.18, "Importing variants\u{2026}")
             totalVariantCount = try VariantDatabase.createFromVCF(
-                vcfURL: firstURL,
+                vcfURL: firstImportURL,
                 outputURL: dbURL,
                 parseGenotypes: true,
-                sourceFile: firstURL.lastPathComponent,
+                sourceFile: firstImportURL.lastPathComponent,
                 progressHandler: { progress, message in
-                    let scaled = 0.10 + progress * 0.80
+                    let scaled = 0.18 + progress * 0.70
                     progressHandler?(scaled, message)
                 },
                 shouldCancel: shouldCancel,
@@ -113,22 +158,20 @@ public enum VCFAutoIngestor {
             )
             logger.info("ingest: Imported \(totalVariantCount) variants from single VCF")
         } else {
-            // Multiple files — create from first, then merge additional VCFs
-            let importProgressRange = 0.80  // 0.10 to 0.90
+            let importProgressRange = 0.70  // 0.18 to 0.88
             let perFileRange = importProgressRange / Double(fileCount)
 
-            for (index, vcfURL) in vcfURLs.enumerated() {
+            for (index, vcfURL) in importURLs.enumerated() {
                 if shouldCancel?() == true {
                     try? fileManager.removeItem(at: bundleURL)
                     throw CancellationError()
                 }
 
-                let fileBase = 0.10 + Double(index) * perFileRange
+                let fileBase = 0.18 + Double(index) * perFileRange
                 let label = "Importing \(index + 1)/\(fileCount): \(vcfURL.lastPathComponent)"
                 progressHandler?(fileBase, label)
 
                 if index == 0 {
-                    // First file creates the database
                     let count = try VariantDatabase.createFromVCF(
                         vcfURL: vcfURL,
                         outputURL: dbURL,
@@ -144,7 +187,6 @@ public enum VCFAutoIngestor {
                     totalVariantCount += count
                     logger.info("ingest: File 1/\(fileCount): \(count) variants from \(vcfURL.lastPathComponent, privacy: .public)")
                 } else {
-                    // Subsequent files: create temp DB, then merge into main
                     let tempDBURL = variantsDir.appendingPathComponent("_temp_merge_\(index).db")
                     defer { try? fileManager.removeItem(at: tempDBURL) }
 
@@ -180,14 +222,14 @@ public enum VCFAutoIngestor {
         progressHandler?(0.92, "Writing manifest\u{2026}")
 
         let trackName = fileCount == 1
-            ? firstURL.deletingPathExtension().lastPathComponent
+            ? firstImportURL.deletingPathExtension().lastPathComponent
             : "\(fileCount) VCF files"
         let trackDescription = fileCount == 1
-            ? "Imported from \(firstURL.lastPathComponent)"
+            ? "Imported from \(firstImportURL.lastPathComponent)"
             : "Merged from \(fileCount) VCF files"
 
         let variantTrack = VariantTrackInfo(
-            id: "vcf-\(firstURL.deletingPathExtension().lastPathComponent)",
+            id: "vcf-\(firstImportURL.deletingPathExtension().lastPathComponent)",
             name: trackName,
             description: trackDescription,
             path: "variants/variants.bcf",  // placeholder — SQLite-only track
@@ -195,14 +237,15 @@ public enum VCFAutoIngestor {
             databasePath: "variants/\(dbFilename)",
             variantType: .mixed,
             variantCount: totalVariantCount,
-            source: firstURL.lastPathComponent
+            source: firstImportURL.lastPathComponent
         )
 
+        let defaultPloidy = vcfURLs.count > 1 ? "haploid" : "auto"
         let manifest = BundleManifest(
             name: bundleName,
             identifier: "vcf-auto-\(UUID().uuidString)",
             description: fileCount == 1
-                ? "Auto-ingested from \(firstURL.lastPathComponent)"
+                ? "Auto-ingested from \(firstImportURL.lastPathComponent)"
                 : "Auto-ingested from \(fileCount) VCF files",
             source: SourceInfo(
                 organism: inferredRef.organism ?? "Unknown",
@@ -212,7 +255,17 @@ public enum VCFAutoIngestor {
                 notes: "Variant-only bundle created by auto-ingestion"
             ),
             genome: nil,
-            variants: [variantTrack]
+            variants: [variantTrack],
+            metadata: [
+                MetadataGroup(
+                    name: "Import Settings",
+                    items: [
+                        MetadataItem(label: "Default Ploidy", value: defaultPloidy),
+                        MetadataItem(label: "Imported VCF Files", value: "\(fileCount)"),
+                        MetadataItem(label: "Ignored Empty Files", value: "\(ignoredEmptyNoReference.count)")
+                    ]
+                )
+            ]
         )
 
         try manifest.save(to: bundleURL)
@@ -232,12 +285,16 @@ public enum VCFAutoIngestor {
     public static func ingest(
         vcfURL: URL,
         outputDirectory: URL,
+        preferredBundleName: String? = nil,
+        replaceExistingBundle: Bool = false,
         progressHandler: (@Sendable (Double, String) -> Void)? = nil,
         shouldCancel: (@Sendable () -> Bool)? = nil
     ) async throws -> IngestResult {
         try await ingest(
             vcfURLs: [vcfURL],
             outputDirectory: outputDirectory,
+            preferredBundleName: preferredBundleName,
+            replaceExistingBundle: replaceExistingBundle,
             progressHandler: progressHandler,
             shouldCancel: shouldCancel
         )
@@ -250,6 +307,8 @@ public enum VCFAutoIngestor {
         let header: VCFHeader
         let chromosomeNames: Set<String>
         let maxPositions: [String: Int]
+        let hasVariantRecords: Bool
+        let hasReferenceHint: Bool
     }
 
     /// Reads VCF header + first N data lines to extract chromosome names without parsing the whole file.
@@ -260,6 +319,7 @@ public enum VCFAutoIngestor {
 
         var chromosomeNames = Set<String>(header.contigs.keys)
         var maxPositions: [String: Int] = [:]
+        var hasVariantRecords = false
 
         // For contigs with known lengths, use those as max positions
         for (name, length) in header.contigs {
@@ -274,6 +334,7 @@ public enum VCFAutoIngestor {
 
             let fields = line.split(separator: "\t", maxSplits: 2)
             if fields.count >= 2 {
+                hasVariantRecords = true
                 let chrom = String(fields[0])
                 chromosomeNames.insert(chrom)
                 if let pos = Int(fields[1]) {
@@ -290,7 +351,9 @@ public enum VCFAutoIngestor {
         return ProbeResult(
             header: header,
             chromosomeNames: chromosomeNames,
-            maxPositions: maxPositions
+            maxPositions: maxPositions,
+            hasVariantRecords: hasVariantRecords,
+            hasReferenceHint: !header.contigs.isEmpty || header.otherHeaders.keys.contains(where: { $0.caseInsensitiveCompare("reference") == .orderedSame })
         )
     }
 
@@ -305,5 +368,14 @@ public enum VCFAutoIngestor {
             return first.deletingPathExtension().lastPathComponent
         }
         return "VCF Variants"
+    }
+
+    /// Produces a filesystem-safe non-empty bundle name.
+    private static func normalizedBundleName(_ raw: String) -> String {
+        let cleaned = raw
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+        return cleaned.isEmpty ? "VCF Variants" : cleaned
     }
 }

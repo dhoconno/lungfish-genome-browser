@@ -199,6 +199,9 @@ public final class AnnotationSearchIndex {
     /// Reference genome total length from bundle metadata, when available.
     private var bundleGenomeTotalLength: Int64?
 
+    /// Optional ploidy hint from bundle metadata (`true` haploid, `false` diploid).
+    private var bundlePloidyHint: Bool?
+
     // MARK: - SQLite Mode
 
     /// Builds the index from a SQLite database file in the bundle.
@@ -223,6 +226,7 @@ public final class AnnotationSearchIndex {
             databaseTrackId = trackId
             bundleIdentifier = bundle.manifest.identifier
             bundleGenomeTotalLength = bundle.manifest.genome?.totalLength ?? 0
+            bundlePloidyHint = inferPloidyHint(from: bundle.manifest)
             annotationDatabases = [(trackId: trackId, db: db)]
             isBuilding = false
             let count = database?.totalCount() ?? 0
@@ -279,6 +283,7 @@ public final class AnnotationSearchIndex {
         databaseTrackId = ""
         bundleIdentifier = bundle.manifest.identifier
         bundleGenomeTotalLength = bundle.manifest.genome?.totalLength ?? 0
+        bundlePloidyHint = inferPloidyHint(from: bundle.manifest)
         rebuildBundleAliasMaps(from: bundle)
 
         for trackId in bundle.annotationTrackIds {
@@ -749,6 +754,9 @@ public final class AnnotationSearchIndex {
         if let override = haploidOverride {
             return override
         }
+        if let metadataHint = bundlePloidyHint {
+            return metadataHint
+        }
         if let genomeLength = bundleGenomeTotalLength, genomeLength > 0 {
             // Viral genomes are typically <100 kb and most bacterial genomes are <10 Mb.
             // Larger eukaryotic genomes are typically orders of magnitude larger.
@@ -787,6 +795,7 @@ public final class AnnotationSearchIndex {
         bundleAliasGroupsByCanonical = [:]
         bundleIdentifier = nil
         bundleGenomeTotalLength = nil
+        bundlePloidyHint = nil
         haploidOverride = nil
         isBuilding = false
     }
@@ -912,6 +921,24 @@ public final class AnnotationSearchIndex {
                 bundleAliasGroupsByCanonical[canonical, default: []].formUnion(group)
             }
         }
+    }
+
+    /// Reads bundle-level ploidy hint from manifest metadata.
+    ///
+    /// Accepted labels: "Default Ploidy", "Ploidy", "default_ploidy".
+    private func inferPloidyHint(from manifest: BundleManifest) -> Bool? {
+        guard let groups = manifest.metadata else { return nil }
+        for group in groups {
+            for item in group.items {
+                let label = item.label.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+                if label == "default ploidy" || label == "ploidy" || label == "default_ploidy" {
+                    let value = item.value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+                    if value.contains("haploid") { return true }
+                    if value.contains("diploid") { return false }
+                }
+            }
+        }
+        return nil
     }
 
     /// Generates simple equivalent alias forms:

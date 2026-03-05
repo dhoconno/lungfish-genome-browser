@@ -18,6 +18,21 @@ public enum SettingsSection: String, Sendable {
     case aiServices
 }
 
+/// Scroll direction behavior for custom viewport interaction handling.
+public enum ScrollDirectionPreference: String, Sendable, CaseIterable, Codable {
+    case system
+    case natural
+    case traditional
+
+    public var label: String {
+        switch self {
+        case .system: return "System"
+        case .natural: return "Natural"
+        case .traditional: return "Traditional"
+        }
+    }
+}
+
 // MARK: - AppSettings
 
 /// Centralized, observable application preferences.
@@ -73,6 +88,12 @@ public final class AppSettings: Sendable {
 
     /// Default vertical spacing between annotation rows in pixels.
     public var defaultAnnotationSpacing: Double = 2
+
+    /// Scroll direction preference for horizontal panning in the viewport.
+    public var horizontalScrollDirection: ScrollDirectionPreference = .system
+
+    /// Scroll direction preference for vertical scrolling in stacked rows.
+    public var verticalScrollDirection: ScrollDirectionPreference = .system
 
     // MARK: - Rendering
 
@@ -161,6 +182,8 @@ public final class AppSettings: Sendable {
         var variantColorThemeName: String
         var defaultAnnotationHeight: Double
         var defaultAnnotationSpacing: Double
+        var horizontalScrollDirection: ScrollDirectionPreference
+        var verticalScrollDirection: ScrollDirectionPreference
         // Rendering
         var maxAnnotationRows: Int
         var sequenceFetchCapKb: Int
@@ -186,6 +209,8 @@ public final class AppSettings: Sendable {
             variantColorThemeName: String,
             defaultAnnotationHeight: Double,
             defaultAnnotationSpacing: Double,
+            horizontalScrollDirection: ScrollDirectionPreference,
+            verticalScrollDirection: ScrollDirectionPreference,
             maxAnnotationRows: Int,
             sequenceFetchCapKb: Int,
             maxTableDisplayCount: Int,
@@ -208,6 +233,8 @@ public final class AppSettings: Sendable {
             self.variantColorThemeName = variantColorThemeName
             self.defaultAnnotationHeight = defaultAnnotationHeight
             self.defaultAnnotationSpacing = defaultAnnotationSpacing
+            self.horizontalScrollDirection = horizontalScrollDirection
+            self.verticalScrollDirection = verticalScrollDirection
             self.maxAnnotationRows = maxAnnotationRows
             self.sequenceFetchCapKb = sequenceFetchCapKb
             self.maxTableDisplayCount = maxTableDisplayCount
@@ -245,6 +272,8 @@ public final class AppSettings: Sendable {
             variantColorThemeName = try container.decodeIfPresent(String.self, forKey: .variantColorThemeName) ?? VariantColorTheme.modern.name
             defaultAnnotationHeight = try container.decodeIfPresent(Double.self, forKey: .defaultAnnotationHeight) ?? 16
             defaultAnnotationSpacing = try container.decodeIfPresent(Double.self, forKey: .defaultAnnotationSpacing) ?? 2
+            horizontalScrollDirection = try container.decodeIfPresent(ScrollDirectionPreference.self, forKey: .horizontalScrollDirection) ?? .system
+            verticalScrollDirection = try container.decodeIfPresent(ScrollDirectionPreference.self, forKey: .verticalScrollDirection) ?? .system
             // Rendering
             maxAnnotationRows = try container.decodeIfPresent(Int.self, forKey: .maxAnnotationRows) ?? 50
             sequenceFetchCapKb = try container.decodeIfPresent(Int.self, forKey: .sequenceFetchCapKb) ?? 500
@@ -299,6 +328,8 @@ public final class AppSettings: Sendable {
             variantColorThemeName: Self.normalizedVariantThemeName(variantColorThemeName),
             defaultAnnotationHeight: Self.clamp(defaultAnnotationHeight, to: Self.annotationHeightBounds),
             defaultAnnotationSpacing: Self.clamp(defaultAnnotationSpacing, to: Self.annotationSpacingBounds),
+            horizontalScrollDirection: horizontalScrollDirection,
+            verticalScrollDirection: verticalScrollDirection,
             maxAnnotationRows: Self.clamp(maxAnnotationRows, to: Self.maxAnnotationRowsBounds),
             sequenceFetchCapKb: Self.clamp(sequenceFetchCapKb, to: Self.fetchCapKbBounds),
             maxTableDisplayCount: Self.clamp(maxTableDisplayCount, to: Self.tableDisplayCountBounds),
@@ -324,6 +355,8 @@ public final class AppSettings: Sendable {
         variantColorThemeName = Self.normalizedVariantThemeName(snapshot.variantColorThemeName)
         defaultAnnotationHeight = Self.clamp(snapshot.defaultAnnotationHeight, to: Self.annotationHeightBounds)
         defaultAnnotationSpacing = Self.clamp(snapshot.defaultAnnotationSpacing, to: Self.annotationSpacingBounds)
+        horizontalScrollDirection = snapshot.horizontalScrollDirection
+        verticalScrollDirection = snapshot.verticalScrollDirection
         maxAnnotationRows = Self.clamp(snapshot.maxAnnotationRows, to: Self.maxAnnotationRowsBounds)
         sequenceFetchCapKb = Self.clamp(snapshot.sequenceFetchCapKb, to: Self.fetchCapKbBounds)
         maxTableDisplayCount = Self.clamp(snapshot.maxTableDisplayCount, to: Self.tableDisplayCountBounds)
@@ -400,6 +433,8 @@ public final class AppSettings: Sendable {
             variantColorThemeName = fresh.variantColorThemeName
             defaultAnnotationHeight = fresh.defaultAnnotationHeight
             defaultAnnotationSpacing = fresh.defaultAnnotationSpacing
+            horizontalScrollDirection = fresh.horizontalScrollDirection
+            verticalScrollDirection = fresh.verticalScrollDirection
         case .rendering:
             maxAnnotationRows = fresh.maxAnnotationRows
             sequenceFetchCapKb = fresh.sequenceFetchCapKb

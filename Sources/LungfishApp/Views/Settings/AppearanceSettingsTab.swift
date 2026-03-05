@@ -79,6 +79,22 @@ struct AppearanceSettingsTab: View {
                 }
             }
 
+            Section("Scrolling") {
+                Picker("Horizontal:", selection: $settings.horizontalScrollDirection) {
+                    ForEach(ScrollDirectionPreference.allCases, id: \.self) { option in
+                        Text(option.label).tag(option)
+                    }
+                }
+                Picker("Vertical:", selection: $settings.verticalScrollDirection) {
+                    ForEach(ScrollDirectionPreference.allCases, id: \.self) { option in
+                        Text(option.label).tag(option)
+                    }
+                }
+                Text("System follows macOS trackpad/mouse settings.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             HStack {
                 Spacer()
                 Button("Restore Defaults") {
@@ -101,6 +117,8 @@ struct AppearanceSettingsTab: View {
         }
         .onChange(of: settings.defaultAnnotationHeight) { _, _ in settings.save() }
         .onChange(of: settings.defaultAnnotationSpacing) { _, _ in settings.save() }
+        .onChange(of: settings.horizontalScrollDirection) { _, _ in settings.save() }
+        .onChange(of: settings.verticalScrollDirection) { _, _ in settings.save() }
     }
 
     // MARK: - Subviews

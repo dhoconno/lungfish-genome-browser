@@ -3828,6 +3828,7 @@ public class SequenceViewerView: NSView {
                         context: context,
                         yOffset: genotypeY,
                         state: sampleDisplayState,
+                        useHaploidAFShading: sampleDisplayState.useHaploidAFShading,
                         sampleDisplayNames: cachedGenotypeSampleDisplayNames,
                         scrollOffset: genotypeScrollOffset,
                         availableHeight: availableHeight,
@@ -5070,16 +5071,6 @@ public class SequenceViewerView: NSView {
                 do {
                     let db = try VariantDatabase(url: dbURL)
                     variantDBByTrackId[trackId] = db
-                    for name in db.sampleNames() where sampleNameSet.insert(name).inserted {
-                        sampleNames.append(name)
-                    }
-                    let trackSampleNames = Set(db.allSourceFiles().keys)
-                    for entry in db.allSampleMetadata() {
-                        var merged = sampleMetadata[entry.name] ?? [:]
-                        merged.merge(entry.metadata) { current, _ in current }
-                        sampleMetadata[entry.name] = merged
-                    }
-
                     let availableChromosomes = trackChromosomeMapSnapshot[trackId] ?? Set(db.allChromosomes())
                     let queryChromosomes = resolveVariantChromosomeCandidates(
                         requestedChromosome: region.chromosome,
@@ -5107,16 +5098,29 @@ public class SequenceViewerView: NSView {
                         )
                     }
 
+                    // For multi-reference / multi-source VCF imports, keep only samples that
+                    // have data on this chromosome so unrelated source files don't clutter rows.
+                    let chromosomeScopedSamples = db.sampleNames(chromosome: resolvedChromosome)
+                    let effectiveSamples = chromosomeScopedSamples.isEmpty ? db.sampleNames() : chromosomeScopedSamples
+                    let effectiveSampleSet = Set(effectiveSamples)
+                    for name in effectiveSamples where sampleNameSet.insert(name).inserted {
+                        sampleNames.append(name)
+                    }
+                    for entry in db.allSampleMetadata() where effectiveSampleSet.contains(entry.name) {
+                        var merged = sampleMetadata[entry.name] ?? [:]
+                        merged.merge(entry.metadata) { current, _ in current }
+                        sampleMetadata[entry.name] = merged
+                    }
+
                     for (variant, genotypes) in regionData {
                         var gtMap: [String: GenotypeDisplayCall] = [:]
-                        // Only pre-fill .homRef for samples that belong to this track.
-                        // Samples from other tracks have no data at this site and should
-                        // not be highlighted (absent = no entry in gtMap).
-                        for name in sampleNames where trackSampleNames.contains(name) {
-                            gtMap[name] = .homRef
-                        }
+                        var afMap: [String: Double] = [:]
                         for gt in genotypes {
-                            gtMap[gt.sampleName] = classifyGenotype(gt)
+                            let call = classifyGenotype(gt)
+                            gtMap[gt.sampleName] = call
+                            if let af = alleleFraction(from: gt.alleleDepths) {
+                                afMap[gt.sampleName] = af
+                            }
                         }
                         allSites.append(VariantSite(
                             position: variant.position,
@@ -5124,6 +5128,7 @@ public class SequenceViewerView: NSView {
                             alt: variant.alt,
                             variantType: variant.variantType,
                             genotypes: gtMap,
+                            sampleAlleleFractions: afMap,
                             databaseRowId: variant.id,
                             variantID: variant.variantID,
                             sourceTrackId: trackId
@@ -8231,10 +8236,23 @@ public class SequenceViewerView: NSView {
         guard let frame = viewController?.referenceFrame else { return }
 
         // scrollingDeltaY/X give raw physical device direction (up/right = positive).
-        // isDirectionInvertedFromDevice is true when natural scrolling is ON.
-        // verticalSign: +1 for traditional (physical up → offset decreases → scroll up),
-        //              -1 for natural (physical up → offset increases → content follows finger down).
-        let verticalSign: CGFloat = event.isDirectionInvertedFromDevice ? -1 : 1
+        // Respect per-axis app settings and fall back to system preference when requested.
+        let settings = AppSettings.shared
+        let systemSign: CGFloat = event.isDirectionInvertedFromDevice ? -1 : 1
+        let verticalSign: CGFloat = {
+            switch settings.verticalScrollDirection {
+            case .system: return systemSign
+            case .natural: return -1
+            case .traditional: return 1
+            }
+        }()
+        let horizontalSign: CGFloat = {
+            switch settings.horizontalScrollDirection {
+            case .system: return systemSign
+            case .natural: return -1
+            case .traditional: return 1
+            }
+        }()
 
         if event.modifierFlags.contains(.command) || event.modifierFlags.contains(.option) {
             // Zoom with Cmd+scroll or Option+scroll
@@ -8300,12 +8318,8 @@ public class SequenceViewerView: NSView {
             }
 
             // Horizontal pan — update coordinates immediately, coalesce redraw at 60fps
-            // When natural scrolling is on (isDirectionInvertedFromDevice), deltas are
-            // inverted from the device direction: negate so content follows finger.
-            // When off, deltas match the device: use directly (traditional scrollbar feel).
             let panScale = event.hasPreciseScrollingDeltas ? 1.0 : 2.0
-            let rawPan = Double(event.scrollingDeltaX) * frame.scale * panScale
-            let panAmount = event.isDirectionInvertedFromDevice ? -rawPan : rawPan
+            let panAmount = Double(horizontalSign * event.scrollingDeltaX) * frame.scale * panScale
             frame.pan(by: panAmount)
 
             scrollRedrawTimer?.invalidate()
@@ -8740,6 +8754,9 @@ public class SequenceViewerView: NSView {
         if let gene = site.geneSymbol {
             tooltip += "\nGene: \(gene)"
         }
+        if let sampleAF = site.sampleAlleleFractions[sampleName] {
+            tooltip += String(format: "\nSample AF: %.3f", sampleAF)
+        }
         if let aaChange = site.aminoAcidChange, site.shortAAChange == nil {
             // Only show long form if shortAAChange wasn't populated
             tooltip += "\nAA Change: \(aaChange)"
@@ -9013,6 +9030,34 @@ private func classifyGenotype(_ gt: GenotypeRecord) -> GenotypeDisplayCall {
     GenotypeDisplayCall.classify(genotype: gt.genotype, allele1: gt.allele1, allele2: gt.allele2)
 }
 
+/// Returns alt allele fraction from VCF AD string ("ref,alt,...") when available.
+private func alleleFraction(from alleleDepths: String?) -> Double? {
+    guard let alleleDepths else { return nil }
+    let depths = alleleDepths
+        .split(separator: ",")
+        .compactMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    guard depths.count >= 2 else { return nil }
+    let total = depths.reduce(0, +)
+    guard total > 0 else { return nil }
+    let altDepth = depths.dropFirst().max() ?? 0
+    return min(1.0, max(0.0, Double(altDepth) / Double(total)))
+}
+
+/// Returns an allele fraction from common INFO AF keys.
+///
+/// Supports scalar and comma-delimited values by using the first parsable value.
+private func alleleFractionFromINFO(_ info: [String: String]) -> Double? {
+    let candidateKeys = ["AF", "af", "VAF", "FREQ", "ALT_FREQ", "MLEAF"]
+    for key in candidateKeys {
+        guard let raw = info[key], !raw.isEmpty else { continue }
+        let first = raw.split(separator: ",", omittingEmptySubsequences: true).first.map(String.init) ?? raw
+        if let value = Double(first.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            return min(1.0, max(0.0, value))
+        }
+    }
+    return nil
+}
+
 /// Enriches variant sites with amino acid impact data from CSQ/INFO fields.
 /// Called on the background genotype fetch queue — does NOT access @MainActor state.
 private func enrichSitesWithCSQImpact(
@@ -9080,6 +9125,16 @@ private func enrichSitesWithCSQImpact(
                 let altLen = sites[i].alt.count
                 if abs(refLen - altLen) % 3 != 0 {
                     sites[i].impact = .frameshift
+                }
+            }
+        }
+
+        // Haploid/viral callsets often provide AF in INFO without per-sample AD.
+        // Fill missing per-sample AF from INFO so genotype row intensity reflects AF.
+        if let variantAF = alleleFractionFromINFO(info), !sites[i].genotypes.isEmpty {
+            for (sample, call) in sites[i].genotypes where call == .het || call == .homAlt {
+                if sites[i].sampleAlleleFractions[sample] == nil {
+                    sites[i].sampleAlleleFractions[sample] = variantAF
                 }
             }
         }

@@ -1695,6 +1695,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         applyHaploidModeSelectionToIndex()
         saveHaploidModeSelection(haploidModeSelection, bundleIdentifier: searchIndex?.bundleIdentifier)
         isHaploidOrganism = searchIndex?.isLikelyHaploidOrganism ?? false
+        currentSampleDisplayState.useHaploidAFShading = isHaploidOrganism
+        postSampleDisplayStateChange()
         rebuildHaploidModeMenu()
         rebuildChipButtons()
         if activeTab == .variants {
@@ -1731,6 +1733,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         case .diploid:
             index.setHaploidOverride(false)
         }
+        currentSampleDisplayState.useHaploidAFShading = index.isLikelyHaploidOrganism
     }
 
     private func rebuildHaploidModeMenu() {
@@ -5599,6 +5602,7 @@ extension AnnotationTableDrawerView: NSMenuDelegate {
             tf.stringValue = sample.displayName ?? ""
             tf.placeholderString = sample.name
             tf.textColor = sample.isVisible ? .labelColor : .tertiaryLabelColor
+            tf.tag = row
         case Self.sampleSourceColumn:
             tf.stringValue = sample.sourceFile
             tf.font = .systemFont(ofSize: 11)

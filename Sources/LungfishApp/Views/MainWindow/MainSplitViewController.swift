@@ -6,6 +6,7 @@ import AppKit
 import LungfishCore
 import LungfishIO
 import os.log
+import UniformTypeIdentifiers
 
 /// Logger for main split view operations
 private let logger = Logger(subsystem: "com.lungfish.browser", category: "MainSplitViewController")
@@ -993,6 +994,26 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             return
         }
 
+        guard let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            logger.error("loadVCFFilesInBackground: Failed to resolve Documents directory")
+            return
+        }
+        let genomesDir = documentsDir.appendingPathComponent("Genomes", isDirectory: true)
+        try? FileManager.default.createDirectory(at: genomesDir, withIntermediateDirectories: true)
+
+        let defaultBundleName: String = {
+            let base = urls.first?.deletingPathExtension().deletingPathExtension().lastPathComponent ?? "VCF Variants"
+            let normalized = base.trimmingCharacters(in: .whitespacesAndNewlines)
+            return normalized.isEmpty ? "VCF Variants" : normalized
+        }()
+        guard let bundleSelection = promptForVCFBundleDestination(
+            defaultName: defaultBundleName,
+            directory: genomesDir
+        ) else {
+            logger.info("loadVCFFilesInBackground: User cancelled VCF import bundle naming")
+            return
+        }
+
         let label = fileCount == 1
             ? "Importing VCF file\u{2026}"
             : "Importing \(fileCount) VCF files\u{2026}"
@@ -1000,16 +1021,11 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                guard let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-                    throw DocumentLoadError.fileNotFound(URL(fileURLWithPath: NSHomeDirectory()))
-                }
-                let genomesDir = documentsDir
-                    .appendingPathComponent("Genomes", isDirectory: true)
-                try? FileManager.default.createDirectory(at: genomesDir, withIntermediateDirectories: true)
-
                 let result = try await VCFAutoIngestor.ingest(
                     vcfURLs: urls,
-                    outputDirectory: genomesDir,
+                    outputDirectory: bundleSelection.directoryURL,
+                    preferredBundleName: bundleSelection.bundleName,
+                    replaceExistingBundle: bundleSelection.replaceExisting,
                     progressHandler: { progress, message in
                         DispatchQueue.main.async { [weak viewerController] in
                             MainActor.assumeIsolated {
@@ -1059,6 +1075,38 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                 }
             }
         }
+    }
+
+    private struct VCFBundleDestination {
+        let directoryURL: URL
+        let bundleName: String
+        let replaceExisting: Bool
+    }
+
+    private func promptForVCFBundleDestination(defaultName: String, directory: URL) -> VCFBundleDestination? {
+        let panel = NSSavePanel()
+        panel.title = "Save Imported Variant Bundle"
+        panel.prompt = "Create Bundle"
+        panel.nameFieldLabel = "Bundle Name:"
+        panel.nameFieldStringValue = "\(defaultName).lungfishref"
+        panel.directoryURL = directory
+        if let bundleType = UTType(filenameExtension: "lungfishref") {
+            panel.allowedContentTypes = [bundleType]
+        }
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        panel.canSelectHiddenExtension = true
+
+        guard panel.runModal() == .OK, let selectedURL = panel.url else { return nil }
+        let rawName = selectedURL.deletingPathExtension().lastPathComponent
+        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bundleName = trimmed.isEmpty ? defaultName : trimmed
+        let destination = selectedURL.deletingLastPathComponent()
+        return VCFBundleDestination(
+            directoryURL: destination,
+            bundleName: bundleName,
+            replaceExisting: FileManager.default.fileExists(atPath: selectedURL.path)
+        )
     }
 
     /// Silently downloads reference genome for a naked (variant-only) bundle.
