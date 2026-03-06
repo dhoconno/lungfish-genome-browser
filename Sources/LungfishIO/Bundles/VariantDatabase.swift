@@ -1312,7 +1312,8 @@ public final class VariantDatabase: @unchecked Sendable {
     /// Returns true if the cache was created successfully.
     @discardableResult
     public func warmHighImpactCache(timeoutSeconds: TimeInterval = 30) -> Bool {
-        guard let db, !_highImpactCacheReady else { return _highImpactCacheReady }
+        let alreadyReady = cacheLock.withLock { _highImpactCacheReady }
+        guard let db, !alreadyReady else { return alreadyReady }
 
         // Install a timeout so the initial scan doesn't block forever.
         let ctx = QueryProgressContext(timeoutSeconds: timeoutSeconds)
@@ -1364,7 +1365,7 @@ public final class VariantDatabase: @unchecked Sendable {
         }
         // Create index on the temp table for fast JOINs.
         sqlite3_exec(db, "CREATE INDEX IF NOT EXISTS _idx_hi ON _high_impact(variant_id)", nil, nil, nil)
-        _highImpactCacheReady = true
+        cacheLock.withLock { _highImpactCacheReady = true }
 
         var countStmt: OpaquePointer?
         defer { sqlite3_finalize(countStmt) }
@@ -1377,7 +1378,7 @@ public final class VariantDatabase: @unchecked Sendable {
     }
 
     /// Whether the high-impact temp table is ready for fast queries.
-    public var highImpactCacheReady: Bool { _highImpactCacheReady }
+    public var highImpactCacheReady: Bool { cacheLock.withLock { _highImpactCacheReady } }
 
     /// Returns the current SmartToken cache state (token rawValue → ready status and count).
     public var tokenCacheState: [String: (ready: Bool, count: Int)] { _tokenCacheState }
@@ -1582,11 +1583,11 @@ public final class VariantDatabase: @unchecked Sendable {
         }
 
         // Also create persistent high-impact table if not already done
-        if !_highImpactCacheReady && !variantInfoSkipped {
+        if !cacheLock.withLock({ _highImpactCacheReady }) && !variantInfoSkipped {
             let hasImpactKey = !availableInfoKeys.isDisjoint(with: Set(Self.impactInfoKeys))
             if hasImpactKey {
                 warmHighImpactCache(timeoutSeconds: timeoutPerToken)
-                if _highImpactCacheReady {
+                if cacheLock.withLock({ _highImpactCacheReady }) {
                     var countStmt: OpaquePointer?
                     var hiCount = 0
                     if sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM _high_impact", -1, &countStmt, nil) == SQLITE_OK,
@@ -1648,7 +1649,7 @@ public final class VariantDatabase: @unchecked Sendable {
 
             _tokenCacheState[name] = (ready: true, count: count)
             if name == "highImpact" {
-                _highImpactCacheReady = true
+                cacheLock.withLock { _highImpactCacheReady = true }
             }
         }
 
@@ -1687,7 +1688,7 @@ public final class VariantDatabase: @unchecked Sendable {
     /// Detects whether a set of InfoFilters is a sole IMPACT=HIGH filter
     /// that can be served from the pre-cached temp table.
     private func isHighImpactOnlyFilter(_ infoFilters: [InfoFilter]) -> Bool {
-        guard _highImpactCacheReady else { return false }
+        guard cacheLock.withLock({ _highImpactCacheReady }) else { return false }
         guard infoFilters.count == 1 else { return false }
         let f = infoFilters[0]
         return f.op == .eq
@@ -2312,14 +2313,25 @@ public final class VariantDatabase: @unchecked Sendable {
         }
 
         let entries = value.split(separator: ",", omittingEmptySubsequences: true)
-        guard let firstEntry = entries.first else { return }
-        let subValues = firstEntry.split(separator: "|", omittingEmptySubsequences: false)
-        guard !subValues.isEmpty else { return }
+        guard !entries.isEmpty else { return }
 
-        for (index, fieldName) in template.enumerated() where index < subValues.count {
-            let trimmed = String(subValues[index]).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-            result["\(key)_\(fieldName)"] = trimmed
+        // Preserve all transcript/frame annotations by aggregating unique values
+        // across every CSQ/ANN entry for each sub-field.
+        var aggregatedByField: [String: [String]] = [:]
+        for entry in entries {
+            let subValues = entry.split(separator: "|", omittingEmptySubsequences: false)
+            guard !subValues.isEmpty else { continue }
+            for (index, fieldName) in template.enumerated() where index < subValues.count {
+                let trimmed = String(subValues[index]).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continue }
+                aggregatedByField[fieldName, default: []].append(trimmed)
+            }
+        }
+
+        for fieldName in template {
+            guard let values = aggregatedByField[fieldName], !values.isEmpty else { continue }
+            let deduped = orderedUniqueStrings(values)
+            result["\(key)_\(fieldName)"] = deduped.joined(separator: ",")
         }
 
         if entries.count > 1 {
@@ -2338,6 +2350,17 @@ public final class VariantDatabase: @unchecked Sendable {
                 result["ANN_Gene"] = gene
             }
         }
+    }
+
+    /// Returns unique strings preserving first-seen order.
+    private static func orderedUniqueStrings(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        var ordered: [String] = []
+        ordered.reserveCapacity(values.count)
+        for value in values where seen.insert(value).inserted {
+            ordered.append(value)
+        }
+        return ordered
     }
 
     /// Batch-fetches INFO dictionaries for multiple variant IDs.
@@ -3669,23 +3692,32 @@ public final class VariantDatabase: @unchecked Sendable {
 
                         // Check if this is a structured field with pipe-delimited sub-fields (e.g., CSQ)
                         if let subFieldNames = structuredInfoFields[key] {
-                            // Split by comma for multiple entries (e.g., multiple transcripts)
+                            // Split by comma for multiple entries (e.g., overlapping transcripts/frames)
+                            // and aggregate unique values per sub-field so downstream table/hover logic
+                            // can surface all possible impacts.
                             let entries = value.split(separator: ",")
-                            // Use only the first entry for the primary sub-field values
-                            // (store the full raw value too for completeness)
-                            if let firstEntry = entries.first {
-                                let subValues = firstEntry.split(separator: "|", omittingEmptySubsequences: false)
+                            var aggregatedByField: [String: [String]] = [:]
+                            for entry in entries {
+                                let subValues = entry.split(separator: "|", omittingEmptySubsequences: false)
                                 for (idx, subFieldName) in subFieldNames.enumerated() {
-                                    let subValue = idx < subValues.count ? subValues[idx] : ""
+                                    let subValue = idx < subValues.count
+                                        ? String(subValues[idx]).trimmingCharacters(in: .whitespacesAndNewlines)
+                                        : ""
                                     guard !subValue.isEmpty else { continue }
-                                    let subKey = "\(key)_\(subFieldName)"
-                                    sqlite3_reset(insertInfoStmt)
-                                    sqlite3_bind_int64(insertInfoStmt, 1, variantRowId)
-                                    sqliteBindText(insertInfoStmt, 2, subKey)
-                                    sqliteBindText(insertInfoStmt, 3, String(subValue))
-                                    sqlite3_step(insertInfoStmt)
-                                    writesSinceCommit += 1
+                                    aggregatedByField[subFieldName, default: []].append(subValue)
                                 }
+                            }
+                            for subFieldName in subFieldNames {
+                                guard let values = aggregatedByField[subFieldName], !values.isEmpty else { continue }
+                                let deduped = Self.orderedUniqueStrings(values)
+                                guard !deduped.isEmpty else { continue }
+                                let subKey = "\(key)_\(subFieldName)"
+                                sqlite3_reset(insertInfoStmt)
+                                sqlite3_bind_int64(insertInfoStmt, 1, variantRowId)
+                                sqliteBindText(insertInfoStmt, 2, subKey)
+                                sqliteBindText(insertInfoStmt, 3, deduped.joined(separator: ","))
+                                sqlite3_step(insertInfoStmt)
+                                writesSinceCommit += 1
                             }
                             // Also store entry count if multiple transcripts
                             if entries.count > 1 {

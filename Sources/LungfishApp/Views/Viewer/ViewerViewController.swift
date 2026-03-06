@@ -1673,11 +1673,7 @@ public class ViewerViewController: NSViewController {
     /// Zooms in on the current view
     public func zoomIn() {
         guard let frame = referenceFrame else { return }
-        let insetPx = Double(viewerView.navigationLeadingInsetPixels)
-        let pw = Double(max(1, frame.pixelWidth))
-        // Visual center of the data area (excluding gutter)
-        let dataCenterFraction = (insetPx + pw) / (2.0 * pw)
-        let center = frame.start + (frame.end - frame.start) * dataCenterFraction
+        let center = (frame.start + frame.end) / 2.0
         let halfWidth = (frame.end - frame.start) / (2 * 2.0)
         frame.start = max(0, center - halfWidth)
         frame.end = min(Double(frame.sequenceLength), center + halfWidth)
@@ -1690,10 +1686,7 @@ public class ViewerViewController: NSViewController {
     /// Zooms out from the current view
     public func zoomOut() {
         guard let frame = referenceFrame else { return }
-        let insetPx = Double(viewerView.navigationLeadingInsetPixels)
-        let pw = Double(max(1, frame.pixelWidth))
-        let dataCenterFraction = (insetPx + pw) / (2.0 * pw)
-        let center = frame.start + (frame.end - frame.start) * dataCenterFraction
+        let center = (frame.start + frame.end) / 2.0
         let halfWidth = (frame.end - frame.start) * 2.0 / 2
         var newStart = center - halfWidth
         var newEnd = center + halfWidth
@@ -3769,21 +3762,10 @@ public class SequenceViewerView: NSView {
             lastAnnotationBottomY = annotationTrackY
         }
 
-        // Show "Fetching annotations..." indicator when annotations are loading
-        if isFetchingAnnotations && cachedBundleAnnotations.isEmpty {
-            let label = "Fetching annotations..." as NSString
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 10),
-                .foregroundColor: NSColor.secondaryLabelColor
-            ]
-            let size = label.size(withAttributes: attributes)
-            let labelRect = CGRect(
-                x: (bounds.width - size.width) / 2,
-                y: annotationTrackY + 4,
-                width: size.width,
-                height: size.height
-            )
-            label.draw(in: labelRect, withAttributes: attributes)
+        // Show annotation loading status whenever annotation fetch is in flight.
+        if isFetchingAnnotations {
+            let message = cachedBundleAnnotations.isEmpty ? "Fetching annotations..." : "Updating annotations..."
+            drawTrackLoadingBadge(context: context, message: message, yOffset: annotationTrackY + 2)
         }
 
         // --- Variants below annotations ---
@@ -3868,6 +3850,14 @@ public class SequenceViewerView: NSView {
                 state: sampleDisplayState
             )
             lastVariantBottomY = vY + totalVariantHeight
+
+            if isFetchingVariants {
+                drawTrackLoadingBadge(context: context, message: "Updating variants...", yOffset: vY + 2)
+            }
+            if isFetchingGenotypes && filteredVariants.count <= variantDisplayCap {
+                let genotypeBadgeY = vY + effectiveSummaryBarHeight + effectiveSummaryToRowGap + 2
+                drawTrackLoadingBadge(context: context, message: "Updating genotypes...", yOffset: genotypeBadgeY)
+            }
         } else if showVariants && !bundle.variantTrackIds.isEmpty {
             // Variant tracks exist but nothing to display — show status badge
             let vY = variantTrackY
@@ -7667,13 +7657,17 @@ public class SequenceViewerView: NSView {
         contextMenuGenomicPosition = clampedContextMenuPosition(for: location, frame: frame)
 
         // Variant context menu takes priority over generic annotation menus.
+        let hoveredVariantResult = genotypeTooltipAtPoint(location)?.variantSearchResult
         if let variant = variantAtPoint(location),
-           let variantResult = variantSearchResult(for: variant) {
+           let variantResult = variantSearchResult(for: variant) ?? hoveredVariantResult {
             if selectedAnnotation?.id != variant.id {
                 selectedAnnotation = variant
                 postAnnotationSelectedNotification(variant)
                 setNeedsDisplay(bounds)
             }
+            showVariantContextMenu(for: variantResult, at: event)
+            return
+        } else if let variantResult = hoveredVariantResult {
             showVariantContextMenu(for: variantResult, at: event)
             return
         }
@@ -8748,6 +8742,7 @@ public class SequenceViewerView: NSView {
     private struct GenotypeTooltipResult {
         let tooltip: String
         let statusText: String
+        let variantSearchResult: AnnotationSearchIndex.SearchResult?
     }
 
     /// Hit-tests the genotype row area and returns a tooltip if the mouse is over a genotype cell.
@@ -8810,7 +8805,11 @@ public class SequenceViewerView: NSView {
         // Avoid recomputing tooltip if we're still on the same cell
         if let last = lastHoveredGenotypeCell, last.sampleIdx == sampleIdx, last.siteIdx == siteIdx {
             if let tooltipText = lastHoveredGenotypeTooltipText {
-                return GenotypeTooltipResult(tooltip: tooltipText, statusText: lastHoveredGenotypeStatusText ?? "")
+                return GenotypeTooltipResult(
+                    tooltip: tooltipText,
+                    statusText: lastHoveredGenotypeStatusText ?? "",
+                    variantSearchResult: genotypeVariantSearchResult(for: genotypeData.sites[siteIdx], frame: frame)
+                )
             }
         }
         lastHoveredGenotypeCell = (sampleIdx, siteIdx)
@@ -8903,7 +8902,33 @@ public class SequenceViewerView: NSView {
         let statusText = "Genotype: \(sampleName) \u{2022} \(callLabel) \u{2022} \(chrom):\(displayPos.formatted()) \(site.ref)\u{2192}\(site.alt)\(aaStatus)"
         lastHoveredGenotypeTooltipText = tooltip
         lastHoveredGenotypeStatusText = statusText
-        return GenotypeTooltipResult(tooltip: tooltip, statusText: statusText)
+        return GenotypeTooltipResult(
+            tooltip: tooltip,
+            statusText: statusText,
+            variantSearchResult: genotypeVariantSearchResult(for: site, frame: frame)
+        )
+    }
+
+    private func genotypeVariantSearchResult(
+        for site: VariantSite,
+        frame: ReferenceFrame
+    ) -> AnnotationSearchIndex.SearchResult? {
+        let fallbackName = "\(frame.chromosome)_\(site.position + 1)"
+        return AnnotationSearchIndex.SearchResult(
+            name: site.variantID?.isEmpty == false ? site.variantID! : fallbackName,
+            chromosome: frame.chromosome,
+            start: site.position,
+            end: site.position + max(1, site.ref.count),
+            trackId: site.sourceTrackId ?? "",
+            type: site.variantType,
+            strand: ".",
+            ref: site.ref,
+            alt: site.alt,
+            quality: nil,
+            filter: nil,
+            sampleCount: nil,
+            variantRowId: site.databaseRowId
+        )
     }
 
     /// Predicts coding consequences from overlapping CDS annotations for a site/sample.
@@ -9431,7 +9456,7 @@ private func alleleFraction(from alleleDepths: String?) -> Double? {
     guard depths.count >= 2 else { return nil }
     let total = depths.reduce(0, +)
     guard total > 0 else { return nil }
-    let altDepth = depths.dropFirst().max() ?? 0
+    let altDepth = depths.dropFirst().reduce(0, +)
     return min(1.0, max(0.0, Double(altDepth) / Double(total)))
 }
 

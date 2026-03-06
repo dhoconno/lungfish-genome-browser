@@ -6,7 +6,6 @@ import AppKit
 import LungfishCore
 import LungfishIO
 import os.log
-import UniformTypeIdentifiers
 
 /// Logger for main split view operations
 private let logger = Logger(subsystem: "com.lungfish.browser", category: "MainSplitViewController")
@@ -521,27 +520,8 @@ public class MainSplitViewController: NSSplitViewController {
             }
         }
 
-        // Load the document and display it
-        Task { @MainActor in
-            viewerController.showProgress("Loading \(urlToLoad.lastPathComponent)...")
-            do {
-                let document = try await DocumentManager.shared.loadDocument(at: urlToLoad)
-                viewerController.hideProgress()
-                viewerController.displayDocument(document)
-                // Note: Sidebar is now filesystem-backed, so FileSystemWatcher will refresh it
-                // when the file is copied. No manual sidebar update needed.
-                logger.info("handleSidebarFileDropped: Successfully loaded and displayed '\(document.name, privacy: .public)'")
-            } catch {
-                viewerController.hideProgress()
-                logger.error("handleSidebarFileDropped: Failed to load file: \(error.localizedDescription, privacy: .public)")
-                let alert = NSAlert()
-                alert.messageText = "Failed to Open File"
-                alert.informativeText = error.localizedDescription
-                alert.alertStyle = .warning
-                alert.addButton(withTitle: "OK")
-                alert.runModal()
-            }
-        }
+        // Load the document and display it via the established GCD dispatch pattern
+        loadGenomicsFileInBackground(url: urlToLoad)
     }
 
     // MARK: - Duplicate File Handling
@@ -573,12 +553,12 @@ public class MainSplitViewController: NSSplitViewController {
     private func generateUniqueFilename(for sourceURL: URL, in targetDir: URL) -> URL {
         let baseName = sourceURL.deletingPathExtension().lastPathComponent
         let ext = sourceURL.pathExtension
-        var counter = 1
-        var newURL = targetDir.appendingPathComponent("\(baseName) 2.\(ext)")
+        var counter = 2
+        var newURL = targetDir.appendingPathComponent("\(baseName) \(counter).\(ext)")
 
         while FileManager.default.fileExists(atPath: newURL.path) {
             counter += 1
-            newURL = targetDir.appendingPathComponent("\(baseName) \(counter + 1).\(ext)")
+            newURL = targetDir.appendingPathComponent("\(baseName) \(counter).\(ext)")
         }
 
         return newURL
@@ -713,7 +693,9 @@ public class MainSplitViewController: NSSplitViewController {
         } completionHandler: { [weak self] in
             logger.info("animateInspectorCollapse[\(source, privacy: .public)]: completion callback fired for serial=\(serial)")
             DispatchQueue.main.async { [weak self] in
-                self?.completeInspectorCollapseAnimation(serial: serial, source: "\(source).completion")
+                MainActor.assumeIsolated {
+                    self?.completeInspectorCollapseAnimation(serial: serial, source: "\(source).completion")
+                }
             }
         }
 
@@ -916,20 +898,22 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
         // Defer execution to the next runloop so the loading indicator paints immediately.
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            defer { self.activityIndicator.hide() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                defer { self.activityIndicator.hide() }
 
-            do {
-                try self.viewerController.displayBundle(at: url)
-                logger.info("displayReferenceBundle: Bundle displayed successfully")
-            } catch {
-                logger.error("displayReferenceBundle: Failed - \(error.localizedDescription, privacy: .public)")
-                let alert = NSAlert()
-                alert.messageText = "Failed to Open Reference Bundle"
-                alert.informativeText = error.localizedDescription
-                alert.alertStyle = .warning
-                alert.addButton(withTitle: "OK")
-                alert.runModal()
+                do {
+                    try self.viewerController.displayBundle(at: url)
+                    logger.info("displayReferenceBundle: Bundle displayed successfully")
+                } catch {
+                    logger.error("displayReferenceBundle: Failed - \(error.localizedDescription, privacy: .public)")
+                    let alert = NSAlert()
+                    alert.messageText = "Failed to Open Reference Bundle"
+                    alert.informativeText = error.localizedDescription
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                }
             }
         }
     }
@@ -994,21 +978,26 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             return
         }
 
-        guard let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            logger.error("loadVCFFilesInBackground: Failed to resolve Documents directory")
+        guard let projectURL = sidebarController.currentProjectURL ?? DocumentManager.shared.activeProject?.url else {
+            logger.error("loadVCFFilesInBackground: No active project; refusing non-project bundle import")
+            let alert = NSAlert()
+            alert.messageText = "No Active Project"
+            alert.informativeText = "Open or create a project first. VCF imports are saved as .lungfishref bundles inside the active project."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
             return
         }
-        let genomesDir = documentsDir.appendingPathComponent("Genomes", isDirectory: true)
-        try? FileManager.default.createDirectory(at: genomesDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: projectURL, withIntermediateDirectories: true)
 
         let defaultBundleName: String = {
             let base = urls.first?.deletingPathExtension().deletingPathExtension().lastPathComponent ?? "VCF Variants"
             let normalized = base.trimmingCharacters(in: .whitespacesAndNewlines)
             return normalized.isEmpty ? "VCF Variants" : normalized
         }()
-        guard let bundleSelection = promptForVCFBundleDestination(
+        guard let bundleSelection = promptForVCFBundleName(
             defaultName: defaultBundleName,
-            directory: genomesDir
+            projectDirectory: projectURL
         ) else {
             logger.info("loadVCFFilesInBackground: User cancelled VCF import bundle naming")
             return
@@ -1023,7 +1012,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             do {
                 let result = try await VCFAutoIngestor.ingest(
                     vcfURLs: urls,
-                    outputDirectory: bundleSelection.directoryURL,
+                    outputDirectory: projectURL,
                     preferredBundleName: bundleSelection.bundleName,
                     replaceExistingBundle: bundleSelection.replaceExisting,
                     progressHandler: { progress, message in
@@ -1038,8 +1027,9 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                 logger.info("loadVCFFilesInBackground: Bundle created at \(result.bundleURL.lastPathComponent, privacy: .public) with \(result.variantCount) variants from \(fileCount) file(s)")
 
                 let bundleURL = result.bundleURL
-                DispatchQueue.main.async { [weak self] in
+                DispatchQueue.main.async { [weak self, weak viewerController] in
                     MainActor.assumeIsolated {
+                        viewerController?.hideProgress()
                         self?.displayReferenceBundle(at: bundleURL)
                     }
                 }
@@ -1077,35 +1067,31 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         }
     }
 
-    private struct VCFBundleDestination {
-        let directoryURL: URL
+    private struct VCFBundleSelection {
         let bundleName: String
         let replaceExisting: Bool
     }
 
-    private func promptForVCFBundleDestination(defaultName: String, directory: URL) -> VCFBundleDestination? {
-        let panel = NSSavePanel()
-        panel.title = "Save Imported Variant Bundle"
-        panel.prompt = "Create Bundle"
-        panel.nameFieldLabel = "Bundle Name:"
-        panel.nameFieldStringValue = "\(defaultName).lungfishref"
-        panel.directoryURL = directory
-        if let bundleType = UTType(filenameExtension: "lungfishref") {
-            panel.allowedContentTypes = [bundleType]
-        }
-        panel.canCreateDirectories = true
-        panel.isExtensionHidden = false
-        panel.canSelectHiddenExtension = true
+    private func promptForVCFBundleName(defaultName: String, projectDirectory: URL) -> VCFBundleSelection? {
+        let alert = NSAlert()
+        alert.messageText = "Name Imported Variant Bundle"
+        alert.informativeText = "This bundle will be saved inside the active project:\n\(projectDirectory.path)"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Create")
+        alert.addButton(withTitle: "Cancel")
 
-        guard panel.runModal() == .OK, let selectedURL = panel.url else { return nil }
-        let rawName = selectedURL.deletingPathExtension().lastPathComponent
-        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let textField = NSTextField(string: defaultName)
+        textField.placeholderString = "Bundle Name"
+        textField.frame = NSRect(x: 0, y: 0, width: 320, height: 24)
+        alert.accessoryView = textField
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let trimmed = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let bundleName = trimmed.isEmpty ? defaultName : trimmed
-        let destination = selectedURL.deletingLastPathComponent()
-        return VCFBundleDestination(
-            directoryURL: destination,
+        let targetURL = projectDirectory.appendingPathComponent("\(bundleName).lungfishref", isDirectory: true)
+        return VCFBundleSelection(
             bundleName: bundleName,
-            replaceExisting: FileManager.default.fileExists(atPath: selectedURL.path)
+            replaceExisting: FileManager.default.fileExists(atPath: targetURL.path)
         )
     }
 

@@ -263,6 +263,92 @@ final class VariantTrackRendererTests: XCTestCase {
         XCTAssertGreaterThan(b3, r3, "HomAlt pixel should have blue > red")
     }
 
+    func testDrawGenotypeRowsHaploidAFColorRamp() {
+        func rgb(_ af: Double) -> (r: CGFloat, g: CGFloat, b: CGFloat) {
+            var r: CGFloat = 0
+            var g: CGFloat = 0
+            var b: CGFloat = 0
+            var a: CGFloat = 0
+            NSColor(cgColor: VariantTrackRenderer.haploidAFColor(af))?.getRed(&r, green: &g, blue: &b, alpha: &a)
+            return (r, g, b)
+        }
+
+        let low = rgb(0.05)
+        let mid = rgb(0.50)
+        let high = rgb(1.00)
+
+        // AF=1.0 should be near black.
+        XCTAssertLessThan(max(high.r, max(high.g, high.b)), 0.15)
+        // Low AF should be much lighter than high AF.
+        XCTAssertGreaterThan(low.r, high.r)
+        XCTAssertGreaterThan(low.g, high.g)
+        XCTAssertGreaterThan(low.b, high.b)
+        // Mid AF should sit in the blue/purple range.
+        XCTAssertGreaterThan(mid.b, mid.r)
+        XCTAssertGreaterThan(mid.b, mid.g)
+    }
+
+    func testHaploidAFColorAtZeroBoundary() {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        NSColor(cgColor: VariantTrackRenderer.haploidAFColor(0.0))?.getRed(&r, green: &g, blue: &b, alpha: &a)
+        XCTAssertGreaterThan(r, 0.90, "AF=0.0 should be near-white")
+        XCTAssertGreaterThan(g, 0.90)
+        XCTAssertGreaterThan(b, 0.90)
+    }
+
+    func testHaploidAFColorNegativeClamped() {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        NSColor(cgColor: VariantTrackRenderer.haploidAFColor(-0.5))?.getRed(&r, green: &g, blue: &b, alpha: &a)
+        XCTAssertGreaterThan(r, 0.90, "Negative AF should clamp to near-white")
+    }
+
+    func testHaploidAFColorOverOneClamped() {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        NSColor(cgColor: VariantTrackRenderer.haploidAFColor(2.5))?.getRed(&r, green: &g, blue: &b, alpha: &a)
+        XCTAssertLessThan(r, 0.15, "AF>1.0 should clamp to near-black")
+    }
+
+    func testHaploidAFColorMonotonicallyDarkens() {
+        func luminance(_ af: Double) -> CGFloat {
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            NSColor(cgColor: VariantTrackRenderer.haploidAFColor(af))?.getRed(&r, green: &g, blue: &b, alpha: &a)
+            return 0.299 * r + 0.587 * g + 0.114 * b
+        }
+        var prevLum = luminance(0.0)
+        for i in 1...10 {
+            let af = Double(i) / 10.0
+            let lum = luminance(af)
+            XCTAssertLessThanOrEqual(lum, prevLum + 0.01,
+                "Luminance should decrease as AF increases: AF=\(af)")
+            prevLum = lum
+        }
+    }
+
+    func testHaploidAFColorAtStopBoundaries() {
+        func rgb(_ af: Double) -> (r: CGFloat, g: CGFloat, b: CGFloat) {
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            NSColor(cgColor: VariantTrackRenderer.haploidAFColor(af))?.getRed(&r, green: &g, blue: &b, alpha: &a)
+            return (r, g, b)
+        }
+        // Stop at 0.15: light blue (0.80, 0.86, 1.00)
+        let s015 = rgb(0.15)
+        XCTAssertEqual(s015.r, 0.80, accuracy: 0.05)
+        XCTAssertEqual(s015.g, 0.86, accuracy: 0.05)
+        XCTAssertEqual(s015.b, 1.00, accuracy: 0.05)
+
+        // Stop at 0.45: purple-blue (0.57, 0.50, 0.94)
+        let s045 = rgb(0.45)
+        XCTAssertEqual(s045.r, 0.57, accuracy: 0.05)
+        XCTAssertEqual(s045.g, 0.50, accuracy: 0.05)
+        XCTAssertEqual(s045.b, 0.94, accuracy: 0.05)
+
+        // Stop at 0.75: deep purple (0.35, 0.29, 0.73)
+        let s075 = rgb(0.75)
+        XCTAssertEqual(s075.r, 0.35, accuracy: 0.05)
+        XCTAssertEqual(s075.g, 0.29, accuracy: 0.05)
+        XCTAssertEqual(s075.b, 0.73, accuracy: 0.05)
+    }
+
     func testDrawGenotypeRowsWithSmallRowHeight() {
         let frame = makeFrame(start: 0, end: 50_000_000)
         let ctx = makeBitmapContext()

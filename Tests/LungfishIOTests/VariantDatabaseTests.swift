@@ -1346,6 +1346,31 @@ final class VariantDatabaseTests: XCTestCase {
         }
     }
 
+    func testStructuredCSQAggregatesAllTranscriptEntries() throws {
+        let csqVCF = """
+        ##fileformat=VCFv4.3
+        ##INFO=<ID=CSQ,Number=.,Type=String,Description="Format: Allele|Consequence|IMPACT|SYMBOL|Gene|Feature_type|Feature|BIOTYPE|EXON|INTRON|HGVSc|HGVSp|cDNA_position|CDS_position|Protein_position|Amino_acids|Codons">
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+        chr1\t101\t.\tC\tT\t60\tPASS\tCSQ=T|missense_variant|MODERATE|ORF1ab|gene1|Transcript|tx1|protein_coding|1/1||c.100C>T|p.S34F|100|100|34|S/F|tCt/tTt,T|stop_gained|HIGH|ORF1ab|gene1|Transcript|tx2|protein_coding|1/1||c.100C>T|p.S34*|100|100|34|S/*|tCt/tAt
+        """
+
+        let vcfURL = try createTempVCF(content: csqVCF, name: "csq_multi.vcf")
+        let dbURL = tempDir.appendingPathComponent("csq_multi.db")
+        try VariantDatabase.createFromVCF(vcfURL: vcfURL, outputURL: dbURL, importProfile: .fast)
+
+        let db = try VariantDatabase(url: dbURL)
+        let variants = db.query(chromosome: "chr1", start: 0, end: 200)
+        XCTAssertEqual(variants.count, 1)
+        let rowId = try XCTUnwrap(variants.first?.id)
+        let info = db.infoValues(variantId: rowId)
+
+        XCTAssertEqual(info["CSQ_entries"], "2")
+        XCTAssertEqual(info["CSQ_Consequence"], "missense_variant,stop_gained")
+        XCTAssertEqual(info["CSQ_IMPACT"], "MODERATE,HIGH")
+        XCTAssertEqual(info["CSQ_Amino_acids"], "S/F,S/*")
+        XCTAssertEqual(info["CSQ_Codons"], "tCt/tTt,tCt/tAt")
+    }
+
     func testResumeSkipVariantInfoDatabase() throws {
         // Verify that resumeImport correctly skips variant_info indexes for
         // databases imported with skipVariantInfo.

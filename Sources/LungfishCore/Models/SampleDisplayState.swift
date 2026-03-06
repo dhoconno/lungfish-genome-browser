@@ -433,7 +433,13 @@ public enum GenotypeDisplayCall: String, Sendable, CaseIterable {
     ///   - allele2: Second allele index (-1 for missing)
     /// - Returns: The classified genotype display call
     public static func classify(genotype: String?, allele1: Int, allele2: Int) -> GenotypeDisplayCall {
-        guard let gtStr = genotype else { return .noCall }
+        guard let gtStr = genotype else {
+            // Some haploid/viral VCF pipelines omit GT but still provide parsed alleles.
+            if allele1 < 0 && allele2 < 0 { return .noCall }
+            if allele1 == 0 && allele2 == 0 { return .homRef }
+            if allele1 == allele2 { return .homAlt }
+            return .het
+        }
         let trimmed = gtStr.trimmingCharacters(in: .whitespaces)
         if trimmed.isEmpty || trimmed == "." || trimmed == "./." || trimmed == ".|." {
             return .noCall

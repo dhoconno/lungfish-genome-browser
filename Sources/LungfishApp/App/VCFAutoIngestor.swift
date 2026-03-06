@@ -129,11 +129,18 @@ public enum VCFAutoIngestor {
         }
         try fileManager.createDirectory(at: bundleURL, withIntermediateDirectories: true)
 
+        // Clean up the bundle directory if anything throws after this point
+        var bundleComplete = false
+        defer {
+            if !bundleComplete {
+                try? fileManager.removeItem(at: bundleURL)
+            }
+        }
+
         let variantsDir = bundleURL.appendingPathComponent("variants", isDirectory: true)
         try fileManager.createDirectory(at: variantsDir, withIntermediateDirectories: true)
 
         if shouldCancel?() == true {
-            try? fileManager.removeItem(at: bundleURL)
             throw CancellationError()
         }
 
@@ -163,7 +170,6 @@ public enum VCFAutoIngestor {
 
             for (index, vcfURL) in importURLs.enumerated() {
                 if shouldCancel?() == true {
-                    try? fileManager.removeItem(at: bundleURL)
                     throw CancellationError()
                 }
 
@@ -214,7 +220,6 @@ public enum VCFAutoIngestor {
         }
 
         if shouldCancel?() == true {
-            try? fileManager.removeItem(at: bundleURL)
             throw CancellationError()
         }
 
@@ -272,6 +277,7 @@ public enum VCFAutoIngestor {
         logger.info("ingest: Manifest written to \(bundleURL.lastPathComponent, privacy: .public)")
 
         progressHandler?(1.0, "Complete")
+        bundleComplete = true
 
         return IngestResult(
             bundleURL: bundleURL,

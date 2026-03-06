@@ -459,4 +459,123 @@ final class SampleDisplayStateTests: XCTestCase {
         XCTAssertEqual(data.sites.count, 1)
         XCTAssertEqual(data.region.chromosome, "chr1")
     }
+
+    // MARK: - GenotypeDisplayCall.classify Haploid Paths
+
+    func testClassifyNilGenotypeWithValidAllelesHomAlt() {
+        let call = GenotypeDisplayCall.classify(genotype: nil, allele1: 1, allele2: 1)
+        XCTAssertEqual(call, .homAlt)
+    }
+
+    func testClassifyNilGenotypeWithValidAllelesHet() {
+        let call = GenotypeDisplayCall.classify(genotype: nil, allele1: 0, allele2: 1)
+        XCTAssertEqual(call, .het)
+    }
+
+    func testClassifyNilGenotypeWithValidAllelesHomRef() {
+        let call = GenotypeDisplayCall.classify(genotype: nil, allele1: 0, allele2: 0)
+        XCTAssertEqual(call, .homRef)
+    }
+
+    func testClassifyNilGenotypeMultiAllelicHet() {
+        let call = GenotypeDisplayCall.classify(genotype: nil, allele1: 1, allele2: 2)
+        XCTAssertEqual(call, .het)
+    }
+
+    // MARK: - VariantImpact.fromCSQ
+
+    func testVariantImpactFromCSQ_Frameshift() {
+        XCTAssertEqual(VariantImpact.fromCSQ(impact: "HIGH", consequence: "frameshift_variant"), .frameshift)
+    }
+
+    func testVariantImpactFromCSQ_StopGained() {
+        XCTAssertEqual(VariantImpact.fromCSQ(impact: "HIGH", consequence: "stop_gained"), .nonsense)
+    }
+
+    func testVariantImpactFromCSQ_Missense() {
+        XCTAssertEqual(VariantImpact.fromCSQ(impact: "MODERATE", consequence: "missense_variant"), .missense)
+    }
+
+    func testVariantImpactFromCSQ_Synonymous() {
+        XCTAssertEqual(VariantImpact.fromCSQ(impact: "LOW", consequence: "synonymous_variant"), .synonymous)
+    }
+
+    func testVariantImpactFromCSQ_SpliceRegion() {
+        XCTAssertEqual(VariantImpact.fromCSQ(impact: "LOW", consequence: "splice_region_variant"), .spliceRegion)
+    }
+
+    func testVariantImpactFromCSQ_CompoundPrefersMostDamaging() {
+        XCTAssertEqual(VariantImpact.fromCSQ(impact: "HIGH", consequence: "frameshift_variant&stop_gained"), .frameshift)
+    }
+
+    func testVariantImpactFromCSQ_FallbackToImpactField() {
+        XCTAssertEqual(VariantImpact.fromCSQ(impact: "HIGH", consequence: "unknown_consequence"), .nonsense)
+        XCTAssertEqual(VariantImpact.fromCSQ(impact: "MODERATE", consequence: "intron_variant"), .missense)
+        XCTAssertEqual(VariantImpact.fromCSQ(impact: "LOW", consequence: "intron_variant"), .synonymous)
+    }
+
+    func testVariantImpactFromCSQ_NilBothFields() {
+        XCTAssertEqual(VariantImpact.fromCSQ(impact: nil, consequence: nil), .unknown)
+    }
+
+    func testVariantImpactFromCSQ_ModifierImpact() {
+        XCTAssertEqual(VariantImpact.fromCSQ(impact: "MODIFIER", consequence: nil), .unknown)
+    }
+
+    // MARK: - useHaploidAFShading Codable
+
+    func testUseHaploidAFShadingRoundTrip() throws {
+        var state = SampleDisplayState()
+        state.useHaploidAFShading = true
+        let data = try JSONEncoder().encode(state)
+        let decoded = try JSONDecoder().decode(SampleDisplayState.self, from: data)
+        XCTAssertTrue(decoded.useHaploidAFShading)
+    }
+
+    func testUseHaploidAFShadingDefaultFalse() throws {
+        let json = """
+        {"sortFields":[],"filters":[],"hiddenSamples":[],"showGenotypeRows":true,"showSummaryBar":true,"rowHeight":12,"summaryBarHeight":20}
+        """
+        let decoded = try JSONDecoder().decode(SampleDisplayState.self, from: json.data(using: .utf8)!)
+        XCTAssertFalse(decoded.useHaploidAFShading)
+    }
+
+    // MARK: - VariantSite with sampleAlleleFractions
+
+    func testVariantSiteWithAlleleFractions() {
+        let site = VariantSite(
+            position: 500,
+            ref: "A",
+            alt: "G,T",
+            variantType: "SNP",
+            genotypes: ["S1": .het, "S2": .homAlt],
+            sampleAlleleFractions: ["S1": 0.35, "S2": 0.95]
+        )
+        XCTAssertEqual(site.sampleAlleleFractions["S1"], 0.35)
+        XCTAssertEqual(site.sampleAlleleFractions["S2"], 0.95)
+        XCTAssertEqual(site.alt, "G,T")
+    }
+
+    // MARK: - New Field Codable Tests
+
+    func testColorThemeNameDefault() {
+        let state = SampleDisplayState()
+        XCTAssertEqual(state.colorThemeName, "Modern")
+    }
+
+    func testSampleGutterWidthOverrideCodable() throws {
+        var state = SampleDisplayState()
+        state.sampleGutterWidthOverride = 200
+        let data = try JSONEncoder().encode(state)
+        let decoded = try JSONDecoder().decode(SampleDisplayState.self, from: data)
+        XCTAssertEqual(decoded.sampleGutterWidthOverride, 200)
+    }
+
+    func testSampleDisplayNameOverridesCodable() throws {
+        var state = SampleDisplayState()
+        state.sampleDisplayNameOverrides = ["S1": "Patient A"]
+        let data = try JSONEncoder().encode(state)
+        let decoded = try JSONDecoder().decode(SampleDisplayState.self, from: data)
+        XCTAssertEqual(decoded.sampleDisplayNameOverrides["S1"], "Patient A")
+    }
 }

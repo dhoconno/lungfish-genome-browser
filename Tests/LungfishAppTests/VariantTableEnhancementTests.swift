@@ -216,7 +216,11 @@ final class VariantTableEnhancementTests: XCTestCase {
         let colIds = drawer.tableView.tableColumns.map(\.identifier.rawValue)
         XCTAssertTrue(colIds.contains("GTSampleColumn"))
         XCTAssertTrue(colIds.contains("GTGenotypeColumn"))
-        XCTAssertTrue(colIds.contains("GTZygosityColumn"))
+        if drawer.isHaploidOrganism {
+            XCTAssertFalse(colIds.contains("GTZygosityColumn"))
+        } else {
+            XCTAssertTrue(colIds.contains("GTZygosityColumn"))
+        }
         XCTAssertTrue(colIds.contains("GTDPColumn"))
         XCTAssertTrue(colIds.contains("GTGQColumn"))
         XCTAssertTrue(colIds.contains("GTABColumn"))

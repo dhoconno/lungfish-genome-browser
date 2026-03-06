@@ -171,15 +171,17 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
 
         // Schedule delayed redraw for layout timing
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            guard let self else { return }
+            MainActor.assumeIsolated {
+                guard let self else { return }
 
-            if let frame = self.referenceFrame, self.viewerView.bounds.width > 0 {
-                frame.pixelWidth = Int(self.viewerView.bounds.width)
+                if let frame = self.referenceFrame, self.viewerView.bounds.width > 0 {
+                    frame.pixelWidth = Int(self.viewerView.bounds.width)
+                }
+
+                self.viewerView.needsDisplay = true
+                self.enhancedRulerView.needsDisplay = true
+                self.headerView.needsDisplay = true
             }
-
-            self.viewerView.needsDisplay = true
-            self.enhancedRulerView.needsDisplay = true
-            self.headerView.needsDisplay = true
         }
 
         // Hide loading indicator

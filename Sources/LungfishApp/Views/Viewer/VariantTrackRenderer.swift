@@ -49,6 +49,29 @@ public enum VariantTrackRenderer {
     /// Separator line color at the gutter edge.
     static let gutterSeparatorColor = CGColor(red: 0.82, green: 0.82, blue: 0.82, alpha: 1.0)
 
+    /// Summary bar data area background.
+    private static let dataAreaBackgroundColor = CGColor(red: 0.95, green: 0.95, blue: 0.95, alpha: 1.0)
+
+    /// Summary bar bottom border color.
+    private static let summaryBorderColor = CGColor(red: 0.8, green: 0.8, blue: 0.8, alpha: 1.0)
+
+    /// Row separator color between samples.
+    private static let rowSeparatorColor = CGColor(red: 0.9, green: 0.9, blue: 0.9, alpha: 1.0)
+
+    /// White background for label-to-data margin.
+    private static let labelMarginColor = CGColor(red: 1, green: 1, blue: 1, alpha: 1.0)
+
+    /// Scroll indicator track background.
+    private static let scrollTrackColor = CGColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 0.05)
+
+    /// Scroll indicator thumb color.
+    private static let scrollThumbColor = CGColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 0.25)
+
+    /// Cached gutter width state to avoid per-frame text measurement.
+    private static var _cachedGutterSamples: [String]?
+    private static var _cachedGutterRowHeight: CGFloat = 0
+    private static var _cachedGutterWidth: CGFloat = 0
+
     // MARK: - Color Palette
 
     /// Converts a ThemeColor to CGColor.
@@ -113,6 +136,12 @@ public enum VariantTrackRenderer {
             return max(40, min(400, override))
         }
         guard !samples.isEmpty else { return sampleLabelFallbackWidth }
+
+        // Return cached value when samples and row height haven't changed
+        if samples == _cachedGutterSamples && rowHeight == _cachedGutterRowHeight {
+            return _cachedGutterWidth
+        }
+
         let fontSize = max(7, min(rowHeight - 2, 12))
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: fontSize, weight: .regular),
@@ -123,8 +152,13 @@ public enum VariantTrackRenderer {
             let width = (label as NSString).size(withAttributes: attrs).width
             if width > maxWidth { maxWidth = width }
         }
-        // Small left/right breathing room for text rendering.
-        return max(24, ceil(maxWidth) + 8)
+        let result = max(24, ceil(maxWidth) + 8)
+
+        _cachedGutterSamples = samples
+        _cachedGutterRowHeight = rowHeight
+        _cachedGutterWidth = result
+
+        return result
     }
 
     // MARK: - Summary Bar Rendering
@@ -170,7 +204,7 @@ public enum VariantTrackRenderer {
         }
 
         // Data area background
-        context.setFillColor(CGColor(red: 0.95, green: 0.95, blue: 0.95, alpha: 1.0))
+        context.setFillColor(dataAreaBackgroundColor)
         context.fill(CGRect(x: inset, y: yOffset, width: frame.dataPixelWidth, height: barHeight))
 
         // Bin variants into per-pixel buckets in the data area
@@ -234,7 +268,7 @@ public enum VariantTrackRenderer {
         }
 
         // Bottom border line
-        context.setStrokeColor(CGColor(red: 0.8, green: 0.8, blue: 0.8, alpha: 1.0))
+        context.setStrokeColor(summaryBorderColor)
         context.setLineWidth(0.5)
         context.move(to: CGPoint(x: 0, y: barBottom))
         context.addLine(to: CGPoint(x: CGFloat(pixelWidth), y: barBottom))
@@ -330,12 +364,19 @@ public enum VariantTrackRenderer {
 
         guard firstVisibleRow <= lastVisibleRow else { return }
 
-        // Paragraph style for truncating sample labels to gutter width
+        // Paragraph style and font attrs hoisted outside the per-row loop to avoid
+        // allocating NSFont + NSDictionary for each of the 451+ sample rows.
         let truncationStyle: NSParagraphStyle = {
             let style = NSMutableParagraphStyle()
             style.lineBreakMode = .byTruncatingTail
             return style
         }()
+        let fontSize = max(7, min(rowH - 2, 12))
+        let labelAttrs: [NSAttributedString.Key: Any] = showLabels ? [
+            .font: NSFont.systemFont(ofSize: fontSize, weight: .regular),
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: truncationStyle,
+        ] : [:]
 
         // Draw genotype cells for each visible sample
         for sampleIdx in firstVisibleRow...lastVisibleRow {
@@ -373,17 +414,11 @@ public enum VariantTrackRenderer {
             // Sample name label drawn ON TOP of genotype cells (when rows are tall enough)
             if showLabels {
                 let label = (sampleDisplayNames[sampleName] ?? sampleName) as NSString
-                let fontSize = max(7, min(rowH - 2, 12))
-                let labelAttrs: [NSAttributedString.Key: Any] = [
-                    .font: NSFont.systemFont(ofSize: fontSize, weight: .regular),
-                    .foregroundColor: NSColor.labelColor,
-                    .paragraphStyle: truncationStyle,
-                ]
                 // Fully opaque gutter background to cover any variant cells beneath
                 context.setFillColor(VariantTrackRenderer.gutterBackgroundColor)
                 context.fill(CGRect(x: 0, y: rowY, width: labelGutterWidth, height: rowH))
                 // Opaque margin between labels and data
-                context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1.0))
+                context.setFillColor(labelMarginColor)
                 context.fill(CGRect(x: labelGutterWidth, y: rowY, width: sampleLabelToDataMargin, height: rowH))
                 // Vertical separator
                 context.setStrokeColor(VariantTrackRenderer.gutterSeparatorColor)
@@ -399,7 +434,7 @@ public enum VariantTrackRenderer {
 
             // Row separator when rows are tall enough
             if rowH >= 4 && sampleIdx < totalRows - 1 {
-                context.setStrokeColor(CGColor(red: 0.9, green: 0.9, blue: 0.9, alpha: 1.0))
+                context.setStrokeColor(rowSeparatorColor)
                 context.setLineWidth(0.5)
                 let sepY = rowY + rowH
                 context.move(to: CGPoint(x: 0, y: sepY))
@@ -434,7 +469,7 @@ public enum VariantTrackRenderer {
     ) {
         // Track background
         let trackRect = CGRect(x: x, y: yOffset, width: scrollIndicatorWidth, height: availableHeight)
-        context.setFillColor(CGColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 0.05))
+        context.setFillColor(scrollTrackColor)
         context.fill(trackRect)
 
         // Thumb
@@ -451,25 +486,54 @@ public enum VariantTrackRenderer {
             width: scrollIndicatorWidth - 2,
             height: thumbHeight
         )
-        context.setFillColor(CGColor(red: 0.0, green: 0.0, blue: 0.0, alpha: 0.25))
+        context.setFillColor(scrollThumbColor)
         context.fill(thumbRect)
     }
 
     // MARK: - Color Helpers
 
+    /// Pre-computed haploid AF color lookup table (256 quantized entries).
+    private static let haploidAFColorLUT: [CGColor] = {
+        typealias RGBStop = (position: CGFloat, color: (r: CGFloat, g: CGFloat, b: CGFloat))
+        let stops: [RGBStop] = [
+            (0.00, (0.97, 0.97, 0.995)),
+            (0.15, (0.80, 0.86, 1.00)),
+            (0.45, (0.57, 0.50, 0.94)),
+            (0.75, (0.35, 0.29, 0.73)),
+            (1.00, (0.08, 0.08, 0.10)),
+        ]
+        return (0..<256).map { i in
+            let clamped = CGFloat(i) / 255.0
+            var r: CGFloat = stops[0].color.r
+            var g: CGFloat = stops[0].color.g
+            var b: CGFloat = stops[0].color.b
+            for idx in 1..<stops.count {
+                let left = stops[idx - 1]
+                let right = stops[idx]
+                guard clamped <= right.position else { continue }
+                let span = max(0.0001, right.position - left.position)
+                let t = (clamped - left.position) / span
+                r = left.color.r + (right.color.r - left.color.r) * t
+                g = left.color.g + (right.color.g - left.color.g) * t
+                b = left.color.b + (right.color.b - left.color.b) * t
+                break
+            }
+            return CGColor(red: r, green: g, blue: b, alpha: 1.0)
+        }
+    }()
+
+    /// Maps haploid alternate allele fraction to a color ramp:
+    /// AF≈0 -> near white, intermediate -> blue/purple, AF≈1 -> near black.
+    /// Uses a 256-entry LUT to avoid per-call CGColor allocation.
+    static func haploidAFColor(_ af: Double) -> CGColor {
+        let idx = max(0, min(255, Int((max(0.0, min(1.0, af)) * 255).rounded())))
+        return haploidAFColorLUT[idx]
+    }
+
     /// Returns the CGColor for a genotype call using the given theme.
     private static func colorForCall(_ call: GenotypeDisplayCall, theme: VariantColorTheme, haploidAF: Double? = nil) -> CGColor {
         if let af = haploidAF, call == .het || call == .homAlt {
-            let clamped = max(0.0, min(1.0, af))
-            // Keep low-AF alternates subtle; make >=5% clearly visible and darken with AF.
-            let alpha: CGFloat
-            if clamped < 0.05 {
-                alpha = 0.08
-            } else {
-                alpha = CGFloat(0.35 + ((clamped - 0.05) / 0.95) * 0.65)
-            }
-            return cgColor(from: call.themeColor(from: theme)).copy(alpha: alpha)
-                ?? cgColor(from: call.themeColor(from: theme))
+            return haploidAFColor(af)
         }
         return cgColor(from: call.themeColor(from: theme))
     }

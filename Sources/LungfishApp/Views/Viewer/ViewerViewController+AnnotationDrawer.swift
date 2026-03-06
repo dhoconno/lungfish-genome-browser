@@ -144,10 +144,11 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
     public func annotationDrawer(_ drawer: AnnotationTableDrawerView, didSelectAnnotation result: AnnotationSearchIndex.SearchResult) {
         annotDrawerLogger.info("annotationDrawer: Navigating to '\(result.name, privacy: .public)' type=\(result.type, privacy: .public) at \(result.chromosome, privacy: .public):\(result.start)-\(result.end) strand=\(result.strand, privacy: .public)")
 
-        let buffer = 1000 // 1kb buffer on each side
         let navigationChromosome = result.isVariant
             ? viewerView.referenceChromosomeName(forVariantDBChromosome: result.chromosome)
             : result.chromosome
+        let annotationSpan = max(1, result.end - result.start)
+        let desiredSpan = max(annotationSpan + 2_000, 3_000)
 
         // Clear any previous sequence fetch error so the new region can be fetched
         viewerView.clearSequenceFetchError()
@@ -160,19 +161,69 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         if let provider = currentBundleDataProvider,
            let chromInfo = provider.chromosomeInfo(named: navigationChromosome) {
             annotDrawerLogger.info("annotationDrawer: Using bundle provider, chromLength=\(chromInfo.length)")
+            let clampedWindow = centeredWindow(
+                center: (result.start + result.end) / 2,
+                span: desiredSpan,
+                chromosomeLength: Int(chromInfo.length)
+            )
             navigateToChromosomeAndPosition(
                 chromosome: chromInfo.name,
                 chromosomeLength: Int(chromInfo.length),
-                start: max(0, result.start - buffer),
-                end: min(Int(chromInfo.length), result.end + buffer)
+                start: clampedWindow.start,
+                end: clampedWindow.end
             )
         } else {
             annotDrawerLogger.info("annotationDrawer: No bundle provider, using navigateToPosition")
+            let seqLength = referenceFrame?.sequenceLength ?? Int.max
+            let clampedWindow = centeredWindow(
+                center: (result.start + result.end) / 2,
+                span: desiredSpan,
+                chromosomeLength: seqLength
+            )
             navigateToPosition(
                 chromosome: navigationChromosome,
-                start: max(0, result.start - buffer),
-                end: result.end + buffer
+                start: clampedWindow.start,
+                end: clampedWindow.end
             )
+        }
+
+        // Guard against transient state races where immediate redraw restores stale extents.
+        let expectedCenter = Double((result.start + result.end) / 2)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, let frame = self.referenceFrame else { return }
+                let isSameChrom = frame.chromosome == navigationChromosome
+                let currentCenter = (frame.start + frame.end) / 2.0
+                let isCentered = abs(currentCenter - expectedCenter) <= 2.0
+                guard !(isSameChrom && isCentered) else { return }
+
+                if let provider = self.currentBundleDataProvider,
+                   let chromInfo = provider.chromosomeInfo(named: navigationChromosome) {
+                    let clampedWindow = self.centeredWindow(
+                        center: Int(expectedCenter.rounded()),
+                        span: desiredSpan,
+                        chromosomeLength: Int(chromInfo.length)
+                    )
+                    self.navigateToChromosomeAndPosition(
+                        chromosome: chromInfo.name,
+                        chromosomeLength: Int(chromInfo.length),
+                        start: clampedWindow.start,
+                        end: clampedWindow.end
+                    )
+                } else {
+                    let seqLength = self.referenceFrame?.sequenceLength ?? Int.max
+                    let clampedWindow = self.centeredWindow(
+                        center: Int(expectedCenter.rounded()),
+                        span: desiredSpan,
+                        chromosomeLength: seqLength
+                    )
+                    _ = self.navigateToPosition(
+                        chromosome: navigationChromosome,
+                        start: clampedWindow.start,
+                        end: clampedWindow.end
+                    )
+                }
+            }
         }
 
         // Look up the full annotation record from SQLite (preserves BED12 exon blocks).
@@ -207,6 +258,21 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         viewerView.setNeedsDisplay(viewerView.bounds)
     }
 
+    private func centeredWindow(center: Int, span: Int, chromosomeLength: Int) -> (start: Int, end: Int) {
+        let clampedLength = max(1, chromosomeLength)
+        let clampedSpan = max(1, min(clampedLength, span))
+        let half = clampedSpan / 2
+        var start = max(0, center - half)
+        var end = min(clampedLength, start + clampedSpan)
+        if end - start < clampedSpan {
+            start = max(0, end - clampedSpan)
+        }
+        if end <= start {
+            end = min(clampedLength, start + 1)
+        }
+        return (start, end)
+    }
+
     public func annotationDrawer(_ drawer: AnnotationTableDrawerView, didDeleteVariants count: Int) {
         annotDrawerLogger.info("annotationDrawer: \(count) variants deleted, clearing cached variants and refreshing")
         syncVariantCountsToManifest()
@@ -220,6 +286,23 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         viewerView.setNeedsDisplay(viewerView.bounds)
     }
 
+    public func annotationDrawer(
+        _ drawer: AnnotationTableDrawerView,
+        fallbackConsequenceFor result: AnnotationSearchIndex.SearchResult
+    ) -> (consequence: String?, aaChange: String?) {
+        guard result.isVariant,
+              let ref = result.ref, !ref.isEmpty,
+              let alt = result.alt, !alt.isEmpty else {
+            return (nil, nil)
+        }
+        return viewerView.fallbackConsequenceForTableVariant(
+            chromosome: result.chromosome,
+            position: result.start,
+            ref: ref,
+            alt: alt
+        )
+    }
+
     public func annotationDrawerDidDragDivider(_ drawer: AnnotationTableDrawerView, deltaY: CGFloat) {
         guard let heightConstraint = annotationDrawerHeightConstraint else { return }
         let maxHeight = view.bounds.height * 0.7
@@ -230,9 +313,11 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         // Defer UserDefaults write — mouseDragged fires at 60+ Hz
         _drawerHeightSaveWorkItem?.cancel()
         let item = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            let height = self.annotationDrawerHeightConstraint?.constant ?? 250
-            UserDefaults.standard.set(Double(height), forKey: "annotationDrawerHeight")
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let height = self.annotationDrawerHeightConstraint?.constant ?? 250
+                UserDefaults.standard.set(Double(height), forKey: "annotationDrawerHeight")
+            }
         }
         _drawerHeightSaveWorkItem = item
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)
@@ -361,6 +446,11 @@ extension ViewerViewController {
         get { objc_getAssociatedObject(self, &Self.annotationSearchIndexKey) as? AnnotationSearchIndex }
         set {
             objc_setAssociatedObject(self, &Self.annotationSearchIndexKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            if let index = newValue {
+                // Apply haploid AF shading immediately on index attach so first render
+                // after import uses the correct AF color ramp without requiring redraw.
+                viewerView?.sampleDisplayState.useHaploidAFShading = index.isLikelyHaploidOrganism
+            }
             // If the drawer exists and index is ready, populate it
             if let index = newValue, !index.isBuilding, let drawer = annotationDrawerView {
                 drawer.setSearchIndex(index)

@@ -102,11 +102,14 @@ extension AnnotationTableDrawerView {
         }
 
         for (identifier, title, width, minWidth, sortKey) in Self.genotypeColumnDefs {
+            if isHaploidOrganism, identifier == Self.gtZygosityColumn {
+                continue
+            }
             let col = NSTableColumn(identifier: identifier)
             col.title = title
             col.width = width
             col.minWidth = minWidth
-            col.resizingMask = .autoresizingMask
+            col.resizingMask = [.autoresizingMask, .userResizingMask]
             col.sortDescriptorPrototype = NSSortDescriptor(
                 key: sortKey, ascending: true,
                 selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
@@ -150,7 +153,7 @@ extension AnnotationTableDrawerView {
         col.headerToolTip = info.description.isEmpty ? info.key : "\(info.description) (\(info.key))"
         col.width = max(80, CGFloat(info.key.count + 2) * 7)
         col.minWidth = 40
-        col.resizingMask = .autoresizingMask
+        col.resizingMask = [.autoresizingMask, .userResizingMask]
         col.sortDescriptorPrototype = NSSortDescriptor(
             key: "gtinfo_\(info.key)", ascending: true,
             selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
@@ -483,6 +486,9 @@ extension AnnotationTableDrawerView {
         let tableColumn = tableView.tableColumns[column]
         guard let key = genotypeFilterKey(forColumnIdentifier: tableColumn.identifier.rawValue) else { return }
         let displayName = tableColumn.title.isEmpty ? "Column" : tableColumn.title
+
+        addColumnSizingMenuItems(menu, tableColumn: tableColumn)
+        menu.addItem(NSMenuItem.separator())
 
         // Sort options
         let sortAscItem = NSMenuItem(
