@@ -15,11 +15,8 @@ if let helperExitCode = VCFImportHelper.runIfRequested(arguments: CommandLine.ar
 // cause delayed menu-bar activation and unstable full-screen behavior.
 let app = NSApplication.shared
 
-// Set the application icon (SPM doesn't process Info.plist CFBundleIconFile)
-if let icnsURL = Bundle.module.url(forResource: "AppIcon", withExtension: "icns"),
-   let icon = NSImage(contentsOf: icnsURL) {
-    app.applicationIconImage = icon
-}
+// Set the application icon from LungfishApp's bundled resources
+app.applicationIconImage = AppIcon.image
 
 let delegate = AppDelegate()
 app.setActivationPolicy(.regular)
