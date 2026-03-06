@@ -224,6 +224,8 @@ public actor PathoplexusService: DatabaseService {
                 host: hostDisplay,
                 geoLocation: meta.geoLocCountry,
                 collectionDate: meta.sampleCollectionDate,
+                completeness: meta.dataUseTerms,  // Reuse completeness field for data use terms
+                isolateName: meta.bestINSDCAccession,  // Store INSDC accession for display
                 sourceDatabase: sourceDB,
                 pangolinClassification: meta.lineage
             )

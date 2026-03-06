@@ -16,6 +16,86 @@ private let logger = Logger(subsystem: "com.lungfish.browser", category: "Databa
 
 /// Executes a MainActor-isolated block on the main thread in a way that works during modal sessions.
 /// Uses Timer with commonModes run loop mode to ensure execution during modal sheet display.
+/// Appends Pathoplexus-specific metadata to a bundle's manifest.
+///
+/// Reads the existing manifest, creates a new one with appended Pathoplexus metadata group,
+/// and writes it back. This preserves all GenBank metadata while adding provenance info.
+private func appendPathoplexusMetadata(_ meta: PathoplexusMetadata, toBundleAt bundleURL: URL) {
+    do {
+        let manifestURL = bundleURL.appendingPathComponent("manifest.json")
+        guard FileManager.default.fileExists(atPath: manifestURL.path) else { return }
+
+        let data = try Data(contentsOf: manifestURL)
+        let existing = try JSONDecoder().decode(BundleManifest.self, from: data)
+
+        // Build Pathoplexus metadata group
+        var items: [MetadataItem] = []
+        items.append(MetadataItem(label: "Pathoplexus Accession", value: meta.accession))
+        if let version = meta.accessionVersion {
+            items.append(MetadataItem(label: "Accession Version", value: version))
+        }
+        if let insdc = meta.bestINSDCAccession {
+            items.append(MetadataItem(label: "INSDC Accession", value: insdc))
+        }
+        if let organism = meta.organism {
+            items.append(MetadataItem(label: "Organism", value: organism))
+        }
+        if let country = meta.geoLocCountry {
+            items.append(MetadataItem(label: "Country", value: country))
+        }
+        if let date = meta.sampleCollectionDate {
+            items.append(MetadataItem(label: "Collection Date", value: date))
+        }
+        if let host = meta.hostNameScientific {
+            items.append(MetadataItem(label: "Host (Scientific)", value: host))
+        }
+        if let host = meta.hostNameCommon {
+            items.append(MetadataItem(label: "Host (Common)", value: host))
+        }
+        if let clade = meta.clade {
+            items.append(MetadataItem(label: "Clade", value: clade))
+        }
+        if let lineage = meta.lineage {
+            items.append(MetadataItem(label: "Lineage", value: lineage))
+        }
+        if let lab = meta.submittingLab {
+            items.append(MetadataItem(label: "Submitting Lab", value: lab))
+        }
+        if let authors = meta.authors {
+            items.append(MetadataItem(label: "Authors", value: authors))
+        }
+        if let terms = meta.dataUseTerms {
+            items.append(MetadataItem(label: "Data Use Terms", value: terms))
+        }
+
+        let ppGroup = MetadataGroup(name: "Pathoplexus", items: items)
+        var groups = existing.metadata ?? []
+        groups.append(ppGroup)
+
+        // Create updated manifest with Pathoplexus metadata appended
+        let updated = BundleManifest(
+            formatVersion: existing.formatVersion,
+            name: existing.name,
+            identifier: existing.identifier,
+            description: existing.description,
+            createdDate: existing.createdDate,
+            modifiedDate: Date(),
+            source: existing.source,
+            genome: existing.genome,
+            annotations: existing.annotations,
+            variants: existing.variants,
+            tracks: existing.tracks,
+            alignments: existing.alignments,
+            metadata: groups
+        )
+
+        try updated.save(to: bundleURL)
+        logger.info("appendPathoplexusMetadata: Added Pathoplexus metadata group to \(bundleURL.lastPathComponent)")
+    } catch {
+        logger.error("appendPathoplexusMetadata: Failed to append metadata: \(error)")
+    }
+}
+
 private func performOnMainRunLoop(_ block: @escaping @MainActor @Sendable () -> Void) {
     // Create a timer that fires immediately and runs in common modes (works during modals)
     let timer = Timer(timeInterval: 0, repeats: false) { _ in
@@ -531,6 +611,9 @@ public class DatabaseBrowserViewModel: ObservableObject {
     /// Data use terms filter for Pathoplexus
     @Published var pathoplexusDataUseTerms: DataUseTerms?
 
+    /// Filter to only show records with INSDC accessions (for GenBank retrieval)
+    @Published var pathoplexusINSDCOnly: Bool = false
+
     /// Collection date from for Pathoplexus
     @Published var pathoplexusDateFrom: String = ""
 
@@ -568,6 +651,7 @@ public class DatabaseBrowserViewModel: ObservableObject {
         if pathoplexusDataUseTerms != nil { count += 1 }
         if !pathoplexusDateFrom.isEmpty || !pathoplexusDateTo.isEmpty { count += 1 }
         if !minLength.isEmpty || !maxLength.isEmpty { count += 1 }
+        if pathoplexusINSDCOnly { count += 1 }
         return count
     }
 
@@ -582,6 +666,7 @@ public class DatabaseBrowserViewModel: ObservableObject {
         pathoplexusDataUseTerms = nil
         pathoplexusDateFrom = ""
         pathoplexusDateTo = ""
+        pathoplexusINSDCOnly = false
         minLength = ""
         maxLength = ""
     }
@@ -727,8 +812,9 @@ public class DatabaseBrowserViewModel: ObservableObject {
         let capturedVirusReleasedSince = virusReleasedSinceFilter.trimmingCharacters(in: .whitespaces)
         let capturedVirusAnnotatedOnly = virusAnnotatedOnly
 
-        // Capture Pathoplexus-specific filters
+        // Capture Pathoplexus-specific filters (use raw searchText, not NCBI-formatted term)
         let capturedPpOrganism = pathoplexusOrganism
+        let capturedPpSearchText = searchText.trimmingCharacters(in: .whitespaces)
         let capturedPpCountry = pathoplexusCountryFilter.trimmingCharacters(in: .whitespaces)
         let capturedPpClade = pathoplexusCladeFilter.trimmingCharacters(in: .whitespaces)
         let capturedPpLineage = pathoplexusLineageFilter.trimmingCharacters(in: .whitespaces)
@@ -738,6 +824,9 @@ public class DatabaseBrowserViewModel: ObservableObject {
         let capturedPpDataUseTerms = pathoplexusDataUseTerms
         let capturedPpDateFrom = pathoplexusDateFrom.trimmingCharacters(in: .whitespaces)
         let capturedPpDateTo = pathoplexusDateTo.trimmingCharacters(in: .whitespaces)
+        let capturedPpMinLength = Int(minLength)
+        let capturedPpMaxLength = Int(maxLength)
+        let capturedPpINSDCOnly = pathoplexusINSDCOnly
 
         // Capture services as they are actors (safe to use across isolation boundaries)
         let ncbi = ncbiService
@@ -934,13 +1023,15 @@ public class DatabaseBrowserViewModel: ObservableObject {
                     dateFormatter.dateFormat = "yyyy-MM-dd"
 
                     var ppFilters = PathoplexusFilters()
+                    // Default to latest version only to avoid duplicates
+                    ppFilters.versionStatus = .latestVersion
                     if !capturedPpCountry.isEmpty { ppFilters.geoLocCountry = capturedPpCountry }
                     if !capturedPpClade.isEmpty { ppFilters.clade = capturedPpClade }
                     if !capturedPpLineage.isEmpty { ppFilters.lineage = capturedPpLineage }
                     if !capturedPpHost.isEmpty { ppFilters.hostNameScientific = capturedPpHost }
                     ppFilters.dataUseTerms = capturedPpDataUseTerms
-                    if let minLen = query.minLength, minLen > 0 { ppFilters.lengthFrom = minLen }
-                    if let maxLen = query.maxLength, maxLen > 0 { ppFilters.lengthTo = maxLen }
+                    if let minLen = capturedPpMinLength, minLen > 0 { ppFilters.lengthFrom = minLen }
+                    if let maxLen = capturedPpMaxLength, maxLen > 0 { ppFilters.lengthTo = maxLen }
 
                     if !capturedPpNucMutations.isEmpty {
                         ppFilters.nucleotideMutations = capturedPpNucMutations.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
@@ -956,20 +1047,33 @@ public class DatabaseBrowserViewModel: ObservableObject {
                         ppFilters.sampleCollectionDateTo = dateFormatter.date(from: capturedPpDateTo)
                     }
 
-                    // If the search text looks like an accession, filter by it
-                    let ppSearchText = query.term.trimmingCharacters(in: .whitespaces)
-                    if !ppSearchText.isEmpty {
-                        ppFilters.accession = ppSearchText
+                    // Use raw search text (not NCBI-formatted term) for accession filter
+                    if !capturedPpSearchText.isEmpty {
+                        ppFilters.accession = capturedPpSearchText
                     }
 
                     let pathoplexusService = PathoplexusService()
-                    searchResults = try await pathoplexusService.search(
+                    var ppResults = try await pathoplexusService.search(
                         organism: ppOrganism,
                         filters: ppFilters,
                         limit: query.limit,
                         offset: query.offset
                     )
-                    logger.info("performSearch: Pathoplexus returned \(searchResults.totalCount) total, \(searchResults.records.count) records")
+                    logger.info("performSearch: Pathoplexus returned \(ppResults.totalCount) total, \(ppResults.records.count) records")
+
+                    // Client-side filter: INSDC-only
+                    if capturedPpINSDCOnly {
+                        let filtered = ppResults.records.filter { $0.sourceDatabase == "INSDC" }
+                        ppResults = SearchResults(
+                            totalCount: filtered.count,
+                            records: filtered,
+                            hasMore: false,
+                            nextCursor: nil
+                        )
+                        logger.info("performSearch: INSDC-only filter reduced to \(filtered.count) records")
+                    }
+
+                    searchResults = ppResults
 
                 default:
                     throw DatabaseServiceError.invalidQuery(reason: "Unsupported database: \(currentSource)")
@@ -1384,6 +1488,12 @@ public class DatabaseBrowserViewModel: ObservableObject {
                                     )
                                 }
                             }
+
+                            // Append Pathoplexus metadata to the bundle manifest
+                            if let meta = ppMeta {
+                                appendPathoplexusMetadata(meta, toBundleAt: bundleURL)
+                            }
+
                             fileURL = bundleURL
                             logger.info("performBatchDownload: Built GenBank bundle from Pathoplexus INSDC at \(bundleURL.path, privacy: .public)")
                         } else {
@@ -1637,6 +1747,14 @@ public struct DatabaseBrowserView: View {
                                     } else {
                                         viewModel.pathoplexusOrganism = organism
                                     }
+                                    // Clear results and selection when switching organisms
+                                    viewModel.results = []
+                                    viewModel.selectedRecords = []
+                                    viewModel.selectedRecord = nil
+                                    viewModel.totalResultCount = 0
+                                    viewModel.hasMoreResults = false
+                                    viewModel.searchPhase = .idle
+                                    viewModel.errorMessage = nil
                                 }
                             )
                         }
@@ -2095,7 +2213,7 @@ public struct DatabaseBrowserView: View {
                 Spacer()
             }
 
-            // Data use terms
+            // Data use terms and INSDC filter
             HStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
                     Label("Data Use Terms", systemImage: "lock.shield")
@@ -2110,6 +2228,11 @@ public struct DatabaseBrowserView: View {
                     .pickerStyle(.menu)
                     .frame(width: 180)
                 }
+
+                Toggle("INSDC Only", isOn: $viewModel.pathoplexusINSDCOnly)
+                    .font(.caption)
+                    .toggleStyle(.checkbox)
+                    .help("Show only records with INSDC accessions (linked to GenBank/ENA for sequence + annotations)")
 
                 Spacer()
             }
@@ -2799,7 +2922,14 @@ struct SearchResultRowWithCheckbox: View {
                             .font(.caption2.bold())
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
-                            .background(db == "RefSeq" ? Color.blue.opacity(0.15) : Color.gray.opacity(0.15))
+                            .background(
+                                db == "RefSeq" ? Color.blue.opacity(0.15) :
+                                db == "INSDC" ? Color.green.opacity(0.15) :
+                                Color.gray.opacity(0.15)
+                            )
+                            .foregroundColor(
+                                db == "INSDC" ? .green : .primary
+                            )
                             .cornerRadius(3)
                     }
 
@@ -2848,12 +2978,25 @@ struct SearchResultRowWithCheckbox: View {
                                 .font(.caption)
                                 .foregroundColor(.blue)
                         }
+                        if let isolate = record.isolateName {
+                            if record.source == .pathoplexus {
+                                // For Pathoplexus, isolateName holds the INSDC accession
+                                Label(isolate, systemImage: "link")
+                                    .font(.caption.monospaced())
+                                    .foregroundColor(.teal)
+                            } else {
+                                Text(isolate)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
                         if let completeness = record.completeness {
                             Text(completeness)
                                 .font(.caption2.bold())
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
-                                .background(completeness == "COMPLETE" ? Color.green.opacity(0.2) : Color.yellow.opacity(0.2))
+                                .background(completenessColor(completeness))
                                 .cornerRadius(3)
                         }
                         if let pangolin = record.pangolinClassification {
@@ -2886,6 +3029,16 @@ struct SearchResultRowWithCheckbox: View {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         return formatter.string(from: date)
+    }
+
+    private func completenessColor(_ value: String) -> Color {
+        switch value.uppercased() {
+        case "COMPLETE": return Color.green.opacity(0.2)
+        case "OPEN": return Color.green.opacity(0.2)
+        case "RESTRICTED": return Color.orange.opacity(0.2)
+        case "PARTIAL": return Color.yellow.opacity(0.2)
+        default: return Color.gray.opacity(0.15)
+        }
     }
 }
 
