@@ -87,7 +87,7 @@ public struct DocumentSection: View {
     @State private var isSRAMetadataExpanded = true
     @State private var isENAMetadataExpanded = true
     @State private var expandedMetadataGroups: Set<String> = []
-    @State private var trackedManifestName: String?
+    @State private var trackedManifestIdentifier: String?
 
     public init(viewModel: DocumentSectionViewModel) {
         self.viewModel = viewModel
@@ -96,14 +96,14 @@ public struct DocumentSection: View {
     public var body: some View {
         if let manifest = viewModel.manifest {
             bundleContent(manifest)
-                .onChange(of: manifest.name) { _, newName in
+                .onChange(of: manifest.modifiedDate) { _, _ in
                     expandAllSections(manifest: manifest)
-                    trackedManifestName = newName
+                    trackedManifestIdentifier = manifest.identifier
                 }
                 .onAppear {
-                    if trackedManifestName != manifest.name {
+                    if trackedManifestIdentifier != manifest.identifier {
                         expandAllSections(manifest: manifest)
-                        trackedManifestName = manifest.name
+                        trackedManifestIdentifier = manifest.identifier
                     }
                 }
         } else if let stats = viewModel.fastqStatistics {
@@ -273,7 +273,7 @@ public struct DocumentSection: View {
         DisclosureGroup(isExpanded: metadataGroupBinding(for: group.name)) {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(group.items) { item in
-                    metadataRow(label: item.label, value: item.value)
+                    metadataRow(label: item.label, value: item.value, url: item.url)
                 }
             }
             .padding(.top, 4)
@@ -526,18 +526,24 @@ public struct DocumentSection: View {
     // MARK: - Metadata Row
 
     @ViewBuilder
-    private func metadataRow(label: String, value: String) -> some View {
+    private func metadataRow(label: String, value: String, url: String? = nil) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text(label)
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .frame(width: 100, alignment: .trailing)
 
-            Text(value)
-                .font(.callout)
-                .foregroundStyle(.primary)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if let urlString = url, let linkURL = URL(string: urlString) {
+                Link(value, destination: linkURL)
+                    .font(.callout)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(value)
+                    .font(.callout)
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 
@@ -564,19 +570,6 @@ public struct DocumentSection: View {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         return formatter.string(from: NSNumber(value: count)) ?? "\(count)"
-    }
-
-    /// Formats a file size in bytes to a human-readable string.
-    private func formatFileSize(_ bytes: Int64) -> String {
-        if bytes >= 1_073_741_824 {
-            return String(format: "%.1f GB", Double(bytes) / 1_073_741_824.0)
-        } else if bytes >= 1_048_576 {
-            return String(format: "%.1f MB", Double(bytes) / 1_048_576.0)
-        } else if bytes >= 1_024 {
-            return String(format: "%.1f KB", Double(bytes) / 1_024.0)
-        } else {
-            return "\(bytes) bytes"
-        }
     }
 
     /// Formats a date for display.

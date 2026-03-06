@@ -91,45 +91,72 @@ public actor PathoplexusService: DatabaseService {
         accession: String
     ) async throws -> PathoplexusMetadata? {
         var filters = PathoplexusFilters()
-        filters.accession = accession
+        filters.accession = accession.trimmingCharacters(in: .whitespacesAndNewlines)
         let results = try await fetchMetadata(organism: organism, filters: filters, limit: 1)
         return results.first
     }
 
     public func fetch(accession: String) async throws -> DatabaseRecord {
-        // Parse organism from accession if possible (e.g., "LOC_MPOX_...")
-        let organism = parseOrganismFromAccession(accession) ?? "mpox"
+        try await fetch(accession: accession, organism: nil)
+    }
+
+    public func fetch(accession: String, organism: String?) async throws -> DatabaseRecord {
+        let normalizedAccession = accession.trimmingCharacters(in: .whitespacesAndNewlines)
+        let organism = organism ?? parseOrganismFromAccession(normalizedAccession) ?? "mpox"
 
         var filters = PathoplexusFilters()
-        filters.accession = accession
+        filters.accession = normalizedAccession
 
         // Get metadata
         let metadata = try await fetchMetadata(organism: organism, filters: filters)
 
         guard let meta = metadata.first else {
-            throw DatabaseServiceError.notFound(accession: accession)
+            throw DatabaseServiceError.notFound(accession: normalizedAccession)
         }
 
-        // Get sequence
-        let sequenceFilters = filters
-        let sequences = try await fetchUnalignedSequencesRaw(organism: organism, filters: sequenceFilters)
+        // Get sequence, trying a few accession forms for robustness.
+        // Some entries are keyed by accession base while others may require
+        // the accession version string.
+        var accessionCandidates: [String] = [normalizedAccession]
+        let metaAcc = meta.accession.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !metaAcc.isEmpty {
+            accessionCandidates.append(metaAcc)
+        }
+        if let versionAcc = meta.accessionVersion?.trimmingCharacters(in: .whitespacesAndNewlines), !versionAcc.isEmpty {
+            accessionCandidates.append(versionAcc)
+        }
+        // De-duplicate while preserving order.
+        var seenCandidates = Set<String>()
+        accessionCandidates = accessionCandidates.filter { seenCandidates.insert($0).inserted }
 
-        // Parse FASTA — use only the first record to avoid chimeric sequences
-        // from segmented viruses (e.g., CCHF with S, M, L segments)
-        let records = parseFASTA(sequences)
-        let sequence = records.first?.sequence ?? ""
+        var sequence = ""
+        for candidate in accessionCandidates {
+            var sequenceFilters = filters
+            sequenceFilters.accession = candidate
+            let fastaText = try await fetchUnalignedSequencesRaw(organism: organism, filters: sequenceFilters)
+            let fastaRecords = parseSequenceRecords(fastaText)
+            if let first = fastaRecords.first, !first.sequence.isEmpty {
+                sequence = first.sequence
+                break
+            }
+        }
+        guard !sequence.isEmpty else {
+            throw DatabaseServiceError.parseError(
+                message: "No nucleotide sequence available for \(normalizedAccession) (tried: \(accessionCandidates.joined(separator: ", ")))"
+            )
+        }
 
         return DatabaseRecord(
-            id: accession,
-            accession: meta.accession,
+            id: normalizedAccession,
+            accession: meta.accession.trimmingCharacters(in: .whitespacesAndNewlines),
             version: meta.accessionVersion,
-            title: "\(meta.organism ?? organism) sequence \(accession)",
+            title: "\(meta.organism ?? organism) sequence \(normalizedAccession)",
             organism: meta.organism,
             sequence: sequence,
             metadata: [
                 "geoLocCountry": meta.geoLocCountry ?? "",
                 "sampleCollectionDate": meta.sampleCollectionDate ?? "",
-                "submittingLab": meta.submittingLab ?? ""
+                "sequencedByOrganization": meta.sequencedByOrganization ?? ""
             ],
             source: .pathoplexus,
             collectionDate: meta.collectionDate,
@@ -197,6 +224,9 @@ public actor PathoplexusService: DatabaseService {
         let metadata = try await fetchMetadata(organism: organism, filters: filters, limit: limit, offset: offset)
 
         let records = metadata.map { meta in
+            let normalizedAccession = meta.accession.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalizedINSDC = meta.bestINSDCAccession?.trimmingCharacters(in: .whitespacesAndNewlines)
+
             // Build a descriptive title
             var titleParts: [String] = []
             titleParts.append(meta.organism ?? organism)
@@ -212,23 +242,24 @@ public actor PathoplexusService: DatabaseService {
             let hostDisplay: String? = meta.hostNameScientific ?? meta.hostNameCommon
 
             // Determine source database tag (INSDC vs Pathoplexus-only)
-            let sourceDB: String? = meta.hasINSDCAccession ? "INSDC" : nil
+            let sourceDB: String? = (normalizedINSDC?.isEmpty == false) ? "INSDC" : nil
 
             return SearchResultRecord(
-                id: meta.accession,
-                accession: meta.accession,
+                id: normalizedAccession,
+                accession: normalizedAccession,
                 title: title,
                 organism: meta.organism,
                 length: meta.length,
                 date: meta.collectionDate,
                 source: .pathoplexus,
                 host: hostDisplay,
-                geoLocation: meta.geoLocCountry,
+                geoLocation: meta.bestLocation ?? meta.geoLocCountry,
                 collectionDate: meta.sampleCollectionDate,
-                completeness: meta.dataUseTerms,  // Reuse completeness field for data use terms
-                isolateName: meta.bestINSDCAccession,  // Store INSDC accession for display
+                completeness: meta.dataUseTerms,
+                isolateName: normalizedINSDC,
                 sourceDatabase: sourceDB,
-                pangolinClassification: meta.lineage
+                pangolinClassification: meta.lineage,
+                subtype: meta.subtype
             )
         }
 
@@ -304,11 +335,12 @@ public actor PathoplexusService: DatabaseService {
         let url = buildLAPISURL(organism: organism, endpoint: endpoint, filters: filters, segment: segment)
 
         return AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     let fasta = try await self.makeRequestString(url: url)
-                    let records = self.parseFASTA(fasta)
+                    let records = self.parseSequenceRecords(fasta)
                     for record in records {
+                        try Task.checkCancellation()
                         continuation.yield(record)
                     }
                     continuation.finish()
@@ -316,6 +348,7 @@ public actor PathoplexusService: DatabaseService {
                     continuation.finish(throwing: error)
                 }
             }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
         }
     }
 
@@ -350,10 +383,10 @@ public actor PathoplexusService: DatabaseService {
             queryItems.append(URLQueryItem(name: "geoLocCountry", value: country))
         }
         if let dateFrom = filters.sampleCollectionDateFrom, !dateFrom.isEmpty {
-            queryItems.append(URLQueryItem(name: "sampleCollectionDateFrom", value: dateFrom))
+            queryItems.append(URLQueryItem(name: "sampleCollectionDateRangeLowerFrom", value: dateFrom))
         }
         if let dateTo = filters.sampleCollectionDateTo, !dateTo.isEmpty {
-            queryItems.append(URLQueryItem(name: "sampleCollectionDateTo", value: dateTo))
+            queryItems.append(URLQueryItem(name: "sampleCollectionDateRangeUpperTo", value: dateTo))
         }
         if let lengthFrom = filters.lengthFrom {
             queryItems.append(URLQueryItem(name: "lengthFrom", value: String(lengthFrom)))
@@ -402,7 +435,9 @@ public actor PathoplexusService: DatabaseService {
 
         var request = URLRequest(url: url)
         request.setValue("Lungfish Genome Explorer", forHTTPHeaderField: "User-Agent")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        // LAPIS sequence endpoints may return either FASTA text or JSON depending on
+        // server-side content negotiation; accept both formats.
+        request.setValue("*/*", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 60
 
         let (data, response) = try await httpClient.data(for: request)
@@ -483,6 +518,25 @@ public actor PathoplexusService: DatabaseService {
 
         return records
     }
+
+    private func parseSequenceRecords(_ content: String) -> [FASTARecord] {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        if trimmed.first == "[" || trimmed.first == "{" {
+            if let data = trimmed.data(using: .utf8),
+               let jsonRecords = try? JSONDecoder().decode([LAPISSequenceRecord].self, from: data) {
+                return jsonRecords.compactMap { record in
+                    let header = record.accessionVersion?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let sequence = (record.main ?? record.sequence ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !header.isEmpty, !sequence.isEmpty else { return nil }
+                    return FASTARecord(header: header, sequence: sequence.uppercased())
+                }
+            }
+        }
+
+        return parseFASTA(content)
+    }
 }
 
 // MARK: - LAPIS Response Types
@@ -497,6 +551,12 @@ struct LAPISAggregatedData: Codable {
 
 struct LAPISDetailsResponse: Codable {
     let data: [PathoplexusMetadata]
+}
+
+struct LAPISSequenceRecord: Codable {
+    let accessionVersion: String?
+    let main: String?
+    let sequence: String?
 }
 
 // MARK: - FASTA Record

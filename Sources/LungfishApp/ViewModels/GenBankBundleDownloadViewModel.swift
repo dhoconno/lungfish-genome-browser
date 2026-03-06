@@ -200,6 +200,121 @@ public final class GenBankBundleDownloadViewModel: @unchecked Sendable {
         genBankDownloadLogger.info("downloadAndBuild: Bundle complete at \(bundleURL.path, privacy: .public)")
         return bundleURL
     }
+
+    /// Builds a `.lungfishref` bundle directly from a provided nucleotide sequence.
+    ///
+    /// Useful for sources (e.g. Pathoplexus-only records) that cannot be resolved
+    /// via GenBank accession lookup but still provide sequence content.
+    public func buildBundleFromSequence(
+        accession: String,
+        title: String?,
+        sequence: String,
+        outputDirectory: URL,
+        sourceDatabase: String = "Pathoplexus",
+        sourceURL: URL? = nil,
+        notes: String? = nil,
+        progressHandler: (@Sendable (Double, String) -> Void)? = nil
+    ) async throws -> URL {
+        let fileManager = FileManager.default
+
+        progressHandler?(0.01, "Checking tools...")
+        try await validateTools()
+
+        let cleanedSequence = sequence
+            .uppercased()
+            .filter { "ACGTNURYKMSWBDHV.-".contains($0) }
+        guard !cleanedSequence.isEmpty else {
+            throw DatabaseServiceError.parseError(message: "No nucleotide sequence available for \(accession)")
+        }
+
+        let tempDir = fileManager.temporaryDirectory
+            .appendingPathComponent("lungfish-sequence-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempDir) }
+
+        progressHandler?(0.12, "Writing FASTA...")
+        let plainFASTA = tempDir.appendingPathComponent("sequence.fa")
+        var fastaContent = ">\(accession)"
+        if let title, !title.isEmpty { fastaContent += " \(title)" }
+        fastaContent += "\n"
+        var idx = cleanedSequence.startIndex
+        while idx < cleanedSequence.endIndex {
+            let endIdx = cleanedSequence.index(idx, offsetBy: 80, limitedBy: cleanedSequence.endIndex) ?? cleanedSequence.endIndex
+            fastaContent += String(cleanedSequence[idx..<endIdx]) + "\n"
+            idx = endIdx
+        }
+        try fastaContent.write(to: plainFASTA, atomically: true, encoding: .utf8)
+
+        progressHandler?(0.30, "Compressing FASTA (bgzip)...")
+        let bgzipResult = try await toolRunner.bgzipCompress(inputPath: plainFASTA, keepOriginal: false)
+        guard bgzipResult.isSuccess else {
+            throw BundleBuildError.compressionFailed(bgzipResult.combinedOutput)
+        }
+
+        let compressedFASTA = tempDir.appendingPathComponent("sequence.fa.gz")
+
+        progressHandler?(0.45, "Indexing FASTA (samtools faidx)...")
+        let faiResult = try await toolRunner.indexFASTA(fastaPath: compressedFASTA)
+        guard faiResult.isSuccess else {
+            throw BundleBuildError.indexingFailed(faiResult.combinedOutput)
+        }
+
+        let faiURL = compressedFASTA.appendingPathExtension("fai")
+        let gziURL = compressedFASTA.appendingPathExtension("gzi")
+        let chromosomes = try BundleBuildHelpers.parseFai(at: faiURL)
+        let totalLength = chromosomes.reduce(Int64(0)) { $0 + $1.length }
+
+        let bundleBaseName = BundleBuildHelpers.sanitizedFilename(accession)
+        let bundleURL = BundleBuildHelpers.makeUniqueBundleURL(
+            baseName: bundleBaseName.isEmpty ? "pathoplexus_sequence" : bundleBaseName,
+            in: outputDirectory
+        )
+        let genomeDir = bundleURL.appendingPathComponent("genome", isDirectory: true)
+        try fileManager.createDirectory(at: genomeDir, withIntermediateDirectories: true)
+
+        try fileManager.moveItem(at: compressedFASTA, to: genomeDir.appendingPathComponent("sequence.fa.gz"))
+        try fileManager.moveItem(at: faiURL, to: genomeDir.appendingPathComponent("sequence.fa.gz.fai"))
+        let hasGzi = fileManager.fileExists(atPath: gziURL.path)
+        if hasGzi {
+            try fileManager.moveItem(at: gziURL, to: genomeDir.appendingPathComponent("sequence.fa.gz.gzi"))
+        }
+
+        progressHandler?(0.78, "Writing bundle manifest...")
+        let genomeInfo = GenomeInfo(
+            path: "genome/sequence.fa.gz",
+            indexPath: "genome/sequence.fa.gz.fai",
+            gzipIndexPath: hasGzi ? "genome/sequence.fa.gz.gzi" : nil,
+            totalLength: totalLength,
+            chromosomes: chromosomes,
+            md5Checksum: nil
+        )
+
+        let sourceInfo = SourceInfo(
+            organism: title ?? accession,
+            commonName: nil,
+            taxonomyId: nil,
+            assembly: accession,
+            assemblyAccession: accession,
+            database: sourceDatabase,
+            sourceURL: sourceURL,
+            downloadDate: Date(),
+            notes: notes ?? "Sequence downloaded from \(sourceDatabase) and converted to Lungfish reference bundle"
+        )
+
+        let manifest = BundleManifest(
+            name: accession,
+            identifier: "org.\(sourceDatabase.lowercased().replacingOccurrences(of: " ", with: "-")).\(accession.lowercased().replacingOccurrences(of: ".", with: "-"))",
+            description: title,
+            source: sourceInfo,
+            genome: genomeInfo,
+            annotations: [],
+            variants: []
+        )
+        try manifest.save(to: bundleURL)
+
+        progressHandler?(1.0, "Bundle ready: \(bundleURL.lastPathComponent)")
+        return bundleURL
+    }
 }
 
 // MARK: - GenBank Metadata Helpers

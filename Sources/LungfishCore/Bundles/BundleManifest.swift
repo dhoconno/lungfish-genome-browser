@@ -204,8 +204,8 @@ public struct BundleManifest: Codable, Sendable, Equatable {
 /// ```
 public struct MetadataGroup: Codable, Sendable, Equatable, Identifiable {
 
-    /// Unique identifier (derived from name).
-    public var id: String { name }
+    /// Stable unique identifier (persisted across save/load cycles).
+    public let id: String
 
     /// Display name for this group (e.g., "Assembly", "Taxonomy", "Virus").
     public let name: String
@@ -215,16 +215,29 @@ public struct MetadataGroup: Codable, Sendable, Equatable, Identifiable {
 
     /// Creates a metadata group.
     public init(name: String, items: [MetadataItem]) {
+        self.id = UUID().uuidString
         self.name = name
         self.items = items
+    }
+
+    /// Backward-compatible decoding: generates a UUID if `id` is missing in older manifests.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        name = try container.decode(String.self, forKey: .name)
+        items = try container.decode([MetadataItem].self, forKey: .items)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, items
     }
 }
 
 /// A single metadata key-value pair within a ``MetadataGroup``.
 public struct MetadataItem: Codable, Sendable, Equatable, Identifiable {
 
-    /// Unique identifier (derived from label).
-    public var id: String { label }
+    /// Stable unique identifier (persisted across save/load cycles).
+    public let id: String
 
     /// Human-readable label (e.g., "Assembly Level", "Taxonomy ID").
     public let label: String
@@ -232,10 +245,28 @@ public struct MetadataItem: Codable, Sendable, Equatable, Identifiable {
     /// The metadata value (e.g., "Chromosome", "9606").
     public let value: String
 
+    /// Optional URL for clickable links (e.g., to Pathoplexus or NCBI pages).
+    public let url: String?
+
     /// Creates a metadata item.
-    public init(label: String, value: String) {
+    public init(label: String, value: String, url: String? = nil) {
+        self.id = UUID().uuidString
         self.label = label
         self.value = value
+        self.url = url
+    }
+
+    /// Backward-compatible decoding: generates a UUID if `id` is missing in older manifests.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        label = try container.decode(String.self, forKey: .label)
+        value = try container.decode(String.self, forKey: .value)
+        url = try container.decodeIfPresent(String.self, forKey: .url)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, label, value, url
     }
 }
 
@@ -837,14 +868,7 @@ extension BundleManifest {
         return try decoder.decode(BundleManifest.self, from: data)
     }
 
-    /// Saves the manifest to a bundle directory.
-    ///
-    /// - Parameter bundleURL: URL to the `.lungfishref` bundle directory
-    /// - Throws: If the manifest cannot be encoded or written
     /// Returns a new manifest with the given variant track appended.
-    ///
-    /// Since `BundleManifest` is immutable, this creates a copy with the
-    /// additional track and an updated `modifiedDate`.
     public func addingVariantTrack(_ track: VariantTrackInfo) -> BundleManifest {
         BundleManifest(
             formatVersion: formatVersion,
@@ -876,7 +900,8 @@ extension BundleManifest {
                 databasePath: track.databasePath,
                 variantType: track.variantType,
                 variantCount: newCount,
-                source: track.source
+                source: track.source,
+                version: track.version
             )
         }
         return BundleManifest(

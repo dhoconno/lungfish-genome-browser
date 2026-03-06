@@ -180,6 +180,9 @@ public struct SearchResultRecord: Sendable, Identifiable, Equatable {
     /// Pangolin lineage classification (e.g., "XFG.14.1.1").
     public let pangolinClassification: String?
 
+    /// Subtype/genotype (e.g., "A.2.1" for RSV). Used by Pathoplexus.
+    public let subtype: String?
+
     public init(
         id: String,
         accession: String,
@@ -194,7 +197,8 @@ public struct SearchResultRecord: Sendable, Identifiable, Equatable {
         completeness: String? = nil,
         isolateName: String? = nil,
         sourceDatabase: String? = nil,
-        pangolinClassification: String? = nil
+        pangolinClassification: String? = nil,
+        subtype: String? = nil
     ) {
         self.id = id
         self.accession = accession
@@ -210,6 +214,7 @@ public struct SearchResultRecord: Sendable, Identifiable, Equatable {
         self.isolateName = isolateName
         self.sourceDatabase = sourceDatabase
         self.pangolinClassification = pangolinClassification
+        self.subtype = subtype
     }
 }
 

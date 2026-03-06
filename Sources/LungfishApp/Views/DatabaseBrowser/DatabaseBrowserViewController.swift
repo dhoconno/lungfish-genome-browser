@@ -20,53 +20,88 @@ private let logger = Logger(subsystem: "com.lungfish.browser", category: "Databa
 ///
 /// Reads the existing manifest, creates a new one with appended Pathoplexus metadata group,
 /// and writes it back. This preserves all GenBank metadata while adding provenance info.
-private func appendPathoplexusMetadata(_ meta: PathoplexusMetadata, toBundleAt bundleURL: URL) {
+private func appendPathoplexusMetadata(_ meta: PathoplexusMetadata, organism: String, toBundleAt bundleURL: URL) {
     do {
         let existing = try BundleManifest.load(from: bundleURL)
 
-        // Build Pathoplexus metadata group
-        var items: [MetadataItem] = []
-        items.append(MetadataItem(label: "Pathoplexus Accession", value: meta.accession))
-        if let version = meta.accessionVersion {
-            items.append(MetadataItem(label: "Accession Version", value: version))
+        // Build Pathoplexus metadata groups
+
+        // Record group
+        var recordItems: [MetadataItem] = []
+        let ppVersion = meta.accessionVersion ?? meta.accession
+        let ppRecordURL = "https://pathoplexus.org/\(organism)/search?accession=\(ppVersion)"
+        recordItems.append(MetadataItem(label: "Accession", value: meta.accession, url: ppRecordURL))
+        if let v = meta.accessionVersion { recordItems.append(MetadataItem(label: "Version", value: v, url: ppRecordURL)) }
+        if let v = meta.displayName { recordItems.append(MetadataItem(label: "Display Name", value: v)) }
+        if let v = meta.bestINSDCAccession {
+            let genbankURL = "https://www.ncbi.nlm.nih.gov/nuccore/\(v)"
+            recordItems.append(MetadataItem(label: "INSDC Accession", value: v, url: genbankURL))
         }
-        if let insdc = meta.bestINSDCAccession {
-            items.append(MetadataItem(label: "INSDC Accession", value: insdc))
+        if let v = meta.bioprojectAccession, !v.isEmpty {
+            recordItems.append(MetadataItem(label: "BioProject", value: v, url: "https://www.ncbi.nlm.nih.gov/bioproject/\(v)"))
         }
-        if let organism = meta.organism {
-            items.append(MetadataItem(label: "Organism", value: organism))
+        if let v = meta.biosampleAccession, !v.isEmpty {
+            recordItems.append(MetadataItem(label: "BioSample", value: v, url: "https://www.ncbi.nlm.nih.gov/biosample/\(v)"))
         }
-        if let country = meta.geoLocCountry {
-            items.append(MetadataItem(label: "Country", value: country))
+        if let v = meta.ncbiSourceDb, !v.isEmpty { recordItems.append(MetadataItem(label: "NCBI Source", value: v)) }
+        if let v = meta.dataUseTerms { recordItems.append(MetadataItem(label: "Data Use Terms", value: v)) }
+        if let v = meta.versionStatus { recordItems.append(MetadataItem(label: "Version Status", value: v)) }
+
+        // Classification group
+        var classItems: [MetadataItem] = []
+        if let v = meta.organism { classItems.append(MetadataItem(label: "Organism", value: v)) }
+        if let v = meta.ncbiVirusName, !v.isEmpty { classItems.append(MetadataItem(label: "Virus Name", value: v)) }
+        if let v = meta.ncbiVirusTaxId {
+            classItems.append(MetadataItem(label: "Taxonomy ID", value: "\(v)", url: "https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?id=\(v)"))
         }
-        if let date = meta.sampleCollectionDate {
-            items.append(MetadataItem(label: "Collection Date", value: date))
-        }
-        if let host = meta.hostNameScientific {
-            items.append(MetadataItem(label: "Host (Scientific)", value: host))
-        }
-        if let host = meta.hostNameCommon {
-            items.append(MetadataItem(label: "Host (Common)", value: host))
-        }
-        if let clade = meta.clade {
-            items.append(MetadataItem(label: "Clade", value: clade))
-        }
-        if let lineage = meta.lineage {
-            items.append(MetadataItem(label: "Lineage", value: lineage))
-        }
-        if let lab = meta.submittingLab {
-            items.append(MetadataItem(label: "Submitting Lab", value: lab))
-        }
-        if let authors = meta.authors {
-            items.append(MetadataItem(label: "Authors", value: authors))
-        }
-        if let terms = meta.dataUseTerms {
-            items.append(MetadataItem(label: "Data Use Terms", value: terms))
+        if let v = meta.subtype, !v.isEmpty { classItems.append(MetadataItem(label: "Subtype", value: v)) }
+        if let v = meta.clade { classItems.append(MetadataItem(label: "Clade", value: v)) }
+        if let v = meta.lineage { classItems.append(MetadataItem(label: "Lineage", value: v)) }
+
+        // Sample group
+        var sampleItems: [MetadataItem] = []
+        if let v = meta.bestLocation { sampleItems.append(MetadataItem(label: "Location", value: v)) }
+        if let v = meta.sampleCollectionDate { sampleItems.append(MetadataItem(label: "Collection Date", value: v)) }
+        if let v = meta.hostNameScientific { sampleItems.append(MetadataItem(label: "Host (Scientific)", value: v)) }
+        if let v = meta.hostNameCommon { sampleItems.append(MetadataItem(label: "Host (Common)", value: v)) }
+        if let v = meta.purposeOfSampling, !v.isEmpty { sampleItems.append(MetadataItem(label: "Sampling Purpose", value: v)) }
+
+        // Sequencing group
+        var seqItems: [MetadataItem] = []
+        if let v = meta.length { seqItems.append(MetadataItem(label: "Length", value: "\(v) bp")) }
+        if let v = meta.sequencedByOrganization, !v.isEmpty { seqItems.append(MetadataItem(label: "Sequencing Lab", value: v)) }
+        if let v = meta.sequencingInstrument, !v.isEmpty { seqItems.append(MetadataItem(label: "Instrument", value: v)) }
+        if let v = meta.purposeOfSequencing, !v.isEmpty { seqItems.append(MetadataItem(label: "Sequencing Purpose", value: v)) }
+        if let n = meta.consensusSequenceSoftwareName, !n.isEmpty {
+            let ver = meta.consensusSequenceSoftwareVersion.map { " \($0)" } ?? ""
+            seqItems.append(MetadataItem(label: "Consensus Software", value: "\(n)\(ver)"))
         }
 
-        let ppGroup = MetadataGroup(name: "Pathoplexus", items: items)
+        // Quality group
+        var qualItems: [MetadataItem] = []
+        if let v = meta.depthOfCoverage { qualItems.append(MetadataItem(label: "Depth of Coverage", value: String(format: "%.1fx", v))) }
+        if let v = meta.breadthOfCoverage { qualItems.append(MetadataItem(label: "Breadth of Coverage", value: String(format: "%.1f%%", v * 100))) }
+        if let v = meta.completeness { qualItems.append(MetadataItem(label: "Completeness", value: String(format: "%.1f%%", v * 100))) }
+        if let v = meta.qualityControlDetermination, !v.isEmpty { qualItems.append(MetadataItem(label: "QC Determination", value: v)) }
+        if let v = meta.totalSnps, v > 0 { qualItems.append(MetadataItem(label: "Total SNPs", value: "\(v)")) }
+        if let v = meta.totalDeletedNucs, v > 0 { qualItems.append(MetadataItem(label: "Total Deletions", value: "\(v)")) }
+        if let v = meta.totalInsertedNucs, v > 0 { qualItems.append(MetadataItem(label: "Total Insertions", value: "\(v)")) }
+        if let v = meta.totalUnknownNucs, v > 0 { qualItems.append(MetadataItem(label: "Unknown Nucs", value: "\(v)")) }
+
+        // Provenance group
+        var provItems: [MetadataItem] = []
+        if let v = meta.groupName, !v.isEmpty { provItems.append(MetadataItem(label: "Submitter Group", value: v)) }
+        if let v = meta.authors, !v.isEmpty { provItems.append(MetadataItem(label: "Authors", value: v)) }
+        if let v = meta.submittedDate { provItems.append(MetadataItem(label: "Submitted", value: v)) }
+        if let v = meta.releasedDate { provItems.append(MetadataItem(label: "Released", value: v)) }
+
         var groups = existing.metadata ?? []
-        groups.append(ppGroup)
+        groups.append(MetadataGroup(name: "Pathoplexus Record", items: recordItems))
+        if !classItems.isEmpty { groups.append(MetadataGroup(name: "Classification", items: classItems)) }
+        if !sampleItems.isEmpty { groups.append(MetadataGroup(name: "Sample", items: sampleItems)) }
+        if !seqItems.isEmpty { groups.append(MetadataGroup(name: "Sequencing", items: seqItems)) }
+        if !qualItems.isEmpty { groups.append(MetadataGroup(name: "Quality", items: qualItems)) }
+        if !provItems.isEmpty { groups.append(MetadataGroup(name: "Provenance", items: provItems)) }
 
         // Create updated manifest with Pathoplexus metadata appended
         let updated = BundleManifest(
@@ -107,7 +142,7 @@ private func performOnMainRunLoop(_ block: @escaping @MainActor @Sendable () -> 
 
 /// Controller for the database browser panel.
 ///
-/// Provides search interface for NCBI and ENA databases with download capability.
+/// Provides search interface for NCBI, SRA (via ENA), and Pathoplexus with download capability.
 @MainActor
 public class DatabaseBrowserViewController: NSViewController {
 
@@ -131,7 +166,7 @@ public class DatabaseBrowserViewController: NSViewController {
     /// Optional initial NCBI search type to pre-select when the browser opens.
     ///
     /// Set this before presenting the controller to open with a specific search type
-    /// (e.g., `.genome` for the "Download Genome Assembly" menu action).
+    /// (e.g., `.genome` to focus on assembly-centric NCBI search).
     public var initialSearchType: NCBISearchType?
 
     // MARK: - Initialization
@@ -153,7 +188,7 @@ public class DatabaseBrowserViewController: NSViewController {
     public override func loadView() {
         viewModel = DatabaseBrowserViewModel(source: databaseSource)
 
-        // Apply initial search type if specified (e.g., for genome assembly downloads)
+        // Apply initial search type if specified.
         if let searchType = initialSearchType {
             viewModel.ncbiSearchType = searchType
         }
@@ -229,6 +264,7 @@ public enum SearchPhase: Equatable {
     case connecting
     case searching
     case loadingDetails
+    case loadingAllResults(loaded: Int, total: Int)
     case complete(count: Int)
     case failed(String)
 
@@ -239,6 +275,10 @@ public enum SearchPhase: Equatable {
         case .connecting: return 0.15
         case .searching: return 0.4
         case .loadingDetails: return 0.7
+        case .loadingAllResults(let loaded, let total):
+            guard total > 0 else { return 0.75 }
+            let fraction = min(1.0, max(0.0, Double(loaded) / Double(total)))
+            return 0.55 + (0.4 * fraction)
         case .complete: return 1.0
         case .failed: return 0
         }
@@ -251,6 +291,8 @@ public enum SearchPhase: Equatable {
         case .connecting: return "Connecting to server..."
         case .searching: return "Searching database..."
         case .loadingDetails: return "Loading record details..."
+        case .loadingAllResults(let loaded, let total):
+            return "Loading all records from server... \(loaded)/\(total)"
         case .complete(let count):
             return "Found \(count) result\(count == 1 ? "" : "s")"
         case .failed(let error):
@@ -262,7 +304,7 @@ public enum SearchPhase: Equatable {
     var isInProgress: Bool {
         switch self {
         case .idle, .complete, .failed: return false
-        case .connecting, .searching, .loadingDetails: return true
+        case .connecting, .searching, .loadingDetails, .loadingAllResults: return true
         }
     }
 }
@@ -350,11 +392,65 @@ public enum VirusCompletenessFilter: String, CaseIterable, Identifiable, Sendabl
     }
 }
 
+/// INSDC filter options for Pathoplexus results.
+public enum PathoplexusINSDCFilter: String, CaseIterable, Identifiable, Sendable {
+    case any = "Any"
+    case insdcOnly = "INSDC Only"
+    case nonINSDCOnly = "Non-INSDC Only"
+
+    public var id: String { rawValue }
+}
+
+// MARK: - Result Sort Order
+
+/// Sort options for search results.
+enum ResultSortOrder: String, CaseIterable, Identifiable {
+    case accession = "Accession"
+    case dateNewest = "Date (Newest)"
+    case dateOldest = "Date (Oldest)"
+    case lengthLongest = "Length (Longest)"
+    case lengthShortest = "Length (Shortest)"
+    case location = "Location"
+    case subtype = "Subtype"
+
+    var id: String { rawValue }
+}
+
+private enum LargeResultAction {
+    case firstThousand
+    case loadAll
+    case cancel
+}
+
+@MainActor
+private func confirmLargeResultActionDialog(totalCount: Int, sourceLabel: String) -> LargeResultAction {
+    let alert = NSAlert()
+    alert.messageText = "Large Result Set (\(totalCount.formatted()) records)"
+    alert.informativeText =
+        "\(sourceLabel) returned a large number of records. Loading fewer records is usually faster for you and gentler on shared host database resources.\n\nChoose how many records to load:"
+    alert.alertStyle = .informational
+
+    alert.addButton(withTitle: "Load First 1,000")
+    alert.addButton(withTitle: "Load All \(totalCount.formatted())")
+    alert.addButton(withTitle: "Cancel")
+
+    let response = alert.runModal()
+    switch response {
+    case .alertFirstButtonReturn:
+        return .firstThousand
+    case .alertSecondButtonReturn:
+        return .loadAll
+    default:
+        return .cancel
+    }
+}
+
 // MARK: - DatabaseBrowserViewModel
 
 /// View model for the database browser.
 @MainActor
 public class DatabaseBrowserViewModel: ObservableObject {
+    private let largeResultThreshold = 1_000
 
     // MARK: - Published Properties
 
@@ -435,18 +531,40 @@ public class DatabaseBrowserViewModel: ObservableObject {
     /// Local filter text for filtering displayed results without re-querying the API
     @Published var localFilterText: String = ""
 
-    /// Filtered results based on localFilterText (computed property)
+    /// Sort order for results
+    @Published var resultSortOrder: ResultSortOrder = .accession
+
+    /// Filtered and sorted results based on localFilterText and resultSortOrder
     var filteredResults: [SearchResultRecord] {
-        guard !localFilterText.isEmpty else { return results }
-        let filter = localFilterText.lowercased()
-        return results.filter { record in
-            record.accession.lowercased().contains(filter) ||
-            record.title.lowercased().contains(filter) ||
-            (record.organism?.lowercased().contains(filter) ?? false) ||
-            (record.host?.lowercased().contains(filter) ?? false) ||
-            (record.geoLocation?.lowercased().contains(filter) ?? false) ||
-            (record.isolateName?.lowercased().contains(filter) ?? false) ||
-            (record.pangolinClassification?.lowercased().contains(filter) ?? false)
+        var filtered = results
+        if !localFilterText.isEmpty {
+            let filter = localFilterText.lowercased()
+            filtered = filtered.filter { record in
+                record.accession.lowercased().contains(filter) ||
+                record.title.lowercased().contains(filter) ||
+                (record.organism?.lowercased().contains(filter) ?? false) ||
+                (record.host?.lowercased().contains(filter) ?? false) ||
+                (record.geoLocation?.lowercased().contains(filter) ?? false) ||
+                (record.isolateName?.lowercased().contains(filter) ?? false) ||
+                (record.pangolinClassification?.lowercased().contains(filter) ?? false) ||
+                (record.subtype?.lowercased().contains(filter) ?? false)
+            }
+        }
+        switch resultSortOrder {
+        case .accession:
+            return filtered // default API order
+        case .dateNewest:
+            return filtered.sorted { ($0.collectionDate ?? "") > ($1.collectionDate ?? "") }
+        case .dateOldest:
+            return filtered.sorted { ($0.collectionDate ?? "") < ($1.collectionDate ?? "") }
+        case .lengthLongest:
+            return filtered.sorted { ($0.length ?? 0) > ($1.length ?? 0) }
+        case .lengthShortest:
+            return filtered.sorted { ($0.length ?? 0) < ($1.length ?? 0) }
+        case .location:
+            return filtered.sorted { ($0.geoLocation ?? "zzz") < ($1.geoLocation ?? "zzz") }
+        case .subtype:
+            return filtered.sorted { ($0.subtype ?? "zzz") < ($1.subtype ?? "zzz") }
         }
     }
 
@@ -604,11 +722,8 @@ public class DatabaseBrowserViewModel: ObservableObject {
     /// Amino acid mutations filter for Pathoplexus (comma-separated, e.g. "GP:440G")
     @Published var pathoplexusAAMutationsFilter: String = ""
 
-    /// Data use terms filter for Pathoplexus
-    @Published var pathoplexusDataUseTerms: DataUseTerms?
-
-    /// Filter to only show records with INSDC accessions (for GenBank retrieval)
-    @Published var pathoplexusINSDCOnly: Bool = false
+    /// INSDC source filter for Pathoplexus results.
+    @Published var pathoplexusINSDCFilter: PathoplexusINSDCFilter = .any
 
     /// Collection date from for Pathoplexus
     @Published var pathoplexusDateFrom: String = ""
@@ -644,10 +759,9 @@ public class DatabaseBrowserViewModel: ObservableObject {
         if !pathoplexusHostFilter.isEmpty { count += 1 }
         if !pathoplexusNucMutationsFilter.isEmpty { count += 1 }
         if !pathoplexusAAMutationsFilter.isEmpty { count += 1 }
-        if pathoplexusDataUseTerms != nil { count += 1 }
         if !pathoplexusDateFrom.isEmpty || !pathoplexusDateTo.isEmpty { count += 1 }
         if !minLength.isEmpty || !maxLength.isEmpty { count += 1 }
-        if pathoplexusINSDCOnly { count += 1 }
+        if pathoplexusINSDCFilter != .any { count += 1 }
         return count
     }
 
@@ -659,10 +773,9 @@ public class DatabaseBrowserViewModel: ObservableObject {
         pathoplexusHostFilter = ""
         pathoplexusNucMutationsFilter = ""
         pathoplexusAAMutationsFilter = ""
-        pathoplexusDataUseTerms = nil
         pathoplexusDateFrom = ""
         pathoplexusDateTo = ""
-        pathoplexusINSDCOnly = false
+        pathoplexusINSDCFilter = .any
         minLength = ""
         maxLength = ""
     }
@@ -776,6 +889,7 @@ public class DatabaseBrowserViewModel: ObservableObject {
         searchPhase = .connecting
         errorMessage = nil
         results = []
+        selectedRecords = []
 
         logger.info("performSearch: Starting search task")
 
@@ -817,12 +931,12 @@ public class DatabaseBrowserViewModel: ObservableObject {
         let capturedPpHost = pathoplexusHostFilter.trimmingCharacters(in: .whitespaces)
         let capturedPpNucMutations = pathoplexusNucMutationsFilter.trimmingCharacters(in: .whitespaces)
         let capturedPpAAMutations = pathoplexusAAMutationsFilter.trimmingCharacters(in: .whitespaces)
-        let capturedPpDataUseTerms = pathoplexusDataUseTerms
         let capturedPpDateFrom = pathoplexusDateFrom.trimmingCharacters(in: .whitespaces)
         let capturedPpDateTo = pathoplexusDateTo.trimmingCharacters(in: .whitespaces)
         let capturedPpMinLength = Int(minLength)
         let capturedPpMaxLength = Int(maxLength)
-        let capturedPpINSDCOnly = pathoplexusINSDCOnly
+        let capturedPpINSDCFilter = pathoplexusINSDCFilter
+        let largeResultThreshold = self.largeResultThreshold
 
         // Capture services as they are actors (safe to use across isolation boundaries)
         let ncbi = ncbiService
@@ -861,43 +975,88 @@ public class DatabaseBrowserViewModel: ObservableObject {
                     switch searchType {
                     case .nucleotide:
                         logger.info("performSearch: Calling NCBI nucleotide search (refseqOnly=\(useRefseqOnly))")
-                        let nucleotideResult = try await ncbi.searchNucleotide(
-                            term: query.term,
-                            retmax: query.limit,
-                            retstart: query.offset,
-                            refseqOnly: useRefseqOnly
-                        )
-                        logger.info("performSearch: Nucleotide search returned \(nucleotideResult.totalCount) total, \(nucleotideResult.ids.count) IDs")
+                        let pageSize = 200
+                        var currentOffset = query.offset
+                        var totalCount: Int?
+                        var targetCount: Int?
+                        var allRecords: [SearchResultRecord] = []
 
-                        guard !nucleotideResult.ids.isEmpty else {
-                            performOnMainRunLoop { [weak self] in
-                                self?.objectWillChange.send()
-                                self?.results = []
-                                self?.totalResultCount = nucleotideResult.totalCount
-                                self?.hasMoreResults = false
-                                self?.searchPhase = .complete(count: 0)
-                            }
-                            return
-                        }
-
-                        let summaries = try await ncbi.esummary(database: .nucleotide, ids: nucleotideResult.ids)
-                        let records = summaries.map { summary in
-                            SearchResultRecord(
-                                id: summary.uid,
-                                accession: summary.accessionVersion ?? summary.uid,
-                                title: summary.title ?? "Unknown",
-                                organism: summary.organism,
-                                length: summary.length,
-                                date: summary.createDate,
-                                source: .ncbi
+                        while true {
+                            try Task.checkCancellation()
+                            let page = try await ncbi.searchNucleotide(
+                                term: query.term,
+                                retmax: pageSize,
+                                retstart: currentOffset,
+                                refseqOnly: useRefseqOnly
                             )
+
+                            if totalCount == nil {
+                                totalCount = page.totalCount
+                                logger.info("performSearch: Nucleotide total count = \(page.totalCount)")
+
+                                if page.totalCount > largeResultThreshold {
+                                    let action = await MainActor.run {
+                                        confirmLargeResultActionDialog(
+                                            totalCount: page.totalCount,
+                                            sourceLabel: "NCBI GenBank"
+                                        )
+                                    }
+                                    switch action {
+                                    case .cancel:
+                                        throw CancellationError()
+                                    case .firstThousand:
+                                        targetCount = min(largeResultThreshold, page.totalCount)
+                                    case .loadAll:
+                                        targetCount = page.totalCount
+                                    }
+                                } else {
+                                    targetCount = page.totalCount
+                                }
+                            }
+
+                            guard !page.ids.isEmpty else { break }
+
+                            let summaries = try await ncbi.esummary(database: .nucleotide, ids: page.ids)
+                            let pageRecords = summaries.map { summary in
+                                SearchResultRecord(
+                                    id: summary.uid,
+                                    accession: summary.accessionVersion ?? summary.uid,
+                                    title: summary.title ?? "Unknown",
+                                    organism: summary.organism,
+                                    length: summary.length,
+                                    date: summary.createDate,
+                                    source: .ncbi
+                                )
+                            }
+                            allRecords.append(contentsOf: pageRecords)
+                            currentOffset += page.ids.count
+
+                            let loadedSnapshot = allRecords.count
+                            let totalSnapshot = targetCount ?? totalCount ?? loadedSnapshot
+                            let recordsSnapshot = allRecords
+                            performOnMainRunLoop { [weak self] in
+                                guard let self = self else { return }
+                                self.objectWillChange.send()
+                                self.results = recordsSnapshot
+                                self.totalResultCount = totalSnapshot
+                                self.hasMoreResults = loadedSnapshot < totalSnapshot
+                                self.searchPhase = .loadingAllResults(loaded: loadedSnapshot, total: totalSnapshot)
+                            }
+
+                            if currentOffset >= (totalCount ?? 0) {
+                                break
+                            }
+                            if currentOffset >= (targetCount ?? .max) {
+                                break
+                            }
                         }
-                        let hasMore = nucleotideResult.totalCount > (query.offset + records.count)
+
+                        let resolvedTotal = targetCount ?? totalCount ?? allRecords.count
                         searchResults = SearchResults(
-                            totalCount: nucleotideResult.totalCount,
-                            records: records,
-                            hasMore: hasMore,
-                            nextCursor: hasMore ? String(query.offset + records.count) : nil
+                            totalCount: resolvedTotal,
+                            records: Array(allRecords.prefix(resolvedTotal)),
+                            hasMore: false,
+                            nextCursor: nil
                         )
 
                     case .virus:
@@ -934,44 +1093,89 @@ public class DatabaseBrowserViewModel: ObservableObject {
                         }
 
                     case .genome:
-                        // Search assemblies
+                        // Search assemblies progressively (load all pages)
                         logger.info("performSearch: Calling NCBI genome search")
-                        let genomeResult = try await ncbi.searchGenome(
-                            term: query.term,
-                            retmax: query.limit,
-                            retstart: query.offset
-                        )
-                        logger.info("performSearch: Genome search returned \(genomeResult.totalCount) total, \(genomeResult.ids.count) IDs")
+                        let pageSize = 200
+                        var currentOffset = query.offset
+                        var totalCount: Int?
+                        var targetCount: Int?
+                        var allRecords: [SearchResultRecord] = []
 
-                        guard !genomeResult.ids.isEmpty else {
-                            performOnMainRunLoop { [weak self] in
-                                self?.objectWillChange.send()
-                                self?.results = []
-                                self?.totalResultCount = genomeResult.totalCount
-                                self?.hasMoreResults = false
-                                self?.searchPhase = .complete(count: 0)
-                            }
-                            return
-                        }
-
-                        let assemblySummaries = try await ncbi.assemblyEsummary(ids: genomeResult.ids)
-                        let records = assemblySummaries.map { summary in
-                            SearchResultRecord(
-                                id: summary.uid,
-                                accession: summary.assemblyAccession ?? summary.uid,
-                                title: summary.assemblyName ?? "Assembly",
-                                organism: summary.organism ?? summary.speciesName,
-                                length: summary.contigN50,  // Use N50 as a proxy for size
-                                date: nil,
-                                source: .ncbi
+                        while true {
+                            try Task.checkCancellation()
+                            let page = try await ncbi.searchGenome(
+                                term: query.term,
+                                retmax: pageSize,
+                                retstart: currentOffset
                             )
+
+                            if totalCount == nil {
+                                totalCount = page.totalCount
+                                logger.info("performSearch: Genome total count = \(page.totalCount)")
+
+                                if page.totalCount > largeResultThreshold {
+                                    let action = await MainActor.run {
+                                        confirmLargeResultActionDialog(
+                                            totalCount: page.totalCount,
+                                            sourceLabel: "NCBI Assembly"
+                                        )
+                                    }
+                                    switch action {
+                                    case .cancel:
+                                        throw CancellationError()
+                                    case .firstThousand:
+                                        targetCount = min(largeResultThreshold, page.totalCount)
+                                    case .loadAll:
+                                        targetCount = page.totalCount
+                                    }
+                                } else {
+                                    targetCount = page.totalCount
+                                }
+                            }
+
+                            guard !page.ids.isEmpty else { break }
+
+                            let assemblySummaries = try await ncbi.assemblyEsummary(ids: page.ids)
+                            let pageRecords = assemblySummaries.map { summary in
+                                SearchResultRecord(
+                                    id: summary.uid,
+                                    accession: summary.assemblyAccession ?? summary.uid,
+                                    title: summary.assemblyName ?? "Assembly",
+                                    organism: summary.organism ?? summary.speciesName,
+                                    length: summary.contigN50,  // Use N50 as a proxy for size
+                                    date: nil,
+                                    source: .ncbi
+                                )
+                            }
+                            allRecords.append(contentsOf: pageRecords)
+                            currentOffset += page.ids.count
+
+                            let loadedSnapshot = allRecords.count
+                            let totalSnapshot = targetCount ?? totalCount ?? loadedSnapshot
+                            let recordsSnapshot = allRecords
+                            performOnMainRunLoop { [weak self] in
+                                guard let self = self else { return }
+                                self.objectWillChange.send()
+                                self.results = recordsSnapshot
+                                self.totalResultCount = totalSnapshot
+                                self.hasMoreResults = loadedSnapshot < totalSnapshot
+                                self.searchPhase = .loadingAllResults(loaded: loadedSnapshot, total: totalSnapshot)
+                            }
+
+                            if currentOffset >= (totalCount ?? 0) {
+                                break
+                            }
+                            if currentOffset >= (targetCount ?? .max) {
+                                break
+                            }
                         }
-                        let hasMore = genomeResult.totalCount > (query.offset + records.count)
+
+                        let resolvedTotal = targetCount ?? totalCount ?? allRecords.count
                         searchResults = SearchResults(
-                            totalCount: genomeResult.totalCount,
-                            records: records,
-                            hasMore: hasMore,
-                            nextCursor: hasMore ? String(query.offset + records.count) : nil
+                            totalCount: resolvedTotal,
+                            records: Array(allRecords.prefix(resolvedTotal)),
+                            hasMore: false,
+                            nextCursor: nil
                         )
                     }
 
@@ -1022,7 +1226,9 @@ public class DatabaseBrowserViewModel: ObservableObject {
                     if !capturedPpClade.isEmpty { ppFilters.clade = capturedPpClade }
                     if !capturedPpLineage.isEmpty { ppFilters.lineage = capturedPpLineage }
                     if !capturedPpHost.isEmpty { ppFilters.hostNameScientific = capturedPpHost }
-                    ppFilters.dataUseTerms = capturedPpDataUseTerms
+                    // Restrict browser results to downloadable/open records.
+                    // Restricted Pathoplexus entries often provide metadata only.
+                    ppFilters.dataUseTerms = .open
                     if let minLen = capturedPpMinLength, minLen > 0 { ppFilters.lengthFrom = minLen }
                     if let maxLen = capturedPpMaxLength, maxLen > 0 { ppFilters.lengthTo = maxLen }
 
@@ -1046,27 +1252,111 @@ public class DatabaseBrowserViewModel: ObservableObject {
                     }
 
                     let pathoplexusService = PathoplexusService()
-                    var ppResults = try await pathoplexusService.search(
+                    let totalCount = try await pathoplexusService.getAggregatedCount(
                         organism: ppOrganism,
-                        filters: ppFilters,
-                        limit: query.limit,
-                        offset: query.offset
+                        filters: ppFilters
                     )
-                    logger.info("performSearch: Pathoplexus returned \(ppResults.totalCount) total, \(ppResults.records.count) records")
+                    logger.info("performSearch: Pathoplexus aggregated count = \(totalCount)")
 
-                    // Client-side filter: INSDC-only
-                    if capturedPpINSDCOnly {
-                        let filtered = ppResults.records.filter { $0.sourceDatabase == "INSDC" }
-                        ppResults = SearchResults(
-                            totalCount: filtered.count,
-                            records: filtered,
+                    let targetCount: Int
+                    if totalCount > largeResultThreshold {
+                        let action = await MainActor.run {
+                            confirmLargeResultActionDialog(
+                                totalCount: totalCount,
+                                sourceLabel: "Pathoplexus"
+                            )
+                        }
+                        switch action {
+                        case .cancel:
+                            throw CancellationError()
+                        case .firstThousand:
+                            targetCount = min(largeResultThreshold, totalCount)
+                        case .loadAll:
+                            targetCount = totalCount
+                        }
+                    } else {
+                        targetCount = totalCount
+                    }
+
+                    if totalCount == 0 {
+                        searchResults = SearchResults(totalCount: 0, records: [], hasMore: false, nextCursor: nil)
+                    } else {
+                        let pageSize = 500
+                        var offset = 0
+                        var fetchedCount = 0
+                        var allRecords: [SearchResultRecord] = []
+                        allRecords.reserveCapacity(totalCount)
+                        let requiresPostFilter = capturedPpINSDCFilter != .any
+
+                        while true {
+                            try Task.checkCancellation()
+
+                            let loadedSnapshot = fetchedCount
+                            let totalSnapshot = totalCount
+                            performOnMainRunLoop { [weak self] in
+                                guard let self = self else { return }
+                                self.objectWillChange.send()
+                                self.searchPhase = .loadingAllResults(loaded: loadedSnapshot, total: totalSnapshot)
+                            }
+
+                            // For unfiltered mode we only need to scan up to targetCount.
+                            // For filtered modes (INSDC/non-INSDC), continue scanning until
+                            // we collect targetCount matches or exhaust all available records.
+                            let remainingToScan: Int
+                            if requiresPostFilter {
+                                remainingToScan = totalCount - offset
+                            } else {
+                                remainingToScan = targetCount - offset
+                            }
+                            if remainingToScan <= 0 { break }
+                            let batchSize = min(pageSize, remainingToScan)
+                            let page = try await pathoplexusService.search(
+                                organism: ppOrganism,
+                                filters: ppFilters,
+                                limit: batchSize,
+                                offset: offset
+                            )
+
+                            fetchedCount += page.records.count
+                            offset += page.records.count
+
+                            // Safety guard for inconsistent pagination responses.
+                            if page.records.isEmpty {
+                                logger.warning("performSearch: Pathoplexus returned empty page before reaching total (offset=\(offset), total=\(totalCount))")
+                                break
+                            }
+
+                            switch capturedPpINSDCFilter {
+                            case .any:
+                                allRecords.append(contentsOf: page.records)
+                            case .insdcOnly:
+                                allRecords.append(contentsOf: page.records.filter { $0.sourceDatabase == "INSDC" })
+                            case .nonINSDCOnly:
+                                allRecords.append(contentsOf: page.records.filter { $0.sourceDatabase != "INSDC" })
+                            }
+
+                            if !requiresPostFilter, offset >= targetCount {
+                                break
+                            }
+                            if requiresPostFilter, allRecords.count >= targetCount {
+                                break
+                            }
+                            if offset >= totalCount {
+                                break
+                            }
+                        }
+
+                        let retained = requiresPostFilter ? min(allRecords.count, targetCount) : allRecords.count
+                        let resolvedTotal = retained
+                        logger.info("performSearch: Pathoplexus loaded records (fetched=\(fetchedCount), retained=\(retained), requested=\(targetCount), available=\(totalCount), filter=\(capturedPpINSDCFilter.rawValue, privacy: .public))")
+
+                        searchResults = SearchResults(
+                            totalCount: resolvedTotal,
+                            records: Array(allRecords.prefix(targetCount)),
                             hasMore: false,
                             nextCursor: nil
                         )
-                        logger.info("performSearch: INSDC-only filter reduced to \(filtered.count) records")
                     }
-
-                    searchResults = ppResults
 
                 default:
                     throw DatabaseServiceError.invalidQuery(reason: "Unsupported database: \(currentSource)")
@@ -1296,6 +1586,7 @@ public class DatabaseBrowserViewModel: ObservableObject {
         Task.detached {
             var downloadedURLs: [URL] = []
             var failedCount = 0
+            var failureDetails: [String] = []
 
             // Create a unique batch directory once for all downloads in this batch
             // This avoids filename collisions when records have the same accession
@@ -1319,6 +1610,7 @@ public class DatabaseBrowserViewModel: ObservableObject {
 
                 do {
                     let fileURL: URL
+                    let normalizedRecordAccession = record.accession.trimmingCharacters(in: .whitespacesAndNewlines)
 
                     switch currentSource {
                     case .ncbi:
@@ -1454,69 +1746,115 @@ public class DatabaseBrowserViewModel: ObservableObject {
                         let pathoplexusService = PathoplexusService()
                         let ppMeta = try await pathoplexusService.fetchMetadataForAccession(
                             organism: ppOrganism,
-                            accession: record.accession
+                            accession: normalizedRecordAccession
                         )
 
-                        if let insdcAccession = ppMeta?.bestINSDCAccession {
-                            // Has INSDC accession — fetch from GenBank with annotations
+                        if ppMeta?.dataUseTerms?.uppercased() == DataUseTerms.restricted.rawValue {
+                            throw DatabaseServiceError.invalidQuery(
+                                reason: "Record \(normalizedRecordAccession) is restricted and cannot be downloaded"
+                            )
+                        } else if let insdcAccession = ppMeta?.bestINSDCAccession?.trimmingCharacters(in: .whitespacesAndNewlines), !insdcAccession.isEmpty {
+                            // Prefer INSDC GenBank retrieval for rich annotations; if unavailable,
+                            // fall back to direct Pathoplexus FASTA so the sample still downloads.
                             logger.info("performBatchDownload: Pathoplexus record \(record.accession, privacy: .public) has INSDC accession \(insdcAccession, privacy: .public), fetching from GenBank")
+                            do {
+                                performOnMainRunLoop {
+                                    DownloadCenter.shared.update(
+                                        id: downloadCenterTaskID,
+                                        progress: progressFraction,
+                                        detail: "Fetching GenBank record \(insdcAccession)..."
+                                    )
+                                }
+
+                                let bundleURL = try await genBankVM.downloadAndBuild(
+                                    accession: insdcAccession,
+                                    outputDirectory: batchDir
+                                ) { progress, message in
+                                    let overall = (Double(index) + progress) / Double(totalCount)
+                                    performOnMainRunLoop {
+                                        DownloadCenter.shared.update(
+                                            id: downloadCenterTaskID,
+                                            progress: overall,
+                                            detail: "\(insdcAccession): \(message)"
+                                        )
+                                    }
+                                }
+
+                                // Append Pathoplexus metadata to the bundle manifest
+                                if let meta = ppMeta {
+                                    appendPathoplexusMetadata(meta, organism: ppOrganism, toBundleAt: bundleURL)
+                                }
+
+                                fileURL = bundleURL
+                                logger.info("performBatchDownload: Built GenBank bundle from Pathoplexus INSDC at \(bundleURL.path, privacy: .public)")
+                            } catch {
+                                logger.warning("performBatchDownload: INSDC fetch failed for \(record.accession, privacy: .public) (\(insdcAccession, privacy: .public)); falling back to Pathoplexus FASTA. Error: \(error.localizedDescription, privacy: .public)")
+                                performOnMainRunLoop {
+                                    DownloadCenter.shared.update(
+                                        id: downloadCenterTaskID,
+                                        progress: progressFraction,
+                                        detail: "GenBank unavailable for \(record.accession); falling back to FASTA..."
+                                    )
+                                }
+
+                                let dbRecord = try await pathoplexusService.fetch(accession: record.accession, organism: ppOrganism)
+                                let bundleURL = try await genBankVM.buildBundleFromSequence(
+                                    accession: dbRecord.accession,
+                                    title: dbRecord.title,
+                                    sequence: dbRecord.sequence,
+                                    outputDirectory: batchDir,
+                                    sourceDatabase: "Pathoplexus",
+                                    sourceURL: URL(string: "https://pathoplexus.org/\(ppOrganism)/search?accession=\(dbRecord.accession)"),
+                                    notes: "Generated from Pathoplexus FASTA fallback after INSDC lookup failed"
+                                ) { progress, message in
+                                    let overall = (Double(index) + progress) / Double(totalCount)
+                                    performOnMainRunLoop {
+                                        DownloadCenter.shared.update(
+                                            id: downloadCenterTaskID,
+                                            progress: overall,
+                                            detail: "\(dbRecord.accession): \(message)"
+                                        )
+                                    }
+                                }
+                                if let meta = ppMeta {
+                                    appendPathoplexusMetadata(meta, organism: ppOrganism, toBundleAt: bundleURL)
+                                }
+                                fileURL = bundleURL
+                            }
+                        } else {
+                            // No INSDC accession — download FASTA only from Pathoplexus
+                            logger.info("performBatchDownload: Pathoplexus record \(record.accession, privacy: .public) has no INSDC accession, building bundle from Pathoplexus FASTA")
                             performOnMainRunLoop {
                                 DownloadCenter.shared.update(
                                     id: downloadCenterTaskID,
                                     progress: progressFraction,
-                                    detail: "Fetching GenBank record \(insdcAccession)..."
+                                    detail: "Building bundle from Pathoplexus sequence for \(record.accession)..."
                                 )
                             }
 
-                            let bundleURL = try await genBankVM.downloadAndBuild(
-                                accession: insdcAccession,
-                                outputDirectory: batchDir
+                            let dbRecord = try await pathoplexusService.fetch(accession: normalizedRecordAccession, organism: ppOrganism)
+                            let bundleURL = try await genBankVM.buildBundleFromSequence(
+                                accession: dbRecord.accession,
+                                title: dbRecord.title,
+                                sequence: dbRecord.sequence,
+                                outputDirectory: batchDir,
+                                sourceDatabase: "Pathoplexus",
+                                sourceURL: URL(string: "https://pathoplexus.org/\(ppOrganism)/search?accession=\(dbRecord.accession)"),
+                                notes: "Generated from Pathoplexus sequence (no INSDC accession available)"
                             ) { progress, message in
                                 let overall = (Double(index) + progress) / Double(totalCount)
                                 performOnMainRunLoop {
                                     DownloadCenter.shared.update(
                                         id: downloadCenterTaskID,
                                         progress: overall,
-                                        detail: "\(insdcAccession): \(message)"
+                                        detail: "\(dbRecord.accession): \(message)"
                                     )
                                 }
                             }
-
-                            // Append Pathoplexus metadata to the bundle manifest
                             if let meta = ppMeta {
-                                appendPathoplexusMetadata(meta, toBundleAt: bundleURL)
+                                appendPathoplexusMetadata(meta, organism: ppOrganism, toBundleAt: bundleURL)
                             }
-
                             fileURL = bundleURL
-                            logger.info("performBatchDownload: Built GenBank bundle from Pathoplexus INSDC at \(bundleURL.path, privacy: .public)")
-                        } else {
-                            // No INSDC accession — download FASTA only from Pathoplexus
-                            logger.info("performBatchDownload: Pathoplexus record \(record.accession, privacy: .public) has no INSDC accession, downloading FASTA only")
-                            performOnMainRunLoop {
-                                DownloadCenter.shared.update(
-                                    id: downloadCenterTaskID,
-                                    progress: progressFraction,
-                                    detail: "Downloading FASTA for \(record.accession)..."
-                                )
-                            }
-
-                            let dbRecord = try await pathoplexusService.fetch(accession: record.accession)
-                            let filename = "\(dbRecord.accession).fasta"
-                            fileURL = batchDir.appendingPathComponent(filename)
-
-                            var fastaContent = ">\(dbRecord.accession)"
-                            if !dbRecord.title.isEmpty {
-                                fastaContent += " \(dbRecord.title)"
-                            }
-                            fastaContent += "\n"
-                            let sequence = dbRecord.sequence
-                            var idx = sequence.startIndex
-                            while idx < sequence.endIndex {
-                                let endIdx = sequence.index(idx, offsetBy: 80, limitedBy: sequence.endIndex) ?? sequence.endIndex
-                                fastaContent += String(sequence[idx..<endIdx]) + "\n"
-                                idx = endIdx
-                            }
-                            try fastaContent.write(to: fileURL, atomically: true, encoding: .utf8)
                         }
 
                     default:
@@ -1524,11 +1862,12 @@ public class DatabaseBrowserViewModel: ObservableObject {
                     }
 
                     downloadedURLs.append(fileURL)
-                    logger.info("Downloaded \(record.accession, privacy: .public)")
+                    logger.info("Downloaded \(normalizedRecordAccession, privacy: .public)")
 
                 } catch {
-                    logger.error("Failed to download \(record.accession, privacy: .public): \(error, privacy: .public)")
+                    logger.error("Failed to download \(record.accession.trimmingCharacters(in: .whitespacesAndNewlines), privacy: .public): \(error, privacy: .public)")
                     failedCount += 1
+                    failureDetails.append("\(record.accession.trimmingCharacters(in: .whitespacesAndNewlines)): \(error.localizedDescription)")
                     // Store the last error detail for the DownloadCenter failure message
                     performOnMainRunLoop {
                         DownloadCenter.shared.update(
@@ -1546,17 +1885,27 @@ public class DatabaseBrowserViewModel: ObservableObject {
             // through the sheet controller which was deallocated on dismissal.
             let finalDownloadedURLs = downloadedURLs
             let finalFailedCount = failedCount
+            let finalFailureDetails = failureDetails
             performOnMainRunLoop {
-                if finalFailedCount > 0 {
+                if finalDownloadedURLs.isEmpty && finalFailedCount > 0 {
+                    let reasonSummary = finalFailureDetails.prefix(3).joined(separator: "; ")
                     DownloadCenter.shared.fail(
                         id: downloadCenterTaskID,
-                        detail: "Completed with \(finalFailedCount) failure(s)"
+                        detail: reasonSummary.isEmpty
+                            ? "Completed with \(finalFailedCount) failure(s)"
+                            : "Completed with \(finalFailedCount) failure(s): \(reasonSummary)"
                     )
                 } else {
                     let bundleNames = finalDownloadedURLs.map { $0.deletingPathExtension().lastPathComponent }
-                    let detail = totalCount == 1
-                        ? "Bundle ready: \(bundleNames.first ?? "unknown")"
-                        : "Completed \(finalDownloadedURLs.count) bundle(s)"
+                    let detail: String
+                    if finalFailedCount > 0 {
+                        let reasonSummary = finalFailureDetails.prefix(3).joined(separator: "; ")
+                        detail = "Completed \(finalDownloadedURLs.count) download(s), \(finalFailedCount) failed. \(reasonSummary)"
+                    } else if totalCount == 1 {
+                        detail = "Bundle ready: \(bundleNames.first ?? "unknown")"
+                    } else {
+                        detail = "Completed \(finalDownloadedURLs.count) bundle(s)"
+                    }
                     DownloadCenter.shared.complete(
                         id: downloadCenterTaskID,
                         detail: detail,
@@ -1788,26 +2137,30 @@ public struct DatabaseBrowserView: View {
     }
 
     private var searchSection: some View {
-        ZStack(alignment: .topLeading) {
-            VStack(alignment: .leading, spacing: 12) {
-                // Primary search bar with scope selector
+        VStack(alignment: .leading, spacing: 12) {
+            // Keep primary search controls always visible.
+            ZStack(alignment: .topLeading) {
                 primarySearchBar
 
-                // Scope help text (when not "All Fields")
-                if viewModel.searchScope != .all {
-                    searchScopeHelp
+                // Autocomplete dropdown - floats below the fixed search field.
+                if !viewModel.autocompleteSuggestions.isEmpty {
+                    autocompleteDropdown
+                        .padding(.top, 46)  // Offset below search field
+                        .padding(.leading, 58)  // Align with text field (after scope selector)
                 }
+            }
 
-                // Advanced search toggle and filters
+            // Scope help text (when not "All Fields")
+            if viewModel.searchScope != .all {
+                searchScopeHelp
+            }
+
+            // Only advanced controls scroll, not the Search button.
+            ScrollView(.vertical, showsIndicators: viewModel.isAdvancedExpanded) {
                 advancedSearchSection
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            // Autocomplete dropdown - positioned in ZStack to float above other content
-            if !viewModel.autocompleteSuggestions.isEmpty {
-                autocompleteDropdown
-                    .padding(.top, 46)  // Offset below search field
-                    .padding(.leading, 58)  // Align with text field (after scope selector)
-            }
+            .frame(maxHeight: viewModel.isAdvancedExpanded ? 230 : 38)
         }
         .padding()
         .animation(.easeInOut(duration: 0.2), value: viewModel.isAdvancedExpanded)
@@ -1879,18 +2232,21 @@ public struct DatabaseBrowserView: View {
                     .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
             )
 
-            // Search button
-            if viewModel.isSearching {
-                ProgressView()
-                    .scaleEffect(0.8)
-                    .frame(width: 70)
-            } else {
-                Button("Search") {
-                    viewModel.performSearch()
+            // Search button remains visible at all times.
+            Button {
+                viewModel.performSearch()
+            } label: {
+                HStack(spacing: 6) {
+                    if viewModel.isSearching {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                    Text(viewModel.isSearching ? "Searching" : "Search")
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(!viewModel.isSearchTextValid)
+                .frame(width: 88)
             }
+            .buttonStyle(.borderedProminent)
+            .disabled(!viewModel.isSearchTextValid || viewModel.isSearching)
         }
     }
 
@@ -2096,6 +2452,14 @@ public struct DatabaseBrowserView: View {
 
     private var pathoplexusFiltersGrid: some View {
         VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.shield")
+                    .foregroundColor(.accentColor)
+                Text("Lungfish retrieves OPEN records only. Restricted sequences are hidden to prevent inappropriate use.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
             // Country and Host row
             HStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -2206,31 +2570,26 @@ public struct DatabaseBrowserView: View {
                 Spacer()
             }
 
-            // Data use terms and INSDC filter
+            // INSDC source filter
             HStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Label("Data Use Terms", systemImage: "lock.shield")
+                    Label("INSDC Source", systemImage: "link")
                         .font(.caption)
                         .foregroundColor(.secondary)
 
-                    Picker("", selection: $viewModel.pathoplexusDataUseTerms) {
-                        Text("Any").tag(nil as DataUseTerms?)
-                        Text("Open").tag(DataUseTerms.open as DataUseTerms?)
-                        Text("Restricted").tag(DataUseTerms.restricted as DataUseTerms?)
+                    Picker("", selection: $viewModel.pathoplexusINSDCFilter) {
+                        ForEach(PathoplexusINSDCFilter.allCases) { option in
+                            Text(option.rawValue).tag(option)
+                        }
                     }
                     .pickerStyle(.menu)
-                    .frame(width: 180)
+                    .frame(width: 200)
                 }
-
-                Toggle("INSDC Only", isOn: $viewModel.pathoplexusINSDCOnly)
-                    .font(.caption)
-                    .toggleStyle(.checkbox)
-                    .help("Show only records with INSDC accessions (linked to GenBank/ENA for sequence + annotations)")
 
                 Spacer()
             }
 
-            Text("Pathoplexus filters are combined with AND logic. Records with INSDC accessions will be fetched from GenBank with annotations.")
+            Text("Pathoplexus filters are combined with AND logic. Restricted records are hidden; only downloadable (OPEN) records are shown. INSDC source filter defaults to Any (both INSDC and non-INSDC records).")
                 .font(.caption2)
                 .foregroundColor(.secondary)
                 .padding(.top, 4)
@@ -2474,6 +2833,17 @@ public struct DatabaseBrowserView: View {
                 .disabled(viewModel.filteredResults.isEmpty)
 
                 Spacer()
+
+                // Sort picker
+                Picker("Sort", selection: $viewModel.resultSortOrder) {
+                    ForEach(ResultSortOrder.allCases) { order in
+                        Text(order.rawValue).tag(order)
+                    }
+                }
+                .pickerStyle(.menu)
+                .font(.caption)
+                .frame(maxWidth: 160)
+                .help("Sort results")
 
                 // Selection count and total results info
                 if !viewModel.selectedRecords.isEmpty {
@@ -2762,8 +3132,6 @@ struct PathoplexusConsentView: View {
     var onAccept: () -> Void
     var onCancel: () -> Void
 
-    @State private var hasScrolledToBottom = false
-
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -2797,6 +3165,9 @@ struct PathoplexusConsentView: View {
                             .font(.headline)
 
                         Text("Sequences in Pathoplexus may be shared under two types of data use terms:")
+
+                        Text("Lungfish retrieves OPEN records only. Restricted records are intentionally excluded to help prevent inappropriate use.")
+                            .font(.subheadline.weight(.semibold))
 
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(alignment: .top, spacing: 8) {
@@ -2997,6 +3368,11 @@ struct SearchResultRowWithCheckbox: View {
                                 .font(.caption.monospaced())
                                 .foregroundColor(.purple)
                         }
+                        if let subtype = record.subtype, !subtype.isEmpty {
+                            Text(subtype)
+                                .font(.caption.monospaced())
+                                .foregroundColor(.indigo)
+                        }
                     }
                 }
             }
@@ -3076,7 +3452,7 @@ extension DatabaseSource {
         case .ncbi:
             return "NCBI Search"
         case .ena:
-            return "SRA (FASTQ Downloads)"
+            return "SRA Search"
         case .ddbj:
             return "DNA Data Bank of Japan"
         case .pathoplexus:

@@ -590,33 +590,30 @@ public final class MainMenu {
 
         toolsMenu.addItem(.separator())
 
-        // Database access - Unified NCBI search
-        toolsMenu.addItem(
+        // Online databases
+        let searchDatabasesItem = NSMenuItem(title: "Search Online Databases...", action: nil, keyEquivalent: "")
+        let searchDatabasesMenu = NSMenu(title: "Search Online Databases")
+
+        searchDatabasesMenu.addItem(
             withTitle: "Search NCBI...",
             action: #selector(ToolsMenuActions.searchNCBI(_:)),
             keyEquivalent: ""
         )
 
-        // SRA/FASTQ download via ENA
-        toolsMenu.addItem(
-            withTitle: "Download SRA (FASTQ)...",
+        searchDatabasesMenu.addItem(
+            withTitle: "Search SRA...",
             action: #selector(ToolsMenuActions.searchSRA(_:)),
             keyEquivalent: ""
         )
 
-        // Pathoplexus viral sequences
-        toolsMenu.addItem(
+        searchDatabasesMenu.addItem(
             withTitle: "Search Pathoplexus...",
             action: #selector(ToolsMenuActions.searchPathoplexus(_:)),
             keyEquivalent: ""
         )
 
-        // Genome assembly download with bundle building
-        toolsMenu.addItem(
-            withTitle: "Download Genome Assembly...",
-            action: #selector(ToolsMenuActions.downloadGenomeAssembly(_:)),
-            keyEquivalent: ""
-        )
+        searchDatabasesItem.submenu = searchDatabasesMenu
+        toolsMenu.addItem(searchDatabasesItem)
 
         toolsMenu.addItem(.separator())
 
@@ -843,7 +840,6 @@ public final class MainMenu {
     func searchNCBI(_ sender: Any?)
     func searchSRA(_ sender: Any?)
     func searchPathoplexus(_ sender: Any?)
-    func downloadGenomeAssembly(_ sender: Any?)
     func runNextflow(_ sender: Any?)
     func runSnakemake(_ sender: Any?)
     func openWorkflowBuilder(_ sender: Any?)

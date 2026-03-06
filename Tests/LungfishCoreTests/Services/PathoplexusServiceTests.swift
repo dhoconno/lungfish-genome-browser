@@ -249,8 +249,8 @@ final class PathoplexusServiceTests: XCTestCase {
 
         // Verify date strings appear in the URL exactly as provided
         let requestURL = requests[0].url!.absoluteString
-        XCTAssertTrue(requestURL.contains("sampleCollectionDateFrom=2024-01-01"), "URL should contain date from: \(requestURL)")
-        XCTAssertTrue(requestURL.contains("sampleCollectionDateTo=2024-02-01"), "URL should contain date to: \(requestURL)")
+        XCTAssertTrue(requestURL.contains("sampleCollectionDateRangeLowerFrom=2024-01-01"), "URL should contain date from: \(requestURL)")
+        XCTAssertTrue(requestURL.contains("sampleCollectionDateRangeUpperTo=2024-02-01"), "URL should contain date to: \(requestURL)")
         XCTAssertTrue(requestURL.contains("accession=PP_001"), "URL should contain accession: \(requestURL)")
         XCTAssertTrue(requestURL.contains("geoLocCountry=USA"), "URL should contain country: \(requestURL)")
         XCTAssertTrue(requestURL.contains("lengthFrom=1000"), "URL should contain lengthFrom: \(requestURL)")

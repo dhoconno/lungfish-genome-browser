@@ -406,6 +406,13 @@ public class MainSplitViewController: NSSplitViewController {
     }
 
     @objc private func handleProjectOpened(_ notification: Notification) {
+        // In multi-window mode, only the active main window should react to
+        // DocumentManager's global project-opened notification.
+        if AppDelegate.shared?.mainWindowController?.mainSplitViewController !== self {
+            logger.debug("handleProjectOpened: Ignoring notification for non-active window")
+            return
+        }
+
         guard let project = notification.userInfo?["project"] as? ProjectFile else {
             logger.warning("handleProjectOpened: No project in notification")
             return

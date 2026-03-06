@@ -1141,6 +1141,9 @@ extension SidebarViewController: NSOutlineViewDataSource {
         debugLog("validateDrop: isInternalDrag=\(isInternalDrag)")
 
         if isInternalDrag {
+            let sourceIdentifier = info.draggingPasteboard.string(forType: sidebarItemPasteboardType)
+            let hasLocalSource = sourceIdentifier.flatMap { findItem(byPath: $0) } != nil
+
             // For internal drags, only allow dropping into folders or projects
             guard let dest = destinationItem else {
                 // Dropping at root level - not allowed for internal items
@@ -1150,6 +1153,13 @@ extension SidebarViewController: NSOutlineViewDataSource {
             // Can only drop into folders or projects
             if dest.type != .folder && dest.type != .project {
                 return []
+            }
+
+            // Cross-window drags carry the internal type, but source items aren't
+            // in this sidebar model. Treat these as copy imports.
+            if !hasLocalSource {
+                logger.debug("validateDrop: Internal type from another window - COPY import to '\(dest.title, privacy: .public)'")
+                return .copy
             }
 
             // Check for Control key to copy, otherwise move
@@ -1213,27 +1223,25 @@ extension SidebarViewController: NSOutlineViewDataSource {
             debugLog("acceptDrop: Internal drag detected with identifier='\(identifierString)'")
 
             // Find the source item by its identifier
-            guard let sourceItem = findItem(byPath: identifierString) else {
-                logger.warning("acceptDrop: Could not find source item with path '\(identifierString, privacy: .public)'")
-                return false
+            if let sourceItem = findItem(byPath: identifierString),
+               let dest = destinationItem, (dest.type == .folder || dest.type == .project) {
+                // Check modifier keys for copy vs move
+                let modifiers = NSEvent.modifierFlags
+                let isCopy = modifiers.contains(.control) || modifiers.contains(.option)
+
+                if isCopy {
+                    // Copy the item
+                    return copyItem(sourceItem, to: dest, at: index)
+                } else {
+                    // Move the item
+                    return moveItem(sourceItem, to: dest, at: index)
+                }
             }
 
-            guard let dest = destinationItem, (dest.type == .folder || dest.type == .project) else {
-                logger.warning("acceptDrop: Invalid destination for internal drag")
-                return false
-            }
-
-            // Check modifier keys for copy vs move
-            let modifiers = NSEvent.modifierFlags
-            let isCopy = modifiers.contains(.control) || modifiers.contains(.option)
-
-            if isCopy {
-                // Copy the item
-                return copyItem(sourceItem, to: dest, at: index)
-            } else {
-                // Move the item
-                return moveItem(sourceItem, to: dest, at: index)
-            }
+            // Cross-window drags include our internal type but the source item
+            // is not present in this window's sidebar model; fall through to the
+            // external file URL path so the file is copied into this project.
+            logger.debug("acceptDrop: Internal identifier not resolvable in this sidebar; falling back to file URL import")
         }
 
         // External file drop

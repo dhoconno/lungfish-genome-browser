@@ -247,6 +247,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     /// Main window controller for the application
     public var mainWindowController: MainWindowController?
 
+    /// All open main windows (strong references for multi-project workflows).
+    private var mainWindowControllers: [MainWindowController] = []
+
     /// Welcome window controller for project selection
     private var welcomeWindowController: WelcomeWindowController?
 
@@ -381,6 +384,19 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         sidebarController.reloadFromFilesystem()
         _ = sidebarController.selectItem(forURL: url)
+        requestInspectorDocumentModeAfterDownload()
+    }
+
+    /// Ensures post-download imports land on the Inspector's Document tab.
+    ///
+    /// Download/import workflows should default to bundle/document context, not
+    /// selection editing context.
+    private func requestInspectorDocumentModeAfterDownload() {
+        NotificationCenter.default.post(
+            name: .showInspectorRequested,
+            object: nil,
+            userInfo: [NotificationUserInfoKey.inspectorTab: "document"]
+        )
     }
 
     deinit {
@@ -407,13 +423,34 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         welcomeWindowController?.show()
     }
 
-    private func showMainWindowWithProject(_ projectURL: URL) {
-        // Set as working directory
-        workingDirectoryURL = projectURL
+    @discardableResult
+    private func createAndShowMainWindow() -> MainWindowController {
+        let controller = MainWindowController()
+        controller.showWindow(nil)
+        mainWindowController = controller
+        if !mainWindowControllers.contains(where: { $0 === controller }) {
+            mainWindowControllers.append(controller)
+        }
+        return controller
+    }
 
-        // Create and show the main window
-        mainWindowController = MainWindowController()
-        mainWindowController?.showWindow(nil)
+    private func openProject(_ projectURL: URL, in controller: MainWindowController) {
+        // Keep global working directory in sync with most recently activated project.
+        workingDirectoryURL = projectURL
+        mainWindowController = controller
+
+        // Use DocumentManager to preserve project semantics and persisted metadata.
+        do {
+            let _ = try DocumentManager.shared.openProject(at: projectURL)
+            debugLog("openProject: Opened project via DocumentManager")
+        } catch {
+            debugLog("openProject: Failed via DocumentManager, falling back to filesystem sidebar: \(error.localizedDescription)")
+            controller.mainSplitViewController?.sidebarController.openProject(at: projectURL)
+        }
+    }
+
+    private func showMainWindowWithProject(_ projectURL: URL) {
+        let controller = createAndShowMainWindow()
 
         // Activate the app to ensure menu bar switches properly
         NSApp.activate(ignoringOtherApps: true)
@@ -422,23 +459,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         welcomeWindowController?.close()
         welcomeWindowController = nil
 
-        // Use the new filesystem-backed sidebar model via DocumentManager
-        // This posts projectOpenedNotification which triggers sidebarController.openProject(at:)
-        // The FileSystemWatcher will automatically refresh the sidebar when files change
-        do {
-            let _ = try DocumentManager.shared.openProject(at: projectURL)
-            debugLog("showMainWindowWithProject: Opened project via DocumentManager")
-        } catch {
-            debugLog("showMainWindowWithProject: Failed to open project: \(error.localizedDescription)")
-            // Fall back to just showing the sidebar with filesystem view
-            mainWindowController?.mainSplitViewController?.sidebarController.openProject(at: projectURL)
-        }
+        openProject(projectURL, in: controller)
     }
 
     private func showMainWindowWithoutProject() {
-        // Create and show the main window without a project
-        mainWindowController = MainWindowController()
-        mainWindowController?.showWindow(nil)
+        _ = createAndShowMainWindow()
 
         // Activate the app to ensure menu bar switches properly
         NSApp.activate(ignoringOtherApps: true)
@@ -636,6 +661,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             name: NSWindow.willCloseNotification,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowDidBecomeMain(_:)),
+            name: NSWindow.didBecomeMainNotification,
+            object: nil
+        )
 
         // Register for annotation update notifications
         NotificationCenter.default.addObserver(
@@ -763,7 +794,28 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     }
 
     @objc private func windowWillClose(_ notification: Notification) {
-        // Handle window close events
+        guard let closedWindow = notification.object as? NSWindow else { return }
+
+        // Remove closed main windows from our tracked list.
+        mainWindowControllers.removeAll { controller in
+            controller.window === closedWindow
+        }
+
+        if mainWindowController?.window === closedWindow {
+            mainWindowController = mainWindowControllers.first(where: { $0.window?.isMainWindow == true }) ?? mainWindowControllers.last
+        }
+    }
+
+    @objc private func windowDidBecomeMain(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              let controller = window.windowController as? MainWindowController else {
+            return
+        }
+
+        mainWindowController = controller
+        if !mainWindowControllers.contains(where: { $0 === controller }) {
+            mainWindowControllers.append(controller)
+        }
     }
 
     private func saveApplicationState() {
@@ -834,7 +886,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     @IBAction func openProjectFolder(_ sender: Any?) {
         let panel = NSOpenPanel()
         panel.title = "Open Project Folder"
-        panel.message = "Select a folder containing genomic data files"
+        panel.message = "Select a Lungfish project folder to open in a new window"
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
@@ -844,20 +896,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             guard response == .OK, let url = panel.url else { return }
             guard let self = self else { return }
 
-            // Set as working directory
-            self.workingDirectoryURL = url
-
-            // Use the new filesystem-backed sidebar model
-            // This automatically scans the directory and sets up FileSystemWatcher
-            do {
-                let _ = try DocumentManager.shared.openProject(at: url)
-                debugLog("openProjectFolder: Opened project via DocumentManager")
-            } catch {
-                debugLog("openProjectFolder: Failed to open project: \(error.localizedDescription)")
-                // Fall back to just showing the sidebar with filesystem view
-                let sidebarController = self.mainWindowController?.mainSplitViewController?.sidebarController
-                sidebarController?.openProject(at: url)
-            }
+            let controller = self.createAndShowMainWindow()
+            NSApp.activate(ignoringOtherApps: true)
+            self.openProject(url, in: controller)
         }
     }
 
@@ -3279,17 +3320,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     }
 
     @objc func searchSRA(_ sender: Any?) {
-        // Use ENA service for SRA/FASTQ downloads
+        // Use ENA service for SRA/FASTQ retrieval
         showDatabaseBrowser(source: .ena)
     }
 
     @objc func searchPathoplexus(_ sender: Any?) {
         showDatabaseBrowser(source: .pathoplexus)
-    }
-
-    @objc func downloadGenomeAssembly(_ sender: Any?) {
-        // TODO: Implement genome assembly download workflow with bundle building
-        showNotImplementedAlert("Genome Assembly Download")
     }
 
     /// Shows the database browser for the specified source.
@@ -3312,7 +3348,18 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         // Present as sheet
         let browserWindow = NSWindow(contentViewController: browserController)
-        browserWindow.title = "Search \(source.displayName)"
+        let title: String
+        switch source {
+        case .ncbi:
+            title = "Search NCBI"
+        case .ena:
+            title = "Search SRA"
+        case .pathoplexus:
+            title = "Search Pathoplexus"
+        default:
+            title = "Search \(source.displayName)"
+        }
+        browserWindow.title = title
 
         window.beginSheet(browserWindow) { _ in
             debugLog("Sheet dismissed callback executing")
@@ -3449,6 +3496,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
                 // Select the downloaded file in the sidebar to highlight what's being viewed
                 sidebarController?.selectItem(forURL: result.url)
+                self.requestInspectorDocumentModeAfterDownload()
 
                 debugLog("handleDownloadedFileSync: Document displayed and sidebar refreshed")
             }
@@ -3593,6 +3641,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     // Select the first downloaded file in the sidebar to highlight what's being viewed
                     if result.error == nil {
                         sidebarController?.selectItem(forURL: result.url)
+                        self.requestInspectorDocumentModeAfterDownload()
                     }
 
                     debugLog("handleMultipleDownloadsSync: Completed importing \(copiedURLs.count) files")
