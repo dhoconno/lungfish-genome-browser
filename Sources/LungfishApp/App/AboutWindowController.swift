@@ -50,7 +50,8 @@ final class AboutWindowController: NSWindowController {
         let iconView = NSImageView()
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.imageScaling = .scaleProportionallyUpOrDown
-        if let logo = NSImage(named: "AboutLogo") {
+        if let logoURL = Bundle.module.url(forResource: "about-logo", withExtension: "png", subdirectory: "Images"),
+           let logo = NSImage(contentsOf: logoURL) {
             iconView.image = logo
         } else {
             iconView.image = NSApp.applicationIconImage
