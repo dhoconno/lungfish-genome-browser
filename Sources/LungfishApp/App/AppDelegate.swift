@@ -3268,19 +3268,24 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         AssemblySheetPresenter.present(
             from: window,
             algorithm: algorithm,
-            onComplete: { outputURL in
+            onComplete: { [weak self] outputURL in
                 debugLog("Assembly completed: \(outputURL.path)")
 
-                // Show success message
-                let alert = NSAlert()
-                alert.messageText = "Assembly Complete"
-                alert.informativeText = "Assembly output saved to:\n\(outputURL.path)"
-                alert.alertStyle = .informational
-                alert.addButton(withTitle: "Open Folder")
-                alert.addButton(withTitle: "OK")
+                // If it's a .lungfishref bundle, open it directly in the app
+                if outputURL.pathExtension == "lungfishref" {
+                    _ = self?.openDocument(at: outputURL)
+                } else {
+                    // Legacy path: show success message
+                    let alert = NSAlert()
+                    alert.messageText = "Assembly Complete"
+                    alert.informativeText = "Assembly output saved to:\n\(outputURL.path)"
+                    alert.alertStyle = .informational
+                    alert.addButton(withTitle: "Open Folder")
+                    alert.addButton(withTitle: "OK")
 
-                if alert.runModal() == .alertFirstButtonReturn {
-                    NSWorkspace.shared.open(outputURL)
+                    if alert.runModal() == .alertFirstButtonReturn {
+                        NSWorkspace.shared.open(outputURL)
+                    }
                 }
             },
             onFailed: { error in

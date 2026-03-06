@@ -164,7 +164,7 @@ public final class VariantConverter: Sendable {
         progress?(0.5, "Converting \(stats.variantCount) variants to BCF...")
 
         // For now, we copy the VCF as a placeholder until bcftools container is integrated
-        // In production, this would use ContainerPluginManager to run bcftools
+        // In production, this would use NativeToolRunner to run bcftools
         try await convertVCFToBCFPlaceholder(
             from: sourceURL,
             to: outputURL,
@@ -342,7 +342,7 @@ public final class VariantConverter: Sendable {
         options: ConversionOptions
     ) async throws {
         // This is a placeholder implementation
-        // In production, this would use bcftools via ContainerPluginManager:
+        // In production, this would use bcftools via NativeToolRunner:
         // bcftools view -Ob -o output.bcf input.vcf
         //
         // For now, we simply copy the file to demonstrate the pipeline
@@ -366,7 +366,7 @@ public final class VariantConverter: Sendable {
         indexURL: URL
     ) async throws {
         // This is a placeholder implementation
-        // In production, this would use bcftools via ContainerPluginManager:
+        // In production, this would use bcftools via NativeToolRunner:
         // bcftools index output.bcf
         //
         // For now, create an empty index file

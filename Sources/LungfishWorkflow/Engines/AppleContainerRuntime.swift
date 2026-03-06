@@ -109,11 +109,8 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
         
         // Debug: print kernel path resolution to stderr
         if let kp = resolvedKernelPath {
-            fputs("[DEBUG] Resolved kernel path: \(kp.path)\n", stderr)
             logger.info("Resolved kernel path: \(kp.path)")
         } else {
-            fputs("[DEBUG] No kernel path resolved\n", stderr)
-            fputs("[DEBUG] Bundle.module.bundlePath: \(Bundle.module.bundlePath)\n", stderr)
             logger.warning("No kernel path resolved")
         }
 
@@ -121,23 +118,18 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
         if let kernelPath = resolvedKernelPath,
            FileManager.default.fileExists(atPath: kernelPath.path) {
             do {
-                fputs("[DEBUG] Creating Kernel object...\n", stderr)
                 let kernel = Kernel(
                     path: kernelPath,
                     platform: .linuxArm
                 )
 
                 // Load bundled initfs into image store if needed
-                fputs("[DEBUG] Loading bundled initfs...\n", stderr)
                 try await Self.loadBundledInitfs(storePath: storePath, logger: logger)
 
                 // Use NAT networking which doesn't require com.apple.vm.networking entitlement
                 // NAT uses VZNATNetworkDeviceAttachment which is available without special entitlements
-                fputs("[DEBUG] Creating NAT network (no entitlement required)...\n", stderr)
                 let natNetwork = NATNetwork()
-                fputs("[DEBUG] NAT network created successfully\n", stderr)
 
-                fputs("[DEBUG] Creating ContainerManager with NAT network and Rosetta emulation...\n", stderr)
                 self.containerManager = try await ContainerManager(
                     kernel: kernel,
                     initfsReference: "vminit:latest",
@@ -145,21 +137,13 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
                     network: natNetwork,
                     rosetta: true  // Enable x86_64 emulation for biocontainers (amd64 only)
                 )
-                fputs("[DEBUG] ContainerManager created successfully with Rosetta!\n", stderr)
                 logger.info("Apple Container runtime initialized with kernel at \(kernelPath.path)")
             } catch {
-                fputs("[DEBUG] Failed to initialize ContainerManager: \(error)\n", stderr)
-                fputs("[DEBUG] Error type: \(type(of: error))\n", stderr)
                 logger.error("Failed to initialize ContainerManager: \(error)")
                 self.containerManager = nil
             }
         } else {
             self.containerManager = nil
-            if resolvedKernelPath == nil {
-                fputs("[DEBUG] Kernel path is nil\n", stderr)
-            } else {
-                fputs("[DEBUG] Kernel file does not exist at resolved path\n", stderr)
-            }
             logger.info("Apple Container runtime initialized without kernel (limited functionality)")
         }
 
@@ -216,16 +200,8 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
 
         } catch {
             // Log detailed error information for debugging
-            fputs("[DEBUG] Image pull error type: \(type(of: error))\n", stderr)
-            fputs("[DEBUG] Image pull error: \(error)\n", stderr)
-            if let containerError = error as? ContainerizationError {
-                fputs("[DEBUG] ContainerizationError code: \(containerError.code)\n", stderr)
-                fputs("[DEBUG] ContainerizationError message: \(containerError.message)\n", stderr)
-                if let cause = containerError.cause {
-                    fputs("[DEBUG] ContainerizationError cause: \(cause)\n", stderr)
-                }
-            }
-            logger.error("Failed to pull image \(reference, privacy: .public): \(error.localizedDescription)")
+
+            logger.error("Failed to pull image \(reference, privacy: .public): \(error)")
             throw ContainerRuntimeError.imagePullFailed(
                 reference: reference,
                 reason: "\(error)"
@@ -239,7 +215,6 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
         config: ContainerConfiguration
     ) async throws -> Container {
         logger.info("Creating container: \(name, privacy: .public)")
-        fputs("[DEBUG] createContainer: name=\(name), image=\(image.reference)\n", stderr)
 
         guard var manager = containerManager else {
             throw ContainerRuntimeError.runtimeNotAvailable(
@@ -250,12 +225,8 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
 
         do {
             let containerID = UUID().uuidString
-            fputs("[DEBUG] createContainer: containerID=\(containerID)\n", stderr)
-            fputs("[DEBUG] createContainer: mounts=\(config.mounts.map { "\($0.source) -> \($0.destination)" })\n", stderr)
 
             // Create the Linux container using ContainerManager
-            fputs("[DEBUG] createContainer: calling manager.create...\n", stderr)
-            fputs("[DEBUG] createContainer: command=\(config.command ?? [])\n", stderr)
             let linuxContainer = try await manager.create(
                 containerID,
                 reference: image.reference,
@@ -280,7 +251,6 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
                 // Process configuration (command to run)
                 if let command = config.command, !command.isEmpty {
                     containerConfig.process.arguments = command
-                    fputs("[DEBUG] createContainer: set process.arguments=\(command)\n", stderr)
                 }
 
                 // Working directory
@@ -325,29 +295,19 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
             return container
 
         } catch {
-            fputs("[DEBUG] createContainer failed: \(error)\n", stderr)
-            fputs("[DEBUG] error type: \(type(of: error))\n", stderr)
-            if let containerError = error as? ContainerizationError {
-                fputs("[DEBUG] ContainerizationError code: \(containerError.code)\n", stderr)
-                fputs("[DEBUG] ContainerizationError message: \(containerError.message)\n", stderr)
-                if let cause = containerError.cause {
-                    fputs("[DEBUG] ContainerizationError cause: \(cause)\n", stderr)
-                }
-            }
-            logger.error("Failed to create container \(name, privacy: .public): \(error.localizedDescription)")
+
+            logger.error("Failed to create container \(name, privacy: .public): \(error)")
             throw ContainerRuntimeError.containerCreationFailed(
                 name: name,
-                reason: error.localizedDescription
+                reason: "\(error)"
             )
         }
     }
 
     public func startContainer(_ container: Container) async throws {
         logger.info("Starting container: \(container.name, privacy: .public)")
-        fputs("[DEBUG] startContainer: \(container.name)\n", stderr)
 
         guard let linuxContainer = nativeContainers[container.id] else {
-            fputs("[DEBUG] startContainer: native container not found for ID \(container.id)\n", stderr)
             throw ContainerRuntimeError.containerStartFailed(
                 containerID: container.id,
                 reason: "Native container not found"
@@ -355,13 +315,9 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
         }
 
         do {
-            fputs("[DEBUG] startContainer: calling linuxContainer.create()...\n", stderr)
             try await linuxContainer.create()
-            fputs("[DEBUG] startContainer: linuxContainer.create() completed\n", stderr)
 
-            fputs("[DEBUG] startContainer: calling linuxContainer.start()...\n", stderr)
             try await linuxContainer.start()
-            fputs("[DEBUG] startContainer: linuxContainer.start() completed\n", stderr)
 
             // Update container state
             if var updatedContainer = activeContainers[container.id] {
@@ -370,22 +326,13 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
             }
 
             logger.info("Container started: \(container.name, privacy: .public)")
-            fputs("[DEBUG] startContainer: container started successfully\n", stderr)
 
         } catch {
-            fputs("[DEBUG] startContainer failed: \(error)\n", stderr)
-            fputs("[DEBUG] error type: \(type(of: error))\n", stderr)
-            if let containerError = error as? ContainerizationError {
-                fputs("[DEBUG] ContainerizationError code: \(containerError.code)\n", stderr)
-                fputs("[DEBUG] ContainerizationError message: \(containerError.message)\n", stderr)
-                if let cause = containerError.cause {
-                    fputs("[DEBUG] ContainerizationError cause: \(cause)\n", stderr)
-                }
-            }
-            logger.error("Failed to start container \(container.name, privacy: .public): \(error.localizedDescription)")
+
+            logger.error("Failed to start container \(container.name, privacy: .public): \(error)")
             throw ContainerRuntimeError.containerStartFailed(
                 containerID: container.id,
-                reason: error.localizedDescription
+                reason: "\(error)"
             )
         }
     }
@@ -418,10 +365,10 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
             logger.info("Container stopped: \(container.name, privacy: .public)")
 
         } catch {
-            logger.error("Failed to stop container \(container.name, privacy: .public): \(error.localizedDescription)")
+            logger.error("Failed to stop container \(container.name, privacy: .public): \(error)")
             throw ContainerRuntimeError.containerStopFailed(
                 containerID: container.id,
-                reason: error.localizedDescription
+                reason: "\(error)"
             )
         }
     }
@@ -436,10 +383,8 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
     /// - Returns: The exit code of the container process
     public func runAndWait(_ container: Container) async throws -> Int32 {
         logger.info("Running container: \(container.name, privacy: .public)")
-        fputs("[DEBUG] runAndWait: container=\(container.name)\n", stderr)
 
         guard let linuxContainer = nativeContainers[container.id] else {
-            fputs("[DEBUG] runAndWait: native container not found\n", stderr)
             throw ContainerRuntimeError.containerStartFailed(
                 containerID: container.id,
                 reason: "Native container not found"
@@ -447,9 +392,7 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
         }
 
         do {
-            fputs("[DEBUG] runAndWait: calling linuxContainer.create()...\n", stderr)
             try await linuxContainer.create()
-            fputs("[DEBUG] runAndWait: calling linuxContainer.start()...\n", stderr)
             try await linuxContainer.start()
 
             // Update container state
@@ -458,10 +401,8 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
                 activeContainers[container.id] = updatedContainer
             }
 
-            fputs("[DEBUG] runAndWait: calling linuxContainer.wait()...\n", stderr)
             let exitStatus = try await linuxContainer.wait()
             let exitCode = exitStatus.exitCode
-            fputs("[DEBUG] runAndWait: container exited with code \(exitCode)\n", stderr)
 
             // Update state to stopped
             if var updatedContainer = activeContainers[container.id] {
@@ -474,14 +415,15 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
             return exitCode
 
         } catch {
-            fputs("[DEBUG] runAndWait failed: \(error)\n", stderr)
-            if let containerError = error as? ContainerizationError {
-                fputs("[DEBUG] ContainerizationError code: \(containerError.code)\n", stderr)
-                fputs("[DEBUG] ContainerizationError message: \(containerError.message)\n", stderr)
+            // Clean up actor-local state on error so removeContainer can succeed
+            if var updatedContainer = activeContainers[container.id] {
+                try? updatedContainer.updateState(.stopped)
+                activeContainers[container.id] = updatedContainer
             }
+            logger.error("runAndWait failed for \(container.name, privacy: .public): \(error)")
             throw ContainerRuntimeError.containerStartFailed(
                 containerID: container.id,
-                reason: error.localizedDescription
+                reason: "\(error)"
             )
         }
     }
@@ -494,10 +436,8 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
         workingDirectory: String
     ) async throws -> ContainerProcess {
         logger.info("Exec in container \(container.name, privacy: .public): \(command, privacy: .public)")
-        fputs("[DEBUG] exec: container=\(container.name), cmd=\(command), args=\(arguments), cwd=\(workingDirectory)\n", stderr)
 
         guard let linuxContainer = nativeContainers[container.id] else {
-            fputs("[DEBUG] exec: native container not found\n", stderr)
             throw ContainerRuntimeError.execFailed(
                 containerID: container.id,
                 command: command,
@@ -505,18 +445,17 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
             )
         }
 
-        guard container.state == .running else {
-            fputs("[DEBUG] exec: container not running, state=\(container.state)\n", stderr)
+        let currentState = activeContainers[container.id]?.state ?? container.state
+        guard currentState == .running else {
             throw ContainerRuntimeError.invalidContainerState(
                 containerID: container.id,
                 expected: .running,
-                actual: container.state
+                actual: currentState
             )
         }
 
         // Execute the command in the container synchronously
         let execID = UUID().uuidString
-        fputs("[DEBUG] exec: calling linuxContainer.exec with ID \(execID)...\n", stderr)
         let execProcess = try await linuxContainer.exec(execID) { execConfig in
             execConfig.arguments = [command] + arguments
             execConfig.workingDirectory = workingDirectory
@@ -525,12 +464,9 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
                 execConfig.environmentVariables.append("\(key)=\(value)")
             }
         }
-        fputs("[DEBUG] exec: linuxContainer.exec returned successfully\n", stderr)
 
         // Start the process
-        fputs("[DEBUG] exec: calling execProcess.start()...\n", stderr)
         try await execProcess.start()
-        fputs("[DEBUG] exec: execProcess.start() completed\n", stderr)
 
         // Create a wrapper that holds the process reference
         let process = ContainerProcess(
@@ -557,11 +493,12 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
     public func removeContainer(_ container: Container) async throws {
         logger.info("Removing container: \(container.name, privacy: .public)")
 
-        guard container.state == .stopped || container.state == .created else {
+        let currentState = activeContainers[container.id]?.state ?? container.state
+        guard currentState == .stopped || currentState == .created else {
             throw ContainerRuntimeError.invalidContainerState(
                 containerID: container.id,
                 expected: .stopped,
-                actual: container.state
+                actual: currentState
             )
         }
 
@@ -654,11 +591,9 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
         do {
             _ = try await imageStore.get(reference: "vminit:latest")
             logger.debug("Initfs already loaded in image store")
-            fputs("[DEBUG] Initfs already loaded in image store\n", stderr)
             return
         } catch {
             // Image not found, need to create it
-            fputs("[DEBUG] Initfs not found in image store, will create it\n", stderr)
         }
 
         // Find the bundled initfs tarball
@@ -697,19 +632,16 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
 
         guard let initfsTarball = initfsTarball else {
             logger.warning("Bundled initfs not found in any search location")
-            fputs("[DEBUG] Bundled initfs not found in any search location\n", stderr)
             return
         }
 
         logger.info("Loading bundled initfs from \(initfsTarball.path)")
-        fputs("[DEBUG] Loading bundled initfs from \(initfsTarball.path)\n", stderr)
 
         // The tarball contains a raw rootfs filesystem (bin/, sbin/, etc.), not an OCI image.
         // Use InitImage.create to convert the rootfs tarball into an OCI image.
         do {
             let platform = Platform(arch: "arm64", os: "linux", variant: "v8")
             
-            fputs("[DEBUG] Creating InitImage from rootfs tarball...\n", stderr)
             _ = try await InitImage.create(
                 reference: "vminit:latest",
                 rootfs: initfsTarball,
@@ -723,10 +655,8 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
             )
 
             logger.info("Successfully created initfs OCI image in store")
-            fputs("[DEBUG] Successfully created initfs OCI image in store\n", stderr)
         } catch {
             logger.warning("Failed to create initfs image: \(error)")
-            fputs("[DEBUG] Failed to create initfs image: \(error)\n", stderr)
             throw error
         }
     }
@@ -748,6 +678,9 @@ public struct NATNetwork: ContainerManager.Network, Sendable {
     /// Track allocated addresses by container ID
     private var allocations: [String: UInt32]
 
+    /// Pool of released addresses available for reuse
+    private var releasedAddresses: [UInt32] = []
+
     public init() {
         // Use a private subnet for NAT - the actual networking is handled by macOS
         // These addresses are used for configuring the network inside the VM
@@ -760,17 +693,31 @@ public struct NATNetwork: ContainerManager.Network, Sendable {
     }
 
     public mutating func create(_ id: String) throws -> Interface? {
-        // Allocate the next IP address
-        let addressValue = subnet.lower.value + nextAddress
+        // Recycle a released address if available, otherwise allocate new
+        let addressOffset: UInt32
+        if !releasedAddresses.isEmpty {
+            addressOffset = releasedAddresses.removeFirst()
+        } else {
+            // /24 subnet: .2 through .254 are usable (253 addresses)
+            guard nextAddress <= 254 else {
+                throw ContainerRuntimeError.runtimeNotAvailable(
+                    .appleContainerization,
+                    reason: "NAT network address pool exhausted (max 253 containers)"
+                )
+            }
+            addressOffset = nextAddress
+            nextAddress += 1
+        }
+
+        let addressValue = subnet.lower.value + addressOffset
         let address = IPv4Address(addressValue)
         let cidr = try CIDRv4(address, prefix: subnet.prefix)
 
         // Gateway is .1 in the subnet
         let gateway = IPv4Address(subnet.lower.value + 1)
 
-        // Store allocation and increment
-        allocations[id] = nextAddress
-        nextAddress += 1
+        // Store allocation
+        allocations[id] = addressOffset
 
         // Return a NATInterface which uses VZNATNetworkDeviceAttachment
         return NATInterface(
@@ -782,7 +729,8 @@ public struct NATNetwork: ContainerManager.Network, Sendable {
     }
 
     public mutating func release(_ id: String) throws {
-        // Just remove the allocation - we don't recycle addresses for simplicity
-        allocations.removeValue(forKey: id)
+        if let offset = allocations.removeValue(forKey: id) {
+            releasedAddresses.append(offset)
+        }
     }
 }

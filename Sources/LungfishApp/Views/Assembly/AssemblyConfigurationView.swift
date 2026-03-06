@@ -8,6 +8,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import os.log
+import LungfishWorkflow
 
 /// Logger for assembly configuration view operations
 private let logger = Logger(subsystem: "com.lungfish.browser", category: "AssemblyConfigurationView")
@@ -382,10 +383,14 @@ public struct AssemblyConfigurationView: View {
                             .font(.subheadline)
                             .fontWeight(.medium)
 
-                        Toggle("Perform error correction", isOn: $viewModel.performErrorCorrection)
-                            .toggleStyle(.checkbox)
+                        Picker("Assembly Mode:", selection: $viewModel.spadesMode) {
+                            ForEach(SPAdesMode.allCases, id: \.self) { mode in
+                                Text(mode.displayName).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.menu)
 
-                        Toggle("Careful mode (mismatch correction)", isOn: $viewModel.carefulMode)
+                        Toggle("Perform error correction", isOn: $viewModel.performErrorCorrection)
                             .toggleStyle(.checkbox)
                     }
 
@@ -448,9 +453,16 @@ public struct AssemblyConfigurationView: View {
             if case .running(let progress, _) = viewModel.assemblyState {
                 if let progress = progress {
                     ProgressView(value: progress, total: 1.0) {
-                        Text("\(Int(progress * 100))%")
-                            .font(.caption)
-                            .monospacedDigit()
+                        HStack {
+                            Text("\(Int(progress * 100))%")
+                                .font(.caption)
+                                .monospacedDigit()
+                            Spacer()
+                            Text("Elapsed: \(viewModel.formattedElapsedTime)")
+                                .font(.caption)
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     .progressViewStyle(.linear)
                 } else {

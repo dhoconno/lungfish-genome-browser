@@ -8,6 +8,8 @@ import Foundation
 import SwiftUI
 import Combine
 import os.log
+import LungfishWorkflow
+import LungfishIO
 
 /// Logger for assembly configuration operations
 private let logger = Logger(subsystem: "com.lungfish.browser", category: "AssemblyConfiguration")
@@ -43,13 +45,13 @@ public enum AssemblyAlgorithm: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Docker image for the algorithm
-    var dockerImage: String {
+    /// Container image reference for the algorithm (arm64-native).
+    var containerImage: String {
         switch self {
         case .auto, .spades:
-            return "staphb/spades:latest"
+            return SPAdesAssemblyPipeline.spadesImageReference
         case .megahit:
-            return "vout/megahit:latest"
+            return "docker.io/lungfish/megahit:1.2.9-arm64"
         }
     }
 
@@ -237,8 +239,11 @@ public class AssemblyConfigurationViewModel: ObservableObject {
     /// Whether to perform error correction (SPAdes only)
     @Published public var performErrorCorrection: Bool = true
 
-    /// Whether to use careful mode for mismatch correction (SPAdes only)
-    @Published public var carefulMode: Bool = false
+    /// SPAdes assembly mode (isolate, meta, plasmid, rna, bio)
+    @Published public var spadesMode: SPAdesMode = .isolate
+
+    /// Elapsed time since assembly started
+    @Published public var elapsedTime: TimeInterval = 0
 
     /// Minimum contig length to report
     @Published public var minContigLength: Int = 200
@@ -294,8 +299,16 @@ public class AssemblyConfigurationViewModel: ObservableObject {
 
     private var assemblyTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
+    private var elapsedTimer: Timer?
+    private var assemblyStartTime: Date?
 
-    // MARK: - Initialization
+    // MARK: - Lifecycle
+
+    deinit {
+        MainActor.assumeIsolated {
+            elapsedTimer?.invalidate()
+        }
+    }
 
     public init() {
         // Set default output directory to user's Documents folder
@@ -480,105 +493,202 @@ public class AssemblyConfigurationViewModel: ObservableObject {
 
     /// Starts the assembly process.
     ///
-    /// This method validates the configuration, prepares the environment,
-    /// and launches the assembly in a container.
+    /// Validates configuration, creates an `SPAdesAssemblyConfig`, runs the
+    /// pipeline via Apple Containers, then builds a `.lungfishref` bundle.
     public func startAssembly() {
         guard canStartAssembly else {
             logger.warning("Cannot start assembly: validation failed or already in progress")
             return
         }
 
-        logger.info("Starting assembly with algorithm: \(self.algorithm.rawValue, privacy: .public)")
+        logger.info("Starting assembly with mode: \(self.spadesMode.displayName, privacy: .public)")
 
         assemblyState = .validating
         logOutput.removeAll()
+        elapsedTime = 0
         appendLog("Starting assembly...", level: .info)
-        appendLog("Algorithm: \(algorithm.rawValue)", level: .info)
+        appendLog("Mode: \(spadesMode.displayName)", level: .info)
         appendLog("Input files: \(inputFiles.count)", level: .info)
 
-        assemblyTask = Task { [weak self] in
-            guard let self = self else { return }
+        // Validate
+        let validation = validateConfiguration()
+        if !validation.isValid {
+            assemblyState = .failed(error: validation.errors.joined(separator: "; "))
+            appendLog("Validation failed: \(validation.errors.joined(separator: ", "))", level: .error)
+            return
+        }
 
-            // Validate
-            let validation = self.validateConfiguration()
-            if !validation.isValid {
-                await MainActor.run {
-                    self.assemblyState = .failed(error: validation.errors.joined(separator: "; "))
-                    self.appendLog("Validation failed: \(validation.errors.joined(separator: ", "))", level: .error)
+        for warning in validation.warnings {
+            appendLog("Warning: \(warning)", level: .warning)
+        }
+
+        assemblyState = .preparing
+        appendLog("Preparing assembly environment...", level: .info)
+        startElapsedTimer()
+
+        // Build SPAdes config from ViewModel state
+        // Use pairedWith UUIDs to correctly identify R1/R2 pairs.
+        // For each pair, the file whose ID is less than its partner's is forward (R1).
+        var forwardReads: [URL] = []
+        var reverseReads: [URL] = []
+        var unpairedReads: [URL] = []
+
+        if pairedEndMode {
+            var seen = Set<UUID>()
+            for file in inputFiles {
+                guard let partnerID = file.pairedWith, !seen.contains(file.id) else {
+                    if file.pairedWith == nil {
+                        unpairedReads.append(file.url)
+                    }
+                    continue
                 }
-                return
-            }
+                seen.insert(file.id)
+                seen.insert(partnerID)
 
-            for warning in validation.warnings {
-                await MainActor.run {
-                    self.appendLog("Warning: \(warning)", level: .warning)
+                if let partner = inputFiles.first(where: { $0.id == partnerID }) {
+                    // Use naming convention: file containing _R1/_1/_forward is forward
+                    let name = file.url.lastPathComponent.lowercased()
+                    let isForward = name.contains("_r1") || name.contains("_1.") || name.contains("_forward")
+                    if isForward {
+                        forwardReads.append(file.url)
+                        reverseReads.append(partner.url)
+                    } else {
+                        forwardReads.append(partner.url)
+                        reverseReads.append(file.url)
+                    }
                 }
             }
+        } else {
+            unpairedReads = inputFiles.map(\.url)
+        }
 
-            // Prepare
-            await MainActor.run {
-                self.assemblyState = .preparing
-                self.appendLog("Preparing assembly environment...", level: .info)
-            }
+        let kmerSizes: [Int]? = kmerConfig.autoSelect ? nil : parseKmerString(customKmerString)
 
-            // Create output directory
+        guard let outputDir = outputDirectory else {
+            stopElapsedTimer()
+            assemblyState = .failed(error: "No output directory selected")
+            return
+        }
+
+        let spadesConfig = SPAdesAssemblyConfig(
+            mode: spadesMode,
+            forwardReads: forwardReads,
+            reverseReads: reverseReads,
+            unpairedReads: unpairedReads,
+            kmerSizes: kmerSizes,
+            memoryGB: Int(maxMemoryGB),
+            threads: Int(maxThreads),
+            minContigLength: minContigLength,
+            skipErrorCorrection: !performErrorCorrection,
+            outputDirectory: outputDir,
+            projectName: projectName
+        )
+
+        // Capture values for the detached task
+        let projectNameCapture = projectName
+
+        assemblyTask = Task.detached { [weak self] in
             do {
-                let outputPath = self.outputDirectory!.appendingPathComponent(self.projectName)
-                try FileManager.default.createDirectory(at: outputPath, withIntermediateDirectories: true)
-                await MainActor.run {
-                    self.appendLog("Created output directory: \(outputPath.path)", level: .info)
+                // 1. Initialize Apple Container runtime
+                let runtime = try await AppleContainerRuntime()
+
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        self?.appendLog("Apple Container runtime initialized", level: .info)
+                    }
+                }
+
+                // 2. Run SPAdes pipeline
+                let pipeline = SPAdesAssemblyPipeline()
+                let result = try await pipeline.run(
+                    config: spadesConfig,
+                    runtime: runtime
+                ) { [weak self] fraction, message in
+                    DispatchQueue.main.async { [weak self] in
+                        MainActor.assumeIsolated {
+                            self?.assemblyState = .running(progress: fraction, stage: message)
+                            self?.appendLog(message, level: .info)
+                        }
+                    }
+                }
+
+                // 3. Log assembly statistics
+                let stats = result.statistics
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        self?.appendLog("Assembly statistics:", level: .info)
+                        self?.appendLog("  Contigs: \(stats.contigCount)", level: .info)
+                        self?.appendLog("  Total length: \(stats.totalLengthBP.formatted()) bp", level: .info)
+                        self?.appendLog("  N50: \(stats.n50.formatted()) bp", level: .info)
+                        self?.appendLog("  GC: \(String(format: "%.1f", stats.gcPercent))%", level: .info)
+                    }
+                }
+
+                // 4. Build provenance
+                let inputRecords = spadesConfig.allInputFiles.map { url in
+                    ProvenanceBuilder.inputRecord(for: url)
+                }
+                let provenance = ProvenanceBuilder.build(
+                    config: spadesConfig,
+                    result: result,
+                    inputRecords: inputRecords
+                )
+
+                // 5. Create .lungfishref bundle
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        self?.assemblyState = .running(progress: 0.97, stage: "Creating reference bundle...")
+                        self?.appendLog("Creating .lungfishref bundle...", level: .info)
+                    }
+                }
+
+                let bundleBuilder = AssemblyBundleBuilder()
+                let bundleURL = try await bundleBuilder.build(
+                    result: result,
+                    config: spadesConfig,
+                    provenance: provenance,
+                    outputDirectory: outputDir,
+                    bundleName: projectNameCapture
+                ) { [weak self] fraction, message in
+                    let overallFraction = 0.95 + fraction * 0.05
+                    DispatchQueue.main.async { [weak self] in
+                        MainActor.assumeIsolated {
+                            self?.assemblyState = .running(progress: overallFraction, stage: message)
+                        }
+                    }
+                }
+
+                // 6. Complete
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        self?.stopElapsedTimer()
+                        self?.assemblyState = .completed(outputPath: bundleURL.path)
+                        self?.appendLog("Bundle created: \(bundleURL.lastPathComponent)", level: .info)
+                        self?.appendLog("Assembly completed successfully!", level: .info)
+                        self?.onAssemblyComplete?(bundleURL)
+                    }
+                }
+
+            } catch is CancellationError {
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        self?.stopElapsedTimer()
+                        self?.assemblyState = .cancelled
+                        self?.appendLog("Assembly cancelled by user", level: .warning)
+                    }
                 }
             } catch {
-                await MainActor.run {
-                    self.assemblyState = .failed(error: "Failed to create output directory: \(error.localizedDescription)")
-                    self.appendLog("Error: \(error.localizedDescription)", level: .error)
+                let errorMessage = "\(error)"
+                logger.error("Assembly failed: \(error)")
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        self?.stopElapsedTimer()
+                        self?.assemblyState = .failed(error: errorMessage)
+                        self?.appendLog("Error: \(errorMessage)", level: .error)
+                        self?.onAssemblyFailed?(errorMessage)
+                    }
                 }
-                return
             }
-
-            // Simulate assembly stages (placeholder for actual container execution)
-            await self.simulateAssembly()
-        }
-    }
-
-    /// Simulates assembly execution for UI development.
-    ///
-    /// In production, this would be replaced with actual container execution.
-    private func simulateAssembly() async {
-        let stages = [
-            (0.1, "Reading input files..."),
-            (0.2, "Building k-mer graph..."),
-            (0.4, "Performing error correction..."),
-            (0.6, "Assembling contigs..."),
-            (0.8, "Scaffolding..."),
-            (0.9, "Writing output..."),
-        ]
-
-        for (progress, stage) in stages {
-            guard !Task.isCancelled else {
-                await MainActor.run {
-                    self.assemblyState = .cancelled
-                    self.appendLog("Assembly cancelled by user", level: .warning)
-                }
-                return
-            }
-
-            await MainActor.run {
-                self.assemblyState = .running(progress: progress, stage: stage)
-                self.appendLog(stage, level: .info)
-            }
-
-            // Simulate work
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-        }
-
-        // Complete
-        let outputPath = outputDirectory!.appendingPathComponent(projectName)
-        await MainActor.run {
-            self.assemblyState = .completed(outputPath: outputPath.path)
-            self.appendLog("Assembly completed successfully!", level: .info)
-            self.appendLog("Output: \(outputPath.path)", level: .info)
-            self.onAssemblyComplete?(outputPath)
         }
     }
 
@@ -586,9 +696,44 @@ public class AssemblyConfigurationViewModel: ObservableObject {
     public func cancelAssembly() {
         assemblyTask?.cancel()
         assemblyTask = nil
+        stopElapsedTimer()
         assemblyState = .cancelled
         appendLog("Assembly cancelled", level: .warning)
         logger.info("Assembly cancelled by user")
+    }
+
+    // MARK: - Elapsed Timer
+
+    private func startElapsedTimer() {
+        assemblyStartTime = Date()
+        elapsedTime = 0
+        elapsedTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, let start = self.assemblyStartTime else { return }
+                    self.elapsedTime = Date().timeIntervalSince(start)
+                }
+            }
+        }
+    }
+
+    private func stopElapsedTimer() {
+        elapsedTimer?.invalidate()
+        elapsedTimer = nil
+    }
+
+    /// Formatted elapsed time string (e.g., "14m 32s").
+    public var formattedElapsedTime: String {
+        let total = Int(elapsedTime)
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let seconds = total % 60
+        if hours > 0 {
+            return "\(hours)h \(minutes)m \(seconds)s"
+        } else if minutes > 0 {
+            return "\(minutes)m \(seconds)s"
+        }
+        return "\(seconds)s"
     }
 
     // MARK: - Logging
@@ -644,25 +789,25 @@ public class AssemblyConfigurationViewModel: ObservableObject {
     /// Applies a preset configuration for bacterial isolate assembly.
     public func applyBacterialIsolatePreset() {
         algorithm = .spades
+        spadesMode = .isolate
         maxMemoryGB = min(16, Double(availableMemoryGB))
         maxThreads = min(8, Double(availableCores))
         kmerConfig.autoSelect = true
         performErrorCorrection = true
-        carefulMode = true
         minContigLength = 500
         logger.info("Applied bacterial isolate preset")
     }
 
     /// Applies a preset configuration for metagenome assembly.
     public func applyMetagenomePreset() {
-        algorithm = .megahit
+        algorithm = .spades
+        spadesMode = .meta
         maxMemoryGB = min(Double(availableMemoryGB) * 0.8, 64)
         maxThreads = Double(availableCores)
         kmerConfig.autoSelect = false
-        customKmerString = "21,29,39,59,79,99,119"
+        customKmerString = "21,33,55,77"
         kmerConfig.customKmers = parseKmerString(customKmerString)
         performErrorCorrection = false
-        carefulMode = false
         minContigLength = 200
         logger.info("Applied metagenome preset")
     }
@@ -670,12 +815,36 @@ public class AssemblyConfigurationViewModel: ObservableObject {
     /// Applies a preset configuration for viral assembly.
     public func applyViralPreset() {
         algorithm = .spades
+        spadesMode = .isolate
         maxMemoryGB = min(8, Double(availableMemoryGB))
         maxThreads = min(4, Double(availableCores))
         kmerConfig.autoSelect = true
         performErrorCorrection = true
-        carefulMode = true
         minContigLength = 100
         logger.info("Applied viral preset")
+    }
+
+    /// Applies a preset configuration for plasmid assembly.
+    public func applyPlasmidPreset() {
+        algorithm = .spades
+        spadesMode = .plasmid
+        maxMemoryGB = min(8, Double(availableMemoryGB))
+        maxThreads = min(4, Double(availableCores))
+        kmerConfig.autoSelect = true
+        performErrorCorrection = true
+        minContigLength = 200
+        logger.info("Applied plasmid preset")
+    }
+
+    /// Applies a preset configuration for RNA assembly.
+    public func applyRNAPreset() {
+        algorithm = .spades
+        spadesMode = .rna
+        maxMemoryGB = min(16, Double(availableMemoryGB))
+        maxThreads = min(8, Double(availableCores))
+        kmerConfig.autoSelect = true
+        performErrorCorrection = true
+        minContigLength = 200
+        logger.info("Applied RNA preset")
     }
 }

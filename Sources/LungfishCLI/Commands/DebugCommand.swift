@@ -217,7 +217,7 @@ struct ContainerSubcommand: AsyncParsableCommand {
         name: .customLong("test-image"),
         help: "Image to use for testing (must have arm64/linux support)"
     )
-    var testImage: String = "docker.io/condaforge/mambaforge:latest"
+    var testImage: String = "docker.io/condaforge/miniforge3:latest"
 
     @OptionGroup var globalOptions: GlobalOptions
 
@@ -237,7 +237,7 @@ struct ContainerSubcommand: AsyncParsableCommand {
 
             if pullTest {
                 print("\n" + formatter.info("Testing image pull: \(testImage)"))
-                print(formatter.info("Note: Uses mambaforge which supports linux/arm64 for Apple Silicon"))
+                print(formatter.info("Note: Uses miniforge3 which supports linux/arm64 for Apple Silicon"))
                 print(formatter.info("Bioinformatics tools are installed via mamba at container startup"))
                 do {
                     // Ensure image reference has domain

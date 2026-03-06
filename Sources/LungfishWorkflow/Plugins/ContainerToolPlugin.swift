@@ -56,17 +56,17 @@ public struct ContainerToolPlugin: Codable, Sendable, Identifiable, Equatable {
     /// Description of the tool's purpose.
     public let description: String
     
-    /// OCI image reference (e.g., "docker.io/condaforge/mambaforge:latest").
+    /// OCI image reference (e.g., "docker.io/condaforge/miniforge3:latest").
     ///
     /// This should be a fully qualified image reference including the registry
-    /// and tag. For arm64 support, prefer multi-arch images like mambaforge.
+    /// and tag. For arm64 support, prefer multi-arch images like miniforge3.
     public let imageReference: String
     
     /// Optional setup commands to run when the container starts.
     ///
     /// These commands are executed before the main tool command and can be used
     /// to install tools dynamically. This is useful when using a base image like
-    /// mambaforge where tools need to be installed via conda/mamba.
+    /// miniforge3 where tools need to be installed via conda/mamba.
     ///
     /// Example: `["mamba", "install", "-y", "-c", "bioconda", "samtools=1.18"]`
     public let setupCommands: [[String]]?

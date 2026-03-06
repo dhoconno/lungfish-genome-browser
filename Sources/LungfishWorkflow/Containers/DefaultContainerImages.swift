@@ -32,7 +32,7 @@ import Foundation
 ///
 /// ## Architecture Support
 ///
-/// For Apple Silicon (arm64) support, we use `condaforge/mambaforge` as a base
+/// For Apple Silicon (arm64) support, we use `condaforge/miniforge3` as a base
 /// image with tools installed via bioconda. This provides multi-arch support
 /// (arm64 + amd64) for all bioinformatics tools.
 ///
@@ -43,8 +43,8 @@ public enum DefaultContainerImages {
     // MARK: - Base Image
     
     /// Multi-arch base image for bioinformatics tools.
-    /// Uses conda-forge/mambaforge which supports arm64 (Apple Silicon) and amd64.
-    public static let baseImage = "docker.io/condaforge/mambaforge:latest"
+    /// Uses conda-forge/miniforge3 which supports arm64 (Apple Silicon) and amd64.
+    public static let baseImage = "docker.io/condaforge/miniforge3:latest"
     
     // MARK: - All Images
     
@@ -67,6 +67,7 @@ public enum DefaultContainerImages {
     /// Optional images for extended functionality.
     public static var optionalImages: [ContainerImageSpec] {
         [
+            spades,
             minimap2,
             bwa,
             fastqc,
@@ -79,7 +80,7 @@ public enum DefaultContainerImages {
     /// SAMtools - Tools for SAM/BAM/CRAM and FASTA indexing.
     ///
     /// Essential for creating .fai indices for FASTA files in reference bundles.
-    /// Uses mambaforge base image with bioconda for arm64 support on Apple Silicon.
+    /// Uses miniforge3 base image with bioconda for arm64 support on Apple Silicon.
     public static let samtools = ContainerImageSpec(
         id: "samtools",
         name: "SAMtools",
@@ -89,7 +90,7 @@ public enum DefaultContainerImages {
         purpose: .indexing,
         version: "1.18",
         supportedExtensions: ["fa", "fasta", "fna", "fa.gz", "sam", "bam", "cram"],
-        estimatedSizeBytes: 500_000_000, // ~500 MB (mambaforge base + tools)
+        estimatedSizeBytes: 500_000_000, // ~500 MB (miniforge3 base + tools)
         documentationURL: URL(string: "https://www.htslib.org/doc/samtools.html"),
         setupCommands: [
             ["mamba", "install", "-y", "-c", "conda-forge", "-c", "bioconda", "samtools=1.18", "htslib=1.18"]
@@ -99,7 +100,7 @@ public enum DefaultContainerImages {
     /// BCFtools - Tools for VCF/BCF manipulation.
     ///
     /// Essential for converting VCF to indexed BCF in reference bundles.
-    /// Uses mambaforge base image with bioconda for arm64 support on Apple Silicon.
+    /// Uses miniforge3 base image with bioconda for arm64 support on Apple Silicon.
     public static let bcftools = ContainerImageSpec(
         id: "bcftools",
         name: "BCFtools",
@@ -109,7 +110,7 @@ public enum DefaultContainerImages {
         purpose: .conversion,
         version: "1.18",
         supportedExtensions: ["vcf", "vcf.gz", "bcf"],
-        estimatedSizeBytes: 500_000_000, // ~500 MB (mambaforge base + tools)
+        estimatedSizeBytes: 500_000_000, // ~500 MB (miniforge3 base + tools)
         documentationURL: URL(string: "https://samtools.github.io/bcftools/bcftools.html"),
         setupCommands: [
             ["mamba", "install", "-y", "-c", "conda-forge", "-c", "bioconda", "bcftools=1.18"]
@@ -119,7 +120,7 @@ public enum DefaultContainerImages {
     /// HTSlib - Block compression utilities.
     ///
     /// Provides bgzip for creating indexed compressed FASTA files.
-    /// Uses mambaforge base image with bioconda for arm64 support on Apple Silicon.
+    /// Uses miniforge3 base image with bioconda for arm64 support on Apple Silicon.
     public static let htslib = ContainerImageSpec(
         id: "htslib",
         name: "HTSlib",
@@ -129,7 +130,7 @@ public enum DefaultContainerImages {
         purpose: .compression,
         version: "1.18",
         supportedExtensions: ["fa", "fasta", "fna", "vcf", "bed", "gff", "gz"],
-        estimatedSizeBytes: 500_000_000, // ~500 MB (mambaforge base + tools)
+        estimatedSizeBytes: 500_000_000, // ~500 MB (miniforge3 base + tools)
         documentationURL: URL(string: "https://www.htslib.org/doc/bgzip.html"),
         setupCommands: [
             ["mamba", "install", "-y", "-c", "conda-forge", "-c", "bioconda", "htslib=1.18"]
@@ -139,7 +140,7 @@ public enum DefaultContainerImages {
     /// UCSC bedToBigBed - BED to BigBed converter.
     ///
     /// Essential for creating indexed BigBed annotation tracks in reference bundles.
-    /// Uses mambaforge base image with bioconda for arm64 support on Apple Silicon.
+    /// Uses miniforge3 base image with bioconda for arm64 support on Apple Silicon.
     public static let ucscBedToBigBed = ContainerImageSpec(
         id: "ucsc-bedtobigbed",
         name: "bedToBigBed",
@@ -149,7 +150,7 @@ public enum DefaultContainerImages {
         purpose: .conversion,
         version: "377",
         supportedExtensions: ["bed", "bed.gz"],
-        estimatedSizeBytes: 500_000_000, // ~500 MB (mambaforge base + tools)
+        estimatedSizeBytes: 500_000_000, // ~500 MB (miniforge3 base + tools)
         documentationURL: URL(string: "https://genome.ucsc.edu/goldenPath/help/bigBed.html"),
         setupCommands: [
             ["mamba", "install", "-y", "-c", "conda-forge", "-c", "bioconda", "ucsc-bedtobigbed"]
@@ -159,7 +160,7 @@ public enum DefaultContainerImages {
     /// UCSC bedGraphToBigWig - bedGraph to BigWig converter.
     ///
     /// Essential for creating indexed BigWig signal tracks in reference bundles.
-    /// Uses mambaforge base image with bioconda for arm64 support on Apple Silicon.
+    /// Uses miniforge3 base image with bioconda for arm64 support on Apple Silicon.
     public static let ucscBedGraphToBigWig = ContainerImageSpec(
         id: "ucsc-bedgraphtobigwig",
         name: "bedGraphToBigWig",
@@ -169,19 +170,39 @@ public enum DefaultContainerImages {
         purpose: .conversion,
         version: "377",
         supportedExtensions: ["bedGraph", "bg", "bedgraph"],
-        estimatedSizeBytes: 500_000_000, // ~500 MB (mambaforge base + tools)
+        estimatedSizeBytes: 500_000_000, // ~500 MB (miniforge3 base + tools)
         documentationURL: URL(string: "https://genome.ucsc.edu/goldenPath/help/bigWig.html"),
         setupCommands: [
             ["mamba", "install", "-y", "-c", "conda-forge", "-c", "bioconda", "ucsc-bedgraphtobigwig"]
         ]
     )
     
+    // MARK: - Optional Images: Assemblers
+
+    /// SPAdes - De novo genome assembler.
+    ///
+    /// arm64-native build from bioconda. Supports bacterial isolate, metagenome,
+    /// plasmid, RNA, and biosynthetic gene cluster assembly modes.
+    public static let spades = ContainerImageSpec(
+        id: "spades",
+        name: "SPAdes",
+        description: "De novo genome assembler for isolates, metagenomes, plasmids, and RNA",
+        reference: "docker.io/lungfish/spades:4.0.0-arm64",
+        category: .optional,
+        purpose: .assembly,
+        version: "4.0.0",
+        supportedExtensions: ["fq", "fastq", "fq.gz", "fastq.gz"],
+        estimatedSizeBytes: 1_500_000_000, // ~1.5 GB (miniforge3 base + SPAdes + dependencies)
+        documentationURL: URL(string: "https://github.com/ablab/spades"),
+        setupCommands: nil // Pre-built image, no setup needed
+    )
+
     // MARK: - Optional Images: Aligners
-    
+
     /// Minimap2 - Fast sequence aligner.
     ///
     /// High-performance aligner for long reads (PacBio, ONT) and assembly-to-assembly alignment.
-    /// Uses mambaforge base image with bioconda for arm64 support on Apple Silicon.
+    /// Uses miniforge3 base image with bioconda for arm64 support on Apple Silicon.
     public static let minimap2 = ContainerImageSpec(
         id: "minimap2",
         name: "Minimap2",
@@ -191,7 +212,7 @@ public enum DefaultContainerImages {
         purpose: .alignment,
         version: "2.26",
         supportedExtensions: ["fa", "fasta", "fq", "fastq", "fa.gz", "fq.gz"],
-        estimatedSizeBytes: 500_000_000, // ~500 MB (mambaforge base + tools)
+        estimatedSizeBytes: 500_000_000, // ~500 MB (miniforge3 base + tools)
         documentationURL: URL(string: "https://github.com/lh3/minimap2"),
         setupCommands: [
             ["mamba", "install", "-y", "-c", "conda-forge", "-c", "bioconda", "minimap2=2.26"]
@@ -201,7 +222,7 @@ public enum DefaultContainerImages {
     /// BWA - Burrows-Wheeler Aligner.
     ///
     /// Classic short-read aligner for Illumina sequencing data.
-    /// Uses mambaforge base image with bioconda for arm64 support on Apple Silicon.
+    /// Uses miniforge3 base image with bioconda for arm64 support on Apple Silicon.
     public static let bwa = ContainerImageSpec(
         id: "bwa",
         name: "BWA",
@@ -211,7 +232,7 @@ public enum DefaultContainerImages {
         purpose: .alignment,
         version: "0.7.17",
         supportedExtensions: ["fa", "fasta", "fq", "fastq", "fa.gz", "fq.gz"],
-        estimatedSizeBytes: 500_000_000, // ~500 MB (mambaforge base + tools)
+        estimatedSizeBytes: 500_000_000, // ~500 MB (miniforge3 base + tools)
         documentationURL: URL(string: "https://bio-bwa.sourceforge.net/"),
         setupCommands: [
             ["mamba", "install", "-y", "-c", "conda-forge", "-c", "bioconda", "bwa=0.7.17"]
@@ -223,7 +244,7 @@ public enum DefaultContainerImages {
     /// FastQC - Quality control for sequencing data.
     ///
     /// Generates quality reports for FASTQ files.
-    /// Uses mambaforge base image with bioconda for arm64 support on Apple Silicon.
+    /// Uses miniforge3 base image with bioconda for arm64 support on Apple Silicon.
     public static let fastqc = ContainerImageSpec(
         id: "fastqc",
         name: "FastQC",
@@ -233,7 +254,7 @@ public enum DefaultContainerImages {
         purpose: .qualityControl,
         version: "0.12.1",
         supportedExtensions: ["fq", "fastq", "fq.gz", "fastq.gz", "bam", "sam"],
-        estimatedSizeBytes: 600_000_000, // ~600 MB (mambaforge base + Java + tools)
+        estimatedSizeBytes: 600_000_000, // ~600 MB (miniforge3 base + Java + tools)
         documentationURL: URL(string: "https://www.bioinformatics.babraham.ac.uk/projects/fastqc/"),
         setupCommands: [
             ["mamba", "install", "-y", "-c", "conda-forge", "-c", "bioconda", "fastqc=0.12.1"]
@@ -243,7 +264,7 @@ public enum DefaultContainerImages {
     /// MultiQC - Aggregate quality reports.
     ///
     /// Aggregates results from multiple QC tools into a single report.
-    /// Uses mambaforge base image with bioconda for arm64 support on Apple Silicon.
+    /// Uses miniforge3 base image with bioconda for arm64 support on Apple Silicon.
     public static let multiqc = ContainerImageSpec(
         id: "multiqc",
         name: "MultiQC",
@@ -253,7 +274,7 @@ public enum DefaultContainerImages {
         purpose: .qualityControl,
         version: "1.17",
         supportedExtensions: [], // Works on output directories, not specific files
-        estimatedSizeBytes: 550_000_000, // ~550 MB (mambaforge base + Python + tools)
+        estimatedSizeBytes: 550_000_000, // ~550 MB (miniforge3 base + Python + tools)
         documentationURL: URL(string: "https://multiqc.info/"),
         setupCommands: [
             ["mamba", "install", "-y", "-c", "conda-forge", "-c", "bioconda", "multiqc=1.17"]
