@@ -37,17 +37,14 @@ public struct PathoplexusFilters: Sendable, Equatable {
     /// Filter by specific accession
     public var accession: String?
 
-    /// Filter by accession version
-    public var accessionVersion: String?
-
     /// Filter by geographic location
     public var geoLocCountry: String?
 
-    /// Filter by collection date (start)
-    public var sampleCollectionDateFrom: Date?
+    /// Filter by collection date (start), format: YYYY-MM-DD
+    public var sampleCollectionDateFrom: String?
 
-    /// Filter by collection date (end)
-    public var sampleCollectionDateTo: Date?
+    /// Filter by collection date (end), format: YYYY-MM-DD
+    public var sampleCollectionDateTo: String?
 
     /// Minimum sequence length
     public var lengthFrom: Int?
@@ -78,10 +75,9 @@ public struct PathoplexusFilters: Sendable, Equatable {
 
     public init(
         accession: String? = nil,
-        accessionVersion: String? = nil,
         geoLocCountry: String? = nil,
-        sampleCollectionDateFrom: Date? = nil,
-        sampleCollectionDateTo: Date? = nil,
+        sampleCollectionDateFrom: String? = nil,
+        sampleCollectionDateTo: String? = nil,
         lengthFrom: Int? = nil,
         lengthTo: Int? = nil,
         nucleotideMutations: [String]? = nil,
@@ -93,7 +89,6 @@ public struct PathoplexusFilters: Sendable, Equatable {
         dataUseTerms: DataUseTerms? = nil
     ) {
         self.accession = accession
-        self.accessionVersion = accessionVersion
         self.geoLocCountry = geoLocCountry
         self.sampleCollectionDateFrom = sampleCollectionDateFrom
         self.sampleCollectionDateTo = sampleCollectionDateTo
@@ -263,53 +258,4 @@ public enum DataUseTerms: String, Sendable, Codable, CaseIterable {
     }
 }
 
-// MARK: - Pathoplexus Group
 
-/// A group/organization in Pathoplexus.
-public struct PathoplexusGroup: Sendable, Codable, Identifiable {
-    public let id: String
-    public let name: String
-    public let institution: String?
-    public let contactEmail: String?
-
-    public init(id: String, name: String, institution: String? = nil, contactEmail: String? = nil) {
-        self.id = id
-        self.name = name
-        self.institution = institution
-        self.contactEmail = contactEmail
-    }
-}
-
-// MARK: - Submission Types
-
-/// A submission request to Pathoplexus.
-public struct PathoplexusSubmissionRequest: Sendable {
-    /// The organism this submission is for
-    public let organism: String
-
-    /// URL to the FASTA file
-    public let sequencesFile: URL
-
-    /// URL to the TSV metadata file
-    public let metadataFile: URL
-
-    /// The group to submit under
-    public let groupId: String
-
-    /// Data use terms
-    public let dataUseTerms: DataUseTerms
-
-    public init(
-        organism: String,
-        sequencesFile: URL,
-        metadataFile: URL,
-        groupId: String,
-        dataUseTerms: DataUseTerms
-    ) {
-        self.organism = organism
-        self.sequencesFile = sequencesFile
-        self.metadataFile = metadataFile
-        self.groupId = groupId
-        self.dataUseTerms = dataUseTerms
-    }
-}

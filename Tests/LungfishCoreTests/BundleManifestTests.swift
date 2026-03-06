@@ -681,6 +681,98 @@ final class BundleManifestTests: XCTestCase {
         XCTAssertTrue(manifest.alignments.isEmpty)
     }
 
+    // MARK: - MetadataGroup Save/Load Tests
+
+    func testMetadataGroupSaveAndLoad() throws {
+        let groups = [
+            MetadataGroup(name: "Pathoplexus", items: [
+                MetadataItem(label: "Accession", value: "PP_12345"),
+                MetadataItem(label: "Organism", value: "Mpox virus"),
+                MetadataItem(label: "Country", value: "Nigeria"),
+                MetadataItem(label: "Collection Date", value: "2024-01-15"),
+                MetadataItem(label: "Data Use Terms", value: "OPEN"),
+            ]),
+            MetadataGroup(name: "Record", items: [
+                MetadataItem(label: "Length", value: "197209"),
+            ])
+        ]
+
+        let manifest = BundleManifest(
+            formatVersion: "1.0",
+            name: "Test Metadata Groups",
+            identifier: "test.metadata",
+            source: SourceInfo(organism: "Test", assembly: "Test"),
+            genome: GenomeInfo(
+                path: "genome/seq.fa.gz",
+                indexPath: "genome/seq.fa.gz.fai",
+                totalLength: 1000,
+                chromosomes: [
+                    ChromosomeInfo(name: "chr1", length: 1000, offset: 6, lineBases: 50, lineWidth: 51)
+                ]
+            ),
+            annotations: [],
+            variants: [],
+            tracks: [],
+            metadata: groups
+        )
+
+        let bundleURL = tempDirectory.appendingPathComponent("metadata-test.lungfishref")
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+        try manifest.save(to: bundleURL)
+
+        let loaded = try BundleManifest.load(from: bundleURL)
+
+        XCTAssertNotNil(loaded.metadata)
+        XCTAssertEqual(loaded.metadata?.count, 2)
+        XCTAssertEqual(loaded.metadata?[0].name, "Pathoplexus")
+        XCTAssertEqual(loaded.metadata?[0].items.count, 5)
+        XCTAssertEqual(loaded.metadata?[0].items[0].label, "Accession")
+        XCTAssertEqual(loaded.metadata?[0].items[0].value, "PP_12345")
+        XCTAssertEqual(loaded.metadata?[0].items[3].value, "2024-01-15")
+        XCTAssertEqual(loaded.metadata?[1].name, "Record")
+    }
+
+    func testMetadataGroupAppendAfterSave() throws {
+        let manifest = createValidManifest()
+
+        let bundleURL = tempDirectory.appendingPathComponent("append-test.lungfishref")
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+        try manifest.save(to: bundleURL)
+
+        // Load, append metadata, save again (simulates appendPathoplexusMetadata)
+        let loaded = try BundleManifest.load(from: bundleURL)
+        XCTAssertNil(loaded.metadata)
+
+        let ppGroup = MetadataGroup(name: "Pathoplexus", items: [
+            MetadataItem(label: "Accession", value: "PP_001"),
+        ])
+        var groups = loaded.metadata ?? []
+        groups.append(ppGroup)
+
+        let updated = BundleManifest(
+            formatVersion: loaded.formatVersion,
+            name: loaded.name,
+            identifier: loaded.identifier,
+            description: loaded.description,
+            createdDate: loaded.createdDate,
+            modifiedDate: Date(),
+            source: loaded.source,
+            genome: loaded.genome,
+            annotations: loaded.annotations,
+            variants: loaded.variants,
+            tracks: loaded.tracks,
+            alignments: loaded.alignments,
+            metadata: groups
+        )
+        try updated.save(to: bundleURL)
+
+        let reloaded = try BundleManifest.load(from: bundleURL)
+        XCTAssertNotNil(reloaded.metadata)
+        XCTAssertEqual(reloaded.metadata?.count, 1)
+        XCTAssertEqual(reloaded.metadata?[0].name, "Pathoplexus")
+        XCTAssertEqual(reloaded.metadata?[0].items[0].value, "PP_001")
+    }
+
     // MARK: - Helper Methods
 
     private func createValidManifest() -> BundleManifest {

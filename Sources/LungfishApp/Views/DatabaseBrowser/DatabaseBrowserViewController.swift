@@ -22,11 +22,7 @@ private let logger = Logger(subsystem: "com.lungfish.browser", category: "Databa
 /// and writes it back. This preserves all GenBank metadata while adding provenance info.
 private func appendPathoplexusMetadata(_ meta: PathoplexusMetadata, toBundleAt bundleURL: URL) {
     do {
-        let manifestURL = bundleURL.appendingPathComponent("manifest.json")
-        guard FileManager.default.fileExists(atPath: manifestURL.path) else { return }
-
-        let data = try Data(contentsOf: manifestURL)
-        let existing = try JSONDecoder().decode(BundleManifest.self, from: data)
+        let existing = try BundleManifest.load(from: bundleURL)
 
         // Build Pathoplexus metadata group
         var items: [MetadataItem] = []
@@ -1019,9 +1015,6 @@ public class DatabaseBrowserViewModel: ObservableObject {
                     logger.info("performSearch: Calling Pathoplexus search for organism=\(ppOrganism, privacy: .public)")
 
                     // Build Pathoplexus-specific filters
-                    let dateFormatter = DateFormatter()
-                    dateFormatter.dateFormat = "yyyy-MM-dd"
-
                     var ppFilters = PathoplexusFilters()
                     // Default to latest version only to avoid duplicates
                     ppFilters.versionStatus = .latestVersion
@@ -1041,10 +1034,10 @@ public class DatabaseBrowserViewModel: ObservableObject {
                     }
 
                     if !capturedPpDateFrom.isEmpty {
-                        ppFilters.sampleCollectionDateFrom = dateFormatter.date(from: capturedPpDateFrom)
+                        ppFilters.sampleCollectionDateFrom = capturedPpDateFrom
                     }
                     if !capturedPpDateTo.isEmpty {
-                        ppFilters.sampleCollectionDateTo = dateFormatter.date(from: capturedPpDateTo)
+                        ppFilters.sampleCollectionDateTo = capturedPpDateTo
                     }
 
                     // Use raw search text (not NCBI-formatted term) for accession filter

@@ -68,8 +68,10 @@ public actor PathoplexusService: DatabaseService {
         filters.lengthTo = query.maxLength
 
         if let dateRange = query.dateRange {
-            filters.sampleCollectionDateFrom = dateRange.lowerBound
-            filters.sampleCollectionDateTo = dateRange.upperBound
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd"
+            filters.sampleCollectionDateFrom = formatter.string(from: dateRange.lowerBound)
+            filters.sampleCollectionDateTo = formatter.string(from: dateRange.upperBound)
         }
 
         // If the term looks like an accession, search by accession
@@ -348,15 +350,11 @@ public actor PathoplexusService: DatabaseService {
         if let country = filters.geoLocCountry {
             queryItems.append(URLQueryItem(name: "geoLocCountry", value: country))
         }
-        if let dateFrom = filters.sampleCollectionDateFrom {
-            let formatter = ISO8601DateFormatter()
-            formatter.formatOptions = [.withFullDate]
-            queryItems.append(URLQueryItem(name: "sampleCollectionDateFrom", value: formatter.string(from: dateFrom)))
+        if let dateFrom = filters.sampleCollectionDateFrom, !dateFrom.isEmpty {
+            queryItems.append(URLQueryItem(name: "sampleCollectionDateFrom", value: dateFrom))
         }
-        if let dateTo = filters.sampleCollectionDateTo {
-            let formatter = ISO8601DateFormatter()
-            formatter.formatOptions = [.withFullDate]
-            queryItems.append(URLQueryItem(name: "sampleCollectionDateTo", value: formatter.string(from: dateTo)))
+        if let dateTo = filters.sampleCollectionDateTo, !dateTo.isEmpty {
+            queryItems.append(URLQueryItem(name: "sampleCollectionDateTo", value: dateTo))
         }
         if let lengthFrom = filters.lengthFrom {
             queryItems.append(URLQueryItem(name: "lengthFrom", value: String(lengthFrom)))

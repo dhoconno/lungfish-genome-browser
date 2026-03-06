@@ -77,7 +77,7 @@ final class PathoplexusServiceTests: XCTestCase {
 
         let filters = PathoplexusFilters(
             geoLocCountry: "USA",
-            sampleCollectionDateFrom: Date(),
+            sampleCollectionDateFrom: "2024-01-01",
             lengthFrom: 1000,
             lengthTo: 20000
         )
@@ -232,10 +232,9 @@ final class PathoplexusServiceTests: XCTestCase {
 
         let filters = PathoplexusFilters(
             accession: "PP_001",
-            accessionVersion: "1",
             geoLocCountry: "USA",
-            sampleCollectionDateFrom: Date(timeIntervalSince1970: 1704067200),  // 2024-01-01
-            sampleCollectionDateTo: Date(timeIntervalSince1970: 1706745600),    // 2024-02-01
+            sampleCollectionDateFrom: "2024-01-01",
+            sampleCollectionDateTo: "2024-02-01",
             lengthFrom: 1000,
             lengthTo: 20000,
             nucleotideMutations: ["C180T"],
@@ -247,6 +246,15 @@ final class PathoplexusServiceTests: XCTestCase {
 
         let requests = await mockClient.requests
         XCTAssertEqual(requests.count, 1)
+
+        // Verify date strings appear in the URL exactly as provided
+        let requestURL = requests[0].url!.absoluteString
+        XCTAssertTrue(requestURL.contains("sampleCollectionDateFrom=2024-01-01"), "URL should contain date from: \(requestURL)")
+        XCTAssertTrue(requestURL.contains("sampleCollectionDateTo=2024-02-01"), "URL should contain date to: \(requestURL)")
+        XCTAssertTrue(requestURL.contains("accession=PP_001"), "URL should contain accession: \(requestURL)")
+        XCTAssertTrue(requestURL.contains("geoLocCountry=USA"), "URL should contain country: \(requestURL)")
+        XCTAssertTrue(requestURL.contains("lengthFrom=1000"), "URL should contain lengthFrom: \(requestURL)")
+        XCTAssertTrue(requestURL.contains("versionStatus=LATEST_VERSION"), "URL should contain versionStatus: \(requestURL)")
     }
 
     // MARK: - Error Handling Tests
