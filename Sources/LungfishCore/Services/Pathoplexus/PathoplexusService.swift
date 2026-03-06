@@ -70,6 +70,7 @@ public actor PathoplexusService: DatabaseService {
         if let dateRange = query.dateRange {
             let formatter = DateFormatter()
             formatter.dateFormat = "yyyy-MM-dd"
+            formatter.locale = Locale(identifier: "en_US_POSIX")
             filters.sampleCollectionDateFrom = formatter.string(from: dateRange.lowerBound)
             filters.sampleCollectionDateTo = formatter.string(from: dateRange.upperBound)
         }
@@ -113,14 +114,10 @@ public actor PathoplexusService: DatabaseService {
         let sequenceFilters = filters
         let sequences = try await fetchUnalignedSequencesRaw(organism: organism, filters: sequenceFilters)
 
-        // Parse FASTA
-        let sequenceLines = sequences.components(separatedBy: "\n")
-        var sequence = ""
-        for line in sequenceLines {
-            if !line.hasPrefix(">") {
-                sequence += line.uppercased()
-            }
-        }
+        // Parse FASTA — use only the first record to avoid chimeric sequences
+        // from segmented viruses (e.g., CCHF with S, M, L segments)
+        let records = parseFASTA(sequences)
+        let sequence = records.first?.sequence ?? ""
 
         return DatabaseRecord(
             id: accession,
@@ -142,9 +139,10 @@ public actor PathoplexusService: DatabaseService {
 
     public nonisolated func fetchBatch(accessions: [String]) async throws -> AsyncThrowingStream<DatabaseRecord, Error> {
         AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     for accession in accessions {
+                        try Task.checkCancellation()
                         let record = try await self.fetch(accession: accession)
                         continuation.yield(record)
                     }
@@ -153,6 +151,7 @@ public actor PathoplexusService: DatabaseService {
                     continuation.finish(throwing: error)
                 }
             }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
         }
     }
 
@@ -429,24 +428,10 @@ public actor PathoplexusService: DatabaseService {
     }
 
     private func makeRequestString(url: URL) async throws -> String {
-        var request = URLRequest(url: url)
-        request.setValue("Lungfish Genome Explorer", forHTTPHeaderField: "User-Agent")
-        request.timeoutInterval = 60
-
-        let (data, response) = try await httpClient.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw DatabaseServiceError.networkError(underlying: "Invalid response type")
-        }
-
-        guard httpResponse.statusCode == 200 else {
-            throw DatabaseServiceError.invalidResponse(statusCode: httpResponse.statusCode)
-        }
-
+        let data = try await makeRequest(url: url)
         guard let string = String(data: data, encoding: .utf8) else {
             throw DatabaseServiceError.parseError(message: "Invalid encoding")
         }
-
         return string
     }
 

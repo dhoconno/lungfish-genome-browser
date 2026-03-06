@@ -171,6 +171,7 @@ public struct PathoplexusMetadata: Sendable, Codable, Identifiable {
         guard let dateStr = sampleCollectionDate else { return nil }
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
         return formatter.date(from: dateStr)
     }
 
