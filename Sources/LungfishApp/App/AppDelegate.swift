@@ -3247,50 +3247,65 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
 
     @objc func runSPAdes(_ sender: Any?) {
-        showAssemblyConfigurationSheet(algorithm: .spades)
-    }
-
-    @objc func runMEGAHIT(_ sender: Any?) {
-        showAssemblyConfigurationSheet(algorithm: .megahit)
-    }
-
-    /// Shows the assembly configuration sheet with the specified algorithm pre-selected.
-    ///
-    /// - Parameter algorithm: The assembly algorithm to pre-select (or nil for auto)
-    private func showAssemblyConfigurationSheet(algorithm: AssemblyAlgorithm? = nil) {
         guard let window = mainWindowController?.window else {
-            debugLog("showAssemblyConfigurationSheet: No main window available")
+            debugLog("runSPAdes: No main window available")
             return
         }
 
-        debugLog("showAssemblyConfigurationSheet: Presenting assembly configuration for \(algorithm?.rawValue ?? "auto")")
+        // Get selected FASTQ files from sidebar
+        let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController
+        let selectedItems = sidebarController?.selectedItems() ?? []
+        let fastqExtensions: Set<String> = ["fq", "fastq", "gz"]
+        let inputFiles = selectedItems.compactMap { item -> URL? in
+            guard let url = item.url else { return nil }
+            // Accept .fq, .fastq, .fq.gz, .fastq.gz
+            let ext = url.pathExtension.lowercased()
+            if fastqExtensions.contains(ext) { return url }
+            // Check double extension for .fq.gz / .fastq.gz
+            let stem = url.deletingPathExtension()
+            if ext == "gz" && fastqExtensions.contains(stem.pathExtension.lowercased()) {
+                return url
+            }
+            return nil
+        }
+
+        if inputFiles.isEmpty {
+            let alert = NSAlert()
+            alert.alertStyle = .informational
+            alert.messageText = "No FASTQ Files Selected"
+            alert.informativeText = "Select one or more FASTQ files (.fq, .fastq, .fq.gz, .fastq.gz) in the sidebar, then choose Assemble with SPAdes."
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+
+        // Output goes to Assemblies/ subfolder in the project directory
+        let outputDirectory: URL?
+        if let projectURL = sidebarController?.currentProjectURL {
+            outputDirectory = projectURL.appendingPathComponent("Assemblies", isDirectory: true)
+        } else if let workingURL = workingDirectoryURL {
+            outputDirectory = workingURL.appendingPathComponent("Assemblies", isDirectory: true)
+        } else {
+            let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+            outputDirectory = documentsURL.appendingPathComponent("Lungfish-Assemblies", isDirectory: true)
+        }
+
+        debugLog("runSPAdes: \(inputFiles.count) files, output=\(outputDirectory?.path ?? "nil")")
 
         AssemblySheetPresenter.present(
             from: window,
-            algorithm: algorithm,
+            inputFiles: inputFiles,
+            outputDirectory: outputDirectory,
             onComplete: { [weak self] outputURL in
                 debugLog("Assembly completed: \(outputURL.path)")
-
-                // If it's a .lungfishref bundle, open it directly in the app
                 if outputURL.pathExtension == "lungfishref" {
                     _ = self?.openDocument(at: outputURL)
-                } else {
-                    // Legacy path: show success message
-                    let alert = NSAlert()
-                    alert.messageText = "Assembly Complete"
-                    alert.informativeText = "Assembly output saved to:\n\(outputURL.path)"
-                    alert.alertStyle = .informational
-                    alert.addButton(withTitle: "Open Folder")
-                    alert.addButton(withTitle: "OK")
-
-                    if alert.runModal() == .alertFirstButtonReturn {
-                        NSWorkspace.shared.open(outputURL)
-                    }
                 }
+                // Refresh sidebar to show new assembly output
+                self?.refreshSidebarAndSelectImportedURL(outputURL)
             },
             onFailed: { error in
                 debugLog("Assembly failed: \(error)")
-
                 let alert = NSAlert()
                 alert.messageText = "Assembly Failed"
                 alert.informativeText = error

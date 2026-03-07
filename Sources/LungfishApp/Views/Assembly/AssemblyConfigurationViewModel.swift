@@ -1,8 +1,6 @@
-// AssemblyConfigurationViewModel.swift - View model for assembly configuration
+// AssemblyConfigurationViewModel.swift - View model for SPAdes assembly configuration
 // Copyright (c) 2024 Lungfish Contributors
 // SPDX-License-Identifier: MIT
-//
-// Owner: UI/UX Lead (Role 02)
 
 import Foundation
 import SwiftUI
@@ -14,58 +12,6 @@ import LungfishIO
 
 /// Logger for assembly configuration operations
 private let logger = Logger(subsystem: "com.lungfish.browser", category: "AssemblyConfiguration")
-
-// MARK: - Assembly Algorithm
-
-/// Supported assembly algorithms.
-public enum AssemblyAlgorithm: String, CaseIterable, Identifiable {
-    case auto = "Auto-select"
-    case spades = "SPAdes"
-    case megahit = "MEGAHIT"
-
-    public var id: String { rawValue }
-
-    /// SF Symbol for the algorithm
-    var icon: String {
-        switch self {
-        case .auto: return "wand.and.stars"
-        case .spades: return "cpu"
-        case .megahit: return "bolt"
-        }
-    }
-
-    /// Description of the algorithm
-    var description: String {
-        switch self {
-        case .auto:
-            return "Automatically select the best algorithm based on input size and available resources"
-        case .spades:
-            return "SPAdes: Accurate de novo assembly, optimal for smaller genomes and isolates"
-        case .megahit:
-            return "MEGAHIT: Fast and memory-efficient, suitable for large metagenomes"
-        }
-    }
-
-    /// Container image reference for the algorithm (arm64-native).
-    var containerImage: String {
-        switch self {
-        case .auto, .spades:
-            return SPAdesAssemblyPipeline.spadesImageReference
-        case .megahit:
-            return "docker.io/lungfish/megahit:1.2.9-arm64"
-        }
-    }
-
-    /// Recommended memory in GB
-    var recommendedMemoryGB: Int {
-        switch self {
-        case .auto, .spades:
-            return 16
-        case .megahit:
-            return 8
-        }
-    }
-}
 
 // MARK: - Assembly State
 
@@ -117,49 +63,6 @@ public enum RuntimeStatus {
     case unavailable
 }
 
-// MARK: - Input File
-
-/// Represents a FASTQ input file for assembly.
-public struct AssemblyInputFile: Identifiable, Hashable {
-    public let id: UUID
-    public let url: URL
-    public let isPaired: Bool
-    public var pairedWith: UUID?
-
-    public var filename: String {
-        url.lastPathComponent
-    }
-
-    public var fileSize: String {
-        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
-        if let size = attributes?[.size] as? Int64 {
-            return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
-        }
-        return "Unknown size"
-    }
-
-    /// Returns the file size in bytes, or 0 if unavailable.
-    public var fileSizeBytes: Int64 {
-        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
-        return attributes?[.size] as? Int64 ?? 0
-    }
-
-    public init(url: URL, isPaired: Bool = false) {
-        self.id = UUID()
-        self.url = url
-        self.isPaired = isPaired
-        self.pairedWith = nil
-    }
-
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
-
-    public static func == (lhs: AssemblyInputFile, rhs: AssemblyInputFile) -> Bool {
-        lhs.id == rhs.id
-    }
-}
-
 // MARK: - K-mer Configuration
 
 /// K-mer size configuration for assembly.
@@ -174,12 +77,6 @@ public struct KmerConfiguration: Equatable {
     var isValid: Bool {
         if autoSelect { return true }
         return !customKmers.isEmpty && customKmers.allSatisfy { $0 % 2 == 1 && $0 >= 11 && $0 <= 127 }
-    }
-
-    /// K-mer sizes as a comma-separated string for display
-    var displayString: String {
-        if autoSelect { return "Auto" }
-        return customKmers.map(String.init).joined(separator: ", ")
     }
 }
 
@@ -202,30 +99,24 @@ public struct AssemblyValidationResult {
 
 // MARK: - AssemblyConfigurationViewModel
 
-/// View model for the assembly configuration sheet.
+/// View model for the SPAdes assembly configuration sheet.
 ///
-/// Manages all configuration options for sequence assembly, including:
-/// - Algorithm selection (SPAdes, MEGAHIT, auto)
-/// - Input file management
-/// - Output location
-/// - Resource allocation (memory, threads)
-/// - K-mer size configuration
-/// - Progress tracking during assembly
+/// Input files and output directory are set externally by the caller
+/// (typically the AppDelegate, which passes selected sidebar files and
+/// the project's `Assemblies/` directory). The dialog only exposes
+/// SPAdes-specific knobs: mode, resources, k-mer sizes, error correction.
 @MainActor
 public class AssemblyConfigurationViewModel: ObservableObject {
 
     // MARK: - Published Properties
 
-    /// Selected assembly algorithm
-    @Published public var algorithm: AssemblyAlgorithm = .auto
+    /// Input file URLs (set by caller, read-only in the UI)
+    @Published public var inputFileURLs: [URL] = []
 
-    /// Input FASTQ files
-    @Published public var inputFiles: [AssemblyInputFile] = []
-
-    /// Output directory URL
+    /// Output directory (set by caller, not user-editable)
     @Published public var outputDirectory: URL?
 
-    /// Output project name (used for output folder naming)
+    /// Output project name (auto-generated from input files)
     @Published public var projectName: String = "assembly_output"
 
     /// Maximum memory to use in GB
@@ -248,9 +139,6 @@ public class AssemblyConfigurationViewModel: ObservableObject {
 
     /// Log output from assembly process
     @Published public var logOutput: [LogEntry] = []
-
-    /// Whether to use paired-end mode
-    @Published public var pairedEndMode: Bool = false
 
     /// Whether to perform error correction (SPAdes only)
     @Published public var performErrorCorrection: Bool = true
@@ -286,21 +174,28 @@ public class AssemblyConfigurationViewModel: ObservableObject {
         return validation.isValid && !assemblyState.isInProgress
     }
 
-    /// Estimated memory requirement based on input file sizes
-    public var estimatedMemoryRequirement: String {
-        let totalSize: Int64 = inputFiles.reduce(0) { total, file in
-            let attributes = try? FileManager.default.attributesOfItem(atPath: file.url.path)
-            return total + (attributes?[.size] as? Int64 ?? 0)
-        }
-        // Rough estimate: assembly typically needs 2-10x input size in memory
-        let estimatedBytes = totalSize * 5
-        return ByteCountFormatter.string(fromByteCount: estimatedBytes, countStyle: .memory)
+    /// Whether paired-end reads were auto-detected
+    public var hasPairedEndReads: Bool {
+        !detectedForwardReads.isEmpty && !detectedReverseReads.isEmpty
     }
 
-    /// Formatted output path
-    public var fullOutputPath: String {
-        guard let outputDir = outputDirectory else { return "Not selected" }
-        return outputDir.appendingPathComponent(projectName).path
+    /// Summary of input files for display
+    public var inputSummary: String {
+        if inputFileURLs.isEmpty { return "No files selected" }
+        let totalSize = inputFileURLs.reduce(Int64(0)) { total, url in
+            let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+            return total + (attrs?[.size] as? Int64 ?? 0)
+        }
+        let sizeStr = ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file)
+        if hasPairedEndReads {
+            let unpairedCount = detectedUnpairedReads.count
+            var parts = ["\(detectedForwardReads.count) paired-end pair\(detectedForwardReads.count == 1 ? "" : "s")"]
+            if unpairedCount > 0 {
+                parts.append("\(unpairedCount) unpaired")
+            }
+            return parts.joined(separator: ", ") + " (\(sizeStr))"
+        }
+        return "\(inputFileURLs.count) file\(inputFileURLs.count == 1 ? "" : "s") (\(sizeStr))"
     }
 
     // MARK: - Callbacks
@@ -321,6 +216,13 @@ public class AssemblyConfigurationViewModel: ObservableObject {
     private var elapsedTimer: Timer?
     private var assemblyStartTime: Date?
 
+    /// Auto-detected forward reads (R1)
+    private var detectedForwardReads: [URL] = []
+    /// Auto-detected reverse reads (R2)
+    private var detectedReverseReads: [URL] = []
+    /// Unpaired reads (no R1/R2 match)
+    private var detectedUnpairedReads: [URL] = []
+
     // MARK: - Lifecycle
 
     deinit {
@@ -329,30 +231,106 @@ public class AssemblyConfigurationViewModel: ObservableObject {
         }
     }
 
-    public init() {
-        // Set default output directory to user's Documents folder
-        let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-        outputDirectory = documentsURL?.appendingPathComponent("Lungfish-Assemblies")
+    /// Creates a new view model with pre-set input files and output directory.
+    ///
+    /// - Parameters:
+    ///   - inputFiles: FASTQ file URLs selected in the sidebar
+    ///   - outputDirectory: Project's Assemblies/ directory
+    public init(inputFiles: [URL] = [], outputDirectory: URL? = nil) {
+        self.inputFileURLs = inputFiles
+        self.outputDirectory = outputDirectory
 
         // Set reasonable defaults based on system resources
         maxMemoryGB = min(Double(availableMemoryGB) * 0.75, 32)
         maxThreads = min(Double(availableCores), 8)
 
+        // Auto-generate project name from first input file
+        if let first = inputFiles.first {
+            let stem = first.deletingPathExtension().lastPathComponent
+            // Strip _R1/_R2/_1/_2 suffixes for a clean name
+            let cleaned = stem
+                .replacingOccurrences(of: "_R1", with: "")
+                .replacingOccurrences(of: "_R2", with: "")
+                .replacingOccurrences(of: "_1", with: "")
+                .replacingOccurrences(of: "_2", with: "")
+            projectName = cleaned + "_assembly"
+        }
+
+        // Auto-detect paired-end files
+        detectPairedEndFiles()
+
         setupKmerStringBinding()
         requestNotificationPermission()
 
-        logger.info("AssemblyConfigurationViewModel initialized: memory=\(self.availableMemoryGB)GB, cores=\(self.availableCores)")
+        logger.info("AssemblyConfigurationViewModel initialized: \(inputFiles.count) files, memory=\(self.availableMemoryGB)GB, cores=\(self.availableCores)")
     }
 
     /// Sets up two-way binding for custom k-mer string
     private func setupKmerStringBinding() {
-        // Update customKmerString when kmerConfig changes
         $kmerConfig
             .map { config -> String in
                 if config.autoSelect { return "" }
                 return config.customKmers.map(String.init).joined(separator: ",")
             }
             .assign(to: &$customKmerString)
+    }
+
+    // MARK: - Paired-End Detection
+
+    /// Auto-detects paired-end files from the input URLs based on naming conventions.
+    private func detectPairedEndFiles() {
+        let patterns: [(String, String)] = [
+            ("_R1", "_R2"),
+            ("_1.", "_2."),
+            ("_r1", "_r2"),
+            ("_forward", "_reverse"),
+        ]
+
+        var forward: [URL] = []
+        var reverse: [URL] = []
+        var matched = Set<URL>()
+
+        for url in inputFileURLs {
+            guard !matched.contains(url) else { continue }
+            let name = url.lastPathComponent
+
+            var foundPair = false
+            for (p1, p2) in patterns {
+                if name.contains(p1) {
+                    let pairName = name.replacingOccurrences(of: p1, with: p2)
+                    if let pair = inputFileURLs.first(where: { $0.lastPathComponent == pairName }) {
+                        forward.append(url)
+                        reverse.append(pair)
+                        matched.insert(url)
+                        matched.insert(pair)
+                        foundPair = true
+                        break
+                    }
+                } else if name.contains(p2) {
+                    let pairName = name.replacingOccurrences(of: p2, with: p1)
+                    if let pair = inputFileURLs.first(where: { $0.lastPathComponent == pairName }) {
+                        forward.append(pair)
+                        reverse.append(url)
+                        matched.insert(url)
+                        matched.insert(pair)
+                        foundPair = true
+                        break
+                    }
+                }
+            }
+
+            if !foundPair {
+                // Will be added to unpaired below
+            }
+        }
+
+        detectedForwardReads = forward
+        detectedReverseReads = reverse
+        detectedUnpairedReads = inputFileURLs.filter { !matched.contains($0) }
+
+        if !forward.isEmpty {
+            logger.info("Auto-detected \(forward.count) paired-end pair(s), \(self.detectedUnpairedReads.count) unpaired")
+        }
     }
 
     // MARK: - Runtime Availability
@@ -373,23 +351,14 @@ public class AssemblyConfigurationViewModel: ObservableObject {
 
     // MARK: - Notifications
 
-    /// Requests permission to deliver user notifications on assembly completion.
     private func requestNotificationPermission() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
             if let error = error {
                 logger.warning("Notification authorization error: \(error)")
-            } else {
-                logger.debug("Notification authorization granted: \(granted)")
             }
         }
     }
 
-    /// Posts a user notification for assembly completion or failure.
-    ///
-    /// - Parameters:
-    ///   - title: Notification title
-    ///   - body: Notification body text
-    ///   - isSuccess: Whether the assembly succeeded (determines notification category)
     private func postAssemblyNotification(title: String, body: String, isSuccess: Bool) {
         let content = UNMutableNotificationContent()
         content.title = title
@@ -399,7 +368,7 @@ public class AssemblyConfigurationViewModel: ObservableObject {
         let request = UNNotificationRequest(
             identifier: "assembly-\(UUID().uuidString)",
             content: content,
-            trigger: nil // Deliver immediately
+            trigger: nil
         )
 
         UNUserNotificationCenter.current().add(request) { error in
@@ -411,19 +380,16 @@ public class AssemblyConfigurationViewModel: ObservableObject {
 
     // MARK: - Disk Space Check
 
-    /// Checks whether there is sufficient disk space at the output directory for assembly.
-    ///
-    /// SPAdes requires at least 2x the total input file size plus 1 GB overhead.
-    ///
-    /// - Returns: A tuple of (sufficient, requiredBytes, availableBytes).
-    ///   Returns `(true, 0, 0)` if the output directory is not set.
     public func checkDiskSpace() -> (sufficient: Bool, requiredBytes: Int64, availableBytes: Int64) {
         guard let outputDir = outputDirectory else {
             return (true, 0, 0)
         }
 
-        let totalInputBytes: Int64 = inputFiles.reduce(0) { $0 + $1.fileSizeBytes }
-        let requiredBytes: Int64 = totalInputBytes * 2 + 1_073_741_824 // 2x input + 1 GB
+        let totalInputBytes: Int64 = inputFileURLs.reduce(0) { total, url in
+            let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+            return total + (attrs?[.size] as? Int64 ?? 0)
+        }
+        let requiredBytes: Int64 = totalInputBytes * 2 + 1_073_741_824
 
         do {
             let resourceValues = try outputDir.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
@@ -431,125 +397,36 @@ public class AssemblyConfigurationViewModel: ObservableObject {
             return (availableBytes >= requiredBytes, requiredBytes, availableBytes)
         } catch {
             logger.warning("Failed to check disk space: \(error)")
-            // If we cannot determine available space, proceed anyway
             return (true, requiredBytes, 0)
-        }
-    }
-
-    // MARK: - Input File Management
-
-    /// Adds input files from URLs.
-    ///
-    /// - Parameter urls: File URLs to add
-    public func addInputFiles(_ urls: [URL]) {
-        for url in urls {
-            // Check if file is already added
-            guard !inputFiles.contains(where: { $0.url == url }) else {
-                logger.debug("File already added: \(url.lastPathComponent, privacy: .public)")
-                continue
-            }
-
-            let file = AssemblyInputFile(url: url)
-            inputFiles.append(file)
-            logger.info("Added input file: \(url.lastPathComponent, privacy: .public)")
-        }
-
-        // Auto-detect paired-end files
-        detectPairedEndFiles()
-    }
-
-    /// Removes an input file.
-    ///
-    /// - Parameter file: The file to remove
-    public func removeInputFile(_ file: AssemblyInputFile) {
-        inputFiles.removeAll { $0.id == file.id }
-
-        // Also remove any paired relationship
-        if let pairedId = file.pairedWith {
-            if let index = inputFiles.firstIndex(where: { $0.id == pairedId }) {
-                inputFiles[index].pairedWith = nil
-            }
-        }
-
-        logger.info("Removed input file: \(file.filename, privacy: .public)")
-    }
-
-    /// Clears all input files.
-    public func clearInputFiles() {
-        inputFiles.removeAll()
-        logger.info("Cleared all input files")
-    }
-
-    /// Attempts to auto-detect paired-end files based on naming conventions.
-    private func detectPairedEndFiles() {
-        // Common paired-end naming patterns: _R1/_R2, _1/_2, .1/.2
-        let patterns = [
-            ("_R1", "_R2"),
-            ("_1", "_2"),
-            (".1", ".2"),
-            ("_r1", "_r2"),
-            ("_forward", "_reverse"),
-        ]
-
-        for i in 0..<inputFiles.count {
-            guard inputFiles[i].pairedWith == nil else { continue }
-
-            let baseName = inputFiles[i].url.deletingPathExtension().lastPathComponent
-
-            for (pattern1, pattern2) in patterns {
-                if baseName.contains(pattern1) {
-                    let expectedPairName = baseName.replacingOccurrences(of: pattern1, with: pattern2)
-
-                    if let pairIndex = inputFiles.firstIndex(where: {
-                        $0.url.deletingPathExtension().lastPathComponent == expectedPairName
-                    }) {
-                        inputFiles[i].pairedWith = inputFiles[pairIndex].id
-                        inputFiles[pairIndex].pairedWith = inputFiles[i].id
-                        pairedEndMode = true
-                        logger.info("Detected paired-end: \(self.inputFiles[i].filename, privacy: .public) <-> \(self.inputFiles[pairIndex].filename, privacy: .public)")
-                        break
-                    }
-                }
-            }
         }
     }
 
     // MARK: - Validation
 
-    /// Validates the current configuration.
-    ///
-    /// - Returns: Validation result with any errors or warnings
     public func validateConfiguration() -> AssemblyValidationResult {
         var errors: [String] = []
         var warnings: [String] = []
 
-        // Check input files
-        if inputFiles.isEmpty {
+        if inputFileURLs.isEmpty {
             errors.append("No input files selected")
         }
 
-        // Check output directory
         if outputDirectory == nil {
-            errors.append("No output directory selected")
+            errors.append("No output directory")
         }
 
-        // Check project name
         if projectName.isEmpty {
             errors.append("Project name is required")
-        } else if projectName.contains("/") || projectName.contains("\\") {
-            errors.append("Project name cannot contain path separators")
         }
 
-        // Check memory allocation
         if Int(maxMemoryGB) > availableMemoryGB {
             warnings.append("Allocated memory exceeds available system memory")
         }
 
-        if maxMemoryGB < Double(algorithm.recommendedMemoryGB) {
-            warnings.append("Allocated memory is below recommended (\(algorithm.recommendedMemoryGB)GB) for \(algorithm.rawValue)")
+        if maxMemoryGB < 8 {
+            warnings.append("SPAdes recommends at least 8 GB of memory")
         }
 
-        // Check k-mer configuration
         if !kmerConfig.autoSelect {
             let kmers = parseKmerString(customKmerString)
             if kmers.isEmpty {
@@ -568,21 +445,12 @@ public class AssemblyConfigurationViewModel: ObservableObject {
             }
         }
 
-        // Check paired-end consistency
-        if pairedEndMode {
-            let pairedCount = inputFiles.filter { $0.pairedWith != nil }.count
-            if pairedCount % 2 != 0 {
-                warnings.append("Odd number of paired files detected")
-            }
-        }
-
         if errors.isEmpty {
             return .valid
         }
         return .invalid(errors: errors, warnings: warnings)
     }
 
-    /// Parses a comma-separated k-mer string into integers.
     private func parseKmerString(_ string: String) -> [Int] {
         return string
             .split(separator: ",")
@@ -592,24 +460,17 @@ public class AssemblyConfigurationViewModel: ObservableObject {
 
     // MARK: - Assembly Execution
 
-    /// Starts the assembly process.
-    ///
-    /// Validates configuration, checks runtime availability and disk space,
-    /// creates an `SPAdesAssemblyConfig`, runs the pipeline via Apple Containers,
-    /// then builds a `.lungfishref` bundle.
     public func startAssembly() {
         guard canStartAssembly else {
             logger.warning("Cannot start assembly: validation failed or already in progress")
             return
         }
 
-        // Pre-flight: check runtime availability
         if runtimeStatus == .unavailable {
             showNoRuntimeAlert()
             return
         }
 
-        // Pre-flight: check disk space
         let diskCheck = checkDiskSpace()
         if !diskCheck.sufficient {
             let requiredFormatted = ByteCountFormatter.string(fromByteCount: diskCheck.requiredBytes, countStyle: .file)
@@ -618,16 +479,15 @@ public class AssemblyConfigurationViewModel: ObservableObject {
             return
         }
 
-        logger.info("Starting assembly with mode: \(self.spadesMode.displayName, privacy: .public)")
+        logger.info("Starting SPAdes assembly: mode=\(self.spadesMode.displayName, privacy: .public)")
 
         assemblyState = .validating
         logOutput.removeAll()
         elapsedTime = 0
-        appendLog("Starting assembly...", level: .info)
+        appendLog("Starting SPAdes assembly...", level: .info)
         appendLog("Mode: \(spadesMode.displayName)", level: .info)
-        appendLog("Input files: \(inputFiles.count)", level: .info)
+        appendLog("Input: \(inputSummary)", level: .info)
 
-        // Validate
         let validation = validateConfiguration()
         if !validation.isValid {
             assemblyState = .failed(error: validation.errors.joined(separator: "; "))
@@ -643,47 +503,15 @@ public class AssemblyConfigurationViewModel: ObservableObject {
         appendLog("Preparing assembly environment...", level: .info)
         startElapsedTimer()
 
-        // Build SPAdes config from ViewModel state
-        // Use pairedWith UUIDs to correctly identify R1/R2 pairs.
-        // For each pair, the file whose ID is less than its partner's is forward (R1).
-        var forwardReads: [URL] = []
-        var reverseReads: [URL] = []
-        var unpairedReads: [URL] = []
-
-        if pairedEndMode {
-            var seen = Set<UUID>()
-            for file in inputFiles {
-                guard let partnerID = file.pairedWith, !seen.contains(file.id) else {
-                    if file.pairedWith == nil {
-                        unpairedReads.append(file.url)
-                    }
-                    continue
-                }
-                seen.insert(file.id)
-                seen.insert(partnerID)
-
-                if let partner = inputFiles.first(where: { $0.id == partnerID }) {
-                    // Use naming convention: file containing _R1/_1/_forward is forward
-                    let name = file.url.lastPathComponent.lowercased()
-                    let isForward = name.contains("_r1") || name.contains("_1.") || name.contains("_forward")
-                    if isForward {
-                        forwardReads.append(file.url)
-                        reverseReads.append(partner.url)
-                    } else {
-                        forwardReads.append(partner.url)
-                        reverseReads.append(file.url)
-                    }
-                }
-            }
-        } else {
-            unpairedReads = inputFiles.map(\.url)
-        }
+        let forwardReads = detectedForwardReads
+        let reverseReads = detectedReverseReads
+        let unpairedReads = detectedUnpairedReads
 
         let kmerSizes: [Int]? = kmerConfig.autoSelect ? nil : parseKmerString(customKmerString)
 
         guard let outputDir = outputDirectory else {
             stopElapsedTimer()
-            assemblyState = .failed(error: "No output directory selected")
+            assemblyState = .failed(error: "No output directory")
             return
         }
 
@@ -701,12 +529,10 @@ public class AssemblyConfigurationViewModel: ObservableObject {
             projectName: projectName
         )
 
-        // Capture values for the detached task
         let projectNameCapture = projectName
 
         assemblyTask = Task.detached { [weak self] in
             do {
-                // 1. Initialize Apple Container runtime
                 let runtime = try await AppleContainerRuntime()
 
                 DispatchQueue.main.async { [weak self] in
@@ -715,7 +541,6 @@ public class AssemblyConfigurationViewModel: ObservableObject {
                     }
                 }
 
-                // 2. Run SPAdes pipeline
                 let pipeline = SPAdesAssemblyPipeline()
                 let result = try await pipeline.run(
                     config: spadesConfig,
@@ -729,7 +554,6 @@ public class AssemblyConfigurationViewModel: ObservableObject {
                     }
                 }
 
-                // 3. Log assembly statistics
                 let stats = result.statistics
                 DispatchQueue.main.async { [weak self] in
                     MainActor.assumeIsolated {
@@ -741,7 +565,6 @@ public class AssemblyConfigurationViewModel: ObservableObject {
                     }
                 }
 
-                // 4. Build provenance
                 let inputRecords = spadesConfig.allInputFiles.map { url in
                     ProvenanceBuilder.inputRecord(for: url)
                 }
@@ -751,7 +574,6 @@ public class AssemblyConfigurationViewModel: ObservableObject {
                     inputRecords: inputRecords
                 )
 
-                // 5. Create .lungfishref bundle
                 DispatchQueue.main.async { [weak self] in
                     MainActor.assumeIsolated {
                         self?.assemblyState = .running(progress: 0.97, stage: "Creating reference bundle...")
@@ -775,7 +597,6 @@ public class AssemblyConfigurationViewModel: ObservableObject {
                     }
                 }
 
-                // 6. Complete
                 DispatchQueue.main.async { [weak self] in
                     MainActor.assumeIsolated {
                         self?.stopElapsedTimer()
@@ -819,7 +640,6 @@ public class AssemblyConfigurationViewModel: ObservableObject {
         }
     }
 
-    /// Cancels the current assembly.
     public func cancelAssembly() {
         assemblyTask?.cancel()
         assemblyTask = nil
@@ -831,19 +651,17 @@ public class AssemblyConfigurationViewModel: ObservableObject {
 
     // MARK: - Alert Helpers
 
-    /// Shows an alert explaining that no container runtime is available.
     private func showNoRuntimeAlert() {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Container Runtime Unavailable"
         alert.informativeText = """
             No container runtime is available on this system. \
-            Sequence assembly requires a container runtime to execute \
-            bioinformatics tools.
+            SPAdes assembly requires Apple Containers to run.
 
             Requirements:
-            - macOS 26 (Tahoe) or later on Apple Silicon for native containers
-            - Or Docker Desktop installed and running as a fallback
+            - macOS 26 (Tahoe) or later
+            - Apple Silicon Mac
 
             Please ensure your system meets these requirements and try again.
             """
@@ -852,11 +670,6 @@ public class AssemblyConfigurationViewModel: ObservableObject {
         logger.warning("Assembly blocked: no container runtime available")
     }
 
-    /// Shows an alert warning that disk space is insufficient.
-    ///
-    /// - Parameters:
-    ///   - required: Formatted string of required disk space
-    ///   - available: Formatted string of available disk space
     private func showDiskSpaceAlert(required: String, available: String) {
         let alert = NSAlert()
         alert.alertStyle = .warning
@@ -895,7 +708,6 @@ public class AssemblyConfigurationViewModel: ObservableObject {
         elapsedTimer = nil
     }
 
-    /// Formatted elapsed time string (e.g., "14m 32s").
     public var formattedElapsedTime: String {
         let total = Int(elapsedTime)
         let hours = total / 3600
@@ -911,13 +723,11 @@ public class AssemblyConfigurationViewModel: ObservableObject {
 
     // MARK: - Logging
 
-    /// Appends a log entry.
     public func appendLog(_ message: String, level: LogLevel = .info) {
         let entry = LogEntry(timestamp: Date(), message: message, level: level)
         logOutput.append(entry)
     }
 
-    /// Log entry for assembly output.
     public struct LogEntry: Identifiable {
         public let id = UUID()
         public let timestamp: Date
@@ -931,7 +741,6 @@ public class AssemblyConfigurationViewModel: ObservableObject {
         }
     }
 
-    /// Log level for assembly messages.
     public enum LogLevel: String {
         case debug
         case info
@@ -959,21 +768,16 @@ public class AssemblyConfigurationViewModel: ObservableObject {
 
     // MARK: - Preset Configurations
 
-    /// Applies a preset configuration for bacterial isolate assembly.
     public func applyBacterialIsolatePreset() {
-        algorithm = .spades
         spadesMode = .isolate
         maxMemoryGB = min(16, Double(availableMemoryGB))
         maxThreads = min(8, Double(availableCores))
         kmerConfig.autoSelect = true
         performErrorCorrection = true
         minContigLength = 500
-        logger.info("Applied bacterial isolate preset")
     }
 
-    /// Applies a preset configuration for metagenome assembly.
     public func applyMetagenomePreset() {
-        algorithm = .spades
         spadesMode = .meta
         maxMemoryGB = min(Double(availableMemoryGB) * 0.8, 64)
         maxThreads = Double(availableCores)
@@ -982,42 +786,14 @@ public class AssemblyConfigurationViewModel: ObservableObject {
         kmerConfig.customKmers = parseKmerString(customKmerString)
         performErrorCorrection = false
         minContigLength = 200
-        logger.info("Applied metagenome preset")
     }
 
-    /// Applies a preset configuration for viral assembly.
     public func applyViralPreset() {
-        algorithm = .spades
         spadesMode = .isolate
         maxMemoryGB = min(8, Double(availableMemoryGB))
         maxThreads = min(4, Double(availableCores))
         kmerConfig.autoSelect = true
         performErrorCorrection = true
         minContigLength = 100
-        logger.info("Applied viral preset")
-    }
-
-    /// Applies a preset configuration for plasmid assembly.
-    public func applyPlasmidPreset() {
-        algorithm = .spades
-        spadesMode = .plasmid
-        maxMemoryGB = min(8, Double(availableMemoryGB))
-        maxThreads = min(4, Double(availableCores))
-        kmerConfig.autoSelect = true
-        performErrorCorrection = true
-        minContigLength = 200
-        logger.info("Applied plasmid preset")
-    }
-
-    /// Applies a preset configuration for RNA assembly.
-    public func applyRNAPreset() {
-        algorithm = .spades
-        spadesMode = .rna
-        maxMemoryGB = min(16, Double(availableMemoryGB))
-        maxThreads = min(8, Double(availableCores))
-        kmerConfig.autoSelect = true
-        performErrorCorrection = true
-        minContigLength = 200
-        logger.info("Applied RNA preset")
     }
 }

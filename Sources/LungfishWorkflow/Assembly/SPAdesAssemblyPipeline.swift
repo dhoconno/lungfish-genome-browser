@@ -146,7 +146,7 @@ public struct SPAdesAssemblyResult: Sendable {
 public final class SPAdesAssemblyPipeline: @unchecked Sendable {
 
     /// Container image reference for SPAdes.
-    public static let spadesImageReference = "docker.io/lungfish/spades:4.0.0-arm64"
+    public static let spadesImageReference = "quay.io/biocontainers/spades:4.0.0--h5fb382e_1"
 
     public init() {}
 

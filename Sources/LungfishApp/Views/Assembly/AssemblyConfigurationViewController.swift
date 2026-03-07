@@ -1,8 +1,6 @@
-// AssemblyConfigurationViewController.swift - NSViewController wrapper for assembly configuration
+// AssemblyConfigurationViewController.swift - NSViewController wrapper for SPAdes assembly
 // Copyright (c) 2024 Lungfish Contributors
 // SPDX-License-Identifier: MIT
-//
-// Owner: UI/UX Lead (Role 02)
 
 import AppKit
 import SwiftUI
@@ -15,30 +13,15 @@ private let logger = Logger(subsystem: "com.lungfish.browser", category: "Assemb
 
 /// NSViewController that hosts the SwiftUI AssemblyConfigurationView.
 ///
-/// This controller serves as a bridge between AppKit's sheet presentation
-/// and the SwiftUI assembly configuration interface.
-///
-/// ## Usage
-///
-/// ```swift
-/// let controller = AssemblyConfigurationViewController(algorithm: .spades)
-/// controller.onAssemblyComplete = { outputURL in
-///     // Handle completed assembly
-/// }
-/// window.beginSheet(controller.window!)
-/// ```
+/// Input files and output directory are provided at init time by the caller.
 @MainActor
 public class AssemblyConfigurationViewController: NSViewController {
 
     // MARK: - Properties
 
-    /// The initial algorithm to pre-select (nil for auto)
-    private let initialAlgorithm: AssemblyAlgorithm?
-
-    /// The SwiftUI hosting view
+    private let inputFiles: [URL]
+    private let outputDirectory: URL?
     private var hostingView: NSHostingView<AssemblyConfigurationView>!
-
-    /// View model for the assembly configuration
     private var viewModel: AssemblyConfigurationViewModel!
 
     /// Callback when assembly completes successfully
@@ -54,9 +37,12 @@ public class AssemblyConfigurationViewController: NSViewController {
 
     /// Creates a new assembly configuration view controller.
     ///
-    /// - Parameter algorithm: Optional initial algorithm to pre-select
-    public init(algorithm: AssemblyAlgorithm? = nil) {
-        self.initialAlgorithm = algorithm
+    /// - Parameters:
+    ///   - inputFiles: FASTQ file URLs to assemble
+    ///   - outputDirectory: Directory for assembly output (e.g. project's Assemblies/)
+    public init(inputFiles: [URL], outputDirectory: URL?) {
+        self.inputFiles = inputFiles
+        self.outputDirectory = outputDirectory
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -67,14 +53,11 @@ public class AssemblyConfigurationViewController: NSViewController {
     // MARK: - Lifecycle
 
     public override func loadView() {
-        viewModel = AssemblyConfigurationViewModel()
+        viewModel = AssemblyConfigurationViewModel(
+            inputFiles: inputFiles,
+            outputDirectory: outputDirectory
+        )
 
-        // Set initial algorithm if specified
-        if let algorithm = initialAlgorithm {
-            viewModel.algorithm = algorithm
-        }
-
-        // Wire up callbacks
         viewModel.onAssemblyComplete = { [weak self] outputURL in
             self?.handleAssemblyComplete(outputURL)
         }
@@ -87,17 +70,16 @@ public class AssemblyConfigurationViewController: NSViewController {
             self?.handleCancel()
         }
 
-        // Create the SwiftUI view
         let configView = AssemblyConfigurationView(viewModel: viewModel)
         hostingView = NSHostingView(rootView: configView)
-        hostingView.frame = NSRect(x: 0, y: 0, width: 650, height: 600)
+        hostingView.frame = NSRect(x: 0, y: 0, width: 550, height: 520)
 
         self.view = hostingView
     }
 
     public override func viewDidLoad() {
         super.viewDidLoad()
-        logger.info("Assembly configuration view loaded")
+        logger.info("Assembly configuration view loaded with \(self.inputFiles.count) files")
     }
 
     // MARK: - Callback Handlers
@@ -114,17 +96,12 @@ public class AssemblyConfigurationViewController: NSViewController {
 
     private func handleCancel() {
         logger.info("Assembly configuration cancelled")
-
-        // Dismiss the sheet
         dismissSheet()
-
-        // Call the cancel callback
         onCancel?()
     }
 
     // MARK: - Sheet Management
 
-    /// Dismisses the sheet if presented as one.
     private func dismissSheet() {
         guard let window = view.window else { return }
 
@@ -138,29 +115,31 @@ public class AssemblyConfigurationViewController: NSViewController {
 
 // MARK: - AssemblySheetPresenter
 
-/// Helper for presenting assembly configuration sheets.
-///
-/// Provides a clean API for showing the assembly configuration
-/// as a sheet from any window.
+/// Helper for presenting the SPAdes assembly configuration sheet.
 @MainActor
 public struct AssemblySheetPresenter {
 
-    /// Presents the assembly configuration sheet.
+    /// Presents the SPAdes assembly configuration sheet.
     ///
     /// - Parameters:
     ///   - window: The parent window to attach the sheet to
-    ///   - algorithm: Optional pre-selected algorithm
+    ///   - inputFiles: FASTQ file URLs to assemble
+    ///   - outputDirectory: Directory for assembly output
     ///   - onComplete: Called when assembly completes
     ///   - onFailed: Called when assembly fails
     ///   - onCancel: Called when user cancels
     public static func present(
         from window: NSWindow,
-        algorithm: AssemblyAlgorithm? = nil,
+        inputFiles: [URL],
+        outputDirectory: URL?,
         onComplete: ((URL) -> Void)? = nil,
         onFailed: ((String) -> Void)? = nil,
         onCancel: (() -> Void)? = nil
     ) {
-        let controller = AssemblyConfigurationViewController(algorithm: algorithm)
+        let controller = AssemblyConfigurationViewController(
+            inputFiles: inputFiles,
+            outputDirectory: outputDirectory
+        )
 
         controller.onAssemblyComplete = { outputURL in
             onComplete?(outputURL)
@@ -174,13 +153,11 @@ public struct AssemblySheetPresenter {
             onCancel?()
         }
 
-        // Create the sheet window
         let sheetWindow = NSWindow(contentViewController: controller)
-        sheetWindow.title = "Sequence Assembly"
+        sheetWindow.title = "Assemble with SPAdes"
         sheetWindow.styleMask = [.titled, .closable]
         sheetWindow.isReleasedWhenClosed = false
 
-        // Present as sheet
         window.beginSheet(sheetWindow) { response in
             logger.info("Assembly sheet dismissed with response: \(response.rawValue)")
         }

@@ -1,12 +1,8 @@
-// AssemblyConfigurationView.swift - Assembly configuration sheet UI
+// AssemblyConfigurationView.swift - SPAdes assembly configuration sheet UI
 // Copyright (c) 2024 Lungfish Contributors
 // SPDX-License-Identifier: MIT
-//
-// Owner: UI/UX Lead (Role 02)
-// Reference: Apple Human Interface Guidelines
 
 import SwiftUI
-import UniformTypeIdentifiers
 import os.log
 import LungfishWorkflow
 
@@ -15,15 +11,10 @@ private let logger = Logger(subsystem: "com.lungfish.browser", category: "Assemb
 
 // MARK: - AssemblyConfigurationView
 
-/// Main SwiftUI view for configuring sequence assembly.
+/// SwiftUI view for configuring a SPAdes assembly run.
 ///
-/// Provides a comprehensive interface for:
-/// - Algorithm selection (SPAdes, MEGAHIT, auto)
-/// - Input file management with drag-and-drop
-/// - Output location selection
-/// - Resource configuration (memory, threads)
-/// - K-mer options for advanced users
-/// - Real-time progress and log output during assembly
+/// Input files and output directory are pre-set by the caller.
+/// The user configures SPAdes mode, resources, and advanced options.
 public struct AssemblyConfigurationView: View {
     @ObservedObject var viewModel: AssemblyConfigurationViewModel
     @Environment(\.dismiss) private var dismiss
@@ -34,12 +25,9 @@ public struct AssemblyConfigurationView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            // Header
             headerSection
-
             Divider()
 
-            // Main content (scrollable)
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     if viewModel.assemblyState.isInProgress ||
@@ -47,9 +35,8 @@ public struct AssemblyConfigurationView: View {
                        viewModel.assemblyState == .failed(error: "") {
                         progressSection
                     } else {
-                        algorithmSection
-                        inputFilesSection
-                        outputSection
+                        inputSummarySection
+                        modeSection
                         resourceSection
                         advancedSection
                     }
@@ -58,11 +45,9 @@ public struct AssemblyConfigurationView: View {
             }
 
             Divider()
-
-            // Footer with buttons
             footerSection
         }
-        .frame(width: 650, height: 600)
+        .frame(width: 550, height: 520)
         .background(Color(nsColor: .windowBackgroundColor))
         .interactiveDismissDisabled(viewModel.assemblyState.isInProgress)
         .onAppear {
@@ -75,24 +60,22 @@ public struct AssemblyConfigurationView: View {
     @ViewBuilder
     private var headerSection: some View {
         HStack(spacing: 12) {
-            Image(systemName: "gearshape.2.fill")
+            Image(systemName: "cpu")
                 .font(.system(size: 28))
                 .foregroundStyle(.tint)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Sequence Assembly")
+                Text("Assemble with SPAdes")
                     .font(.headline)
-                Text("Configure de novo assembly using SPAdes or MEGAHIT")
+                Text("De novo genome assembly")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
 
             Spacer()
 
-            // Runtime status indicator
             runtimeStatusIndicator
 
-            // Preset menu
             Menu {
                 Button("Bacterial Isolate") {
                     viewModel.applyBacterialIsolatePreset()
@@ -114,7 +97,6 @@ public struct AssemblyConfigurationView: View {
 
     // MARK: - Runtime Status Indicator
 
-    /// Visual indicator showing whether the container runtime is available.
     @ViewBuilder
     private var runtimeStatusIndicator: some View {
         HStack(spacing: 4) {
@@ -144,157 +126,59 @@ public struct AssemblyConfigurationView: View {
         .padding(.trailing, 8)
     }
 
-    // MARK: - Algorithm Section
+    // MARK: - Input Summary Section
 
     @ViewBuilder
-    private var algorithmSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Assembly Algorithm", systemImage: "cpu")
+    private var inputSummarySection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Input Files", systemImage: "doc.on.doc")
                 .font(.headline)
 
-            Picker("Algorithm", selection: $viewModel.algorithm) {
-                ForEach(AssemblyAlgorithm.allCases) { algo in
-                    HStack {
-                        Image(systemName: algo.icon)
-                        Text(algo.rawValue)
-                    }
-                    .tag(algo)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-
-            Text(viewModel.algorithm.description)
-                .font(.caption)
+            Text(viewModel.inputSummary)
+                .font(.callout)
                 .foregroundStyle(.secondary)
-                .padding(.top, 4)
-        }
-        .padding(16)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(8)
-    }
 
-    // MARK: - Input Files Section
-
-    @ViewBuilder
-    private var inputFilesSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("Input Files", systemImage: "doc.on.doc")
-                    .font(.headline)
-
-                Spacer()
-
-                Button {
-                    openFilePicker()
-                } label: {
-                    Label("Add Files", systemImage: "plus")
-                }
-                .buttonStyle(.bordered)
-
-                if !viewModel.inputFiles.isEmpty {
-                    Button {
-                        viewModel.clearInputFiles()
-                    } label: {
-                        Label("Clear", systemImage: "trash")
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(.red)
-                }
-            }
-
-            // File drop zone / list
-            if viewModel.inputFiles.isEmpty {
-                FileDropZone(onDrop: handleFileDrop)
-            } else {
-                inputFileList
-            }
-
-            // Paired-end toggle
-            if !viewModel.inputFiles.isEmpty {
-                Toggle("Paired-end reads", isOn: $viewModel.pairedEndMode)
-                    .toggleStyle(.checkbox)
-                    .padding(.top, 4)
-            }
-        }
-        .padding(16)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(8)
-    }
-
-    @ViewBuilder
-    private var inputFileList: some View {
-        VStack(spacing: 1) {
-            ForEach(viewModel.inputFiles) { file in
-                HStack(spacing: 12) {
-                    Image(systemName: file.pairedWith != nil ? "link" : "doc")
-                        .foregroundStyle(file.pairedWith != nil ? .blue : .secondary)
-                        .frame(width: 20)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(file.filename)
-                            .font(.callout)
-                            .lineLimit(1)
-                        Text(file.fileSize)
+            // List file names
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(viewModel.inputFileURLs, id: \.self) { url in
+                    HStack(spacing: 6) {
+                        Image(systemName: "doc")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        Text(url.lastPathComponent)
+                            .font(.system(.caption, design: .monospaced))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
-
-                    Spacer()
-
-                    Button {
-                        viewModel.removeInputFile(file)
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color(nsColor: .textBackgroundColor))
             }
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .textBackgroundColor))
+            .cornerRadius(6)
         }
-        .cornerRadius(6)
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-        )
-        .frame(maxHeight: 150)
+        .padding(16)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .cornerRadius(8)
     }
 
-    // MARK: - Output Section
+    // MARK: - Mode Section
 
     @ViewBuilder
-    private var outputSection: some View {
+    private var modeSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Output", systemImage: "folder")
+            Label("Assembly Mode", systemImage: "gearshape.2")
                 .font(.headline)
 
-            HStack {
-                TextField("Project name", text: $viewModel.projectName)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 200)
-
-                Spacer()
-
-                Button {
-                    openOutputDirectoryPicker()
-                } label: {
-                    Label("Choose Location", systemImage: "folder.badge.plus")
+            Picker("Mode:", selection: $viewModel.spadesMode) {
+                ForEach(SPAdesMode.allCases, id: \.self) { mode in
+                    Text(mode.displayName).tag(mode)
                 }
-                .buttonStyle(.bordered)
             }
+            .pickerStyle(.menu)
 
-            HStack(spacing: 8) {
-                Image(systemName: "folder.fill")
-                    .foregroundStyle(.secondary)
-                Text(viewModel.fullOutputPath)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
+            Toggle("Perform error correction", isOn: $viewModel.performErrorCorrection)
+                .toggleStyle(.checkbox)
         }
         .padding(16)
         .background(Color(nsColor: .controlBackgroundColor))
@@ -310,7 +194,6 @@ public struct AssemblyConfigurationView: View {
                 .font(.headline)
 
             VStack(spacing: 16) {
-                // Memory slider
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text("Memory")
@@ -336,18 +219,17 @@ public struct AssemblyConfigurationView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    if Int(viewModel.maxMemoryGB) < viewModel.algorithm.recommendedMemoryGB {
+                    if viewModel.maxMemoryGB < 8 {
                         HStack(spacing: 4) {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.orange)
-                            Text("Recommended: \(viewModel.algorithm.recommendedMemoryGB) GB for \(viewModel.algorithm.rawValue)")
+                            Text("SPAdes recommends at least 8 GB")
                                 .font(.caption)
                                 .foregroundStyle(.orange)
                         }
                     }
                 }
 
-                // Thread slider
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text("Threads")
@@ -386,7 +268,6 @@ public struct AssemblyConfigurationView: View {
     private var advancedSection: some View {
         DisclosureGroup(isExpanded: $viewModel.isAdvancedExpanded) {
             VStack(alignment: .leading, spacing: 16) {
-                // K-mer configuration
                 VStack(alignment: .leading, spacing: 8) {
                     Text("K-mer Sizes")
                         .font(.subheadline)
@@ -415,32 +296,17 @@ public struct AssemblyConfigurationView: View {
 
                 Divider()
 
-                // SPAdes-specific options
-                if viewModel.algorithm == .spades || viewModel.algorithm == .auto {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("SPAdes Options")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-
-                        Picker("Assembly Mode:", selection: $viewModel.spadesMode) {
-                            ForEach(SPAdesMode.allCases, id: \.self) { mode in
-                                Text(mode.displayName).tag(mode)
-                            }
-                        }
-                        .pickerStyle(.menu)
-
-                        Toggle("Perform error correction", isOn: $viewModel.performErrorCorrection)
-                            .toggleStyle(.checkbox)
-                    }
-
-                    Divider()
-                }
-
-                // Output options
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Output Options")
                         .font(.subheadline)
                         .fontWeight(.medium)
+
+                    HStack {
+                        Text("Project name:")
+                        TextField("Name", text: $viewModel.projectName)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 200)
+                    }
 
                     HStack {
                         Text("Minimum contig length:")
@@ -467,7 +333,6 @@ public struct AssemblyConfigurationView: View {
     @ViewBuilder
     private var progressSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Status header
             HStack(spacing: 12) {
                 progressIcon
                     .font(.system(size: 24))
@@ -488,7 +353,6 @@ public struct AssemblyConfigurationView: View {
                 }
             }
 
-            // Progress bar
             if case .running(let progress, _) = viewModel.assemblyState {
                 if let progress = progress {
                     ProgressView(value: progress, total: 1.0) {
@@ -510,7 +374,6 @@ public struct AssemblyConfigurationView: View {
                 }
             }
 
-            // Log output
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Output Log")
@@ -589,20 +452,13 @@ public struct AssemblyConfigurationView: View {
 
     private var progressTitle: String {
         switch viewModel.assemblyState {
-        case .idle:
-            return "Ready"
-        case .validating:
-            return "Validating"
-        case .preparing:
-            return "Preparing"
-        case .running:
-            return "Running Assembly"
-        case .completed:
-            return "Assembly Complete"
-        case .failed:
-            return "Assembly Failed"
-        case .cancelled:
-            return "Assembly Cancelled"
+        case .idle: return "Ready"
+        case .validating: return "Validating"
+        case .preparing: return "Preparing"
+        case .running: return "Running Assembly"
+        case .completed: return "Assembly Complete"
+        case .failed: return "Assembly Failed"
+        case .cancelled: return "Assembly Cancelled"
         }
     }
 
@@ -611,7 +467,6 @@ public struct AssemblyConfigurationView: View {
     @ViewBuilder
     private var footerSection: some View {
         HStack(spacing: 12) {
-            // Validation status
             if !viewModel.assemblyState.isInProgress {
                 let validation = viewModel.validateConfiguration()
                 if !validation.errors.isEmpty {
@@ -637,18 +492,12 @@ public struct AssemblyConfigurationView: View {
 
             Spacer()
 
-            // Action buttons
             if viewModel.assemblyState.isInProgress {
                 Button("Cancel") {
                     viewModel.cancelAssembly()
                 }
                 .buttonStyle(.bordered)
             } else if case .completed = viewModel.assemblyState {
-                Button("Open Output") {
-                    openOutputFolder()
-                }
-                .buttonStyle(.bordered)
-
                 Button("Done") {
                     dismiss()
                 }
@@ -684,68 +533,6 @@ public struct AssemblyConfigurationView: View {
 
     // MARK: - Actions
 
-    private func openFilePicker() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = true
-        panel.allowedContentTypes = [
-            UTType(filenameExtension: "fq")!,
-            UTType(filenameExtension: "fastq")!,
-            UTType(filenameExtension: "gz")!,
-        ]
-        panel.message = "Select FASTQ files for assembly"
-
-        panel.begin { response in
-            if response == .OK {
-                viewModel.addInputFiles(panel.urls)
-            }
-        }
-    }
-
-    private func openOutputDirectoryPicker() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = true
-        panel.message = "Choose output directory"
-
-        if let currentDir = viewModel.outputDirectory {
-            panel.directoryURL = currentDir
-        }
-
-        panel.begin { response in
-            if response == .OK, let url = panel.url {
-                viewModel.outputDirectory = url
-            }
-        }
-    }
-
-    private func handleFileDrop(_ providers: [NSItemProvider]) -> Bool {
-        var urls: [URL] = []
-
-        for provider in providers {
-            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                let semaphore = DispatchSemaphore(value: 0)
-                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { data, _ in
-                    if let urlData = data as? Data,
-                       let url = URL(dataRepresentation: urlData, relativeTo: nil) {
-                        urls.append(url)
-                    }
-                    semaphore.signal()
-                }
-                semaphore.wait()
-            }
-        }
-
-        if !urls.isEmpty {
-            viewModel.addInputFiles(urls)
-            return true
-        }
-        return false
-    }
-
     private func copyLogToClipboard() {
         let logText = viewModel.logOutput.map { entry in
             "[\(entry.formattedTimestamp)] [\(entry.level.rawValue.uppercased())] \(entry.message)"
@@ -753,52 +540,6 @@ public struct AssemblyConfigurationView: View {
 
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(logText, forType: .string)
-    }
-
-    private func openOutputFolder() {
-        guard let outputDir = viewModel.outputDirectory else { return }
-        let outputPath = outputDir.appendingPathComponent(viewModel.projectName)
-        NSWorkspace.shared.open(outputPath)
-    }
-}
-
-// MARK: - FileDropZone
-
-/// A drop zone for dragging and dropping FASTQ files.
-struct FileDropZone: View {
-    let onDrop: ([NSItemProvider]) -> Bool
-    @State private var isTargeted = false
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "arrow.down.doc")
-                .font(.system(size: 36))
-                .foregroundStyle(isTargeted ? .blue : .secondary)
-
-            Text("Drop FASTQ files here")
-                .font(.headline)
-                .foregroundStyle(isTargeted ? .primary : .secondary)
-
-            Text("or click \"Add Files\" to browse")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: 120)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(
-                    style: StrokeStyle(lineWidth: 2, dash: [8, 4])
-                )
-                .foregroundStyle(isTargeted ? .blue : Color(nsColor: .separatorColor))
-        )
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(isTargeted ? Color.blue.opacity(0.05) : Color.clear)
-        )
-        .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
-            onDrop(providers)
-        }
     }
 }
 

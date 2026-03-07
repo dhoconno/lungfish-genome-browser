@@ -539,22 +539,11 @@ public final class MainMenu {
         let toolsMenu = NSMenu(title: "Tools")
 
         // Assembly
-        let assemblyItem = NSMenuItem(title: "Assembly", action: nil, keyEquivalent: "")
-        let assemblyMenu = NSMenu(title: "Assembly")
-
-        assemblyMenu.addItem(
-            withTitle: "SPAdes Assembly...",
+        toolsMenu.addItem(
+            withTitle: "Assemble with SPAdes...",
             action: #selector(ToolsMenuActions.runSPAdes(_:)),
             keyEquivalent: ""
         )
-        assemblyMenu.addItem(
-            withTitle: "MEGAHIT Assembly...",
-            action: #selector(ToolsMenuActions.runMEGAHIT(_:)),
-            keyEquivalent: ""
-        )
-
-        assemblyItem.submenu = assemblyMenu
-        toolsMenu.addItem(assemblyItem)
 
         // Primer Design
         let primerItem = NSMenuItem(title: "Primer Design", action: nil, keyEquivalent: "")
@@ -832,7 +821,6 @@ public final class MainMenu {
 @MainActor
 @objc protocol ToolsMenuActions {
     func runSPAdes(_ sender: Any?)
-    func runMEGAHIT(_ sender: Any?)
     func designPrimers(_ sender: Any?)
     func primalScheme(_ sender: Any?)
     func inSilicoPCR(_ sender: Any?)

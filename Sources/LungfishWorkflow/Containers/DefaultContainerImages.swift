@@ -187,7 +187,7 @@ public enum DefaultContainerImages {
         id: "spades",
         name: "SPAdes",
         description: "De novo genome assembler for isolates, metagenomes, plasmids, and RNA",
-        reference: "docker.io/lungfish/spades:4.0.0-arm64",
+        reference: "quay.io/biocontainers/spades:4.0.0--h5fb382e_1",
         category: .optional,
         purpose: .assembly,
         version: "4.0.0",
