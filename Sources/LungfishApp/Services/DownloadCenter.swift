@@ -153,6 +153,13 @@ public final class OperationCenter: ObservableObject {
         return id
     }
 
+    /// Sets the cancellation callback for an existing operation.
+    /// Useful when the operation must be registered before the cancellable task handle exists.
+    public func setCancelCallback(for id: UUID, callback: @escaping @Sendable () -> Void) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].onCancel = callback
+    }
+
     public func update(id: UUID, progress: Double, detail: String) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].progress = max(0, min(1, progress))

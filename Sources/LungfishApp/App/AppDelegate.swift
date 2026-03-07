@@ -3572,15 +3572,23 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             }
 
             let originalFilename = tempURL.lastPathComponent
-            let fileExtension = tempURL.pathExtension
-            var baseName = tempURL.deletingPathExtension().lastPathComponent
+
+            // Build the full compound extension (e.g. "fastq.gz") and true base name
+            var strippedURL = tempURL
+            var extensionParts: [String] = []
+            while !strippedURL.pathExtension.isEmpty {
+                extensionParts.insert(strippedURL.pathExtension, at: 0)
+                strippedURL = strippedURL.deletingPathExtension()
+            }
+            let fileExtension = extensionParts.joined(separator: ".")
+            var baseName = strippedURL.lastPathComponent
 
             // Strip the UID suffix from batch downloads (format: "accession_uid.ext" -> "accession.ext")
             // UIDs are numeric, so we look for _digits at the end of the basename.
             // Skip for .lungfishref bundles — their filenames are already clean accessions
             // and accession numbers like NC_045512 contain underscore+digits that would be
             // incorrectly stripped.
-            if fileExtension != "lungfishref",
+            if !extensionParts.contains("lungfishref"),
                let underscoreRange = baseName.range(of: "_", options: .backwards) {
                 let potentialUID = String(baseName[underscoreRange.upperBound...])
                 // Check if everything after the underscore is digits (a UID)

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import LungfishCore
 import LungfishIO
 import LungfishWorkflow
 import os.log
@@ -50,53 +51,52 @@ public enum FASTQIngestionService {
             inputFiles = [url]
         }
 
+        let clumpifyEnabled = AppSettings.shared.fastqClumpifyEnabled
+
         let outputDir = url.deletingLastPathComponent()
         let config = FASTQIngestionConfig(
             inputFiles: inputFiles,
             pairingMode: pairingMode,
             outputDirectory: outputDir,
             threads: min(ProcessInfo.processInfo.processorCount, 8),
-            deleteOriginals: true
+            deleteOriginals: true,
+            skipClumpify: !clumpifyEnabled
         )
 
         let baseName = FASTQIngestionPipeline.deriveBaseName(from: url)
         let title = "FASTQ Ingestion: \(baseName)"
 
+        // Register the operation FIRST so we have a stable ID to pass to the detached task.
+        let opID = OperationCenter.shared.start(
+            title: title,
+            detail: "Preparing...",
+            operationType: .ingestion
+        )
+
         let task = Task.detached {
             await Self.runIngestion(
                 config: config,
-                title: title,
+                operationID: opID,
                 existingMetadata: existingMetadata
             )
         }
 
-        _ = OperationCenter.shared.start(
-            title: title,
-            detail: "Preparing...",
-            operationType: .ingestion,
-            onCancel: { task.cancel() }
-        )
+        // Store cancellation callback now that we have the task handle.
+        OperationCenter.shared.setCancelCallback(for: opID) { task.cancel() }
     }
 
     // MARK: - Pipeline Runner
 
-    private static func runIngestion(
+    /// Runs the ingestion pipeline off the main actor.
+    ///
+    /// Must be `nonisolated` — the cooperative executor does not reliably schedule
+    /// `@MainActor` methods called from `Task.detached`.  We hop to `MainActor.run`
+    /// only for the few OperationCenter mutations that need it.
+    nonisolated private static func runIngestion(
         config: FASTQIngestionConfig,
-        title: String,
+        operationID opID: UUID,
         existingMetadata: PersistedFASTQMetadata?
     ) async {
-        // Find operation ID
-        let operationID: UUID? = await MainActor.run {
-            OperationCenter.shared.items.first(where: {
-                $0.title == title && $0.state == .running
-            })?.id
-        }
-
-        guard let opID = operationID else {
-            logger.error("Ingestion operation not found in OperationCenter")
-            return
-        }
-
         do {
             let pipeline = FASTQIngestionPipeline()
             let result = try await pipeline.run(config: config) { fraction, message in

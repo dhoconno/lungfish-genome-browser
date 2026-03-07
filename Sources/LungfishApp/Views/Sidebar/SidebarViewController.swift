@@ -463,8 +463,8 @@ public class SidebarViewController: NSViewController {
                     // Include directories
                     let childItem = buildSidebarTree(from: childURL, isRoot: false)
                     items.append(childItem)
-                } else {
-                    // Only include supported file types
+                } else if !isInternalSidecarFile(childURL) {
+                    // Only include supported, non-sidecar file types
                     let ext = childURL.pathExtension.lowercased()
                     if isSupportedFileExtension(ext) {
                         let childItem = buildSidebarTree(from: childURL, isRoot: false)
@@ -558,8 +558,8 @@ public class SidebarViewController: NSViewController {
                         // Always include directories
                         let childItem = buildSidebarTree(from: childURL, isRoot: false)
                         item.children.append(childItem)
-                    } else {
-                        // Only include supported file types
+                    } else if !isInternalSidecarFile(childURL) {
+                        // Only include supported, non-sidecar file types
                         let ext = childURL.pathExtension.lowercased()
                         if isSupportedFileExtension(ext) {
                             let childItem = buildSidebarTree(from: childURL, isRoot: false)
@@ -592,6 +592,11 @@ public class SidebarViewController: NSViewController {
     private func isSupportedFileExtension(_ ext: String) -> Bool {
         // Hidden files (empty extension) are not supported
         !ext.isEmpty
+    }
+
+    /// Returns true for internal sidecar/metadata files that should be hidden from the sidebar.
+    private func isInternalSidecarFile(_ url: URL) -> Bool {
+        url.lastPathComponent.hasSuffix(".lungfish-meta.json")
     }
 
     /// Counts the total number of items in a tree.

@@ -2002,9 +2002,9 @@ public class ViewerViewController: NSViewController {
         // Determine destination directory
         let destinationDirectory: URL
         if let project = projectURL {
-            destinationDirectory = project.appendingPathComponent("downloads", isDirectory: true)
+            destinationDirectory = project.appendingPathComponent("Downloads", isDirectory: true)
         } else if let working = workingURL {
-            destinationDirectory = working.appendingPathComponent("downloads", isDirectory: true)
+            destinationDirectory = working.appendingPathComponent("Downloads", isDirectory: true)
         } else {
             // Fallback to user's Downloads folder
             let downloadsURL = fileManager.urls(for: .downloadsDirectory, in: .userDomainMask).first!

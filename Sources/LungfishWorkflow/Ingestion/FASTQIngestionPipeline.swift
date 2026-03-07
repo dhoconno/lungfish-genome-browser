@@ -37,13 +37,18 @@ public struct FASTQIngestionConfig: Sendable {
     /// Quality binning scheme for compression optimization.
     public let qualityBinning: QualityBinningScheme
 
+    /// Whether to skip the clumpify step (k-mer sorting + quality binning).
+    /// When true, only compression and indexing are performed.
+    public let skipClumpify: Bool
+
     public init(
         inputFiles: [URL],
         pairingMode: PairingMode = .singleEnd,
         outputDirectory: URL,
         threads: Int = 4,
         deleteOriginals: Bool = true,
-        qualityBinning: QualityBinningScheme = .illumina4
+        qualityBinning: QualityBinningScheme = .illumina4,
+        skipClumpify: Bool = false
     ) {
         self.inputFiles = inputFiles
         self.pairingMode = pairingMode
@@ -51,6 +56,7 @@ public struct FASTQIngestionConfig: Sendable {
         self.threads = threads
         self.deleteOriginals = deleteOriginals
         self.qualityBinning = qualityBinning
+        self.skipClumpify = skipClumpify
     }
 }
 
@@ -166,24 +172,31 @@ public final class FASTQIngestionPipeline: @unchecked Sendable {
         )
 
         // Step 1: Clumpify + quality bin (50% of progress)
-        progress(0.0, "Sorting reads by k-mer similarity...")
         let clumpifiedFile: URL
         let wasClumpified: Bool
 
-        do {
-            clumpifiedFile = try await clumpify(
-                config: config,
-                baseName: baseName,
-                progress: { fraction, msg in
-                    progress(fraction * 0.5, msg)
-                }
-            )
-            wasClumpified = true
-        } catch {
-            logger.warning("Clumpify failed (non-fatal): \(error)")
+        if config.skipClumpify {
+            logger.info("Clumpify skipped (disabled in preferences)")
             clumpifiedFile = config.inputFiles[0]
             wasClumpified = false
-            progress(0.5, "Clumpify failed, continuing with original...")
+            progress(0.5, "Clumpify disabled, skipping...")
+        } else {
+            progress(0.0, "Sorting reads by k-mer similarity...")
+            do {
+                clumpifiedFile = try await clumpify(
+                    config: config,
+                    baseName: baseName,
+                    progress: { fraction, msg in
+                        progress(fraction * 0.5, msg)
+                    }
+                )
+                wasClumpified = true
+            } catch {
+                logger.warning("Clumpify failed (non-fatal): \(error)")
+                clumpifiedFile = config.inputFiles[0]
+                wasClumpified = false
+                progress(0.5, "Clumpify failed, continuing with original...")
+            }
         }
 
         try Task.checkCancellation()
