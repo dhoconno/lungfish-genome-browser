@@ -491,6 +491,9 @@ public class InspectorViewController: NSViewController {
             viewModel.documentSectionViewModel.updateSRAMetadata(sra: sra, ena: ena)
         }
 
+        let ingestion = notification.userInfo?["ingestionMetadata"] as? IngestionMetadata
+        viewModel.documentSectionViewModel.updateIngestionMetadata(ingestion)
+
         viewModel.selectedTab = .document
     }
 

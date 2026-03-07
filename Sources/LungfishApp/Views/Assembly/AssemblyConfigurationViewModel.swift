@@ -146,6 +146,18 @@ public class AssemblyConfigurationViewModel: ObservableObject {
     /// Minimum contig length to report
     @Published public var minContigLength: Int = 200
 
+    /// Enable careful mode (mismatch correction, incompatible with --isolate)
+    @Published public var careful: Bool = false
+
+    /// Coverage cutoff ("auto", "off", or empty for SPAdes default)
+    @Published public var covCutoff: String = ""
+
+    /// PHRED quality offset (0 = auto-detect, 33 or 64)
+    @Published public var phredOffset: Int = 0
+
+    /// Additional custom CLI arguments (space-separated string from user)
+    @Published public var customArgsString: String = ""
+
     /// Container runtime availability status.
     @Published public var runtimeStatus: RuntimeStatus = .checking
 
@@ -390,6 +402,10 @@ public class AssemblyConfigurationViewModel: ObservableObject {
             warnings.append("SPAdes recommends at least 8 GB of memory")
         }
 
+        if careful && spadesMode == .isolate {
+            errors.append("--careful is incompatible with --isolate mode")
+        }
+
         if !kmerConfig.autoSelect {
             let kmers = parseKmerString(customKmerString)
             if kmers.isEmpty {
@@ -462,6 +478,10 @@ public class AssemblyConfigurationViewModel: ObservableObject {
             return
         }
 
+        // Parse custom CLI args (split on whitespace, respecting quotes)
+        let parsedCustomArgs = customArgsString.isEmpty ? [] :
+            customArgsString.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+
         let spadesConfig = SPAdesAssemblyConfig(
             mode: spadesMode,
             forwardReads: forwardReads,
@@ -472,6 +492,10 @@ public class AssemblyConfigurationViewModel: ObservableObject {
             threads: Int(maxThreads),
             minContigLength: minContigLength,
             skipErrorCorrection: !performErrorCorrection,
+            careful: careful,
+            covCutoff: covCutoff.isEmpty ? nil : covCutoff,
+            phredOffset: phredOffset == 0 ? nil : phredOffset,
+            customArgs: parsedCustomArgs,
             outputDirectory: outputDir,
             projectName: projectName
         )
@@ -542,6 +566,20 @@ public class AssemblyConfigurationViewModel: ObservableObject {
 
             let stats = result.statistics
             logger.info("Assembly stats: contigs=\(stats.contigCount), N50=\(stats.n50), total=\(stats.totalLengthBP)bp")
+
+            // Save config for potential reassembly
+            let spadesOutputDir = outputDir.appendingPathComponent(projectName)
+            try? SPAdesAssemblyPipeline.saveConfig(config, to: spadesOutputDir)
+
+            // Clean intermediate files
+            await MainActor.run {
+                OperationCenter.shared.update(id: opID, progress: 0.94, detail: "Cleaning intermediate files...")
+            }
+            let freed = try? SPAdesAssemblyPipeline.cleanIntermediates(in: spadesOutputDir)
+            if let freed {
+                let freedStr = ByteCountFormatter.string(fromByteCount: freed, countStyle: .file)
+                logger.info("Freed \(freedStr) of intermediate files")
+            }
 
             await MainActor.run {
                 OperationCenter.shared.update(id: opID, progress: 0.95, detail: "Creating reference bundle...")
@@ -678,6 +716,8 @@ public class AssemblyConfigurationViewModel: ObservableObject {
         maxThreads = min(8, Double(availableCores))
         kmerConfig.autoSelect = true
         performErrorCorrection = true
+        careful = false  // incompatible with --isolate
+        covCutoff = ""
         minContigLength = 500
     }
 
@@ -689,6 +729,8 @@ public class AssemblyConfigurationViewModel: ObservableObject {
         customKmerString = "21,33,55,77"
         kmerConfig.customKmers = parseKmerString(customKmerString)
         performErrorCorrection = false
+        careful = false
+        covCutoff = "auto"
         minContigLength = 200
     }
 
@@ -698,6 +740,8 @@ public class AssemblyConfigurationViewModel: ObservableObject {
         maxThreads = min(4, Double(availableCores))
         kmerConfig.autoSelect = true
         performErrorCorrection = true
+        careful = false  // incompatible with --isolate
+        covCutoff = ""
         minContigLength = 100
     }
 }

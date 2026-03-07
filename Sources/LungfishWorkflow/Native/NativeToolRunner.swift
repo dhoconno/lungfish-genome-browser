@@ -75,6 +75,7 @@ public enum NativeTool: String, CaseIterable, Sendable {
     case tabix
     case bedToBigBed
     case bedGraphToBigWig
+    case pigz
 
     /// The executable name for this tool.
     public var executableName: String {
@@ -85,6 +86,7 @@ public enum NativeTool: String, CaseIterable, Sendable {
         case .tabix: return "tabix"
         case .bedToBigBed: return "bedToBigBed"
         case .bedGraphToBigWig: return "bedGraphToBigWig"
+        case .pigz: return "pigz"
         }
     }
 
@@ -95,6 +97,7 @@ public enum NativeTool: String, CaseIterable, Sendable {
         case .bcftools: return "bcftools"
         case .bgzip, .tabix: return "htslib"
         case .bedToBigBed, .bedGraphToBigWig: return "ucsc-tools"
+        case .pigz: return "pigz"
         }
     }
 
@@ -105,6 +108,8 @@ public enum NativeTool: String, CaseIterable, Sendable {
             return "MIT/Expat"
         case .bedToBigBed, .bedGraphToBigWig:
             return "MIT (UCSC Genome Browser)"
+        case .pigz:
+            return "zlib License"
         }
     }
 
@@ -153,7 +158,8 @@ public actor NativeToolRunner {
         "samtools": "1.21",
         "bcftools": "1.21",
         "htslib": "1.21",
-        "ucsc-tools": "469"
+        "ucsc-tools": "469",
+        "pigz": "2.8"
     ]
 
     // MARK: - Initialization
@@ -335,6 +341,93 @@ public actor NativeToolRunner {
         }
     }
     
+    /// Returns the path to a tool if available, or nil.
+    public func toolPath(for tool: NativeTool) throws -> URL {
+        return try findTool(tool)
+    }
+
+    /// Runs a native tool, redirecting stdout to a file.
+    ///
+    /// Used for tools like pigz/bgzip that write binary data to stdout.
+    public func runWithFileOutput(
+        _ tool: NativeTool,
+        arguments: [String],
+        outputFile: URL,
+        workingDirectory: URL? = nil,
+        environment: [String: String]? = nil,
+        timeout: TimeInterval? = nil
+    ) async throws -> NativeToolResult {
+        let toolPath = try findTool(tool)
+        let actualTimeout = timeout ?? defaultTimeout
+
+        return try await withCheckedThrowingContinuation { continuation in
+            let process = Process()
+            process.executableURL = toolPath
+            process.arguments = arguments
+
+            if let workingDirectory {
+                process.currentDirectoryURL = workingDirectory
+            }
+
+            var processEnvironment = ProcessInfo.processInfo.environment
+            if let environment {
+                for (key, value) in environment {
+                    processEnvironment[key] = value
+                }
+            }
+            process.environment = processEnvironment
+
+            // Redirect stdout to file
+            FileManager.default.createFile(atPath: outputFile.path, contents: nil)
+            let outputHandle = FileHandle(forWritingAtPath: outputFile.path)!
+            process.standardOutput = outputHandle
+
+            let stderrPipe = Pipe()
+            process.standardError = stderrPipe
+
+            let timeoutWorkItem = DispatchWorkItem {
+                if process.isRunning {
+                    process.terminate()
+                }
+            }
+            DispatchQueue.global().asyncAfter(
+                deadline: .now() + actualTimeout,
+                execute: timeoutWorkItem
+            )
+
+            do {
+                try process.run()
+                process.waitUntilExit()
+                timeoutWorkItem.cancel()
+
+                try? outputHandle.close()
+                let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+
+                let result = NativeToolResult(
+                    exitCode: process.terminationStatus,
+                    stdout: "",
+                    stderr: stderr
+                )
+
+                if result.isSuccess {
+                    self.logger.info("\(tool.rawValue) completed successfully (output: \(outputFile.lastPathComponent))")
+                } else {
+                    self.logger.warning("\(tool.rawValue) exited with code \(result.exitCode)")
+                }
+
+                continuation.resume(returning: result)
+
+            } catch {
+                timeoutWorkItem.cancel()
+                try? outputHandle.close()
+                continuation.resume(throwing: NativeToolError.executionFailed(
+                    tool.rawValue, -1, error.localizedDescription
+                ))
+            }
+        }
+    }
+
     // MARK: - Private Methods
 
     private func discoverToolPath(_ tool: NativeTool) throws -> URL {

@@ -5,6 +5,7 @@
 import AppKit
 import LungfishCore
 import LungfishIO
+import LungfishWorkflow
 import os.log
 
 /// Logger for sidebar operations
@@ -1791,6 +1792,13 @@ extension SidebarViewController: NSMenuDelegate {
                 menu.addItem(deleteVariantsItem)
             }
 
+            // Reassemble — only if bundle has assembly provenance
+            if let url = items.first?.url, bundleHasAssemblyProvenance(url) {
+                let reassembleItem = NSMenuItem(title: "Reassemble\u{2026}", action: #selector(contextMenuReassemble(_:)), keyEquivalent: "")
+                reassembleItem.target = self
+                menu.addItem(reassembleItem)
+            }
+
             menu.addItem(NSMenuItem.separator())
         }
 
@@ -2130,6 +2138,46 @@ extension SidebarViewController: NSMenuDelegate {
                 }
             }
         }
+    }
+
+    private func bundleHasAssemblyProvenance(_ bundleURL: URL) -> Bool {
+        let provenanceURL = bundleURL.appendingPathComponent("assembly/provenance.json")
+        return FileManager.default.fileExists(atPath: provenanceURL.path)
+    }
+
+    @objc private func contextMenuReassemble(_ sender: Any?) {
+        let items = selectedItems()
+        guard let item = items.first, item.type == .referenceBundle, let bundleURL = item.url else { return }
+
+        let assemblyDir = bundleURL.appendingPathComponent("assembly")
+        guard let provenance = try? AssemblyProvenance.load(from: assemblyDir) else {
+            logger.error("contextMenuReassemble: Failed to load provenance from \(bundleURL.lastPathComponent)")
+            return
+        }
+
+        // Try to locate original input files from provenance
+        let inputFiles = provenance.inputs.compactMap { record -> URL? in
+            // Look for files relative to current project
+            if let projectURL = self.projectURL {
+                let candidates = [
+                    projectURL.appendingPathComponent(record.filename),
+                    projectURL.appendingPathComponent("FASTQ").appendingPathComponent(record.filename),
+                    projectURL.appendingPathComponent("Reads").appendingPathComponent(record.filename),
+                ]
+                return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
+            }
+            return nil
+        }
+
+        guard let window = self.view.window else { return }
+        let outputDir = bundleURL.deletingLastPathComponent()
+
+        AssemblySheetPresenter.present(
+            from: window,
+            inputFiles: inputFiles,
+            outputDirectory: outputDir,
+            onCancel: nil
+        )
     }
 
     @objc private func contextMenuShowInFinder(_ sender: Any?) {

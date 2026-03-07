@@ -929,7 +929,8 @@ public class ViewerViewController: NSViewController {
         statistics: FASTQDatasetStatistics,
         records: [FASTQRecord],
         sraRunInfo: SRARunInfo? = nil,
-        enaReadRecord: ENAReadRecord? = nil
+        enaReadRecord: ENAReadRecord? = nil,
+        ingestionMetadata: IngestionMetadata? = nil
     ) {
         hideQuickLookPreview()
         hideFASTQDatasetView()
@@ -962,6 +963,7 @@ public class ViewerViewController: NSViewController {
         var userInfo: [String: Any] = ["statistics": statistics]
         if let sra = sraRunInfo { userInfo["sraRunInfo"] = sra }
         if let ena = enaReadRecord { userInfo["enaReadRecord"] = ena }
+        if let ingestion = ingestionMetadata { userInfo["ingestionMetadata"] = ingestion }
         NotificationCenter.default.post(
             name: .fastqDatasetLoaded,
             object: self,
@@ -1154,8 +1156,10 @@ public class ViewerViewController: NSViewController {
     public func displayDocument(_ document: LoadedDocument) {
         logger.info("displayDocument: Starting to display '\(document.name, privacy: .public)'")
         
-        // Hide any QuickLook preview when showing a genomics document
+        // Hide any non-document views when showing a genomics document
         hideQuickLookPreview()
+        hideFASTQDatasetView()
+        hideVCFDatasetView()
         logger.info("displayDocument: Document has \(document.sequences.count) sequences, \(document.annotations.count) annotations")
 
         currentDocument = document
@@ -1242,6 +1246,10 @@ public class ViewerViewController: NSViewController {
             showNoSequenceSelected()
             return
         }
+
+        // Hide any dataset-specific views that may be covering the viewer
+        hideFASTQDatasetView()
+        hideVCFDatasetView()
 
         // Hide the progress overlay first - it may be covering the view area
         hideProgress()

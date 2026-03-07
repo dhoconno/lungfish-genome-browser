@@ -27,20 +27,18 @@ public struct AssemblyConfigurationView: View {
             headerSection
             Divider()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    inputSummarySection
-                    modeSection
-                    resourceSection
-                    advancedSection
-                }
-                .padding(20)
+            Form {
+                inputSummarySection
+                modeSection
+                resourceSection
+                advancedSection
             }
+            .formStyle(.grouped)
 
             Divider()
             footerSection
         }
-        .frame(width: 550, height: 520)
+        .frame(width: 550, height: 560)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             viewModel.checkRuntimeAvailability()
@@ -52,10 +50,6 @@ public struct AssemblyConfigurationView: View {
     @ViewBuilder
     private var headerSection: some View {
         HStack(spacing: 12) {
-            Image(systemName: "cpu")
-                .font(.system(size: 28))
-                .foregroundStyle(.tint)
-
             VStack(alignment: .leading, spacing: 2) {
                 Text("Assemble with SPAdes")
                     .font(.headline)
@@ -122,46 +116,27 @@ public struct AssemblyConfigurationView: View {
 
     @ViewBuilder
     private var inputSummarySection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("Input Files", systemImage: "doc.on.doc")
-                .font(.headline)
-
+        Section("Input Files") {
             Text(viewModel.inputSummary)
                 .font(.callout)
                 .foregroundStyle(.secondary)
 
-            // List file names
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(viewModel.inputFileURLs, id: \.self) { url in
-                    HStack(spacing: 6) {
-                        Image(systemName: "doc")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(url.lastPathComponent)
-                            .font(.system(.caption, design: .monospaced))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
+                    Text(url.lastPathComponent)
+                        .font(.system(.caption, design: .monospaced))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
             }
-            .padding(8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(nsColor: .textBackgroundColor))
-            .cornerRadius(6)
         }
-        .padding(16)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(8)
     }
 
     // MARK: - Mode Section
 
     @ViewBuilder
     private var modeSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Assembly Mode", systemImage: "gearshape.2")
-                .font(.headline)
-
+        Section("Assembly Mode") {
             Picker("Mode:", selection: $viewModel.spadesMode) {
                 ForEach(SPAdesMode.allCases, id: \.self) { mode in
                     Text(mode.displayName).tag(mode)
@@ -171,153 +146,157 @@ public struct AssemblyConfigurationView: View {
 
             Toggle("Perform error correction", isOn: $viewModel.performErrorCorrection)
                 .toggleStyle(.checkbox)
+
+            Toggle("Careful mode (mismatch correction)", isOn: $viewModel.careful)
+                .toggleStyle(.checkbox)
+                .disabled(viewModel.spadesMode == .isolate)
+                .help("Reduces mismatches and short indels. Incompatible with --isolate mode.")
+
+            if viewModel.careful && viewModel.spadesMode == .isolate {
+                Text("--careful is incompatible with --isolate mode")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
         }
-        .padding(16)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(8)
     }
 
     // MARK: - Resource Section
 
     @ViewBuilder
     private var resourceSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Resources", systemImage: "memorychip")
-                .font(.headline)
-
-            VStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("Memory")
-                        Spacer()
-                        Text("\(Int(viewModel.maxMemoryGB)) GB")
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                    }
-
-                    HStack(spacing: 8) {
-                        Text("1")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                        Slider(
-                            value: $viewModel.maxMemoryGB,
-                            in: 1...Double(viewModel.availableMemoryGB),
-                            step: 1
-                        )
-
-                        Text("\(viewModel.availableMemoryGB)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if viewModel.maxMemoryGB < 8 {
-                        HStack(spacing: 4) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
-                            Text("SPAdes recommends at least 8 GB")
-                                .font(.caption)
-                                .foregroundStyle(.orange)
-                        }
-                    }
+        Section("Resources") {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Memory")
+                    Spacer()
+                    Text("\(Int(viewModel.maxMemoryGB)) GB")
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
                 }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("Threads")
-                        Spacer()
-                        Text("\(Int(viewModel.maxThreads))")
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                    }
+                HStack(spacing: 8) {
+                    Text("1")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
-                    HStack(spacing: 8) {
-                        Text("1")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    Slider(
+                        value: $viewModel.maxMemoryGB,
+                        in: 1...Double(viewModel.availableMemoryGB),
+                        step: 1
+                    )
 
-                        Slider(
-                            value: $viewModel.maxThreads,
-                            in: 1...Double(viewModel.availableCores),
-                            step: 1
-                        )
+                    Text("\(viewModel.availableMemoryGB)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
-                        Text("\(viewModel.availableCores)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                if viewModel.maxMemoryGB < 8 {
+                    Text("SPAdes recommends at least 8 GB")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Threads")
+                    Spacer()
+                    Text("\(Int(viewModel.maxThreads))")
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 8) {
+                    Text("1")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Slider(
+                        value: $viewModel.maxThreads,
+                        in: 1...Double(viewModel.availableCores),
+                        step: 1
+                    )
+
+                    Text("\(viewModel.availableCores)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
-        .padding(16)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(8)
     }
 
     // MARK: - Advanced Section
 
     @ViewBuilder
     private var advancedSection: some View {
-        DisclosureGroup(isExpanded: $viewModel.isAdvancedExpanded) {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("K-mer Sizes")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
+        Section("Advanced Options", isExpanded: $viewModel.isAdvancedExpanded) {
+            // K-mer sizes
+            Toggle("Auto-select k-mer sizes", isOn: $viewModel.kmerConfig.autoSelect)
+                .toggleStyle(.checkbox)
 
-                    Toggle("Auto-select k-mer sizes", isOn: $viewModel.kmerConfig.autoSelect)
-                        .toggleStyle(.checkbox)
+            if !viewModel.kmerConfig.autoSelect {
+                HStack {
+                    TextField("K-mer sizes (comma-separated)", text: $viewModel.customKmerString)
+                        .textFieldStyle(.roundedBorder)
 
-                    if !viewModel.kmerConfig.autoSelect {
-                        HStack {
-                            TextField("K-mer sizes (comma-separated)", text: $viewModel.customKmerString)
-                                .textFieldStyle(.roundedBorder)
-
-                            Button("Reset") {
-                                viewModel.customKmerString = "21,33,55,77,99,127"
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                        }
-
-                        Text("Enter odd numbers between 11 and 127, separated by commas")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    Button("Reset") {
+                        viewModel.customKmerString = "21,33,55,77,99,127"
                     }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
 
-                Divider()
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Output Options")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-
-                    HStack {
-                        Text("Project name:")
-                        TextField("Name", text: $viewModel.projectName)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 200)
-                    }
-
-                    HStack {
-                        Text("Minimum contig length:")
-                        TextField("bp", value: $viewModel.minContigLength, format: .number)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 80)
-                        Text("bp")
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                Text("Enter odd numbers between 11 and 127, separated by commas")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .padding(.top, 12)
-        } label: {
-            Label("Advanced Options", systemImage: "slider.horizontal.3")
-                .font(.headline)
+
+            // Coverage cutoff
+            Picker("Coverage cutoff:", selection: $viewModel.covCutoff) {
+                Text("Default").tag("")
+                Text("Auto").tag("auto")
+                Text("Off").tag("off")
+            }
+            .pickerStyle(.menu)
+            .help("--cov-cutoff: coverage cutoff value for repeat resolution")
+
+            // PHRED offset
+            Picker("PHRED offset:", selection: $viewModel.phredOffset) {
+                Text("Auto-detect").tag(0)
+                Text("33 (Sanger/Illumina 1.8+)").tag(33)
+                Text("64 (Illumina 1.3-1.7)").tag(64)
+            }
+            .pickerStyle(.menu)
+
+            // Output options
+            HStack {
+                Text("Project name:")
+                TextField("Name", text: $viewModel.projectName)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 200)
+            }
+
+            HStack {
+                Text("Minimum contig length:")
+                TextField("bp", value: $viewModel.minContigLength, format: .number)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 80)
+                Text("bp")
+                    .foregroundStyle(.secondary)
+            }
+
+            // Custom CLI args
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Additional arguments:")
+                TextField("e.g. --tmp-dir /fast/tmp", text: $viewModel.customArgsString)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+
+                Text("Extra flags passed verbatim to spades.py")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
-        .padding(16)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(8)
     }
 
     // MARK: - Footer Section

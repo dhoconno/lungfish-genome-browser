@@ -33,18 +33,23 @@ public struct PersistedFASTQMetadata: Codable, Sendable {
     /// Source URL or identifier for the download.
     public var downloadSource: String?
 
+    /// Ingestion pipeline metadata (clumpify/compress/index status).
+    public var ingestion: IngestionMetadata?
+
     public init(
         computedStatistics: FASTQDatasetStatistics? = nil,
         sraRunInfo: SRARunInfo? = nil,
         enaReadRecord: ENAReadRecord? = nil,
         downloadDate: Date? = nil,
-        downloadSource: String? = nil
+        downloadSource: String? = nil,
+        ingestion: IngestionMetadata? = nil
     ) {
         self.computedStatistics = computedStatistics
         self.sraRunInfo = sraRunInfo
         self.enaReadRecord = enaReadRecord
         self.downloadDate = downloadDate
         self.downloadSource = downloadSource
+        self.ingestion = ingestion
     }
 }
 
@@ -121,5 +126,63 @@ public enum FASTQMetadataStore {
     public static func delete(for fastqURL: URL) {
         let url = metadataURL(for: fastqURL)
         try? FileManager.default.removeItem(at: url)
+    }
+}
+
+// MARK: - Ingestion Metadata
+
+/// Records the state of the FASTQ ingestion pipeline.
+public struct IngestionMetadata: Codable, Sendable {
+
+    /// Pairing mode of the FASTQ data.
+    public enum PairingMode: String, Codable, Sendable {
+        case singleEnd = "single_end"
+        case pairedEnd = "paired_end"
+        case interleaved = "interleaved"
+    }
+
+    /// Whether the file has been clumpified (k-mer sorted for compression).
+    public var isClumpified: Bool
+
+    /// Whether the file is gzip-compressed.
+    public var isCompressed: Bool
+
+    /// Whether the file has been indexed (samtools fqidx).
+    public var isIndexed: Bool
+
+    /// Pairing mode (single-end, paired-end, or interleaved).
+    public var pairingMode: PairingMode
+
+    /// Quality binning scheme applied (e.g. "illumina4", "eightLevel", "none").
+    /// Nil for files ingested before quality binning was added.
+    public var qualityBinning: String?
+
+    /// Original filenames before ingestion (e.g. ["SRR123_1.fastq", "SRR123_2.fastq"]).
+    public var originalFilenames: [String]
+
+    /// Date the ingestion pipeline completed.
+    public var ingestionDate: Date?
+
+    /// Size of the file before clumpification/compression (bytes).
+    public var originalSizeBytes: Int64?
+
+    public init(
+        isClumpified: Bool = false,
+        isCompressed: Bool = false,
+        isIndexed: Bool = false,
+        pairingMode: PairingMode = .singleEnd,
+        qualityBinning: String? = nil,
+        originalFilenames: [String] = [],
+        ingestionDate: Date? = nil,
+        originalSizeBytes: Int64? = nil
+    ) {
+        self.isClumpified = isClumpified
+        self.isCompressed = isCompressed
+        self.isIndexed = isIndexed
+        self.pairingMode = pairingMode
+        self.qualityBinning = qualityBinning
+        self.originalFilenames = originalFilenames
+        self.ingestionDate = ingestionDate
+        self.originalSizeBytes = originalSizeBytes
     }
 }

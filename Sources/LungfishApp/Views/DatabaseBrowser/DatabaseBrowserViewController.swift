@@ -1748,13 +1748,15 @@ public class DatabaseBrowserViewModel: ObservableObject {
 
                         // Save ENA metadata sidecar alongside each downloaded FASTQ
                         if let localURL = firstDownloaded {
-                            let metadata = PersistedFASTQMetadata(
+                            let meta = PersistedFASTQMetadata(
                                 enaReadRecord: readRecord,
                                 downloadDate: Date(),
                                 downloadSource: "ENA"
                             )
-                            FASTQMetadataStore.save(metadata, for: localURL)
+                            FASTQMetadataStore.save(meta, for: localURL)
                         }
+                        // Note: FASTQ ingestion is triggered after import into
+                        // the project directory (in handleMultipleDownloadsSync)
 
                     case .pathoplexus:
                         // Check if this record has an INSDC accession for GenBank retrieval

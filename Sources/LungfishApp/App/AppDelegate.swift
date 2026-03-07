@@ -5,6 +5,7 @@
 import AppKit
 import LungfishCore
 import LungfishIO
+import LungfishWorkflow
 import UniformTypeIdentifiers
 import os
 
@@ -3606,10 +3607,31 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             do {
                 try FileManager.default.copyItem(at: tempURL, to: destinationURL)
                 debugLog("handleMultipleDownloadsSync: Copied \(originalFilename) to \(destinationURL.path)")
+
+                // Copy metadata sidecar if it exists (e.g. SRA/ENA download metadata)
+                let sidecarURL = FASTQMetadataStore.metadataURL(for: tempURL)
+                if FileManager.default.fileExists(atPath: sidecarURL.path) {
+                    let destSidecar = FASTQMetadataStore.metadataURL(for: destinationURL)
+                    try? FileManager.default.copyItem(at: sidecarURL, to: destSidecar)
+                    try? FileManager.default.removeItem(at: sidecarURL)
+                }
+
                 try? FileManager.default.removeItem(at: tempURL)
                 copiedURLs.append(destinationURL)
             } catch {
                 debugLog("handleMultipleDownloadsSync: Failed to copy \(originalFilename) - \(error)")
+            }
+        }
+
+        // Trigger FASTQ ingestion for any imported FASTQ files (now at their final location)
+        for url in copiedURLs {
+            let ext = url.pathExtension.lowercased()
+            let isFASTQ = ext == "fastq" || ext == "fq" ||
+                (ext == "gz" && (url.deletingPathExtension().pathExtension.lowercased() == "fastq" ||
+                                 url.deletingPathExtension().pathExtension.lowercased() == "fq"))
+            if isFASTQ {
+                let existingMeta = FASTQMetadataStore.load(for: url)
+                FASTQIngestionService.ingestIfNeeded(url: url, existingMetadata: existingMeta)
             }
         }
 

@@ -8,6 +8,7 @@ import AppKit
 import SwiftUI
 import LungfishCore
 import LungfishIO
+import LungfishWorkflow
 import os.log
 
 /// Logger for SRA browser operations
@@ -249,13 +250,17 @@ public class SRABrowserViewModel: ObservableObject {
                 let fileCount = files.count
 
                 // Save SRA metadata sidecar alongside first downloaded FASTQ
+                let metadata: PersistedFASTQMetadata?
                 if let firstFile = files.first {
-                    let metadata = PersistedFASTQMetadata(
+                    let meta = PersistedFASTQMetadata(
                         sraRunInfo: run,
                         downloadDate: Date(),
                         downloadSource: "SRA"
                     )
-                    FASTQMetadataStore.save(metadata, for: firstFile)
+                    FASTQMetadataStore.save(meta, for: firstFile)
+                    metadata = meta
+                } else {
+                    metadata = nil
                 }
 
                 self.objectWillChange.send()
@@ -263,6 +268,9 @@ public class SRABrowserViewModel: ObservableObject {
                 self.statusMessage = "Downloaded \(fileCount) files for \(run.accession)"
                 self.isDownloading = false
                 logger.info("Downloaded \(fileCount, privacy: .public) files for \(run.accession, privacy: .public)")
+
+                // Note: FASTQ ingestion is triggered after import into
+                // the project directory (in handleMultipleDownloadsSync)
 
                 // Notify completion
                 self.onDownloadComplete?(files)

@@ -65,8 +65,10 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
         // Create reference bundle with pre-loaded manifest (synchronous)
         let bundle = ReferenceBundle(url: url, manifest: manifest)
 
-        // Hide any QuickLook preview and ensure genomics viewer is visible
+        // Hide any non-bundle views and ensure genomics viewer is visible
         hideQuickLookPreview()
+        hideFASTQDatasetView()
+        hideVCFDatasetView()
 
         // Get chromosome list: from genome if available, otherwise synthesize from variant databases
         var chromosomes = manifest.genome?.chromosomes ?? []

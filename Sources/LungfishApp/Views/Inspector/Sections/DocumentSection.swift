@@ -54,6 +54,9 @@ public final class DocumentSectionViewModel {
     /// ENA read record metadata (set when available from download or sidecar).
     var enaReadRecord: ENAReadRecord?
 
+    /// Ingestion pipeline metadata (clumpify/compress/index status).
+    var ingestionMetadata: IngestionMetadata?
+
     /// Updates the view model with FASTQ dataset statistics.
     func updateFASTQStatistics(_ stats: FASTQDatasetStatistics) {
         self.fastqStatistics = stats
@@ -67,6 +70,11 @@ public final class DocumentSectionViewModel {
     func updateSRAMetadata(sra: SRARunInfo?, ena: ENAReadRecord?) {
         self.sraRunInfo = sra
         self.enaReadRecord = ena
+    }
+
+    /// Updates the view model with ingestion metadata.
+    func updateIngestionMetadata(_ ingestion: IngestionMetadata?) {
+        self.ingestionMetadata = ingestion
     }
 }
 
@@ -358,6 +366,12 @@ public struct DocumentSection: View {
                 Divider()
                 enaMetadataSection(ena)
             }
+
+            // Ingestion Metadata
+            if let ingestion = viewModel.ingestionMetadata {
+                Divider()
+                ingestionMetadataSection(ingestion)
+            }
         }
     }
 
@@ -499,6 +513,48 @@ public struct DocumentSection: View {
             .padding(.top, 4)
         } label: {
             Text("ENA Metadata")
+                .font(.headline)
+        }
+    }
+
+    // MARK: - Ingestion Metadata
+
+    @ViewBuilder
+    private func ingestionMetadataSection(_ ingestion: IngestionMetadata) -> some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 6) {
+                metadataRow(label: "Clumpified", value: ingestion.isClumpified ? "Yes" : "No")
+                metadataRow(label: "Compressed", value: ingestion.isCompressed ? "Yes" : "No")
+                metadataRow(label: "Indexed", value: ingestion.isIndexed ? "Yes" : "No")
+                metadataRow(label: "Pairing", value: ingestion.pairingMode.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
+                if let binning = ingestion.qualityBinning, binning != "none" {
+                    metadataRow(label: "Quality Binning", value: binning)
+                }
+
+                if !ingestion.originalFilenames.isEmpty {
+                    Divider()
+                    Text("Original Files")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    ForEach(ingestion.originalFilenames, id: \.self) { name in
+                        Text(name)
+                            .font(.system(.caption, design: .monospaced))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+
+                if let size = ingestion.originalSizeBytes {
+                    metadataRow(label: "Original Size", value: ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                }
+
+                if let date = ingestion.ingestionDate {
+                    metadataRow(label: "Processed", value: formatDate(date))
+                }
+            }
+            .padding(.top, 4)
+        } label: {
+            Text("Ingestion")
                 .font(.headline)
         }
     }

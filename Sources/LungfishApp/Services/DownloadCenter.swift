@@ -14,6 +14,7 @@ public enum OperationType: String, Sendable {
     case bundleBuild = "Bundle Build"
     case export = "Export"
     case assembly = "Assembly"
+    case ingestion = "Ingestion"
 }
 
 @MainActor

@@ -9,6 +9,7 @@ Versions:
 - bcftools: 1.22 (MIT/Expat license)
 - htslib (bgzip, tabix): 1.22.1 (MIT/Expat license)
 - UCSC tools (bedToBigBed, bedGraphToBigWig): 469 (MIT license)
+- pigz: 2.8 (zlib license)
 
 Build date: 2026-02-09 16:36:58 UTC
 Build architecture: arm64

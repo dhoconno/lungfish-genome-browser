@@ -5,6 +5,7 @@
 import AppKit
 import LungfishCore
 import LungfishIO
+import LungfishWorkflow
 import os.log
 
 /// Logger for main split view operations
@@ -525,6 +526,15 @@ public class MainSplitViewController: NSSplitViewController {
                     logger.info("handleSidebarFileDropped: Using existing file")
                 }
             }
+        }
+
+        // Trigger FASTQ ingestion for dropped FASTQ files
+        let ext = urlToLoad.pathExtension.lowercased()
+        let isFASTQ = ext == "fastq" || ext == "fq" ||
+            (ext == "gz" && (urlToLoad.deletingPathExtension().pathExtension.lowercased() == "fastq" ||
+                             urlToLoad.deletingPathExtension().pathExtension.lowercased() == "fq"))
+        if isFASTQ {
+            FASTQIngestionService.ingestIfNeeded(url: urlToLoad)
         }
 
         // Load the document and display it via the established GCD dispatch pattern
@@ -1430,7 +1440,8 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                                 statistics: cachedStats,
                                 records: sampleRecords,
                                 sraRunInfo: cachedMeta?.sraRunInfo,
-                                enaReadRecord: cachedMeta?.enaReadRecord
+                                enaReadRecord: cachedMeta?.enaReadRecord,
+                                ingestionMetadata: cachedMeta?.ingestion
                             )
                             logger.info("loadFASTQDatasetInBackground: Displayed from cache with \(sampleRecords.count) sample records")
                         }
@@ -1474,6 +1485,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
                 let sraRunInfo = metadata.sraRunInfo
                 let enaReadRecord = metadata.enaReadRecord
+                let ingestionMeta = metadata.ingestion
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         viewerController.hideProgress()
@@ -1481,7 +1493,8 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                             statistics: statistics,
                             records: sampleRecords,
                             sraRunInfo: sraRunInfo,
-                            enaReadRecord: enaReadRecord
+                            enaReadRecord: enaReadRecord,
+                            ingestionMetadata: ingestionMeta
                         )
                         logger.info("loadFASTQDatasetInBackground: Dashboard displayed with \(statistics.readCount) total reads, \(sampleRecords.count) in table")
                     }

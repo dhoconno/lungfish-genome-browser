@@ -44,7 +44,7 @@ public enum SPAdesMode: String, Sendable, CaseIterable, Codable {
 // MARK: - SPAdesAssemblyConfig
 
 /// Configuration for a SPAdes assembly run.
-public struct SPAdesAssemblyConfig: Sendable {
+public struct SPAdesAssemblyConfig: Sendable, Codable {
     /// Assembly mode.
     public let mode: SPAdesMode
     /// Paired-end forward reads (R1).
@@ -63,6 +63,14 @@ public struct SPAdesAssemblyConfig: Sendable {
     public let minContigLength: Int
     /// Whether to skip error correction.
     public let skipErrorCorrection: Bool
+    /// Enable careful mode (mismatch correction, incompatible with --isolate).
+    public let careful: Bool
+    /// Coverage cutoff value ("auto", "off", or a numeric string).
+    public let covCutoff: String?
+    /// PHRED quality offset (auto-detected if nil, otherwise 33 or 64).
+    public let phredOffset: Int?
+    /// Additional custom CLI arguments passed verbatim to SPAdes.
+    public let customArgs: [String]
     /// Output directory on the host.
     public let outputDirectory: URL
     /// Project name for output naming.
@@ -78,6 +86,10 @@ public struct SPAdesAssemblyConfig: Sendable {
         threads: Int = 4,
         minContigLength: Int = 200,
         skipErrorCorrection: Bool = false,
+        careful: Bool = false,
+        covCutoff: String? = nil,
+        phredOffset: Int? = nil,
+        customArgs: [String] = [],
         outputDirectory: URL,
         projectName: String = "assembly_output"
     ) {
@@ -90,6 +102,10 @@ public struct SPAdesAssemblyConfig: Sendable {
         self.threads = threads
         self.minContigLength = minContigLength
         self.skipErrorCorrection = skipErrorCorrection
+        self.careful = careful
+        self.covCutoff = covCutoff
+        self.phredOffset = phredOffset
+        self.customArgs = customArgs
         self.outputDirectory = outputDirectory
         self.projectName = projectName
     }
@@ -370,6 +386,24 @@ public final class SPAdesAssemblyPipeline: @unchecked Sendable {
             args.append("--only-assembler")
         }
 
+        // Careful mode (incompatible with --isolate, caller should validate)
+        if config.careful {
+            args.append("--careful")
+        }
+
+        // Coverage cutoff
+        if let covCutoff = config.covCutoff, !covCutoff.isEmpty {
+            args += ["--cov-cutoff", covCutoff]
+        }
+
+        // PHRED quality offset
+        if let phredOffset = config.phredOffset {
+            args += ["--phred-offset", String(phredOffset)]
+        }
+
+        // Custom CLI arguments (passed verbatim)
+        args += config.customArgs
+
         // Output directory (inside container)
         args += ["-o", "/output"]
 
@@ -427,6 +461,81 @@ public final class SPAdesAssemblyPipeline: @unchecked Sendable {
         )
     }
 
+    // MARK: - Intermediate Cleanup
+
+    /// Removes SPAdes intermediate files from the output directory,
+    /// keeping only the essential outputs (contigs, scaffolds, graph, log, params).
+    ///
+    /// - Parameter outputDir: The SPAdes output directory
+    /// - Returns: Number of bytes freed
+    @discardableResult
+    public static func cleanIntermediates(in outputDir: URL) throws -> Int64 {
+        let fm = FileManager.default
+        let keepFiles: Set<String> = [
+            "contigs.fasta",
+            "scaffolds.fasta",
+            "assembly_graph_with_scaffolds.gfa",
+            "assembly_graph.fastg",
+            "spades.log",
+            "params.txt",
+            "config.json",  // our saved config
+        ]
+
+        var freedBytes: Int64 = 0
+        let contents = try fm.contentsOfDirectory(at: outputDir, includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey])
+
+        for item in contents {
+            if keepFiles.contains(item.lastPathComponent) { continue }
+
+            let resourceValues = try item.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
+            if resourceValues.isDirectory == true {
+                // Remove intermediate directories (corrected/, misc/, tmp/, K*/)
+                let dirSize = try Self.directorySize(at: item)
+                try fm.removeItem(at: item)
+                freedBytes += dirSize
+                logger.info("Removed intermediate directory: \(item.lastPathComponent) (\(dirSize) bytes)")
+            } else {
+                let size = Int64(resourceValues.fileSize ?? 0)
+                try fm.removeItem(at: item)
+                freedBytes += size
+            }
+        }
+
+        logger.info("Cleaned SPAdes intermediates: freed \(freedBytes) bytes")
+        return freedBytes
+    }
+
+    private static func directorySize(at url: URL) throws -> Int64 {
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey]) else {
+            return 0
+        }
+        var total: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            let resourceValues = try fileURL.resourceValues(forKeys: [.fileSizeKey])
+            total += Int64(resourceValues.fileSize ?? 0)
+        }
+        return total
+    }
+
+    // MARK: - Config Persistence
+
+    /// Saves the assembly configuration as JSON in the output directory for relaunch.
+    public static func saveConfig(_ config: SPAdesAssemblyConfig, to outputDir: URL) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(config)
+        let configURL = outputDir.appendingPathComponent("config.json")
+        try data.write(to: configURL)
+        logger.info("Saved assembly config to \(configURL.lastPathComponent)")
+    }
+
+    /// Loads a previously saved assembly configuration.
+    public static func loadConfig(from outputDir: URL) throws -> SPAdesAssemblyConfig {
+        let configURL = outputDir.appendingPathComponent("config.json")
+        let data = try Data(contentsOf: configURL)
+        return try JSONDecoder().decode(SPAdesAssemblyConfig.self, from: data)
+    }
 }
 
 // MARK: - SPAdesWorkspace
