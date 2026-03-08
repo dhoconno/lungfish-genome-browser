@@ -73,6 +73,8 @@ public enum FileTypeUtility {
 
         // Reference bundle
         map["lungfishref"] = .referenceBundle
+        // FASTQ package bundle
+        map[FASTQBundle.directoryExtension] = .sequence
 
         return map
     }()

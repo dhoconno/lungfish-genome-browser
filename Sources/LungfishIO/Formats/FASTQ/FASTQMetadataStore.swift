@@ -36,13 +36,17 @@ public struct PersistedFASTQMetadata: Codable, Sendable {
     /// Ingestion pipeline metadata (clumpify/compress/index status).
     public var ingestion: IngestionMetadata?
 
+    /// Cached summary parsed from `seqkit stats -a -T`.
+    public var seqkitStats: SeqkitStatsMetadata?
+
     public init(
         computedStatistics: FASTQDatasetStatistics? = nil,
         sraRunInfo: SRARunInfo? = nil,
         enaReadRecord: ENAReadRecord? = nil,
         downloadDate: Date? = nil,
         downloadSource: String? = nil,
-        ingestion: IngestionMetadata? = nil
+        ingestion: IngestionMetadata? = nil,
+        seqkitStats: SeqkitStatsMetadata? = nil
     ) {
         self.computedStatistics = computedStatistics
         self.sraRunInfo = sraRunInfo
@@ -50,6 +54,42 @@ public struct PersistedFASTQMetadata: Codable, Sendable {
         self.downloadDate = downloadDate
         self.downloadSource = downloadSource
         self.ingestion = ingestion
+        self.seqkitStats = seqkitStats
+    }
+}
+
+/// Summary values from `seqkit stats -a -T` cached in metadata.
+public struct SeqkitStatsMetadata: Codable, Sendable, Equatable {
+    public let numSeqs: Int
+    public let sumLen: Int64
+    public let minLen: Int
+    public let avgLen: Double
+    public let maxLen: Int
+    public let q20Percentage: Double
+    public let q30Percentage: Double
+    public let averageQuality: Double
+    public let gcPercentage: Double
+
+    public init(
+        numSeqs: Int,
+        sumLen: Int64,
+        minLen: Int,
+        avgLen: Double,
+        maxLen: Int,
+        q20Percentage: Double,
+        q30Percentage: Double,
+        averageQuality: Double,
+        gcPercentage: Double
+    ) {
+        self.numSeqs = numSeqs
+        self.sumLen = sumLen
+        self.minLen = minLen
+        self.avgLen = avgLen
+        self.maxLen = maxLen
+        self.q20Percentage = q20Percentage
+        self.q30Percentage = q30Percentage
+        self.averageQuality = averageQuality
+        self.gcPercentage = gcPercentage
     }
 }
 
@@ -109,6 +149,18 @@ public enum FASTQMetadataStore {
         let url = metadataURL(for: fastqURL)
 
         do {
+            // Do not create orphan metadata files when the FASTQ was deleted.
+            guard FileManager.default.fileExists(atPath: fastqURL.path) else {
+                logger.debug("Skipping FASTQ metadata save because source file is missing: \(fastqURL.lastPathComponent, privacy: .public)")
+                return
+            }
+
+            // Ensure parent directory exists for late writes after moves.
+            let parentDirectory = url.deletingLastPathComponent()
+            if !FileManager.default.fileExists(atPath: parentDirectory.path) {
+                try FileManager.default.createDirectory(at: parentDirectory, withIntermediateDirectories: true)
+            }
+
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

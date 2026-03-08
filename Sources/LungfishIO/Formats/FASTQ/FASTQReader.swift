@@ -355,6 +355,9 @@ public final class FASTQReader: Sendable {
         var count = 0
 
         for try await record in records(from: url) {
+            if count % 2_000 == 0 {
+                try Task.checkCancellation()
+            }
             collector.process(record)
             if count < sampleLimit {
                 sampleRecords.append(record)
@@ -362,9 +365,11 @@ public final class FASTQReader: Sendable {
             count += 1
             if count % 10_000 == 0 {
                 progress?(count)
+                try Task.checkCancellation()
             }
         }
 
+        try Task.checkCancellation()
         progress?(count)
         return (collector.finalize(), sampleRecords)
     }

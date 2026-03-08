@@ -76,6 +76,11 @@ public enum NativeTool: String, CaseIterable, Sendable {
     case bedToBigBed
     case bedGraphToBigWig
     case pigz
+    case seqkit
+    case fastp
+    case vsearch
+    case clumpify
+    case java
 
     /// The executable name for this tool.
     public var executableName: String {
@@ -87,6 +92,26 @@ public enum NativeTool: String, CaseIterable, Sendable {
         case .bedToBigBed: return "bedToBigBed"
         case .bedGraphToBigWig: return "bedGraphToBigWig"
         case .pigz: return "pigz"
+        case .seqkit: return "seqkit"
+        case .fastp: return "fastp"
+        case .vsearch: return "vsearch"
+        case .clumpify: return "clumpify.sh"
+        case .java: return "java"
+        }
+    }
+
+    /// Relative path from the tools root directory.
+    ///
+    /// Most tools are rooted directly under `Tools/`. Multi-file distributions
+    /// (BBTools and bundled JRE) are nested under subdirectories.
+    public var relativeExecutablePath: String {
+        switch self {
+        case .clumpify:
+            return "bbtools/clumpify.sh"
+        case .java:
+            return "jre/bin/java"
+        default:
+            return executableName
         }
     }
 
@@ -98,6 +123,11 @@ public enum NativeTool: String, CaseIterable, Sendable {
         case .bgzip, .tabix: return "htslib"
         case .bedToBigBed, .bedGraphToBigWig: return "ucsc-tools"
         case .pigz: return "pigz"
+        case .seqkit: return "seqkit"
+        case .fastp: return "fastp"
+        case .vsearch: return "vsearch"
+        case .clumpify: return "bbtools"
+        case .java: return "openjdk"
         }
     }
 
@@ -110,6 +140,16 @@ public enum NativeTool: String, CaseIterable, Sendable {
             return "MIT (UCSC Genome Browser)"
         case .pigz:
             return "zlib License"
+        case .seqkit:
+            return "MIT License"
+        case .fastp:
+            return "MIT License"
+        case .vsearch:
+            return "Dual-license: BSD-2-Clause / GPL-3.0-or-later"
+        case .clumpify:
+            return "BBMap License"
+        case .java:
+            return "GPL-2.0-with-classpath-exception"
         }
     }
 
@@ -159,7 +199,12 @@ public actor NativeToolRunner {
         "bcftools": "1.21",
         "htslib": "1.21",
         "ucsc-tools": "469",
-        "pigz": "2.8"
+        "pigz": "2.8",
+        "seqkit": "2.9.0",
+        "fastp": "1.1.0",
+        "vsearch": "2.29.2",
+        "bbtools": "39.13",
+        "openjdk": "21.0.10"
     ]
 
     // MARK: - Initialization
@@ -431,14 +476,14 @@ public actor NativeToolRunner {
     // MARK: - Private Methods
 
     private func discoverToolPath(_ tool: NativeTool) throws -> URL {
-        let executable = tool.executableName
+        let relativePath = tool.relativeExecutablePath
 
         guard let toolsDir = toolsDirectory else {
             logger.error("Tools directory not found in bundled resources")
             throw NativeToolError.toolsDirectoryNotFound
         }
 
-        let bundledToolPath = toolsDir.appendingPathComponent(executable)
+        let bundledToolPath = toolsDir.appendingPathComponent(relativePath)
         if FileManager.default.isExecutableFile(atPath: bundledToolPath.path) {
             logger.info("Found bundled \(tool.rawValue) at \(bundledToolPath.path)")
             return bundledToolPath
@@ -581,7 +626,7 @@ public actor NativeToolRunner {
 
         var missingTools: [NativeTool] = []
         for tool in NativeTool.allCases {
-            let toolPath = toolsDir.appendingPathComponent(tool.executableName)
+            let toolPath = toolsDir.appendingPathComponent(tool.relativeExecutablePath)
             if !FileManager.default.isExecutableFile(atPath: toolPath.path) {
                 missingTools.append(tool)
             }

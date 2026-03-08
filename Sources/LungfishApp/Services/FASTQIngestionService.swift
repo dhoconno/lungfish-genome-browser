@@ -12,7 +12,7 @@ private let logger = Logger(subsystem: "com.lungfish.browser", category: "FASTQI
 
 // MARK: - FASTQIngestionService
 
-/// App-level service that runs the FASTQ ingestion pipeline (clumpify → compress → index)
+/// App-level service that runs the FASTQ ingestion pipeline (clumpify → compress)
 /// and reports progress via OperationCenter.
 ///
 /// Call `ingestIfNeeded` from any FASTQ import path (SRA download, drag-drop, file import).
@@ -22,7 +22,7 @@ public enum FASTQIngestionService {
 
     /// Ingests a FASTQ file if it hasn't already been processed.
     ///
-    /// Runs clumpify → compress → index in the background via OperationCenter.
+    /// Runs clumpify → compress in the background via OperationCenter.
     /// The processed file replaces the original. Metadata sidecar is updated.
     ///
     /// - Parameters:
@@ -51,7 +51,9 @@ public enum FASTQIngestionService {
             inputFiles = [url]
         }
 
-        let clumpifyEnabled = AppSettings.shared.fastqClumpifyEnabled
+        // Enforce clumpify for all FASTQ ingestions so downstream statistics
+        // operate on the normalized read order.
+        let clumpifyEnabled = true
 
         let outputDir = url.deletingLastPathComponent()
         let config = FASTQIngestionConfig(
@@ -111,6 +113,9 @@ public enum FASTQIngestionService {
                 }
             }
 
+            guard result.wasClumpified else {
+                throw FASTQIngestionError.clumpifyFailed("pipeline completed without clumpifying reads")
+            }
             // Update metadata sidecar
             let pairingMode: IngestionMetadata.PairingMode = {
                 switch result.pairingMode {
@@ -123,7 +128,7 @@ public enum FASTQIngestionService {
             let ingestion = IngestionMetadata(
                 isClumpified: result.wasClumpified,
                 isCompressed: true,
-                isIndexed: result.indexFile != nil,
+                isIndexed: false,
                 pairingMode: pairingMode,
                 qualityBinning: result.qualityBinning.rawValue,
                 originalFilenames: result.originalFilenames,

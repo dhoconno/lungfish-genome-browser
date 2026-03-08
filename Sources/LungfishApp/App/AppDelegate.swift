@@ -3256,25 +3256,16 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         // Get selected FASTQ files from sidebar
         let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController
         let selectedItems = sidebarController?.selectedItems() ?? []
-        let fastqExtensions: Set<String> = ["fq", "fastq", "gz"]
         let inputFiles = selectedItems.compactMap { item -> URL? in
             guard let url = item.url else { return nil }
-            // Accept .fq, .fastq, .fq.gz, .fastq.gz
-            let ext = url.pathExtension.lowercased()
-            if fastqExtensions.contains(ext) { return url }
-            // Check double extension for .fq.gz / .fastq.gz
-            let stem = url.deletingPathExtension()
-            if ext == "gz" && fastqExtensions.contains(stem.pathExtension.lowercased()) {
-                return url
-            }
-            return nil
+            return FASTQBundle.resolvePrimaryFASTQURL(for: url)
         }
 
         if inputFiles.isEmpty {
             let alert = NSAlert()
             alert.alertStyle = .informational
             alert.messageText = "No FASTQ Files Selected"
-            alert.informativeText = "Select one or more FASTQ files (.fq, .fastq, .fq.gz, .fastq.gz) in the sidebar, then choose Assemble with SPAdes."
+            alert.informativeText = "Select one or more FASTQ files or FASTQ bundles in the sidebar, then choose Assemble with SPAdes."
             alert.addButton(withTitle: "OK")
             alert.runModal()
             return
@@ -3589,6 +3580,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             // and accession numbers like NC_045512 contain underscore+digits that would be
             // incorrectly stripped.
             if !extensionParts.contains("lungfishref"),
+               !extensionParts.contains(FASTQBundle.directoryExtension),
+               !FASTQBundle.isFASTQFileURL(tempURL),
                let underscoreRange = baseName.range(of: "_", options: .backwards) {
                 let potentialUID = String(baseName[underscoreRange.upperBound...])
                 // Check if everything after the underscore is digits (a UID)
@@ -3600,6 +3593,54 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
             let cleanFilename = "\(baseName).\(fileExtension)"
             activityIndicator?.updateMessage("Copying \(cleanFilename) (\(index + 1)/\(totalCount))...")
+
+            // FASTQ imports are stored as package bundles so the FASTQ payload,
+            // index, and metadata always travel together.
+            if FASTQBundle.isFASTQFileURL(tempURL) {
+                var bundleURL = destinationDirectory.appendingPathComponent(
+                    "\(baseName).\(FASTQBundle.directoryExtension)",
+                    isDirectory: true
+                )
+                var bundleCounter = 1
+                while FileManager.default.fileExists(atPath: bundleURL.path) {
+                    bundleURL = destinationDirectory.appendingPathComponent(
+                        "\(baseName)_\(bundleCounter).\(FASTQBundle.directoryExtension)",
+                        isDirectory: true
+                    )
+                    bundleCounter += 1
+                }
+
+                do {
+                    try FileManager.default.createDirectory(
+                        at: bundleURL,
+                        withIntermediateDirectories: true
+                    )
+
+                    let bundledFASTQURL = bundleURL.appendingPathComponent(cleanFilename)
+                    try FileManager.default.copyItem(at: tempURL, to: bundledFASTQURL)
+                    debugLog("handleMultipleDownloadsSync: Packaged \(originalFilename) into \(bundleURL.path)")
+
+                    let sourceSidecar = FASTQMetadataStore.metadataURL(for: tempURL)
+                    if FileManager.default.fileExists(atPath: sourceSidecar.path) {
+                        let destSidecar = FASTQMetadataStore.metadataURL(for: bundledFASTQURL)
+                        try? FileManager.default.copyItem(at: sourceSidecar, to: destSidecar)
+                        try? FileManager.default.removeItem(at: sourceSidecar)
+                    }
+
+                    let sourceFASTQIndex = tempURL.appendingPathExtension("fai")
+                    if FileManager.default.fileExists(atPath: sourceFASTQIndex.path) {
+                        let destFASTQIndex = bundledFASTQURL.appendingPathExtension("fai")
+                        try? FileManager.default.copyItem(at: sourceFASTQIndex, to: destFASTQIndex)
+                        try? FileManager.default.removeItem(at: sourceFASTQIndex)
+                    }
+
+                    try? FileManager.default.removeItem(at: tempURL)
+                    copiedURLs.append(bundleURL)
+                } catch {
+                    debugLog("handleMultipleDownloadsSync: Failed to package FASTQ \(originalFilename) - \(error)")
+                }
+                continue
+            }
 
             // Generate unique filename if needed
             var destinationURL = destinationDirectory.appendingPathComponent(cleanFilename)
@@ -3624,6 +3665,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     try? FileManager.default.removeItem(at: sidecarURL)
                 }
 
+                // Copy FASTQ index sidecar when present (e.g. pre-import fqidx output).
+                let sourceFASTQIndex = tempURL.appendingPathExtension("fai")
+                if FileManager.default.fileExists(atPath: sourceFASTQIndex.path) {
+                    let destFASTQIndex = destinationURL.appendingPathExtension("fai")
+                    try? FileManager.default.copyItem(at: sourceFASTQIndex, to: destFASTQIndex)
+                    try? FileManager.default.removeItem(at: sourceFASTQIndex)
+                }
+
                 try? FileManager.default.removeItem(at: tempURL)
                 copiedURLs.append(destinationURL)
             } catch {
@@ -3633,22 +3682,19 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         // Trigger FASTQ ingestion for any imported FASTQ files (now at their final location)
         for url in copiedURLs {
-            let ext = url.pathExtension.lowercased()
-            let isFASTQ = ext == "fastq" || ext == "fq" ||
-                (ext == "gz" && (url.deletingPathExtension().pathExtension.lowercased() == "fastq" ||
-                                 url.deletingPathExtension().pathExtension.lowercased() == "fq"))
-            if isFASTQ {
-                let existingMeta = FASTQMetadataStore.load(for: url)
-                FASTQIngestionService.ingestIfNeeded(url: url, existingMetadata: existingMeta)
+            if let fastqURL = FASTQBundle.resolvePrimaryFASTQURL(for: url) {
+                let existingMeta = FASTQMetadataStore.load(for: fastqURL)
+                FASTQIngestionService.ingestIfNeeded(url: fastqURL, existingMetadata: existingMeta)
             }
         }
 
         // Now load the first file to display (load others in background)
         if let firstURL = copiedURLs.first {
-            if firstURL.pathExtension.lowercased() == "lungfishref" {
+            if firstURL.pathExtension.lowercased() == "lungfishref" ||
+                FASTQBundle.resolvePrimaryFASTQURL(for: firstURL) != nil {
                 activityIndicator?.hide()
                 refreshSidebarAndSelectImportedURL(firstURL)
-                debugLog("handleMultipleDownloadsSync: Imported \(copiedURLs.count) bundle(s)")
+                debugLog("handleMultipleDownloadsSync: Imported \(copiedURLs.count) bundled item(s)")
                 return
             }
 

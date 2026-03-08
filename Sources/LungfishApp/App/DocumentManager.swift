@@ -61,7 +61,7 @@ public enum DocumentType: String, CaseIterable, Sendable {
     public var extensions: [String] {
         switch self {
         case .fasta: return ["fa", "fasta", "fna", "fas"]
-        case .fastq: return ["fq", "fastq"]
+        case .fastq: return ["fq", "fastq", FASTQBundle.directoryExtension]
         case .genbank: return ["gb", "gbk", "genbank"]
         case .gff3: return ["gff", "gff3"]
         case .bed: return ["bed"]

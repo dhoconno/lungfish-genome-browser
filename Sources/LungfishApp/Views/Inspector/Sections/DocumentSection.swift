@@ -386,6 +386,10 @@ public struct DocumentSection: View {
                 metadataRow(label: "Max Length", value: "\(stats.maxReadLength) bp")
                 metadataRow(label: "Median Length", value: "\(stats.medianReadLength) bp")
                 metadataRow(label: "N50", value: "\(stats.n50ReadLength) bp")
+                metadataRow(
+                    label: "Quality Report",
+                    value: hasCachedQualityReport(stats) ? "Cached" : "Not Computed"
+                )
 
                 Divider()
 
@@ -399,6 +403,10 @@ public struct DocumentSection: View {
             Text("Dataset Statistics")
                 .font(.headline)
         }
+    }
+
+    private func hasCachedQualityReport(_ stats: FASTQDatasetStatistics) -> Bool {
+        !stats.perPositionQuality.isEmpty && !stats.qualityScoreHistogram.isEmpty
     }
 
     @ViewBuilder

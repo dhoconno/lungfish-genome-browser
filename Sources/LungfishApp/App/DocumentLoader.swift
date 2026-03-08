@@ -100,6 +100,21 @@ public enum DocumentLoader {
         }
 
         for case let fileURL as URL in enumerator {
+            var isDirectory: ObjCBool = false
+            fileManager.fileExists(atPath: fileURL.path, isDirectory: &isDirectory)
+
+            // Treat custom package directories as leaf documents and skip descendants.
+            if isDirectory.boolValue,
+               (fileURL.pathExtension.lowercased() == "lungfishref" ||
+                fileURL.pathExtension.lowercased() == FASTQBundle.directoryExtension) {
+                if let type = DocumentType.detect(from: fileURL) {
+                    results.append(FileScanResult(url: fileURL, type: type))
+                    logger.debug("scanFolder: Found package \(fileURL.lastPathComponent, privacy: .public) (\(type.rawValue, privacy: .public))")
+                }
+                enumerator.skipDescendants()
+                continue
+            }
+
             // Check if it's a supported file type
             if let type = DocumentType.detect(from: fileURL) {
                 results.append(FileScanResult(url: fileURL, type: type))

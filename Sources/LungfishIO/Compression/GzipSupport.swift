@@ -78,21 +78,8 @@ public final class GzipInputStream: Sendable {
         AsyncThrowingStream { continuation in
             Task {
                 do {
-                    // Read the compressed data
-                    let compressedData = try Data(contentsOf: url)
-
-                    guard compressedData.count >= 2 else {
-                        throw GzipError.emptyFile
-                    }
-
-                    // Verify gzip magic bytes
-                    guard compressedData[0] == Self.gzipMagic[0],
-                          compressedData[1] == Self.gzipMagic[1] else {
-                        throw GzipError.invalidFormat
-                    }
-
-                    // Decompress
-                    let decompressedData = try self.decompress(compressedData)
+                    // Use system gzip for robust support of multi-member gzip/BGZF streams.
+                    let decompressedData = try self.decompressWithSystemGzip()
 
                     guard let content = String(data: decompressedData, encoding: .utf8) else {
                         throw GzipError.decompressionFailed("Invalid UTF-8 encoding")
@@ -225,24 +212,56 @@ public final class GzipInputStream: Sendable {
     /// - Returns: Decompressed file content
     /// - Throws: `GzipError` if decompression fails
     public func readAll() async throws -> String {
-        let compressedData = try Data(contentsOf: url)
-
-        guard compressedData.count >= 2 else {
-            throw GzipError.emptyFile
-        }
-
-        guard compressedData[0] == Self.gzipMagic[0],
-              compressedData[1] == Self.gzipMagic[1] else {
-            throw GzipError.invalidFormat
-        }
-
-        let decompressedData = try decompress(compressedData)
+        let decompressedData = try decompressWithSystemGzip()
 
         guard let content = String(data: decompressedData, encoding: .utf8) else {
             throw GzipError.decompressionFailed("Invalid UTF-8 encoding")
         }
 
         return content
+    }
+
+    /// Decompresses gzip/BGZF files using `/usr/bin/gzip -dc`.
+    ///
+    /// This path handles concatenated gzip members (e.g. BGZF blocks),
+    /// which are common in indexed genomics files.
+    private func decompressWithSystemGzip() throws -> Data {
+        let compressedData = try Data(contentsOf: url)
+        guard compressedData.count >= 2 else {
+            throw GzipError.emptyFile
+        }
+        guard compressedData[0] == Self.gzipMagic[0],
+              compressedData[1] == Self.gzipMagic[1] else {
+            throw GzipError.invalidFormat
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/gzip")
+        process.arguments = ["-dc", url.path]
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        do {
+            try process.run()
+        } catch {
+            throw GzipError.decompressionFailed("Failed to launch gzip: \(error.localizedDescription)")
+        }
+
+        let output = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            let stderrText = String(data: stderrData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw GzipError.decompressionFailed(
+                stderrText?.isEmpty == false ? stderrText! : "gzip exited with code \(process.terminationStatus)"
+            )
+        }
+        return output
     }
 }
 

@@ -126,6 +126,7 @@ private func appendPathoplexusMetadata(_ meta: PathoplexusMetadata, organism: St
     } catch {
         logger.error("appendPathoplexusMetadata: Failed to append metadata: \(error)")
     }
+
 }
 
 private func performOnMainRunLoop(_ block: @escaping @MainActor @Sendable () -> Void) {
@@ -1624,7 +1625,7 @@ public class DatabaseBrowserViewModel: ObservableObject {
                 }
 
                 do {
-                    let fileURL: URL
+                    var fileURL: URL?
                     let normalizedRecordAccession = record.accession.trimmingCharacters(in: .whitespacesAndNewlines)
 
                     switch currentSource {
@@ -1715,7 +1716,7 @@ public class DatabaseBrowserViewModel: ObservableObject {
                         }
 
                         // Download each FASTQ file to the batch directory
-                        var firstDownloaded: URL?
+                        var downloadedFASTQFiles: [URL] = []
                         for (fileIdx, fastqURL) in fastqURLs.enumerated() {
                             let filename = fastqURL.lastPathComponent
                             let localPath = batchDir.appendingPathComponent(filename)
@@ -1742,21 +1743,170 @@ public class DatabaseBrowserViewModel: ObservableObject {
                             }
                             try data.write(to: localPath)
                             logger.info("performBatchDownload: Saved \(filename) (\(data.count) bytes)")
-                            if firstDownloaded == nil { firstDownloaded = localPath }
+                            downloadedFASTQFiles.append(localPath)
                         }
-                        fileURL = firstDownloaded ?? batchDir
 
-                        // Save ENA metadata sidecar alongside each downloaded FASTQ
-                        if let localURL = firstDownloaded {
+                        guard !downloadedFASTQFiles.isEmpty else {
+                            throw DatabaseServiceError.invalidQuery(reason: "No FASTQ files were downloaded for \(record.accession)")
+                        }
+
+                        // FASTQ imports are only considered complete once each ingestion batch has:
+                        // 1) passed through clumpify/compression, 2) been indexed, and
+                        // 3) had full dataset statistics precomputed for instant viewport load.
+                        // For paired-end SRA, process R1/R2 together so output is interleaved.
+                        let isPairedBatch: Bool = {
+                            guard downloadedFASTQFiles.count == 2 else { return false }
+                            let first = downloadedFASTQFiles[0].lastPathComponent.lowercased()
+                            let second = downloadedFASTQFiles[1].lastPathComponent.lowercased()
+                            let pairedSuffixes: [(String, String)] = [
+                                ("_1.fastq.gz", "_2.fastq.gz"),
+                                ("_r1.fastq.gz", "_r2.fastq.gz"),
+                                ("_1.fq.gz", "_2.fq.gz"),
+                                ("_r1.fq.gz", "_r2.fq.gz")
+                            ]
+                            return pairedSuffixes.contains { left, right in
+                                first.hasSuffix(left) && second.hasSuffix(right)
+                                    || first.hasSuffix(right) && second.hasSuffix(left)
+                            }
+                        }()
+
+                        let ingestionBatches: [(files: [URL], pairingMode: FASTQIngestionConfig.PairingMode)] = {
+                            if isPairedBatch {
+                                let ordered = downloadedFASTQFiles.sorted { lhs, rhs in
+                                    let left = lhs.lastPathComponent.lowercased()
+                                    let right = rhs.lastPathComponent.lowercased()
+                                    let leftIsR1 = left.contains("_1.fastq") || left.contains("_1.fq")
+                                        || left.contains("_r1.fastq") || left.contains("_r1.fq")
+                                    let rightIsR1 = right.contains("_1.fastq") || right.contains("_1.fq")
+                                        || right.contains("_r1.fastq") || right.contains("_r1.fq")
+                                    if leftIsR1 != rightIsR1 {
+                                        return leftIsR1
+                                    }
+                                    return left.localizedStandardCompare(right) == .orderedAscending
+                                }
+                                return [(ordered, .pairedEnd)]
+                            }
+                            return downloadedFASTQFiles.map { ([$0], .singleEnd) }
+                        }()
+
+                        let batchCount = max(ingestionBatches.count, 1)
+                        var processedFASTQFiles: [URL] = []
+                        for (batchIdx, batch) in ingestionBatches.enumerated() {
+                            let phasePrefix = "[\(batchIdx + 1)/\(ingestionBatches.count)]"
                             let meta = PersistedFASTQMetadata(
                                 enaReadRecord: readRecord,
                                 downloadDate: Date(),
                                 downloadSource: "ENA"
                             )
-                            FASTQMetadataStore.save(meta, for: localURL)
+
+                            performOnMainRunLoop {
+                                DownloadCenter.shared.update(
+                                    id: downloadCenterTaskID,
+                                    progress: progressFraction,
+                                    detail: "\(record.accession) \(phasePrefix) clumpify/compress..."
+                                )
+                            }
+
+                            let pipeline = FASTQIngestionPipeline()
+                            let config = FASTQIngestionConfig(
+                                inputFiles: batch.files,
+                                pairingMode: batch.pairingMode,
+                                outputDirectory: batch.files[0].deletingLastPathComponent(),
+                                threads: min(ProcessInfo.processInfo.processorCount, 8),
+                                deleteOriginals: true,
+                                qualityBinning: .illumina4,
+                                skipClumpify: false
+                            )
+
+                            let ingestionResult = try await pipeline.run(config: config) { pipelineProgress, message in
+                                // Map ingestion progress inside this record slice for user feedback.
+                                let perRecordStep = (Double(batchIdx) + pipelineProgress) / Double(batchCount)
+                                let overall = min(
+                                    0.99,
+                                    (Double(index) + perRecordStep) / Double(totalCount)
+                                )
+                                performOnMainRunLoop {
+                                    DownloadCenter.shared.update(
+                                        id: downloadCenterTaskID,
+                                        progress: overall,
+                                        detail: "\(record.accession) \(phasePrefix) \(message)"
+                                    )
+                                }
+                            }
+                            guard ingestionResult.wasClumpified else {
+                                throw DatabaseServiceError.parseError(
+                                    message: "FASTQ clumpify did not complete for \(batch.files[0].lastPathComponent)"
+                                )
+                            }
+                            var metadata = FASTQMetadataStore.load(for: ingestionResult.outputFile) ?? meta
+                            metadata.enaReadRecord = readRecord
+                            metadata.downloadDate = metadata.downloadDate ?? Date()
+                            metadata.downloadSource = metadata.downloadSource ?? "ENA"
+                            metadata.ingestion = IngestionMetadata(
+                                isClumpified: ingestionResult.wasClumpified,
+                                isCompressed: true,
+                                isIndexed: false,
+                                pairingMode: {
+                                    switch ingestionResult.pairingMode {
+                                    case .singleEnd:
+                                        return .singleEnd
+                                    case .pairedEnd, .interleaved:
+                                        return .interleaved
+                                    }
+                                }(),
+                                qualityBinning: ingestionResult.qualityBinning.rawValue,
+                                originalFilenames: ingestionResult.originalFilenames,
+                                ingestionDate: Date(),
+                                originalSizeBytes: ingestionResult.originalSizeBytes
+                            )
+
+                            performOnMainRunLoop {
+                                DownloadCenter.shared.update(
+                                    id: downloadCenterTaskID,
+                                    progress: progressFraction,
+                                    detail: "\(record.accession) \(phasePrefix) computing FASTQ statistics..."
+                                )
+                            }
+
+                            let estimatedReadsPerFile: Double = {
+                                guard let totalReads = readRecord.readCount, totalReads > 0 else {
+                                    return 1_000_000
+                                }
+                                return max(1.0, Double(totalReads) / Double(batchCount))
+                            }()
+                            let (statistics, seqkitStats) = try await self.computeFASTQStatisticsFast(
+                                for: ingestionResult.outputFile,
+                                progress: { processedCount in
+                                    if processedCount > 0, processedCount % 100_000 == 0 {
+                                        // Map stats phase from 90%->99% within each file.
+                                        let statsProgress = min(
+                                            0.09,
+                                            (Double(processedCount) / estimatedReadsPerFile) * 0.09
+                                        )
+                                        let perRecordStep = (Double(batchIdx) + 0.9 + statsProgress) / Double(batchCount)
+                                        let overall = min(
+                                            0.995,
+                                            (Double(index) + perRecordStep) / Double(totalCount)
+                                        )
+                                        performOnMainRunLoop {
+                                            DownloadCenter.shared.update(
+                                                id: downloadCenterTaskID,
+                                                progress: overall,
+                                                detail: "\(record.accession) \(phasePrefix) stats \(processedCount) reads..."
+                                            )
+                                        }
+                                    }
+                                }
+                            )
+                            metadata.computedStatistics = statistics
+                            metadata.seqkitStats = seqkitStats
+                            FASTQMetadataStore.save(metadata, for: ingestionResult.outputFile)
+
+                            processedFASTQFiles.append(ingestionResult.outputFile)
                         }
-                        // Note: FASTQ ingestion is triggered after import into
-                        // the project directory (in handleMultipleDownloadsSync)
+
+                        downloadedURLs.append(contentsOf: processedFASTQFiles)
+                        fileURL = nil
 
                     case .pathoplexus:
                         // Check if this record has an INSDC accession for GenBank retrieval
@@ -1878,7 +2028,9 @@ public class DatabaseBrowserViewModel: ObservableObject {
                         throw DatabaseServiceError.invalidQuery(reason: "Unsupported database")
                     }
 
-                    downloadedURLs.append(fileURL)
+                    if let fileURL {
+                        downloadedURLs.append(fileURL)
+                    }
                     logger.info("Downloaded \(normalizedRecordAccession, privacy: .public)")
 
                 } catch {
@@ -1919,9 +2071,14 @@ public class DatabaseBrowserViewModel: ObservableObject {
                         let reasonSummary = finalFailureDetails.prefix(3).joined(separator: "; ")
                         detail = "Completed \(finalDownloadedURLs.count) download(s), \(finalFailedCount) failed. \(reasonSummary)"
                     } else if totalCount == 1 {
-                        detail = "Bundle ready: \(bundleNames.first ?? "unknown")"
+                        if currentSource == .ena {
+                            detail = "FASTQ ready: \(bundleNames.first ?? "unknown")"
+                        } else {
+                            detail = "Bundle ready: \(bundleNames.first ?? "unknown")"
+                        }
                     } else {
-                        detail = "Completed \(finalDownloadedURLs.count) bundle(s)"
+                        let unit = currentSource == .ena ? "file(s)" : "bundle(s)"
+                        detail = "Completed \(finalDownloadedURLs.count) \(unit)"
                     }
                     DownloadCenter.shared.complete(
                         id: downloadCenterTaskID,
@@ -1933,6 +2090,186 @@ public class DatabaseBrowserViewModel: ObservableObject {
                 logger.info("performBatchDownload: Complete - \(finalDownloadedURLs.count) downloaded, \(finalFailedCount) failed")
             }
         }
+    }
+
+    private func computeFASTQStatisticsFast(
+        for fastqURL: URL,
+        progress: (@Sendable (Int) -> Void)? = nil
+    ) async throws -> (FASTQDatasetStatistics, SeqkitStatsMetadata?) {
+        do {
+            let summary = try await fetchSeqkitSummary(for: fastqURL)
+            let histogram = try await loadReadLengthHistogramFromFASTQ(
+                from: fastqURL,
+                progress: progress
+            )
+
+            let readCount = summary.numSeqs > 0 ? summary.numSeqs : histogram.reduce(0) { $0 + $1.value }
+            let baseCount = summary.sumLen > 0 ? summary.sumLen : histogram.reduce(Int64(0)) { total, item in
+                total + Int64(item.key * item.value)
+            }
+            let minLength = summary.minLen > 0 ? summary.minLen : histogram.keys.min() ?? 0
+            let maxLength = summary.maxLen > 0 ? summary.maxLen : histogram.keys.max() ?? 0
+            let meanLength = summary.avgLen > 0 ? summary.avgLen : (readCount > 0 ? Double(baseCount) / Double(readCount) : 0)
+            let medianLength = histogramMedian(histogram, totalCount: readCount)
+            let n50 = histogramN50(histogram, totalBases: baseCount)
+
+            return (FASTQDatasetStatistics(
+                readCount: readCount,
+                baseCount: baseCount,
+                meanReadLength: meanLength,
+                minReadLength: minLength,
+                maxReadLength: maxLength,
+                medianReadLength: medianLength,
+                n50ReadLength: n50,
+                meanQuality: summary.avgQual,
+                q20Percentage: summary.q20,
+                q30Percentage: summary.q30,
+                gcContent: summary.gcPercent / 100.0,
+                readLengthHistogram: histogram,
+                qualityScoreHistogram: [:],
+                perPositionQuality: []
+            ), summary.asMetadata())
+        } catch {
+            logger.warning("computeFASTQStatisticsFast: fast path failed for \(fastqURL.lastPathComponent, privacy: .public), falling back to full reader stats. Error: \(error.localizedDescription, privacy: .public)")
+            let reader = FASTQReader()
+            let (statistics, _) = try await reader.computeStatistics(
+                from: fastqURL,
+                sampleLimit: 0,
+                progress: progress
+            )
+            return (statistics, nil)
+        }
+    }
+
+    private struct SeqkitSummary {
+        let numSeqs: Int
+        let sumLen: Int64
+        let minLen: Int
+        let avgLen: Double
+        let maxLen: Int
+        let q20: Double
+        let q30: Double
+        let avgQual: Double
+        let gcPercent: Double
+
+        func asMetadata() -> SeqkitStatsMetadata {
+            SeqkitStatsMetadata(
+                numSeqs: numSeqs,
+                sumLen: sumLen,
+                minLen: minLen,
+                avgLen: avgLen,
+                maxLen: maxLen,
+                q20Percentage: q20,
+                q30Percentage: q30,
+                averageQuality: avgQual,
+                gcPercentage: gcPercent
+            )
+        }
+    }
+
+    private func fetchSeqkitSummary(for fastqURL: URL) async throws -> SeqkitSummary {
+        let runner = NativeToolRunner.shared
+        let result = try await runner.run(
+            .seqkit,
+            arguments: ["stats", "-a", "-T", fastqURL.path],
+            timeout: 900
+        )
+
+        guard result.isSuccess else {
+            throw DatabaseServiceError.parseError(
+                message: "seqkit stats failed: \(result.stderr)"
+            )
+        }
+
+        let lines = result.stdout
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+            .filter { !$0.isEmpty }
+        guard lines.count >= 2 else {
+            throw DatabaseServiceError.parseError(
+                message: "seqkit stats returned unexpected output"
+            )
+        }
+
+        let headers = lines[0].split(separator: "\t").map(String.init)
+        let values = lines[1].split(separator: "\t").map(String.init)
+        guard headers.count == values.count else {
+            throw DatabaseServiceError.parseError(
+                message: "seqkit stats header/value mismatch"
+            )
+        }
+
+        var map: [String: String] = [:]
+        for (header, value) in zip(headers, values) {
+            map[header] = value
+        }
+
+        func parseInt(_ key: String) -> Int { Int(map[key] ?? "") ?? 0 }
+        func parseInt64(_ key: String) -> Int64 { Int64(map[key] ?? "") ?? 0 }
+        func parseDouble(_ key: String) -> Double { Double(map[key] ?? "") ?? 0 }
+
+        return SeqkitSummary(
+            numSeqs: parseInt("num_seqs"),
+            sumLen: parseInt64("sum_len"),
+            minLen: parseInt("min_len"),
+            avgLen: parseDouble("avg_len"),
+            maxLen: parseInt("max_len"),
+            q20: parseDouble("Q20(%)"),
+            q30: parseDouble("Q30(%)"),
+            avgQual: parseDouble("AvgQual"),
+            gcPercent: parseDouble("GC(%)")
+        )
+    }
+
+    private func loadReadLengthHistogramFromFASTQ(
+        from fastqURL: URL,
+        progress: (@Sendable (Int) -> Void)? = nil
+    ) async throws -> [Int: Int] {
+        guard FileManager.default.fileExists(atPath: fastqURL.path) else {
+            throw DatabaseServiceError.notFound(accession: fastqURL.lastPathComponent)
+        }
+
+        var histogram: [Int: Int] = [:]
+        var readCount = 0
+        let reader = FASTQReader(validateSequence: false)
+
+        for try await record in reader.records(from: fastqURL) {
+            histogram[record.length, default: 0] += 1
+            readCount += 1
+            if readCount % 10_000 == 0 {
+                progress?(readCount)
+                try Task.checkCancellation()
+            }
+        }
+
+        progress?(readCount)
+        return histogram
+    }
+
+    private func histogramMedian(_ histogram: [Int: Int], totalCount: Int) -> Int {
+        guard totalCount > 0 else { return 0 }
+        let target = (totalCount + 1) / 2
+        var cumulative = 0
+        for (length, count) in histogram.sorted(by: { $0.key < $1.key }) {
+            cumulative += count
+            if cumulative >= target {
+                return length
+            }
+        }
+        return histogram.keys.max() ?? 0
+    }
+
+    private func histogramN50(_ histogram: [Int: Int], totalBases: Int64) -> Int {
+        guard totalBases > 0 else { return 0 }
+        let target = Double(totalBases) / 2.0
+        var cumulative: Double = 0
+        for (length, count) in histogram.sorted(by: { $0.key > $1.key }) {
+            cumulative += Double(length * count)
+            if cumulative >= target {
+                return length
+            }
+        }
+        return histogram.keys.max() ?? 0
     }
 }
 

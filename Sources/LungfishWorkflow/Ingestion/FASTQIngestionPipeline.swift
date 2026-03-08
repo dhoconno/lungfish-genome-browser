@@ -1,4 +1,4 @@
-// FASTQIngestionPipeline.swift - Clumpify, compress, and index FASTQ files
+// FASTQIngestionPipeline.swift - Clumpify and compress FASTQ files
 // Copyright (c) 2024 Lungfish Contributors
 // SPDX-License-Identifier: MIT
 
@@ -38,7 +38,7 @@ public struct FASTQIngestionConfig: Sendable {
     public let qualityBinning: QualityBinningScheme
 
     /// Whether to skip the clumpify step (k-mer sorting + quality binning).
-    /// When true, only compression and indexing are performed.
+    /// When true, only compression is performed.
     public let skipClumpify: Bool
 
     public init(
@@ -90,7 +90,6 @@ public enum FASTQIngestionError: Error, LocalizedError {
     case pairedEndRequiresTwoFiles
     case clumpifyFailed(String)
     case compressionFailed(String)
-    case indexingFailed(String)
     case toolNotFound(String)
 
     public var errorDescription: String? {
@@ -105,8 +104,6 @@ public enum FASTQIngestionError: Error, LocalizedError {
             return "Clumpify failed: \(msg)"
         case .compressionFailed(let msg):
             return "Compression failed: \(msg)"
-        case .indexingFailed(let msg):
-            return "Indexing failed: \(msg)"
         case .toolNotFound(let tool):
             return "Required tool not found: \(tool)"
         }
@@ -116,13 +113,11 @@ public enum FASTQIngestionError: Error, LocalizedError {
 // MARK: - FASTQIngestionPipeline
 
 /// Pipeline that processes raw FASTQ files into a compressed, optimized format:
-/// 1. **Clumpify** (native Swift) — reorders reads by k-mer hash + bins quality scores
-/// 2. **Compress** (pigz/bgzip) — parallel gzip compression
-/// 3. **Index** (samtools fqidx) — creates .fai index for random access
+/// 1. **Clumpify** (BBTools `clumpify.sh`) — reorders reads by k-mer similarity
+/// 2. **Compress** (pigz/bgzip) — gzip/BGZF compression
 ///
 /// The clumpify step sorts reads so that sequences sharing k-mers are adjacent,
-/// letting gzip find longer matches. Quality binning reduces the quality alphabet
-/// from ~42 to 4-8 distinct values, further improving compression.
+/// letting gzip find longer matches and improving downstream storage locality.
 ///
 /// Original files are deleted after successful processing.
 public final class FASTQIngestionPipeline: @unchecked Sendable {
@@ -164,7 +159,10 @@ public final class FASTQIngestionPipeline: @unchecked Sendable {
         }
 
         let baseName = Self.deriveBaseName(from: config.inputFiles[0])
-        let outputFile = config.outputDirectory.appendingPathComponent("\(baseName).fastq.gz")
+        var outputFile = config.outputDirectory.appendingPathComponent("\(baseName).fastq.gz")
+        if config.inputFiles.contains(where: { $0.standardizedFileURL == outputFile.standardizedFileURL }) {
+            outputFile = config.outputDirectory.appendingPathComponent("\(baseName).clumped.fastq.gz")
+        }
 
         try FileManager.default.createDirectory(
             at: config.outputDirectory,
@@ -185,17 +183,15 @@ public final class FASTQIngestionPipeline: @unchecked Sendable {
             do {
                 clumpifiedFile = try await clumpify(
                     config: config,
-                    baseName: baseName,
+                    outputFile: outputFile,
                     progress: { fraction, msg in
                         progress(fraction * 0.5, msg)
                     }
                 )
                 wasClumpified = true
             } catch {
-                logger.warning("Clumpify failed (non-fatal): \(error)")
-                clumpifiedFile = config.inputFiles[0]
-                wasClumpified = false
-                progress(0.5, "Clumpify failed, continuing with original...")
+                // Clumpify is mandatory for imported FASTQ workflows.
+                throw FASTQIngestionError.clumpifyFailed(error.localizedDescription)
             }
         }
 
@@ -205,8 +201,12 @@ public final class FASTQIngestionPipeline: @unchecked Sendable {
         progress(0.5, "Compressing...")
         let compressedFile: URL
 
-        if clumpifiedFile.pathExtension == "gz" && !wasClumpified {
-            // Already compressed and no clumpification happened
+        if wasClumpified {
+            // clumpify.sh already produced compressed output with pigz.
+            compressedFile = clumpifiedFile
+            progress(0.85, "Compression complete (bbtools)")
+        } else if clumpifiedFile.pathExtension == "gz" {
+            // Already compressed and clumpification was skipped
             compressedFile = clumpifiedFile
             progress(0.85, "Already compressed")
         } else {
@@ -218,27 +218,6 @@ public final class FASTQIngestionPipeline: @unchecked Sendable {
                     progress(0.5 + fraction * 0.35, msg)
                 }
             )
-            // Remove uncompressed clumpified temp file
-            if wasClumpified {
-                try? FileManager.default.removeItem(at: clumpifiedFile)
-            }
-        }
-
-        try Task.checkCancellation()
-
-        // Step 3: Index with samtools fqidx (15% of progress)
-        progress(0.85, "Indexing with samtools fqidx...")
-        let indexFile: URL?
-        do {
-            indexFile = try await index(
-                fastqFile: compressedFile,
-                progress: { fraction, msg in
-                    progress(0.85 + fraction * 0.15, msg)
-                }
-            )
-        } catch {
-            logger.warning("FASTQ indexing failed (non-fatal): \(error)")
-            indexFile = nil
         }
 
         // Delete originals if requested
@@ -256,48 +235,107 @@ public final class FASTQIngestionPipeline: @unchecked Sendable {
 
         progress(1.0, "Ingestion complete")
 
+        let outputPairingMode: FASTQIngestionConfig.PairingMode = {
+            switch config.pairingMode {
+            case .pairedEnd:
+                // Paired inputs are normalized to a single interleaved output file.
+                return .interleaved
+            case .singleEnd, .interleaved:
+                return config.pairingMode
+            }
+        }()
+
         return FASTQIngestionResult(
             outputFile: compressedFile,
-            indexFile: indexFile,
+            indexFile: nil,
             wasClumpified: wasClumpified,
             qualityBinning: config.qualityBinning,
             originalFilenames: originalFilenames,
             originalSizeBytes: originalSize,
             finalSizeBytes: finalSize,
-            pairingMode: config.pairingMode
+            pairingMode: outputPairingMode
         )
     }
 
     // MARK: - Pipeline Steps
 
-    /// Sorts reads by k-mer hash and bins quality scores using native Swift.
+    /// Sorts reads by k-mer similarity using bundled BBTools `clumpify.sh`.
+    ///
+    /// This writes directly to a gzip output so we can avoid an extra
+    /// compression pass while keeping compatibility with `samtools fqidx`.
     private func clumpify(
         config: FASTQIngestionConfig,
-        baseName: String,
+        outputFile: URL,
         progress: @escaping @Sendable (Double, String) -> Void
     ) async throws -> URL {
-        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("lungfish-clumpify-\(UUID().uuidString.prefix(8))")
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-
-        let outputFile = tempDir.appendingPathComponent("\(baseName).clumpified.fastq")
-
-        let clumpifier = ReadClumpifier(
-            kmerSize: 31,
-            binningScheme: config.qualityBinning
-        )
-
-        // For now, process the first input file.
-        // Paired-end interleaving can be added later.
         let inputFile = config.inputFiles[0]
+        let inputFile2 = config.pairingMode == .pairedEnd ? config.inputFiles[1] : nil
+        let toolsDirectory = await runner.getToolsDirectory()
+        let clumpifyScript = try await runner.toolPath(for: .clumpify)
+        let bundledJava = (try? await runner.toolPath(for: .java))
+        let timeoutSeconds = max(900, Double((try? FileManager.default.attributesOfItem(atPath: inputFile.path)[.size] as? Int64) ?? 0) / 2_500_000)
 
-        let result = try await clumpifier.process(
-            inputFile: inputFile,
-            outputFile: outputFile,
-            progress: progress
+        var env: [String: String] = [:]
+        if let toolsDirectory {
+            let existingPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+            env["PATH"] = "\(toolsDirectory.path):\(existingPath)"
+        }
+        if let bundledJava {
+            let javaHome = bundledJava.deletingLastPathComponent().deletingLastPathComponent()
+            env["JAVA_HOME"] = javaHome.path
+            env["BBMAP_JAVA"] = bundledJava.path
+        }
+
+        var args = [
+            "in=\(inputFile.path)",
+            "out=\(outputFile.path)",
+            "ow=t",
+            "reorder",
+            "groups=1",
+            "pigz=t",
+            "zl=4",
+            "threads=\(max(1, config.threads))"
+        ]
+
+        if let inputFile2 {
+            args.append("in2=\(inputFile2.path)")
+            // Emit a single interleaved output file for downstream indexing/display.
+            args.append("interleaved=t")
+        }
+
+        switch config.qualityBinning {
+        case .illumina4:
+            args.append("quantize=0,8,13,22,27,32,37")
+        case .eightLevel:
+            args.append("quantize=2")
+        case .none:
+            break
+        }
+
+        progress(0.05, "Launching bbtools clumpify.sh...")
+
+        let result = try await runner.runProcess(
+            executableURL: clumpifyScript,
+            arguments: args,
+            workingDirectory: config.outputDirectory,
+            environment: env,
+            timeout: timeoutSeconds,
+            toolName: "clumpify.sh"
         )
 
-        logger.info("Clumpified \(result.readCount) reads (\(config.qualityBinning.rawValue) binning)")
+        guard result.isSuccess else {
+            let stderr = result.stderr.isEmpty ? result.stdout : result.stderr
+            throw FASTQIngestionError.clumpifyFailed(
+                String(stderr.suffix(2_000)).trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+
+        guard FileManager.default.fileExists(atPath: outputFile.path) else {
+            throw FASTQIngestionError.clumpifyFailed("clumpify.sh completed without producing output")
+        }
+
+        progress(1.0, "clumpify.sh complete")
+        logger.info("Clumpified reads with bbtools (\(config.qualityBinning.rawValue) binning)")
 
         return outputFile
     }
@@ -312,12 +350,12 @@ public final class FASTQIngestionPipeline: @unchecked Sendable {
         let tool: NativeTool
         let args: [String]
 
-        if (try? await runner.toolPath(for: .pigz)) != nil {
-            tool = .pigz
-            args = ["-p", String(threads), "-c", inputFile.path]
-        } else if (try? await runner.toolPath(for: .bgzip)) != nil {
+        if (try? await runner.toolPath(for: .bgzip)) != nil {
             tool = .bgzip
             args = ["-@", String(threads), "-c", inputFile.path]
+        } else if (try? await runner.toolPath(for: .pigz)) != nil {
+            tool = .pigz
+            args = ["-p", String(threads), "-c", inputFile.path]
         } else {
             throw FASTQIngestionError.toolNotFound("pigz or bgzip")
         }
@@ -343,36 +381,6 @@ public final class FASTQIngestionPipeline: @unchecked Sendable {
 
         progress(1.0, "Compression complete")
         return outputFile
-    }
-
-    /// Creates a FASTQ index with samtools fqidx.
-    private func index(
-        fastqFile: URL,
-        progress: @escaping @Sendable (Double, String) -> Void
-    ) async throws -> URL {
-        let args = ["fqidx", fastqFile.path]
-
-        let inputAttrs = try? FileManager.default.attributesOfItem(atPath: fastqFile.path)
-        let inputSize = (inputAttrs?[.size] as? Int64) ?? 0
-        let timeoutSeconds = max(300, Double(inputSize) / 10_000_000)
-
-        progress(0.1, "Creating FASTQ index...")
-
-        let result = try await runner.run(
-            .samtools,
-            arguments: args,
-            timeout: timeoutSeconds
-        )
-
-        guard result.isSuccess else {
-            throw FASTQIngestionError.indexingFailed(
-                String(result.stderr.suffix(500)).trimmingCharacters(in: .whitespacesAndNewlines)
-            )
-        }
-
-        let indexFile = fastqFile.appendingPathExtension("fai")
-        progress(1.0, "Index created")
-        return indexFile
     }
 
     // MARK: - Helpers

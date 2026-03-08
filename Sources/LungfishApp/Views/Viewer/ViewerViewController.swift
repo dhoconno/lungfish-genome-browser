@@ -928,6 +928,7 @@ public class ViewerViewController: NSViewController {
     public func displayFASTQDataset(
         statistics: FASTQDatasetStatistics,
         records: [FASTQRecord],
+        fastqURL: URL? = nil,
         sraRunInfo: SRARunInfo? = nil,
         enaReadRecord: ENAReadRecord? = nil,
         ingestionMetadata: IngestionMetadata? = nil
@@ -949,7 +950,19 @@ public class ViewerViewController: NSViewController {
             dashView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
 
-        controller.configure(statistics: statistics, records: records)
+        controller.configure(statistics: statistics, records: records, fastqURL: fastqURL)
+        controller.onStatisticsUpdated = { [weak self] updatedStats in
+            guard let self else { return }
+            var updatedUserInfo: [String: Any] = ["statistics": updatedStats]
+            if let sra = sraRunInfo { updatedUserInfo["sraRunInfo"] = sra }
+            if let ena = enaReadRecord { updatedUserInfo["enaReadRecord"] = ena }
+            if let ingestion = ingestionMetadata { updatedUserInfo["ingestionMetadata"] = ingestion }
+            NotificationCenter.default.post(
+                name: .fastqDatasetLoaded,
+                object: self,
+                userInfo: updatedUserInfo
+            )
+        }
         fastqDatasetController = controller
 
         // Hide normal genomic viewer components

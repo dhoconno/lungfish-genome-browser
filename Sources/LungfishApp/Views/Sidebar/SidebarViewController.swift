@@ -502,6 +502,10 @@ public class SidebarViewController: NSViewController {
                 if url.pathExtension.lowercased() == "lungfishref" {
                     itemType = .referenceBundle
                     icon = "cylinder.split.1x2"  // Database-like icon for genome bundles
+                } else if FASTQBundle.isBundleURL(url),
+                          FASTQBundle.resolvePrimaryFASTQURL(for: url) != nil {
+                    itemType = .fastqBundle
+                    icon = "doc.text"
                 } else {
                     itemType = .folder
                     icon = "folder"
@@ -514,8 +518,10 @@ public class SidebarViewController: NSViewController {
             }
         }
 
-        // Create the item (strip .lungfishref extension for display)
-        let displayName = itemType == .referenceBundle ? url.deletingPathExtension().lastPathComponent : filename
+        // Create the item (strip bundle extension for display)
+        let displayName = (itemType == .referenceBundle || itemType == .fastqBundle)
+            ? url.deletingPathExtension().lastPathComponent
+            : filename
         let item = SidebarItem(
             title: displayName,
             type: itemType,
@@ -1656,6 +1662,7 @@ public enum SidebarItemType {
     case image     // Image files - uses QuickLook preview
     case unknown   // Unknown file type - uses QuickLook preview
     case referenceBundle  // .lungfishref reference genome bundle
+    case fastqBundle  // .lungfishfastq FASTQ package bundle
 
     var tintColor: NSColor {
         switch self {
@@ -1670,6 +1677,7 @@ public enum SidebarItemType {
         case .image: return .systemPink
         case .unknown: return .tertiaryLabelColor
         case .referenceBundle: return .systemIndigo
+        case .fastqBundle: return .systemGreen
         }
     }
 
@@ -1686,7 +1694,7 @@ public enum SidebarItemType {
     /// Whether this item type is a bundle that should appear as a single item
     var isBundle: Bool {
         switch self {
-        case .referenceBundle:
+        case .referenceBundle, .fastqBundle:
             return true
         default:
             return false

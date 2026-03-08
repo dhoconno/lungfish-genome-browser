@@ -163,6 +163,13 @@ final class NativeToolRunnerTests: XCTestCase {
         XCTAssertEqual(NativeTool.tabix.executableName, "tabix")
         XCTAssertEqual(NativeTool.bedToBigBed.executableName, "bedToBigBed")
         XCTAssertEqual(NativeTool.bedGraphToBigWig.executableName, "bedGraphToBigWig")
+        XCTAssertEqual(NativeTool.seqkit.executableName, "seqkit")
+        XCTAssertEqual(NativeTool.fastp.executableName, "fastp")
+        XCTAssertEqual(NativeTool.vsearch.executableName, "vsearch")
+        XCTAssertEqual(NativeTool.clumpify.executableName, "clumpify.sh")
+        XCTAssertEqual(NativeTool.java.executableName, "java")
+        XCTAssertEqual(NativeTool.clumpify.relativeExecutablePath, "bbtools/clumpify.sh")
+        XCTAssertEqual(NativeTool.java.relativeExecutablePath, "jre/bin/java")
     }
 
     func testNativeToolSourcePackages() {
@@ -180,7 +187,7 @@ final class NativeToolRunnerTests: XCTestCase {
     }
 
     func testAllCasesCount() {
-        XCTAssertEqual(NativeTool.allCases.count, 7, "Should have 7 bundled tools")
+        XCTAssertEqual(NativeTool.allCases.count, 12, "Should have 12 bundled tools")
     }
 
     // MARK: - Error Tests

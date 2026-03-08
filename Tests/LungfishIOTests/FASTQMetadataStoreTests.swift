@@ -98,6 +98,16 @@ final class FASTQMetadataStoreTests: XCTestCase {
         return try! JSONDecoder().decode(ENAReadRecord.self, from: json)
     }
 
+    @discardableResult
+    private func createFASTQFixture(at url: URL) -> URL {
+        let fixture = "@read1\nACGT\n+\nIIII\n"
+        FileManager.default.createFile(
+            atPath: url.path,
+            contents: Data(fixture.utf8)
+        )
+        return url
+    }
+
     // MARK: - Metadata URL Convention
 
     func testMetadataURLAppendsSuffix() {
@@ -118,6 +128,7 @@ final class FASTQMetadataStoreTests: XCTestCase {
 
     func testSaveAndLoadRoundTrip() {
         let fastqURL = tempDir.appendingPathComponent("test.fastq.gz")
+        createFASTQFixture(at: fastqURL)
         let stats = makeSampleStatistics()
         let metadata = PersistedFASTQMetadata(
             computedStatistics: stats,
@@ -138,6 +149,7 @@ final class FASTQMetadataStoreTests: XCTestCase {
 
     func testSaveAndLoadWithSRAMetadata() {
         let fastqURL = tempDir.appendingPathComponent("SRR12345.fastq.gz")
+        createFASTQFixture(at: fastqURL)
         let sra = makeSampleSRARunInfo()
         let metadata = PersistedFASTQMetadata(
             sraRunInfo: sra,
@@ -159,6 +171,7 @@ final class FASTQMetadataStoreTests: XCTestCase {
 
     func testSaveAndLoadWithENAMetadata() {
         let fastqURL = tempDir.appendingPathComponent("ERR9876543.fastq.gz")
+        createFASTQFixture(at: fastqURL)
         let ena = makeSampleENAReadRecord()
         let metadata = PersistedFASTQMetadata(
             enaReadRecord: ena,
@@ -179,6 +192,7 @@ final class FASTQMetadataStoreTests: XCTestCase {
 
     func testSaveAndLoadFullMetadata() {
         let fastqURL = tempDir.appendingPathComponent("full_test.fastq.gz")
+        createFASTQFixture(at: fastqURL)
         let metadata = PersistedFASTQMetadata(
             computedStatistics: makeSampleStatistics(),
             sraRunInfo: makeSampleSRARunInfo(),
@@ -209,6 +223,7 @@ final class FASTQMetadataStoreTests: XCTestCase {
 
     func testDeleteRemovesSidecar() {
         let fastqURL = tempDir.appendingPathComponent("delete_test.fastq.gz")
+        createFASTQFixture(at: fastqURL)
         let metadata = PersistedFASTQMetadata(downloadSource: "test")
 
         FASTQMetadataStore.save(metadata, for: fastqURL)
@@ -228,6 +243,7 @@ final class FASTQMetadataStoreTests: XCTestCase {
 
     func testSaveOverwritesExisting() {
         let fastqURL = tempDir.appendingPathComponent("overwrite_test.fastq.gz")
+        createFASTQFixture(at: fastqURL)
 
         let metadata1 = PersistedFASTQMetadata(downloadSource: "first")
         FASTQMetadataStore.save(metadata1, for: fastqURL)
@@ -237,6 +253,17 @@ final class FASTQMetadataStoreTests: XCTestCase {
 
         let loaded = FASTQMetadataStore.load(for: fastqURL)
         XCTAssertEqual(loaded?.downloadSource, "second")
+    }
+
+    func testSaveSkipsWhenFASTQMissing() {
+        let fastqURL = tempDir.appendingPathComponent("missing.fastq.gz")
+        let sidecarURL = FASTQMetadataStore.metadataURL(for: fastqURL)
+
+        let metadata = PersistedFASTQMetadata(downloadSource: "should-not-write")
+        FASTQMetadataStore.save(metadata, for: fastqURL)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sidecarURL.path))
+        XCTAssertNil(FASTQMetadataStore.load(for: fastqURL))
     }
 
     // MARK: - PersistedFASTQMetadata Codable

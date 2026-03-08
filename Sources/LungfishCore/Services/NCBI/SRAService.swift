@@ -314,45 +314,75 @@ public actor SRAService {
             withIntermediateDirectories: true
         )
 
-        // Construct ENA FTP URL
-        // Format: ftp://ftp.sra.ebi.ac.uk/vol1/fastq/SRR111/048/SRR11140748/SRR11140748_1.fastq.gz
-        let prefix = String(accession.prefix(6))
-        let suffix = accession.count > 9 ? "/0" + String(accession.suffix(2)) : ""
+        // Prefer ENA Portal-reported FASTQ URLs (authoritative for run layout/path).
+        var candidateURLs: [URL] = []
+        do {
+            let enaService = ENAService(httpClient: httpClient)
+            let records = try await enaService.searchReads(term: accession, limit: 1)
+            if let record = records.first {
+                let portalURLs = await enaService.fastqHTTPURLs(for: record)
+                if !portalURLs.isEmpty {
+                    candidateURLs = portalURLs
+                    logger.info("Resolved \(portalURLs.count, privacy: .public) FASTQ URL(s) for \(accession, privacy: .public) via ENA portal")
+                }
+            }
+        } catch {
+            logger.warning("ENA portal URL resolution failed for \(accession, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
 
-        let baseURL = "https://ftp.sra.ebi.ac.uk/vol1/fastq/\(prefix)\(suffix)/\(accession)"
+        // Fallback: construct known ENA FTP path variants.
+        if candidateURLs.isEmpty {
+            // Format examples:
+            // - SRR11140748 -> /vol1/fastq/SRR111/048/SRR11140748/SRR11140748_1.fastq.gz
+            // - SRR390728   -> /vol1/fastq/SRR390/SRR390728/SRR390728.fastq.gz
+            let prefix = String(accession.prefix(6))
+            let middle = accession.count > 9 ? "/\(String(accession.suffix(3)))" : ""
+            let baseURL = "https://ftp.sra.ebi.ac.uk/vol1/fastq/\(prefix)\(middle)/\(accession)"
+            candidateURLs = ["_1.fastq.gz", "_2.fastq.gz", ".fastq.gz"].compactMap {
+                URL(string: "\(baseURL)/\(accession)\($0)")
+            }
+            logger.warning("Falling back to heuristic ENA URL construction for \(accession, privacy: .public)")
+        }
 
         var downloadedFiles: [URL] = []
-
-        // Try to download paired-end files first
-        for suffix in ["_1.fastq.gz", "_2.fastq.gz", ".fastq.gz"] {
-            let fileURL = URL(string: "\(baseURL)/\(accession)\(suffix)")!
-            let localPath = outputDirectory.appendingPathComponent("\(accession)\(suffix)")
+        var attemptedURLs: [String] = []
+        let totalCandidates = max(candidateURLs.count, 1)
+        for (index, fileURL) in candidateURLs.enumerated() {
+            let filename = fileURL.lastPathComponent.isEmpty
+                ? "\(accession)_\(index + 1).fastq.gz"
+                : fileURL.lastPathComponent
+            let localPath = outputDirectory.appendingPathComponent(filename)
+            attemptedURLs.append(fileURL.absoluteString)
 
             do {
                 logger.info("Attempting to download from ENA: \(fileURL.absoluteString, privacy: .public)")
 
                 var request = URLRequest(url: fileURL)
                 request.setValue("Lungfish Genome Explorer", forHTTPHeaderField: "User-Agent")
+                request.timeoutInterval = 600
 
                 let (data, response) = try await httpClient.data(for: request)
-
                 guard let httpResponse = response as? HTTPURLResponse,
                       (200...299).contains(httpResponse.statusCode) else {
-                    continue  // Try next suffix
+                    continue
                 }
 
                 try data.write(to: localPath)
                 downloadedFiles.append(localPath)
+                progress?(Double(index + 1) / Double(totalCandidates))
 
                 logger.info("Downloaded: \(localPath.lastPathComponent, privacy: .public)")
             } catch {
-                // File might not exist with this suffix, try next
+                logger.warning("ENA FASTQ download failed for \(fileURL.absoluteString, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 continue
             }
         }
 
         if downloadedFiles.isEmpty {
-            throw SRAError.downloadFailed("Could not download FASTQ files from ENA for \(accession)")
+            let attemptedPreview = attemptedURLs.prefix(3).joined(separator: ", ")
+            throw SRAError.downloadFailed(
+                "Could not download FASTQ files from ENA for \(accession). Attempted URLs: \(attemptedPreview)"
+            )
         }
 
         progress?(1.0)

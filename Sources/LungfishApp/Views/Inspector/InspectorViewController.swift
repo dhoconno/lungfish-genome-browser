@@ -1277,6 +1277,7 @@ extension SidebarItemType: CustomStringConvertible {
         case .image: return "Image"
         case .unknown: return "File"
         case .referenceBundle: return "Reference Bundle"
+        case .fastqBundle: return "FASTQ Bundle"
         }
     }
 }

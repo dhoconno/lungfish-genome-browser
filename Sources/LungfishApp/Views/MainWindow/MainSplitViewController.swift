@@ -79,6 +79,20 @@ public class MainSplitViewController: NSSplitViewController {
     /// Collapsed target for the active inspector transition.
     private var inspectorTransitionTargetCollapsedState: Bool?
 
+    // MARK: - FASTQ Loading State
+
+    /// Background task for FASTQ statistics/sample loading.
+    ///
+    /// Cancelled whenever selection changes away from FASTQ content so stale
+    /// progress updates cannot overwrite the active view.
+    private var fastqLoadTask: Task<Void, Never>?
+
+    /// Monotonic generation used to discard stale async FASTQ updates.
+    private var fastqLoadGeneration: Int = 0
+
+    /// FASTQ URL currently targeted by the active background load.
+    private var activeFASTQLoadURL: URL?
+
     // MARK: - Configuration
 
     /// Minimum sidebar width
@@ -528,13 +542,9 @@ public class MainSplitViewController: NSSplitViewController {
             }
         }
 
-        // Trigger FASTQ ingestion for dropped FASTQ files
-        let ext = urlToLoad.pathExtension.lowercased()
-        let isFASTQ = ext == "fastq" || ext == "fq" ||
-            (ext == "gz" && (urlToLoad.deletingPathExtension().pathExtension.lowercased() == "fastq" ||
-                             urlToLoad.deletingPathExtension().pathExtension.lowercased() == "fq"))
-        if isFASTQ {
-            FASTQIngestionService.ingestIfNeeded(url: urlToLoad)
+        // Trigger FASTQ ingestion for dropped FASTQ files/bundles
+        if let fastqURL = FASTQBundle.resolvePrimaryFASTQURL(for: urlToLoad) {
+            FASTQIngestionService.ingestIfNeeded(url: fastqURL)
         }
 
         // Load the document and display it via the established GCD dispatch pattern
@@ -818,9 +828,24 @@ public class MainSplitViewController: NSSplitViewController {
 
 extension MainSplitViewController: SidebarSelectionDelegate {
 
+    /// Cancels any in-flight FASTQ dashboard load and optionally clears progress UI.
+    private func cancelFASTQLoadIfNeeded(hideProgress: Bool, reason: String) {
+        if fastqLoadTask != nil {
+            logger.info("cancelFASTQLoadIfNeeded: cancelling FASTQ load (\(reason, privacy: .public))")
+            fastqLoadTask?.cancel()
+            fastqLoadTask = nil
+        }
+        fastqLoadGeneration &+= 1
+        activeFASTQLoadURL = nil
+        if hideProgress {
+            viewerController.hideProgress()
+        }
+    }
+
     public func sidebarDidSelectItem(_ item: SidebarItem?) {
         guard let item = item else {
             logger.info("sidebarDidSelectItem: Selection cleared, clearing viewer")
+            cancelFASTQLoadIfNeeded(hideProgress: true, reason: "selection cleared")
             viewerController.clearBundleDisplay()
             viewerController.clearViewer()
             return
@@ -851,6 +876,11 @@ extension MainSplitViewController: SidebarSelectionDelegate {
     /// avoiding Swift Task issues that occur when called from notification handlers.
     private func displayContent(for item: SidebarItem) {
         logger.info("displayContent: Selected '\(item.title, privacy: .public)' type=\(String(describing: item.type))")
+
+        let selectedFASTQURL = item.url.flatMap { FASTQBundle.resolvePrimaryFASTQURL(for: $0) }?.standardizedFileURL
+        if selectedFASTQURL == nil {
+            cancelFASTQLoadIfNeeded(hideProgress: true, reason: "selected non-FASTQ item '\(item.title)'")
+        }
 
         // Skip non-displayable container types
         guard item.type != .folder && item.type != .project && item.type != .group else {
@@ -937,11 +967,13 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
     /// Display genomics file - cache-first, then load via DocumentManager.
     private func displayGenomicsFile(url: URL) {
-        // FASTQ files use the streaming statistics dashboard (not bulk loading)
-        if isFASTQFile(url) {
-            loadFASTQDatasetInBackground(url: url)
+        // FASTQ files/packages use the streaming statistics dashboard (not bulk loading)
+        if let fastqURL = FASTQBundle.resolvePrimaryFASTQURL(for: url) {
+            loadFASTQDatasetInBackground(url: fastqURL)
             return
         }
+
+        cancelFASTQLoadIfNeeded(hideProgress: true, reason: "displaying non-FASTQ file \(url.lastPathComponent)")
 
         // Standalone VCF files use the auto-ingestion pipeline
         if Self.isVCFFile(url) {
@@ -967,12 +999,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
     /// Returns true if the URL points to a FASTQ file (by extension).
     private func isFASTQFile(_ url: URL) -> Bool {
-        var checkURL = url
-        if checkURL.pathExtension.lowercased() == "gz" {
-            checkURL = checkURL.deletingPathExtension()
-        }
-        let ext = checkURL.pathExtension.lowercased()
-        return ext == "fastq" || ext == "fq"
+        FASTQBundle.resolvePrimaryFASTQURL(for: url) != nil
     }
 
     /// Returns true if the URL points to a VCF file (by extension).
@@ -1407,69 +1434,56 @@ extension MainSplitViewController: SidebarSelectionDelegate {
     /// uses them directly (still loads sample records for the table). Otherwise,
     /// computes statistics in a single streaming pass and caches them.
     private func loadFASTQDatasetInBackground(url: URL) {
-        logger.info("loadFASTQDatasetInBackground: Loading '\(url.lastPathComponent, privacy: .public)'")
+        let fastqURL = url.standardizedFileURL
+        logger.info("loadFASTQDatasetInBackground: Loading '\(fastqURL.lastPathComponent, privacy: .public)'")
 
         guard let viewerController = self.viewerController else {
             logger.warning("loadFASTQDatasetInBackground: Viewer controller not available")
             return
         }
 
+        // Cancel any previous FASTQ work before starting a new request.
+        fastqLoadTask?.cancel()
+        fastqLoadTask = nil
+        fastqLoadGeneration &+= 1
+        let generation = fastqLoadGeneration
+        activeFASTQLoadURL = fastqURL
+
+        let isCurrentRequest: @MainActor () -> Bool = { [weak self] in
+            guard let self = self else { return false }
+            return self.fastqLoadGeneration == generation &&
+                self.activeFASTQLoadURL?.standardizedFileURL == fastqURL
+        }
+
         // Check for cached metadata
-        let cachedMeta = FASTQMetadataStore.load(for: url)
+        let cachedMeta = FASTQMetadataStore.load(for: fastqURL)
         if let cachedStats = cachedMeta?.computedStatistics {
             logger.info("loadFASTQDatasetInBackground: Using cached statistics (\(cachedStats.readCount) reads)")
-            viewerController.showProgress("Loading FASTQ sample records...")
-
-            // Still need to load sample records for the table
-            Task.detached(priority: .userInitiated) {
-                do {
-                    let reader = FASTQReader()
-                    var sampleRecords: [FASTQRecord] = []
-                    sampleRecords.reserveCapacity(10_000)
-                    var count = 0
-                    for try await record in reader.records(from: url) {
-                        if count < 10_000 { sampleRecords.append(record) }
-                        count += 1
-                        if count >= 10_000 { break }
-                    }
-
-                    DispatchQueue.main.async {
-                        MainActor.assumeIsolated {
-                            viewerController.hideProgress()
-                            viewerController.displayFASTQDataset(
-                                statistics: cachedStats,
-                                records: sampleRecords,
-                                sraRunInfo: cachedMeta?.sraRunInfo,
-                                enaReadRecord: cachedMeta?.enaReadRecord,
-                                ingestionMetadata: cachedMeta?.ingestion
-                            )
-                            logger.info("loadFASTQDatasetInBackground: Displayed from cache with \(sampleRecords.count) sample records")
-                        }
-                    }
-                } catch {
-                    let errorMessage = "\(error)"
-                    DispatchQueue.main.async {
-                        MainActor.assumeIsolated {
-                            viewerController.hideProgress()
-                            logger.error("loadFASTQDatasetInBackground: Failed to load samples - \(errorMessage)")
-                        }
-                    }
-                }
-            }
+            viewerController.displayFASTQDataset(
+                statistics: cachedStats,
+                records: [],
+                fastqURL: fastqURL,
+                sraRunInfo: cachedMeta?.sraRunInfo,
+                enaReadRecord: cachedMeta?.enaReadRecord,
+                ingestionMetadata: cachedMeta?.ingestion
+            )
+            logger.info("loadFASTQDatasetInBackground: Displayed from cache without read table scan")
             return
         }
 
         viewerController.showProgress("Computing FASTQ statistics...")
 
-        Task.detached(priority: .userInitiated) {
+        fastqLoadTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 let reader = FASTQReader()
-                let (statistics, sampleRecords) = try await reader.computeStatistics(
-                    from: url,
-                    sampleLimit: 10_000,
+                let summary = try await Self.fetchSeqkitSummary(for: fastqURL)
+                let (histogram, processedReads) = try await Self.collectFASTQHistogram(
+                    from: fastqURL,
                     progress: { count in
+                        guard !Task.isCancelled else { return }
                         DispatchQueue.main.async {
                             MainActor.assumeIsolated {
+                                guard isCurrentRequest(), !Task.isCancelled else { return }
                                 viewerController.showProgress(
                                     "Computing FASTQ statistics... \(count) reads processed"
                                 )
@@ -1477,32 +1491,51 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                         }
                     }
                 )
+                let statistics = Self.buildFASTQStatistics(
+                    summary: summary,
+                    histogram: histogram,
+                    fallbackReadCount: processedReads
+                )
+                try Task.checkCancellation()
 
-                // Cache the computed statistics for next time
-                var metadata = cachedMeta ?? PersistedFASTQMetadata()
-                metadata.computedStatistics = statistics
-                FASTQMetadataStore.save(metadata, for: url)
+                // Cache the computed statistics for next time.
+                // Skip stale/deleted targets so we don't write sidecars into removed paths.
+                if FileManager.default.fileExists(atPath: fastqURL.path) {
+                    var metadata = cachedMeta ?? PersistedFASTQMetadata()
+                    metadata.computedStatistics = statistics
+                    metadata.seqkitStats = summary.asMetadata()
+                    FASTQMetadataStore.save(metadata, for: fastqURL)
+                } else {
+                    logger.debug("loadFASTQDatasetInBackground: FASTQ deleted before cache write, skipping sidecar save")
+                }
 
-                let sraRunInfo = metadata.sraRunInfo
-                let enaReadRecord = metadata.enaReadRecord
-                let ingestionMeta = metadata.ingestion
-                DispatchQueue.main.async {
+                let sraRunInfo = cachedMeta?.sraRunInfo
+                let enaReadRecord = cachedMeta?.enaReadRecord
+                let ingestionMeta = cachedMeta?.ingestion
+                DispatchQueue.main.async { [weak self] in
                     MainActor.assumeIsolated {
+                        guard let self = self, isCurrentRequest() else { return }
+                        self.fastqLoadTask = nil
                         viewerController.hideProgress()
                         viewerController.displayFASTQDataset(
                             statistics: statistics,
-                            records: sampleRecords,
+                            records: [],
+                            fastqURL: fastqURL,
                             sraRunInfo: sraRunInfo,
                             enaReadRecord: enaReadRecord,
                             ingestionMetadata: ingestionMeta
                         )
-                        logger.info("loadFASTQDatasetInBackground: Dashboard displayed with \(statistics.readCount) total reads, \(sampleRecords.count) in table")
+                        logger.info("loadFASTQDatasetInBackground: Dashboard displayed with \(statistics.readCount) total reads")
                     }
                 }
+            } catch is CancellationError {
+                logger.debug("loadFASTQDatasetInBackground: Statistics computation cancelled (gen=\(generation))")
             } catch {
                 let errorMessage = "\(error)"
-                DispatchQueue.main.async {
+                DispatchQueue.main.async { [weak self] in
                     MainActor.assumeIsolated {
+                        guard let self = self, isCurrentRequest() else { return }
+                        self.fastqLoadTask = nil
                         viewerController.hideProgress()
                         logger.error("loadFASTQDatasetInBackground: Failed - \(errorMessage)")
 
@@ -1516,6 +1549,158 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                 }
             }
         }
+    }
+
+    private struct SeqkitSummary {
+        let numSeqs: Int
+        let sumLen: Int64
+        let minLen: Int
+        let avgLen: Double
+        let maxLen: Int
+        let q20Percentage: Double
+        let q30Percentage: Double
+        let averageQuality: Double
+        let gcPercentage: Double
+
+        func asMetadata() -> SeqkitStatsMetadata {
+            SeqkitStatsMetadata(
+                numSeqs: numSeqs,
+                sumLen: sumLen,
+                minLen: minLen,
+                avgLen: avgLen,
+                maxLen: maxLen,
+                q20Percentage: q20Percentage,
+                q30Percentage: q30Percentage,
+                averageQuality: averageQuality,
+                gcPercentage: gcPercentage
+            )
+        }
+    }
+
+    nonisolated private static func fetchSeqkitSummary(for fastqURL: URL) async throws -> SeqkitSummary {
+        let runner = NativeToolRunner.shared
+        let result = try await runner.run(
+            .seqkit,
+            arguments: ["stats", "-a", "-T", fastqURL.path],
+            timeout: 900
+        )
+        guard result.isSuccess else {
+            throw DatabaseServiceError.parseError(
+                message: "seqkit stats failed: \(result.stderr)"
+            )
+        }
+
+        let lines = result.stdout
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+            .filter { !$0.isEmpty }
+        guard lines.count >= 2 else {
+            throw DatabaseServiceError.parseError(
+                message: "seqkit stats returned unexpected output"
+            )
+        }
+
+        let headers = lines[0].split(separator: "\t").map(String.init)
+        let values = lines[1].split(separator: "\t").map(String.init)
+        guard headers.count == values.count else {
+            throw DatabaseServiceError.parseError(
+                message: "seqkit stats header/value mismatch"
+            )
+        }
+
+        var map: [String: String] = [:]
+        for (header, value) in zip(headers, values) {
+            map[header] = value
+        }
+
+        func int(_ key: String) -> Int { Int(map[key] ?? "") ?? 0 }
+        func int64(_ key: String) -> Int64 { Int64(map[key] ?? "") ?? 0 }
+        func dbl(_ key: String) -> Double { Double(map[key] ?? "") ?? 0 }
+
+        return SeqkitSummary(
+            numSeqs: int("num_seqs"),
+            sumLen: int64("sum_len"),
+            minLen: int("min_len"),
+            avgLen: dbl("avg_len"),
+            maxLen: int("max_len"),
+            q20Percentage: dbl("Q20(%)"),
+            q30Percentage: dbl("Q30(%)"),
+            averageQuality: dbl("AvgQual"),
+            gcPercentage: dbl("GC(%)")
+        )
+    }
+
+    nonisolated private static func collectFASTQHistogram(
+        from fastqURL: URL,
+        progress: (@Sendable (Int) -> Void)? = nil
+    ) async throws -> (histogram: [Int: Int], readCount: Int) {
+        let reader = FASTQReader(validateSequence: false)
+        var histogram: [Int: Int] = [:]
+        var readCount = 0
+
+        for try await record in reader.records(from: fastqURL) {
+            histogram[record.length, default: 0] += 1
+            readCount += 1
+            if readCount % 10_000 == 0 {
+                progress?(readCount)
+                try Task.checkCancellation()
+            }
+        }
+        progress?(readCount)
+        return (histogram, readCount)
+    }
+
+    nonisolated private static func buildFASTQStatistics(
+        summary: SeqkitSummary,
+        histogram: [Int: Int],
+        fallbackReadCount: Int
+    ) -> FASTQDatasetStatistics {
+        let readCount = summary.numSeqs > 0 ? summary.numSeqs : fallbackReadCount
+        let baseCount = summary.sumLen > 0 ? summary.sumLen : histogram.reduce(Int64(0)) { total, item in
+            total + Int64(item.key * item.value)
+        }
+        let minLength = summary.minLen > 0 ? summary.minLen : histogram.keys.min() ?? 0
+        let maxLength = summary.maxLen > 0 ? summary.maxLen : histogram.keys.max() ?? 0
+        let meanLength = summary.avgLen > 0 ? summary.avgLen : (readCount > 0 ? Double(baseCount) / Double(readCount) : 0)
+
+        func medianLength() -> Int {
+            guard readCount > 0 else { return 0 }
+            let target = (readCount + 1) / 2
+            var cumulative = 0
+            for (length, count) in histogram.sorted(by: { $0.key < $1.key }) {
+                cumulative += count
+                if cumulative >= target { return length }
+            }
+            return histogram.keys.max() ?? 0
+        }
+
+        func n50Length() -> Int {
+            guard baseCount > 0 else { return 0 }
+            let target = Double(baseCount) / 2.0
+            var cumulative = 0.0
+            for (length, count) in histogram.sorted(by: { $0.key > $1.key }) {
+                cumulative += Double(length * count)
+                if cumulative >= target { return length }
+            }
+            return histogram.keys.max() ?? 0
+        }
+
+        return FASTQDatasetStatistics(
+            readCount: readCount,
+            baseCount: baseCount,
+            meanReadLength: meanLength,
+            minReadLength: minLength,
+            maxReadLength: maxLength,
+            medianReadLength: medianLength(),
+            n50ReadLength: n50Length(),
+            meanQuality: summary.averageQuality,
+            q20Percentage: summary.q20Percentage,
+            q30Percentage: summary.q30Percentage,
+            gcContent: summary.gcPercentage / 100.0,
+            readLengthHistogram: histogram,
+            qualityScoreHistogram: [:],
+            perPositionQuality: []
+        )
     }
 
     /// Loads a genomics file in the background using structured concurrency.

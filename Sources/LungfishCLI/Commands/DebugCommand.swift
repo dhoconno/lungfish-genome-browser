@@ -5,6 +5,7 @@
 import ArgumentParser
 import Foundation
 import LungfishCore
+import LungfishIO
 import LungfishWorkflow
 
 /// Debug and troubleshooting commands
@@ -15,6 +16,7 @@ struct DebugCommand: AsyncParsableCommand {
         subcommands: [
             EnvSubcommand.self,
             ContainerSubcommand.self,
+            FASTQIngestSubcommand.self,
             WorkflowLogSubcommand.self,
         ],
         defaultSubcommand: EnvSubcommand.self
@@ -272,6 +274,187 @@ struct ContainerSubcommand: AsyncParsableCommand {
             print("Please upgrade to macOS 26 (Tahoe) or later for container support.")
         }
     }
+}
+
+// MARK: - FASTQ Ingestion Diagnostics
+
+/// Runs the FASTQ ingestion pipeline outside the app UI.
+struct FASTQIngestSubcommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "fastq-ingest",
+        abstract: "Run FASTQ clumpify/compress/index + optional stats",
+        discussion: """
+            Executes the same FASTQ ingestion pipeline used by app imports.
+
+            Examples:
+              lungfish debug fastq-ingest ./SRR1770413_1.fastq.gz --stats --sample-limit 0
+              lungfish debug fastq-ingest ./R1.fastq.gz --pair ./R2.fastq.gz --delete-originals
+            """
+    )
+
+    @Argument(help: "Input FASTQ file (R1 for paired-end)")
+    var input: String
+
+    @Option(name: .customLong("pair"), help: "Optional R2 FASTQ file for paired-end mode")
+    var pair: String?
+
+    @Option(name: .customLong("output-dir"), help: "Output directory for processed FASTQ")
+    var outputDir: String = "."
+
+    @Option(
+        name: .customLong("binning"),
+        help: "Quality binning scheme (illumina4, eightLevel, none)"
+    )
+    var binning: String = QualityBinningScheme.illumina4.rawValue
+
+    @Flag(name: .customLong("skip-clumpify"), help: "Skip read clumpification step")
+    var skipClumpify: Bool = false
+
+    @Flag(name: .customLong("delete-originals"), help: "Delete original FASTQ file(s) after success")
+    var deleteOriginals: Bool = false
+
+    @Flag(name: .customLong("stats"), help: "Compute FASTQ statistics on processed output")
+    var stats: Bool = false
+
+    @Option(name: .customLong("sample-limit"), help: "Read sample limit for stats (0 = full dataset)")
+    var sampleLimit: Int = 10_000
+
+    @OptionGroup var globalOptions: GlobalOptions
+
+    func run() async throws {
+        let formatter = TerminalFormatter(useColors: globalOptions.useColors)
+        let inputURL = URL(fileURLWithPath: input)
+        guard FileManager.default.fileExists(atPath: inputURL.path) else {
+            throw CLIError.inputFileNotFound(path: inputURL.path)
+        }
+
+        let pairingMode: FASTQIngestionConfig.PairingMode
+        var inputs: [URL] = [inputURL]
+        if let pair {
+            let pairURL = URL(fileURLWithPath: pair)
+            guard FileManager.default.fileExists(atPath: pairURL.path) else {
+                throw CLIError.inputFileNotFound(path: pairURL.path)
+            }
+            inputs.append(pairURL)
+            pairingMode = .pairedEnd
+        } else {
+            pairingMode = .singleEnd
+        }
+
+        guard let qualityBinning = QualityBinningScheme(rawValue: binning) else {
+            throw CLIError.validationFailed(errors: [
+                "Invalid binning scheme '\(binning)'. Expected one of: \(QualityBinningScheme.allCases.map(\.rawValue).joined(separator: ", "))"
+            ])
+        }
+
+        let outputURL = URL(fileURLWithPath: outputDir)
+        try FileManager.default.createDirectory(at: outputURL, withIntermediateDirectories: true)
+
+        let config = FASTQIngestionConfig(
+            inputFiles: inputs,
+            pairingMode: pairingMode,
+            outputDirectory: outputURL,
+            threads: max(1, globalOptions.threads ?? ProcessInfo.processInfo.activeProcessorCount),
+            deleteOriginals: deleteOriginals,
+            qualityBinning: qualityBinning,
+            skipClumpify: skipClumpify
+        )
+
+        if !globalOptions.quiet {
+            print(formatter.header("FASTQ Ingestion Diagnostics"))
+            print("input: \(inputURL.path)")
+            if let pair { print("pair:  \(pair)") }
+            print("output dir: \(outputURL.path)")
+            print("pairing: \(pairingMode.rawValue)")
+            print("binning: \(qualityBinning.rawValue)")
+            print("skip clumpify: \(skipClumpify)")
+            print("delete originals: \(deleteOriginals)")
+            print("")
+        }
+
+        let pipeline = FASTQIngestionPipeline()
+        let result = try await pipeline.run(config: config) { fraction, message in
+            if !globalOptions.quiet {
+                let pct = Int((fraction * 100).rounded())
+                print("[\(pct)%] \(message)")
+            }
+        }
+
+        if globalOptions.outputFormat == .json {
+            let payload = FastqIngestResultPayload(
+                outputFile: result.outputFile.path,
+                indexFile: result.indexFile?.path,
+                wasClumpified: result.wasClumpified,
+                qualityBinning: result.qualityBinning.rawValue,
+                originalFilenames: result.originalFilenames,
+                originalSizeBytes: result.originalSizeBytes,
+                finalSizeBytes: result.finalSizeBytes,
+                pairingMode: result.pairingMode.rawValue
+            )
+            JSONOutputHandler().writeData(payload, label: nil)
+        } else {
+            print(formatter.success("Pipeline completed"))
+            print("output: \(result.outputFile.path)")
+            print("index:  \(result.indexFile?.path ?? "none")")
+            print("clumpified: \(result.wasClumpified)")
+            print("size: \(result.originalSizeBytes) -> \(result.finalSizeBytes) bytes")
+        }
+
+        if stats {
+            let statsLimit = max(0, sampleLimit)
+            if !globalOptions.quiet {
+                print("")
+                print(formatter.info("Computing statistics (sampleLimit=\(statsLimit))..."))
+            }
+            let reader = FASTQReader()
+            let (summary, _) = try await reader.computeStatistics(
+                from: result.outputFile,
+                sampleLimit: statsLimit,
+                progress: { count in
+                    guard !globalOptions.quiet else { return }
+                    if count > 0, count % 100_000 == 0 {
+                        print("  processed \(count) reads")
+                    }
+                }
+            )
+            if globalOptions.outputFormat == .json {
+                let statsPayload = FastqStatsPayload(
+                    readCount: summary.readCount,
+                    baseCount: summary.baseCount,
+                    meanReadLength: summary.meanReadLength,
+                    q30Percentage: summary.q30Percentage,
+                    gcPercentage: summary.gcContent * 100.0
+                )
+                JSONOutputHandler().writeData(statsPayload, label: nil)
+            } else {
+                print(formatter.success("Stats complete"))
+                print("reads: \(summary.readCount)")
+                print("bases: \(summary.baseCount)")
+                print(String(format: "mean read length: %.2f", summary.meanReadLength))
+                print(String(format: "Q30 %%: %.2f", summary.q30Percentage))
+                print(String(format: "GC %%: %.2f", summary.gcContent * 100.0))
+            }
+        }
+    }
+}
+
+private struct FastqIngestResultPayload: Codable {
+    let outputFile: String
+    let indexFile: String?
+    let wasClumpified: Bool
+    let qualityBinning: String
+    let originalFilenames: [String]
+    let originalSizeBytes: Int64
+    let finalSizeBytes: Int64
+    let pairingMode: String
+}
+
+private struct FastqStatsPayload: Codable {
+    let readCount: Int
+    let baseCount: Int64
+    let meanReadLength: Double
+    let q30Percentage: Double
+    let gcPercentage: Double
 }
 
 // MARK: - Workflow Log Parser
