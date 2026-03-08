@@ -320,7 +320,7 @@ public actor FASTQDerivativeService {
         try writer.open()
         defer { try? writer.close() }
 
-        for try await record in reader.streamRecords(from: rootFASTQ) {
+        for try await record in reader.records(from: rootFASTQ) {
             let key = normalizedIdentifier(record.identifier)
             if let remaining = mutableCounts[key], remaining > 0 {
                 try writer.write(record)
@@ -342,7 +342,7 @@ public actor FASTQDerivativeService {
         defer { try? handle.close() }
 
         var count = 0
-        for try await record in reader.streamRecords(from: fastqURL) {
+        for try await record in reader.records(from: fastqURL) {
             let line = normalizedIdentifier(record.identifier) + "\n"
             try handle.write(contentsOf: Data(line.utf8))
             count += 1
@@ -417,7 +417,7 @@ public actor FASTQDerivativeService {
         var buffer: FASTQRecord?
         var seen: Set<String> = []
 
-        for try await record in reader.streamRecords(from: sourceFASTQ) {
+        for try await record in reader.records(from: sourceFASTQ) {
             if let first = buffer {
                 let second = record
                 let key = pairedKey(first: first, second: second, mode: mode)

@@ -1648,6 +1648,14 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         }
     }
 
+    private func requestInspectorDocumentModeAfterDownload() {
+        NotificationCenter.default.post(
+            name: .showInspectorRequested,
+            object: nil,
+            userInfo: [NotificationUserInfoKey.inspectorTab: "document"]
+        )
+    }
+
     private struct SeqkitSummary {
         let numSeqs: Int
         let sumLen: Int64

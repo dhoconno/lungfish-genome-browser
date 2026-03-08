@@ -590,10 +590,11 @@ public struct DocumentSection: View {
                 metadataRow(label: "Root", value: manifest.rootBundleRelativePath)
                 metadataRow(label: "Root FASTQ", value: manifest.rootFASTQFilename)
                 metadataRow(label: "Read IDs", value: manifest.readIDListFilename)
-                metadataRow(label: "Created", value: dateString(manifest.createdAt))
+                metadataRow(label: "Created", value: formatDate(manifest.createdAt))
             }
         } label: {
-            sectionLabel("Derived FASTQ")
+            Text("Derived FASTQ")
+                .font(.headline)
         }
     }
 
