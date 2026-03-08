@@ -8,20 +8,13 @@ import LungfishIO
 @MainActor
 public final class FASTQDatasetViewController: NSViewController {
 
-    // MARK: - Chart Tabs
+    // MARK: - Operation Categories
 
-    private enum ChartTab: Int, CaseIterable {
-        case lengthDistribution = 0
-        case qualityPerPosition = 1
-        case qualityScoreDistribution = 2
-
-        var title: String {
-            switch self {
-            case .lengthDistribution: return "Length Distribution"
-            case .qualityPerPosition: return "Quality / Position"
-            case .qualityScoreDistribution: return "Q Score Distribution"
-            }
-        }
+    private struct OperationItem {
+        let kind: OperationKind
+        let title: String
+        let sfSymbol: String
+        let category: String
     }
 
     private enum OperationKind: Int, CaseIterable {
@@ -31,6 +24,14 @@ public final class FASTQDatasetViewController: NSViewController {
         case searchText
         case searchMotif
         case deduplicate
+        case qualityTrim
+        case adapterTrim
+        case fixedTrim
+        case contaminantFilter
+        case pairedEndMerge
+        case pairedEndRepair
+        case primerRemoval
+        case errorCorrection
 
         var title: String {
             switch self {
@@ -40,9 +41,78 @@ public final class FASTQDatasetViewController: NSViewController {
             case .searchText: return "Find by ID/Description"
             case .searchMotif: return "Find by Sequence Motif"
             case .deduplicate: return "Remove Duplicates"
+            case .qualityTrim: return "Quality Trim"
+            case .adapterTrim: return "Adapter Removal"
+            case .fixedTrim: return "Fixed Trim (5'/3')"
+            case .contaminantFilter: return "Contaminant Filter"
+            case .pairedEndMerge: return "Merge Overlapping Pairs"
+            case .pairedEndRepair: return "Repair Paired Reads"
+            case .primerRemoval: return "Custom Primer Removal"
+            case .errorCorrection: return "Error Correction"
+            }
+        }
+
+        var sfSymbol: String {
+            switch self {
+            case .subsampleProportion: return "chart.pie"
+            case .subsampleCount: return "number"
+            case .lengthFilter: return "arrow.left.and.right"
+            case .searchText: return "magnifyingglass"
+            case .searchMotif: return "text.magnifyingglass"
+            case .deduplicate: return "square.on.square.dashed"
+            case .qualityTrim: return "scissors"
+            case .adapterTrim: return "minus.circle"
+            case .fixedTrim: return "ruler"
+            case .contaminantFilter: return "shield.slash"
+            case .pairedEndMerge: return "arrow.triangle.merge"
+            case .pairedEndRepair: return "wrench.and.screwdriver"
+            case .primerRemoval: return "xmark.seal"
+            case .errorCorrection: return "wand.and.stars"
+            }
+        }
+
+        var category: String {
+            switch self {
+            case .subsampleProportion, .subsampleCount: return "SAMPLING"
+            case .qualityTrim, .adapterTrim, .fixedTrim, .primerRemoval: return "TRIMMING"
+            case .lengthFilter, .contaminantFilter, .deduplicate: return "FILTERING"
+            case .errorCorrection: return "CORRECTION"
+            case .pairedEndMerge, .pairedEndRepair: return "REFORMATTING"
+            case .searchText, .searchMotif: return "SEARCH"
+            }
+        }
+
+        var previewKind: OperationPreviewView.OperationKind {
+            switch self {
+            case .subsampleProportion: return .subsampleProportion
+            case .subsampleCount: return .subsampleCount
+            case .lengthFilter: return .lengthFilter
+            case .searchText: return .searchText
+            case .searchMotif: return .searchMotif
+            case .deduplicate: return .deduplicate
+            case .qualityTrim: return .qualityTrim
+            case .adapterTrim: return .adapterTrim
+            case .fixedTrim: return .fixedTrim
+            case .contaminantFilter: return .contaminantFilter
+            case .pairedEndMerge: return .pairedEndMerge
+            case .pairedEndRepair: return .pairedEndRepair
+            case .primerRemoval: return .primerRemoval
+            case .errorCorrection: return .errorCorrection
             }
         }
     }
+
+    // MARK: - Sidebar Data
+
+    /// Category headers + operation items for the source list sidebar.
+    private static let categories: [(header: String, items: [OperationKind])] = [
+        ("SAMPLING", [.subsampleProportion, .subsampleCount]),
+        ("TRIMMING", [.qualityTrim, .adapterTrim, .fixedTrim, .primerRemoval]),
+        ("FILTERING", [.lengthFilter, .contaminantFilter, .deduplicate]),
+        ("CORRECTION", [.errorCorrection]),
+        ("REFORMATTING", [.pairedEndMerge, .pairedEndRepair]),
+        ("SEARCH", [.searchText, .searchMotif]),
+    ]
 
     // MARK: - Properties
 
@@ -50,33 +120,39 @@ public final class FASTQDatasetViewController: NSViewController {
     private var fastqURL: URL?
     private var sourceURL: URL?
     private var derivativeManifest: FASTQDerivedBundleManifest?
-    private var activeChartTab: ChartTab = .lengthDistribution
+    private var selectedOperation: OperationKind?
     private var qualityReportTask: Task<Void, Never>?
     private var operationTask: Task<Void, Never>?
 
     public var onStatisticsUpdated: ((FASTQDatasetStatistics) -> Void)?
     public var onRunOperation: ((FASTQDerivativeRequest) async throws -> Void)?
 
-    // MARK: - UI Components
+    // MARK: - UI Components — Two-Pane Split
 
-    private let splitView = NSSplitView()
+    private let mainSplitView = NSSplitView()
     private let topPane = NSView()
-    private let bottomPane = NSView()
+    private let middlePane = NSView()
 
+    // Top Pane: Summary + Sparklines
     private let summaryBar = FASTQSummaryBar()
-    private let chartControlsRow = NSView()
-    private let tabBar = NSSegmentedControl()
+    private let sparklineStrip = FASTQSparklineStrip()
+    private let qualityReportButton = NSButton(title: "Compute Quality Report", target: nil, action: nil)
 
-    private let chartContainer = NSView()
-    private let lengthHistogramView = FASTQHistogramChartView()
-    private let qualityBoxplotView = FASTQQualityBoxplotView()
-    private let qualityScoreHistogramView = FASTQHistogramChartView()
+    // Middle Pane: Sidebar + Preview (inner split for resizable sidebar)
+    private let middleSplitView = NSSplitView()
+    private let sidebarPane = NSView()
+    private let previewPane = NSView()
+    private let operationSidebar = NSTableView()
+    private let operationScrollView = NSScrollView()
+    private let parameterBar = NSStackView()
+    private let previewCanvas = OperationPreviewView()
+    private let runBar = NSView()
+    private let runButton = NSButton(title: "Run", target: nil, action: nil)
+    private let outputEstimateLabel = NSTextField(labelWithString: "")
+    private let statusLabel = NSTextField(labelWithString: "")
+    private let progressIndicator = NSProgressIndicator()
 
-    private let consoleTitleLabel = NSTextField(labelWithString: "FASTQ Operations")
-    private let consoleScrollView = NSScrollView()
-    private let consoleTextView = NSTextView()
-
-    private let operationPopup = NSPopUpButton()
+    // Parameter controls (reused across operations)
     private let fieldOneLabel = NSTextField(labelWithString: "")
     private let fieldTwoLabel = NSTextField(labelWithString: "")
     private let fieldOneInput = NSTextField(string: "")
@@ -84,14 +160,14 @@ public final class FASTQDatasetViewController: NSViewController {
     private let searchFieldPopup = NSPopUpButton()
     private let dedupModePopup = NSPopUpButton()
     private let regexCheckbox = NSButton(checkboxWithTitle: "Regex", target: nil, action: nil)
-    private let pairedAwareCheckbox = NSButton(checkboxWithTitle: "Paired-aware deduplication", target: nil, action: nil)
-
-    private let runOperationButton = NSButton(title: "Run Operation", target: nil, action: nil)
-    private let computeQualityButton = NSButton(title: "Compute Quality Report", target: nil, action: nil)
-    private let qualityStatusBadge = NSTextField(labelWithString: "")
-
-    private let progressIndicator = NSProgressIndicator()
-    private let progressLabel = NSTextField(labelWithString: "")
+    private let revCompCheckbox = NSButton(checkboxWithTitle: "Rev. Comp.", target: nil, action: nil)
+    private let pairedAwareCheckbox = NSButton(checkboxWithTitle: "Paired-aware", target: nil, action: nil)
+    private let qualityTrimModePopup = NSPopUpButton()
+    private let adapterModePopup = NSPopUpButton()
+    private let contaminantModePopup = NSPopUpButton()
+    private let mergeStrictnessPopup = NSPopUpButton()
+    private let primerSourcePopup = NSPopUpButton()
+    private let interleaveDirectionPopup = NSPopUpButton()
 
     // MARK: - Lifecycle
 
@@ -104,12 +180,14 @@ public final class FASTQDatasetViewController: NSViewController {
         view = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
         view.wantsLayer = true
 
-        configureSplitView()
+        configureMainSplitView()
         configureTopPane()
-        configureBottomPane()
-        layoutSplitView()
-        updateOperationInputs()
-        updateQualityControls()
+        configureMiddlePane()
+    }
+
+    public override func viewDidLayout() {
+        super.viewDidLayout()
+        updateSplitPositions()
     }
 
     // MARK: - Public API
@@ -126,78 +204,60 @@ public final class FASTQDatasetViewController: NSViewController {
         self.fastqURL = fastqURL
         self.sourceURL = sourceURL
         self.derivativeManifest = derivativeManifest
-        self.activeChartTab = .lengthDistribution
 
         summaryBar.update(with: statistics)
-        updateCharts()
-        updateQualityControls()
-        appendConsole("Loaded dataset: \(statistics.readCount) reads")
+        sparklineStrip.update(with: statistics)
+        previewCanvas.update(operation: selectedOperation?.previewKind ?? .none, statistics: statistics)
+        updateQualityReportButton()
+        setStatus("Loaded: \(statistics.readCount) reads")
         if let derivativeManifest {
-            appendConsole("Derived dataset: \(derivativeManifest.operation.displaySummary)")
+            setStatus("Derived: \(derivativeManifest.operation.displaySummary)")
         }
     }
 
-    // MARK: - Setup
+    // MARK: - Main Split View
 
-    private func configureSplitView() {
-        splitView.translatesAutoresizingMaskIntoConstraints = false
-        splitView.isVertical = false
-        splitView.dividerStyle = .thin
-        splitView.adjustSubviews()
-        view.addSubview(splitView)
+    private func configureMainSplitView() {
+        mainSplitView.translatesAutoresizingMaskIntoConstraints = false
+        mainSplitView.isVertical = false
+        mainSplitView.dividerStyle = .thin
+        mainSplitView.delegate = self
+        view.addSubview(mainSplitView)
 
-        topPane.translatesAutoresizingMaskIntoConstraints = false
-        bottomPane.translatesAutoresizingMaskIntoConstraints = false
-        splitView.addSubview(topPane)
-        splitView.addSubview(bottomPane)
+        for pane in [topPane, middlePane] {
+            pane.translatesAutoresizingMaskIntoConstraints = false
+            mainSplitView.addSubview(pane)
+        }
 
         NSLayoutConstraint.activate([
-            splitView.topAnchor.constraint(equalTo: view.topAnchor),
-            splitView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            splitView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            splitView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            mainSplitView.topAnchor.constraint(equalTo: view.topAnchor),
+            mainSplitView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            mainSplitView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            mainSplitView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
 
-        topPane.heightAnchor.constraint(greaterThanOrEqualToConstant: 260).isActive = true
-        bottomPane.heightAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
+        topPane.heightAnchor.constraint(greaterThanOrEqualToConstant: 80).isActive = true
+        middlePane.heightAnchor.constraint(greaterThanOrEqualToConstant: 200).isActive = true
     }
+
+    // MARK: - Top Pane: Summary + Sparklines
 
     private func configureTopPane() {
         summaryBar.translatesAutoresizingMaskIntoConstraints = false
         topPane.addSubview(summaryBar)
 
-        chartControlsRow.translatesAutoresizingMaskIntoConstraints = false
-        topPane.addSubview(chartControlsRow)
-
-        tabBar.segmentCount = ChartTab.allCases.count
-        for tab in ChartTab.allCases {
-            tabBar.setLabel(tab.title, forSegment: tab.rawValue)
-            tabBar.setWidth(0, forSegment: tab.rawValue)
+        sparklineStrip.translatesAutoresizingMaskIntoConstraints = false
+        sparklineStrip.onComputeQualityReport = { [weak self] in
+            self?.computeQualityReportClicked()
         }
-        tabBar.selectedSegment = ChartTab.lengthDistribution.rawValue
-        tabBar.segmentStyle = .texturedRounded
-        tabBar.target = self
-        tabBar.action = #selector(chartTabChanged(_:))
-        tabBar.translatesAutoresizingMaskIntoConstraints = false
-        chartControlsRow.addSubview(tabBar)
+        topPane.addSubview(sparklineStrip)
 
-        chartContainer.translatesAutoresizingMaskIntoConstraints = false
-        chartContainer.wantsLayer = true
-        topPane.addSubview(chartContainer)
-
-        for chart in [lengthHistogramView, qualityBoxplotView, qualityScoreHistogramView] as [NSView] {
-            chart.translatesAutoresizingMaskIntoConstraints = false
-            chartContainer.addSubview(chart)
-            NSLayoutConstraint.activate([
-                chart.topAnchor.constraint(equalTo: chartContainer.topAnchor),
-                chart.leadingAnchor.constraint(equalTo: chartContainer.leadingAnchor),
-                chart.trailingAnchor.constraint(equalTo: chartContainer.trailingAnchor),
-                chart.bottomAnchor.constraint(equalTo: chartContainer.bottomAnchor),
-            ])
-        }
-
-        qualityBoxplotView.isHidden = true
-        qualityScoreHistogramView.isHidden = true
+        qualityReportButton.translatesAutoresizingMaskIntoConstraints = false
+        qualityReportButton.bezelStyle = .accessoryBarAction
+        qualityReportButton.font = .systemFont(ofSize: 11, weight: .medium)
+        qualityReportButton.target = self
+        qualityReportButton.action = #selector(qualityReportButtonClicked(_:))
+        topPane.addSubview(qualityReportButton)
 
         NSLayoutConstraint.activate([
             summaryBar.topAnchor.constraint(equalTo: topPane.topAnchor),
@@ -205,361 +265,439 @@ public final class FASTQDatasetViewController: NSViewController {
             summaryBar.trailingAnchor.constraint(equalTo: topPane.trailingAnchor),
             summaryBar.heightAnchor.constraint(equalToConstant: 48),
 
-            chartControlsRow.topAnchor.constraint(equalTo: summaryBar.bottomAnchor, constant: 4),
-            chartControlsRow.leadingAnchor.constraint(equalTo: topPane.leadingAnchor),
-            chartControlsRow.trailingAnchor.constraint(equalTo: topPane.trailingAnchor),
-            chartControlsRow.heightAnchor.constraint(equalToConstant: 30),
+            sparklineStrip.topAnchor.constraint(equalTo: summaryBar.bottomAnchor, constant: 2),
+            sparklineStrip.leadingAnchor.constraint(equalTo: topPane.leadingAnchor),
+            sparklineStrip.trailingAnchor.constraint(equalTo: topPane.trailingAnchor),
+            sparklineStrip.heightAnchor.constraint(equalToConstant: 52),
+            sparklineStrip.bottomAnchor.constraint(lessThanOrEqualTo: topPane.bottomAnchor),
 
-            tabBar.leadingAnchor.constraint(equalTo: chartControlsRow.leadingAnchor, constant: 8),
-            tabBar.centerYAnchor.constraint(equalTo: chartControlsRow.centerYAnchor),
-
-            chartContainer.topAnchor.constraint(equalTo: chartControlsRow.bottomAnchor, constant: 4),
-            chartContainer.leadingAnchor.constraint(equalTo: topPane.leadingAnchor),
-            chartContainer.trailingAnchor.constraint(equalTo: topPane.trailingAnchor),
-            chartContainer.bottomAnchor.constraint(equalTo: topPane.bottomAnchor),
+            qualityReportButton.trailingAnchor.constraint(equalTo: topPane.trailingAnchor, constant: -8),
+            qualityReportButton.centerYAnchor.constraint(equalTo: sparklineStrip.centerYAnchor),
         ])
     }
 
-    private func configureBottomPane() {
-        consoleTitleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
-        consoleTitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        bottomPane.addSubview(consoleTitleLabel)
+    // MARK: - Middle Pane: Operation Sidebar + Preview (resizable split)
 
-        operationPopup.addItems(withTitles: OperationKind.allCases.map(\.title))
-        operationPopup.target = self
-        operationPopup.action = #selector(operationSelectionChanged(_:))
-        operationPopup.translatesAutoresizingMaskIntoConstraints = false
-        bottomPane.addSubview(operationPopup)
+    private func configureMiddlePane() {
+        // Inner horizontal split: sidebar | preview
+        middleSplitView.translatesAutoresizingMaskIntoConstraints = false
+        middleSplitView.isVertical = true
+        middleSplitView.dividerStyle = .thin
+        middleSplitView.delegate = self
+        middlePane.addSubview(middleSplitView)
 
-        fieldOneLabel.font = .systemFont(ofSize: 12)
-        fieldTwoLabel.font = .systemFont(ofSize: 12)
-        fieldOneLabel.translatesAutoresizingMaskIntoConstraints = false
-        fieldTwoLabel.translatesAutoresizingMaskIntoConstraints = false
-        fieldOneInput.translatesAutoresizingMaskIntoConstraints = false
-        fieldTwoInput.translatesAutoresizingMaskIntoConstraints = false
+        sidebarPane.translatesAutoresizingMaskIntoConstraints = false
+        previewPane.translatesAutoresizingMaskIntoConstraints = false
+        middleSplitView.addSubview(sidebarPane)
+        middleSplitView.addSubview(previewPane)
 
+        NSLayoutConstraint.activate([
+            middleSplitView.topAnchor.constraint(equalTo: middlePane.topAnchor),
+            middleSplitView.leadingAnchor.constraint(equalTo: middlePane.leadingAnchor),
+            middleSplitView.trailingAnchor.constraint(equalTo: middlePane.trailingAnchor),
+            middleSplitView.bottomAnchor.constraint(equalTo: middlePane.bottomAnchor),
+        ])
+
+        // Operation sidebar (source list style)
+        operationSidebar.style = .sourceList
+        operationSidebar.headerView = nil
+        operationSidebar.usesAlternatingRowBackgroundColors = false
+        operationSidebar.selectionHighlightStyle = .sourceList
+        operationSidebar.rowHeight = 24
+        operationSidebar.target = self
+        operationSidebar.action = #selector(operationSidebarClicked(_:))
+
+        let iconColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("icon"))
+        iconColumn.width = 20
+        iconColumn.maxWidth = 20
+        operationSidebar.addTableColumn(iconColumn)
+
+        let nameColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
+        nameColumn.width = 200
+        nameColumn.resizingMask = .autoresizingMask
+        operationSidebar.addTableColumn(nameColumn)
+
+        operationSidebar.dataSource = self
+        operationSidebar.delegate = self
+
+        operationScrollView.documentView = operationSidebar
+        operationScrollView.hasVerticalScroller = true
+        operationScrollView.autohidesScrollers = true
+        operationScrollView.drawsBackground = false
+        operationScrollView.translatesAutoresizingMaskIntoConstraints = false
+        sidebarPane.addSubview(operationScrollView)
+
+        NSLayoutConstraint.activate([
+            operationScrollView.topAnchor.constraint(equalTo: sidebarPane.topAnchor),
+            operationScrollView.leadingAnchor.constraint(equalTo: sidebarPane.leadingAnchor),
+            operationScrollView.trailingAnchor.constraint(equalTo: sidebarPane.trailingAnchor),
+            operationScrollView.bottomAnchor.constraint(equalTo: sidebarPane.bottomAnchor),
+        ])
+
+        // Preview area
+        configureParameterBar()
+        previewPane.addSubview(parameterBar)
+
+        previewCanvas.translatesAutoresizingMaskIntoConstraints = false
+        previewCanvas.wantsLayer = true
+        previewPane.addSubview(previewCanvas)
+
+        configureRunBar()
+        previewPane.addSubview(runBar)
+
+        NSLayoutConstraint.activate([
+            parameterBar.topAnchor.constraint(equalTo: previewPane.topAnchor),
+            parameterBar.leadingAnchor.constraint(equalTo: previewPane.leadingAnchor),
+            parameterBar.trailingAnchor.constraint(equalTo: previewPane.trailingAnchor),
+            parameterBar.heightAnchor.constraint(equalToConstant: 36),
+
+            previewCanvas.topAnchor.constraint(equalTo: parameterBar.bottomAnchor, constant: 1),
+            previewCanvas.leadingAnchor.constraint(equalTo: previewPane.leadingAnchor),
+            previewCanvas.trailingAnchor.constraint(equalTo: previewPane.trailingAnchor),
+            previewCanvas.bottomAnchor.constraint(equalTo: runBar.topAnchor, constant: -1),
+
+            runBar.leadingAnchor.constraint(equalTo: previewPane.leadingAnchor),
+            runBar.trailingAnchor.constraint(equalTo: previewPane.trailingAnchor),
+            runBar.bottomAnchor.constraint(equalTo: previewPane.bottomAnchor),
+            runBar.heightAnchor.constraint(equalToConstant: 36),
+        ])
+    }
+
+    private func configureParameterBar() {
+        parameterBar.translatesAutoresizingMaskIntoConstraints = false
+        parameterBar.orientation = .horizontal
+        parameterBar.distribution = .fill
+        parameterBar.spacing = 12
+        parameterBar.edgeInsets = NSEdgeInsets(top: 4, left: 12, bottom: 4, right: 12)
+
+        // Initialize popups
         searchFieldPopup.addItems(withTitles: ["ID", "Description"])
-        searchFieldPopup.translatesAutoresizingMaskIntoConstraints = false
-
         dedupModePopup.addItems(withTitles: ["Identifier", "Description", "Sequence"])
-        dedupModePopup.translatesAutoresizingMaskIntoConstraints = false
+        qualityTrimModePopup.addItems(withTitles: ["Cut Right (3')", "Cut Front (5')", "Cut Tail", "Cut Both"])
+        adapterModePopup.addItems(withTitles: ["Auto-Detect", "Specify Sequence"])
+        contaminantModePopup.addItems(withTitles: ["PhiX Spike-in", "Custom Reference"])
+        mergeStrictnessPopup.addItems(withTitles: ["Normal", "Strict"])
+        primerSourcePopup.addItems(withTitles: ["Literal Sequence", "Reference FASTA"])
+        interleaveDirectionPopup.addItems(withTitles: ["Interleave (R1+R2 → one)", "Deinterleave (one → R1+R2)"])
+
+        for control in [fieldOneLabel, fieldTwoLabel] {
+            control.font = .systemFont(ofSize: 10, weight: .medium)
+            control.textColor = .secondaryLabelColor
+            control.translatesAutoresizingMaskIntoConstraints = false
+        }
+
+        for field in [fieldOneInput, fieldTwoInput] {
+            field.font = .systemFont(ofSize: 12)
+            field.translatesAutoresizingMaskIntoConstraints = false
+            field.widthAnchor.constraint(equalToConstant: 80).isActive = true
+            field.delegate = self
+        }
+
+        for popup in [searchFieldPopup, dedupModePopup, qualityTrimModePopup, adapterModePopup,
+                       contaminantModePopup, mergeStrictnessPopup, primerSourcePopup,
+                       interleaveDirectionPopup] {
+            popup.font = .systemFont(ofSize: 12)
+            popup.translatesAutoresizingMaskIntoConstraints = false
+            popup.target = self
+            popup.action = #selector(parameterPopupChanged(_:))
+        }
 
         regexCheckbox.translatesAutoresizingMaskIntoConstraints = false
+        regexCheckbox.target = self
+        regexCheckbox.action = #selector(parameterCheckboxChanged(_:))
+        revCompCheckbox.translatesAutoresizingMaskIntoConstraints = false
+        revCompCheckbox.target = self
+        revCompCheckbox.action = #selector(parameterCheckboxChanged(_:))
         pairedAwareCheckbox.translatesAutoresizingMaskIntoConstraints = false
+        pairedAwareCheckbox.target = self
+        pairedAwareCheckbox.action = #selector(parameterCheckboxChanged(_:))
+    }
 
-        runOperationButton.bezelStyle = .rounded
-        runOperationButton.target = self
-        runOperationButton.action = #selector(runOperationClicked(_:))
-        runOperationButton.translatesAutoresizingMaskIntoConstraints = false
+    private func configureRunBar() {
+        runBar.translatesAutoresizingMaskIntoConstraints = false
 
-        computeQualityButton.bezelStyle = .rounded
-        computeQualityButton.target = self
-        computeQualityButton.action = #selector(computeQualityReportClicked(_:))
-        computeQualityButton.translatesAutoresizingMaskIntoConstraints = false
+        // Top border
+        let border = NSBox()
+        border.boxType = .separator
+        border.translatesAutoresizingMaskIntoConstraints = false
+        runBar.addSubview(border)
 
-        qualityStatusBadge.font = .systemFont(ofSize: 11, weight: .semibold)
-        qualityStatusBadge.alignment = .center
-        qualityStatusBadge.wantsLayer = true
-        qualityStatusBadge.layer?.cornerRadius = 6
-        qualityStatusBadge.translatesAutoresizingMaskIntoConstraints = false
+        // Status label (replaces bottom activity panel)
+        statusLabel.font = .systemFont(ofSize: 10)
+        statusLabel.textColor = .tertiaryLabelColor
+        statusLabel.lineBreakMode = .byTruncatingTail
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        runBar.addSubview(statusLabel)
+
+        outputEstimateLabel.font = .systemFont(ofSize: 11)
+        outputEstimateLabel.textColor = .secondaryLabelColor
+        outputEstimateLabel.translatesAutoresizingMaskIntoConstraints = false
+        runBar.addSubview(outputEstimateLabel)
 
         progressIndicator.style = .spinning
         progressIndicator.controlSize = .small
         progressIndicator.isDisplayedWhenStopped = false
         progressIndicator.translatesAutoresizingMaskIntoConstraints = false
+        runBar.addSubview(progressIndicator)
 
-        progressLabel.font = .systemFont(ofSize: 11)
-        progressLabel.textColor = .secondaryLabelColor
-        progressLabel.isHidden = true
-        progressLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        for subview in [
-            fieldOneLabel, fieldOneInput,
-            fieldTwoLabel, fieldTwoInput,
-            searchFieldPopup, dedupModePopup,
-            regexCheckbox, pairedAwareCheckbox,
-            runOperationButton, computeQualityButton,
-            qualityStatusBadge, progressIndicator, progressLabel,
-        ] {
-            bottomPane.addSubview(subview)
-        }
-
-        consoleScrollView.translatesAutoresizingMaskIntoConstraints = false
-        consoleScrollView.borderType = .bezelBorder
-        consoleScrollView.hasVerticalScroller = true
-        consoleScrollView.drawsBackground = true
-        consoleScrollView.backgroundColor = .textBackgroundColor
-
-        consoleTextView.isEditable = false
-        consoleTextView.isSelectable = true
-        consoleTextView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        consoleTextView.string = ""
-        consoleScrollView.documentView = consoleTextView
-        bottomPane.addSubview(consoleScrollView)
+        runButton.bezelStyle = .rounded
+        runButton.keyEquivalent = "\r"
+        runButton.keyEquivalentModifierMask = .command
+        runButton.target = self
+        runButton.action = #selector(runOperationClicked(_:))
+        runButton.translatesAutoresizingMaskIntoConstraints = false
+        runButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 64).isActive = true
+        runBar.addSubview(runButton)
 
         NSLayoutConstraint.activate([
-            consoleTitleLabel.topAnchor.constraint(equalTo: bottomPane.topAnchor, constant: 8),
-            consoleTitleLabel.leadingAnchor.constraint(equalTo: bottomPane.leadingAnchor, constant: 8),
+            border.topAnchor.constraint(equalTo: runBar.topAnchor),
+            border.leadingAnchor.constraint(equalTo: runBar.leadingAnchor),
+            border.trailingAnchor.constraint(equalTo: runBar.trailingAnchor),
+            border.heightAnchor.constraint(equalToConstant: 1),
 
-            operationPopup.topAnchor.constraint(equalTo: consoleTitleLabel.bottomAnchor, constant: 8),
-            operationPopup.leadingAnchor.constraint(equalTo: bottomPane.leadingAnchor, constant: 8),
-            operationPopup.widthAnchor.constraint(equalToConstant: 240),
+            statusLabel.leadingAnchor.constraint(equalTo: runBar.leadingAnchor, constant: 12),
+            statusLabel.centerYAnchor.constraint(equalTo: runBar.centerYAnchor),
+            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: outputEstimateLabel.leadingAnchor, constant: -8),
 
-            fieldOneLabel.topAnchor.constraint(equalTo: operationPopup.topAnchor),
-            fieldOneLabel.leadingAnchor.constraint(equalTo: operationPopup.trailingAnchor, constant: 12),
-            fieldOneLabel.widthAnchor.constraint(equalToConstant: 120),
+            outputEstimateLabel.centerXAnchor.constraint(equalTo: runBar.centerXAnchor),
+            outputEstimateLabel.centerYAnchor.constraint(equalTo: runBar.centerYAnchor),
 
-            fieldOneInput.topAnchor.constraint(equalTo: fieldOneLabel.bottomAnchor, constant: 4),
-            fieldOneInput.leadingAnchor.constraint(equalTo: fieldOneLabel.leadingAnchor),
-            fieldOneInput.widthAnchor.constraint(equalToConstant: 150),
+            progressIndicator.trailingAnchor.constraint(equalTo: runButton.leadingAnchor, constant: -8),
+            progressIndicator.centerYAnchor.constraint(equalTo: runBar.centerYAnchor),
 
-            fieldTwoLabel.topAnchor.constraint(equalTo: operationPopup.topAnchor),
-            fieldTwoLabel.leadingAnchor.constraint(equalTo: fieldOneInput.trailingAnchor, constant: 12),
-            fieldTwoLabel.widthAnchor.constraint(equalToConstant: 120),
-
-            fieldTwoInput.topAnchor.constraint(equalTo: fieldTwoLabel.bottomAnchor, constant: 4),
-            fieldTwoInput.leadingAnchor.constraint(equalTo: fieldTwoLabel.leadingAnchor),
-            fieldTwoInput.widthAnchor.constraint(equalToConstant: 150),
-
-            searchFieldPopup.topAnchor.constraint(equalTo: operationPopup.topAnchor),
-            searchFieldPopup.leadingAnchor.constraint(equalTo: fieldTwoInput.trailingAnchor, constant: 12),
-            searchFieldPopup.widthAnchor.constraint(equalToConstant: 120),
-
-            dedupModePopup.topAnchor.constraint(equalTo: operationPopup.topAnchor),
-            dedupModePopup.leadingAnchor.constraint(equalTo: fieldTwoInput.trailingAnchor, constant: 12),
-            dedupModePopup.widthAnchor.constraint(equalToConstant: 140),
-
-            regexCheckbox.topAnchor.constraint(equalTo: fieldOneInput.bottomAnchor, constant: 6),
-            regexCheckbox.leadingAnchor.constraint(equalTo: fieldOneInput.leadingAnchor),
-
-            pairedAwareCheckbox.topAnchor.constraint(equalTo: fieldOneInput.bottomAnchor, constant: 6),
-            pairedAwareCheckbox.leadingAnchor.constraint(equalTo: dedupModePopup.leadingAnchor),
-
-            runOperationButton.topAnchor.constraint(equalTo: operationPopup.topAnchor),
-            runOperationButton.trailingAnchor.constraint(equalTo: bottomPane.trailingAnchor, constant: -8),
-
-            computeQualityButton.topAnchor.constraint(equalTo: runOperationButton.bottomAnchor, constant: 6),
-            computeQualityButton.trailingAnchor.constraint(equalTo: bottomPane.trailingAnchor, constant: -8),
-
-            qualityStatusBadge.centerYAnchor.constraint(equalTo: computeQualityButton.centerYAnchor),
-            qualityStatusBadge.trailingAnchor.constraint(equalTo: computeQualityButton.leadingAnchor, constant: -8),
-            qualityStatusBadge.heightAnchor.constraint(equalToConstant: 20),
-            qualityStatusBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: 118),
-
-            progressLabel.centerYAnchor.constraint(equalTo: qualityStatusBadge.centerYAnchor),
-            progressLabel.trailingAnchor.constraint(equalTo: qualityStatusBadge.leadingAnchor, constant: -8),
-
-            progressIndicator.centerYAnchor.constraint(equalTo: progressLabel.centerYAnchor),
-            progressIndicator.trailingAnchor.constraint(equalTo: progressLabel.leadingAnchor, constant: -6),
-
-            consoleScrollView.topAnchor.constraint(equalTo: regexCheckbox.bottomAnchor, constant: 10),
-            consoleScrollView.leadingAnchor.constraint(equalTo: bottomPane.leadingAnchor, constant: 8),
-            consoleScrollView.trailingAnchor.constraint(equalTo: bottomPane.trailingAnchor, constant: -8),
-            consoleScrollView.bottomAnchor.constraint(equalTo: bottomPane.bottomAnchor, constant: -8),
+            runButton.trailingAnchor.constraint(equalTo: runBar.trailingAnchor, constant: -12),
+            runButton.centerYAnchor.constraint(equalTo: runBar.centerYAnchor),
         ])
+
+        runButton.isEnabled = false
     }
 
-    private func layoutSplitView() {
-        splitView.setPosition(view.bounds.height * 0.56, ofDividerAt: 0)
+    // MARK: - Split View Layout
+
+    private func updateSplitPositions() {
+        let viewHeight = view.bounds.height
+        guard viewHeight > 200 else { return }
+
+        // Top pane: summary + sparklines (~108pt)
+        let topHeight = min(viewHeight * 0.18, 130)
+        mainSplitView.setPosition(topHeight, ofDividerAt: 0)
+
+        // Sidebar default width — wide enough to show full operation names
+        middleSplitView.setPosition(240, ofDividerAt: 0)
     }
 
-    // MARK: - Updates
+    // MARK: - Parameter Bar Updates
 
-    private func updateCharts() {
-        guard let stats = statistics else { return }
-
-        let lengthBins = stats.readLengthHistogram
-            .sorted { $0.key < $1.key }
-            .map { (key: $0.key, value: $0.value) }
-
-        lengthHistogramView.update(with: .init(
-            title: "Read Length Distribution",
-            xLabel: "Read Length (bp)",
-            yLabel: "Count",
-            bins: lengthBins,
-            barColor: .systemBlue
-        ))
-
-        let qBins = stats.qualityScoreHistogram.sorted { $0.key < $1.key }
-            .map { (key: Int($0.key), value: $0.value) }
-
-        qualityScoreHistogramView.update(with: .init(
-            title: "Quality Score Distribution",
-            xLabel: "Quality Score (Phred)",
-            yLabel: "Base Count",
-            bins: qBins,
-            barColor: .systemGreen
-        ))
-
-        qualityBoxplotView.update(with: stats.perPositionQuality)
-        applyChartVisibility()
-    }
-
-    private func applyChartVisibility() {
-        lengthHistogramView.isHidden = activeChartTab != .lengthDistribution
-        qualityBoxplotView.isHidden = activeChartTab != .qualityPerPosition
-        qualityScoreHistogramView.isHidden = activeChartTab != .qualityScoreDistribution
-    }
-
-    private func updateQualityControls() {
-        let hasQualityReport = hasQualityData
-
-        tabBar.selectedSegment = activeChartTab.rawValue
-        tabBar.setEnabled(true, forSegment: ChartTab.lengthDistribution.rawValue)
-        tabBar.setEnabled(hasQualityReport, forSegment: ChartTab.qualityPerPosition.rawValue)
-        tabBar.setEnabled(hasQualityReport, forSegment: ChartTab.qualityScoreDistribution.rawValue)
-
-        if hasQualityReport {
-            qualityStatusBadge.stringValue = "Quality Report: Cached"
-            qualityStatusBadge.textColor = .systemGreen
-            qualityStatusBadge.layer?.backgroundColor = NSColor.systemGreen.withAlphaComponent(0.12).cgColor
-            qualityStatusBadge.layer?.borderColor = NSColor.systemGreen.withAlphaComponent(0.35).cgColor
-            qualityStatusBadge.layer?.borderWidth = 1
-        } else {
-            qualityStatusBadge.stringValue = "Quality Report: Not Computed"
-            qualityStatusBadge.textColor = .secondaryLabelColor
-            qualityStatusBadge.layer?.backgroundColor = NSColor.tertiaryLabelColor.withAlphaComponent(0.12).cgColor
-            qualityStatusBadge.layer?.borderColor = NSColor.tertiaryLabelColor.withAlphaComponent(0.25).cgColor
-            qualityStatusBadge.layer?.borderWidth = 1
+    private func updateParameterBar() {
+        // Remove all existing arranged subviews
+        for view in parameterBar.arrangedSubviews {
+            parameterBar.removeArrangedSubview(view)
+            view.removeFromSuperview()
         }
 
-        if !hasQualityReport, activeChartTab != .lengthDistribution {
-            activeChartTab = .lengthDistribution
-            tabBar.selectedSegment = activeChartTab.rawValue
-            applyChartVisibility()
-        }
-
-        let canCompute = fastqURL != nil && !hasQualityReport && qualityReportTask == nil
-        computeQualityButton.isHidden = !canCompute
-    }
-
-    private func updateOperationInputs() {
-        let kind = OperationKind(rawValue: operationPopup.indexOfSelectedItem) ?? .subsampleProportion
-
-        fieldOneLabel.isHidden = false
-        fieldOneInput.isHidden = false
-        fieldTwoLabel.isHidden = true
-        fieldTwoInput.isHidden = true
-        searchFieldPopup.isHidden = true
-        regexCheckbox.isHidden = true
-        dedupModePopup.isHidden = true
-        pairedAwareCheckbox.isHidden = true
-
-        switch kind {
-        case .subsampleProportion:
-            fieldOneLabel.stringValue = "Proportion (0-1)"
-            fieldOneInput.placeholderString = "0.10"
-
-        case .subsampleCount:
-            fieldOneLabel.stringValue = "Read Count"
-            fieldOneInput.placeholderString = "10000"
-
-        case .lengthFilter:
-            fieldOneLabel.stringValue = "Min Length"
-            fieldTwoLabel.stringValue = "Max Length"
-            fieldOneInput.placeholderString = ""
-            fieldTwoInput.placeholderString = ""
-            fieldTwoLabel.isHidden = false
-            fieldTwoInput.isHidden = false
-
-        case .searchText:
-            fieldOneLabel.stringValue = "Pattern"
-            fieldOneInput.placeholderString = "read-id"
-            searchFieldPopup.isHidden = false
-            regexCheckbox.isHidden = false
-
-        case .searchMotif:
-            fieldOneLabel.stringValue = "Motif / Pattern"
-            fieldOneInput.placeholderString = "ATGNNNT"
-            regexCheckbox.isHidden = false
-
-        case .deduplicate:
-            fieldOneLabel.isHidden = true
-            fieldOneInput.isHidden = true
-            dedupModePopup.isHidden = false
-            pairedAwareCheckbox.isHidden = false
-        }
-    }
-
-    private var hasQualityData: Bool {
-        guard let stats = statistics else { return false }
-        return !stats.perPositionQuality.isEmpty && !stats.qualityScoreHistogram.isEmpty
-    }
-
-    // MARK: - Actions
-
-    @objc private func chartTabChanged(_ sender: NSSegmentedControl) {
-        guard let tab = ChartTab(rawValue: sender.selectedSegment) else { return }
-        if (tab == .qualityPerPosition || tab == .qualityScoreDistribution), !hasQualityData {
-            sender.selectedSegment = ChartTab.lengthDistribution.rawValue
-            activeChartTab = .lengthDistribution
-        } else {
-            activeChartTab = tab
-        }
-        applyChartVisibility()
-    }
-
-    @objc private func operationSelectionChanged(_ sender: NSPopUpButton) {
-        _ = sender
-        updateOperationInputs()
-    }
-
-    @objc private func runOperationClicked(_ sender: NSButton) {
-        _ = sender
-        guard operationTask == nil else { return }
-        guard let request = buildOperationRequest() else { return }
-        guard let onRunOperation else {
-            appendConsole("Operation unavailable: no FASTQ source selected.")
+        guard let kind = selectedOperation else {
+            let label = NSTextField(labelWithString: "Select an operation from the list")
+            label.font = .systemFont(ofSize: 11)
+            label.textColor = .tertiaryLabelColor
+            parameterBar.addArrangedSubview(label)
+            runButton.isEnabled = false
             return
         }
 
-        runOperationButton.isEnabled = false
-        progressIndicator.startAnimation(nil)
-        progressLabel.isHidden = false
-        progressLabel.stringValue = "Running operation..."
+        // Clear field values when switching operations to prevent bleed-through
+        fieldOneInput.stringValue = ""
+        fieldTwoInput.stringValue = ""
+        runButton.isEnabled = true
 
-        appendConsole("Starting: \(description(for: request))")
+        switch kind {
+        case .subsampleProportion:
+            fieldOneLabel.stringValue = "Proportion:"
+            fieldOneInput.placeholderString = "0.10"
+            parameterBar.addArrangedSubview(fieldOneLabel)
+            parameterBar.addArrangedSubview(fieldOneInput)
 
-        operationTask = Task { [weak self] in
-            do {
-                try await onRunOperation(request)
-                await MainActor.run {
-                    guard let self else { return }
-                    self.operationTask = nil
-                    self.runOperationButton.isEnabled = true
-                    self.progressIndicator.stopAnimation(nil)
-                    self.progressLabel.isHidden = true
-                    self.appendConsole("Completed: \(self.description(for: request))")
-                }
-            } catch {
-                await MainActor.run {
-                    guard let self else { return }
-                    self.operationTask = nil
-                    self.runOperationButton.isEnabled = true
-                    self.progressIndicator.stopAnimation(nil)
-                    self.progressLabel.isHidden = true
-                    self.appendConsole("Failed: \(error.localizedDescription)")
+        case .subsampleCount:
+            fieldOneLabel.stringValue = "Count:"
+            fieldOneInput.placeholderString = "10000"
+            parameterBar.addArrangedSubview(fieldOneLabel)
+            parameterBar.addArrangedSubview(fieldOneInput)
 
-                    let alert = NSAlert()
-                    alert.messageText = "FASTQ Operation Failed"
-                    alert.informativeText = error.localizedDescription
-                    alert.alertStyle = .warning
-                    alert.addButton(withTitle: "OK")
-                    alert.runModal()
-                }
-            }
+        case .lengthFilter:
+            fieldOneLabel.stringValue = "Min:"
+            fieldTwoLabel.stringValue = "Max:"
+            fieldOneInput.placeholderString = ""
+            fieldTwoInput.placeholderString = ""
+            parameterBar.addArrangedSubview(fieldOneLabel)
+            parameterBar.addArrangedSubview(fieldOneInput)
+            parameterBar.addArrangedSubview(fieldTwoLabel)
+            parameterBar.addArrangedSubview(fieldTwoInput)
+
+        case .searchText:
+            fieldOneLabel.stringValue = "Pattern:"
+            fieldOneInput.placeholderString = "SRR1770413"
+            parameterBar.addArrangedSubview(fieldOneLabel)
+            parameterBar.addArrangedSubview(fieldOneInput)
+            parameterBar.addArrangedSubview(searchFieldPopup)
+            parameterBar.addArrangedSubview(regexCheckbox)
+
+        case .searchMotif:
+            fieldOneLabel.stringValue = "Motif:"
+            fieldOneInput.placeholderString = "ATGNNNT"
+            parameterBar.addArrangedSubview(fieldOneLabel)
+            parameterBar.addArrangedSubview(fieldOneInput)
+            parameterBar.addArrangedSubview(regexCheckbox)
+            parameterBar.addArrangedSubview(revCompCheckbox)
+
+        case .deduplicate:
+            parameterBar.addArrangedSubview(dedupModePopup)
+            parameterBar.addArrangedSubview(pairedAwareCheckbox)
+
+        case .qualityTrim:
+            fieldOneLabel.stringValue = "Q Threshold:"
+            fieldOneInput.placeholderString = "20"
+            fieldTwoLabel.stringValue = "Window:"
+            fieldTwoInput.placeholderString = "4"
+            parameterBar.addArrangedSubview(fieldOneLabel)
+            parameterBar.addArrangedSubview(fieldOneInput)
+            parameterBar.addArrangedSubview(fieldTwoLabel)
+            parameterBar.addArrangedSubview(fieldTwoInput)
+            parameterBar.addArrangedSubview(qualityTrimModePopup)
+
+        case .adapterTrim:
+            fieldOneLabel.stringValue = "Adapter:"
+            fieldOneInput.placeholderString = "(auto-detect)"
+            parameterBar.addArrangedSubview(adapterModePopup)
+            parameterBar.addArrangedSubview(fieldOneLabel)
+            parameterBar.addArrangedSubview(fieldOneInput)
+
+        case .fixedTrim:
+            fieldOneLabel.stringValue = "5' Trim:"
+            fieldOneInput.placeholderString = "0"
+            fieldTwoLabel.stringValue = "3' Trim:"
+            fieldTwoInput.placeholderString = "0"
+            parameterBar.addArrangedSubview(fieldOneLabel)
+            parameterBar.addArrangedSubview(fieldOneInput)
+            parameterBar.addArrangedSubview(fieldTwoLabel)
+            parameterBar.addArrangedSubview(fieldTwoInput)
+
+        case .contaminantFilter:
+            fieldOneLabel.stringValue = "K-mer:"
+            fieldOneInput.placeholderString = "31"
+            fieldTwoLabel.stringValue = "Mismatch:"
+            fieldTwoInput.placeholderString = "1"
+            parameterBar.addArrangedSubview(contaminantModePopup)
+            parameterBar.addArrangedSubview(fieldOneLabel)
+            parameterBar.addArrangedSubview(fieldOneInput)
+            parameterBar.addArrangedSubview(fieldTwoLabel)
+            parameterBar.addArrangedSubview(fieldTwoInput)
+
+        case .pairedEndMerge:
+            fieldOneLabel.stringValue = "Min Overlap:"
+            fieldOneInput.placeholderString = "12"
+            parameterBar.addArrangedSubview(mergeStrictnessPopup)
+            parameterBar.addArrangedSubview(fieldOneLabel)
+            parameterBar.addArrangedSubview(fieldOneInput)
+
+        case .pairedEndRepair:
+            let label = NSTextField(labelWithString: "No parameters required")
+            label.font = .systemFont(ofSize: 11)
+            label.textColor = .secondaryLabelColor
+            parameterBar.addArrangedSubview(label)
+
+        case .primerRemoval:
+            fieldOneLabel.stringValue = "Sequence/Path:"
+            fieldOneInput.placeholderString = "AGATCGGAAGAGC"
+            fieldTwoLabel.stringValue = "K-mer:"
+            fieldTwoInput.placeholderString = "23"
+            parameterBar.addArrangedSubview(primerSourcePopup)
+            parameterBar.addArrangedSubview(fieldOneLabel)
+            parameterBar.addArrangedSubview(fieldOneInput)
+            parameterBar.addArrangedSubview(fieldTwoLabel)
+            parameterBar.addArrangedSubview(fieldTwoInput)
+
+        case .errorCorrection:
+            fieldOneLabel.stringValue = "K-mer Size:"
+            fieldOneInput.placeholderString = "50"
+            parameterBar.addArrangedSubview(fieldOneLabel)
+            parameterBar.addArrangedSubview(fieldOneInput)
+        }
+
+        // Add spacer to push controls left
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        parameterBar.addArrangedSubview(spacer)
+
+        // Update preview
+        updatePreview()
+    }
+
+    private func updatePreview() {
+        guard let kind = selectedOperation else {
+            previewCanvas.update(operation: .none, statistics: statistics)
+            return
+        }
+
+        var params = OperationPreviewView.Parameters()
+        params.proportion = Double(fieldOneInput.stringValue) ?? 0.1
+        params.count = Int(fieldOneInput.stringValue) ?? 1000
+        params.minLength = Int(fieldOneInput.stringValue)
+        params.maxLength = Int(fieldTwoInput.stringValue)
+        params.qualityThreshold = Int(fieldOneInput.stringValue) ?? 20
+        params.windowSize = Int(fieldTwoInput.stringValue) ?? 4
+        params.trimMode = qualityTrimModePopup.titleOfSelectedItem ?? "Cut Right (3')"
+        params.trim5Prime = Int(fieldOneInput.stringValue) ?? 0
+        params.trim3Prime = Int(fieldTwoInput.stringValue) ?? 0
+        params.dedupMode = dedupModePopup.titleOfSelectedItem ?? "Sequence"
+        params.kmerSize = Int(fieldOneInput.stringValue) ?? 50
+        params.searchPattern = fieldOneInput.stringValue
+        params.searchField = searchFieldPopup.titleOfSelectedItem ?? "ID"
+        params.searchRegex = regexCheckbox.state == .on
+        params.reverseComplement = revCompCheckbox.state == .on
+
+        previewCanvas.parameters = params
+        previewCanvas.update(operation: kind.previewKind, statistics: statistics)
+
+        // Update output estimate
+        updateOutputEstimate(for: kind)
+    }
+
+    private func updateOutputEstimate(for kind: OperationKind) {
+        guard let stats = statistics else {
+            outputEstimateLabel.stringValue = "Output depends on data content"
+            return
+        }
+
+        switch kind {
+        case .subsampleProportion:
+            let p = Double(fieldOneInput.stringValue) ?? 0.1
+            let estimated = Int(Double(stats.readCount) * p)
+            outputEstimateLabel.stringValue = "Estimated output: ~\(formatCount(estimated)) reads (\(String(format: "%.1f", p * 100))%)"
+        case .subsampleCount:
+            let n = Int(fieldOneInput.stringValue) ?? 1000
+            outputEstimateLabel.stringValue = "Estimated output: \(formatCount(min(n, stats.readCount))) reads"
+        default:
+            outputEstimateLabel.stringValue = "Output depends on data content"
         }
     }
 
-    @objc private func computeQualityReportClicked(_ sender: NSButton) {
+    // MARK: - Quality Report
+
+    private func updateQualityReportButton() {
+        let canCompute = fastqURL != nil && !hasQualityData && qualityReportTask == nil
+        qualityReportButton.isHidden = !canCompute
+    }
+
+    @objc private func qualityReportButtonClicked(_ sender: Any) {
+        computeQualityReportClicked()
+    }
+
+    private func computeQualityReportClicked() {
         guard let url = fastqURL else { return }
         guard qualityReportTask == nil else { return }
 
-        sender.isEnabled = false
-        progressIndicator.startAnimation(nil)
-        progressLabel.isHidden = false
-        progressLabel.stringValue = "Computing quality report..."
-        appendConsole("Computing quality report...")
+        qualityReportButton.isEnabled = false
+        setStatus("Computing quality report...")
 
         qualityReportTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
@@ -578,22 +716,19 @@ public final class FASTQDatasetViewController: NSViewController {
                     self.qualityReportTask = nil
                     self.statistics = fullStats
                     self.summaryBar.update(with: fullStats)
-                    self.updateCharts()
-                    self.updateQualityControls()
-                    self.progressIndicator.stopAnimation(nil)
-                    self.progressLabel.isHidden = true
-                    self.computeQualityButton.isEnabled = true
-                    self.appendConsole("Quality report cached.")
+                    self.sparklineStrip.update(with: fullStats)
+                    self.previewCanvas.update(operation: self.selectedOperation?.previewKind ?? .none, statistics: fullStats)
+                    self.qualityReportButton.isEnabled = true
+                    self.updateQualityReportButton()
+                    self.setStatus("Quality report complete")
                     self.onStatisticsUpdated?(fullStats)
                 }
             } catch {
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     self.qualityReportTask = nil
-                    self.progressIndicator.stopAnimation(nil)
-                    self.progressLabel.isHidden = true
-                    self.computeQualityButton.isEnabled = true
-                    self.appendConsole("Quality report failed: \(error.localizedDescription)")
+                    self.qualityReportButton.isEnabled = true
+                    self.setStatus("Quality report failed")
 
                     let alert = NSAlert()
                     alert.messageText = "Quality Report Failed"
@@ -606,22 +741,135 @@ public final class FASTQDatasetViewController: NSViewController {
         }
     }
 
+    // MARK: - Actions
+
+    @objc private func operationSidebarClicked(_ sender: NSTableView) {
+        let row = sender.selectedRow
+        guard row >= 0 else { return }
+
+        // Map flat row to operation kind
+        selectedOperation = operationKindForRow(row)
+        updateParameterBar()
+    }
+
+    @objc private func parameterPopupChanged(_ sender: NSPopUpButton) {
+        updatePreview()
+    }
+
+    @objc private func parameterCheckboxChanged(_ sender: NSButton) {
+        updatePreview()
+    }
+
+    @objc private func runOperationClicked(_ sender: Any) {
+        guard operationTask == nil else { return }
+        guard let request = buildOperationRequest() else { return }
+        guard let onRunOperation else {
+            setStatus("No FASTQ source selected")
+            return
+        }
+
+        runButton.isEnabled = false
+        progressIndicator.startAnimation(nil)
+        setStatus("Running: \(description(for: request))")
+
+        operationTask = Task { [weak self] in
+            do {
+                try await onRunOperation(request)
+                await MainActor.run {
+                    guard let self else { return }
+                    self.operationTask = nil
+                    self.runButton.isEnabled = true
+                    self.progressIndicator.stopAnimation(nil)
+                    self.setStatus("Done: \(self.description(for: request))")
+                }
+            } catch {
+                await MainActor.run {
+                    guard let self else { return }
+                    self.operationTask = nil
+                    self.runButton.isEnabled = true
+                    self.progressIndicator.stopAnimation(nil)
+                    self.setStatus("Failed: \(error.localizedDescription)")
+
+                    let alert = NSAlert()
+                    alert.messageText = "FASTQ Operation Failed"
+                    alert.informativeText = error.localizedDescription
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                }
+            }
+        }
+    }
+
+    // MARK: - Sidebar Row Mapping
+
+    /// Maps a flat table row index to an OperationKind, accounting for category headers.
+    private func operationKindForRow(_ row: Int) -> OperationKind? {
+        var currentRow = 0
+        for (_, items) in Self.categories {
+            if currentRow == row { return nil } // header row
+            currentRow += 1 // header
+            for item in items {
+                if currentRow == row { return item }
+                currentRow += 1
+            }
+        }
+        return nil
+    }
+
+    /// Total number of rows in the sidebar (headers + items).
+    private var sidebarRowCount: Int {
+        Self.categories.reduce(0) { $0 + 1 + $1.items.count }
+    }
+
+    /// Returns whether a row is a group header.
+    private func isGroupRow(_ row: Int) -> Bool {
+        var currentRow = 0
+        for (_, items) in Self.categories {
+            if currentRow == row { return true }
+            currentRow += 1 + items.count
+        }
+        return false
+    }
+
+    /// Returns the category header or operation title for a row.
+    private func titleForRow(_ row: Int) -> String {
+        var currentRow = 0
+        for (header, items) in Self.categories {
+            if currentRow == row { return header }
+            currentRow += 1
+            for item in items {
+                if currentRow == row { return item.title }
+                currentRow += 1
+            }
+        }
+        return ""
+    }
+
+    /// Returns the SF Symbol name for an operation row.
+    private func sfSymbolForRow(_ row: Int) -> String? {
+        operationKindForRow(row)?.sfSymbol
+    }
+
     // MARK: - Request Building
 
     private func buildOperationRequest() -> FASTQDerivativeRequest? {
-        let kind = OperationKind(rawValue: operationPopup.indexOfSelectedItem) ?? .subsampleProportion
+        guard let kind = selectedOperation else {
+            setStatus("No operation selected.")
+            return nil
+        }
 
         switch kind {
         case .subsampleProportion:
             guard let value = Double(fieldOneInput.stringValue), value > 0, value <= 1 else {
-                appendConsole("Invalid proportion. Enter a value in (0, 1].")
+                setStatus("Invalid proportion. Enter a value in (0, 1].")
                 return nil
             }
             return .subsampleProportion(value)
 
         case .subsampleCount:
             guard let value = Int(fieldOneInput.stringValue), value > 0 else {
-                appendConsole("Invalid read count. Enter an integer > 0.")
+                setStatus("Invalid read count. Enter an integer > 0.")
                 return nil
             }
             return .subsampleCount(value)
@@ -630,11 +878,11 @@ public final class FASTQDatasetViewController: NSViewController {
             let minValue = Int(fieldOneInput.stringValue.trimmingCharacters(in: .whitespaces))
             let maxValue = Int(fieldTwoInput.stringValue.trimmingCharacters(in: .whitespaces))
             if minValue == nil, maxValue == nil {
-                appendConsole("Provide min, max, or both for length filter.")
+                setStatus("Provide min, max, or both for length filter.")
                 return nil
             }
             if let minValue, let maxValue, minValue > maxValue {
-                appendConsole("Min length cannot be greater than max length.")
+                setStatus("Min length cannot be greater than max length.")
                 return nil
             }
             return .lengthFilter(min: minValue, max: maxValue)
@@ -642,7 +890,7 @@ public final class FASTQDatasetViewController: NSViewController {
         case .searchText:
             let query = fieldOneInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !query.isEmpty else {
-                appendConsole("Search pattern cannot be empty.")
+                setStatus("Search pattern cannot be empty.")
                 return nil
             }
             let field: FASTQSearchField = searchFieldPopup.indexOfSelectedItem == 1 ? .description : .id
@@ -651,7 +899,7 @@ public final class FASTQDatasetViewController: NSViewController {
         case .searchMotif:
             let pattern = fieldOneInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !pattern.isEmpty else {
-                appendConsole("Motif pattern cannot be empty.")
+                setStatus("Motif pattern cannot be empty.")
                 return nil
             }
             return .searchMotif(pattern: pattern, regex: regexCheckbox.state == .on)
@@ -664,6 +912,113 @@ public final class FASTQDatasetViewController: NSViewController {
             default: mode = .identifier
             }
             return .deduplicate(mode: mode, pairedAware: pairedAwareCheckbox.state == .on)
+
+        case .qualityTrim:
+            let threshold = Int(fieldOneInput.stringValue) ?? 20
+            let windowSize = Int(fieldTwoInput.stringValue) ?? 4
+            guard threshold > 0, windowSize > 0 else {
+                setStatus("Quality threshold and window size must be > 0.")
+                return nil
+            }
+            let trimMode: FASTQQualityTrimMode
+            switch qualityTrimModePopup.indexOfSelectedItem {
+            case 1: trimMode = .cutFront
+            case 2: trimMode = .cutTail
+            case 3: trimMode = .cutBoth
+            default: trimMode = .cutRight
+            }
+            return .qualityTrim(threshold: threshold, windowSize: windowSize, mode: trimMode)
+
+        case .adapterTrim:
+            let adapterMode: FASTQAdapterMode
+            let sequence: String?
+            if adapterModePopup.indexOfSelectedItem == 1 {
+                adapterMode = .specified
+                let seq = fieldOneInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !seq.isEmpty else {
+                    setStatus("Specify an adapter sequence or use Auto-Detect.")
+                    return nil
+                }
+                sequence = seq
+            } else {
+                adapterMode = .autoDetect
+                sequence = nil
+            }
+            return .adapterTrim(mode: adapterMode, sequence: sequence, sequenceR2: nil, fastaFilename: nil)
+
+        case .fixedTrim:
+            let from5 = Int(fieldOneInput.stringValue) ?? 0
+            let from3 = Int(fieldTwoInput.stringValue) ?? 0
+            guard from5 >= 0, from3 >= 0 else {
+                setStatus("Trim values must be >= 0.")
+                return nil
+            }
+            guard from5 > 0 || from3 > 0 else {
+                setStatus("At least one trim value must be > 0.")
+                return nil
+            }
+            return .fixedTrim(from5Prime: from5, from3Prime: from3)
+
+        case .contaminantFilter:
+            let kmerSize = Int(fieldOneInput.stringValue) ?? 31
+            let hammingDist = Int(fieldTwoInput.stringValue) ?? 1
+            guard kmerSize > 0, kmerSize <= 63 else {
+                setStatus("Kmer size must be between 1 and 63.")
+                return nil
+            }
+            guard hammingDist >= 0, hammingDist <= 3 else {
+                setStatus("Mismatch tolerance must be 0-3.")
+                return nil
+            }
+            if contaminantModePopup.indexOfSelectedItem == 1 {
+                setStatus("Custom reference mode requires a file picker (not yet implemented). Use PhiX mode.")
+                return nil
+            }
+            return .contaminantFilter(mode: .phix, referenceFasta: nil, kmerSize: kmerSize, hammingDistance: hammingDist)
+
+        case .pairedEndMerge:
+            let minOverlap = Int(fieldOneInput.stringValue) ?? 12
+            guard minOverlap > 0 else {
+                setStatus("Minimum overlap must be > 0.")
+                return nil
+            }
+            let strictness: FASTQMergeStrictness = mergeStrictnessPopup.indexOfSelectedItem == 1 ? .strict : .normal
+            return .pairedEndMerge(strictness: strictness, minOverlap: minOverlap)
+
+        case .pairedEndRepair:
+            return .pairedEndRepair
+
+        case .primerRemoval:
+            let source: FASTQPrimerSource = primerSourcePopup.indexOfSelectedItem == 1 ? .reference : .literal
+            let kmerSize = Int(fieldTwoInput.stringValue) ?? 23
+            guard kmerSize > 0, kmerSize <= 63 else {
+                setStatus("K-mer size must be between 1 and 63.")
+                return nil
+            }
+            let input = fieldOneInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !input.isEmpty else {
+                setStatus("Provide a primer sequence (literal) or reference FASTA path.")
+                return nil
+            }
+            switch source {
+            case .literal:
+                let validChars = CharacterSet(charactersIn: "ACGTUacgtuNnRYSWKMBDHVryswkmbdhv")
+                guard input.unicodeScalars.allSatisfy({ validChars.contains($0) }) else {
+                    setStatus("Primer sequence contains invalid characters. Use IUPAC nucleotide codes.")
+                    return nil
+                }
+                return .primerRemoval(source: .literal, literalSequence: input, referenceFasta: nil, kmerSize: kmerSize, minKmer: 11, hammingDistance: 1)
+            case .reference:
+                return .primerRemoval(source: .reference, literalSequence: nil, referenceFasta: input, kmerSize: kmerSize, minKmer: 11, hammingDistance: 1)
+            }
+
+        case .errorCorrection:
+            let kmerSize = Int(fieldOneInput.stringValue) ?? 50
+            guard kmerSize > 0, kmerSize <= 62 else {
+                setStatus("K-mer size must be between 1 and 62 (tadpole limit).")
+                return nil
+            }
+            return .errorCorrection(kmerSize: kmerSize)
         }
     }
 
@@ -681,13 +1036,137 @@ public final class FASTQDatasetViewController: NSViewController {
             return "Motif \(pattern)\(regex ? " (regex)" : "")"
         case .deduplicate(let mode, let pairedAware):
             return "Deduplicate \(mode.rawValue)\(pairedAware ? " (paired-aware)" : "")"
+        case .qualityTrim(let threshold, let windowSize, let mode):
+            return "Quality trim Q\(threshold) w\(windowSize) (\(mode.rawValue))"
+        case .adapterTrim(let mode, _, _, _):
+            return "Adapter trim (\(mode.rawValue))"
+        case .fixedTrim(let from5Prime, let from3Prime):
+            return "Fixed trim (5': \(from5Prime), 3': \(from3Prime))"
+        case .contaminantFilter(let mode, _, let kmerSize, let hammingDistance):
+            return "Contaminant filter (\(mode.rawValue), k=\(kmerSize), hdist=\(hammingDistance))"
+        case .pairedEndMerge(let strictness, let minOverlap):
+            return "PE merge (\(strictness.rawValue), min overlap: \(minOverlap))"
+        case .pairedEndRepair:
+            return "PE read repair"
+        case .primerRemoval(let source, let literalSeq, let refFasta, let kmerSize, _, _):
+            let srcDesc = source == .literal ? (literalSeq ?? "literal") : (refFasta ?? "reference")
+            return "Primer removal (\(source.rawValue): \(srcDesc), k=\(kmerSize))"
+        case .errorCorrection(let kmerSize):
+            return "Error correction (k=\(kmerSize))"
+        case .interleaveReformat(let direction):
+            return direction == .interleave ? "Interleave R1/R2" : "Deinterleave to R1/R2"
         }
     }
 
-    private func appendConsole(_ line: String) {
-        let timestamp = ISO8601DateFormatter().string(from: Date())
-        let entry = "[\(timestamp)] \(line)\n"
-        consoleTextView.textStorage?.append(NSAttributedString(string: entry))
-        consoleTextView.scrollToEndOfDocument(nil)
+    // MARK: - Helpers
+
+    private var hasQualityData: Bool {
+        guard let stats = statistics else { return false }
+        return !stats.perPositionQuality.isEmpty && !stats.qualityScoreHistogram.isEmpty
+    }
+
+    private func setStatus(_ line: String) {
+        statusLabel.stringValue = line
+    }
+
+    private func formatCount(_ count: Int) -> String {
+        if count >= 1_000_000 { return String(format: "%.1fM", Double(count) / 1_000_000) }
+        if count >= 1_000 { return String(format: "%.1fK", Double(count) / 1_000) }
+        return "\(count)"
+    }
+}
+
+// MARK: - NSTableViewDataSource & Delegate (Operation Sidebar)
+
+extension FASTQDatasetViewController: NSTableViewDataSource, NSTableViewDelegate {
+
+    public func numberOfRows(in tableView: NSTableView) -> Int {
+        sidebarRowCount
+    }
+
+    public func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
+        isGroupRow(row)
+    }
+
+    public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let isGroup = isGroupRow(row)
+        let title = titleForRow(row)
+        let columnID = tableColumn?.identifier.rawValue ?? ""
+
+        if isGroup {
+            if columnID == "icon" { return nil }
+            let cell = NSTextField(labelWithString: title)
+            cell.font = .systemFont(ofSize: 11, weight: .semibold)
+            cell.textColor = .secondaryLabelColor
+            return cell
+        }
+
+        if columnID == "icon" {
+            if let symbolName = sfSymbolForRow(row) {
+                let imageView = NSImageView()
+                imageView.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
+                imageView.contentTintColor = .secondaryLabelColor
+                imageView.imageScaling = .scaleProportionallyDown
+                return imageView
+            }
+            return nil
+        }
+
+        let cell = NSTextField(labelWithString: title)
+        cell.font = .systemFont(ofSize: 12)
+        cell.textColor = .labelColor
+        cell.lineBreakMode = .byTruncatingTail
+        return cell
+    }
+
+    public func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        isGroupRow(row) ? 28 : 24
+    }
+
+    public func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        !isGroupRow(row)
+    }
+
+    public func tableViewSelectionDidChange(_ notification: Notification) {
+        guard let tableView = notification.object as? NSTableView,
+              tableView === operationSidebar else { return }
+        let row = tableView.selectedRow
+        guard row >= 0 else { return }
+        selectedOperation = operationKindForRow(row)
+        updateParameterBar()
+    }
+}
+
+// MARK: - NSTextFieldDelegate (parameter field changes)
+
+extension FASTQDatasetViewController: NSTextFieldDelegate {
+    public func controlTextDidChange(_ obj: Notification) {
+        updatePreview()
+    }
+
+    public func controlTextDidEndEditing(_ obj: Notification) {
+        updatePreview()
+    }
+}
+
+// MARK: - NSSplitViewDelegate (sidebar constraints)
+
+extension FASTQDatasetViewController: NSSplitViewDelegate {
+    public func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
+        if splitView === middleSplitView {
+            return 200 // minimum sidebar width
+        }
+        return proposedMinimumPosition
+    }
+
+    public func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
+        if splitView === middleSplitView {
+            return 320 // maximum sidebar width
+        }
+        return proposedMaximumPosition
+    }
+
+    public func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool {
+        false
     }
 }

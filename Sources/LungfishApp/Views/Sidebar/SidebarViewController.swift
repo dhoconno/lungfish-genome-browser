@@ -521,12 +521,25 @@ public class SidebarViewController: NSViewController {
         let displayName = (itemType == .referenceBundle || itemType == .fastqBundle)
             ? url.deletingPathExtension().lastPathComponent
             : filename
+
+        // Load composition subtitle for FASTQ bundles with mixed read types
+        var subtitle: String?
+        if itemType == .fastqBundle {
+            if let manifest = FASTQBundle.loadDerivedManifest(in: url),
+               let classification = manifest.readClassification {
+                subtitle = classification.compositionLabel
+            } else if let readManifest = ReadManifest.load(from: url) {
+                subtitle = readManifest.classification.compositionLabel
+            }
+        }
+
         let item = SidebarItem(
             title: displayName,
             type: itemType,
             icon: icon,
             children: [],
-            url: url
+            url: url,
+            subtitle: subtitle
         )
 
         // If it's a directory, scan children (unless it's a bundle)
@@ -1510,7 +1523,8 @@ extension SidebarViewController: NSOutlineViewDelegate {
     public func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let sidebarItem = item as? SidebarItem else { return nil }
 
-        let identifier = NSUserInterfaceItemIdentifier("SidebarCell")
+        let hasSubtitle = sidebarItem.subtitle != nil
+        let identifier = NSUserInterfaceItemIdentifier(hasSubtitle ? "SidebarCellWithSubtitle" : "SidebarCell")
         var cellView = outlineView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView
 
         if cellView == nil {
@@ -1528,20 +1542,51 @@ extension SidebarViewController: NSOutlineViewDelegate {
             cellView?.addSubview(textField)
             cellView?.textField = textField
 
-            NSLayoutConstraint.activate([
-                imageView.leadingAnchor.constraint(equalTo: cellView!.leadingAnchor, constant: 2),
-                imageView.centerYAnchor.constraint(equalTo: cellView!.centerYAnchor),
-                imageView.widthAnchor.constraint(equalToConstant: 16),
-                imageView.heightAnchor.constraint(equalToConstant: 16),
+            if hasSubtitle {
+                let subtitleField = NSTextField(labelWithString: "")
+                subtitleField.translatesAutoresizingMaskIntoConstraints = false
+                subtitleField.lineBreakMode = .byTruncatingTail
+                subtitleField.font = NSFont.systemFont(ofSize: 10)
+                subtitleField.textColor = .secondaryLabelColor
+                subtitleField.tag = 999
+                cellView?.addSubview(subtitleField)
 
-                textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 4),
-                textField.trailingAnchor.constraint(equalTo: cellView!.trailingAnchor, constant: -2),
-                textField.centerYAnchor.constraint(equalTo: cellView!.centerYAnchor),
-            ])
+                NSLayoutConstraint.activate([
+                    imageView.leadingAnchor.constraint(equalTo: cellView!.leadingAnchor, constant: 2),
+                    imageView.centerYAnchor.constraint(equalTo: cellView!.centerYAnchor),
+                    imageView.widthAnchor.constraint(equalToConstant: 16),
+                    imageView.heightAnchor.constraint(equalToConstant: 16),
+
+                    textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 4),
+                    textField.trailingAnchor.constraint(equalTo: cellView!.trailingAnchor, constant: -2),
+                    textField.topAnchor.constraint(equalTo: cellView!.topAnchor, constant: 2),
+
+                    subtitleField.leadingAnchor.constraint(equalTo: textField.leadingAnchor),
+                    subtitleField.trailingAnchor.constraint(equalTo: textField.trailingAnchor),
+                    subtitleField.topAnchor.constraint(equalTo: textField.bottomAnchor, constant: 0),
+                    subtitleField.bottomAnchor.constraint(lessThanOrEqualTo: cellView!.bottomAnchor, constant: -2),
+                ])
+            } else {
+                NSLayoutConstraint.activate([
+                    imageView.leadingAnchor.constraint(equalTo: cellView!.leadingAnchor, constant: 2),
+                    imageView.centerYAnchor.constraint(equalTo: cellView!.centerYAnchor),
+                    imageView.widthAnchor.constraint(equalToConstant: 16),
+                    imageView.heightAnchor.constraint(equalToConstant: 16),
+
+                    textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 4),
+                    textField.trailingAnchor.constraint(equalTo: cellView!.trailingAnchor, constant: -2),
+                    textField.centerYAnchor.constraint(equalTo: cellView!.centerYAnchor),
+                ])
+            }
         }
 
         // Configure cell
         cellView?.textField?.stringValue = sidebarItem.title
+
+        // Update subtitle field if present
+        if let subtitleField = cellView?.viewWithTag(999) as? NSTextField {
+            subtitleField.stringValue = sidebarItem.subtitle ?? ""
+        }
 
         if sidebarItem.type == .group {
             cellView?.textField?.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
@@ -1558,6 +1603,13 @@ extension SidebarViewController: NSOutlineViewDelegate {
         }
 
         return cellView
+    }
+
+    public func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
+        if let sidebarItem = item as? SidebarItem, sidebarItem.subtitle != nil {
+            return 36
+        }
+        return 24
     }
 
     public func outlineView(_ outlineView: NSOutlineView, isGroupItem item: Any) -> Bool {
@@ -1637,13 +1689,16 @@ public class SidebarItem: NSObject {
     public let icon: String?
     public var children: [SidebarItem]
     public var url: URL?
+    /// Optional subtitle for additional context (e.g. read composition label).
+    public var subtitle: String?
 
-    public init(title: String, type: SidebarItemType, icon: String? = nil, children: [SidebarItem] = [], url: URL? = nil) {
+    public init(title: String, type: SidebarItemType, icon: String? = nil, children: [SidebarItem] = [], url: URL? = nil, subtitle: String? = nil) {
         self.title = title
         self.type = type
         self.icon = icon
         self.children = children
         self.url = url
+        self.subtitle = subtitle
         super.init()
     }
 }

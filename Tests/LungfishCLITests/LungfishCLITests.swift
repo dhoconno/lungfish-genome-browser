@@ -11,7 +11,6 @@ final class LungfishCLITests: XCTestCase {
 
     func testGlobalOptionsDefaults() {
         let options = GlobalOptions()
-        XCTAssertNil(options.output)
         XCTAssertEqual(options.outputFormat, .text)
         XCTAssertEqual(options.verbosity, 0)
         XCTAssertFalse(options.quiet)

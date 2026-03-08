@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import LungfishWorkflow
 
 /// A custom About window following macOS HIG conventions.
 ///
@@ -238,14 +239,37 @@ final class AboutWindowController: NSWindowController {
         appendSecondary("Wisconsin National Primate Research Center")
         appendSecondary("Early testing and feedback")
 
-        // Open Source Dependencies
-        appendHeading("Open Source")
-        let tools: [(String, String)] = [
-            ("SAMtools / HTSlib / BCFtools", "MIT"),
-            ("UCSC Genome Browser Tools", "MIT"),
-            ("SeqKit", "MIT"),
-            ("BBTools (including clumpify.sh)", "BBMap License"),
-            ("OpenJDK Runtime (Temurin)", "GPL-2.0 with Classpath Exception"),
+        // Embedded Bioinformatics Tools
+        appendHeading("Embedded Tools")
+
+        let versions = NativeToolRunner.bundledVersions
+        let embeddedTools: [(String, String, String)] = [
+            ("SAMtools", versions["samtools"] ?? "?", "MIT"),
+            ("HTSlib", versions["htslib"] ?? "?", "MIT"),
+            ("BCFtools", versions["bcftools"] ?? "?", "MIT"),
+            ("UCSC Genome Browser Tools", "v\(versions["ucsc-tools"] ?? "?")", "MIT"),
+            ("SeqKit", versions["seqkit"] ?? "?", "MIT"),
+            ("fastp", versions["fastp"] ?? "?", "MIT"),
+            ("BBTools", versions["bbtools"] ?? "?", "BBMap License"),
+            ("VSEARCH", versions["vsearch"] ?? "?", "BSD-2-Clause / GPL-3.0"),
+            ("pigz", versions["pigz"] ?? "?", "zlib"),
+            ("OpenJDK Runtime (Temurin)", versions["openjdk"] ?? "?", "GPL-2.0 w/ Classpath"),
+        ]
+
+        let versionStyle: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .regular),
+            .foregroundColor: NSColor.tertiaryLabelColor,
+            .paragraphStyle: centered,
+        ]
+
+        for (name, version, license) in embeddedTools {
+            credits.append(NSAttributedString(string: "\(name) \(version)", attributes: bodyStyle))
+            credits.append(NSAttributedString(string: "  \(license)\n", attributes: versionStyle))
+        }
+
+        // Other Open Source Dependencies
+        appendHeading("Other Open Source")
+        let otherDeps: [(String, String)] = [
             ("minimap2", "MIT"),
             ("BWA", "GPL-3.0"),
             ("SPAdes", "GPL-2.0"),
@@ -257,7 +281,7 @@ final class AboutWindowController: NSWindowController {
             ("Swift Async Algorithms", "Apache 2.0"),
             ("Apple Containerization", "Apache 2.0"),
         ]
-        for (name, license) in tools {
+        for (name, license) in otherDeps {
             credits.append(NSAttributedString(string: name, attributes: bodyStyle))
             credits.append(NSAttributedString(string: "  \(license)\n", attributes: secondaryStyle))
         }

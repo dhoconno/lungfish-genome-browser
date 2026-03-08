@@ -15,6 +15,9 @@ public enum FASTQBundle {
     /// Derived dataset manifest filename.
     public static let derivedManifestFilename = "derived.manifest.json"
 
+    /// Trim positions filename for trim derivative bundles.
+    public static let trimPositionFilename = "trim-positions.tsv"
+
     /// Returns `true` when the URL is a `.lungfishfastq` directory.
     public static func isBundleURL(_ url: URL) -> Bool {
         guard url.pathExtension.lowercased() == directoryExtension else { return false }
@@ -99,15 +102,79 @@ public enum FASTQBundle {
         try data.write(to: manifestURL, options: .atomic)
     }
 
-    /// Resolves the read ID list URL for a derived bundle.
+    /// Resolves the read ID list URL for a derived bundle (subset derivatives only).
     public static func readIDListURL(forDerivedBundle bundleURL: URL) -> URL? {
-        guard let manifest = loadDerivedManifest(in: bundleURL) else { return nil }
-        return bundleURL.appendingPathComponent(manifest.readIDListFilename)
+        guard let manifest = loadDerivedManifest(in: bundleURL),
+              case .subset(let filename) = manifest.payload else { return nil }
+        return bundleURL.appendingPathComponent(filename)
+    }
+
+    /// Resolves the trim positions URL for a derived bundle (trim derivatives only).
+    public static func trimPositionsURL(forDerivedBundle bundleURL: URL) -> URL? {
+        guard let manifest = loadDerivedManifest(in: bundleURL),
+              case .trim(let filename) = manifest.payload else { return nil }
+        return bundleURL.appendingPathComponent(filename)
+    }
+
+    /// Resolves paired R1/R2 FASTQ URLs for a fullPaired payload derived bundle.
+    public static func pairedFASTQURLs(forDerivedBundle bundleURL: URL) -> (r1: URL, r2: URL)? {
+        guard let manifest = loadDerivedManifest(in: bundleURL),
+              case .fullPaired(let r1, let r2) = manifest.payload else { return nil }
+        return (bundleURL.appendingPathComponent(r1), bundleURL.appendingPathComponent(r2))
+    }
+
+    /// Resolves the materialized FASTQ URL for a full payload derived bundle.
+    public static func fullPayloadFASTQURL(forDerivedBundle bundleURL: URL) -> URL? {
+        guard let manifest = loadDerivedManifest(in: bundleURL),
+              case .full(let filename) = manifest.payload else { return nil }
+        return bundleURL.appendingPathComponent(filename)
+    }
+
+    /// Resolves role-based FASTQ file URLs for a multi-file bundle.
+    ///
+    /// Checks for a `read-manifest.json` first, then falls back to the derived
+    /// manifest's `.fullMixed` payload. Returns nil for homogeneous bundles.
+    public static func classifiedFileURLs(for bundleURL: URL) -> [ReadClassification.FileRole: URL]? {
+        // Try standalone read manifest first
+        if let readManifest = ReadManifest.load(from: bundleURL) {
+            return buildRoleMap(from: readManifest.classification, in: bundleURL)
+        }
+        // Try derived bundle manifest with fullMixed payload
+        if let manifest = loadDerivedManifest(in: bundleURL),
+           case .fullMixed(let classification) = manifest.payload {
+            return buildRoleMap(from: classification, in: bundleURL)
+        }
+        return nil
+    }
+
+    /// Builds a role → URL map from a ReadClassification, filtering to files that exist.
+    private static func buildRoleMap(
+        from classification: ReadClassification,
+        in bundleURL: URL
+    ) -> [ReadClassification.FileRole: URL] {
+        var result: [ReadClassification.FileRole: URL] = [:]
+        for entry in classification.files {
+            let url = bundleURL.appendingPathComponent(entry.filename)
+            if FileManager.default.fileExists(atPath: url.path) {
+                result[entry.role] = url
+            }
+        }
+        return result
     }
 
     /// Resolves a relative bundle path from an anchor bundle URL.
+    ///
+    /// The resolved path must remain within the anchor's parent directory
+    /// to prevent path traversal attacks via crafted manifest files.
     public static func resolveBundle(relativePath: String, from anchorBundleURL: URL) -> URL {
-        URL(fileURLWithPath: relativePath, relativeTo: anchorBundleURL).standardizedFileURL
+        let resolved = URL(fileURLWithPath: relativePath, relativeTo: anchorBundleURL).standardizedFileURL
+        let parentDir = anchorBundleURL.deletingLastPathComponent().standardizedFileURL
+        // Validate the resolved path stays within the parent directory
+        guard resolved.path.hasPrefix(parentDir.path) else {
+            // Return anchor itself as a safe fallback — caller will check isBundleURL
+            return anchorBundleURL
+        }
+        return resolved
     }
 
     /// Derives a stable base name by stripping all extensions from a FASTQ filename.
