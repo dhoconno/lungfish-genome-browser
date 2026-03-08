@@ -325,9 +325,22 @@ public actor DockerRuntime: ContainerRuntimeProtocol {
     public func stopContainer(_ container: Container) async throws {
         logger.info("Stopping container: \(container.name, privacy: .public)")
 
+        let currentState = activeContainers[container.id]?.state ?? container.state
+        if currentState == .stopped {
+            logger.debug("stopContainer: Container already stopped: \(container.name, privacy: .public)")
+            return
+        }
+        if currentState == .created {
+            if var updatedContainer = activeContainers[container.id] {
+                try? updatedContainer.updateState(.stopped)
+                activeContainers[container.id] = updatedContainer
+            }
+            return
+        }
+
         // Update state to stopping
         if var updatedContainer = activeContainers[container.id] {
-            try updatedContainer.updateState(.stopping)
+            try? updatedContainer.updateState(.stopping)
             activeContainers[container.id] = updatedContainer
         }
 
@@ -345,7 +358,7 @@ public actor DockerRuntime: ContainerRuntimeProtocol {
 
         // Update state to stopped
         if var updatedContainer = activeContainers[container.id] {
-            try updatedContainer.updateState(.stopped)
+            try? updatedContainer.updateState(.stopped)
             activeContainers[container.id] = updatedContainer
         }
 
@@ -482,12 +495,16 @@ public actor DockerRuntime: ContainerRuntimeProtocol {
     public func removeContainer(_ container: Container) async throws {
         logger.info("Removing container: \(container.name, privacy: .public)")
 
-        guard container.state == .stopped || container.state == .created else {
-            throw ContainerRuntimeError.invalidContainerState(
-                containerID: container.id,
-                expected: .stopped,
-                actual: container.state
-            )
+        var currentState = activeContainers[container.id]?.state ?? container.state
+        if currentState == .running || currentState == .stopping {
+            try? await stopContainer(container)
+            currentState = activeContainers[container.id]?.state ?? .stopped
+        }
+
+        guard currentState == .stopped || currentState == .created else {
+            logger.debug("removeContainer: forcing local cleanup for \(container.name, privacy: .public) in state \(String(describing: currentState), privacy: .public)")
+            activeContainers.removeValue(forKey: container.id)
+            return
         }
 
         let (exitCode, _, stderr) = await runDockerCommand(["rm", container.id])

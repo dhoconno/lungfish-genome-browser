@@ -412,7 +412,7 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
             path: containerRoot.appendingPathComponent("bootlog.log")
         )
 
-        return LinuxContainer(
+        return try LinuxContainer(
             id,
             rootfs: rootfs,
             vmm: vmm,
@@ -500,6 +500,20 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
     public func stopContainer(_ container: Container) async throws {
         logger.info("Stopping container: \(container.name, privacy: .public)")
 
+        let currentState = activeContainers[container.id]?.state ?? container.state
+        if currentState == .stopped {
+            logger.debug("stopContainer: Container already stopped: \(container.name, privacy: .public)")
+            return
+        }
+        if currentState == .created {
+            // Created-but-never-started containers do not need a runtime stop call.
+            if var updatedContainer = activeContainers[container.id] {
+                try? updatedContainer.updateState(.stopped)
+                activeContainers[container.id] = updatedContainer
+            }
+            return
+        }
+
         guard let linuxContainer = nativeContainers[container.id] else {
             throw ContainerRuntimeError.containerStopFailed(
                 containerID: container.id,
@@ -510,7 +524,7 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
         do {
             // Update state to stopping
             if var updatedContainer = activeContainers[container.id] {
-                try updatedContainer.updateState(.stopping)
+                try? updatedContainer.updateState(.stopping)
                 activeContainers[container.id] = updatedContainer
             }
 
@@ -518,7 +532,7 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
 
             // Update state to stopped
             if var updatedContainer = activeContainers[container.id] {
-                try updatedContainer.updateState(.stopped)
+                try? updatedContainer.updateState(.stopped)
                 activeContainers[container.id] = updatedContainer
             }
 
@@ -653,13 +667,17 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
     public func removeContainer(_ container: Container) async throws {
         logger.info("Removing container: \(container.name, privacy: .public)")
 
-        let currentState = activeContainers[container.id]?.state ?? container.state
+        var currentState = activeContainers[container.id]?.state ?? container.state
+        if currentState == .running || currentState == .stopping {
+            try? await stopContainer(container)
+            currentState = activeContainers[container.id]?.state ?? .stopped
+        }
+
         guard currentState == .stopped || currentState == .created else {
-            throw ContainerRuntimeError.invalidContainerState(
-                containerID: container.id,
-                expected: .stopped,
-                actual: currentState
-            )
+            logger.debug("removeContainer: forcing removal from local state for container \(container.name, privacy: .public) in state \(String(describing: currentState), privacy: .public)")
+            activeContainers.removeValue(forKey: container.id)
+            nativeContainers.removeValue(forKey: container.id)
+            return
         }
 
         // Remove from active containers

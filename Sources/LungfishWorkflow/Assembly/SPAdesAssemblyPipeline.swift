@@ -227,6 +227,11 @@ public final class SPAdesAssemblyPipeline: @unchecked Sendable {
             config: containerConfig
         )
 
+        let cleanupContainer: @Sendable () async -> Void = {
+            try? await runtime.stopContainer(container)
+            try? await runtime.removeContainer(container)
+        }
+
         // Run container with cancellation support — stop the container if task is cancelled
         let exitCode: Int32
         do {
@@ -235,22 +240,19 @@ public final class SPAdesAssemblyPipeline: @unchecked Sendable {
             } onCancel: {
                 Task {
                     logger.info("Cancellation requested — stopping SPAdes container")
-                    try? await runtime.stopContainer(container)
+                    await cleanupContainer()
                 }
             }
         } catch is CancellationError {
-            try? await runtime.stopContainer(container)
-            try? await runtime.removeContainer(container)
+            await cleanupContainer()
             throw SPAdesPipelineError.cancelled
         } catch {
-            try? await runtime.stopContainer(container)
-            try? await runtime.removeContainer(container)
+            await cleanupContainer()
             throw error
         }
 
-        // Cleanup container (stop defensively in case runAndWait didn't fully terminate)
-        try? await runtime.stopContainer(container)
-        try? await runtime.removeContainer(container)
+        // Cleanup container (idempotent; runtime may already be in stopped state).
+        await cleanupContainer()
         try Task.checkCancellation()
 
         let wallTime = Date().timeIntervalSince(startTime)
