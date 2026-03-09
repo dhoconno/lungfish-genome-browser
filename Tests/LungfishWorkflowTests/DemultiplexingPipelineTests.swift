@@ -64,7 +64,7 @@ final class DemultiplexingPipelineTests: XCTestCase {
             outputDirectory: URL(fileURLWithPath: "/tmp/output")
         )
 
-        XCTAssertEqual(config.barcodeLocation, .anywhere)
+        XCTAssertEqual(config.barcodeLocation, .bothEnds)
         XCTAssertEqual(config.errorRate, 0.15, accuracy: 0.001)
         XCTAssertEqual(config.minimumOverlap, 3)
         XCTAssertTrue(config.trimBarcodes)
@@ -78,7 +78,7 @@ final class DemultiplexingPipelineTests: XCTestCase {
             .inputFileNotFound(URL(fileURLWithPath: "/tmp/test.fastq")),
             .cutadaptFailed(exitCode: 1, stderr: "error message"),
             .noBarcodes,
-            .automaticBarcodeDiscoveryDisabled,
+            .combinatorialRequiresSampleAssignments,
             .outputParsingFailed("bad json"),
             .bundleCreationFailed(barcode: "D701", underlying: NSError(domain: "test", code: 1)),
         ]
@@ -97,12 +97,12 @@ final class DemultiplexingPipelineTests: XCTestCase {
 
     // MARK: - DemultiplexConfig Custom Location
 
-    func testDemultiplexConfigAnywhereLocation() {
+    func testDemultiplexConfigBothEndsLocation() {
         let config = DemultiplexConfig(
             inputURL: URL(fileURLWithPath: "/tmp/test.fastq.gz"),
             barcodeKit: IlluminaBarcodeKitRegistry.truseqSingleA,
             outputDirectory: URL(fileURLWithPath: "/tmp/output"),
-            barcodeLocation: .anywhere,
+            barcodeLocation: .bothEnds,
             errorRate: 0.2,
             minimumOverlap: 5,
             trimBarcodes: false,
@@ -110,7 +110,7 @@ final class DemultiplexingPipelineTests: XCTestCase {
             threads: 8
         )
 
-        XCTAssertEqual(config.barcodeLocation, .anywhere)
+        XCTAssertEqual(config.barcodeLocation, .bothEnds)
         XCTAssertEqual(config.errorRate, 0.2, accuracy: 0.001)
         XCTAssertEqual(config.minimumOverlap, 5)
         XCTAssertFalse(config.trimBarcodes)
@@ -149,7 +149,7 @@ final class DemultiplexingPipelineTests: XCTestCase {
                 inputURL: inputFASTQ,
                 barcodeKit: kit,
                 outputDirectory: outputDir,
-                barcodeLocation: .anywhere,
+                barcodeLocation: .bothEnds,
                 errorRate: 0.0,
                 minimumOverlap: 8,
                 trimBarcodes: true,

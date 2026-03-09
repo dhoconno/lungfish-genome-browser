@@ -30,6 +30,12 @@ public struct DemultiplexConfig: Sendable {
     /// Minimum overlap between barcode and read (cutadapt --overlap). Default 3.
     public let minimumOverlap: Int
 
+    /// Maximum bases from the 5' terminus where a barcode may begin.
+    public let maxDistanceFrom5Prime: Int
+
+    /// Maximum bases from the 3' terminus where a barcode may end.
+    public let maxDistanceFrom3Prime: Int
+
     /// Whether to trim barcode sequences from output reads.
     public let trimBarcodes: Bool
 
@@ -39,16 +45,25 @@ public struct DemultiplexConfig: Sendable {
     /// Number of threads for cutadapt (--cores).
     public let threads: Int
 
+    /// Optional explicit asymmetric sample assignments.
+    ///
+    /// When present, these are used to build linked 5'/3' adapters directly,
+    /// avoiding cartesian expansion for combinatorial kits.
+    public let sampleAssignments: [FASTQSampleBarcodeAssignment]
+
     public init(
         inputURL: URL,
         barcodeKit: IlluminaBarcodeDefinition,
         outputDirectory: URL,
-        barcodeLocation: BarcodeLocation = .anywhere,
+        barcodeLocation: BarcodeLocation = .bothEnds,
         errorRate: Double = 0.15,
         minimumOverlap: Int = 3,
+        maxDistanceFrom5Prime: Int = 0,
+        maxDistanceFrom3Prime: Int = 0,
         trimBarcodes: Bool = true,
         unassignedDisposition: UnassignedDisposition = .keep,
-        threads: Int = 4
+        threads: Int = 4,
+        sampleAssignments: [FASTQSampleBarcodeAssignment] = []
     ) {
         self.inputURL = inputURL
         self.barcodeKit = barcodeKit
@@ -56,9 +71,12 @@ public struct DemultiplexConfig: Sendable {
         self.barcodeLocation = barcodeLocation
         self.errorRate = errorRate
         self.minimumOverlap = minimumOverlap
+        self.maxDistanceFrom5Prime = max(0, maxDistanceFrom5Prime)
+        self.maxDistanceFrom3Prime = max(0, maxDistanceFrom3Prime)
         self.trimBarcodes = trimBarcodes
         self.unassignedDisposition = unassignedDisposition
         self.threads = threads
+        self.sampleAssignments = sampleAssignments
     }
 }
 
@@ -85,7 +103,7 @@ public enum DemultiplexError: Error, LocalizedError {
     case inputFileNotFound(URL)
     case cutadaptFailed(exitCode: Int32, stderr: String)
     case noBarcodes
-    case automaticBarcodeDiscoveryDisabled
+    case combinatorialRequiresSampleAssignments
     case outputParsingFailed(String)
     case bundleCreationFailed(barcode: String, underlying: Error)
 
@@ -97,8 +115,8 @@ public enum DemultiplexError: Error, LocalizedError {
             return "cutadapt failed (exit \(code)): \(String(stderr.suffix(500)))"
         case .noBarcodes:
             return "Barcode kit has no barcodes defined"
-        case .automaticBarcodeDiscoveryDisabled:
-            return "Automatic barcode discovery is temporarily disabled. Select a known fixed barcode kit."
+        case .combinatorialRequiresSampleAssignments:
+            return "Combinatorial kits require explicit sample barcode assignments."
         case .outputParsingFailed(let msg):
             return "Failed to parse cutadapt output: \(msg)"
         case .bundleCreationFailed(let barcode, let error):
@@ -117,8 +135,8 @@ public enum DemultiplexError: Error, LocalizedError {
 /// 3. Create `.lungfishfastq` bundles from each output file
 /// 4. Generate a `DemultiplexManifest` with per-barcode statistics
 ///
-/// Supports both single-indexed and dual-indexed Illumina kits, and
-/// handles barcodes at 5' (anchored), 3' (anchored), or anywhere in the read.
+/// Supports both single-indexed and dual-indexed kits and terminally anchored
+/// barcode matching with configurable 5'/3' search windows.
 ///
 /// ```
 /// input.lungfishfastq/
@@ -274,7 +292,11 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                 }
             } else {
                 assignedReadCount += readCount
-                let sequenceInfo = barcodeSequenceInfo(for: baseName, kit: config.barcodeKit)
+                let sequenceInfo = barcodeSequenceInfo(
+                    for: baseName,
+                    kit: config.barcodeKit,
+                    sampleAssignments: config.sampleAssignments
+                )
                 barcodeResults.append(BarcodeResult(
                     barcodeID: baseName,
                     sampleName: sequenceInfo.sampleName,
@@ -299,12 +321,15 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         let elapsed = Date().timeIntervalSince(startTime)
 
         // Build BarcodeKit for manifest
+        let usesExplicitAssignments = !config.sampleAssignments.isEmpty
         let kitForManifest = BarcodeKit(
             name: config.barcodeKit.displayName,
             vendor: config.barcodeKit.vendor,
-            barcodeCount: config.barcodeKit.barcodes.count,
-            isDualIndexed: config.barcodeKit.isDualIndexed,
-            barcodeType: config.barcodeKit.pairingMode == .singleEnd ? .singleEnd : .asymmetric
+            barcodeCount: usesExplicitAssignments ? config.sampleAssignments.count : config.barcodeKit.barcodes.count,
+            isDualIndexed: usesExplicitAssignments ? true : config.barcodeKit.isDualIndexed,
+            barcodeType: usesExplicitAssignments
+                ? .asymmetric
+                : (config.barcodeKit.pairingMode == .singleEnd ? .singleEnd : .asymmetric)
         )
 
         // Build the cutadapt version string
@@ -317,7 +342,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                 tool: "cutadapt",
                 toolVersion: cutadaptVersion,
                 maxMismatches: Int(config.errorRate * Double(config.barcodeKit.barcodes[0].i7Sequence.count)),
-                requireBothEnds: config.barcodeKit.isDualIndexed,
+                requireBothEnds: config.barcodeLocation == .bothEnds || config.barcodeKit.isDualIndexed || usesExplicitAssignments,
                 trimBarcodes: config.trimBarcodes,
                 commandLine: "cutadapt \(args.joined(separator: " "))",
                 wallClockSeconds: elapsed
@@ -374,13 +399,55 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
     ) async throws -> AdapterConfiguration {
         let adapterFASTA = workDirectory.appendingPathComponent("adapters.fasta")
 
+        if !config.sampleAssignments.isEmpty {
+            let entries: [(name: String, first: String, second: String)] = config.sampleAssignments.compactMap { assignment in
+                guard let forward = resolveSequence(
+                    explicitSequence: assignment.forwardSequence,
+                    barcodeID: assignment.forwardBarcodeID,
+                    kit: config.barcodeKit
+                ), let reverse = resolveSequence(
+                    explicitSequence: assignment.reverseSequence,
+                    barcodeID: assignment.reverseBarcodeID,
+                    kit: config.barcodeKit
+                ) else {
+                    return nil
+                }
+
+                return (
+                    name: sanitizedSampleIdentifier(assignment.sampleID),
+                    first: contextualizedSequence(forward, role: .i7, vendor: config.barcodeKit.vendor),
+                    second: contextualizedSequence(reverse, role: .i5, vendor: config.barcodeKit.vendor)
+                )
+            }
+
+            guard !entries.isEmpty else {
+                throw DemultiplexError.combinatorialRequiresSampleAssignments
+            }
+
+            try writeLinkedAdapterFASTA(
+                entries: entries,
+                location: config.barcodeLocation,
+                maxDistanceFrom5Prime: config.maxDistanceFrom5Prime,
+                maxDistanceFrom3Prime: config.maxDistanceFrom3Prime,
+                to: adapterFASTA
+            )
+            return AdapterConfiguration(adapterFASTA: adapterFASTA, adapterFlag: "-g")
+        }
+
         switch config.barcodeKit.pairingMode {
         case .singleEnd:
-            _ = try IlluminaBarcodeKitRegistry.generateCutadaptFASTA(
-                for: config.barcodeKit,
-                to: adapterFASTA,
+            let entries: [(name: String, sequence: String)] = config.barcodeKit.barcodes.map { barcode in
+                (
+                    name: barcode.id,
+                    sequence: contextualizedSequence(barcode.i7Sequence, role: .i7, vendor: config.barcodeKit.vendor)
+                )
+            }
+            try writeSingleEndAdapterFASTA(
+                entries: entries,
                 location: config.barcodeLocation,
-                includeAdapterContext: config.barcodeKit.vendor.lowercased() == "illumina"
+                maxDistanceFrom5Prime: config.maxDistanceFrom5Prime,
+                maxDistanceFrom3Prime: config.maxDistanceFrom3Prime,
+                to: adapterFASTA
             )
             return AdapterConfiguration(
                 adapterFASTA: adapterFASTA,
@@ -405,11 +472,17 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                 )
             }
             guard !entries.isEmpty else { throw DemultiplexError.noBarcodes }
-            try writeLinkedAdapterFASTA(entries: entries, location: config.barcodeLocation, to: adapterFASTA)
+            try writeLinkedAdapterFASTA(
+                entries: entries,
+                location: config.barcodeLocation,
+                maxDistanceFrom5Prime: config.maxDistanceFrom5Prime,
+                maxDistanceFrom3Prime: config.maxDistanceFrom3Prime,
+                to: adapterFASTA
+            )
             return AdapterConfiguration(adapterFASTA: adapterFASTA, adapterFlag: "-g")
 
         case .combinatorialDual:
-            throw DemultiplexError.automaticBarcodeDiscoveryDisabled
+            throw DemultiplexError.combinatorialRequiresSampleAssignments
         }
     }
 
@@ -442,30 +515,51 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
             return "-g"
         case .threePrime:
             return "-a"
-        case .anywhere:
-            return "-b"
+        case .bothEnds:
+            return "-g"
         }
     }
 
-    private func writeLinkedAdapterFASTA(
-        entries: [(name: String, first: String, second: String)],
+    private func writeSingleEndAdapterFASTA(
+        entries: [(name: String, sequence: String)],
         location: BarcodeLocation,
+        maxDistanceFrom5Prime: Int,
+        maxDistanceFrom3Prime: Int,
         to outputURL: URL
     ) throws {
         var lines: [String] = []
-        lines.reserveCapacity(max(1, entries.count * 4))
+        let fivePrimeOffsets = Array(0...max(0, maxDistanceFrom5Prime))
+        let threePrimeOffsets = Array(0...max(0, maxDistanceFrom3Prime))
+        let perEntryPatternCount: Int
+        switch location {
+        case .fivePrime:
+            perEntryPatternCount = fivePrimeOffsets.count
+        case .threePrime:
+            perEntryPatternCount = threePrimeOffsets.count
+        case .bothEnds:
+            // Single-end kits are matched as 5' barcodes by convention.
+            perEntryPatternCount = fivePrimeOffsets.count
+        }
+        lines.reserveCapacity(max(1, entries.count * perEntryPatternCount * 2))
 
         for entry in entries {
-            let first = entry.first.uppercased()
-            let second = entry.second.uppercased()
-            let forwardPattern = linkedAdapterPattern(first: first, second: second, location: location)
-            lines.append(">\(entry.name)")
-            lines.append(forwardPattern)
-
-            if first != second {
-                let reversePattern = linkedAdapterPattern(first: second, second: first, location: location)
-                lines.append(">\(entry.name)")
-                lines.append(reversePattern)
+            let sequence = entry.sequence.uppercased()
+            switch location {
+            case .fivePrime:
+                for offset in fivePrimeOffsets {
+                    lines.append(">\(entry.name)")
+                    lines.append("^\(wildcardExact(offset))\(sequence)")
+                }
+            case .threePrime:
+                for offset in threePrimeOffsets {
+                    lines.append(">\(entry.name)")
+                    lines.append("\(sequence)\(wildcardExact(offset))$")
+                }
+            case .bothEnds:
+                for offset in fivePrimeOffsets {
+                    lines.append(">\(entry.name)")
+                    lines.append("^\(wildcardExact(offset))\(sequence)")
+                }
             }
         }
 
@@ -473,21 +567,158 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         try content.write(to: outputURL, atomically: true, encoding: .utf8)
     }
 
-    private func linkedAdapterPattern(first: String, second: String, location: BarcodeLocation) -> String {
+    private func writeLinkedAdapterFASTA(
+        entries: [(name: String, first: String, second: String)],
+        location: BarcodeLocation,
+        maxDistanceFrom5Prime: Int,
+        maxDistanceFrom3Prime: Int,
+        to outputURL: URL
+    ) throws {
+        var lines: [String] = []
+        let fivePrimeOffsets = Array(0...max(0, maxDistanceFrom5Prime))
+        let threePrimeOffsets = Array(0...max(0, maxDistanceFrom3Prime))
+        let perOrientationPatternCount: Int
         switch location {
         case .fivePrime:
-            return "^\(first)...\(second)"
+            perOrientationPatternCount = fivePrimeOffsets.count
         case .threePrime:
-            return "\(first)...\(second)$"
-        case .anywhere:
-            return "\(first)...\(second)"
+            perOrientationPatternCount = threePrimeOffsets.count
+        case .bothEnds:
+            perOrientationPatternCount = fivePrimeOffsets.count * threePrimeOffsets.count
         }
+        lines.reserveCapacity(max(1, entries.count * perOrientationPatternCount * 4))
+
+        for entry in entries {
+            let first = entry.first.uppercased()
+            let second = entry.second.uppercased()
+            let forwardPatterns = linkedAdapterPatterns(
+                first: first,
+                second: second,
+                location: location,
+                fivePrimeOffsets: fivePrimeOffsets,
+                threePrimeOffsets: threePrimeOffsets
+            )
+            for pattern in forwardPatterns {
+                lines.append(">\(entry.name)")
+                lines.append(pattern)
+            }
+
+            if first != second {
+                let reversePatterns = linkedAdapterPatterns(
+                    first: second,
+                    second: first,
+                    location: location,
+                    fivePrimeOffsets: fivePrimeOffsets,
+                    threePrimeOffsets: threePrimeOffsets
+                )
+                for pattern in reversePatterns {
+                    lines.append(">\(entry.name)")
+                    lines.append(pattern)
+                }
+            }
+        }
+
+        let content = lines.joined(separator: "\n") + "\n"
+        try content.write(to: outputURL, atomically: true, encoding: .utf8)
+    }
+
+    private func linkedAdapterPatterns(
+        first: String,
+        second: String,
+        location: BarcodeLocation,
+        fivePrimeOffsets: [Int],
+        threePrimeOffsets: [Int]
+    ) -> [String] {
+        var patterns: [String] = []
+        switch location {
+        case .fivePrime:
+            patterns.reserveCapacity(fivePrimeOffsets.count)
+            for offset in fivePrimeOffsets {
+                patterns.append("^\(wildcardExact(offset))\(first)...\(second)")
+            }
+        case .threePrime:
+            patterns.reserveCapacity(threePrimeOffsets.count)
+            for offset in threePrimeOffsets {
+                patterns.append("\(first)...\(second)\(wildcardExact(offset))$")
+            }
+        case .bothEnds:
+            patterns.reserveCapacity(fivePrimeOffsets.count * threePrimeOffsets.count)
+            for offset5 in fivePrimeOffsets {
+                for offset3 in threePrimeOffsets {
+                    patterns.append("^\(wildcardExact(offset5))\(first)...\(second)\(wildcardExact(offset3))$")
+                }
+            }
+        }
+        return patterns
+    }
+
+    private func wildcardExact(_ offset: Int) -> String {
+        let distance = max(0, offset)
+        guard distance > 0 else { return "" }
+        return "N{\(distance)}"
+    }
+
+    private func resolveSequence(
+        explicitSequence: String?,
+        barcodeID: String?,
+        kit: IlluminaBarcodeDefinition
+    ) -> String? {
+        if let explicitSequence, !explicitSequence.isEmpty {
+            return explicitSequence.uppercased()
+        }
+        guard let barcodeID else { return nil }
+        guard let barcode = kit.barcodes.first(where: { $0.id.caseInsensitiveCompare(barcodeID) == .orderedSame }) else {
+            return nil
+        }
+        return barcode.i7Sequence.uppercased()
+    }
+
+    private func sanitizedSampleIdentifier(_ sampleID: String) -> String {
+        let trimmed = sampleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sanitized = trimmed
+            .replacingOccurrences(of: "[^A-Za-z0-9._-]+", with: "_", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "._-"))
+        return sanitized.isEmpty ? "sample" : sanitized
+    }
+
+    private func canonicalSampleID(_ value: String) -> String {
+        sanitizedSampleIdentifier(value).lowercased()
+    }
+
+    private func sampleAssignmentLookup(
+        _ assignments: [FASTQSampleBarcodeAssignment]
+    ) -> [String: FASTQSampleBarcodeAssignment] {
+        var lookup: [String: FASTQSampleBarcodeAssignment] = [:]
+        for assignment in assignments {
+            lookup[canonicalSampleID(assignment.sampleID)] = assignment
+        }
+        return lookup
+    }
+
+    private func sampleAssignment(
+        for outputName: String,
+        assignments: [FASTQSampleBarcodeAssignment]
+    ) -> FASTQSampleBarcodeAssignment? {
+        let lookup = sampleAssignmentLookup(assignments)
+        return lookup[canonicalSampleID(outputName)]
+    }
+
+    private func assignmentSequence(_ explicit: String?, id: String?, kit: IlluminaBarcodeDefinition) -> String? {
+        resolveSequence(explicitSequence: explicit, barcodeID: id, kit: kit)
     }
 
     private func barcodeSequenceInfo(
         for outputName: String,
-        kit: IlluminaBarcodeDefinition
+        kit: IlluminaBarcodeDefinition,
+        sampleAssignments: [FASTQSampleBarcodeAssignment]
     ) -> (sampleName: String?, forward: String?, reverse: String?) {
+        if let assignment = sampleAssignment(for: outputName, assignments: sampleAssignments) {
+            let sampleLabel = assignment.sampleName ?? assignment.sampleID
+            let forward = assignmentSequence(assignment.forwardSequence, id: assignment.forwardBarcodeID, kit: kit)
+            let reverse = assignmentSequence(assignment.reverseSequence, id: assignment.reverseBarcodeID, kit: kit)
+            return (sampleLabel, forward, reverse)
+        }
+
         switch kit.pairingMode {
         case .singleEnd, .fixedDual:
             if let barcode = kit.barcodes.first(where: { $0.id == outputName }) {

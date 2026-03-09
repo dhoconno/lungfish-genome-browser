@@ -32,7 +32,16 @@ public enum FASTQDerivativeRequest: Sendable {
     case interleaveReformat(direction: FASTQInterleaveDirection)
 
     // Demultiplexing (produces per-barcode bundles)
-    case demultiplex(kitID: String, customCSVPath: String?, location: String, errorRate: Double, trimBarcodes: Bool)
+    case demultiplex(
+        kitID: String,
+        customCSVPath: String?,
+        location: String,
+        maxDistanceFrom5Prime: Int,
+        maxDistanceFrom3Prime: Int,
+        errorRate: Double,
+        trimBarcodes: Bool,
+        sampleAssignments: [FASTQSampleBarcodeAssignment]?
+    )
 
     /// Whether this request produces a trim derivative (vs subset).
     var isTrimOperation: Bool {
@@ -190,15 +199,27 @@ public actor FASTQDerivativeService {
 
         // Mixed-output operations (merge/repair) write multiple files directly
         // to the output bundle, bypassing the single-file temp flow.
-        if case .demultiplex(let kitID, let customCSVPath, let location, let errorRate, let trimBarcodes) = request {
+        if case .demultiplex(
+            let kitID,
+            let customCSVPath,
+            let location,
+            let maxDistanceFrom5Prime,
+            let maxDistanceFrom3Prime,
+            let errorRate,
+            let trimBarcodes,
+            let sampleAssignments
+        ) = request {
             return try await createDemultiplexDerivative(
                 sourceFASTQ: materializedSourceFASTQ,
                 sourceBundleURL: sourceBundleURL,
                 kitID: kitID,
                 customCSVPath: customCSVPath,
                 location: location,
+                maxDistanceFrom5Prime: maxDistanceFrom5Prime,
+                maxDistanceFrom3Prime: maxDistanceFrom3Prime,
                 errorRate: errorRate,
                 trimBarcodes: trimBarcodes,
+                sampleAssignments: sampleAssignments ?? [],
                 progress: progress
             )
         }
@@ -361,8 +382,11 @@ public actor FASTQDerivativeService {
         kitID: String,
         customCSVPath: String?,
         location: String,
+        maxDistanceFrom5Prime: Int,
+        maxDistanceFrom3Prime: Int,
         errorRate: Double,
         trimBarcodes: Bool,
+        sampleAssignments: [FASTQSampleBarcodeAssignment],
         progress: (@Sendable (String) -> Void)?
     ) async throws -> URL {
         let barcodeKit: IlluminaBarcodeDefinition
@@ -389,8 +413,8 @@ public actor FASTQDerivativeService {
             barcodeLocation = .fivePrime
         case "threeprime", "3prime", "three_prime":
             barcodeLocation = .threePrime
-        case "anywhere":
-            barcodeLocation = .anywhere
+        case "bothends", "both_ends", "both-ends", "both":
+            barcodeLocation = .bothEnds
         default:
             throw FASTQDerivativeError.invalidOperation("Unsupported barcode location: \(location)")
         }
@@ -410,7 +434,10 @@ public actor FASTQDerivativeService {
                 outputDirectory: outputDirectory,
                 barcodeLocation: barcodeLocation,
                 errorRate: errorRate,
-                trimBarcodes: trimBarcodes
+                maxDistanceFrom5Prime: maxDistanceFrom5Prime,
+                maxDistanceFrom3Prime: maxDistanceFrom3Prime,
+                trimBarcodes: trimBarcodes,
+                sampleAssignments: sampleAssignments
             ),
             progress: { fraction, message in
                 let percent = Int((fraction * 100.0).rounded())
@@ -434,6 +461,15 @@ public actor FASTQDerivativeService {
             try? sourceScopedManifest.save(to: sourceBundleURL)
         }
 
+        if !sampleAssignments.isEmpty {
+            persistDemultiplexedSampleMetadata(
+                for: result,
+                outputDirectory: outputDirectory,
+                sourceBundleURL: sourceBundleURL,
+                assignments: sampleAssignments
+            )
+        }
+
         // Prefer selecting the largest assigned barcode bundle; fall back to unassigned.
         let selectedBundle: URL
         if let topBarcode = result.manifest.barcodes.max(by: { $0.readCount < $1.readCount }) {
@@ -447,6 +483,62 @@ public actor FASTQDerivativeService {
         progress?("Demultiplex complete: \(result.manifest.barcodes.count) barcode bundle(s)")
         derivativeLogger.info("Created demultiplex output at \(outputDirectory.path, privacy: .public)")
         return selectedBundle
+    }
+
+    private func persistDemultiplexedSampleMetadata(
+        for result: DemultiplexResult,
+        outputDirectory: URL,
+        sourceBundleURL: URL,
+        assignments: [FASTQSampleBarcodeAssignment]
+    ) {
+        var assignmentLookup: [String: FASTQSampleBarcodeAssignment] = [:]
+        for assignment in assignments {
+            assignmentLookup[normalizeSampleKey(assignment.sampleID)] = assignment
+        }
+        guard !assignmentLookup.isEmpty else { return }
+
+        for barcode in result.manifest.barcodes {
+            let key = normalizeSampleKey(barcode.barcodeID)
+            guard let assignment = assignmentLookup[key] else { continue }
+
+            let bundleURL = outputDirectory.appendingPathComponent(barcode.bundleRelativePath, isDirectory: true)
+            guard let payloadFASTQ = FASTQBundle.resolvePrimaryFASTQURL(for: bundleURL),
+                  FileManager.default.fileExists(atPath: payloadFASTQ.path) else {
+                continue
+            }
+
+            var metadata = FASTQMetadataStore.load(for: payloadFASTQ) ?? PersistedFASTQMetadata()
+            var demux = metadata.demultiplexMetadata ?? FASTQDemultiplexMetadata()
+
+            // Child bundles only need the single resolved sample assignment.
+            let resolvedAssignment = FASTQSampleBarcodeAssignment(
+                sampleID: assignment.sampleID,
+                sampleName: assignment.sampleName,
+                forwardBarcodeID: assignment.forwardBarcodeID ?? barcode.barcodeID,
+                forwardSequence: barcode.forwardSequence ?? assignment.forwardSequence,
+                reverseBarcodeID: assignment.reverseBarcodeID,
+                reverseSequence: barcode.reverseSequence ?? assignment.reverseSequence,
+                metadata: assignment.metadata
+            )
+            demux.sampleAssignments = [resolvedAssignment]
+            metadata.demultiplexMetadata = demux
+            FASTQMetadataStore.save(metadata, for: payloadFASTQ)
+        }
+
+        // Preserve full sample-assignment metadata on the demultiplexed source as well.
+        if let sourceFASTQ = FASTQBundle.resolvePrimaryFASTQURL(for: sourceBundleURL) {
+            var sourceMetadata = FASTQMetadataStore.load(for: sourceFASTQ) ?? PersistedFASTQMetadata()
+            var sourceDemux = sourceMetadata.demultiplexMetadata ?? FASTQDemultiplexMetadata()
+            sourceDemux.sampleAssignments = assignments
+            sourceMetadata.demultiplexMetadata = sourceDemux
+            FASTQMetadataStore.save(sourceMetadata, for: sourceFASTQ)
+        }
+    }
+
+    private func normalizeSampleKey(_ raw: String) -> String {
+        raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "[^A-Za-z0-9._-]+", with: "_", options: .regularExpression)
+            .lowercased()
     }
 
     /// Creates a derivative bundle for operations that produce multiple classified files

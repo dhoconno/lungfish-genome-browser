@@ -425,13 +425,13 @@ extension MainWindowController: NSToolbarDelegate {
 
         case ToolbarIdentifier.toggleAnnotationDrawer:
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            item.label = "Annotations"
-            item.paletteLabel = "Toggle Annotation Drawer"
-            item.toolTip = "Show or hide the annotation table"
+            item.label = "Drawer"
+            item.paletteLabel = "Toggle Bottom Drawer"
+            item.toolTip = "Show or hide the bottom metadata drawer"
             let button = makeToolbarButton(
                 symbolName: "tablecells",
                 fallbacks: ["tablecells.badge.ellipsis", "list.dash"],
-                accessibilityLabel: "Toggle Annotation Drawer"
+                accessibilityLabel: "Toggle Bottom Drawer"
             )
             button.target = self
             button.action = #selector(toggleAnnotationDrawer(_:))

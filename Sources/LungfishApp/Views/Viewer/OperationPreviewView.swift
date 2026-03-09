@@ -128,8 +128,21 @@ final class OperationPreviewView: NSView {
     var parameters = Parameters() { didSet { needsDisplay = true } }
     private var statistics: FASTQDatasetStatistics?
     private var animationProgress: CGFloat = 1.0
+    private let fastaScrollView = NSScrollView()
+    private let fastaTextView = NSTextView()
+    private var showsFASTAPreview = true
 
     override var isFlipped: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configureFASTAPreview()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureFASTAPreview()
+    }
 
     // MARK: - Public API
 
@@ -137,6 +150,92 @@ final class OperationPreviewView: NSView {
         self.operationKind = operation
         self.statistics = statistics
         needsDisplay = true
+    }
+
+    func setFASTAContent(_ text: String) {
+        showsFASTAPreview = true
+        fastaScrollView.isHidden = false
+        fastaTextView.string = text
+        refreshFASTATextViewSize()
+        needsDisplay = true
+    }
+
+    private func configureFASTAPreview() {
+        wantsLayer = true
+
+        fastaScrollView.translatesAutoresizingMaskIntoConstraints = false
+        fastaScrollView.borderType = .noBorder
+        fastaScrollView.drawsBackground = true
+        fastaScrollView.backgroundColor = .textBackgroundColor
+        fastaScrollView.hasVerticalScroller = true
+        fastaScrollView.hasHorizontalScroller = true
+        fastaScrollView.autohidesScrollers = true
+
+        fastaTextView.isEditable = false
+        fastaTextView.isSelectable = true
+        fastaTextView.isRichText = false
+        fastaTextView.importsGraphics = false
+        fastaTextView.allowsUndo = false
+        fastaTextView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        fastaTextView.textColor = .labelColor
+        fastaTextView.backgroundColor = .textBackgroundColor
+        fastaTextView.usesFindPanel = true
+        fastaTextView.isVerticallyResizable = true
+        fastaTextView.isHorizontallyResizable = true
+        fastaTextView.autoresizingMask = []
+        fastaTextView.minSize = NSSize(width: 0, height: 0)
+        fastaTextView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        if let textContainer = fastaTextView.textContainer {
+            textContainer.widthTracksTextView = false
+            textContainer.containerSize = NSSize(
+                width: CGFloat.greatestFiniteMagnitude,
+                height: CGFloat.greatestFiniteMagnitude
+            )
+            textContainer.lineBreakMode = .byClipping
+            textContainer.lineFragmentPadding = 0
+        }
+        fastaTextView.textContainerInset = NSSize(width: 8, height: 8)
+        fastaScrollView.documentView = fastaTextView
+
+        addSubview(fastaScrollView)
+        NSLayoutConstraint.activate([
+            fastaScrollView.topAnchor.constraint(equalTo: topAnchor),
+            fastaScrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            fastaScrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            fastaScrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    override func layout() {
+        super.layout()
+        if showsFASTAPreview {
+            refreshFASTATextViewSize()
+        }
+    }
+
+    private func refreshFASTATextViewSize() {
+        guard let textContainer = fastaTextView.textContainer,
+              let layoutManager = fastaTextView.layoutManager else { return }
+
+        layoutManager.ensureLayout(for: textContainer)
+        let used = layoutManager.usedRect(for: textContainer)
+        let inset = fastaTextView.textContainerInset
+
+        let targetWidth = max(
+            fastaScrollView.contentSize.width,
+            ceil(used.width + inset.width * 2 + 8)
+        )
+        let targetHeight = max(
+            fastaScrollView.contentSize.height,
+            ceil(used.height + inset.height * 2 + 8)
+        )
+        let currentSize = fastaTextView.frame.size
+        if abs(currentSize.width - targetWidth) > 0.5 || abs(currentSize.height - targetHeight) > 0.5 {
+            fastaTextView.setFrameSize(NSSize(width: targetWidth, height: targetHeight))
+        }
     }
 
     // MARK: - Common Drawing Constants
@@ -154,6 +253,10 @@ final class OperationPreviewView: NSView {
     // MARK: - Drawing
 
     override func draw(_ dirtyRect: NSRect) {
+        if showsFASTAPreview {
+            return
+        }
+
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
 
         // Background

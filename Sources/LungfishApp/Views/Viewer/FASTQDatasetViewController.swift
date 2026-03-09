@@ -4,6 +4,7 @@
 
 import AppKit
 import LungfishIO
+import LungfishWorkflow
 
 @MainActor
 public final class FASTQDatasetViewController: NSViewController {
@@ -129,7 +130,9 @@ public final class FASTQDatasetViewController: NSViewController {
     private var selectedOperation: OperationKind?
     private var qualityReportTask: Task<Void, Never>?
     private var operationTask: Task<Void, Never>?
+    private var fastaPreviewTask: Task<Void, Never>?
     private var demuxKitOptions: [IlluminaBarcodeDefinition] = []
+    private var demuxSampleAssignments: [FASTQSampleBarcodeAssignment] = []
 
     public var onStatisticsUpdated: ((FASTQDatasetStatistics) -> Void)?
     public var onRunOperation: ((FASTQDerivativeRequest) async throws -> Void)?
@@ -177,14 +180,18 @@ public final class FASTQDatasetViewController: NSViewController {
     private let interleaveDirectionPopup = NSPopUpButton()
     private let demuxKitPopup = NSPopUpButton()
     private let demuxLocationPopup = NSPopUpButton()
+    private let demuxWindow5Label = NSTextField(labelWithString: "5' Window:")
+    private let demuxWindow5Input = NSTextField(string: "0")
+    private let demuxWindow3Label = NSTextField(labelWithString: "3' Window:")
+    private let demuxWindow3Input = NSTextField(string: "0")
     private let demuxTrimCheckbox = NSButton(checkboxWithTitle: "Remove barcodes + flanking sequences", target: nil, action: nil)
-    private let demuxSuggestionLabel = NSTextField(labelWithString: "")
 
     // MARK: - Lifecycle
 
     deinit {
         qualityReportTask?.cancel()
         operationTask?.cancel()
+        fastaPreviewTask?.cancel()
     }
 
     public override func loadView() {
@@ -215,24 +222,60 @@ public final class FASTQDatasetViewController: NSViewController {
         sourceURL: URL? = nil,
         derivativeManifest: FASTQDerivedBundleManifest? = nil
     ) {
-        _ = records
-        if demuxKitOptions.isEmpty {
-            demuxKitOptions = IlluminaBarcodeKitRegistry.builtinKits()
-        }
-
         self.statistics = statistics
         self.fastqURL = fastqURL
         self.sourceURL = sourceURL
         self.derivativeManifest = derivativeManifest
 
+        loadDemultiplexMetadata(for: fastqURL)
+
         summaryBar.update(with: statistics)
         sparklineStrip.update(with: statistics)
         previewCanvas.update(operation: selectedOperation?.previewKind ?? .none, statistics: statistics)
+        loadFASTAPreview(fastqURL: fastqURL, fallbackRecords: records)
         updateQualityReportButton()
         setStatus("Loaded: \(statistics.readCount) reads")
         if let derivativeManifest {
             setStatus("Derived: \(derivativeManifest.operation.displaySummary)")
         }
+    }
+
+    private func loadDemultiplexMetadata(for fastqURL: URL?) {
+        var kits = IlluminaBarcodeKitRegistry.builtinKits()
+        var preferredKitID: String?
+        demuxSampleAssignments = []
+
+        if let fastqURL,
+           let metadata = FASTQMetadataStore.load(for: fastqURL),
+           let demuxMetadata = metadata.demultiplexMetadata {
+            demuxSampleAssignments = demuxMetadata.sampleAssignments
+            preferredKitID = demuxMetadata.preferredBarcodeSetID
+            for customKit in demuxMetadata.customBarcodeSets {
+                if kits.contains(where: { $0.id == customKit.id }) { continue }
+                kits.append(customKit)
+            }
+        }
+
+        demuxKitOptions = kits
+        demuxKitPopup.removeAllItems()
+        demuxKitPopup.addItems(withTitles: demuxKitOptions.map(\.displayName))
+
+        if let preferredKitID,
+           let preferredIndex = demuxKitOptions.firstIndex(where: { $0.id == preferredKitID }) {
+            demuxKitPopup.selectItem(at: preferredIndex)
+        } else if let defaultIndex = demuxKitOptions.firstIndex(where: { $0.id == "nextera-xt-v2" }) {
+            demuxKitPopup.selectItem(at: defaultIndex)
+        } else if !demuxKitOptions.isEmpty {
+            demuxKitPopup.selectItem(at: 0)
+        }
+    }
+
+    public func updateOperationStatus(_ line: String) {
+        setStatus(line)
+    }
+
+    public func refreshDemultiplexMetadata() {
+        loadDemultiplexMetadata(for: fastqURL)
     }
 
     // MARK: - Main Split View
@@ -431,13 +474,13 @@ public final class FASTQDatasetViewController: NSViewController {
         primerSourcePopup.addItems(withTitles: ["Literal Sequence", "Reference FASTA"])
         interleaveDirectionPopup.addItems(withTitles: ["Interleave (R1+R2 → one)", "Deinterleave (one → R1+R2)"])
 
-        for control in [fieldOneLabel, fieldTwoLabel] {
+        for control in [fieldOneLabel, fieldTwoLabel, demuxWindow5Label, demuxWindow3Label] {
             control.font = .systemFont(ofSize: 10, weight: .medium)
             control.textColor = .secondaryLabelColor
             control.translatesAutoresizingMaskIntoConstraints = false
         }
 
-        for field in [fieldOneInput, fieldTwoInput] {
+        for field in [fieldOneInput, fieldTwoInput, demuxWindow5Input, demuxWindow3Input] {
             field.font = .systemFont(ofSize: 12)
             field.translatesAutoresizingMaskIntoConstraints = false
             field.widthAnchor.constraint(equalToConstant: 80).isActive = true
@@ -457,13 +500,6 @@ public final class FASTQDatasetViewController: NSViewController {
         demuxKitPopup.translatesAutoresizingMaskIntoConstraints = false
         demuxKitPopup.target = self
         demuxKitPopup.action = #selector(demuxKitSelectionChanged(_:))
-
-        demuxSuggestionLabel.font = .systemFont(ofSize: 11)
-        demuxSuggestionLabel.textColor = .tertiaryLabelColor
-        demuxSuggestionLabel.lineBreakMode = .byTruncatingTail
-        demuxSuggestionLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        demuxSuggestionLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        demuxSuggestionLabel.translatesAutoresizingMaskIntoConstraints = false
 
         regexCheckbox.translatesAutoresizingMaskIntoConstraints = false
         regexCheckbox.target = self
@@ -688,28 +724,28 @@ public final class FASTQDatasetViewController: NSViewController {
             parameterBar.addArrangedSubview(fieldOneInput)
 
         case .demultiplex:
-            if demuxKitPopup.numberOfItems == 0 {
-                if demuxKitOptions.isEmpty {
-                    demuxKitOptions = IlluminaBarcodeKitRegistry.builtinKits()
-                }
-                demuxKitPopup.addItems(withTitles: demuxKitOptions.map(\.displayName))
-                if let defaultIndex = demuxKitOptions.firstIndex(where: { $0.id == "nextera-xt-v2" }) {
-                    demuxKitPopup.selectItem(at: defaultIndex)
-                }
-            }
             if demuxLocationPopup.numberOfItems == 0 {
-                demuxLocationPopup.addItems(withTitles: ["Anywhere", "5' End", "3' End"])
+                demuxLocationPopup.addItems(withTitles: ["5' End", "3' End", "Both Ends (5'+3')"])
+                demuxLocationPopup.selectItem(at: 2)
             }
             demuxTrimCheckbox.state = .on
             fieldOneLabel.stringValue = "Error Rate:"
             fieldOneInput.placeholderString = "0.15"
+            if demuxWindow5Input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                demuxWindow5Input.stringValue = "0"
+            }
+            if demuxWindow3Input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                demuxWindow3Input.stringValue = "0"
+            }
             parameterBar.addArrangedSubview(demuxKitPopup)
             parameterBar.addArrangedSubview(demuxLocationPopup)
             parameterBar.addArrangedSubview(fieldOneLabel)
             parameterBar.addArrangedSubview(fieldOneInput)
+            parameterBar.addArrangedSubview(demuxWindow5Label)
+            parameterBar.addArrangedSubview(demuxWindow5Input)
+            parameterBar.addArrangedSubview(demuxWindow3Label)
+            parameterBar.addArrangedSubview(demuxWindow3Input)
             parameterBar.addArrangedSubview(demuxTrimCheckbox)
-            parameterBar.addArrangedSubview(demuxSuggestionLabel)
-            demuxSuggestionLabel.stringValue = "Automatic barcode-set detection is disabled; choose a known kit"
         }
 
         // Add spacer to push controls left
@@ -771,6 +807,119 @@ public final class FASTQDatasetViewController: NSViewController {
         default:
             outputEstimateLabel.stringValue = "Output depends on data content"
         }
+    }
+
+    private func loadFASTAPreview(fastqURL: URL?, fallbackRecords: [FASTQRecord]) {
+        fastaPreviewTask?.cancel()
+        fastaPreviewTask = nil
+
+        if let fastqURL {
+            previewCanvas.setFASTAContent("Loading first 1,000 FASTQ reads as FASTA...")
+            let sourceURL = fastqURL.standardizedFileURL
+            fastaPreviewTask = Task.detached(priority: .utility) { [weak self] in
+                do {
+                    let fasta = try await Self.buildFASTAPreview(from: sourceURL, readLimit: 1_000)
+                    await MainActor.run { [weak self] in
+                        guard let self else { return }
+                        guard self.fastqURL?.standardizedFileURL == sourceURL else { return }
+                        self.previewCanvas.setFASTAContent(fasta)
+                        self.fastaPreviewTask = nil
+                    }
+                } catch is CancellationError {
+                    await MainActor.run { [weak self] in
+                        self?.fastaPreviewTask = nil
+                    }
+                } catch {
+                    await MainActor.run { [weak self] in
+                        guard let self else { return }
+                        guard self.fastqURL?.standardizedFileURL == sourceURL else { return }
+                        self.previewCanvas.setFASTAContent("Failed to load FASTA preview: \(error.localizedDescription)")
+                        self.fastaPreviewTask = nil
+                    }
+                }
+            }
+            return
+        }
+
+        if !fallbackRecords.isEmpty {
+            let subset = Array(fallbackRecords.prefix(1_000))
+            previewCanvas.setFASTAContent(Self.formatFASTA(records: subset))
+        } else {
+            previewCanvas.setFASTAContent("No FASTQ reads available for preview.")
+        }
+    }
+
+    private static func buildFASTAPreview(from url: URL, readLimit: Int) async throws -> String {
+        if let streamedFASTA = await buildFASTAPreviewWithSeqkit(from: url, readLimit: readLimit) {
+            return streamedFASTA
+        }
+
+        let reader = FASTQReader(validateSequence: false)
+        var records: [FASTQRecord] = []
+        records.reserveCapacity(readLimit)
+        for try await record in reader.records(from: url) {
+            records.append(record)
+            if records.count >= readLimit { break }
+        }
+        return formatFASTA(records: records)
+    }
+
+    private static func buildFASTAPreviewWithSeqkit(from url: URL, readLimit: Int) async -> String? {
+        let fm = FileManager.default
+        let tempDir = fm.temporaryDirectory.appendingPathComponent("lungfish-fasta-preview-\(UUID().uuidString)", isDirectory: true)
+        let sampledFASTQ = tempDir.appendingPathComponent("sample.fastq")
+        let outputFASTA = tempDir.appendingPathComponent("sample.fasta")
+
+        do {
+            try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        } catch {
+            return nil
+        }
+        defer { try? fm.removeItem(at: tempDir) }
+
+        do {
+            let runner = NativeToolRunner.shared
+            let headResult = try await runner.run(
+                .seqkit,
+                arguments: ["head", "-n", String(max(1, readLimit)), url.path],
+                timeout: 120
+            )
+            guard headResult.isSuccess, !headResult.stdout.isEmpty else {
+                return nil
+            }
+
+            try headResult.stdout.write(to: sampledFASTQ, atomically: true, encoding: .utf8)
+
+            let fastaResult = try await runner.run(
+                .seqkit,
+                arguments: ["fq2fa", "-w", "0", sampledFASTQ.path, "-o", outputFASTA.path],
+                timeout: 120
+            )
+            guard fastaResult.isSuccess else {
+                return nil
+            }
+
+            let fasta = try String(contentsOf: outputFASTA, encoding: .utf8)
+            guard !fasta.isEmpty else { return "No FASTQ reads available for preview." }
+            return fasta.hasSuffix("\n") ? fasta : fasta + "\n"
+        } catch {
+            return nil
+        }
+    }
+
+    private static func formatFASTA(records: [FASTQRecord]) -> String {
+        guard !records.isEmpty else { return "No FASTQ reads available for preview." }
+        var lines: [String] = []
+        lines.reserveCapacity(records.count * 2)
+        for record in records {
+            if let description = record.description, !description.isEmpty {
+                lines.append(">\(record.identifier) \(description)")
+            } else {
+                lines.append(">\(record.identifier)")
+            }
+            lines.append(record.sequence)
+        }
+        return lines.joined(separator: "\n") + "\n"
     }
 
     // MARK: - Quality Report
@@ -1124,20 +1273,43 @@ public final class FASTQDatasetViewController: NSViewController {
                 setStatus("Select a barcode kit.")
                 return nil
             }
-            let kitID = demuxKitOptions[demuxKitPopup.indexOfSelectedItem].id
+            let selectedKit = demuxKitOptions[demuxKitPopup.indexOfSelectedItem]
+            let kitID = selectedKit.id
             let location: String
             switch demuxLocationPopup.indexOfSelectedItem {
-            case 1: location = "fivePrime"
-            case 2: location = "threePrime"
-            default: location = "anywhere"
+            case 0: location = "fivePrime"
+            case 1: location = "threePrime"
+            default: location = "bothEnds"
             }
             let errorRate = Double(fieldOneInput.stringValue) ?? 0.15
             guard errorRate >= 0, errorRate <= 1 else {
                 setStatus("Error rate must be between 0 and 1.")
                 return nil
             }
+            let maxDistanceFrom5Prime = Int(demuxWindow5Input.stringValue) ?? 0
+            let maxDistanceFrom3Prime = Int(demuxWindow3Input.stringValue) ?? 0
+            guard maxDistanceFrom5Prime >= 0, maxDistanceFrom3Prime >= 0 else {
+                setStatus("Demultiplex windows must be >= 0.")
+                return nil
+            }
+
+            let resolvedAssignments = resolveDemultiplexAssignments(using: selectedKit)
+            if selectedKit.pairingMode == .combinatorialDual && resolvedAssignments.isEmpty {
+                setStatus("Combinatorial kits require FASTQ sample metadata with explicit 5'/3' barcode pairs.")
+                return nil
+            }
+
             let trim = demuxTrimCheckbox.state == .on
-            return .demultiplex(kitID: kitID, customCSVPath: nil, location: location, errorRate: errorRate, trimBarcodes: trim)
+            return .demultiplex(
+                kitID: kitID,
+                customCSVPath: nil,
+                location: location,
+                maxDistanceFrom5Prime: maxDistanceFrom5Prime,
+                maxDistanceFrom3Prime: maxDistanceFrom3Prime,
+                errorRate: errorRate,
+                trimBarcodes: trim,
+                sampleAssignments: resolvedAssignments.isEmpty ? nil : resolvedAssignments
+            )
         }
     }
 
@@ -1174,12 +1346,55 @@ public final class FASTQDatasetViewController: NSViewController {
             return "Error correction (k=\(kmerSize))"
         case .interleaveReformat(let direction):
             return direction == .interleave ? "Interleave R1/R2" : "Deinterleave to R1/R2"
-        case .demultiplex(let kitID, _, let location, let errorRate, _):
-            return "Demultiplex (\(kitID), \(location), e=\(String(format: "%.2f", errorRate)))"
+        case .demultiplex(
+            let kitID,
+            _,
+            let location,
+            let maxDistanceFrom5Prime,
+            let maxDistanceFrom3Prime,
+            let errorRate,
+            _,
+            let sampleAssignments
+        ):
+            let sampleCount = sampleAssignments?.count ?? 0
+            let source = sampleCount > 0 ? ", \(sampleCount) sample-pairs" : ""
+            return "Demultiplex (\(kitID), \(location), w5=\(maxDistanceFrom5Prime), w3=\(maxDistanceFrom3Prime), e=\(String(format: "%.2f", errorRate))\(source))"
         }
     }
 
     // MARK: - Helpers
+
+    private func resolveDemultiplexAssignments(using kit: IlluminaBarcodeDefinition) -> [FASTQSampleBarcodeAssignment] {
+        guard !demuxSampleAssignments.isEmpty else { return [] }
+
+        var resolved: [FASTQSampleBarcodeAssignment] = []
+        resolved.reserveCapacity(demuxSampleAssignments.count)
+
+        for assignment in demuxSampleAssignments {
+            let forward = assignment.forwardSequence ?? sequenceForBarcode(id: assignment.forwardBarcodeID, in: kit)
+            let reverse = assignment.reverseSequence ?? sequenceForBarcode(id: assignment.reverseBarcodeID, in: kit)
+
+            guard let forward, let reverse else { continue }
+            resolved.append(
+                FASTQSampleBarcodeAssignment(
+                    sampleID: assignment.sampleID,
+                    sampleName: assignment.sampleName,
+                    forwardBarcodeID: assignment.forwardBarcodeID,
+                    forwardSequence: forward,
+                    reverseBarcodeID: assignment.reverseBarcodeID,
+                    reverseSequence: reverse,
+                    metadata: assignment.metadata
+                )
+            )
+        }
+
+        return resolved
+    }
+
+    private func sequenceForBarcode(id: String?, in kit: IlluminaBarcodeDefinition) -> String? {
+        guard let id = id?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty else { return nil }
+        return kit.barcodes.first(where: { $0.id.caseInsensitiveCompare(id) == .orderedSame })?.i7Sequence.uppercased()
+    }
 
     private var hasQualityData: Bool {
         guard let stats = statistics else { return false }

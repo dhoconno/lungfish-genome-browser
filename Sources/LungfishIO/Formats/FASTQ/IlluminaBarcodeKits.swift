@@ -120,8 +120,31 @@ public enum BarcodeLocation: String, Codable, Sendable, CaseIterable {
     /// Barcode at the 3' (end) of the read. Uses cutadapt `-a SEQUENCE$`.
     case threePrime
 
-    /// Barcode may be anywhere in the read. Uses cutadapt `-b SEQUENCE`.
-    case anywhere
+    /// Dual-end barcode matching (5' and 3' together), typically linked adapters.
+    case bothEnds
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        switch raw {
+        case "fivePrime":
+            self = .fivePrime
+        case "threePrime":
+            self = .threePrime
+        case "bothEnds":
+            self = .bothEnds
+        case "anywhere":
+            // Backward compatibility for persisted settings from older builds.
+            self = .bothEnds
+        default:
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown BarcodeLocation '\(raw)'")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 }
 
 // MARK: - Illumina Adapter Flanking Sequences
@@ -162,7 +185,22 @@ public enum IlluminaBarcodeKitRegistry {
 
     /// Returns all built-in barcode kit definitions.
     public static func builtinKits() -> [IlluminaBarcodeDefinition] {
-        [truseqSingleA, truseqSingleB, truseqHTDual, nexteraXTv2, idtUDIndexes, pacbioSequel384V1]
+        [
+            truseqSingleA,
+            truseqSingleB,
+            truseqHTDual,
+            nexteraXTv2,
+            idtUDIndexes,
+            pacbioSequel16V3,
+            pacbioSequel96V2,
+            pacbioSequel384V1,
+            ontNativeBarcoding12NBD104,
+            ontNativeBarcoding12NBD114,
+            ontNativeBarcoding24,
+            ontPCRBarcoding96,
+            ontRapidBarcoding12,
+            ont16SRapidAmplicon24,
+        ]
     }
 
     /// Looks up a built-in kit by ID.
@@ -313,8 +351,8 @@ public enum IlluminaBarcodeKitRegistry {
             return "^\(sequence)"  // Anchored to 5' end
         case .threePrime:
             return "\(sequence)$"  // Anchored to 3' end
-        case .anywhere:
-            return sequence         // Unanchored
+        case .bothEnds:
+            return "^\(sequence)"  // For single-end generation, treat as 5' anchored.
         }
     }
 
@@ -460,6 +498,36 @@ public enum IlluminaBarcodeKitRegistry {
         }()
     )
 
+    /// PacBio Sequel 16 barcodes (v3) as a combinatorial asymmetric set.
+    ///
+    /// Source: Pacific Biosciences "Sequel_16_Barcodes_v3.fasta".
+    public static let pacbioSequel16V3: IlluminaBarcodeDefinition = {
+        let barcodes = parseFASTARecords(PacBioBarcodeData.sequel16V3FASTA)
+        return IlluminaBarcodeDefinition(
+            id: "pacbio-sequel-16-v3",
+            displayName: "PacBio Sequel 16 (v3)",
+            vendor: "pacbio",
+            isDualIndexed: true,
+            pairingMode: .combinatorialDual,
+            barcodes: barcodes
+        )
+    }()
+
+    /// PacBio Sequel 96 barcodes (v2) as a combinatorial asymmetric set.
+    ///
+    /// Source: Pacific Biosciences "Sequel_96_barcodes_v2.fasta".
+    public static let pacbioSequel96V2: IlluminaBarcodeDefinition = {
+        let barcodes = parseFASTARecords(PacBioBarcodeData.sequel96V2FASTA)
+        return IlluminaBarcodeDefinition(
+            id: "pacbio-sequel-96-v2",
+            displayName: "PacBio Sequel 96 (v2)",
+            vendor: "pacbio",
+            isDualIndexed: true,
+            pairingMode: .combinatorialDual,
+            barcodes: barcodes
+        )
+    }()
+
     /// PacBio Sequel 384 barcodes (`bc1001`-`bc1384`) as a combinatorial asymmetric set.
     ///
     /// Source: Pacific Biosciences "Sequel_384_barcodes_v1.fasta".
@@ -471,6 +539,86 @@ public enum IlluminaBarcodeKitRegistry {
             vendor: "pacbio",
             isDualIndexed: true,
             pairingMode: .combinatorialDual,
+            barcodes: barcodes
+        )
+    }()
+
+    /// ONT Native Barcoding (NBD104, 12 barcodes).
+    public static let ontNativeBarcoding12NBD104: IlluminaBarcodeDefinition = {
+        let allBarcodes = parseFASTARecords(ONTBarcodeData.nbd104Nbd114FASTA)
+        let barcodes = barcodesWithNumericSuffix(in: 1...12, from: allBarcodes)
+        return IlluminaBarcodeDefinition(
+            id: "ont-nbd104",
+            displayName: "ONT Native Barcoding (NBD104, 12)",
+            vendor: "oxford-nanopore",
+            isDualIndexed: false,
+            pairingMode: .singleEnd,
+            barcodes: barcodes
+        )
+    }()
+
+    /// ONT Native Barcoding (NBD114, 12 barcodes).
+    public static let ontNativeBarcoding12NBD114: IlluminaBarcodeDefinition = {
+        let allBarcodes = parseFASTARecords(ONTBarcodeData.nbd104Nbd114FASTA)
+        let barcodes = barcodesWithNumericSuffix(in: 13...24, from: allBarcodes)
+        return IlluminaBarcodeDefinition(
+            id: "ont-nbd114",
+            displayName: "ONT Native Barcoding (NBD114, 12)",
+            vendor: "oxford-nanopore",
+            isDualIndexed: false,
+            pairingMode: .singleEnd,
+            barcodes: barcodes
+        )
+    }()
+
+    /// ONT Native Barcoding Expansion (NBD104/NBD114, 24 barcodes).
+    public static let ontNativeBarcoding24: IlluminaBarcodeDefinition = {
+        let barcodes = parseFASTARecords(ONTBarcodeData.nbd104Nbd114FASTA)
+        return IlluminaBarcodeDefinition(
+            id: "ont-nbd104-114",
+            displayName: "ONT Native Barcoding (NBD104/NBD114, 24)",
+            vendor: "oxford-nanopore",
+            isDualIndexed: false,
+            pairingMode: .singleEnd,
+            barcodes: barcodes
+        )
+    }()
+
+    /// ONT PCR Barcoding Expansion (PBC096, 96 barcodes).
+    public static let ontPCRBarcoding96: IlluminaBarcodeDefinition = {
+        let barcodes = parseFASTARecords(ONTBarcodeData.pbc096FASTA)
+        return IlluminaBarcodeDefinition(
+            id: "ont-pbc096",
+            displayName: "ONT PCR Barcoding (PBC096, 96)",
+            vendor: "oxford-nanopore",
+            isDualIndexed: false,
+            pairingMode: .singleEnd,
+            barcodes: barcodes
+        )
+    }()
+
+    /// ONT Rapid Barcoding Kit (RBK004, 12 barcodes).
+    public static let ontRapidBarcoding12: IlluminaBarcodeDefinition = {
+        let barcodes = parseFASTARecords(ONTBarcodeData.rbk004FASTA)
+        return IlluminaBarcodeDefinition(
+            id: "ont-rbk004",
+            displayName: "ONT Rapid Barcoding (RBK004, 12)",
+            vendor: "oxford-nanopore",
+            isDualIndexed: false,
+            pairingMode: .singleEnd,
+            barcodes: barcodes
+        )
+    }()
+
+    /// ONT 16S Rapid Amplicon Barcoding (RAB204/RAB214, 24 barcodes).
+    public static let ont16SRapidAmplicon24: IlluminaBarcodeDefinition = {
+        let barcodes = parseFASTARecords(ONTBarcodeData.rab204Rab214FASTA)
+        return IlluminaBarcodeDefinition(
+            id: "ont-rab204-214",
+            displayName: "ONT 16S Rapid Amplicon (RAB204/RAB214, 24)",
+            vendor: "oxford-nanopore",
+            isDualIndexed: false,
+            pairingMode: .singleEnd,
             barcodes: barcodes
         )
     }()
@@ -500,5 +648,16 @@ public enum IlluminaBarcodeKitRegistry {
         }
         flushCurrent()
         return parsed
+    }
+
+    private static func barcodesWithNumericSuffix(
+        in range: ClosedRange<Int>,
+        from barcodes: [IlluminaBarcode]
+    ) -> [IlluminaBarcode] {
+        barcodes.filter { barcode in
+            let digits = barcode.id.filter(\.isNumber)
+            guard let value = Int(digits) else { return false }
+            return range.contains(value)
+        }
     }
 }

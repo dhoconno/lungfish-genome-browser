@@ -1878,6 +1878,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                         alert.informativeText = errorMessage
                         alert.alertStyle = .warning
                         alert.addButton(withTitle: "OK")
+                        alert.applyLungfishBranding()
                         alert.runModal()
                     }
                 }
@@ -1898,12 +1899,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         }
 
         await MainActor.run {
-            self.viewerController.showProgress("Running FASTQ operation...")
-        }
-        defer {
-            Task { @MainActor in
-                self.viewerController.hideProgress()
-            }
+            self.viewerController.updateFASTQOperationStatus("Running FASTQ operation...")
         }
 
         let derivedURL = try await FASTQDerivativeService.shared.createDerivative(
@@ -1912,7 +1908,8 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             progress: { [weak self] message in
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
-                        self?.viewerController.showProgress(message)
+                        guard let self else { return }
+                        self.viewerController.updateFASTQOperationStatus(message)
                     }
                 }
             }

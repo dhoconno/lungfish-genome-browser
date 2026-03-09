@@ -44,6 +44,9 @@ public struct PersistedFASTQMetadata: Codable, Sendable {
     /// Nil for homogeneous single-end or paired-end bundles.
     public var readClassification: ReadClassification?
 
+    /// Optional FASTQ demultiplex metadata edited in the FASTQ bottom drawer.
+    public var demultiplexMetadata: FASTQDemultiplexMetadata?
+
     public init(
         computedStatistics: FASTQDatasetStatistics? = nil,
         sraRunInfo: SRARunInfo? = nil,
@@ -52,7 +55,8 @@ public struct PersistedFASTQMetadata: Codable, Sendable {
         downloadSource: String? = nil,
         ingestion: IngestionMetadata? = nil,
         seqkitStats: SeqkitStatsMetadata? = nil,
-        readClassification: ReadClassification? = nil
+        readClassification: ReadClassification? = nil,
+        demultiplexMetadata: FASTQDemultiplexMetadata? = nil
     ) {
         self.computedStatistics = computedStatistics
         self.sraRunInfo = sraRunInfo
@@ -62,6 +66,7 @@ public struct PersistedFASTQMetadata: Codable, Sendable {
         self.ingestion = ingestion
         self.seqkitStats = seqkitStats
         self.readClassification = readClassification
+        self.demultiplexMetadata = demultiplexMetadata
     }
 }
 

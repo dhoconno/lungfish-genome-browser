@@ -736,17 +736,20 @@ struct FastqDemultiplexSubcommand: AsyncParsableCommand {
         discussion: """
             Splits multiplexed FASTQ reads into per-barcode output files using
             embedded cutadapt. Supports single- and dual-indexed Illumina kits,
-            custom barcode CSVs, and flexible barcode location (5', 3', or anywhere).
+            custom barcode CSVs, and terminally anchored barcode location (5', 3', or both ends).
 
             Useful for internal Illumina barcodes within ONT reads, re-demultiplexing,
             or demultiplexing with custom barcode sets.
 
             Built-in kits: truseq-single-a, truseq-single-b, truseq-ht-dual,
-            nextera-xt-v2, idt-ud-indexes, pacbio-sequel-384-v1.
+            nextera-xt-v2, idt-ud-indexes, pacbio-sequel-16-v3,
+            pacbio-sequel-96-v2, pacbio-sequel-384-v1, ont-nbd104,
+            ont-nbd114, ont-nbd104-114, ont-pbc096, ont-rbk004,
+            ont-rab204-214.
 
             Examples:
               lungfish fastq demultiplex reads.fastq.gz --kit truseq-single-a -o demux-out/
-              lungfish fastq demultiplex reads.fastq.gz --kit custom.csv -o demux-out/ --location anywhere
+              lungfish fastq demultiplex reads.fastq.gz --kit custom.csv -o demux-out/ --location bothends
             """
     )
 
@@ -754,7 +757,7 @@ struct FastqDemultiplexSubcommand: AsyncParsableCommand {
     var input: String
 
     @Option(name: .customLong("kit"),
-            help: "Barcode kit: truseq-single-a, truseq-single-b, truseq-ht-dual, nextera-xt-v2, idt-ud-indexes, pacbio-sequel-384-v1, or path to custom CSV")
+            help: "Barcode kit: truseq-single-a, truseq-single-b, truseq-ht-dual, nextera-xt-v2, idt-ud-indexes, pacbio-sequel-16-v3, pacbio-sequel-96-v2, pacbio-sequel-384-v1, ont-nbd104, ont-nbd114, ont-nbd104-114, ont-pbc096, ont-rbk004, ont-rab204-214, or path to custom CSV")
     var kit: String
 
     @Option(name: [.customLong("output"), .customShort("o")],
@@ -762,8 +765,16 @@ struct FastqDemultiplexSubcommand: AsyncParsableCommand {
     var output: String
 
     @Option(name: .customLong("location"),
-            help: "Barcode location: 5prime, 3prime, anywhere (default: anywhere)")
-    var location: String = "anywhere"
+            help: "Barcode location: 5prime, 3prime, bothends (default: bothends)")
+    var location: String = "bothends"
+
+    @Option(name: .customLong("max-distance-5prime"),
+            help: "Max bases from 5' terminus where barcodes may start (default: 0)")
+    var maxDistanceFrom5Prime: Int = 0
+
+    @Option(name: .customLong("max-distance-3prime"),
+            help: "Max bases from 3' terminus where barcodes may end (default: 0)")
+    var maxDistanceFrom3Prime: Int = 0
 
     @Option(name: .customLong("error-rate"),
             help: "Maximum error rate for barcode matching (default: 0.15)")
@@ -789,6 +800,9 @@ struct FastqDemultiplexSubcommand: AsyncParsableCommand {
         guard errorRate >= 0 && errorRate <= 1 else {
             throw ValidationError("Error rate must be between 0 and 1 (got \(errorRate))")
         }
+        guard maxDistanceFrom5Prime >= 0, maxDistanceFrom3Prime >= 0 else {
+            throw ValidationError("Max barcode distances must be non-negative")
+        }
 
         let inputURL = try validateInput(input)
         let outputURL = URL(fileURLWithPath: output)
@@ -804,7 +818,7 @@ struct FastqDemultiplexSubcommand: AsyncParsableCommand {
         } else {
             throw ValidationError(
                 "Unknown barcode kit '\(kit)'. Use one of: truseq-single-a, truseq-single-b, "
-                + "truseq-ht-dual, nextera-xt-v2, idt-ud-indexes, pacbio-sequel-384-v1, or a path to a custom CSV."
+                + "truseq-ht-dual, nextera-xt-v2, idt-ud-indexes, pacbio-sequel-16-v3, pacbio-sequel-96-v2, pacbio-sequel-384-v1, ont-nbd104, ont-nbd114, ont-nbd104-114, ont-pbc096, ont-rbk004, ont-rab204-214, or a path to a custom CSV."
             )
         }
 
@@ -813,9 +827,9 @@ struct FastqDemultiplexSubcommand: AsyncParsableCommand {
         switch location.lowercased() {
         case "5prime", "five-prime", "fiveprime": barcodeLocation = .fivePrime
         case "3prime", "three-prime", "threeprime": barcodeLocation = .threePrime
-        case "anywhere", "any": barcodeLocation = .anywhere
+        case "bothends", "both", "both-ends", "both_ends": barcodeLocation = .bothEnds
         default:
-            throw ValidationError("Invalid barcode location '\(location)'. Use: 5prime, 3prime, anywhere")
+            throw ValidationError("Invalid barcode location '\(location)'. Use: 5prime, 3prime, bothends")
         }
 
         let config = DemultiplexConfig(
@@ -825,6 +839,8 @@ struct FastqDemultiplexSubcommand: AsyncParsableCommand {
             barcodeLocation: barcodeLocation,
             errorRate: errorRate,
             minimumOverlap: overlap,
+            maxDistanceFrom5Prime: maxDistanceFrom5Prime,
+            maxDistanceFrom3Prime: maxDistanceFrom3Prime,
             trimBarcodes: !noTrim,
             unassignedDisposition: discardUnassigned ? .discard : .keep,
             threads: threads

@@ -919,6 +919,18 @@ public class ViewerViewController: NSViewController {
         progressOverlay.isHidden = true
     }
 
+    public var isDisplayingFASTQDataset: Bool {
+        fastqDatasetController != nil
+    }
+
+    public func updateFASTQOperationStatus(_ message: String) {
+        fastqDatasetController?.updateOperationStatus(message)
+    }
+
+    func refreshFASTQDemultiplexMetadata() {
+        fastqDatasetController?.refreshDemultiplexMetadata()
+    }
+
     // MARK: - FASTQ Dataset Display
 
     /// Displays the FASTQ dataset dashboard in place of the normal sequence viewer.
@@ -946,11 +958,13 @@ public class ViewerViewController: NSViewController {
         dashView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(dashView)
 
+        let dashBottomConstraint = dashView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+
         NSLayoutConstraint.activate([
             dashView.topAnchor.constraint(equalTo: view.topAnchor),
             dashView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             dashView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            dashView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            dashBottomConstraint,
         ])
 
         controller.configure(
@@ -976,6 +990,9 @@ public class ViewerViewController: NSViewController {
             )
         }
         fastqDatasetController = controller
+        fastqDashboardView = dashView
+        fastqDashboardBottomConstraint = dashBottomConstraint
+        currentFASTQDatasetURL = fastqURL
 
         // Hide normal genomic viewer components
         enhancedRulerView.isHidden = true
@@ -997,15 +1014,23 @@ public class ViewerViewController: NSViewController {
             userInfo: userInfo
         )
 
+        if fastqMetadataDrawerView != nil {
+            refreshFASTQMetadataDrawerContent()
+        }
+
         logger.info("displayFASTQDataset: Showing dashboard with \(statistics.readCount) reads")
     }
 
     /// Removes the FASTQ dataset dashboard and restores normal viewer components.
     public func hideFASTQDatasetView() {
         guard let controller = fastqDatasetController else { return }
+        teardownFASTQMetadataDrawer()
         controller.view.removeFromSuperview()
         controller.removeFromParent()
         fastqDatasetController = nil
+        fastqDashboardView = nil
+        fastqDashboardBottomConstraint = nil
+        currentFASTQDatasetURL = nil
 
         // Restore normal viewer components
         enhancedRulerView.isHidden = false
