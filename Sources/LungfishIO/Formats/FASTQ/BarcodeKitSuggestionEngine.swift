@@ -119,6 +119,65 @@ public enum BarcodeKitSuggestionEngine {
         return Array(ranked.prefix(max(1, maxCandidates)))
     }
 
+    /// Finds dominant barcode pairs for combinatorial dual-index kits.
+    ///
+    /// Pair IDs are returned in canonical form `lhs--rhs` (sorted by ID).
+    public static func dominantBarcodePairs(
+        in fastqURL: URL,
+        kit: IlluminaBarcodeDefinition,
+        sampleReadLimit: Int = 1_000,
+        minimumHitFraction: Double = 0.005,
+        maxPairs: Int = 96
+    ) async throws -> [String] {
+        let reads = try await sampleReadSequences(from: fastqURL, limit: sampleReadLimit)
+        guard !reads.isEmpty else { return [] }
+
+        var counts: [String: Int] = [:]
+        for read in reads where !read.isEmpty {
+            let matches = matchedBarcodeOffsets(in: read, for: kit)
+            guard matches.count >= 2 else { continue }
+
+            let ordered = matches.sorted { lhs, rhs in
+                if lhs.value == rhs.value {
+                    return lhs.key.localizedStandardCompare(rhs.key) == .orderedAscending
+                }
+                return lhs.value < rhs.value
+            }
+
+            let first = ordered[0].key
+            let second = ordered[1].key
+            guard first != second else { continue }
+            let pairID = canonicalPairName(first, second)
+            counts[pairID, default: 0] += 1
+        }
+
+        guard !counts.isEmpty else { return [] }
+
+        let minHits = max(1, Int(Double(reads.count) * minimumHitFraction))
+        var ranked = counts
+            .filter { $0.value >= minHits }
+            .sorted { lhs, rhs in
+                if lhs.value == rhs.value {
+                    return lhs.key.localizedStandardCompare(rhs.key) == .orderedAscending
+                }
+                return lhs.value > rhs.value
+            }
+            .map(\.key)
+
+        if ranked.isEmpty {
+            ranked = counts
+                .sorted { lhs, rhs in
+                    if lhs.value == rhs.value {
+                        return lhs.key.localizedStandardCompare(rhs.key) == .orderedAscending
+                    }
+                    return lhs.value > rhs.value
+                }
+                .map(\.key)
+        }
+
+        return Array(ranked.prefix(max(1, maxPairs)))
+    }
+
     /// Reverse-complements a DNA sequence.
     public static func reverseComplement(_ sequence: String) -> String {
         let mapped = sequence.uppercased().reversed().map { base -> Character in
@@ -150,36 +209,60 @@ public enum BarcodeKitSuggestionEngine {
         in read: String,
         for kit: IlluminaBarcodeDefinition
     ) -> Set<String> {
+        Set(matchedBarcodeOffsets(in: read, for: kit).keys)
+    }
+
+    private static func matchedBarcodeOffsets(
+        in read: String,
+        for kit: IlluminaBarcodeDefinition
+    ) -> [String: Int] {
         let normalizedRead = read.uppercased()
-        var matched: Set<String> = []
+        let nsRead = normalizedRead as NSString
+        var matched: [String: Int] = [:]
+
+        func firstMatchOffset(_ sequence: String) -> Int? {
+            let direct = nsRead.range(of: sequence)
+            let rc = nsRead.range(of: reverseComplement(sequence))
+            let directOffset = direct.location != NSNotFound ? direct.location : nil
+            let rcOffset = rc.location != NSNotFound ? rc.location : nil
+            switch (directOffset, rcOffset) {
+            case let (lhs?, rhs?):
+                return min(lhs, rhs)
+            case let (lhs?, nil):
+                return lhs
+            case let (nil, rhs?):
+                return rhs
+            case (nil, nil):
+                return nil
+            }
+        }
 
         for barcode in kit.barcodes {
             let i7 = barcode.i7Sequence.uppercased()
-            let i7rc = reverseComplement(i7)
-            let i7Matched = normalizedRead.contains(i7) || normalizedRead.contains(i7rc)
+            let i7Offset = firstMatchOffset(i7)
+            let i7Matched = i7Offset != nil
 
             switch kit.pairingMode {
             case .singleEnd:
                 if i7Matched {
-                    matched.insert(barcode.id)
+                    matched[barcode.id] = min(matched[barcode.id] ?? .max, i7Offset ?? .max)
                 }
 
             case .fixedDual:
                 guard let i5 = barcode.i5Sequence?.uppercased() else {
                     if i7Matched {
-                        matched.insert(barcode.id)
+                        matched[barcode.id] = min(matched[barcode.id] ?? .max, i7Offset ?? .max)
                     }
                     continue
                 }
-                let i5rc = reverseComplement(i5)
-                let i5Matched = normalizedRead.contains(i5) || normalizedRead.contains(i5rc)
-                if i7Matched && i5Matched {
-                    matched.insert(barcode.id)
+                let i5Offset = firstMatchOffset(i5)
+                if i7Matched, let i5Offset {
+                    matched[barcode.id] = min(matched[barcode.id] ?? .max, min(i7Offset ?? .max, i5Offset))
                 }
 
             case .combinatorialDual:
                 if i7Matched {
-                    matched.insert(barcode.id)
+                    matched[barcode.id] = min(matched[barcode.id] ?? .max, i7Offset ?? .max)
                 }
             }
         }
@@ -203,5 +286,12 @@ public enum BarcodeKitSuggestionEngine {
         }
 
         return sampled
+    }
+
+    private static func canonicalPairName(_ lhs: String, _ rhs: String) -> String {
+        if lhs.localizedStandardCompare(rhs) == .orderedDescending {
+            return "\(rhs)--\(lhs)"
+        }
+        return "\(lhs)--\(rhs)"
     }
 }

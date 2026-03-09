@@ -169,8 +169,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         let adapterConfig = try await createAdapterConfiguration(
             for: config,
             inputFASTQ: inputFASTQ,
-            workDirectory: workDir,
-            progress: progress
+            workDirectory: workDir
         )
 
         // Step 2: Build cutadapt command (5% progress)
@@ -370,8 +369,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
     private func createAdapterConfiguration(
         for config: DemultiplexConfig,
         inputFASTQ: URL,
-        workDirectory: URL,
-        progress: @escaping @Sendable (Double, String) -> Void
+        workDirectory: URL
     ) async throws -> AdapterConfiguration {
         let adapterFASTA = workDirectory.appendingPathComponent("adapters.fasta")
 
@@ -410,35 +408,61 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
             return AdapterConfiguration(adapterFASTA: adapterFASTA, adapterFlag: "-g")
 
         case .combinatorialDual:
-            progress(0.02, "Scanning first 1000 reads for barcode candidates...")
+            let maxPairEntries = 96
+            let maxFallbackBarcodes = 13 // 13*14/2 = 91 pairs
             let candidateIDs = try await BarcodeKitSuggestionEngine.dominantBarcodeIDs(
                 in: inputFASTQ,
                 kit: config.barcodeKit,
                 sampleReadLimit: 1_000,
                 minimumHitFraction: 0.01,
-                maxCandidates: 64
+                maxCandidates: maxFallbackBarcodes
+            )
+            let dominantPairs = try await BarcodeKitSuggestionEngine.dominantBarcodePairs(
+                in: inputFASTQ,
+                kit: config.barcodeKit,
+                sampleReadLimit: 1_000,
+                minimumHitFraction: 0.005,
+                maxPairs: maxPairEntries
             )
 
             let lookup = Dictionary(uniqueKeysWithValues: config.barcodeKit.barcodes.map { ($0.id, $0) })
-            let selectedFromSample = candidateIDs.compactMap { lookup[$0] }
-
-            let selected: [IlluminaBarcode]
-            if selectedFromSample.count >= 2 {
-                selected = selectedFromSample
-            } else if selectedFromSample.count == 1 {
-                let seen = Set(selectedFromSample.map(\.id))
-                selected = Array((selectedFromSample + config.barcodeKit.barcodes.filter { !seen.contains($0.id) }).prefix(16))
-            } else {
-                selected = Array(config.barcodeKit.barcodes.prefix(32))
-            }
 
             var linkedEntries: [(name: String, first: String, second: String)] = []
-            linkedEntries.reserveCapacity(selected.count * selected.count)
-            for (idx, lhs) in selected.enumerated() {
-                for rhs in selected[idx...] {
-                    let name = canonicalPairName(lhs.id, rhs.id)
-                    linkedEntries.append((name: name, first: lhs.i7Sequence, second: rhs.i7Sequence))
+            if !dominantPairs.isEmpty {
+                linkedEntries.reserveCapacity(dominantPairs.count)
+                for pairID in dominantPairs {
+                    let parts = pairID.components(separatedBy: "--")
+                    guard parts.count == 2 else { continue }
+                    guard let lhs = lookup[parts[0]], let rhs = lookup[parts[1]] else { continue }
+                    linkedEntries.append((name: pairID, first: lhs.i7Sequence, second: rhs.i7Sequence))
                 }
+            } else {
+                let selectedFromSample = candidateIDs.compactMap { lookup[$0] }
+
+                let selected: [IlluminaBarcode]
+                if selectedFromSample.count >= 2 {
+                    selected = Array(selectedFromSample.prefix(maxFallbackBarcodes))
+                } else if selectedFromSample.count == 1 {
+                    let seen = Set(selectedFromSample.map(\.id))
+                    selected = Array(
+                        (selectedFromSample + config.barcodeKit.barcodes.filter { !seen.contains($0.id) })
+                            .prefix(maxFallbackBarcodes)
+                    )
+                } else {
+                    selected = Array(config.barcodeKit.barcodes.prefix(maxFallbackBarcodes))
+                }
+
+                linkedEntries.reserveCapacity(selected.count * selected.count)
+                for (idx, lhs) in selected.enumerated() {
+                    for rhs in selected[idx...] {
+                        let name = canonicalPairName(lhs.id, rhs.id)
+                        linkedEntries.append((name: name, first: lhs.i7Sequence, second: rhs.i7Sequence))
+                    }
+                }
+            }
+
+            if linkedEntries.count > maxPairEntries {
+                linkedEntries = Array(linkedEntries.prefix(maxPairEntries))
             }
             guard !linkedEntries.isEmpty else { throw DemultiplexError.noBarcodes }
 
@@ -446,11 +470,6 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                 entries: linkedEntries,
                 location: config.barcodeLocation,
                 to: adapterFASTA
-            )
-
-            progress(
-                0.04,
-                "Prepared \(selected.count) candidate barcodes (\(linkedEntries.count) barcode pairs)"
             )
             return AdapterConfiguration(adapterFASTA: adapterFASTA, adapterFlag: "-g")
         }

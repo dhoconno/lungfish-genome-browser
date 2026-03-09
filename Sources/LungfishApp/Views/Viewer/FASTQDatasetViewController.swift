@@ -189,6 +189,7 @@ public final class FASTQDatasetViewController: NSViewController {
     private let demuxKitPopup = NSPopUpButton()
     private let demuxLocationPopup = NSPopUpButton()
     private let demuxTrimCheckbox = NSButton(checkboxWithTitle: "Trim barcodes", target: nil, action: nil)
+    private let demuxSuggestionLabel = NSTextField(labelWithString: "")
 
     // MARK: - Lifecycle
 
@@ -249,6 +250,10 @@ public final class FASTQDatasetViewController: NSViewController {
         sparklineStrip.update(with: statistics)
         previewCanvas.update(operation: selectedOperation?.previewKind ?? .none, statistics: statistics)
         updateQualityReportButton()
+        if selectedOperation == .demultiplex {
+            updateDemuxSuggestionLabel()
+            startDemuxSuggestionIfNeeded()
+        }
         setStatus("Loaded: \(statistics.readCount) reads")
         if let derivativeManifest {
             setStatus("Derived: \(derivativeManifest.operation.displaySummary)")
@@ -477,6 +482,13 @@ public final class FASTQDatasetViewController: NSViewController {
         demuxKitPopup.translatesAutoresizingMaskIntoConstraints = false
         demuxKitPopup.target = self
         demuxKitPopup.action = #selector(demuxKitSelectionChanged(_:))
+
+        demuxSuggestionLabel.font = .systemFont(ofSize: 11)
+        demuxSuggestionLabel.textColor = .secondaryLabelColor
+        demuxSuggestionLabel.lineBreakMode = .byTruncatingTail
+        demuxSuggestionLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        demuxSuggestionLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        demuxSuggestionLabel.translatesAutoresizingMaskIntoConstraints = false
 
         regexCheckbox.translatesAutoresizingMaskIntoConstraints = false
         regexCheckbox.target = self
@@ -721,7 +733,9 @@ public final class FASTQDatasetViewController: NSViewController {
             parameterBar.addArrangedSubview(fieldOneLabel)
             parameterBar.addArrangedSubview(fieldOneInput)
             parameterBar.addArrangedSubview(demuxTrimCheckbox)
+            parameterBar.addArrangedSubview(demuxSuggestionLabel)
             startDemuxSuggestionIfNeeded()
+            updateDemuxSuggestionLabel()
         }
 
         // Add spacer to push controls left
@@ -779,23 +793,32 @@ public final class FASTQDatasetViewController: NSViewController {
             let n = Int(fieldOneInput.stringValue) ?? 1000
             outputEstimateLabel.stringValue = "Estimated output: \(formatCount(min(n, stats.readCount))) reads"
         case .demultiplex:
-            switch demuxSuggestionState {
-            case .idle:
-                outputEstimateLabel.stringValue = "Scan first 1,000 reads to suggest barcode set"
-            case .scanning:
-                outputEstimateLabel.stringValue = "Scanning first 1,000 reads for barcode kit suggestions..."
-            case .ready(let suggestions, let sampledReads):
-                if let top = suggestions.first {
-                    outputEstimateLabel.stringValue =
-                        "Suggested: \(top.displayName) (\(String(format: "%.1f", top.hitFraction * 100))% of \(sampledReads) reads)"
-                } else {
-                    outputEstimateLabel.stringValue = "No kit exceeds 25% of first \(sampledReads) reads"
-                }
-            case .failed:
-                outputEstimateLabel.stringValue = "Barcode-set scan failed; choose a kit manually"
-            }
+            outputEstimateLabel.stringValue = "Output depends on data content"
         default:
             outputEstimateLabel.stringValue = "Output depends on data content"
+        }
+    }
+
+    private func updateDemuxSuggestionLabel() {
+        switch demuxSuggestionState {
+        case .idle:
+            demuxSuggestionLabel.stringValue = "Suggestion: scan first 1,000 reads to infer barcode set"
+            demuxSuggestionLabel.textColor = .secondaryLabelColor
+        case .scanning:
+            demuxSuggestionLabel.stringValue = "Suggestion: scanning first 1,000 reads..."
+            demuxSuggestionLabel.textColor = .secondaryLabelColor
+        case .ready(let suggestions, let sampledReads):
+            if let top = suggestions.first {
+                demuxSuggestionLabel.stringValue =
+                    "Suggestion: \(top.displayName) (\(String(format: "%.1f", top.hitFraction * 100))% of \(sampledReads) reads)"
+                demuxSuggestionLabel.textColor = .secondaryLabelColor
+            } else {
+                demuxSuggestionLabel.stringValue = "Suggestion: no preset kit exceeded 25% in first \(sampledReads) reads"
+                demuxSuggestionLabel.textColor = .tertiaryLabelColor
+            }
+        case .failed:
+            demuxSuggestionLabel.stringValue = "Suggestion scan failed; choose a barcode set manually"
+            demuxSuggestionLabel.textColor = .systemOrange
         }
     }
 
@@ -805,7 +828,7 @@ public final class FASTQDatasetViewController: NSViewController {
         guard let fastqURL else { return }
 
         demuxSuggestionState = .scanning
-        updateOutputEstimate(for: .demultiplex)
+        updateDemuxSuggestionLabel()
 
         let sourceURL = fastqURL
         demuxSuggestionTask = Task.detached(priority: .utility) { [weak self] in
@@ -823,7 +846,7 @@ public final class FASTQDatasetViewController: NSViewController {
                     self.demuxSuggestionTask = nil
                     self.demuxSuggestionState = .ready(suggestions, sampledReads: 1_000)
                     self.applyTopDemuxSuggestionIfAppropriate(suggestions)
-                    self.updateOutputEstimate(for: .demultiplex)
+                    self.updateDemuxSuggestionLabel()
                 }
             } catch {
                 await MainActor.run { [weak self] in
@@ -831,7 +854,7 @@ public final class FASTQDatasetViewController: NSViewController {
                     guard self.fastqURL?.standardizedFileURL == sourceURL.standardizedFileURL else { return }
                     self.demuxSuggestionTask = nil
                     self.demuxSuggestionState = .failed
-                    self.updateOutputEstimate(for: .demultiplex)
+                    self.updateDemuxSuggestionLabel()
                 }
             }
         }

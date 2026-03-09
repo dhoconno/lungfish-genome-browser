@@ -69,4 +69,28 @@ final class BarcodeKitSuggestionEngineTests: XCTestCase {
         XCTAssertTrue(dominant.contains("bc1002"))
         XCTAssertTrue(dominant.contains("bc1050"))
     }
+
+    func testDominantBarcodePairsReturnsObservedPair() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let sequences = [
+            "ACACACAGACTGTGAGAAAAAAGATATACGCGAGAGAG", // bc1002 -> bc1050
+            "GATATACGCGAGAGAGTTTTTTACACACAGACTGTGAG", // bc1050 -> bc1002
+            "ACACACAGACTGTGAGCCCCCCGATATACGCGAGAGAG", // bc1002 -> bc1050
+            "ACACACAGACTGTGAGGGGGGGGATATACGCGAGAGAG", // bc1002 -> bc1050
+        ]
+        let fastqURL = dir.appendingPathComponent("sample.fastq")
+        try writeFASTQ(sequences: sequences, to: fastqURL)
+
+        let pairs = try await BarcodeKitSuggestionEngine.dominantBarcodePairs(
+            in: fastqURL,
+            kit: IlluminaBarcodeKitRegistry.pacbioSequel384V1,
+            sampleReadLimit: 4,
+            minimumHitFraction: 0.1,
+            maxPairs: 8
+        )
+
+        XCTAssertTrue(pairs.contains("bc1002--bc1050"))
+    }
 }
