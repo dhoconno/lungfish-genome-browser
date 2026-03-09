@@ -228,20 +228,24 @@ public actor NativeToolRunner {
     /// Default timeout for tool execution (5 minutes).
     private let defaultTimeout: TimeInterval = 300
 
-    /// Bundled tool versions (set during build).
-    public static let bundledVersions: [String: String] = [
-        "samtools": "1.21",
-        "bcftools": "1.21",
-        "htslib": "1.21",
-        "ucsc-tools": "469",
-        "pigz": "2.8",
-        "seqkit": "2.9.0",
-        "fastp": "1.1.0",
-        "vsearch": "2.29.2",
-        "cutadapt": "4.9",
-        "bbtools": "39.13",
-        "openjdk": "21.0.10"
-    ]
+    /// Bundled tool versions, loaded from tool-versions.json at launch.
+    public static let bundledVersions: [String: String] = {
+        // Try to load from the JSON manifest bundled as a resource
+        if let url = Bundle.module.url(forResource: "tool-versions", withExtension: "json", subdirectory: "Tools"),
+           let data = try? Data(contentsOf: url),
+           let manifest = try? JSONDecoder().decode(ToolVersionsManifest.self, from: data) {
+            return Dictionary(uniqueKeysWithValues: manifest.tools.map { ($0.name, $0.version) })
+        }
+        // Fallback if resource not found (e.g. unit tests without bundle)
+        return [:]
+    }()
+
+    /// Full tool manifest with license and source info, loaded from tool-versions.json.
+    public static let toolManifest: ToolVersionsManifest? = {
+        guard let url = Bundle.module.url(forResource: "tool-versions", withExtension: "json", subdirectory: "Tools"),
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(ToolVersionsManifest.self, from: data)
+    }()
 
     // MARK: - Initialization
 
