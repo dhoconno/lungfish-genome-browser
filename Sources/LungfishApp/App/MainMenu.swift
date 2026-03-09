@@ -405,31 +405,6 @@ public final class MainMenu {
 
         viewMenu.addItem(.separator())
 
-        // Display mode submenu
-        let displayModeItem = NSMenuItem(title: "Display Mode", action: nil, keyEquivalent: "")
-        let displayModeMenu = NSMenu(title: "Display Mode")
-
-        displayModeMenu.addItem(
-            withTitle: "Collapsed",
-            action: #selector(ViewMenuActions.setDisplayModeCollapsed(_:)),
-            keyEquivalent: ""
-        )
-        displayModeMenu.addItem(
-            withTitle: "Squished",
-            action: #selector(ViewMenuActions.setDisplayModeSquished(_:)),
-            keyEquivalent: ""
-        )
-        displayModeMenu.addItem(
-            withTitle: "Expanded",
-            action: #selector(ViewMenuActions.setDisplayModeExpanded(_:)),
-            keyEquivalent: ""
-        )
-
-        displayModeItem.submenu = displayModeMenu
-        viewMenu.addItem(displayModeItem)
-
-        viewMenu.addItem(.separator())
-
         // DNA/RNA mode toggle
         let nucleotideModeItem = viewMenu.addItem(
             withTitle: "Show as RNA (U instead of T)",
@@ -796,9 +771,6 @@ public final class MainMenu {
     func zoomOut(_ sender: Any?)
     func zoomToFit(_ sender: Any?)
     func zoomReset(_ sender: Any?)
-    func setDisplayModeCollapsed(_ sender: Any?)
-    func setDisplayModeSquished(_ sender: Any?)
-    func setDisplayModeExpanded(_ sender: Any?)
     func toggleNucleotideMode(_ sender: Any?)
     func resetViewSettingsToDefaults(_ sender: Any?)
     func showAIAssistant(_ sender: Any?)

@@ -2464,18 +2464,6 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         mainWindowController?.mainSplitViewController?.viewerController?.zoomReset()
     }
 
-    @objc func setDisplayModeCollapsed(_ sender: Any?) {
-        showNotImplementedAlert("Collapsed Display Mode")
-    }
-
-    @objc func setDisplayModeSquished(_ sender: Any?) {
-        showNotImplementedAlert("Squished Display Mode")
-    }
-
-    @objc func setDisplayModeExpanded(_ sender: Any?) {
-        showNotImplementedAlert("Expanded Display Mode")
-    }
-
     @objc func toggleNucleotideMode(_ sender: Any?) {
         guard let viewerController = mainWindowController?.mainSplitViewController?.viewerController else {
             return
