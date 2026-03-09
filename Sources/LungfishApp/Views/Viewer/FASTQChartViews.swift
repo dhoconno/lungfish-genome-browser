@@ -21,6 +21,14 @@ final class FASTQSummaryBar: NSView {
     func update(with stats: FASTQDatasetStatistics) {
         self.statistics = stats
         needsDisplay = true
+        updateAccessibility(stats)
+    }
+
+    private func updateAccessibility(_ stats: FASTQDatasetStatistics) {
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("FASTQ Summary Statistics")
+        let desc = "\(stats.readCount) reads, mean length \(Int(stats.meanReadLength)) bp, mean quality \(String(format: "%.1f", stats.meanQuality)), GC \(String(format: "%.1f%%", stats.gcContent * 100))"
+        setAccessibilityValue(desc)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -170,6 +178,15 @@ final class FASTQHistogramChartView: NSView {
     func update(with data: HistogramData) {
         self.data = data
         needsDisplay = true
+        updateAccessibility(data)
+    }
+
+    private func updateAccessibility(_ data: HistogramData) {
+        setAccessibilityRole(.image)
+        setAccessibilityLabel(data.title)
+        let total = data.bins.reduce(0) { $0 + $1.value }
+        let desc = "Histogram with \(data.bins.count) bins, \(total) total observations"
+        setAccessibilityValue(desc)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -334,6 +351,19 @@ final class FASTQQualityBoxplotView: NSView {
     func update(with summaries: [PositionQualitySummary]) {
         self.summaries = summaries
         needsDisplay = true
+        updateAccessibility(summaries)
+    }
+
+    private func updateAccessibility(_ summaries: [PositionQualitySummary]) {
+        setAccessibilityRole(.image)
+        setAccessibilityLabel("Per-Position Quality Boxplot")
+        guard !summaries.isEmpty else {
+            setAccessibilityValue("No data")
+            return
+        }
+        let meanQ = summaries.reduce(0.0) { $0 + $1.mean } / Double(summaries.count)
+        let desc = "\(summaries.count) positions, overall mean quality \(String(format: "%.1f", meanQ))"
+        setAccessibilityValue(desc)
     }
 
     override func draw(_ dirtyRect: NSRect) {

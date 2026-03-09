@@ -43,6 +43,28 @@ public enum FASTQDerivativeRequest: Sendable {
         sampleAssignments: [FASTQSampleBarcodeAssignment]?
     )
 
+    /// Human-readable label for this operation, used in the Operations panel.
+    var operationLabel: String {
+        switch self {
+        case .subsampleProportion(let p): return "Subsample \(Int(p * 100))%"
+        case .subsampleCount(let n): return "Subsample \(n) reads"
+        case .lengthFilter: return "Length Filter"
+        case .searchText: return "Search"
+        case .searchMotif: return "Motif Search"
+        case .deduplicate: return "Deduplicate"
+        case .qualityTrim: return "Quality Trim"
+        case .adapterTrim: return "Adapter Trim"
+        case .fixedTrim: return "Fixed Trim"
+        case .contaminantFilter: return "Contaminant Filter"
+        case .pairedEndMerge: return "Paired-End Merge"
+        case .pairedEndRepair: return "Paired-End Repair"
+        case .primerRemoval: return "Primer Removal"
+        case .errorCorrection: return "Error Correction"
+        case .interleaveReformat: return "Interleave Reformat"
+        case .demultiplex: return "Demultiplex"
+        }
+    }
+
     /// Whether this request produces a trim derivative (vs subset).
     var isTrimOperation: Bool {
         switch self {
@@ -124,6 +146,9 @@ public actor FASTQDerivativeService {
     public static let shared = FASTQDerivativeService()
 
     private let runner = NativeToolRunner.shared
+
+    /// Cached BBTools environment dictionary — stable across the actor's lifetime.
+    private var cachedBBToolsEnv: [String: String]?
 
     public init() {}
 
@@ -1382,7 +1407,11 @@ public actor FASTQDerivativeService {
     ///
     /// BBTools scripts are Java wrappers — they need the bundled JRE on PATH
     /// and JAVA_HOME/BBMAP_JAVA set to avoid depending on system Java.
+    /// Result is cached after first call since the tools directory is stable.
     private func bbToolsEnvironment() async -> [String: String] {
+        if let cached = cachedBBToolsEnv {
+            return cached
+        }
         var env: [String: String] = [:]
         // Add tools directory to PATH so bbtools scripts can find the bundled JRE
         if let toolsDir = await runner.getToolsDirectory() {
@@ -1397,6 +1426,7 @@ public actor FASTQDerivativeService {
                 env["BBMAP_JAVA"] = javaURL.path
             }
         }
+        cachedBBToolsEnv = env
         return env
     }
 

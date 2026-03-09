@@ -1898,27 +1898,52 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             throw FASTQDerivativeError.sourceMustBeBundle
         }
 
-        await MainActor.run {
-            self.viewerController.updateFASTQOperationStatus("Running FASTQ operation...")
-        }
-
-        let derivedURL = try await FASTQDerivativeService.shared.createDerivative(
-            from: sourceBundleURL,
-            request: request,
-            progress: { [weak self] message in
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated {
-                        guard let self else { return }
-                        self.viewerController.updateFASTQOperationStatus(message)
-                    }
-                }
-            }
+        // Register with OperationCenter for visibility in the Operations panel
+        let opTitle = "FASTQ: \(request.operationLabel)"
+        let opID: UUID = OperationCenter.shared.start(
+            title: opTitle,
+            detail: "Preparing...",
+            operationType: .fastqOperation
         )
 
-        await MainActor.run {
-            self.sidebarController.reloadFromFilesystem()
-            self.sidebarController.selectItem(forURL: derivedURL)
-            self.requestInspectorDocumentModeAfterDownload()
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                self?.viewerController.updateFASTQOperationStatus("Running FASTQ operation...")
+            }
+        }
+
+        do {
+            let derivedURL = try await FASTQDerivativeService.shared.createDerivative(
+                from: sourceBundleURL,
+                request: request,
+                progress: { [weak self] message in
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated {
+                            guard let self else { return }
+                            self.viewerController.updateFASTQOperationStatus(message)
+                            OperationCenter.shared.update(id: opID, progress: -1, detail: message)
+                        }
+                    }
+                }
+            )
+
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    OperationCenter.shared.complete(id: opID, detail: "Done")
+                    self.sidebarController.reloadFromFilesystem()
+                    self.sidebarController.selectItem(forURL: derivedURL)
+                    self.requestInspectorDocumentModeAfterDownload()
+                }
+            }
+        } catch {
+            let errorMessage = "\(error)"
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    OperationCenter.shared.fail(id: opID, detail: errorMessage)
+                }
+            }
+            throw error
         }
     }
 

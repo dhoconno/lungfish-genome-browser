@@ -58,6 +58,14 @@ final class FASTQSparklineStrip: NSView {
         self.statistics = stats
         updateFullCharts()
         needsDisplay = true
+        updateAccessibility(stats)
+    }
+
+    private func updateAccessibility(_ stats: FASTQDatasetStatistics) {
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("FASTQ Quality Sparklines")
+        let desc = "Length distribution, per-position quality, and quality score distribution charts. Click to expand."
+        setAccessibilityValue(desc)
     }
 
     override func updateTrackingAreas() {

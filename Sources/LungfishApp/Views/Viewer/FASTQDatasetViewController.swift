@@ -227,6 +227,7 @@ public final class FASTQDatasetViewController: NSViewController {
     private let previewCanvas = OperationPreviewView()
     private let runBar = NSView()
     private let runButton = NSButton(title: "Run", target: nil, action: nil)
+    private let cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
     private let outputEstimateLabel = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
     private let progressIndicator = NSProgressIndicator()
@@ -653,6 +654,13 @@ public final class FASTQDatasetViewController: NSViewController {
         runButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 64).isActive = true
         runBar.addSubview(runButton)
 
+        cancelButton.bezelStyle = .rounded
+        cancelButton.target = self
+        cancelButton.action = #selector(cancelOperationClicked(_:))
+        cancelButton.translatesAutoresizingMaskIntoConstraints = false
+        cancelButton.isHidden = true
+        runBar.addSubview(cancelButton)
+
         let statusToEstimate = statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: outputEstimateLabel.leadingAnchor, constant: -8)
         statusToEstimate.priority = .defaultLow
 
@@ -669,8 +677,11 @@ public final class FASTQDatasetViewController: NSViewController {
             outputEstimateLabel.centerXAnchor.constraint(equalTo: runBar.centerXAnchor),
             outputEstimateLabel.centerYAnchor.constraint(equalTo: runBar.centerYAnchor),
 
-            progressIndicator.trailingAnchor.constraint(equalTo: runButton.leadingAnchor, constant: -8),
+            progressIndicator.trailingAnchor.constraint(equalTo: cancelButton.leadingAnchor, constant: -8),
             progressIndicator.centerYAnchor.constraint(equalTo: runBar.centerYAnchor),
+
+            cancelButton.trailingAnchor.constraint(equalTo: runButton.leadingAnchor, constant: -4),
+            cancelButton.centerYAnchor.constraint(equalTo: runBar.centerYAnchor),
 
             runButton.trailingAnchor.constraint(equalTo: runBar.trailingAnchor, constant: -12),
             runButton.centerYAnchor.constraint(equalTo: runBar.centerYAnchor),
@@ -948,22 +959,29 @@ public final class FASTQDatasetViewController: NSViewController {
             fastaPreviewTask = Task.detached(priority: .utility) { [weak self] in
                 do {
                     let fasta = try await Self.buildFASTAPreview(from: sourceURL, readLimit: 1_000)
-                    await MainActor.run { [weak self] in
-                        guard let self else { return }
-                        guard self.fastqURL?.standardizedFileURL == sourceURL else { return }
-                        self.previewCanvas.setFASTAContent(fasta)
-                        self.fastaPreviewTask = nil
+                    DispatchQueue.main.async { [weak self] in
+                        MainActor.assumeIsolated {
+                            guard let self else { return }
+                            guard self.fastqURL?.standardizedFileURL == sourceURL else { return }
+                            self.previewCanvas.setFASTAContent(fasta)
+                            self.fastaPreviewTask = nil
+                        }
                     }
                 } catch is CancellationError {
-                    await MainActor.run { [weak self] in
-                        self?.fastaPreviewTask = nil
+                    DispatchQueue.main.async { [weak self] in
+                        MainActor.assumeIsolated {
+                            self?.fastaPreviewTask = nil
+                        }
                     }
                 } catch {
-                    await MainActor.run { [weak self] in
-                        guard let self else { return }
-                        guard self.fastqURL?.standardizedFileURL == sourceURL else { return }
-                        self.previewCanvas.setFASTAContent("Failed to load FASTA preview: \(error.localizedDescription)")
-                        self.fastaPreviewTask = nil
+                    let errorMessage = "\(error)"
+                    DispatchQueue.main.async { [weak self] in
+                        MainActor.assumeIsolated {
+                            guard let self else { return }
+                            guard self.fastqURL?.standardizedFileURL == sourceURL else { return }
+                            self.previewCanvas.setFASTAContent("Failed to load FASTA preview: \(errorMessage)")
+                            self.fastaPreviewTask = nil
+                        }
                     }
                 }
             }
@@ -1265,8 +1283,15 @@ public final class FASTQDatasetViewController: NSViewController {
         guard qualityReportTask == nil else { return }
 
         runButton.isEnabled = false
+        cancelButton.isHidden = false
         progressIndicator.startAnimation(nil)
         setStatus("Computing quality report...")
+
+        let opID = OperationCenter.shared.start(
+            title: "Quality Report",
+            detail: url.lastPathComponent,
+            operationType: .qualityReport
+        )
 
         qualityReportTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
@@ -1283,12 +1308,14 @@ public final class FASTQDatasetViewController: NSViewController {
                 DispatchQueue.main.async { [weak self] in
                     MainActor.assumeIsolated {
                         guard let self else { return }
+                        OperationCenter.shared.complete(id: opID, detail: "Complete — \(fullStats.readCount) reads")
                         self.qualityReportTask = nil
                         self.statistics = fullStats
                         self.summaryBar.update(with: fullStats)
                         self.sparklineStrip.update(with: fullStats)
                         self.previewCanvas.update(operation: self.selectedOperation?.previewKind ?? .none, statistics: fullStats)
                         self.runButton.isEnabled = true
+                        self.cancelButton.isHidden = true
                         self.progressIndicator.stopAnimation(nil)
                         self.updateQualityReportButton()
                         self.setStatus("Quality report complete")
@@ -1296,17 +1323,20 @@ public final class FASTQDatasetViewController: NSViewController {
                     }
                 }
             } catch {
+                let errorMessage = "\(error)"
                 DispatchQueue.main.async { [weak self] in
                     MainActor.assumeIsolated {
                         guard let self else { return }
+                        OperationCenter.shared.fail(id: opID, detail: errorMessage)
                         self.qualityReportTask = nil
                         self.runButton.isEnabled = true
+                        self.cancelButton.isHidden = true
                         self.progressIndicator.stopAnimation(nil)
                         self.setStatus("Quality report failed")
 
                         let alert = NSAlert()
                         alert.messageText = "Quality Report Failed"
-                        alert.informativeText = error.localizedDescription
+                        alert.informativeText = errorMessage
                         alert.alertStyle = .warning
                         alert.addButton(withTitle: "OK")
                         alert.applyLungfishBranding()
@@ -1318,6 +1348,26 @@ public final class FASTQDatasetViewController: NSViewController {
     }
 
     // MARK: - Actions
+
+    @objc private func cancelOperationClicked(_ sender: Any) {
+        if let task = qualityReportTask {
+            task.cancel()
+            qualityReportTask = nil
+            runButton.isEnabled = true
+            cancelButton.isHidden = true
+            progressIndicator.stopAnimation(nil)
+            setStatus("Quality report cancelled")
+            return
+        }
+        if let task = operationTask {
+            task.cancel()
+            operationTask = nil
+            runButton.isEnabled = true
+            cancelButton.isHidden = true
+            progressIndicator.stopAnimation(nil)
+            setStatus("Operation cancelled")
+        }
+    }
 
     @objc private func operationSidebarClicked(_ sender: NSTableView) {
         let row = sender.selectedRow
@@ -1354,35 +1404,41 @@ public final class FASTQDatasetViewController: NSViewController {
         }
 
         runButton.isEnabled = false
+        cancelButton.isHidden = false
         progressIndicator.startAnimation(nil)
         setStatus("Running: \(description(for: request))")
 
         operationTask = Task { [weak self] in
             do {
                 try await onRunOperation(request)
-                await MainActor.run {
-                    guard let self else { return }
-                    self.operationTask = nil
-                    self.runButton.isEnabled = true
-                    self.progressIndicator.stopAnimation(nil)
-                    self.setStatus("Done: \(self.description(for: request))")
-                }
+                guard let self else { return }
+                self.operationTask = nil
+                self.runButton.isEnabled = true
+                self.cancelButton.isHidden = true
+                self.progressIndicator.stopAnimation(nil)
+                self.setStatus("Done: \(self.description(for: request))")
+            } catch is CancellationError {
+                guard let self else { return }
+                self.operationTask = nil
+                self.runButton.isEnabled = true
+                self.cancelButton.isHidden = true
+                self.progressIndicator.stopAnimation(nil)
+                self.setStatus("Cancelled")
             } catch {
-                await MainActor.run {
-                    guard let self else { return }
-                    self.operationTask = nil
-                    self.runButton.isEnabled = true
-                    self.progressIndicator.stopAnimation(nil)
-                    self.setStatus("Failed: \(error.localizedDescription)")
+                guard let self else { return }
+                self.operationTask = nil
+                self.runButton.isEnabled = true
+                self.cancelButton.isHidden = true
+                self.progressIndicator.stopAnimation(nil)
+                self.setStatus("Failed: \(error.localizedDescription)")
 
-                    let alert = NSAlert()
-                    alert.messageText = "FASTQ Operation Failed"
-                    alert.informativeText = error.localizedDescription
-                    alert.alertStyle = .warning
-                    alert.addButton(withTitle: "OK")
-                    alert.applyLungfishBranding()
-                    alert.runModal()
-                }
+                let alert = NSAlert()
+                alert.messageText = "FASTQ Operation Failed"
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.applyLungfishBranding()
+                alert.runModal()
             }
         }
     }

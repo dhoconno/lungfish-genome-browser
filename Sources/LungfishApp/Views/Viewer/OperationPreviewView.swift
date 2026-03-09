@@ -150,6 +150,19 @@ final class OperationPreviewView: NSView {
         self.operationKind = operation
         self.statistics = statistics
         needsDisplay = true
+        updateAccessibility(operation)
+    }
+
+    private func updateAccessibility(_ operation: OperationKind) {
+        setAccessibilityRole(.image)
+        setAccessibilityLabel("Operation Preview")
+        let desc: String
+        switch operation {
+        case .none: desc = "No operation selected"
+        case .qualityReport: desc = "Quality report schematic"
+        default: desc = "Schematic showing how reads will be transformed"
+        }
+        setAccessibilityValue(desc)
     }
 
     func setFASTAContent(_ text: String) {
