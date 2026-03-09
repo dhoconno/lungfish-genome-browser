@@ -1901,11 +1901,12 @@ extension SidebarViewController: NSMenuDelegate {
         guard !items.isEmpty else { return }
 
         // Check what types we have selected
-        let hasFiles = items.contains { $0.type != .group && $0.type != .project && $0.type != .folder && $0.type != .referenceBundle }
+        let hasFiles = items.contains { $0.type != .group && $0.type != .project && $0.type != .folder && $0.type != .referenceBundle && $0.type != .fastqBundle }
         let hasFolders = items.contains { $0.type == .folder || $0.type == .project }
         let hasGroups = items.contains { $0.type == .group }
         let hasDeletable = items.contains { $0.type != .group && $0.type != .project }
         let hasBundles = items.contains { $0.type == .referenceBundle }
+        let hasFASTQBundles = items.contains { $0.type == .fastqBundle }
 
         // Single bundle selected - show bundle-specific options
         if items.count == 1 && hasBundles {
@@ -1942,6 +1943,24 @@ extension SidebarViewController: NSMenuDelegate {
 
             menu.addItem(NSMenuItem.separator())
         }
+
+        // Single FASTQ bundle selected - show FASTQ-specific options
+        if items.count == 1 && hasFASTQBundles {
+            let openItem = NSMenuItem(title: "Open Bundle", action: #selector(contextMenuOpen(_:)), keyEquivalent: "")
+            openItem.target = self
+            menu.addItem(openItem)
+
+            let exportItem = NSMenuItem(title: "Export as FASTQ\u{2026}", action: #selector(contextMenuExportFASTQ(_:)), keyEquivalent: "")
+            exportItem.target = self
+            menu.addItem(exportItem)
+
+            let showContentsItem = NSMenuItem(title: "Show Package Contents", action: #selector(contextMenuShowBundleContents(_:)), keyEquivalent: "")
+            showContentsItem.target = self
+            menu.addItem(showContentsItem)
+
+            menu.addItem(NSMenuItem.separator())
+        }
+
 
         // Single item selected - show Open
         if items.count == 1 && hasFiles {
@@ -2035,7 +2054,7 @@ extension SidebarViewController: NSMenuDelegate {
     /// Shows the internal contents of a bundle in Finder (like "Show Package Contents" in macOS).
     @objc private func contextMenuShowBundleContents(_ sender: Any?) {
         let items = selectedItems()
-        guard let item = items.first, item.type == .referenceBundle, let url = item.url else { return }
+        guard let item = items.first, (item.type == .referenceBundle || item.type == .fastqBundle), let url = item.url else { return }
 
         logger.info("contextMenuShowBundleContents: Showing contents of '\(item.title, privacy: .public)'")
 
@@ -2530,6 +2549,114 @@ extension SidebarViewController: NSMenuDelegate {
         // Immediately refresh sidebar for instant feedback
         reloadFromFilesystem()
     }
+    // MARK: - FASTQ Export
+
+    /// Exports a FASTQ bundle to a standalone FASTQ file via NSSavePanel.
+    @objc private func contextMenuExportFASTQ(_ sender: Any?) {
+        let items = selectedItems()
+        guard let item = items.first, item.type == .fastqBundle, let bundleURL = item.url else { return }
+
+        logger.info("contextMenuExportFASTQ: Exporting '\(item.title, privacy: .public)'")
+
+        let isDerived = FASTQBundle.isDerivedBundle(bundleURL)
+        let baseName = FASTQBundle.deriveBaseName(from: bundleURL)
+
+        // Determine suggested filename based on bundle content
+        let suggestedName: String
+        if isDerived {
+            suggestedName = baseName + ".fastq.gz"
+        } else if let primaryURL = FASTQBundle.resolvePrimaryFASTQURL(for: bundleURL) {
+            suggestedName = primaryURL.lastPathComponent
+        } else {
+            suggestedName = baseName + ".fastq"
+        }
+
+        let savePanel = NSSavePanel()
+        savePanel.title = "Export FASTQ"
+        savePanel.nameFieldStringValue = suggestedName
+        savePanel.allowedContentTypes = [.data]
+        savePanel.canCreateDirectories = true
+
+        guard let window = view.window else {
+            logger.warning("contextMenuExportFASTQ: No window available for save panel")
+            return
+        }
+
+        savePanel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let outputURL = savePanel.url else { return }
+            self?.performFASTQExport(bundleURL: bundleURL, outputURL: outputURL, isDerived: isDerived, title: item.title)
+        }
+    }
+
+    /// Performs the actual FASTQ export operation in the background.
+    private func performFASTQExport(bundleURL: URL, outputURL: URL, isDerived: Bool, title: String) {
+        logger.info("performFASTQExport: Writing to '\(outputURL.lastPathComponent, privacy: .public)' (derived: \(isDerived))")
+
+        Task.detached { [weak self] in
+            do {
+                if isDerived {
+                    // Derived bundle: materialize through FASTQDerivativeService
+                    try await FASTQDerivativeService.shared.exportMaterializedFASTQ(
+                        fromDerivedBundle: bundleURL,
+                        to: outputURL,
+                        progress: { message in
+                            logger.info("performFASTQExport progress: \(message, privacy: .public)")
+                        }
+                    )
+                } else {
+                    // Root bundle: copy the primary FASTQ file directly
+                    guard let primaryURL = FASTQBundle.resolvePrimaryFASTQURL(for: bundleURL) else {
+                        throw NSError(domain: "com.lungfish.browser", code: 1,
+                                      userInfo: [NSLocalizedDescriptionKey: "No FASTQ file found inside bundle"])
+                    }
+                    try FileManager.default.copyItem(at: primaryURL, to: outputURL)
+                }
+
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.showExportSuccessAlert(outputURL: outputURL, title: title)
+                    }
+                }
+            } catch {
+                logger.error("performFASTQExport: Failed - \(error, privacy: .public)")
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.showExportErrorAlert(error: error, title: title)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Shows a success alert after FASTQ export completes.
+    private func showExportSuccessAlert(outputURL: URL, title: String) {
+        guard let window = view.window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Export Complete"
+        alert.informativeText = "\(title) has been exported as \(outputURL.lastPathComponent)."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Show in Finder")
+        alert.beginSheetModal(for: window) { response in
+            if response == .alertSecondButtonReturn {
+                NSWorkspace.shared.activateFileViewerSelecting([outputURL])
+            }
+        }
+    }
+
+    /// Shows an error alert when FASTQ export fails.
+    private func showExportErrorAlert(error: Error, title: String) {
+        guard let window = view.window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Export Failed"
+        alert.informativeText = "Could not export \(title): \(error.localizedDescription)"
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "OK")
+        alert.beginSheetModal(for: window)
+    }
+
 
     // MARK: - Move To Submenu
 

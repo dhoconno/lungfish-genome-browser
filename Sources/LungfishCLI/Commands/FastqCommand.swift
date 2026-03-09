@@ -744,7 +744,8 @@ struct FastqDemultiplexSubcommand: AsyncParsableCommand {
             Built-in kits: truseq-single-a, truseq-single-b, truseq-ht-dual,
             nextera-xt-v2, idt-ud-indexes, pacbio-sequel-16-v3,
             pacbio-sequel-96-v2, pacbio-sequel-384-v1, ont-nbd104,
-            ont-nbd114, ont-nbd104-114, ont-pbc096, ont-rbk004,
+            ont-nbd114, ont-nbd104-114, ont-nbd114-96, ont-pbc096,
+            ont-rbk004, ont-rbk114-24, ont-rbk114-96, ont-16s114-24,
             ont-rab204-214.
 
             Examples:
@@ -757,7 +758,7 @@ struct FastqDemultiplexSubcommand: AsyncParsableCommand {
     var input: String
 
     @Option(name: .customLong("kit"),
-            help: "Barcode kit: truseq-single-a, truseq-single-b, truseq-ht-dual, nextera-xt-v2, idt-ud-indexes, pacbio-sequel-16-v3, pacbio-sequel-96-v2, pacbio-sequel-384-v1, ont-nbd104, ont-nbd114, ont-nbd104-114, ont-pbc096, ont-rbk004, ont-rab204-214, or path to custom CSV")
+            help: "Barcode kit: truseq-single-a, truseq-single-b, truseq-ht-dual, nextera-xt-v2, idt-ud-indexes, pacbio-sequel-16-v3, pacbio-sequel-96-v2, pacbio-sequel-384-v1, ont-nbd104, ont-nbd114, ont-nbd104-114, ont-nbd114-96, ont-pbc096, ont-rbk004, ont-rbk114-24, ont-rbk114-96, ont-16s114-24, ont-rab204-214, or path to custom CSV")
     var kit: String
 
     @Option(name: [.customLong("output"), .customShort("o")],
@@ -818,7 +819,7 @@ struct FastqDemultiplexSubcommand: AsyncParsableCommand {
         } else {
             throw ValidationError(
                 "Unknown barcode kit '\(kit)'. Use one of: truseq-single-a, truseq-single-b, "
-                + "truseq-ht-dual, nextera-xt-v2, idt-ud-indexes, pacbio-sequel-16-v3, pacbio-sequel-96-v2, pacbio-sequel-384-v1, ont-nbd104, ont-nbd114, ont-nbd104-114, ont-pbc096, ont-rbk004, ont-rab204-214, or a path to a custom CSV."
+                + "truseq-ht-dual, nextera-xt-v2, idt-ud-indexes, pacbio-sequel-16-v3, pacbio-sequel-96-v2, pacbio-sequel-384-v1, ont-nbd104, ont-nbd114, ont-nbd104-114, ont-nbd114-96, ont-pbc096, ont-rbk004, ont-rbk114-24, ont-rbk114-96, ont-16s114-24, ont-rab204-214, or a path to a custom CSV."
             )
         }
 

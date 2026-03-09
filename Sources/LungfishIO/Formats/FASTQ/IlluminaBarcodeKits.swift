@@ -197,8 +197,12 @@ public enum IlluminaBarcodeKitRegistry {
             ontNativeBarcoding12NBD104,
             ontNativeBarcoding12NBD114,
             ontNativeBarcoding24,
+            ontNativeBarcoding96,
             ontPCRBarcoding96,
             ontRapidBarcoding12,
+            ontRapidBarcoding24,
+            ontRapidBarcoding96,
+            ont16SBarcoding24,
             ont16SRapidAmplicon24,
         ]
     }
@@ -610,7 +614,83 @@ public enum IlluminaBarcodeKitRegistry {
         )
     }()
 
+    /// ONT Native Barcoding 96 (SQK-NBD114-96, V14).
+    /// Also compatible with SQK-MLK114-96-XL and SQK-HTB114-96.
+    public static let ontNativeBarcoding96: IlluminaBarcodeDefinition = {
+        let barcodes = parseFASTARecords(ONTBarcodeData.nativeBarcoding96FASTA)
+        return IlluminaBarcodeDefinition(
+            id: "ont-nbd114-96",
+            displayName: "ONT Native Barcoding V14 (SQK-NBD114-96, 96)",
+            vendor: "oxford-nanopore",
+            isDualIndexed: false,
+            pairingMode: .singleEnd,
+            barcodes: barcodes
+        )
+    }()
+
+    /// ONT Rapid Barcoding 24 (SQK-RBK114-24, V14).
+    /// Uses BC01-BC24 sequences (same as PCR barcoding).
+    public static let ontRapidBarcoding24: IlluminaBarcodeDefinition = {
+        let allBarcodes = parseFASTARecords(ONTBarcodeData.bc96FASTA)
+        let barcodes = barcodesWithNumericSuffix(in: 1...24, from: allBarcodes)
+        return IlluminaBarcodeDefinition(
+            id: "ont-rbk114-24",
+            displayName: "ONT Rapid Barcoding V14 (SQK-RBK114-24, 24)",
+            vendor: "oxford-nanopore",
+            isDualIndexed: false,
+            pairingMode: .singleEnd,
+            barcodes: barcodes
+        )
+    }()
+
+    /// ONT Rapid Barcoding 96 (SQK-RBK114-96, V14).
+    /// Uses BC01-BC96 with 6 variant substitutions at positions 26, 39, 40, 48, 54, 60.
+    public static let ontRapidBarcoding96: IlluminaBarcodeDefinition = {
+        let baseBarcodes = parseFASTARecords(ONTBarcodeData.bc96FASTA)
+        let variants = parseFASTARecords(ONTBarcodeData.rbk114_96VariantFASTA)
+        let variantMap = Dictionary(uniqueKeysWithValues: variants.map { ($0.id, $0) })
+
+        // Build the RBK114-96 arrangement: BC01-96 but replace specific positions.
+        let rbkSubstitutions: [Int: String] = [
+            26: "RBK26", 39: "RBK39", 40: "RBK40", 48: "RBK48", 54: "RBK54", 60: "RBK60",
+        ]
+        var barcodes: [IlluminaBarcode] = []
+        for bc in baseBarcodes {
+            let digits = bc.id.filter(\.isNumber)
+            if let num = Int(digits), let variantID = rbkSubstitutions[num],
+               let variant = variantMap[variantID] {
+                barcodes.append(variant)
+            } else {
+                barcodes.append(bc)
+            }
+        }
+        return IlluminaBarcodeDefinition(
+            id: "ont-rbk114-96",
+            displayName: "ONT Rapid Barcoding V14 (SQK-RBK114-96, 96)",
+            vendor: "oxford-nanopore",
+            isDualIndexed: false,
+            pairingMode: .singleEnd,
+            barcodes: barcodes
+        )
+    }()
+
+    /// ONT 16S Barcoding 24 (SQK-16S114-24, V14).
+    /// Uses BC01-BC24 sequences with 16S-specific flanking regions.
+    public static let ont16SBarcoding24: IlluminaBarcodeDefinition = {
+        let allBarcodes = parseFASTARecords(ONTBarcodeData.bc96FASTA)
+        let barcodes = barcodesWithNumericSuffix(in: 1...24, from: allBarcodes)
+        return IlluminaBarcodeDefinition(
+            id: "ont-16s114-24",
+            displayName: "ONT 16S Barcoding V14 (SQK-16S114-24, 24)",
+            vendor: "oxford-nanopore",
+            isDualIndexed: false,
+            pairingMode: .singleEnd,
+            barcodes: barcodes
+        )
+    }()
+
     /// ONT 16S Rapid Amplicon Barcoding (RAB204/RAB214, 24 barcodes).
+    /// Legacy kit; uses BC01-BC24 sequences.
     public static let ont16SRapidAmplicon24: IlluminaBarcodeDefinition = {
         let barcodes = parseFASTARecords(ONTBarcodeData.rab204Rab214FASTA)
         return IlluminaBarcodeDefinition(

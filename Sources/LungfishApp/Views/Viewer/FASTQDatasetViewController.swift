@@ -6,6 +6,64 @@ import AppKit
 import LungfishIO
 import LungfishWorkflow
 
+/// Parsed FASTQ read record for the read preview table.
+private struct FASTQReadPreviewRecord {
+    let index: Int
+    let readID: String
+    let sequence: String
+    let length: Int
+    let meanQuality: Double
+}
+
+/// Parses raw FASTQ text (4 lines per record) into preview records.
+/// Free function to avoid @MainActor isolation from the enclosing class.
+private func parseFASTQReadPreviewRecords(from fastqText: String) -> [FASTQReadPreviewRecord] {
+    let lines = fastqText.split(separator: "\n", omittingEmptySubsequences: false)
+    var records: [FASTQReadPreviewRecord] = []
+    records.reserveCapacity(1_000)
+
+    var i = 0
+    var recordIndex = 1
+    while i + 3 < lines.count {
+        let headerLine = lines[i]
+        let sequenceLine = lines[i + 1]
+        // lines[i + 2] is the "+" separator
+        let qualityLine = lines[i + 3]
+
+        // Parse read ID from header (strip leading @, take first whitespace-delimited token)
+        let header = headerLine.hasPrefix("@") ? String(headerLine.dropFirst()) : String(headerLine)
+        let readID = String(header.split(separator: " ", maxSplits: 1).first ?? Substring(header))
+
+        let sequence = String(sequenceLine)
+        let length = sequence.count
+
+        // Compute mean Phred quality from ASCII quality string
+        let meanQ: Double
+        if qualityLine.isEmpty {
+            meanQ = 0
+        } else {
+            var totalQ = 0
+            for char in qualityLine.utf8 {
+                totalQ += Int(char) - 33
+            }
+            meanQ = Double(totalQ) / Double(qualityLine.count)
+        }
+
+        records.append(FASTQReadPreviewRecord(
+            index: recordIndex,
+            readID: readID,
+            sequence: sequence,
+            length: length,
+            meanQuality: meanQ
+        ))
+
+        recordIndex += 1
+        i += 4
+    }
+
+    return records
+}
+
 @MainActor
 public final class FASTQDatasetViewController: NSViewController {
 
@@ -19,6 +77,7 @@ public final class FASTQDatasetViewController: NSViewController {
     }
 
     private enum OperationKind: Int, CaseIterable {
+        case qualityReport
         case subsampleProportion
         case subsampleCount
         case lengthFilter
@@ -37,6 +96,7 @@ public final class FASTQDatasetViewController: NSViewController {
 
         var title: String {
             switch self {
+            case .qualityReport: return "Compute Quality Report"
             case .subsampleProportion: return "Subsample by Proportion"
             case .subsampleCount: return "Subsample by Count"
             case .lengthFilter: return "Filter by Read Length"
@@ -57,6 +117,7 @@ public final class FASTQDatasetViewController: NSViewController {
 
         var sfSymbol: String {
             switch self {
+            case .qualityReport: return "chart.bar.doc.horizontal"
             case .subsampleProportion: return "chart.pie"
             case .subsampleCount: return "number"
             case .lengthFilter: return "arrow.left.and.right"
@@ -77,6 +138,7 @@ public final class FASTQDatasetViewController: NSViewController {
 
         var category: String {
             switch self {
+            case .qualityReport: return "QUALITY"
             case .subsampleProportion, .subsampleCount: return "SAMPLING"
             case .qualityTrim, .adapterTrim, .fixedTrim, .primerRemoval: return "TRIMMING"
             case .lengthFilter, .contaminantFilter, .deduplicate: return "FILTERING"
@@ -89,6 +151,7 @@ public final class FASTQDatasetViewController: NSViewController {
 
         var previewKind: OperationPreviewView.OperationKind {
             switch self {
+            case .qualityReport: return .qualityReport
             case .subsampleProportion: return .subsampleProportion
             case .subsampleCount: return .subsampleCount
             case .lengthFilter: return .lengthFilter
@@ -112,6 +175,7 @@ public final class FASTQDatasetViewController: NSViewController {
 
     /// Category headers + operation items for the source list sidebar.
     private static let categories: [(header: String, items: [OperationKind])] = [
+        ("QUALITY", [.qualityReport]),
         ("SAMPLING", [.subsampleProportion, .subsampleCount]),
         ("TRIMMING", [.qualityTrim, .adapterTrim, .fixedTrim, .primerRemoval]),
         ("FILTERING", [.lengthFilter, .contaminantFilter, .deduplicate]),
@@ -137,6 +201,12 @@ public final class FASTQDatasetViewController: NSViewController {
     public var onStatisticsUpdated: ((FASTQDatasetStatistics) -> Void)?
     public var onRunOperation: ((FASTQDerivativeRequest) async throws -> Void)?
 
+    // MARK: - Read Preview Data
+
+    private var readPreviewRecords: [FASTQReadPreviewRecord] = []
+    private var readPreviewTask: Task<Void, Never>?
+    private var readPreviewLoaded = false
+
     // MARK: - UI Components — Two-Pane Split
 
     private let mainSplitView = NSSplitView()
@@ -146,7 +216,6 @@ public final class FASTQDatasetViewController: NSViewController {
     // Top Pane: Summary + Sparklines
     private let summaryBar = FASTQSummaryBar()
     private let sparklineStrip = FASTQSparklineStrip()
-    private let qualityReportButton = NSButton(title: "Compute Quality Report", target: nil, action: nil)
 
     // Middle Pane: Sidebar + Preview (inner split for resizable sidebar)
     private let middleSplitView = NSSplitView()
@@ -161,6 +230,16 @@ public final class FASTQDatasetViewController: NSViewController {
     private let outputEstimateLabel = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
     private let progressIndicator = NSProgressIndicator()
+
+    // Middle Pane: Tab Selector
+    private let middleTabControl = NSSegmentedControl()
+    private let middleContentContainer = NSView()
+
+    // Read Preview view
+    private let readPreviewScrollView = NSScrollView()
+    private let readPreviewTable = NSTableView()
+    private let readPreviewSpinner = NSProgressIndicator()
+    private let readPreviewPlaceholder = NSTextField(labelWithString: "Select the Reads tab to preview the first 1,000 records.")
 
     // Parameter controls (reused across operations)
     private let fieldOneLabel = NSTextField(labelWithString: "")
@@ -192,6 +271,7 @@ public final class FASTQDatasetViewController: NSViewController {
         qualityReportTask?.cancel()
         operationTask?.cancel()
         fastaPreviewTask?.cancel()
+        readPreviewTask?.cancel()
     }
 
     public override func loadView() {
@@ -226,6 +306,12 @@ public final class FASTQDatasetViewController: NSViewController {
         self.fastqURL = fastqURL
         self.sourceURL = sourceURL
         self.derivativeManifest = derivativeManifest
+
+        // Reset read preview cache when the source changes
+        readPreviewLoaded = false
+        readPreviewRecords = []
+        readPreviewTask?.cancel()
+        readPreviewTask = nil
 
         loadDemultiplexMetadata(for: fastqURL)
 
@@ -310,16 +396,9 @@ public final class FASTQDatasetViewController: NSViewController {
 
         sparklineStrip.translatesAutoresizingMaskIntoConstraints = false
         sparklineStrip.onComputeQualityReport = { [weak self] in
-            self?.computeQualityReportClicked()
+            self?.selectAndRunQualityReport()
         }
         topPane.addSubview(sparklineStrip)
-
-        qualityReportButton.translatesAutoresizingMaskIntoConstraints = false
-        qualityReportButton.bezelStyle = .accessoryBarAction
-        qualityReportButton.font = .systemFont(ofSize: 11, weight: .medium)
-        qualityReportButton.target = self
-        qualityReportButton.action = #selector(qualityReportButtonClicked(_:))
-        topPane.addSubview(qualityReportButton)
 
         NSLayoutConstraint.activate([
             summaryBar.topAnchor.constraint(equalTo: topPane.topAnchor),
@@ -331,21 +410,44 @@ public final class FASTQDatasetViewController: NSViewController {
             sparklineStrip.leadingAnchor.constraint(equalTo: topPane.leadingAnchor),
             sparklineStrip.trailingAnchor.constraint(equalTo: topPane.trailingAnchor),
             sparklineStrip.heightAnchor.constraint(equalToConstant: 52),
-
-            qualityReportButton.trailingAnchor.constraint(equalTo: topPane.trailingAnchor, constant: -8),
-            qualityReportButton.centerYAnchor.constraint(equalTo: sparklineStrip.centerYAnchor),
         ])
     }
 
     // MARK: - Middle Pane: Operation Sidebar + Preview (resizable split)
 
     private func configureMiddlePane() {
+        // Tab control: Operations | Reads
+        middleTabControl.segmentCount = 2
+        middleTabControl.setLabel("Operations", forSegment: 0)
+        middleTabControl.setLabel("Reads", forSegment: 1)
+        middleTabControl.segmentStyle = .texturedRounded
+        middleTabControl.selectedSegment = 0
+        middleTabControl.target = self
+        middleTabControl.action = #selector(middleTabChanged(_:))
+        middleTabControl.translatesAutoresizingMaskIntoConstraints = false
+        middlePane.addSubview(middleTabControl)
+
+        // Content container holds either the operations split or read preview
+        middleContentContainer.translatesAutoresizingMaskIntoConstraints = false
+        middlePane.addSubview(middleContentContainer)
+
+        NSLayoutConstraint.activate([
+            middleTabControl.topAnchor.constraint(equalTo: middlePane.topAnchor, constant: 4),
+            middleTabControl.centerXAnchor.constraint(equalTo: middlePane.centerXAnchor),
+            middleTabControl.heightAnchor.constraint(equalToConstant: 24),
+
+            middleContentContainer.topAnchor.constraint(equalTo: middleTabControl.bottomAnchor, constant: 4),
+            middleContentContainer.leadingAnchor.constraint(equalTo: middlePane.leadingAnchor),
+            middleContentContainer.trailingAnchor.constraint(equalTo: middlePane.trailingAnchor),
+            middleContentContainer.bottomAnchor.constraint(equalTo: middlePane.bottomAnchor),
+        ])
+
         // Inner horizontal split: sidebar | preview
         middleSplitView.translatesAutoresizingMaskIntoConstraints = false
         middleSplitView.isVertical = true
         middleSplitView.dividerStyle = .thin
         middleSplitView.delegate = self
-        middlePane.addSubview(middleSplitView)
+        middleContentContainer.addSubview(middleSplitView)
 
         // NSSplitView manages pane frames — do NOT set
         // translatesAutoresizingMaskIntoConstraints = false on these.
@@ -356,11 +458,14 @@ public final class FASTQDatasetViewController: NSViewController {
         middleSplitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)  // preview flexes
 
         NSLayoutConstraint.activate([
-            middleSplitView.topAnchor.constraint(equalTo: middlePane.topAnchor),
-            middleSplitView.leadingAnchor.constraint(equalTo: middlePane.leadingAnchor),
-            middleSplitView.trailingAnchor.constraint(equalTo: middlePane.trailingAnchor),
-            middleSplitView.bottomAnchor.constraint(equalTo: middlePane.bottomAnchor),
+            middleSplitView.topAnchor.constraint(equalTo: middleContentContainer.topAnchor),
+            middleSplitView.leadingAnchor.constraint(equalTo: middleContentContainer.leadingAnchor),
+            middleSplitView.trailingAnchor.constraint(equalTo: middleContentContainer.trailingAnchor),
+            middleSplitView.bottomAnchor.constraint(equalTo: middleContentContainer.bottomAnchor),
         ])
+
+        // Read preview table (hidden initially)
+        configureReadPreviewTable()
 
         // Operation sidebar (source list style)
         operationSidebar.style = .sourceList
@@ -610,6 +715,7 @@ public final class FASTQDatasetViewController: NSViewController {
         fieldOneInput.stringValue = ""
         fieldTwoInput.stringValue = ""
         runButton.isEnabled = true
+        runButton.title = "Run"
 
         switch kind {
         case .subsampleProportion:
@@ -746,6 +852,27 @@ public final class FASTQDatasetViewController: NSViewController {
             parameterBar.addArrangedSubview(demuxWindow3Label)
             parameterBar.addArrangedSubview(demuxWindow3Input)
             parameterBar.addArrangedSubview(demuxTrimCheckbox)
+
+        case .qualityReport:
+            if hasQualityData {
+                let label = NSTextField(labelWithString: "Quality data already computed. Sparkline charts are populated above.")
+                label.font = .systemFont(ofSize: 11)
+                label.textColor = .secondaryLabelColor
+                parameterBar.addArrangedSubview(label)
+                runButton.isEnabled = false
+            } else if qualityReportTask != nil {
+                let label = NSTextField(labelWithString: "Computing quality report...")
+                label.font = .systemFont(ofSize: 11)
+                label.textColor = .secondaryLabelColor
+                parameterBar.addArrangedSubview(label)
+                runButton.isEnabled = false
+            } else {
+                let label = NSTextField(labelWithString: "Scan all reads to compute per-position quality, length distribution, and quality score histograms.")
+                label.font = .systemFont(ofSize: 11)
+                label.textColor = .secondaryLabelColor
+                parameterBar.addArrangedSubview(label)
+                runButton.title = "Compute"
+            }
         }
 
         // Add spacer to push controls left
@@ -802,6 +929,8 @@ public final class FASTQDatasetViewController: NSViewController {
         case .subsampleCount:
             let n = Int(fieldOneInput.stringValue) ?? 1000
             outputEstimateLabel.stringValue = "Estimated output: \(formatCount(min(n, stats.readCount))) reads"
+        case .qualityReport:
+            outputEstimateLabel.stringValue = ""
         case .demultiplex:
             outputEstimateLabel.stringValue = "Output depends on data content"
         default:
@@ -922,22 +1051,221 @@ public final class FASTQDatasetViewController: NSViewController {
         return lines.joined(separator: "\n") + "\n"
     }
 
+    // MARK: - Read Preview Table
+
+    private func configureReadPreviewTable() {
+        readPreviewTable.style = .plain
+        readPreviewTable.usesAlternatingRowBackgroundColors = true
+        readPreviewTable.rowHeight = 20
+        readPreviewTable.headerView = NSTableHeaderView()
+        readPreviewTable.allowsColumnReordering = false
+
+        let colIndex = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("rp_index"))
+        colIndex.title = "#"
+        colIndex.width = 50
+        colIndex.maxWidth = 70
+        readPreviewTable.addTableColumn(colIndex)
+
+        let colID = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("rp_readID"))
+        colID.title = "Read ID"
+        colID.width = 200
+        colID.minWidth = 100
+        colID.resizingMask = .autoresizingMask
+        readPreviewTable.addTableColumn(colID)
+
+        let colLen = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("rp_length"))
+        colLen.title = "Length"
+        colLen.width = 60
+        colLen.maxWidth = 80
+        readPreviewTable.addTableColumn(colLen)
+
+        let colQ = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("rp_meanQ"))
+        colQ.title = "Mean Q"
+        colQ.width = 60
+        colQ.maxWidth = 80
+        readPreviewTable.addTableColumn(colQ)
+
+        let colSeq = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("rp_sequence"))
+        colSeq.title = "Sequence"
+        colSeq.width = 400
+        colSeq.minWidth = 100
+        colSeq.resizingMask = .autoresizingMask
+        readPreviewTable.addTableColumn(colSeq)
+
+        readPreviewTable.dataSource = self
+        readPreviewTable.delegate = self
+
+        readPreviewScrollView.documentView = readPreviewTable
+        readPreviewScrollView.hasVerticalScroller = true
+        readPreviewScrollView.hasHorizontalScroller = true
+        readPreviewScrollView.autohidesScrollers = true
+        readPreviewScrollView.translatesAutoresizingMaskIntoConstraints = false
+        readPreviewScrollView.isHidden = true
+        middleContentContainer.addSubview(readPreviewScrollView)
+
+        readPreviewSpinner.style = .spinning
+        readPreviewSpinner.controlSize = .regular
+        readPreviewSpinner.isDisplayedWhenStopped = false
+        readPreviewSpinner.translatesAutoresizingMaskIntoConstraints = false
+        readPreviewSpinner.isHidden = true
+        middleContentContainer.addSubview(readPreviewSpinner)
+
+        readPreviewPlaceholder.font = .systemFont(ofSize: 13)
+        readPreviewPlaceholder.textColor = .tertiaryLabelColor
+        readPreviewPlaceholder.alignment = .center
+        readPreviewPlaceholder.translatesAutoresizingMaskIntoConstraints = false
+        readPreviewPlaceholder.isHidden = true
+        middleContentContainer.addSubview(readPreviewPlaceholder)
+
+        NSLayoutConstraint.activate([
+            readPreviewScrollView.topAnchor.constraint(equalTo: middleContentContainer.topAnchor),
+            readPreviewScrollView.leadingAnchor.constraint(equalTo: middleContentContainer.leadingAnchor),
+            readPreviewScrollView.trailingAnchor.constraint(equalTo: middleContentContainer.trailingAnchor),
+            readPreviewScrollView.bottomAnchor.constraint(equalTo: middleContentContainer.bottomAnchor),
+
+            readPreviewSpinner.centerXAnchor.constraint(equalTo: middleContentContainer.centerXAnchor),
+            readPreviewSpinner.centerYAnchor.constraint(equalTo: middleContentContainer.centerYAnchor),
+
+            readPreviewPlaceholder.centerXAnchor.constraint(equalTo: middleContentContainer.centerXAnchor),
+            readPreviewPlaceholder.centerYAnchor.constraint(equalTo: middleContentContainer.centerYAnchor),
+            readPreviewPlaceholder.widthAnchor.constraint(lessThanOrEqualTo: middleContentContainer.widthAnchor, constant: -40),
+        ])
+    }
+
+    @objc private func middleTabChanged(_ sender: NSSegmentedControl) {
+        let showReads = sender.selectedSegment == 1
+        middleSplitView.isHidden = showReads
+        readPreviewScrollView.isHidden = !showReads
+        readPreviewPlaceholder.isHidden = true
+
+        if showReads && !readPreviewLoaded {
+            loadReadPreview()
+        }
+    }
+
+    private func loadReadPreview() {
+        guard let url = fastqURL else {
+            readPreviewPlaceholder.stringValue = "No FASTQ file available for preview."
+            readPreviewPlaceholder.isHidden = false
+            readPreviewScrollView.isHidden = true
+            return
+        }
+
+        readPreviewTask?.cancel()
+        readPreviewSpinner.isHidden = false
+        readPreviewSpinner.startAnimation(nil)
+        readPreviewPlaceholder.isHidden = true
+        setStatus("Loading read preview...")
+
+        let sourceURL = url.standardizedFileURL
+        readPreviewTask = Task.detached(priority: .utility) { [weak self] in
+            do {
+                let runner = NativeToolRunner.shared
+                let result = try await runner.run(
+                    .seqkit,
+                    arguments: ["head", "-n", "1000", sourceURL.path],
+                    timeout: 120
+                )
+
+                guard result.isSuccess, !result.stdout.isEmpty else {
+                    DispatchQueue.main.async { [weak self] in
+                        MainActor.assumeIsolated {
+                            guard let self else { return }
+                            self.readPreviewSpinner.stopAnimation(nil)
+                            self.readPreviewSpinner.isHidden = true
+                            self.readPreviewPlaceholder.stringValue = "Failed to extract reads from FASTQ file."
+                            self.readPreviewPlaceholder.isHidden = false
+                            self.readPreviewScrollView.isHidden = true
+                            self.setStatus("Read preview failed")
+                        }
+                    }
+                    return
+                }
+
+                let records = parseFASTQReadPreviewRecords(from: result.stdout)
+
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        guard self.fastqURL?.standardizedFileURL == sourceURL else { return }
+                        self.readPreviewRecords = records
+                        self.readPreviewLoaded = true
+                        self.readPreviewTable.reloadData()
+                        self.readPreviewSpinner.stopAnimation(nil)
+                        self.readPreviewSpinner.isHidden = true
+                        self.readPreviewTask = nil
+                        self.setStatus("Read preview: \(records.count) reads loaded")
+                    }
+                }
+            } catch is CancellationError {
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.readPreviewSpinner.stopAnimation(nil)
+                        self.readPreviewSpinner.isHidden = true
+                        self.readPreviewTask = nil
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.readPreviewSpinner.stopAnimation(nil)
+                        self.readPreviewSpinner.isHidden = true
+                        self.readPreviewPlaceholder.stringValue = "Failed to load read preview: \(error.localizedDescription)"
+                        self.readPreviewPlaceholder.isHidden = false
+                        self.readPreviewScrollView.isHidden = true
+                        self.readPreviewTask = nil
+                        self.setStatus("Read preview failed")
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Quality Report
 
     private func updateQualityReportButton() {
-        let canCompute = fastqURL != nil && !hasQualityData && qualityReportTask == nil
-        qualityReportButton.isHidden = !canCompute
+        // Quality report availability is now reflected via the sidebar operation state.
+        // If quality data already exists, the parameter bar shows "already computed".
+        if selectedOperation == .qualityReport {
+            updateParameterBar()
+        }
     }
 
-    @objc private func qualityReportButtonClicked(_ sender: Any) {
-        computeQualityReportClicked()
+    /// Selects the Quality Report operation in the sidebar and immediately runs it.
+    private func selectAndRunQualityReport() {
+        // Find the row index for .qualityReport in the sidebar
+        var targetRow = -1
+        var currentRow = 0
+        for (_, items) in Self.categories {
+            currentRow += 1 // header
+            for item in items {
+                if item == .qualityReport {
+                    targetRow = currentRow
+                    break
+                }
+                currentRow += 1
+            }
+            if targetRow >= 0 { break }
+        }
+
+        guard targetRow >= 0 else { return }
+        operationSidebar.selectRowIndexes(IndexSet(integer: targetRow), byExtendingSelection: false)
+        selectedOperation = .qualityReport
+        updateParameterBar()
+
+        // Run immediately
+        computeQualityReport()
     }
 
-    private func computeQualityReportClicked() {
+    /// Runs the quality report computation (reused by sidebar Run button and sparkline callback).
+    private func computeQualityReport() {
         guard let url = fastqURL else { return }
         guard qualityReportTask == nil else { return }
 
-        qualityReportButton.isEnabled = false
+        runButton.isEnabled = false
+        progressIndicator.startAnimation(nil)
         setStatus("Computing quality report...")
 
         qualityReportTask = Task.detached(priority: .userInitiated) { [weak self] in
@@ -952,32 +1280,38 @@ public final class FASTQDatasetViewController: NSViewController {
                 metadata.computedStatistics = fullStats
                 FASTQMetadataStore.save(metadata, for: url)
 
-                await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    self.qualityReportTask = nil
-                    self.statistics = fullStats
-                    self.summaryBar.update(with: fullStats)
-                    self.sparklineStrip.update(with: fullStats)
-                    self.previewCanvas.update(operation: self.selectedOperation?.previewKind ?? .none, statistics: fullStats)
-                    self.qualityReportButton.isEnabled = true
-                    self.updateQualityReportButton()
-                    self.setStatus("Quality report complete")
-                    self.onStatisticsUpdated?(fullStats)
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.qualityReportTask = nil
+                        self.statistics = fullStats
+                        self.summaryBar.update(with: fullStats)
+                        self.sparklineStrip.update(with: fullStats)
+                        self.previewCanvas.update(operation: self.selectedOperation?.previewKind ?? .none, statistics: fullStats)
+                        self.runButton.isEnabled = true
+                        self.progressIndicator.stopAnimation(nil)
+                        self.updateQualityReportButton()
+                        self.setStatus("Quality report complete")
+                        self.onStatisticsUpdated?(fullStats)
+                    }
                 }
             } catch {
-                await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    self.qualityReportTask = nil
-                    self.qualityReportButton.isEnabled = true
-                    self.setStatus("Quality report failed")
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.qualityReportTask = nil
+                        self.runButton.isEnabled = true
+                        self.progressIndicator.stopAnimation(nil)
+                        self.setStatus("Quality report failed")
 
-                    let alert = NSAlert()
-                    alert.messageText = "Quality Report Failed"
-                    alert.informativeText = error.localizedDescription
-                    alert.alertStyle = .warning
-                    alert.addButton(withTitle: "OK")
-                    alert.applyLungfishBranding()
-                    alert.runModal()
+                        let alert = NSAlert()
+                        alert.messageText = "Quality Report Failed"
+                        alert.informativeText = error.localizedDescription
+                        alert.alertStyle = .warning
+                        alert.addButton(withTitle: "OK")
+                        alert.applyLungfishBranding()
+                        alert.runModal()
+                    }
                 }
             }
         }
@@ -1007,6 +1341,11 @@ public final class FASTQDatasetViewController: NSViewController {
     }
 
     @objc private func runOperationClicked(_ sender: Any) {
+        // Quality report has its own execution path
+        if selectedOperation == .qualityReport {
+            computeQualityReport()
+            return
+        }
         guard operationTask == nil else { return }
         guard let request = buildOperationRequest() else { return }
         guard let onRunOperation else {
@@ -1107,6 +1446,10 @@ public final class FASTQDatasetViewController: NSViewController {
         }
 
         switch kind {
+        case .qualityReport:
+            // Quality report is not a derivative operation; handled via computeQualityReport()
+            return nil
+
         case .subsampleProportion:
             guard let value = Double(fieldOneInput.stringValue), value > 0, value <= 1 else {
                 setStatus("Invalid proportion. Enter a value in (0, 1].")
@@ -1412,19 +1755,27 @@ public final class FASTQDatasetViewController: NSViewController {
     }
 }
 
-// MARK: - NSTableViewDataSource & Delegate (Operation Sidebar)
+// MARK: - NSTableViewDataSource & Delegate (Operation Sidebar + Read Preview)
 
 extension FASTQDatasetViewController: NSTableViewDataSource, NSTableViewDelegate {
 
     public func numberOfRows(in tableView: NSTableView) -> Int {
-        sidebarRowCount
+        if tableView === readPreviewTable {
+            return readPreviewRecords.count
+        }
+        return sidebarRowCount
     }
 
     public func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
-        isGroupRow(row)
+        if tableView === readPreviewTable { return false }
+        return isGroupRow(row)
     }
 
     public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        if tableView === readPreviewTable {
+            return readPreviewCellView(for: tableColumn, row: row)
+        }
+
         let isGroup = isGroupRow(row)
         let title = titleForRow(row)
         let columnID = tableColumn?.identifier.rawValue ?? ""
@@ -1456,11 +1807,13 @@ extension FASTQDatasetViewController: NSTableViewDataSource, NSTableViewDelegate
     }
 
     public func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        isGroupRow(row) ? 28 : 24
+        if tableView === readPreviewTable { return 20 }
+        return isGroupRow(row) ? 28 : 24
     }
 
     public func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
-        !isGroupRow(row)
+        if tableView === readPreviewTable { return true }
+        return !isGroupRow(row)
     }
 
     public func tableViewSelectionDidChange(_ notification: Notification) {
@@ -1470,6 +1823,62 @@ extension FASTQDatasetViewController: NSTableViewDataSource, NSTableViewDelegate
         guard row >= 0 else { return }
         selectedOperation = operationKindForRow(row)
         updateParameterBar()
+    }
+
+    // MARK: - Read Preview Cell Views
+
+    private func readPreviewCellView(for tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard row < readPreviewRecords.count else { return nil }
+        let record = readPreviewRecords[row]
+        let columnID = tableColumn?.identifier.rawValue ?? ""
+
+        switch columnID {
+        case "rp_index":
+            let cell = NSTextField(labelWithString: "\(record.index)")
+            cell.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+            cell.textColor = .secondaryLabelColor
+            cell.alignment = .right
+            return cell
+
+        case "rp_readID":
+            let cell = NSTextField(labelWithString: record.readID)
+            cell.font = .systemFont(ofSize: 11)
+            cell.textColor = .labelColor
+            cell.lineBreakMode = .byTruncatingTail
+            return cell
+
+        case "rp_length":
+            let cell = NSTextField(labelWithString: "\(record.length)")
+            cell.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+            cell.textColor = .labelColor
+            cell.alignment = .right
+            return cell
+
+        case "rp_meanQ":
+            let cell = NSTextField(labelWithString: String(format: "%.1f", record.meanQuality))
+            cell.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+            cell.alignment = .right
+            // Color-code quality
+            if record.meanQuality >= 30 {
+                cell.textColor = .systemGreen
+            } else if record.meanQuality >= 20 {
+                cell.textColor = .systemYellow
+            } else {
+                cell.textColor = .systemRed
+            }
+            return cell
+
+        case "rp_sequence":
+            let truncated = record.sequence.count > 80 ? String(record.sequence.prefix(80)) + "..." : record.sequence
+            let cell = NSTextField(labelWithString: truncated)
+            cell.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+            cell.textColor = .labelColor
+            cell.lineBreakMode = .byTruncatingTail
+            return cell
+
+        default:
+            return nil
+        }
     }
 }
 

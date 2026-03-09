@@ -100,6 +100,7 @@ final class OperationPreviewView: NSView {
         case searchText
         case searchMotif
         case demultiplex
+        case qualityReport
         case none
     }
 
@@ -294,6 +295,8 @@ final class OperationPreviewView: NSView {
             drawSearchPreview(ctx: ctx, rect: rect)
         case .demultiplex:
             drawDemultiplexPreview(ctx: ctx, rect: rect)
+        case .qualityReport:
+            drawQualityReportPreview(ctx: ctx, rect: rect)
         case .none:
             drawIdleState(ctx: ctx, rect: rect)
         }
@@ -1458,6 +1461,64 @@ final class OperationPreviewView: NSView {
 
             y += readHeight + readSpacing
         }
+    }
+
+
+    // MARK: - Quality Report Preview
+
+    private func drawQualityReportPreview(ctx: CGContext, rect: CGRect) {
+        // Draw a schematic showing quality analysis output: bar chart icon + description
+        let centerX = rect.midX
+        let centerY = rect.midY
+
+        // Draw a stylized bar chart icon
+        let barWidth: CGFloat = 8
+        let barSpacing: CGFloat = 4
+        let barHeights: [CGFloat] = [0.3, 0.6, 0.9, 0.7, 0.5, 0.8, 0.4, 0.65, 0.85, 0.55]
+        let maxBarHeight: CGFloat = 60
+        let totalWidth = CGFloat(barHeights.count) * (barWidth + barSpacing) - barSpacing
+        let startX = centerX - totalWidth / 2
+        let baseY = centerY + 20
+
+        for (i, h) in barHeights.enumerated() {
+            let x = startX + CGFloat(i) * (barWidth + barSpacing)
+            let height = h * maxBarHeight
+            let barRect = CGRect(x: x, y: baseY - height, width: barWidth, height: height)
+
+            // Color by quality tier
+            let color: NSColor
+            if h >= 0.8 { color = FASTQPalette.qualityHigh }
+            else if h >= 0.6 { color = FASTQPalette.qualityMedium }
+            else if h >= 0.4 { color = FASTQPalette.qualityLow }
+            else { color = FASTQPalette.qualityVeryLow }
+
+            ctx.setFillColor(color.withAlphaComponent(0.7).cgColor)
+            ctx.fill(barRect)
+            ctx.setStrokeColor(color.cgColor)
+            ctx.setLineWidth(0.5)
+            ctx.stroke(barRect)
+        }
+
+        // Title above
+        let titleAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+            .foregroundColor: FASTQPalette.summaryText,
+        ]
+        let title = NSAttributedString(string: "Quality Report", attributes: titleAttrs)
+        let titleSize = title.size()
+        title.draw(at: CGPoint(x: centerX - titleSize.width / 2, y: baseY - maxBarHeight - 30))
+
+        // Subtitle below
+        let subtitleAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11),
+            .foregroundColor: FASTQPalette.secondaryText,
+        ]
+        let subtitle = NSAttributedString(
+            string: "Per-position quality, length distribution, Q score histogram",
+            attributes: subtitleAttrs
+        )
+        let subSize = subtitle.size()
+        subtitle.draw(at: CGPoint(x: centerX - subSize.width / 2, y: baseY + 10))
     }
 
     // MARK: - Drawing Helpers
