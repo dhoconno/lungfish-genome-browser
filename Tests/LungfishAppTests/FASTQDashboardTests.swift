@@ -274,6 +274,7 @@ final class FASTQDashboardTests: XCTestCase {
             return
         }
 
+        // Top pane is fixed-height — min and max are the same.
         XCTAssertEqual(
             controller.splitView(mainSplit, constrainMinCoordinate: 0, ofSubviewAt: 0),
             115,
@@ -281,7 +282,7 @@ final class FASTQDashboardTests: XCTestCase {
         )
         XCTAssertEqual(
             controller.splitView(mainSplit, constrainMaxCoordinate: 999, ofSubviewAt: 0),
-            125,
+            115,
             accuracy: 0.001
         )
         XCTAssertEqual(

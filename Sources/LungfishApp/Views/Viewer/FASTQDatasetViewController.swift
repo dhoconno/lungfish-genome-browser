@@ -75,9 +75,8 @@ public final class FASTQDatasetViewController: NSViewController {
         static let sparklineHeight: CGFloat = 64
         static let topPaneBottomPadding: CGFloat = 1
 
-        static let minTopPaneHeight: CGFloat = summaryBarHeight + summaryToSparklineSpacing + sparklineHeight + topPaneBottomPadding
-        static let preferredTopPaneHeight: CGFloat = minTopPaneHeight + 1
-        static let maxTopPaneHeight: CGFloat = 125
+        /// Fixed height for the top pane (summary + sparklines). Not user-resizable.
+        static let topPaneHeight: CGFloat = summaryBarHeight + summaryToSparklineSpacing + sparklineHeight + topPaneBottomPadding
 
         static let minSidebarWidth: CGFloat = 140
         static let maxSidebarWidth: CGFloat = 260
@@ -335,7 +334,6 @@ public final class FASTQDatasetViewController: NSViewController {
     public override func viewDidLayout() {
         super.viewDidLayout()
         applyInitialSplitPositionsIfNeeded()
-        normalizeTopPaneHeightIfNeeded()
     }
 
     public override func viewDidAppear() {
@@ -824,13 +822,6 @@ public final class FASTQDatasetViewController: NSViewController {
 
     private var didApplyInitialSplitPositions = false
 
-    private var targetTopPaneHeight: CGFloat {
-        max(
-            LayoutDefaults.minTopPaneHeight,
-            min(LayoutDefaults.preferredTopPaneHeight, LayoutDefaults.maxTopPaneHeight)
-        )
-    }
-
     private func applyInitialSplitPositionsIfNeeded() {
         guard !didApplyInitialSplitPositions else { return }
 
@@ -839,9 +830,8 @@ public final class FASTQDatasetViewController: NSViewController {
         guard viewHeight > LayoutDefaults.minGeometryForInitialLayout,
               middleWidth > LayoutDefaults.minGeometryForInitialLayout else { return }
 
-        // Give sparklines enough vertical budget to show full distributions by default.
-        let topHeight = targetTopPaneHeight
-        mainSplitView.setPosition(topHeight, ofDividerAt: 0)
+        // Pin the top pane to its fixed height.
+        mainSplitView.setPosition(LayoutDefaults.topPaneHeight, ofDividerAt: 0)
 
         // Keep operation list compact by default to prioritize preview/read content width.
         let sidebarWidth = max(
@@ -853,16 +843,6 @@ public final class FASTQDatasetViewController: NSViewController {
         didApplyInitialSplitPositions = true
     }
 
-    private func normalizeTopPaneHeightIfNeeded() {
-        guard didApplyInitialSplitPositions,
-              mainSplitView.subviews.count >= 2 else { return }
-
-        let currentTopHeight = mainSplitView.subviews[0].frame.height
-        let target = targetTopPaneHeight
-        if abs(currentTopHeight - target) > 0.5 {
-            mainSplitView.setPosition(target, ofDividerAt: 0)
-        }
-    }
 
     // MARK: - Parameter Bar Updates
 
@@ -2126,7 +2106,8 @@ extension FASTQDatasetViewController: NSTextFieldDelegate {
 extension FASTQDatasetViewController: NSSplitViewDelegate {
     public func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
         if splitView === mainSplitView {
-            return LayoutDefaults.minTopPaneHeight
+            // Top pane is fixed-height — lock divider in place.
+            return LayoutDefaults.topPaneHeight
         }
         if splitView === middleSplitView {
             return LayoutDefaults.minSidebarWidth
@@ -2136,7 +2117,8 @@ extension FASTQDatasetViewController: NSSplitViewDelegate {
 
     public func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
         if splitView === mainSplitView {
-            return LayoutDefaults.maxTopPaneHeight
+            // Top pane is fixed-height — lock divider in place.
+            return LayoutDefaults.topPaneHeight
         }
         if splitView === middleSplitView {
             return LayoutDefaults.maxSidebarWidth
@@ -2146,15 +2128,5 @@ extension FASTQDatasetViewController: NSSplitViewDelegate {
 
     public func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool {
         false
-    }
-
-    public func splitViewDidResizeSubviews(_ notification: Notification) {
-        guard let splitView = notification.object as? NSSplitView,
-              splitView === mainSplitView,
-              didApplyInitialSplitPositions else { return }
-
-        // Keep the top strip compact on window resize so tabs remain directly
-        // beneath sparklines instead of accumulating empty whitespace.
-        normalizeTopPaneHeightIfNeeded()
     }
 }
