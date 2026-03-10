@@ -57,6 +57,26 @@ public struct BarcodeScoutResult: Codable, Sendable {
 
     /// Filename for persisting scout results in the bundle.
     public static let filename = "scout-result.json"
+
+    /// Applies auto-accept/reject thresholds to all detections.
+    ///
+    /// - Parameters:
+    ///   - acceptMinHits: Barcodes with hits >= this value are accepted.
+    ///   - rejectMaxHits: Barcodes with hits <= this value are rejected.
+    ///
+    /// When both conditions are true (overlapping thresholds), accept takes precedence.
+    /// Barcodes between the thresholds are set to undecided.
+    public mutating func applyThresholds(acceptMinHits: Int, rejectMaxHits: Int) {
+        for i in detections.indices {
+            if detections[i].hitCount >= acceptMinHits {
+                detections[i].disposition = .accepted
+            } else if detections[i].hitCount <= rejectMaxHits {
+                detections[i].disposition = .rejected
+            } else {
+                detections[i].disposition = .undecided
+            }
+        }
+    }
 }
 
 /// Detection result for a single barcode during scouting.
@@ -115,6 +135,15 @@ public enum DetectionDisposition: String, Codable, Sendable {
     case accepted
     case rejected
     case undecided
+
+    /// Returns the next disposition in the cycle: undecided -> accepted -> rejected -> undecided.
+    public var next: DetectionDisposition {
+        switch self {
+        case .undecided: return .accepted
+        case .accepted: return .rejected
+        case .rejected: return .undecided
+        }
+    }
 }
 
 /// Which end(s) of the read a barcode was found on.

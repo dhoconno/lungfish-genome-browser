@@ -1,5 +1,5 @@
 // BarcodeScoutSheet.swift - Modal sheet for reviewing barcode scout results
-// Copyright (c) 2024 Lungfish Contributors
+// Copyright (c) 2025 Lungfish Contributors
 // SPDX-License-Identifier: MIT
 
 import AppKit
@@ -40,9 +40,16 @@ public final class BarcodeScoutSheet: NSViewController, NSTableViewDataSource, N
     private let scrollView = NSScrollView()
     private let acceptThresholdField = NSTextField(string: "10")
     private let rejectThresholdField = NSTextField(string: "3")
-    private let applyThresholdsButton = NSButton(title: "Apply Thresholds", target: nil, action: nil)
-    private let proceedButton = NSButton(title: "Proceed with Accepted Barcodes", target: nil, action: nil)
+    private let applyThresholdsButton = NSButton(title: "Apply", target: nil, action: nil)
+    private let proceedButton = NSButton(title: "Proceed", target: nil, action: nil)
     private let cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
+
+    private static let countFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.groupingSeparator = ","
+        return f
+    }()
 
     // Column identifiers
     private enum Column: String {
@@ -75,7 +82,7 @@ public final class BarcodeScoutSheet: NSViewController, NSTableViewDataSource, N
     // MARK: - View Lifecycle
 
     public override func loadView() {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 720, height: 520))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 760, height: 520))
         container.translatesAutoresizingMaskIntoConstraints = false
         self.view = container
         setupUI()
@@ -109,7 +116,7 @@ public final class BarcodeScoutSheet: NSViewController, NSTableViewDataSource, N
         view.addSubview(bottomBar)
 
         // Threshold controls
-        let acceptLabel = NSTextField(labelWithString: "Auto-accept hits \u{2265}")
+        let acceptLabel = NSTextField(labelWithString: "Accept \u{2265}")
         acceptLabel.font = .systemFont(ofSize: 11)
         acceptLabel.translatesAutoresizingMaskIntoConstraints = false
         bottomBar.addSubview(acceptLabel)
@@ -119,7 +126,7 @@ public final class BarcodeScoutSheet: NSViewController, NSTableViewDataSource, N
         acceptThresholdField.widthAnchor.constraint(equalToConstant: 48).isActive = true
         bottomBar.addSubview(acceptThresholdField)
 
-        let rejectLabel = NSTextField(labelWithString: "Auto-reject hits \u{2264}")
+        let rejectLabel = NSTextField(labelWithString: "Reject \u{2264}")
         rejectLabel.font = .systemFont(ofSize: 11)
         rejectLabel.translatesAutoresizingMaskIntoConstraints = false
         bottomBar.addSubview(rejectLabel)
@@ -184,6 +191,9 @@ public final class BarcodeScoutSheet: NSViewController, NSTableViewDataSource, N
             applyThresholdsButton.leadingAnchor.constraint(equalTo: rejectThresholdField.trailingAnchor, constant: 8),
             applyThresholdsButton.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
 
+            // Anti-overlap gap between threshold controls and action buttons
+            applyThresholdsButton.trailingAnchor.constraint(lessThanOrEqualTo: cancelButton.leadingAnchor, constant: -16),
+
             // Action buttons (right-aligned)
             proceedButton.trailingAnchor.constraint(equalTo: bottomBar.trailingAnchor),
             proceedButton.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
@@ -191,7 +201,7 @@ public final class BarcodeScoutSheet: NSViewController, NSTableViewDataSource, N
             cancelButton.centerYAnchor.constraint(equalTo: bottomBar.centerYAnchor),
 
             // Overall size
-            view.widthAnchor.constraint(greaterThanOrEqualToConstant: 720),
+            view.widthAnchor.constraint(greaterThanOrEqualToConstant: 760),
             view.heightAnchor.constraint(greaterThanOrEqualToConstant: 420),
         ])
     }
@@ -205,7 +215,7 @@ public final class BarcodeScoutSheet: NSViewController, NSTableViewDataSource, N
         tableView.delegate = self
 
         let columns: [(Column, String, CGFloat)] = [
-            (.status, "", 44),
+            (.status, "Status", 52),
             (.barcode, "Barcode", 80),
             (.hits, "Hits", 70),
             (.percentage, "%", 60),
@@ -297,12 +307,15 @@ public final class BarcodeScoutSheet: NSViewController, NSTableViewDataSource, N
         case .accepted:
             button.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "Accepted")
             button.contentTintColor = .systemGreen
+            button.toolTip = "Accepted \u{2014} click to reject"
         case .rejected:
             button.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Rejected")
             button.contentTintColor = .systemRed
+            button.toolTip = "Rejected \u{2014} click to clear"
         case .undecided:
             button.image = NSImage(systemSymbolName: "questionmark.circle", accessibilityDescription: "Undecided")
             button.contentTintColor = .secondaryLabelColor
+            button.toolTip = "Undecided \u{2014} click to accept"
         }
 
         return button
@@ -326,32 +339,19 @@ public final class BarcodeScoutSheet: NSViewController, NSTableViewDataSource, N
         let row = sender.tag
         guard row < scoutResult.detections.count else { return }
 
-        // Cycle: undecided -> accepted -> rejected -> undecided
-        let current = scoutResult.detections[row].disposition
-        let next: DetectionDisposition
-        switch current {
-        case .undecided: next = .accepted
-        case .accepted: next = .rejected
-        case .rejected: next = .undecided
-        }
-        scoutResult.detections[row].disposition = next
+        scoutResult.detections[row].disposition = scoutResult.detections[row].disposition.next
         tableView.reloadData(forRowIndexes: IndexSet(integer: row), columnIndexes: IndexSet(integer: 0))
         updateHeader()
     }
 
     @objc private func applyThresholds() {
-        let acceptMin = Int(acceptThresholdField.stringValue) ?? 10
-        let rejectMax = Int(rejectThresholdField.stringValue) ?? 3
+        // Commit any in-flight text edits before applying
+        view.window?.makeFirstResponder(nil)
 
-        for i in scoutResult.detections.indices {
-            if scoutResult.detections[i].hitCount >= acceptMin {
-                scoutResult.detections[i].disposition = .accepted
-            } else if scoutResult.detections[i].hitCount <= rejectMax {
-                scoutResult.detections[i].disposition = .rejected
-            } else {
-                scoutResult.detections[i].disposition = .undecided
-            }
-        }
+        let acceptMin = max(0, Int(acceptThresholdField.stringValue) ?? 10)
+        let rejectMax = max(0, Int(rejectThresholdField.stringValue) ?? 3)
+
+        scoutResult.applyThresholds(acceptMinHits: acceptMin, rejectMaxHits: rejectMax)
         tableView.reloadData()
         updateHeader()
     }
@@ -369,7 +369,11 @@ public final class BarcodeScoutSheet: NSViewController, NSTableViewDataSource, N
             alert.informativeText = "Accept at least one barcode before proceeding."
             alert.alertStyle = .warning
             alert.addButton(withTitle: "OK")
-            alert.runModal()
+            if let window = view.window {
+                alert.beginSheetModal(for: window)
+            } else {
+                alert.runModal()
+            }
             return
         }
         onProceed?(accepted, scoutResult)
@@ -388,10 +392,7 @@ public final class BarcodeScoutSheet: NSViewController, NSTableViewDataSource, N
     // MARK: - Formatting
 
     private func formatCount(_ n: Int) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.groupingSeparator = ","
-        return formatter.string(from: NSNumber(value: n)) ?? "\(n)"
+        Self.countFormatter.string(from: NSNumber(value: n)) ?? "\(n)"
     }
 
     // MARK: - Presentation
@@ -416,7 +417,9 @@ public final class BarcodeScoutSheet: NSViewController, NSTableViewDataSource, N
         sheetWindow.styleMask = [.titled, .closable, .resizable]
         sheetWindow.isReleasedWhenClosed = false
 
-        window.beginSheet(sheetWindow) { _ in }
+        window.beginSheet(sheetWindow) { _ in
+            _ = controller  // prevent premature release; ensure cleanup after dismiss
+        }
     }
 }
 

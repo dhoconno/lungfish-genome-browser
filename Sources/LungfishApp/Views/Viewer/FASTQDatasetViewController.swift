@@ -275,6 +275,7 @@ public final class FASTQDatasetViewController: NSViewController {
         operationTask?.cancel()
         fastaPreviewTask?.cancel()
         readPreviewTask?.cancel()
+        scoutTask?.cancel()
     }
 
     public override func loadView() {
@@ -674,6 +675,14 @@ public final class FASTQDatasetViewController: NSViewController {
         cancelButton.isHidden = true
         runBar.addSubview(cancelButton)
 
+        demuxScoutButton.bezelStyle = .rounded
+        demuxScoutButton.font = .systemFont(ofSize: 11)
+        demuxScoutButton.target = self
+        demuxScoutButton.action = #selector(scoutBarcodesClicked(_:))
+        demuxScoutButton.translatesAutoresizingMaskIntoConstraints = false
+        demuxScoutButton.isHidden = true
+        runBar.addSubview(demuxScoutButton)
+
         let statusToEstimate = statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: outputEstimateLabel.leadingAnchor, constant: -8)
         statusToEstimate.priority = .defaultLow
 
@@ -690,8 +699,11 @@ public final class FASTQDatasetViewController: NSViewController {
             outputEstimateLabel.centerXAnchor.constraint(equalTo: runBar.centerXAnchor),
             outputEstimateLabel.centerYAnchor.constraint(equalTo: runBar.centerYAnchor),
 
-            progressIndicator.trailingAnchor.constraint(equalTo: cancelButton.leadingAnchor, constant: -8),
+            progressIndicator.trailingAnchor.constraint(equalTo: demuxScoutButton.leadingAnchor, constant: -8),
             progressIndicator.centerYAnchor.constraint(equalTo: runBar.centerYAnchor),
+
+            demuxScoutButton.trailingAnchor.constraint(equalTo: cancelButton.leadingAnchor, constant: -4),
+            demuxScoutButton.centerYAnchor.constraint(equalTo: runBar.centerYAnchor),
 
             cancelButton.trailingAnchor.constraint(equalTo: runButton.leadingAnchor, constant: -4),
             cancelButton.centerYAnchor.constraint(equalTo: runBar.centerYAnchor),
@@ -732,6 +744,7 @@ public final class FASTQDatasetViewController: NSViewController {
             label.textColor = .tertiaryLabelColor
             parameterBar.addArrangedSubview(label)
             runButton.isEnabled = false
+            demuxScoutButton.isHidden = true
             return
         }
 
@@ -740,6 +753,7 @@ public final class FASTQDatasetViewController: NSViewController {
         fieldTwoInput.stringValue = ""
         runButton.isEnabled = true
         runButton.title = "Run"
+        demuxScoutButton.isHidden = kind != .demultiplex
 
         switch kind {
         case .subsampleProportion:
@@ -876,11 +890,6 @@ public final class FASTQDatasetViewController: NSViewController {
             parameterBar.addArrangedSubview(demuxWindow3Label)
             parameterBar.addArrangedSubview(demuxWindow3Input)
             parameterBar.addArrangedSubview(demuxTrimCheckbox)
-            demuxScoutButton.bezelStyle = .rounded
-            demuxScoutButton.font = .systemFont(ofSize: 11)
-            demuxScoutButton.target = self
-            demuxScoutButton.action = #selector(scoutBarcodesClicked(_:))
-            parameterBar.addArrangedSubview(demuxScoutButton)
 
         case .qualityReport:
             if hasQualityData {
@@ -1485,7 +1494,6 @@ public final class FASTQDatasetViewController: NSViewController {
         setStatus("Scouting barcodes...")
 
         scoutTask = Task { [weak self] in
-            guard let self else { return }
             do {
                 let pipeline = DemultiplexingPipeline()
                 let result = try await pipeline.scout(
@@ -1501,6 +1509,8 @@ public final class FASTQDatasetViewController: NSViewController {
                     }
                 )
 
+                try Task.checkCancellation()
+                guard let self else { return }
                 self.scoutTask = nil
                 self.demuxScoutButton.isEnabled = true
                 self.progressIndicator.stopAnimation(nil)
@@ -1523,11 +1533,13 @@ public final class FASTQDatasetViewController: NSViewController {
                     }
                 )
             } catch is CancellationError {
+                guard let self else { return }
                 self.scoutTask = nil
                 self.demuxScoutButton.isEnabled = true
                 self.progressIndicator.stopAnimation(nil)
                 self.setStatus("Scout cancelled.")
             } catch {
+                guard let self else { return }
                 self.scoutTask = nil
                 self.demuxScoutButton.isEnabled = true
                 self.progressIndicator.stopAnimation(nil)
@@ -1546,26 +1558,51 @@ public final class FASTQDatasetViewController: NSViewController {
             saveScoutResult(scoutResult, for: fastqURL)
         }
 
-        // Build pruned kit with only accepted barcodes
+        // Build pruned kit with only accepted barcodes and user-assigned sample names
         let acceptedIDs = Set(acceptedDetections.map(\.barcodeID))
-        let prunedBarcodes = kit.barcodes.filter { acceptedIDs.contains($0.id) }
-
-        // Update sample names from scout detections
-        var updatedBarcodes = prunedBarcodes
-        for i in updatedBarcodes.indices {
-            if let detection = acceptedDetections.first(where: { $0.barcodeID == updatedBarcodes[i].id }),
+        var prunedBarcodes = kit.barcodes.filter { acceptedIDs.contains($0.id) }
+        for i in prunedBarcodes.indices {
+            if let detection = acceptedDetections.first(where: { $0.barcodeID == prunedBarcodes[i].id }),
                let sampleName = detection.sampleName {
-                updatedBarcodes[i] = BarcodeEntry(
-                    id: updatedBarcodes[i].id,
-                    i7Sequence: updatedBarcodes[i].i7Sequence,
-                    i5Sequence: updatedBarcodes[i].i5Sequence,
+                prunedBarcodes[i] = BarcodeEntry(
+                    id: prunedBarcodes[i].id,
+                    i7Sequence: prunedBarcodes[i].i7Sequence,
+                    i5Sequence: prunedBarcodes[i].i5Sequence,
                     sampleName: sampleName
                 )
             }
         }
 
-        let acceptedCount = acceptedDetections.count
-        setStatus("Scout complete: \(acceptedCount) barcode(s) accepted. Ready to demultiplex.")
+        // Update sample assignments from accepted barcodes
+        demuxSampleAssignments = prunedBarcodes.map { barcode in
+            FASTQSampleBarcodeAssignment(
+                sampleID: barcode.sampleName ?? barcode.id,
+                sampleName: barcode.sampleName,
+                forwardBarcodeID: barcode.id,
+                forwardSequence: barcode.i7Sequence,
+                reverseBarcodeID: nil,
+                reverseSequence: barcode.i5Sequence,
+                metadata: [:]
+            )
+        }
+
+        // Replace the kit in options with the pruned version for the next "Run"
+        let prunedKit = BarcodeKitDefinition(
+            id: kit.id,
+            displayName: "\(kit.displayName) (\(prunedBarcodes.count) scouted)",
+            vendor: kit.vendor,
+            platform: kit.platform,
+            kitType: kit.kitType,
+            isDualIndexed: kit.isDualIndexed,
+            pairingMode: kit.pairingMode,
+            barcodes: prunedBarcodes
+        )
+        if let idx = demuxKitOptions.firstIndex(where: { $0.id == kit.id }) {
+            demuxKitOptions[idx] = prunedKit
+            demuxKitPopup.item(at: idx)?.title = prunedKit.displayName
+        }
+
+        setStatus("Scout complete: \(prunedBarcodes.count) barcode(s) accepted. Ready to demultiplex.")
     }
 
     private func saveScoutResult(_ result: BarcodeScoutResult, for fastqURL: URL) {
