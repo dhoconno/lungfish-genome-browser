@@ -79,6 +79,14 @@ public struct DemultiplexConfig: Sendable {
     /// max(config.errorRate, sourcePlatform.recommendedErrorRate).
     public var sourcePlatform: SequencingPlatform?
 
+    /// Root bundle URL for writing derived manifests in virtual demux bundles.
+    /// When set, each per-barcode bundle will contain a derived-manifest.json
+    /// pointing back to this root for on-demand materialization.
+    public let rootBundleURL: URL?
+
+    /// Root FASTQ filename inside the root bundle (e.g., "reads.fastq.gz").
+    public let rootFASTQFilename: String?
+
     /// Resolved adapter context (uses override if set, otherwise derives from kit).
     public var resolvedAdapterContext: any PlatformAdapterContext {
         adapterContext ?? barcodeKit.adapterContext
@@ -112,7 +120,9 @@ public struct DemultiplexConfig: Sendable {
         threads: Int = 4,
         adapterContext: (any PlatformAdapterContext)? = nil,
         sampleAssignments: [FASTQSampleBarcodeAssignment] = [],
-        sourcePlatform: SequencingPlatform? = nil
+        sourcePlatform: SequencingPlatform? = nil,
+        rootBundleURL: URL? = nil,
+        rootFASTQFilename: String? = nil
     ) {
         self.inputURL = inputURL
         self.barcodeKit = barcodeKit
@@ -145,6 +155,8 @@ public struct DemultiplexConfig: Sendable {
         self.threads = threads
         self.sampleAssignments = sampleAssignments
         self.sourcePlatform = sourcePlatform
+        self.rootBundleURL = rootBundleURL
+        self.rootFASTQFilename = rootFASTQFilename
     }
 }
 

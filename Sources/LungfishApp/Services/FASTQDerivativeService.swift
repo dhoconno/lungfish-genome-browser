@@ -235,6 +235,7 @@ public actor FASTQDerivativeService {
                 plan: plan,
                 sourceFASTQ: materializedSourceFASTQ,
                 sourceBundleURL: sourceBundleURL,
+                rootFASTQFilename: rootFASTQFilename,
                 progress: progress
             )
         }
@@ -255,6 +256,7 @@ public actor FASTQDerivativeService {
             return try await createDemultiplexDerivative(
                 sourceFASTQ: materializedSourceFASTQ,
                 sourceBundleURL: sourceBundleURL,
+                rootFASTQFilename: rootFASTQFilename,
                 kitID: kitID,
                 customCSVPath: customCSVPath,
                 location: location,
@@ -423,6 +425,7 @@ public actor FASTQDerivativeService {
     private func createDemultiplexDerivative(
         sourceFASTQ: URL,
         sourceBundleURL: URL,
+        rootFASTQFilename: String,
         kitID: String,
         customCSVPath: String?,
         location: String,
@@ -485,7 +488,9 @@ public actor FASTQDerivativeService {
                 maxDistanceFrom5Prime: maxDistanceFrom5Prime,
                 maxDistanceFrom3Prime: maxDistanceFrom3Prime,
                 trimBarcodes: trimBarcodes,
-                sampleAssignments: sampleAssignments
+                sampleAssignments: sampleAssignments,
+                rootBundleURL: sourceBundleURL,
+                rootFASTQFilename: rootFASTQFilename
             ),
             progress: { fraction, message in
                 let percent = Int((fraction * 100.0).rounded())
@@ -545,6 +550,7 @@ public actor FASTQDerivativeService {
         plan: DemultiplexPlan,
         sourceFASTQ: URL,
         sourceBundleURL: URL,
+        rootFASTQFilename: String,
         progress: (@Sendable (String) -> Void)?
     ) async throws -> URL {
         try plan.validate()
@@ -561,6 +567,7 @@ public actor FASTQDerivativeService {
             return try await createDemultiplexDerivative(
                 sourceFASTQ: sourceFASTQ,
                 sourceBundleURL: sourceBundleURL,
+                rootFASTQFilename: rootFASTQFilename,
                 kitID: step.barcodeKitID,
                 customCSVPath: nil,
                 location: location,
