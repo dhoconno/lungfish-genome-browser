@@ -253,6 +253,7 @@ public final class FASTQDatasetViewController: NSViewController {
     private let operationSidebar = NSTableView()
     private let operationScrollView = NSScrollView()
     private let operationSidebarHeader = NSTextField(labelWithString: "FASTQ Operations")
+    private let operationSidebarHeaderSeparator = NSBox()
     private let parameterBar = NSStackView()
     private let parameterBarSeparator = NSBox()
     private let previewCanvas = OperationPreviewView()
@@ -514,6 +515,7 @@ public final class FASTQDatasetViewController: NSViewController {
         operationSidebar.headerView = nil
         operationSidebar.usesAlternatingRowBackgroundColors = false
         operationSidebar.rowHeight = 24
+        operationSidebar.floatsGroupRows = false
 
         let iconColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("icon"))
         iconColumn.width = 20
@@ -537,6 +539,9 @@ public final class FASTQDatasetViewController: NSViewController {
         operationSidebarHeader.textColor = .secondaryLabelColor
         operationSidebarHeader.translatesAutoresizingMaskIntoConstraints = false
         sidebarPane.addSubview(operationSidebarHeader)
+        operationSidebarHeaderSeparator.boxType = .separator
+        operationSidebarHeaderSeparator.translatesAutoresizingMaskIntoConstraints = false
+        sidebarPane.addSubview(operationSidebarHeaderSeparator)
         sidebarPane.addSubview(operationScrollView)
 
         NSLayoutConstraint.activate([
@@ -544,7 +549,11 @@ public final class FASTQDatasetViewController: NSViewController {
             operationSidebarHeader.leadingAnchor.constraint(equalTo: sidebarPane.leadingAnchor, constant: 8),
             operationSidebarHeader.trailingAnchor.constraint(lessThanOrEqualTo: sidebarPane.trailingAnchor, constant: -8),
 
-            operationScrollView.topAnchor.constraint(equalTo: operationSidebarHeader.bottomAnchor, constant: 1),
+            operationSidebarHeaderSeparator.topAnchor.constraint(equalTo: operationSidebarHeader.bottomAnchor, constant: 2),
+            operationSidebarHeaderSeparator.leadingAnchor.constraint(equalTo: sidebarPane.leadingAnchor),
+            operationSidebarHeaderSeparator.trailingAnchor.constraint(equalTo: sidebarPane.trailingAnchor),
+
+            operationScrollView.topAnchor.constraint(equalTo: operationSidebarHeaderSeparator.bottomAnchor, constant: 1),
             operationScrollView.leadingAnchor.constraint(equalTo: sidebarPane.leadingAnchor),
             operationScrollView.trailingAnchor.constraint(equalTo: sidebarPane.trailingAnchor),
             operationScrollView.bottomAnchor.constraint(equalTo: sidebarPane.bottomAnchor),
