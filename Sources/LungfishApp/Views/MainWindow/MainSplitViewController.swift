@@ -1748,12 +1748,13 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                 self.activeFASTQSourceURL?.standardizedFileURL == standardizedSourceURL
         }
 
-        // Pointer-only derived bundles can render immediately from cached manifest stats.
-        if fastqURL == nil, let derivedManifest {
+        // Derived bundles use cached manifest stats (which reflect the true read count,
+        // not the preview file's 1,000-read subset).
+        if let derivedManifest {
             viewerController.displayFASTQDataset(
                 statistics: derivedManifest.cachedStatistics,
                 records: [],
-                fastqURL: nil,
+                fastqURL: fastqURL,
                 sraRunInfo: nil,
                 enaReadRecord: nil,
                 ingestionMetadata: derivedManifest.pairingMode.map {

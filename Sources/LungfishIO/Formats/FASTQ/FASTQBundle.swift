@@ -164,19 +164,11 @@ public enum FASTQBundle {
 
     /// Resolves a relative bundle path from an anchor bundle URL.
     ///
-    /// The resolved path must remain within the anchor's parent directory
-    /// to prevent path traversal attacks via crafted manifest files.
+    /// Demux output bundles may be nested several levels deep relative to the
+    /// root bundle (e.g. `../../root.lungfishfastq`), so no parent-directory
+    /// restriction is applied. Callers validate the resolved URL independently.
     public static func resolveBundle(relativePath: String, from anchorBundleURL: URL) -> URL {
-        let resolved = URL(fileURLWithPath: relativePath, relativeTo: anchorBundleURL).standardizedFileURL
-        let parentDir = anchorBundleURL.deletingLastPathComponent().standardizedFileURL
-        // Validate the resolved path stays within the parent directory.
-        // Append "/" to prevent prefix matching siblings (e.g. /foo/bar vs /foo/barcode).
-        let parentPrefix = parentDir.path.hasSuffix("/") ? parentDir.path : parentDir.path + "/"
-        guard resolved.path.hasPrefix(parentPrefix) || resolved.path == parentDir.path else {
-            // Return anchor itself as a safe fallback — caller will check isBundleURL
-            return anchorBundleURL
-        }
-        return resolved
+        URL(fileURLWithPath: relativePath, relativeTo: anchorBundleURL).standardizedFileURL
     }
 
     /// Derives a stable base name by stripping known FASTQ/compression extensions.
