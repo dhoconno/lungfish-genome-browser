@@ -594,6 +594,8 @@ public actor FASTQDerivativeService {
             plan: plan,
             inputURL: sourceFASTQ,
             outputDirectory: outputDirectory,
+            rootBundleURL: sourceBundleURL,
+            rootFASTQFilename: rootFASTQFilename,
             progress: { fraction, message in
                 let percent = Int((fraction * 100.0).rounded())
                 progress?("Multi-step demux (\(percent)%): \(message)")

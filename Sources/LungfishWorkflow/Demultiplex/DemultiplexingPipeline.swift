@@ -378,13 +378,16 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
             let baseCount: Int64
         }
 
+        // Virtual mode: extract read IDs + preview (default for single-step and final multi-step)
+        // Full mode: move entire cutadapt output into bundle (intermediate multi-step)
+        let isVirtualMode = config.rootBundleURL != nil
+
         let bundleResults: [VirtualBundleResult] = try await withThrowingTaskGroup(
             of: VirtualBundleResult?.self,
             returning: [VirtualBundleResult].self
         ) { group in
             var results: [VirtualBundleResult] = []
             var inFlight = 0
-            var fileIndex = 0
 
             for file in filesToProcess {
                 // Throttle to 8 concurrent
@@ -401,37 +404,45 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                 try fm.createDirectory(at: bundleURL, withIntermediateDirectories: true)
 
                 let capturedRunner = self.runner
+                let capturedIsVirtual = isVirtualMode
                 group.addTask {
                     try Task.checkCancellation()
 
-                    // Extract read IDs
-                    let readIDsURL = bundleURL.appendingPathComponent("read-ids.txt")
-                    let readIDResult = try await capturedRunner.run(
-                        .seqkit,
-                        arguments: ["seq", "--name", "--only-id", file.url.path, "-o", readIDsURL.path],
-                        timeout: 300
-                    )
-                    guard readIDResult.isSuccess else {
-                        logger.error("seqkit seq failed for \(file.baseName): \(readIDResult.stderr)")
-                        return nil
-                    }
+                    if capturedIsVirtual {
+                        // Virtual mode: extract read IDs + small preview
+                        let readIDsURL = bundleURL.appendingPathComponent("read-ids.txt")
+                        let readIDResult = try await capturedRunner.run(
+                            .seqkit,
+                            arguments: ["seq", "--name", "--only-id", file.url.path, "-o", readIDsURL.path],
+                            timeout: 300
+                        )
+                        guard readIDResult.isSuccess else {
+                            logger.error("seqkit seq failed for \(file.baseName): \(readIDResult.stderr)")
+                            return nil
+                        }
 
-                    // Extract preview (first 1000 reads)
-                    let previewURL = bundleURL.appendingPathComponent("preview.fastq.gz")
-                    let previewResult = try await capturedRunner.run(
-                        .seqkit,
-                        arguments: ["head", "-n", "1000", file.url.path, "-o", previewURL.path],
-                        timeout: 120
-                    )
-                    guard previewResult.isSuccess else {
-                        logger.error("seqkit head failed for \(file.baseName): \(previewResult.stderr)")
-                        return nil
+                        let previewURL = bundleURL.appendingPathComponent("preview.fastq.gz")
+                        let previewResult = try await capturedRunner.run(
+                            .seqkit,
+                            arguments: ["head", "-n", "1000", file.url.path, "-o", previewURL.path],
+                            timeout: 120
+                        )
+                        guard previewResult.isSuccess else {
+                            logger.error("seqkit head failed for \(file.baseName): \(previewResult.stderr)")
+                            return nil
+                        }
+                    } else {
+                        // Full mode: move cutadapt output file into bundle for downstream steps
+                        let destFilename = file.url.lastPathComponent
+                        let destURL = bundleURL.appendingPathComponent(destFilename)
+                        try FileManager.default.moveItem(at: file.url, to: destURL)
                     }
 
                     // Get accurate read count and base count via seqkit stats
+                    let statsSource = capturedIsVirtual ? file.url : bundleURL.appendingPathComponent(file.url.lastPathComponent)
                     let statsResult = try await capturedRunner.run(
                         .seqkit,
-                        arguments: ["stats", "-T", file.url.path],
+                        arguments: ["stats", "-T", statsSource.path],
                         timeout: 300
                     )
                     var readCount = 0
@@ -459,7 +470,6 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                     )
                 }
                 inFlight += 1
-                fileIndex += 1
             }
 
             // Collect remaining results
@@ -1560,6 +1570,8 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         plan: DemultiplexPlan,
         inputURL: URL,
         outputDirectory: URL,
+        rootBundleURL: URL? = nil,
+        rootFASTQFilename: String? = nil,
         progress: @escaping @Sendable (Double, String) -> Void
     ) async throws -> MultiStepDemultiplexResult {
         try plan.validate()
@@ -1581,6 +1593,11 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
             let binCount = currentInputURLs.count
             let progressPerBin = progressPerStep / Double(max(1, binCount))
 
+            // Only the final step creates virtual bundles; intermediate steps keep full FASTQ
+            let isFinalStep = stepIndex == sortedSteps.count - 1
+            let stepRootBundleURL = isFinalStep ? rootBundleURL : nil
+            let stepRootFASTQFilename = isFinalStep ? rootFASTQFilename : nil
+
             // Step 0 (single input) runs sequentially; inner steps run bins concurrently
             let perBinResults: [DemultiplexResult]
             if stepIndex == 0 || binCount <= 1 {
@@ -1589,7 +1606,9 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                     let binBaseProgress = stepBaseProgress + Double(binIndex) * progressPerBin
                     let config = buildStepConfig(
                         step: step, kit: kit, binInputURL: binInputURL,
-                        outputDirectory: outputDirectory
+                        outputDirectory: outputDirectory,
+                        rootBundleURL: stepRootBundleURL,
+                        rootFASTQFilename: stepRootFASTQFilename
                     )
                     let result = try await run(config: config) { fraction, message in
                         progress(binBaseProgress + fraction * progressPerBin, "Step \(stepIndex + 1): \(message)")
@@ -1610,7 +1629,9 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                         let binBaseProgress = stepBaseProgress + Double(idx) * progressPerBin
                         let config = buildStepConfig(
                             step: step, kit: kit, binInputURL: binInputURL,
-                            outputDirectory: outputDirectory
+                            outputDirectory: outputDirectory,
+                            rootBundleURL: stepRootBundleURL,
+                            rootFASTQFilename: stepRootFASTQFilename
                         )
                         nextBinIndex += 1
                         group.addTask { [self] in
@@ -1630,7 +1651,9 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                             let binBaseProgress = stepBaseProgress + Double(nextIdx) * progressPerBin
                             let config = buildStepConfig(
                                 step: step, kit: kit, binInputURL: binInputURL,
-                                outputDirectory: outputDirectory
+                                outputDirectory: outputDirectory,
+                                rootBundleURL: stepRootBundleURL,
+                                rootFASTQFilename: stepRootFASTQFilename
                             )
                             nextBinIndex += 1
                             group.addTask { [self] in
@@ -1709,7 +1732,9 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         step: DemultiplexStep,
         kit: BarcodeKitDefinition,
         binInputURL: URL,
-        outputDirectory: URL
+        outputDirectory: URL,
+        rootBundleURL: URL? = nil,
+        rootFASTQFilename: String? = nil
     ) -> DemultiplexConfig {
         let binName = binInputURL.deletingPathExtension().lastPathComponent
         let stepOutputDir = outputDirectory
@@ -1726,7 +1751,9 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
             trimBarcodes: step.trimBarcodes,
             searchReverseComplement: step.searchReverseComplement,
             unassignedDisposition: step.unassignedDisposition,
-            sampleAssignments: step.sampleAssignments
+            sampleAssignments: step.sampleAssignments,
+            rootBundleURL: rootBundleURL,
+            rootFASTQFilename: rootFASTQFilename
         )
     }
 
