@@ -556,6 +556,66 @@ final class FASTQDerivativesTests: XCTestCase {
         XCTAssertEqual(FASTQDerivativePayload.trim(trimPositionFilename: "trim.tsv").category, "trim")
         XCTAssertEqual(FASTQDerivativePayload.full(fastqFilename: "reads.fq").category, "full")
         XCTAssertEqual(FASTQDerivativePayload.fullPaired(r1Filename: "R1.fq", r2Filename: "R2.fq").category, "full-paired")
+        XCTAssertEqual(
+            FASTQDerivativePayload.demuxedVirtual(barcodeID: "bc1", readIDListFilename: "ids.txt", previewFilename: "preview.fastq.gz").category,
+            "demuxed-virtual"
+        )
+    }
+
+    // MARK: - Demuxed Virtual Payload
+
+    func testDemuxedVirtualManifestRoundTrip() throws {
+        let (tempDir, bundleURL) = try makeTempBundle()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let op = FASTQDerivativeOperation(kind: .demultiplex, createdAt: Date())
+        let stats = FASTQDatasetStatistics.placeholder(readCount: 5000, baseCount: 750_000)
+        let manifest = FASTQDerivedBundleManifest(
+            name: "bc1001",
+            parentBundleRelativePath: "../root.lungfishfastq",
+            rootBundleRelativePath: "../root.lungfishfastq",
+            rootFASTQFilename: "reads.fastq.gz",
+            payload: .demuxedVirtual(
+                barcodeID: "bc1001",
+                readIDListFilename: "read-ids.txt",
+                previewFilename: "preview.fastq.gz"
+            ),
+            lineage: [op],
+            operation: op,
+            cachedStatistics: stats,
+            pairingMode: nil
+        )
+
+        try FASTQBundle.saveDerivedManifest(manifest, in: bundleURL)
+        let loaded = FASTQBundle.loadDerivedManifest(in: bundleURL)
+
+        XCTAssertNotNil(loaded)
+        XCTAssertEqual(loaded?.name, "bc1001")
+        XCTAssertEqual(loaded?.rootFASTQFilename, "reads.fastq.gz")
+        if case .demuxedVirtual(let barcodeID, let readIDFile, let previewFile) = loaded?.payload {
+            XCTAssertEqual(barcodeID, "bc1001")
+            XCTAssertEqual(readIDFile, "read-ids.txt")
+            XCTAssertEqual(previewFile, "preview.fastq.gz")
+        } else {
+            XCTFail("Expected demuxedVirtual payload, got \(String(describing: loaded?.payload))")
+        }
+        XCTAssertEqual(loaded?.cachedStatistics.readCount, 5000)
+        XCTAssertEqual(loaded?.cachedStatistics.baseCount, 750_000)
+        XCTAssertEqual(loaded?.cachedStatistics.meanReadLength, 150.0)
+    }
+
+    func testPlaceholderStatistics() {
+        let stats = FASTQDatasetStatistics.placeholder(readCount: 10_000, baseCount: 1_500_000)
+        XCTAssertEqual(stats.readCount, 10_000)
+        XCTAssertEqual(stats.baseCount, 1_500_000)
+        XCTAssertEqual(stats.meanReadLength, 150.0)
+        XCTAssertEqual(stats.minReadLength, 0)
+        XCTAssertEqual(stats.maxReadLength, 0)
+        XCTAssertTrue(stats.readLengthHistogram.isEmpty)
+        XCTAssertTrue(stats.qualityScoreHistogram.isEmpty)
+
+        let emptyStats = FASTQDatasetStatistics.placeholder(readCount: 0, baseCount: 0)
+        XCTAssertEqual(emptyStats.meanReadLength, 0)
     }
 
     // MARK: - Trim Validation Edge Cases
