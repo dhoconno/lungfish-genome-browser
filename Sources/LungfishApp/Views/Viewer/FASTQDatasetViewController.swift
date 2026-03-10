@@ -67,6 +67,24 @@ private func parseFASTQReadPreviewRecords(from fastqText: String) -> [FASTQReadP
 @MainActor
 public final class FASTQDatasetViewController: NSViewController {
 
+    // MARK: - Layout Defaults
+
+    private enum LayoutDefaults {
+        static let summaryBarHeight: CGFloat = 48
+        static let summaryToSparklineSpacing: CGFloat = 2
+        static let sparklineHeight: CGFloat = 64
+        static let topPaneBottomPadding: CGFloat = 2
+
+        static let minTopPaneHeight: CGFloat = summaryBarHeight + summaryToSparklineSpacing + sparklineHeight + topPaneBottomPadding
+        static let maxTopPaneHeight: CGFloat = 180
+        static let preferredTopPaneFraction: CGFloat = 0.22
+
+        static let minSidebarWidth: CGFloat = 140
+        static let maxSidebarWidth: CGFloat = 260
+        static let preferredSidebarFraction: CGFloat = 0.22
+        static let minGeometryForInitialLayout: CGFloat = 300
+    }
+
     // MARK: - Operation Categories
 
     private struct OperationItem {
@@ -310,13 +328,17 @@ public final class FASTQDatasetViewController: NSViewController {
         configureMiddlePane()
     }
 
-    private var didSetInitialSplitPositions = false
-
     public override func viewDidLayout() {
         super.viewDidLayout()
-        if !didSetInitialSplitPositions, view.bounds.height > 200 {
-            didSetInitialSplitPositions = true
-            updateSplitPositions()
+        applyInitialSplitPositionsIfNeeded()
+    }
+
+    public override func viewDidAppear() {
+        super.viewDidAppear()
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                self?.applyInitialSplitPositionsIfNeeded()
+            }
         }
     }
 
@@ -402,12 +424,12 @@ public final class FASTQDatasetViewController: NSViewController {
             summaryBar.topAnchor.constraint(equalTo: topPane.topAnchor),
             summaryBar.leadingAnchor.constraint(equalTo: topPane.leadingAnchor),
             summaryBar.trailingAnchor.constraint(equalTo: topPane.trailingAnchor),
-            summaryBar.heightAnchor.constraint(equalToConstant: 48),
+            summaryBar.heightAnchor.constraint(equalToConstant: LayoutDefaults.summaryBarHeight),
 
-            sparklineStrip.topAnchor.constraint(equalTo: summaryBar.bottomAnchor, constant: 2),
+            sparklineStrip.topAnchor.constraint(equalTo: summaryBar.bottomAnchor, constant: LayoutDefaults.summaryToSparklineSpacing),
             sparklineStrip.leadingAnchor.constraint(equalTo: topPane.leadingAnchor),
             sparklineStrip.trailingAnchor.constraint(equalTo: topPane.trailingAnchor),
-            sparklineStrip.heightAnchor.constraint(equalToConstant: 52),
+            sparklineStrip.heightAnchor.constraint(equalToConstant: LayoutDefaults.sparklineHeight),
         ])
     }
 
@@ -764,16 +786,31 @@ public final class FASTQDatasetViewController: NSViewController {
 
     // MARK: - Split View Layout
 
-    private func updateSplitPositions() {
-        let viewHeight = view.bounds.height
-        guard viewHeight > 200 else { return }
+    private var didApplyInitialSplitPositions = false
 
-        // Top pane: summary + sparklines (~108pt)
-        let topHeight = min(viewHeight * 0.18, 130)
+    private func applyInitialSplitPositionsIfNeeded() {
+        guard !didApplyInitialSplitPositions else { return }
+
+        let viewHeight = view.bounds.height
+        let middleWidth = middleSplitView.bounds.width
+        guard viewHeight > LayoutDefaults.minGeometryForInitialLayout,
+              middleWidth > LayoutDefaults.minGeometryForInitialLayout else { return }
+
+        // Give sparklines enough vertical budget to show full distributions by default.
+        let topHeight = max(
+            LayoutDefaults.minTopPaneHeight,
+            min(viewHeight * LayoutDefaults.preferredTopPaneFraction, LayoutDefaults.maxTopPaneHeight)
+        )
         mainSplitView.setPosition(topHeight, ofDividerAt: 0)
 
-        // Sidebar width — just wide enough for longest operation name ("Demultiplex (Barcodes)")
-        middleSplitView.setPosition(170, ofDividerAt: 0)
+        // Keep operation list compact by default to prioritize preview/read content width.
+        let sidebarWidth = max(
+            LayoutDefaults.minSidebarWidth,
+            min(middleWidth * LayoutDefaults.preferredSidebarFraction, LayoutDefaults.maxSidebarWidth)
+        )
+        middleSplitView.setPosition(sidebarWidth, ofDividerAt: 0)
+
+        didApplyInitialSplitPositions = true
     }
 
     // MARK: - Parameter Bar Updates
@@ -2038,20 +2075,20 @@ extension FASTQDatasetViewController: NSTextFieldDelegate {
 extension FASTQDatasetViewController: NSSplitViewDelegate {
     public func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
         if splitView === mainSplitView {
-            return 104 // minimum top pane height (48 + 2 + 52 + 2)
+            return LayoutDefaults.minTopPaneHeight
         }
         if splitView === middleSplitView {
-            return 140 // minimum sidebar width
+            return LayoutDefaults.minSidebarWidth
         }
         return proposedMinimumPosition
     }
 
     public func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
         if splitView === mainSplitView {
-            return 160 // maximum top pane height
+            return LayoutDefaults.maxTopPaneHeight
         }
         if splitView === middleSplitView {
-            return 220 // maximum sidebar width
+            return LayoutDefaults.maxSidebarWidth
         }
         return proposedMaximumPosition
     }
