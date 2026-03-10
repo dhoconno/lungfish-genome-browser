@@ -809,13 +809,13 @@ struct FastqDemultiplexSubcommand: AsyncParsableCommand {
         let outputURL = URL(fileURLWithPath: output)
 
         // Resolve barcode kit
-        let barcodeKit: IlluminaBarcodeDefinition
-        if let builtin = IlluminaBarcodeKitRegistry.kit(byID: kit) {
+        let barcodeKit: BarcodeKitDefinition
+        if let builtin = BarcodeKitRegistry.kit(byID: kit) {
             barcodeKit = builtin
         } else if FileManager.default.fileExists(atPath: kit) {
             let csvURL = URL(fileURLWithPath: kit)
             let name = csvURL.deletingPathExtension().lastPathComponent
-            barcodeKit = try IlluminaBarcodeKitRegistry.loadCustomKit(from: csvURL, name: name)
+            barcodeKit = try BarcodeKitRegistry.loadCustomKit(from: csvURL, name: name)
         } else {
             throw ValidationError(
                 "Unknown barcode kit '\(kit)'. Use one of: truseq-single-a, truseq-single-b, "

@@ -54,14 +54,14 @@ public struct FASTQDemultiplexMetadata: Codable, Sendable, Equatable {
     public var sampleAssignments: [FASTQSampleBarcodeAssignment]
 
     /// User-defined barcode sets imported from CSV.
-    public var customBarcodeSets: [IlluminaBarcodeDefinition]
+    public var customBarcodeSets: [BarcodeKitDefinition]
 
     /// User-preferred barcode set ID.
     public var preferredBarcodeSetID: String?
 
     public init(
         sampleAssignments: [FASTQSampleBarcodeAssignment] = [],
-        customBarcodeSets: [IlluminaBarcodeDefinition] = [],
+        customBarcodeSets: [BarcodeKitDefinition] = [],
         preferredBarcodeSetID: String? = nil
     ) {
         self.sampleAssignments = sampleAssignments

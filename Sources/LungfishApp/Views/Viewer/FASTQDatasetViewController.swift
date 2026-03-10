@@ -192,19 +192,32 @@ public final class FASTQDatasetViewController: NSViewController {
     private var sourceURL: URL?
     private var derivativeManifest: FASTQDerivedBundleManifest?
     private var selectedOperation: OperationKind?
-    private var qualityReportTask: Task<Void, Never>?
-    private var operationTask: Task<Void, Never>?
-    private var fastaPreviewTask: Task<Void, Never>?
-    private var demuxKitOptions: [IlluminaBarcodeDefinition] = []
+    private nonisolated(unsafe) var qualityReportTask: Task<Void, Never>?
+    private nonisolated(unsafe) var operationTask: Task<Void, Never>?
+    private nonisolated(unsafe) var fastaPreviewTask: Task<Void, Never>?
+    private var demuxKitOptions: [BarcodeKitDefinition] = []
     private var demuxSampleAssignments: [FASTQSampleBarcodeAssignment] = []
 
     public var onStatisticsUpdated: ((FASTQDatasetStatistics) -> Void)?
     public var onRunOperation: ((FASTQDerivativeRequest) async throws -> Void)?
 
+    /// Callback to open/focus the Demux Setup tab in the metadata drawer.
+    public var onOpenDemuxDrawer: (() -> Void)?
+
+    /// Current demux configuration from the metadata drawer. Set by the drawer view.
+    /// When present, the demultiplex operation reads from this instead of the inline controls.
+    public var currentDemuxConfig: DemultiplexStep? {
+        didSet {
+            if selectedOperation == .demultiplex {
+                updateParameterBar()
+            }
+        }
+    }
+
     // MARK: - Read Preview Data
 
     private var readPreviewRecords: [FASTQReadPreviewRecord] = []
-    private var readPreviewTask: Task<Void, Never>?
+    private nonisolated(unsafe) var readPreviewTask: Task<Void, Never>?
     private var readPreviewLoaded = false
 
     // MARK: - UI Components — Two-Pane Split
@@ -265,8 +278,31 @@ public final class FASTQDatasetViewController: NSViewController {
     private let demuxWindow3Label = NSTextField(labelWithString: "3' Window:")
     private let demuxWindow3Input = NSTextField(string: "0")
     private let demuxTrimCheckbox = NSButton(checkboxWithTitle: "Remove barcodes + flanking sequences", target: nil, action: nil)
-    private let demuxScoutButton = NSButton(title: "Scout Barcodes", target: nil, action: nil)
-    private var scoutTask: Task<Void, Never>?
+    private let demuxScoutButton = NSButton(title: "Detect Barcodes", target: nil, action: nil)
+    private nonisolated(unsafe) var scoutTask: Task<Void, Never>?
+
+    // Error banner (replaces modal NSAlert for operation failures)
+    private lazy var errorBannerView: NSView = {
+        let banner = NSView()
+        banner.wantsLayer = true
+        banner.layer?.backgroundColor = NSColor.systemRed.withAlphaComponent(0.1).cgColor
+        banner.layer?.cornerRadius = 6
+        banner.isHidden = true
+        return banner
+    }()
+    private lazy var errorBannerLabel: NSTextField = {
+        let label = NSTextField(wrappingLabelWithString: "")
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .systemRed
+        label.maximumNumberOfLines = 3
+        return label
+    }()
+    private lazy var errorBannerDismissButton: NSButton = {
+        let btn = NSButton(image: NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Dismiss")!, target: self, action: #selector(dismissErrorBanner))
+        btn.bezelStyle = .inline
+        btn.isBordered = false
+        return btn
+    }()
 
     // MARK: - Lifecycle
 
@@ -295,6 +331,19 @@ public final class FASTQDatasetViewController: NSViewController {
             didSetInitialSplitPositions = true
             updateSplitPositions()
         }
+        adjustParameterBarForWidth()
+    }
+
+    /// Hides non-essential demux controls when the parameter bar is too narrow.
+    private func adjustParameterBarForWidth() {
+        guard selectedOperation == .demultiplex else { return }
+        let availableWidth = parameterBar.frame.width
+        let isNarrow = availableWidth < 600
+        demuxWindow5Label.isHidden = isNarrow
+        demuxWindow5Input.isHidden = isNarrow
+        demuxWindow3Label.isHidden = isNarrow
+        demuxWindow3Input.isHidden = isNarrow
+        demuxTrimCheckbox.isHidden = isNarrow
     }
 
     // MARK: - Public API
@@ -331,7 +380,7 @@ public final class FASTQDatasetViewController: NSViewController {
     }
 
     private func loadDemultiplexMetadata(for fastqURL: URL?) {
-        var kits = IlluminaBarcodeKitRegistry.builtinKits()
+        var kits = BarcodeKitRegistry.builtinKits()
         var preferredKitID: String?
         demuxSampleAssignments = []
 
@@ -528,6 +577,10 @@ public final class FASTQDatasetViewController: NSViewController {
         configureRunBar()
         previewPane.addSubview(runBar)
 
+        // Error banner (inline replacement for modal alerts)
+        configureErrorBanner()
+        previewPane.addSubview(errorBannerView)
+
         let parameterBarHeight = parameterBar.heightAnchor.constraint(equalToConstant: 36)
         parameterBarHeight.priority = .defaultHigh
         let runBarHeight = runBar.heightAnchor.constraint(equalToConstant: 36)
@@ -549,8 +602,17 @@ public final class FASTQDatasetViewController: NSViewController {
         previewLeading.priority = .defaultHigh
         let previewTrailing = previewCanvas.trailingAnchor.constraint(equalTo: previewPane.trailingAnchor)
         previewTrailing.priority = .defaultHigh
-        let previewBottom = previewCanvas.bottomAnchor.constraint(equalTo: runBar.topAnchor, constant: -1)
+        let previewBottom = previewCanvas.bottomAnchor.constraint(equalTo: errorBannerView.topAnchor, constant: -1)
         previewBottom.priority = .defaultHigh
+
+        let bannerLeading = errorBannerView.leadingAnchor.constraint(equalTo: previewPane.leadingAnchor, constant: 8)
+        bannerLeading.priority = .defaultHigh
+        let bannerTrailing = errorBannerView.trailingAnchor.constraint(equalTo: previewPane.trailingAnchor, constant: -8)
+        bannerTrailing.priority = .defaultHigh
+        let bannerBottom = errorBannerView.bottomAnchor.constraint(equalTo: runBar.topAnchor, constant: -4)
+        bannerBottom.priority = .defaultHigh
+        let bannerHeight = errorBannerView.heightAnchor.constraint(equalToConstant: 0)
+        bannerHeight.priority = .defaultLow
 
         let runLeading = runBar.leadingAnchor.constraint(equalTo: previewPane.leadingAnchor)
         runLeading.priority = .defaultHigh
@@ -570,6 +632,11 @@ public final class FASTQDatasetViewController: NSViewController {
             previewTrailing,
             previewBottom,
 
+            bannerLeading,
+            bannerTrailing,
+            bannerBottom,
+            bannerHeight,
+
             runLeading,
             runTrailing,
             runBottom,
@@ -583,6 +650,7 @@ public final class FASTQDatasetViewController: NSViewController {
         parameterBar.distribution = .fill
         parameterBar.spacing = 12
         parameterBar.edgeInsets = NSEdgeInsets(top: 4, left: 12, bottom: 4, right: 12)
+        parameterBar.detachesHiddenViews = true
 
         // Initialize popups
         searchFieldPopup.addItems(withTitles: ["ID", "Description"])
@@ -632,6 +700,41 @@ public final class FASTQDatasetViewController: NSViewController {
         pairedAwareCheckbox.action = #selector(parameterCheckboxChanged(_:))
     }
 
+    private func configureErrorBanner() {
+        errorBannerView.translatesAutoresizingMaskIntoConstraints = false
+        errorBannerLabel.translatesAutoresizingMaskIntoConstraints = false
+        errorBannerDismissButton.translatesAutoresizingMaskIntoConstraints = false
+
+        errorBannerView.addSubview(errorBannerLabel)
+        errorBannerView.addSubview(errorBannerDismissButton)
+
+        NSLayoutConstraint.activate([
+            errorBannerLabel.leadingAnchor.constraint(equalTo: errorBannerView.leadingAnchor, constant: 8),
+            errorBannerLabel.centerYAnchor.constraint(equalTo: errorBannerView.centerYAnchor),
+            errorBannerLabel.trailingAnchor.constraint(lessThanOrEqualTo: errorBannerDismissButton.leadingAnchor, constant: -4),
+
+            errorBannerDismissButton.trailingAnchor.constraint(equalTo: errorBannerView.trailingAnchor, constant: -4),
+            errorBannerDismissButton.centerYAnchor.constraint(equalTo: errorBannerView.centerYAnchor),
+            errorBannerDismissButton.widthAnchor.constraint(equalToConstant: 16),
+            errorBannerDismissButton.heightAnchor.constraint(equalToConstant: 16),
+        ])
+    }
+
+    private func showErrorBanner(_ message: String) {
+        errorBannerLabel.stringValue = message
+        errorBannerView.isHidden = false
+        // Auto-dismiss after 10 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            MainActor.assumeIsolated {
+                self?.dismissErrorBanner()
+            }
+        }
+    }
+
+    @objc private func dismissErrorBanner() {
+        errorBannerView.isHidden = true
+    }
+
     private func configureRunBar() {
         runBar.translatesAutoresizingMaskIntoConstraints = false
 
@@ -679,6 +782,7 @@ public final class FASTQDatasetViewController: NSViewController {
         demuxScoutButton.font = .systemFont(ofSize: 11)
         demuxScoutButton.target = self
         demuxScoutButton.action = #selector(scoutBarcodesClicked(_:))
+        demuxScoutButton.toolTip = "Scan the first 10,000 reads to identify which barcodes are present"
         demuxScoutButton.translatesAutoresizingMaskIntoConstraints = false
         demuxScoutButton.isHidden = true
         runBar.addSubview(demuxScoutButton)
@@ -868,28 +972,64 @@ public final class FASTQDatasetViewController: NSViewController {
             parameterBar.addArrangedSubview(fieldOneInput)
 
         case .demultiplex:
-            if demuxLocationPopup.numberOfItems == 0 {
-                demuxLocationPopup.addItems(withTitles: ["5' End", "3' End", "Both Ends (5'+3')"])
-                demuxLocationPopup.selectItem(at: 2)
+            if let drawerConfig = currentDemuxConfig {
+                // Show read-only summary of the drawer configuration
+                let kitName = BarcodeKitRegistry.kit(byID: drawerConfig.barcodeKitID)?.displayName ?? drawerConfig.barcodeKitID
+                let locationDesc: String
+                switch drawerConfig.barcodeLocation {
+                case .fivePrime: locationDesc = "5'"
+                case .threePrime: locationDesc = "3'"
+                case .bothEnds: locationDesc = "Both"
+                }
+                let summaryText = "\(kitName) | \(locationDesc) | e=\(String(format: "%.2f", drawerConfig.errorRate)) | \(drawerConfig.trimBarcodes ? "Trim" : "Keep")"
+                let summaryLabel = NSTextField(labelWithString: summaryText)
+                summaryLabel.font = .systemFont(ofSize: 11)
+                summaryLabel.textColor = .secondaryLabelColor
+                summaryLabel.lineBreakMode = .byTruncatingTail
+                parameterBar.addArrangedSubview(summaryLabel)
+
+                let configureButton = NSButton(title: "Configure in Drawer\u{2026}", target: self, action: #selector(openDemuxDrawerClicked(_:)))
+                configureButton.bezelStyle = .rounded
+                configureButton.font = .systemFont(ofSize: 11)
+                configureButton.translatesAutoresizingMaskIntoConstraints = false
+                parameterBar.addArrangedSubview(configureButton)
+                // Hide the duplicate scout button from the run bar when using drawer config
+                demuxScoutButton.isHidden = true
+            } else {
+                // Fallback: show full inline controls when no drawer config is set
+                if demuxLocationPopup.numberOfItems == 0 {
+                    demuxLocationPopup.addItems(withTitles: ["5' End", "3' End", "Both Ends (5'+3')"])
+                    demuxLocationPopup.selectItem(at: 2)
+                }
+                demuxTrimCheckbox.state = .on
+                fieldOneLabel.stringValue = "Error Rate:"
+                fieldOneInput.placeholderString = "0.15"
+                if demuxWindow5Input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    demuxWindow5Input.stringValue = "0"
+                }
+                if demuxWindow3Input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    demuxWindow3Input.stringValue = "0"
+                }
+                parameterBar.addArrangedSubview(demuxKitPopup)
+                parameterBar.addArrangedSubview(demuxLocationPopup)
+                parameterBar.addArrangedSubview(fieldOneLabel)
+                parameterBar.addArrangedSubview(fieldOneInput)
+                parameterBar.addArrangedSubview(demuxWindow5Label)
+                parameterBar.addArrangedSubview(demuxWindow5Input)
+                parameterBar.addArrangedSubview(demuxWindow3Label)
+                parameterBar.addArrangedSubview(demuxWindow3Input)
+                parameterBar.addArrangedSubview(demuxTrimCheckbox)
+
+                // Critical controls always visible; optional ones can be hidden when narrow
+                parameterBar.setVisibilityPriority(.mustHold, for: demuxKitPopup)
+                parameterBar.setVisibilityPriority(.mustHold, for: demuxLocationPopup)
+                parameterBar.setVisibilityPriority(.detachOnlyIfNecessary, for: demuxWindow5Label)
+                parameterBar.setVisibilityPriority(.detachOnlyIfNecessary, for: demuxWindow5Input)
+                parameterBar.setVisibilityPriority(.detachOnlyIfNecessary, for: demuxWindow3Label)
+                parameterBar.setVisibilityPriority(.detachOnlyIfNecessary, for: demuxWindow3Input)
+                parameterBar.setVisibilityPriority(.detachOnlyIfNecessary, for: demuxTrimCheckbox)
+                adjustParameterBarForWidth()
             }
-            demuxTrimCheckbox.state = .on
-            fieldOneLabel.stringValue = "Error Rate:"
-            fieldOneInput.placeholderString = "0.15"
-            if demuxWindow5Input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                demuxWindow5Input.stringValue = "0"
-            }
-            if demuxWindow3Input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                demuxWindow3Input.stringValue = "0"
-            }
-            parameterBar.addArrangedSubview(demuxKitPopup)
-            parameterBar.addArrangedSubview(demuxLocationPopup)
-            parameterBar.addArrangedSubview(fieldOneLabel)
-            parameterBar.addArrangedSubview(fieldOneInput)
-            parameterBar.addArrangedSubview(demuxWindow5Label)
-            parameterBar.addArrangedSubview(demuxWindow5Input)
-            parameterBar.addArrangedSubview(demuxWindow3Label)
-            parameterBar.addArrangedSubview(demuxWindow3Input)
-            parameterBar.addArrangedSubview(demuxTrimCheckbox)
 
         case .qualityReport:
             if hasQualityData {
@@ -1428,7 +1568,10 @@ public final class FASTQDatasetViewController: NSViewController {
             return
         }
         guard operationTask == nil else { return }
-        guard let request = buildOperationRequest() else { return }
+        guard let request = buildOperationRequest() else {
+            shakeButton(runButton)
+            return
+        }
         guard let onRunOperation else {
             setStatus("No FASTQ source selected")
             return
@@ -1439,7 +1582,7 @@ public final class FASTQDatasetViewController: NSViewController {
         progressIndicator.startAnimation(nil)
         setStatus("Running: \(description(for: request))")
 
-        operationTask = Task { [weak self] in
+        operationTask = Task { [weak self, onRunOperation] in
             do {
                 try await onRunOperation(request)
                 guard let self else { return }
@@ -1461,20 +1604,17 @@ public final class FASTQDatasetViewController: NSViewController {
                 self.runButton.isEnabled = true
                 self.cancelButton.isHidden = true
                 self.progressIndicator.stopAnimation(nil)
-                self.setStatus("Failed: \(error.localizedDescription)")
-
-                let alert = NSAlert()
-                alert.messageText = "FASTQ Operation Failed"
-                alert.informativeText = error.localizedDescription
-                alert.alertStyle = .warning
-                alert.addButton(withTitle: "OK")
-                alert.applyLungfishBranding()
-                alert.runModal()
+                self.setStatus("Failed: \(error.localizedDescription)", isError: true)
+                self.showErrorBanner("Operation failed: \(error.localizedDescription)")
             }
         }
     }
 
     // MARK: - Barcode Scouting
+
+    @objc private func openDemuxDrawerClicked(_ sender: Any) {
+        onOpenDemuxDrawer?()
+    }
 
     @objc private func scoutBarcodesClicked(_ sender: Any) {
         guard scoutTask == nil else { return }
@@ -1484,14 +1624,14 @@ public final class FASTQDatasetViewController: NSViewController {
         }
         guard demuxKitPopup.indexOfSelectedItem >= 0,
               demuxKitPopup.indexOfSelectedItem < demuxKitOptions.count else {
-            setStatus("Select a barcode kit before scouting.")
+            setStatus("Select a barcode kit before detecting.")
             return
         }
 
         let selectedKit = demuxKitOptions[demuxKitPopup.indexOfSelectedItem]
         demuxScoutButton.isEnabled = false
         progressIndicator.startAnimation(nil)
-        setStatus("Scouting barcodes...")
+        setStatus("Detecting barcodes...")
 
         scoutTask = Task { [weak self] in
             do {
@@ -1537,13 +1677,13 @@ public final class FASTQDatasetViewController: NSViewController {
                 self.scoutTask = nil
                 self.demuxScoutButton.isEnabled = true
                 self.progressIndicator.stopAnimation(nil)
-                self.setStatus("Scout cancelled.")
+                self.setStatus("Detection cancelled.")
             } catch {
                 guard let self else { return }
                 self.scoutTask = nil
                 self.demuxScoutButton.isEnabled = true
                 self.progressIndicator.stopAnimation(nil)
-                self.setStatus("Scout failed: \(error.localizedDescription)")
+                self.setStatus("Detection failed: \(error.localizedDescription)")
             }
         }
     }
@@ -1575,13 +1715,16 @@ public final class FASTQDatasetViewController: NSViewController {
 
         // Update sample assignments from accepted barcodes
         demuxSampleAssignments = prunedBarcodes.map { barcode in
-            FASTQSampleBarcodeAssignment(
+            // For symmetric kits (e.g., ONT native barcoding), the same barcode
+            // appears on both ends. Use forward sequence for reverse too.
+            let isSymmetric = kit.pairingMode == .symmetric
+            return FASTQSampleBarcodeAssignment(
                 sampleID: barcode.sampleName ?? barcode.id,
                 sampleName: barcode.sampleName,
                 forwardBarcodeID: barcode.id,
                 forwardSequence: barcode.i7Sequence,
-                reverseBarcodeID: nil,
-                reverseSequence: barcode.i5Sequence,
+                reverseBarcodeID: isSymmetric ? barcode.id : nil,
+                reverseSequence: isSymmetric ? PlatformAdapters.reverseComplement(barcode.i7Sequence) : barcode.i5Sequence,
                 metadata: [:]
             )
         }
@@ -1589,7 +1732,7 @@ public final class FASTQDatasetViewController: NSViewController {
         // Replace the kit in options with the pruned version for the next "Run"
         let prunedKit = BarcodeKitDefinition(
             id: kit.id,
-            displayName: "\(kit.displayName) (\(prunedBarcodes.count) scouted)",
+            displayName: "\(kit.displayName) (\(prunedBarcodes.count) detected)",
             vendor: kit.vendor,
             platform: kit.platform,
             kitType: kit.kitType,
@@ -1602,7 +1745,34 @@ public final class FASTQDatasetViewController: NSViewController {
             demuxKitPopup.item(at: idx)?.title = prunedKit.displayName
         }
 
-        setStatus("Scout complete: \(prunedBarcodes.count) barcode(s) accepted. Ready to demultiplex.")
+        // Persist pruned kit to FASTQDemultiplexMetadata so it survives app restart.
+        // Uses a scout-specific ID to avoid colliding with the original builtin kit.
+        if let fastqURL {
+            var metadata = FASTQMetadataStore.load(for: fastqURL) ?? PersistedFASTQMetadata()
+            var demux = metadata.demultiplexMetadata ?? FASTQDemultiplexMetadata()
+            let persistedKit = BarcodeKitDefinition(
+                id: "\(prunedKit.id)-scouted",
+                displayName: prunedKit.displayName,
+                vendor: prunedKit.vendor,
+                platform: prunedKit.platform,
+                kitType: prunedKit.kitType,
+                isDualIndexed: prunedKit.isDualIndexed,
+                pairingMode: prunedKit.pairingMode,
+                barcodes: prunedKit.barcodes
+            )
+            // Replace any previous scouted version for this kit, or append
+            if let existingIdx = demux.customBarcodeSets.firstIndex(where: { $0.id == persistedKit.id }) {
+                demux.customBarcodeSets[existingIdx] = persistedKit
+            } else {
+                demux.customBarcodeSets.append(persistedKit)
+            }
+            demux.preferredBarcodeSetID = prunedKit.id
+            demux.sampleAssignments = demuxSampleAssignments
+            metadata.demultiplexMetadata = demux
+            FASTQMetadataStore.save(metadata, for: fastqURL)
+        }
+
+        setStatus("Detection complete: \(prunedBarcodes.count) barcode(s) accepted. Ready to demultiplex.")
     }
 
     private func saveScoutResult(_ result: BarcodeScoutResult, for fastqURL: URL) {
@@ -1695,7 +1865,7 @@ public final class FASTQDatasetViewController: NSViewController {
 
     private func buildOperationRequest() -> FASTQDerivativeRequest? {
         guard let kind = selectedOperation else {
-            setStatus("No operation selected.")
+            setStatus("No operation selected.", isError: true)
             return nil
         }
 
@@ -1706,14 +1876,14 @@ public final class FASTQDatasetViewController: NSViewController {
 
         case .subsampleProportion:
             guard let value = Double(fieldOneInput.stringValue), value > 0, value <= 1 else {
-                setStatus("Invalid proportion. Enter a value in (0, 1].")
+                setStatus("Invalid proportion. Enter a value in (0, 1].", isError: true)
                 return nil
             }
             return .subsampleProportion(value)
 
         case .subsampleCount:
             guard let value = Int(fieldOneInput.stringValue), value > 0 else {
-                setStatus("Invalid read count. Enter an integer > 0.")
+                setStatus("Invalid read count. Enter an integer > 0.", isError: true)
                 return nil
             }
             return .subsampleCount(value)
@@ -1722,11 +1892,11 @@ public final class FASTQDatasetViewController: NSViewController {
             let minValue = Int(fieldOneInput.stringValue.trimmingCharacters(in: .whitespaces))
             let maxValue = Int(fieldTwoInput.stringValue.trimmingCharacters(in: .whitespaces))
             if minValue == nil, maxValue == nil {
-                setStatus("Provide min, max, or both for length filter.")
+                setStatus("Provide min, max, or both for length filter.", isError: true)
                 return nil
             }
             if let minValue, let maxValue, minValue > maxValue {
-                setStatus("Min length cannot be greater than max length.")
+                setStatus("Min length cannot be greater than max length.", isError: true)
                 return nil
             }
             return .lengthFilter(min: minValue, max: maxValue)
@@ -1734,7 +1904,7 @@ public final class FASTQDatasetViewController: NSViewController {
         case .searchText:
             let query = fieldOneInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !query.isEmpty else {
-                setStatus("Search pattern cannot be empty.")
+                setStatus("Search pattern cannot be empty.", isError: true)
                 return nil
             }
             let field: FASTQSearchField = searchFieldPopup.indexOfSelectedItem == 1 ? .description : .id
@@ -1743,7 +1913,7 @@ public final class FASTQDatasetViewController: NSViewController {
         case .searchMotif:
             let pattern = fieldOneInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !pattern.isEmpty else {
-                setStatus("Motif pattern cannot be empty.")
+                setStatus("Motif pattern cannot be empty.", isError: true)
                 return nil
             }
             return .searchMotif(pattern: pattern, regex: regexCheckbox.state == .on)
@@ -1761,7 +1931,7 @@ public final class FASTQDatasetViewController: NSViewController {
             let threshold = Int(fieldOneInput.stringValue) ?? 20
             let windowSize = Int(fieldTwoInput.stringValue) ?? 4
             guard threshold > 0, windowSize > 0 else {
-                setStatus("Quality threshold and window size must be > 0.")
+                setStatus("Quality threshold and window size must be > 0.", isError: true)
                 return nil
             }
             let trimMode: FASTQQualityTrimMode
@@ -1780,7 +1950,7 @@ public final class FASTQDatasetViewController: NSViewController {
                 adapterMode = .specified
                 let seq = fieldOneInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !seq.isEmpty else {
-                    setStatus("Specify an adapter sequence or use Auto-Detect.")
+                    setStatus("Specify an adapter sequence or use Auto-Detect.", isError: true)
                     return nil
                 }
                 sequence = seq
@@ -1794,11 +1964,11 @@ public final class FASTQDatasetViewController: NSViewController {
             let from5 = Int(fieldOneInput.stringValue) ?? 0
             let from3 = Int(fieldTwoInput.stringValue) ?? 0
             guard from5 >= 0, from3 >= 0 else {
-                setStatus("Trim values must be >= 0.")
+                setStatus("Trim values must be >= 0.", isError: true)
                 return nil
             }
             guard from5 > 0 || from3 > 0 else {
-                setStatus("At least one trim value must be > 0.")
+                setStatus("At least one trim value must be > 0.", isError: true)
                 return nil
             }
             return .fixedTrim(from5Prime: from5, from3Prime: from3)
@@ -1807,15 +1977,15 @@ public final class FASTQDatasetViewController: NSViewController {
             let kmerSize = Int(fieldOneInput.stringValue) ?? 31
             let hammingDist = Int(fieldTwoInput.stringValue) ?? 1
             guard kmerSize > 0, kmerSize <= 63 else {
-                setStatus("Kmer size must be between 1 and 63.")
+                setStatus("Kmer size must be between 1 and 63.", isError: true)
                 return nil
             }
             guard hammingDist >= 0, hammingDist <= 3 else {
-                setStatus("Mismatch tolerance must be 0-3.")
+                setStatus("Mismatch tolerance must be 0-3.", isError: true)
                 return nil
             }
             if contaminantModePopup.indexOfSelectedItem == 1 {
-                setStatus("Custom reference mode requires a file picker (not yet implemented). Use PhiX mode.")
+                setStatus("Custom reference mode requires a file picker (not yet implemented). Use PhiX mode.", isError: true)
                 return nil
             }
             return .contaminantFilter(mode: .phix, referenceFasta: nil, kmerSize: kmerSize, hammingDistance: hammingDist)
@@ -1823,7 +1993,7 @@ public final class FASTQDatasetViewController: NSViewController {
         case .pairedEndMerge:
             let minOverlap = Int(fieldOneInput.stringValue) ?? 12
             guard minOverlap > 0 else {
-                setStatus("Minimum overlap must be > 0.")
+                setStatus("Minimum overlap must be > 0.", isError: true)
                 return nil
             }
             let strictness: FASTQMergeStrictness = mergeStrictnessPopup.indexOfSelectedItem == 1 ? .strict : .normal
@@ -1836,19 +2006,19 @@ public final class FASTQDatasetViewController: NSViewController {
             let source: FASTQPrimerSource = primerSourcePopup.indexOfSelectedItem == 1 ? .reference : .literal
             let kmerSize = Int(fieldTwoInput.stringValue) ?? 23
             guard kmerSize > 0, kmerSize <= 63 else {
-                setStatus("K-mer size must be between 1 and 63.")
+                setStatus("K-mer size must be between 1 and 63.", isError: true)
                 return nil
             }
             let input = fieldOneInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !input.isEmpty else {
-                setStatus("Provide a primer sequence (literal) or reference FASTA path.")
+                setStatus("Provide a primer sequence (literal) or reference FASTA path.", isError: true)
                 return nil
             }
             switch source {
             case .literal:
                 let validChars = CharacterSet(charactersIn: "ACGTUacgtuNnRYSWKMBDHVryswkmbdhv")
                 guard input.unicodeScalars.allSatisfy({ validChars.contains($0) }) else {
-                    setStatus("Primer sequence contains invalid characters. Use IUPAC nucleotide codes.")
+                    setStatus("Primer sequence contains invalid characters. Use IUPAC nucleotide codes.", isError: true)
                     return nil
                 }
                 return .primerRemoval(source: .literal, literalSequence: input, referenceFasta: nil, kmerSize: kmerSize, minKmer: 11, hammingDistance: 1)
@@ -1859,15 +2029,39 @@ public final class FASTQDatasetViewController: NSViewController {
         case .errorCorrection:
             let kmerSize = Int(fieldOneInput.stringValue) ?? 50
             guard kmerSize > 0, kmerSize <= 62 else {
-                setStatus("K-mer size must be between 1 and 62 (tadpole limit).")
+                setStatus("K-mer size must be between 1 and 62 (tadpole limit).", isError: true)
                 return nil
             }
             return .errorCorrection(kmerSize: kmerSize)
 
         case .demultiplex:
+            // Prefer drawer config when available
+            if let drawerConfig = currentDemuxConfig {
+                let drawerLocation: String
+                switch drawerConfig.barcodeLocation {
+                case .fivePrime: drawerLocation = "fivePrime"
+                case .threePrime: drawerLocation = "threePrime"
+                case .bothEnds: drawerLocation = "bothEnds"
+                }
+                let resolvedKit = BarcodeKitRegistry.kit(byID: drawerConfig.barcodeKitID)
+                let assignments = drawerConfig.sampleAssignments
+                return .demultiplex(
+                    kitID: drawerConfig.barcodeKitID,
+                    customCSVPath: nil,
+                    location: drawerLocation,
+                    maxDistanceFrom5Prime: 0,
+                    maxDistanceFrom3Prime: 0,
+                    errorRate: drawerConfig.errorRate,
+                    trimBarcodes: drawerConfig.trimBarcodes,
+                    sampleAssignments: assignments.isEmpty ? nil : assignments,
+                    kitOverride: resolvedKit
+                )
+            }
+
+            // Fallback: read from inline controls
             guard demuxKitPopup.indexOfSelectedItem >= 0,
                   demuxKitPopup.indexOfSelectedItem < demuxKitOptions.count else {
-                setStatus("Select a barcode kit.")
+                setStatus("Select a barcode kit.", isError: true)
                 return nil
             }
             let selectedKit = demuxKitOptions[demuxKitPopup.indexOfSelectedItem]
@@ -1880,23 +2074,26 @@ public final class FASTQDatasetViewController: NSViewController {
             }
             let errorRate = Double(fieldOneInput.stringValue) ?? 0.15
             guard errorRate >= 0, errorRate <= 1 else {
-                setStatus("Error rate must be between 0 and 1.")
+                setStatus("Error rate must be between 0 and 1.", isError: true)
                 return nil
             }
             let maxDistanceFrom5Prime = Int(demuxWindow5Input.stringValue) ?? 0
             let maxDistanceFrom3Prime = Int(demuxWindow3Input.stringValue) ?? 0
             guard maxDistanceFrom5Prime >= 0, maxDistanceFrom3Prime >= 0 else {
-                setStatus("Demultiplex windows must be >= 0.")
+                setStatus("Demultiplex windows must be >= 0.", isError: true)
                 return nil
             }
 
             let resolvedAssignments = resolveDemultiplexAssignments(using: selectedKit)
             if selectedKit.pairingMode == .combinatorialDual && resolvedAssignments.isEmpty {
-                setStatus("Combinatorial kits require FASTQ sample metadata with explicit 5'/3' barcode pairs.")
+                setStatus("Combinatorial kits require FASTQ sample metadata with explicit 5'/3' barcode pairs.", isError: true)
                 return nil
             }
 
             let trim = demuxTrimCheckbox.state == .on
+            // Pass the full kit definition so scout-pruned kits are used directly
+            // instead of re-resolving by ID from the registry (which loses pruning).
+            let kitDefinition = selectedKit
             return .demultiplex(
                 kitID: kitID,
                 customCSVPath: nil,
@@ -1905,7 +2102,8 @@ public final class FASTQDatasetViewController: NSViewController {
                 maxDistanceFrom3Prime: maxDistanceFrom3Prime,
                 errorRate: errorRate,
                 trimBarcodes: trim,
-                sampleAssignments: resolvedAssignments.isEmpty ? nil : resolvedAssignments
+                sampleAssignments: resolvedAssignments.isEmpty ? nil : resolvedAssignments,
+                kitOverride: kitDefinition
             )
         }
     }
@@ -1951,17 +2149,20 @@ public final class FASTQDatasetViewController: NSViewController {
             let maxDistanceFrom3Prime,
             let errorRate,
             _,
-            let sampleAssignments
+            let sampleAssignments,
+            _
         ):
             let sampleCount = sampleAssignments?.count ?? 0
             let source = sampleCount > 0 ? ", \(sampleCount) sample-pairs" : ""
             return "Demultiplex (\(kitID), \(location), w5=\(maxDistanceFrom5Prime), w3=\(maxDistanceFrom3Prime), e=\(String(format: "%.2f", errorRate))\(source))"
+        case .multiStepDemultiplex(let plan, _):
+            return "Multi-step demultiplex (\(plan.steps.count) steps)"
         }
     }
 
     // MARK: - Helpers
 
-    private func resolveDemultiplexAssignments(using kit: IlluminaBarcodeDefinition) -> [FASTQSampleBarcodeAssignment] {
+    private func resolveDemultiplexAssignments(using kit: BarcodeKitDefinition) -> [FASTQSampleBarcodeAssignment] {
         guard !demuxSampleAssignments.isEmpty else { return [] }
 
         var resolved: [FASTQSampleBarcodeAssignment] = []
@@ -1988,7 +2189,7 @@ public final class FASTQDatasetViewController: NSViewController {
         return resolved
     }
 
-    private func sequenceForBarcode(id: String?, in kit: IlluminaBarcodeDefinition) -> String? {
+    private func sequenceForBarcode(id: String?, in kit: BarcodeKitDefinition) -> String? {
         guard let id = id?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty else { return nil }
         return kit.barcodes.first(where: { $0.id.caseInsensitiveCompare(id) == .orderedSame })?.i7Sequence.uppercased()
     }
@@ -1998,8 +2199,23 @@ public final class FASTQDatasetViewController: NSViewController {
         return !stats.perPositionQuality.isEmpty && !stats.qualityScoreHistogram.isEmpty
     }
 
-    private func setStatus(_ line: String) {
+    private func setStatus(_ line: String, isError: Bool = false) {
         statusLabel.stringValue = line
+        statusLabel.textColor = isError ? .systemRed : .tertiaryLabelColor
+        if isError {
+            // Brief font size emphasis for errors
+            statusLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        } else {
+            statusLabel.font = .systemFont(ofSize: 10)
+        }
+    }
+
+    private func shakeButton(_ button: NSButton) {
+        let animation = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        animation.timingFunction = CAMediaTimingFunction(name: .linear)
+        animation.duration = 0.4
+        animation.values = [-6, 6, -4, 4, -2, 2, 0]
+        button.layer?.add(animation, forKey: "shake")
     }
 
     private func formatCount(_ count: Int) -> String {

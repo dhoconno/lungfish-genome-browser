@@ -283,16 +283,35 @@ final class FASTQSparklineStrip: NSView {
     }
 
     private func drawDisabledState(ctx: CGContext, rect: CGRect) {
-        ctx.setFillColor(NSColor.tertiaryLabelColor.withAlphaComponent(0.2).cgColor)
-        ctx.fill(rect)
+        // Subtle dashed border to indicate interactivity
+        ctx.saveGState()
+        ctx.setStrokeColor(NSColor.tertiaryLabelColor.withAlphaComponent(0.4).cgColor)
+        ctx.setLineWidth(1.0)
+        ctx.setLineDash(phase: 0, lengths: [3, 3])
+        let insetRect = rect.insetBy(dx: 2, dy: 2)
+        ctx.addPath(CGPath(roundedRect: insetRect, cornerWidth: 4, cornerHeight: 4, transform: nil))
+        ctx.strokePath()
+        ctx.restoreGState()
 
+        // "Click to Compute" label
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 9),
-            .foregroundColor: NSColor.tertiaryLabelColor,
+            .font: NSFont.systemFont(ofSize: 9, weight: .medium),
+            .foregroundColor: NSColor.secondaryLabelColor,
         ]
-        let str = NSAttributedString(string: "Run Quality Report", attributes: attrs)
+        let str = NSAttributedString(string: "Click to Compute", attributes: attrs)
         let size = str.size()
         str.draw(at: CGPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        // Show pointing hand cursor over quality sparklines when no data
+        if !hasQualityData {
+            for kind in SparklineKind.allCases where kind != .length {
+                let rect = sparklineRect(at: kind.rawValue)
+                addCursorRect(rect, cursor: .pointingHand)
+            }
+        }
     }
 
     private var hasQualityData: Bool {

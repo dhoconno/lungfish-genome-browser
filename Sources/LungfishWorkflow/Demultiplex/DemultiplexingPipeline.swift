@@ -74,9 +74,25 @@ public struct DemultiplexConfig: Sendable {
     /// avoiding cartesian expansion for combinatorial kits.
     public let sampleAssignments: [FASTQSampleBarcodeAssignment]
 
+    /// The platform that generated the FASTQ reads (may differ from the barcode kit's platform).
+    /// When set and different from the kit's platform, the effective error rate is
+    /// max(config.errorRate, sourcePlatform.recommendedErrorRate).
+    public var sourcePlatform: SequencingPlatform?
+
     /// Resolved adapter context (uses override if set, otherwise derives from kit).
     public var resolvedAdapterContext: any PlatformAdapterContext {
         adapterContext ?? barcodeKit.adapterContext
+    }
+
+    /// Effective error rate accounting for cross-platform scenarios.
+    ///
+    /// When the source platform differs from the kit's platform (e.g., PacBio kit on ONT reads),
+    /// uses the higher of the configured error rate and the source platform's recommended rate.
+    public var effectiveErrorRate: Double {
+        guard let sourcePlatform, sourcePlatform != barcodeKit.platform else {
+            return errorRate
+        }
+        return max(errorRate, sourcePlatform.recommendedErrorRate)
     }
 
     public init(
@@ -95,7 +111,8 @@ public struct DemultiplexConfig: Sendable {
         polyGTrimQuality: Int? = nil,
         threads: Int = 4,
         adapterContext: (any PlatformAdapterContext)? = nil,
-        sampleAssignments: [FASTQSampleBarcodeAssignment] = []
+        sampleAssignments: [FASTQSampleBarcodeAssignment] = [],
+        sourcePlatform: SequencingPlatform? = nil
     ) {
         self.inputURL = inputURL
         self.barcodeKit = barcodeKit
@@ -127,6 +144,7 @@ public struct DemultiplexConfig: Sendable {
         self.polyGTrimQuality = polyGTrimQuality ?? barcodeKit.platform.defaultPolyGTrimQuality
         self.threads = threads
         self.sampleAssignments = sampleAssignments
+        self.sourcePlatform = sourcePlatform
     }
 }
 
@@ -157,6 +175,7 @@ public enum DemultiplexError: Error, LocalizedError, Sendable {
     case outputParsingFailed(String)
     case bundleCreationFailed(barcode: String, underlying: String)
     case noOutputResults
+    case emptyAdapterSequences(kitName: String)
 
     public var errorDescription: String? {
         switch self {
@@ -174,6 +193,8 @@ public enum DemultiplexError: Error, LocalizedError, Sendable {
             return "Failed to create bundle for \(barcode): \(error)"
         case .noOutputResults:
             return "Multi-step demultiplexing produced no output results."
+        case .emptyAdapterSequences(let kitName):
+            return "Adapter FASTA for kit '\(kitName)' contains no valid sequences. Check barcode definitions."
         }
     }
 }
@@ -244,6 +265,13 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
             for: config,
             workDirectory: workDir
         )
+
+        // Validate adapter FASTA is non-empty (catches upstream bugs before cutadapt fails cryptically)
+        let fastaContent = try String(contentsOf: adapterConfig.adapterFASTA, encoding: .utf8)
+        let sequences = fastaContent.split(separator: "\n").filter { !$0.hasPrefix(">") && !$0.isEmpty }
+        if sequences.isEmpty || sequences.allSatisfy({ $0.trimmingCharacters(in: .whitespaces).isEmpty }) {
+            throw DemultiplexError.emptyAdapterSequences(kitName: config.barcodeKit.displayName)
+        }
 
         // Step 2: Build cutadapt command (5% progress)
         progress(0.05, "Configuring cutadapt...")
@@ -452,7 +480,33 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
     ) async throws -> AdapterConfiguration {
         let adapterFASTA = workDirectory.appendingPathComponent("adapters.fasta")
 
-        if !config.sampleAssignments.isEmpty {
+        if !config.sampleAssignments.isEmpty
+            && config.barcodeKit.pairingMode == .symmetric
+            && config.barcodeKit.platform.readsCanBeReverseComplemented {
+            // Symmetric long-read kits with sample assignments from scout:
+            // Use linked adapter specs (which correctly handle the symmetric barcode
+            // on both read ends) but with sample-specific names from assignments.
+            let ctx = config.resolvedAdapterContext
+            var lines: [String] = []
+            for assignment in config.sampleAssignments {
+                guard let sequence = resolveSequence(
+                    explicitSequence: assignment.forwardSequence,
+                    barcodeID: assignment.forwardBarcodeID,
+                    kit: config.barcodeKit
+                ) else { continue }
+                let spec = ctx.linkedSpec(barcodeSequence: sequence)
+                let name = sanitizedSampleIdentifier(assignment.sampleID)
+                lines.append(">\(name)")
+                lines.append(spec)
+            }
+            guard !lines.isEmpty else {
+                throw DemultiplexError.combinatorialRequiresSampleAssignments
+            }
+            let content = lines.joined(separator: "\n") + "\n"
+            try content.write(to: adapterFASTA, atomically: true, encoding: .utf8)
+            try validateAdapterFASTA(at: adapterFASTA, kitName: config.barcodeKit.displayName)
+            return AdapterConfiguration(adapterFASTA: adapterFASTA, adapterFlag: "-g")
+        } else if !config.sampleAssignments.isEmpty {
             let entries: [(name: String, first: String, second: String)] = config.sampleAssignments.compactMap { assignment in
                 guard let forward = resolveSequence(
                     explicitSequence: assignment.forwardSequence,
@@ -484,6 +538,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                 maxDistanceFrom3Prime: config.maxDistanceFrom3Prime,
                 to: adapterFASTA
             )
+            try validateAdapterFASTA(at: adapterFASTA, kitName: config.barcodeKit.displayName)
             return AdapterConfiguration(adapterFASTA: adapterFASTA, adapterFlag: "-g")
         }
 
@@ -502,6 +557,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                 }
                 let content = lines.joined(separator: "\n") + "\n"
                 try content.write(to: adapterFASTA, atomically: true, encoding: .utf8)
+                try validateAdapterFASTA(at: adapterFASTA, kitName: config.barcodeKit.displayName)
                 return AdapterConfiguration(adapterFASTA: adapterFASTA, adapterFlag: "-g")
             }
 
@@ -519,6 +575,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                 maxDistanceFrom3Prime: config.maxDistanceFrom3Prime,
                 to: adapterFASTA
             )
+            try validateAdapterFASTA(at: adapterFASTA, kitName: config.barcodeKit.displayName)
             return AdapterConfiguration(
                 adapterFASTA: adapterFASTA,
                 adapterFlag: adapterFlag(for: config.barcodeLocation)
@@ -549,10 +606,27 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                 maxDistanceFrom3Prime: config.maxDistanceFrom3Prime,
                 to: adapterFASTA
             )
+            try validateAdapterFASTA(at: adapterFASTA, kitName: config.barcodeKit.displayName)
             return AdapterConfiguration(adapterFASTA: adapterFASTA, adapterFlag: "-g")
 
         case .combinatorialDual:
             throw DemultiplexError.combinatorialRequiresSampleAssignments
+        }
+    }
+
+    /// Validates that an adapter FASTA file contains at least one non-empty sequence.
+    private func validateAdapterFASTA(at url: URL, kitName: String) throws {
+        let content = try String(contentsOf: url, encoding: .utf8)
+        let sequences = content.split(separator: "\n")
+            .filter { !$0.hasPrefix(">") && !$0.isEmpty }
+        guard !sequences.isEmpty else {
+            throw DemultiplexError.emptyAdapterSequences(kitName: kitName)
+        }
+        for seq in sequences {
+            let trimmed = seq.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                throw DemultiplexError.emptyAdapterSequences(kitName: kitName)
+            }
         }
     }
 
@@ -821,8 +895,8 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         // Adapter specification.
         args += [adapterFlag, "file:\(adapterFASTA.path)"]
 
-        // Error rate and overlap
-        args += ["-e", String(config.errorRate)]
+        // Error rate (cross-platform aware) and overlap
+        args += ["-e", String(config.effectiveErrorRate)]
         args += ["--overlap", String(config.minimumOverlap)]
 
         // Search both strand orientations for long-read platforms
@@ -973,6 +1047,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         }
         let adapterContent = lines.joined(separator: "\n") + "\n"
         try adapterContent.write(to: adapterFASTA, atomically: true, encoding: .utf8)
+        try validateAdapterFASTA(at: adapterFASTA, kitName: kit.displayName)
 
         // Step 3: Run cutadapt
         progress(0.3, "Running cutadapt scout scan...")

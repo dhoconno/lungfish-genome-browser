@@ -98,7 +98,7 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
     private let stepErrorLabel = NSTextField(labelWithString: "Error Rate:")
     private let stepErrorRateField = NSTextField(string: "0.15")
     private let stepTrimCheckbox = NSButton(checkboxWithTitle: "Trim barcodes", target: nil, action: nil)
-    private let stepScoutButton = NSButton(title: "Scout", target: nil, action: nil)
+    private let stepScoutButton = NSButton(title: "Detect", target: nil, action: nil)
     private let stepAddButton = NSButton(title: "+", target: nil, action: nil)
     private let stepRemoveButton = NSButton(title: "−", target: nil, action: nil)
 
@@ -161,6 +161,13 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
     /// Returns the current demux plan built from the Demux Setup tab.
     public func currentDemuxPlan() -> DemultiplexPlan {
         DemultiplexPlan(steps: demuxSteps, compositeSampleNames: compositeSampleNames)
+    }
+
+    /// Programmatically selects the Demux Setup tab.
+    public func selectDemuxSetupTab() {
+        tabControl.selectedSegment = Tab.demuxSetup.rawValue
+        activeTab = .demuxSetup
+        rebuildColumns()
     }
 
     // MARK: - Setup UI
@@ -394,7 +401,7 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         stepSymmetryPopup.setAccessibilityLabel("Barcode symmetry mode")
         stepErrorRateField.setAccessibilityLabel("Error rate")
         stepTrimCheckbox.setAccessibilityLabel("Trim barcodes from reads")
-        stepScoutButton.setAccessibilityLabel("Scout barcode matches")
+        stepScoutButton.setAccessibilityLabel("Detect barcode matches")
         stepTable.setAccessibilityLabel("Demultiplexing steps")
         stepAddButton.setAccessibilityLabel("Add demux step")
         stepRemoveButton.setAccessibilityLabel("Remove demux step")
@@ -492,12 +499,17 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
 
         // Barcode Kits tab constraints (kit list top half, detail table bottom half)
         let kitHeightConstraint = scrollView.heightAnchor.constraint(equalTo: heightAnchor, multiplier: 0.35)
-        kitHeightConstraint.priority = .defaultHigh
+        kitHeightConstraint.priority = NSLayoutConstraint.Priority(749) // Below minimum height
+        let kitMinHeightConstraint = scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 60)
+        kitMinHeightConstraint.priority = .defaultHigh // 750 — wins over multiplier
+        let kitDetailMinHeightConstraint = kitDetailScrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 60)
+        kitDetailMinHeightConstraint.priority = .defaultHigh
         barcodeKitsConstraints = [
             scrollView.topAnchor.constraint(equalTo: headerBar.bottomAnchor, constant: 6),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             kitHeightConstraint,
+            kitMinHeightConstraint,
 
             kitDetailLabel.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 4),
             kitDetailLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
@@ -506,16 +518,19 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
             kitDetailScrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             kitDetailScrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             kitDetailScrollView.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -6),
+            kitDetailMinHeightConstraint,
         ]
 
         // Demux Setup tab constraints (step list top, detail panel bottom)
         let stepHeightConstraint = stepScrollView.heightAnchor.constraint(equalTo: heightAnchor, multiplier: 0.3)
-        stepHeightConstraint.priority = .defaultHigh
+        stepHeightConstraint.priority = NSLayoutConstraint.Priority(749) // Below minimum height
+        let stepMinHeight = stepScrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 60)
+        stepMinHeight.priority = .defaultHigh // 750 — wins over multiplier
         demuxSetupConstraints = [
             stepScrollView.topAnchor.constraint(equalTo: headerBar.bottomAnchor, constant: 6),
             stepScrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             stepScrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            stepScrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 60),
+            stepMinHeight,
             stepHeightConstraint,
 
             stepDetailContainer.topAnchor.constraint(equalTo: stepScrollView.bottomAnchor, constant: 4),

@@ -129,6 +129,15 @@ public class MainSplitViewController: NSSplitViewController {
                 self?.applySidebarPreferredWidth(self?.sidebarDefaultWidth ?? 240, allowShrink: true)
             }
         }
+        // One-time migration: clear stale split view autosave from broken TARIC configuration
+        let autosaveMigrationKey = "com.lungfish.splitview.autosave.v2.migrated"
+        if !UserDefaults.standard.bool(forKey: autosaveMigrationKey) {
+            if let autosaveName = splitView.autosaveName {
+                UserDefaults.standard.removeObject(forKey: "NSSplitView Subview Frames \(autosaveName)")
+            }
+            UserDefaults.standard.set(true, forKey: autosaveMigrationKey)
+        }
+
         logger.info("viewDidLoad: MainSplitViewController setup complete")
     }
 
@@ -1045,6 +1054,31 @@ public class MainSplitViewController: NSSplitViewController {
             return true
         }
         return false
+    }
+
+    public override func splitView(
+        _ splitView: NSSplitView,
+        constrainMinCoordinate proposedMinimumPosition: CGFloat,
+        ofSubviewAt dividerIndex: Int
+    ) -> CGFloat {
+        switch dividerIndex {
+        case 0: return max(proposedMinimumPosition, 180)   // Sidebar min width
+        case 1: return max(proposedMinimumPosition, 300)   // Content min width (from left edge)
+        default: return proposedMinimumPosition
+        }
+    }
+
+    public override func splitView(
+        _ splitView: NSSplitView,
+        constrainMaxCoordinate proposedMaximumPosition: CGFloat,
+        ofSubviewAt dividerIndex: Int
+    ) -> CGFloat {
+        let totalWidth = splitView.bounds.width
+        switch dividerIndex {
+        case 0: return min(proposedMaximumPosition, totalWidth * 0.4)  // Sidebar max 40%
+        case 1: return min(proposedMaximumPosition, totalWidth - 180)  // Inspector min 180
+        default: return proposedMaximumPosition
+        }
     }
 
     public override func splitViewDidResizeSubviews(_ notification: Notification) {

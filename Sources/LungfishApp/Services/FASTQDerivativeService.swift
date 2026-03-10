@@ -40,8 +40,12 @@ public enum FASTQDerivativeRequest: Sendable {
         maxDistanceFrom3Prime: Int,
         errorRate: Double,
         trimBarcodes: Bool,
-        sampleAssignments: [FASTQSampleBarcodeAssignment]?
+        sampleAssignments: [FASTQSampleBarcodeAssignment]?,
+        kitOverride: BarcodeKitDefinition?
     )
+
+    // Multi-step demultiplexing (produces per-barcode bundles via DemultiplexPlan)
+    case multiStepDemultiplex(plan: DemultiplexPlan, sourcePlatform: SequencingPlatform?)
 
     /// Human-readable label for this operation, used in the Operations panel.
     var operationLabel: String {
@@ -62,6 +66,7 @@ public enum FASTQDerivativeRequest: Sendable {
         case .errorCorrection: return "Error Correction"
         case .interleaveReformat: return "Interleave Reformat"
         case .demultiplex: return "Demultiplex"
+        case .multiStepDemultiplex: return "Multi-Step Demultiplex"
         }
     }
 
@@ -74,7 +79,8 @@ public enum FASTQDerivativeRequest: Sendable {
              .searchText, .searchMotif, .deduplicate, .contaminantFilter:
             return false
         case .pairedEndMerge, .pairedEndRepair, .primerRemoval,
-             .errorCorrection, .interleaveReformat, .demultiplex:
+             .errorCorrection, .interleaveReformat, .demultiplex,
+             .multiStepDemultiplex:
             return false
         }
     }
@@ -83,7 +89,8 @@ public enum FASTQDerivativeRequest: Sendable {
     var isFullOperation: Bool {
         switch self {
         case .pairedEndMerge, .pairedEndRepair, .primerRemoval,
-             .errorCorrection, .interleaveReformat, .demultiplex:
+             .errorCorrection, .interleaveReformat, .demultiplex,
+             .multiStepDemultiplex:
             return true
         default:
             return false
@@ -222,6 +229,16 @@ public actor FASTQDerivativeService {
             baseLineage = []
         }
 
+        // Multi-step demultiplexing has its own execution path
+        if case .multiStepDemultiplex(let plan, _) = request {
+            return try await createMultiStepDemultiplexDerivative(
+                plan: plan,
+                sourceFASTQ: materializedSourceFASTQ,
+                sourceBundleURL: sourceBundleURL,
+                progress: progress
+            )
+        }
+
         // Mixed-output operations (merge/repair) write multiple files directly
         // to the output bundle, bypassing the single-file temp flow.
         if case .demultiplex(
@@ -232,7 +249,8 @@ public actor FASTQDerivativeService {
             let maxDistanceFrom3Prime,
             let errorRate,
             let trimBarcodes,
-            let sampleAssignments
+            let sampleAssignments,
+            let kitOverride
         ) = request {
             return try await createDemultiplexDerivative(
                 sourceFASTQ: materializedSourceFASTQ,
@@ -245,6 +263,7 @@ public actor FASTQDerivativeService {
                 errorRate: errorRate,
                 trimBarcodes: trimBarcodes,
                 sampleAssignments: sampleAssignments ?? [],
+                kitOverride: kitOverride,
                 progress: progress
             )
         }
@@ -412,10 +431,14 @@ public actor FASTQDerivativeService {
         errorRate: Double,
         trimBarcodes: Bool,
         sampleAssignments: [FASTQSampleBarcodeAssignment],
+        kitOverride: BarcodeKitDefinition?,
         progress: (@Sendable (String) -> Void)?
     ) async throws -> URL {
-        let barcodeKit: IlluminaBarcodeDefinition
-        if let customCSVPath, !customCSVPath.isEmpty {
+        let barcodeKit: BarcodeKitDefinition
+        if let kitOverride {
+            // Use the caller-provided kit directly (e.g. pruned by scout)
+            barcodeKit = kitOverride
+        } else if let customCSVPath, !customCSVPath.isEmpty {
             let csvURL: URL
             if customCSVPath.hasPrefix("/") {
                 csvURL = URL(fileURLWithPath: customCSVPath)
@@ -425,8 +448,8 @@ public actor FASTQDerivativeService {
             guard FileManager.default.fileExists(atPath: csvURL.path) else {
                 throw FASTQDerivativeError.invalidOperation("Custom barcode CSV not found: \(csvURL.path)")
             }
-            barcodeKit = try IlluminaBarcodeKitRegistry.loadCustomKit(from: csvURL, name: "Custom")
-        } else if let builtin = IlluminaBarcodeKitRegistry.kit(byID: kitID) {
+            barcodeKit = try BarcodeKitRegistry.loadCustomKit(from: csvURL, name: "Custom")
+        } else if let builtin = BarcodeKitRegistry.kit(byID: kitID) {
             barcodeKit = builtin
         } else {
             throw FASTQDerivativeError.invalidOperation("Unknown barcode kit: \(kitID)")
@@ -508,6 +531,79 @@ public actor FASTQDerivativeService {
         progress?("Demultiplex complete: \(result.manifest.barcodes.count) barcode bundle(s)")
         derivativeLogger.info("Created demultiplex output at \(outputDirectory.path, privacy: .public)")
         return selectedBundle
+    }
+
+    /// Runs a multi-step demultiplexing pipeline and returns the most representative output bundle.
+    ///
+    /// - Parameters:
+    ///   - plan: The multi-step demultiplexing plan.
+    ///   - sourceFASTQ: Materialized source FASTQ file.
+    ///   - sourceBundleURL: Source bundle URL.
+    ///   - progress: Progress callback.
+    /// - Returns: URL of the largest output bundle for immediate selection.
+    private func createMultiStepDemultiplexDerivative(
+        plan: DemultiplexPlan,
+        sourceFASTQ: URL,
+        sourceBundleURL: URL,
+        progress: (@Sendable (String) -> Void)?
+    ) async throws -> URL {
+        try plan.validate()
+
+        // For single-step plans, delegate to existing single-step implementation
+        if plan.steps.count == 1, let step = plan.steps.first {
+            let location: String
+            switch step.barcodeLocation {
+            case .fivePrime: location = "fivePrime"
+            case .threePrime: location = "threePrime"
+            case .bothEnds: location = "bothEnds"
+            }
+            let resolvedKit = BarcodeKitRegistry.kit(byID: step.barcodeKitID)
+            return try await createDemultiplexDerivative(
+                sourceFASTQ: sourceFASTQ,
+                sourceBundleURL: sourceBundleURL,
+                kitID: step.barcodeKitID,
+                customCSVPath: nil,
+                location: location,
+                maxDistanceFrom5Prime: 0,
+                maxDistanceFrom3Prime: 0,
+                errorRate: step.errorRate,
+                trimBarcodes: step.trimBarcodes,
+                sampleAssignments: step.sampleAssignments,
+                kitOverride: resolvedKit,
+                progress: progress
+            )
+        }
+
+        // Multi-step: use DemultiplexingPipeline.runMultiStep
+        let sourceBaseName = FASTQBundle.deriveBaseName(from: sourceBundleURL)
+        let parentDir = sourceBundleURL.deletingLastPathComponent()
+        let outputDirBase = parentDir.appendingPathComponent("\(sourceBaseName)-demux-multi", isDirectory: true)
+        let outputDirectory = uniqueDirectoryURL(startingAt: outputDirBase)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+
+        progress?("Running multi-step demultiplexing (\(plan.steps.count) steps)...")
+        let pipeline = DemultiplexingPipeline()
+        let result = try await pipeline.runMultiStep(
+            plan: plan,
+            inputURL: sourceFASTQ,
+            outputDirectory: outputDirectory,
+            progress: { fraction, message in
+                let percent = Int((fraction * 100.0).rounded())
+                progress?("Multi-step demux (\(percent)%): \(message)")
+            }
+        )
+
+        // Select the largest final output bundle
+        guard let topBundle = result.outputBundleURLs.max(by: {
+            (try? FileManager.default.attributesOfItem(atPath: $0.path)[.size] as? Int64) ?? 0 <
+            (try? FileManager.default.attributesOfItem(atPath: $1.path)[.size] as? Int64) ?? 0
+        }) else {
+            throw FASTQDerivativeError.emptyResult
+        }
+
+        progress?("Multi-step demux complete: \(result.outputBundleURLs.count) output bundle(s)")
+        derivativeLogger.info("Created multi-step demux output at \(outputDirectory.path, privacy: .public)")
+        return topBundle
     }
 
     private func persistDemultiplexedSampleMetadata(
@@ -1017,6 +1113,11 @@ public actor FASTQDerivativeService {
         case .demultiplex:
             throw FASTQDerivativeError.invalidOperation(
                 "Demultiplexing is not implemented in FASTQDerivativeService. Use the demultiplexing pipeline."
+            )
+
+        case .multiStepDemultiplex:
+            throw FASTQDerivativeError.invalidOperation(
+                "Multi-step demultiplexing is handled via createMultiStepDemultiplexDerivative."
             )
         }
     }

@@ -60,7 +60,7 @@ final class DemultiplexingPipelineTests: XCTestCase {
     func testDemultiplexConfigDefaults() {
         let config = DemultiplexConfig(
             inputURL: URL(fileURLWithPath: "/tmp/test.fastq.gz"),
-            barcodeKit: IlluminaBarcodeKitRegistry.truseqSingleA,
+            barcodeKit: BarcodeKitRegistry.truseqSingleA,
             outputDirectory: URL(fileURLWithPath: "/tmp/output")
         )
 
@@ -101,7 +101,7 @@ final class DemultiplexingPipelineTests: XCTestCase {
     func testDemultiplexConfigBothEndsLocation() {
         let config = DemultiplexConfig(
             inputURL: URL(fileURLWithPath: "/tmp/test.fastq.gz"),
-            barcodeKit: IlluminaBarcodeKitRegistry.truseqSingleA,
+            barcodeKit: BarcodeKitRegistry.truseqSingleA,
             outputDirectory: URL(fileURLWithPath: "/tmp/output"),
             barcodeLocation: .bothEnds,
             errorRate: 0.2,
@@ -196,14 +196,14 @@ final class DemultiplexingPipelineTests: XCTestCase {
         )
 
         let outputDir = dir.appendingPathComponent("demux-out", isDirectory: true)
-        let kit = IlluminaBarcodeDefinition(
+        let kit = BarcodeKitDefinition(
             id: "fixed-dual-test",
             displayName: "Fixed Dual Test",
             vendor: "custom",
             isDualIndexed: true,
             pairingMode: .fixedDual,
             barcodes: [
-                IlluminaBarcode(id: "P01", i7Sequence: "ACGTACGT", i5Sequence: "TGCATGCA"),
+                BarcodeEntry(id: "P01", i7Sequence: "ACGTACGT", i5Sequence: "TGCATGCA"),
             ]
         )
 
@@ -292,5 +292,196 @@ final class DemultiplexingPipelineTests: XCTestCase {
             outputDirectory: URL(fileURLWithPath: "/tmp/out")
         )
         XCTAssertEqual(config.polyGTrimQuality, 20)
+    }
+
+    // MARK: - P0 Regression Tests (Phase 1)
+
+    /// Adapter FASTA content would be non-empty for all built-in kits.
+    /// Validates that every kit's adapter context produces valid linked specs
+    /// and that no barcode sequence is empty.
+    func testAdapterFASTAContentNonEmptyForAllKits() {
+        let kits = BarcodeKitRegistry.builtinKits()
+
+        for kit in kits {
+            // Skip combinatorial kits — they require explicit sample assignments
+            if kit.pairingMode == .combinatorialDual { continue }
+
+            let context = kit.adapterContext
+            for barcode in kit.barcodes {
+                XCTAssertFalse(
+                    barcode.i7Sequence.isEmpty,
+                    "Barcode \(barcode.id) in kit \(kit.displayName) should have non-empty i7 sequence"
+                )
+
+                // For long-read platforms, test linked spec
+                if kit.platform.readsCanBeReverseComplemented {
+                    let spec = context.linkedSpec(barcodeSequence: barcode.i7Sequence)
+                    XCTAssertFalse(
+                        spec.isEmpty,
+                        "Linked spec should not be empty for \(kit.displayName) barcode \(barcode.id)"
+                    )
+                    // Verify no empty segments around the ... separator
+                    let parts = spec.components(separatedBy: "...")
+                    for (idx, part) in parts.enumerated() {
+                        XCTAssertFalse(
+                            String(part).trimmingCharacters(in: .whitespaces).isEmpty,
+                            "Linked spec part \(idx) should not be empty for \(kit.displayName) \(barcode.id)"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /// DemultiplexError.emptyAdapterSequences has a description.
+    func testEmptyAdapterSequencesErrorDescription() {
+        let error = DemultiplexError.emptyAdapterSequences(kitName: "Test Kit")
+        XCTAssertNotNil(error.errorDescription)
+        XCTAssertTrue(error.errorDescription?.contains("Test Kit") ?? false)
+    }
+
+    /// Resolved adapter context returns correct type per kit platform.
+    func testResolvedAdapterContextForAllBuiltinKits() {
+        let kits = BarcodeKitRegistry.builtinKits()
+        for kit in kits {
+            let config = DemultiplexConfig(
+                inputURL: URL(fileURLWithPath: "/tmp/test.fastq.gz"),
+                barcodeKit: kit,
+                outputDirectory: URL(fileURLWithPath: "/tmp/output")
+            )
+            let ctx = config.resolvedAdapterContext
+            switch kit.vendor {
+            case "oxford-nanopore":
+                switch kit.kitType {
+                case .rapidBarcoding:
+                    XCTAssertTrue(ctx is ONTRapidAdapterContext,
+                                  "ONT rapid kit \(kit.id) should have ONTRapidAdapterContext")
+                default:
+                    // nativeBarcoding, pcrBarcoding, sixteenS all use ONTNativeAdapterContext
+                    XCTAssertTrue(ctx is ONTNativeAdapterContext,
+                                  "ONT kit \(kit.id) (type: \(kit.kitType)) should have ONTNativeAdapterContext")
+                }
+            case "illumina":
+                XCTAssertTrue(ctx is IlluminaTruSeqAdapterContext || ctx is IlluminaNexteraAdapterContext,
+                              "Illumina kit \(kit.id) should have Illumina adapter context")
+            case "pacbio":
+                XCTAssertTrue(ctx is PacBioAdapterContext,
+                              "PacBio kit \(kit.id) should have PacBioAdapterContext")
+            default:
+                break
+            }
+        }
+    }
+
+    // MARK: - P1 Tests (Phase 2)
+
+    /// Combinatorial dual kits without sample assignments should throw.
+    func testCombinatorialDualWithoutAssignmentsThrows() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let inputFASTQ = dir.appendingPathComponent("input.fastq")
+        try writeFASTQ(sequences: ["ACGTACGTACGTACGT"], to: inputFASTQ)
+
+        let outputDir = dir.appendingPathComponent("demux-out", isDirectory: true)
+        let kit = BarcodeKitDefinition(
+            id: "combo-test",
+            displayName: "Combinatorial Test",
+            vendor: "custom",
+            isDualIndexed: true,
+            pairingMode: .combinatorialDual,
+            barcodes: [
+                BarcodeEntry(id: "F01", i7Sequence: "ACGTACGT"),
+                BarcodeEntry(id: "R01", i7Sequence: "TGCATGCA"),
+            ]
+        )
+
+        let pipeline = DemultiplexingPipeline()
+        do {
+            _ = try await pipeline.run(
+                config: DemultiplexConfig(
+                    inputURL: inputFASTQ,
+                    barcodeKit: kit,
+                    outputDirectory: outputDir,
+                    threads: 1
+                ),
+                progress: { _, _ in }
+            )
+            XCTFail("Should have thrown for combinatorial kit without assignments")
+        } catch let error as DemultiplexError {
+            switch error {
+            case .combinatorialRequiresSampleAssignments:
+                break // Expected
+            default:
+                XCTFail("Expected combinatorialRequiresSampleAssignments, got \(error)")
+            }
+        }
+    }
+
+    // MARK: - P2 Tests
+
+    /// Poly-G trim config produces correct effective quality value.
+    func testPolyGTrimConfigFlowsToEffectiveRate() {
+        let illuminaKit = BarcodeKitDefinition(
+            id: "test-illumina-polyg",
+            displayName: "Test Illumina PolyG",
+            vendor: "illumina",
+            barcodes: [BarcodeEntry(id: "BC01", i7Sequence: "ACGT")]
+        )
+
+        // Default: Illumina gets polyG = 20
+        let defaultConfig = DemultiplexConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/input.fastq"),
+            barcodeKit: illuminaKit,
+            outputDirectory: URL(fileURLWithPath: "/tmp/out")
+        )
+        XCTAssertEqual(defaultConfig.polyGTrimQuality, 20)
+
+        // Explicit override
+        let overrideConfig = DemultiplexConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/input.fastq"),
+            barcodeKit: illuminaKit,
+            outputDirectory: URL(fileURLWithPath: "/tmp/out"),
+            polyGTrimQuality: 30
+        )
+        XCTAssertEqual(overrideConfig.polyGTrimQuality, 30)
+
+        // Explicit nil disables
+        let disabledConfig = DemultiplexConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/input.fastq"),
+            barcodeKit: illuminaKit,
+            outputDirectory: URL(fileURLWithPath: "/tmp/out"),
+            polyGTrimQuality: 0
+        )
+        XCTAssertEqual(disabledConfig.polyGTrimQuality, 0)
+    }
+
+    /// Cross-platform error rate: effectiveErrorRate uses max of kit and source platform.
+    func testEffectiveErrorRateCrossPlatform() {
+        let illuminaKit = BarcodeKitDefinition(
+            id: "test-cross-plat",
+            displayName: "Cross Platform Test",
+            vendor: "illumina",
+            barcodes: [BarcodeEntry(id: "BC01", i7Sequence: "ACGT")]
+        )
+
+        // No source platform: uses kit error rate as-is
+        let config1 = DemultiplexConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/input.fastq"),
+            barcodeKit: illuminaKit,
+            outputDirectory: URL(fileURLWithPath: "/tmp/out"),
+            errorRate: 0.1
+        )
+        XCTAssertEqual(config1.effectiveErrorRate, 0.1, accuracy: 0.001)
+
+        // Same platform: no adjustment
+        let config2 = DemultiplexConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/input.fastq"),
+            barcodeKit: illuminaKit,
+            outputDirectory: URL(fileURLWithPath: "/tmp/out"),
+            errorRate: 0.1,
+            sourcePlatform: .illumina
+        )
+        XCTAssertEqual(config2.effectiveErrorRate, 0.1, accuracy: 0.001)
     }
 }

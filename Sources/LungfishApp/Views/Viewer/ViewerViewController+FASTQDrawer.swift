@@ -4,6 +4,7 @@
 
 import AppKit
 import LungfishIO
+import LungfishWorkflow
 import os.log
 
 private let fastqDrawerLogger = Logger(subsystem: "com.lungfish.browser", category: "ViewerFASTQDrawer")
@@ -97,7 +98,27 @@ extension ViewerViewController: FASTQMetadataDrawerViewDelegate {
         persisted.demultiplexMetadata = metadata
         FASTQMetadataStore.save(persisted, for: targetURL)
         refreshFASTQDemultiplexMetadata()
+        syncDemuxConfigToController()
         fastqDrawerLogger.info("Saved FASTQ demultiplex metadata for \(targetURL.lastPathComponent, privacy: .public)")
+    }
+
+    /// Syncs the drawer's first demux step to the operations panel as the current config.
+    func syncDemuxConfigToController() {
+        guard let drawer = fastqMetadataDrawerView else { return }
+        let plan = drawer.currentDemuxPlan()
+        let firstStep = plan.steps.sorted(by: { $0.ordinal < $1.ordinal }).first
+        fastqDatasetController?.currentDemuxConfig = firstStep
+    }
+
+    /// Opens the metadata drawer and selects the Demux Setup tab.
+    func openDemuxSetupDrawer() {
+        if fastqMetadataDrawerView == nil {
+            configureFASTQMetadataDrawer()
+        }
+        if !isFASTQMetadataDrawerOpen {
+            toggleFASTQMetadataDrawer()
+        }
+        fastqMetadataDrawerView?.selectDemuxSetupTab()
     }
 }
 

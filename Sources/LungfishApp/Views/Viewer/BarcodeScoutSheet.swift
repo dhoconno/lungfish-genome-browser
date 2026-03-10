@@ -413,7 +413,7 @@ public final class BarcodeScoutSheet: NSViewController, NSTableViewDataSource, N
         )
 
         let sheetWindow = NSWindow(contentViewController: controller)
-        sheetWindow.title = "Barcode Scout Results"
+        sheetWindow.title = "Barcode Detection Results"
         sheetWindow.styleMask = [.titled, .closable, .resizable]
         sheetWindow.isReleasedWhenClosed = false
 

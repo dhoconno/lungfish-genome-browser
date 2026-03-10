@@ -19,6 +19,7 @@ public enum BarcodePairingMode: String, Codable, Sendable, CaseIterable {
 }
 
 /// Backward-compatible alias for ``BarcodeKitDefinition``.
+@available(*, deprecated, renamed: "BarcodeKitDefinition")
 public typealias IlluminaBarcodeDefinition = BarcodeKitDefinition
 
 /// A barcode kit definition for demultiplexing, supporting single- and dual-indexed kits.
@@ -111,6 +112,7 @@ public struct BarcodeKitDefinition: Codable, Sendable, Equatable, Identifiable {
 }
 
 /// Backward-compatible alias for ``BarcodeEntry``.
+@available(*, deprecated, renamed: "BarcodeEntry")
 public typealias IlluminaBarcode = BarcodeEntry
 
 /// A single barcode entry with index sequences.
@@ -222,6 +224,7 @@ public enum IlluminaAdapterContext {
 // MARK: - Barcode Kit Registry
 
 /// Backward-compatible alias for ``BarcodeKitRegistry``.
+@available(*, deprecated, renamed: "BarcodeKitRegistry")
 public typealias IlluminaBarcodeKitRegistry = BarcodeKitRegistry
 
 /// Registry of built-in and custom barcode kits for demultiplexing.

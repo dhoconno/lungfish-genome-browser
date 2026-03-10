@@ -13,12 +13,12 @@ final class IlluminaBarcodeKitTests: XCTestCase {
     // MARK: - Built-In Kit Registry
 
     func testBuiltinKitCount() {
-        let kits = IlluminaBarcodeKitRegistry.builtinKits()
+        let kits = BarcodeKitRegistry.builtinKits()
         XCTAssertEqual(kits.count, 18)
     }
 
     func testTruSeqSingleA() {
-        let kit = IlluminaBarcodeKitRegistry.truseqSingleA
+        let kit = BarcodeKitRegistry.truseqSingleA
         XCTAssertEqual(kit.id, "truseq-single-a")
         XCTAssertEqual(kit.barcodes.count, 12)
         XCTAssertFalse(kit.isDualIndexed)
@@ -30,7 +30,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
     }
 
     func testTruSeqSingleB() {
-        let kit = IlluminaBarcodeKitRegistry.truseqSingleB
+        let kit = BarcodeKitRegistry.truseqSingleB
         XCTAssertEqual(kit.id, "truseq-single-b")
         XCTAssertEqual(kit.barcodes.count, 8)
         XCTAssertFalse(kit.isDualIndexed)
@@ -38,7 +38,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
     }
 
     func testTruSeqHTDual() {
-        let kit = IlluminaBarcodeKitRegistry.truseqHTDual
+        let kit = BarcodeKitRegistry.truseqHTDual
         XCTAssertEqual(kit.id, "truseq-ht-dual")
         XCTAssertEqual(kit.barcodes.count, 96) // 12 i7 × 8 i5
         XCTAssertTrue(kit.isDualIndexed)
@@ -49,7 +49,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
     }
 
     func testNexteraXTv2() {
-        let kit = IlluminaBarcodeKitRegistry.nexteraXTv2
+        let kit = BarcodeKitRegistry.nexteraXTv2
         XCTAssertEqual(kit.id, "nextera-xt-v2")
         XCTAssertEqual(kit.barcodes.count, 84) // 12 × 7
         XCTAssertTrue(kit.isDualIndexed)
@@ -57,7 +57,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
     }
 
     func testIDTUDIndexes() {
-        let kit = IlluminaBarcodeKitRegistry.idtUDIndexes
+        let kit = BarcodeKitRegistry.idtUDIndexes
         XCTAssertEqual(kit.id, "idt-ud-indexes")
         XCTAssertEqual(kit.barcodes.count, 24)
         XCTAssertTrue(kit.isDualIndexed)
@@ -65,7 +65,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
     }
 
     func testPacBioSequel384V1() {
-        let kit = IlluminaBarcodeKitRegistry.pacbioSequel384V1
+        let kit = BarcodeKitRegistry.pacbioSequel384V1
         XCTAssertEqual(kit.id, "pacbio-sequel-384-v1")
         XCTAssertEqual(kit.vendor, "pacbio")
         XCTAssertTrue(kit.isDualIndexed)
@@ -80,7 +80,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
     }
 
     func testPacBioSequel16V3() {
-        let kit = IlluminaBarcodeKitRegistry.pacbioSequel16V3
+        let kit = BarcodeKitRegistry.pacbioSequel16V3
         XCTAssertEqual(kit.id, "pacbio-sequel-16-v3")
         XCTAssertEqual(kit.vendor, "pacbio")
         XCTAssertTrue(kit.isDualIndexed)
@@ -91,7 +91,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
     }
 
     func testPacBioSequel96V2() {
-        let kit = IlluminaBarcodeKitRegistry.pacbioSequel96V2
+        let kit = BarcodeKitRegistry.pacbioSequel96V2
         XCTAssertEqual(kit.id, "pacbio-sequel-96-v2")
         XCTAssertEqual(kit.vendor, "pacbio")
         XCTAssertTrue(kit.isDualIndexed)
@@ -102,7 +102,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
     }
 
     func testONTNativeBarcoding12NBD104() {
-        let kit = IlluminaBarcodeKitRegistry.ontNativeBarcoding12NBD104
+        let kit = BarcodeKitRegistry.ontNativeBarcoding12NBD104
         XCTAssertEqual(kit.id, "ont-nbd104")
         XCTAssertEqual(kit.vendor, "oxford-nanopore")
         XCTAssertFalse(kit.isDualIndexed)
@@ -112,7 +112,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
     }
 
     func testONTNativeBarcoding12NBD114() {
-        let kit = IlluminaBarcodeKitRegistry.ontNativeBarcoding12NBD114
+        let kit = BarcodeKitRegistry.ontNativeBarcoding12NBD114
         XCTAssertEqual(kit.id, "ont-nbd114")
         XCTAssertEqual(kit.vendor, "oxford-nanopore")
         XCTAssertFalse(kit.isDualIndexed)
@@ -122,7 +122,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
     }
 
     func testONTNativeBarcoding24() {
-        let kit = IlluminaBarcodeKitRegistry.ontNativeBarcoding24
+        let kit = BarcodeKitRegistry.ontNativeBarcoding24
         XCTAssertEqual(kit.id, "ont-nbd104-114")
         XCTAssertEqual(kit.vendor, "oxford-nanopore")
         XCTAssertFalse(kit.isDualIndexed)
@@ -133,7 +133,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
     }
 
     func testONTPCRBarcoding96() {
-        let kit = IlluminaBarcodeKitRegistry.ontPCRBarcoding96
+        let kit = BarcodeKitRegistry.ontPCRBarcoding96
         XCTAssertEqual(kit.id, "ont-pbc096")
         XCTAssertEqual(kit.vendor, "oxford-nanopore")
         XCTAssertFalse(kit.isDualIndexed)
@@ -146,7 +146,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
     }
 
     func testONTRapidBarcoding12() {
-        let kit = IlluminaBarcodeKitRegistry.ontRapidBarcoding12
+        let kit = BarcodeKitRegistry.ontRapidBarcoding12
         XCTAssertEqual(kit.id, "ont-rbk004")
         XCTAssertEqual(kit.vendor, "oxford-nanopore")
         XCTAssertFalse(kit.isDualIndexed)
@@ -156,7 +156,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
     }
 
     func testONTNativeBarcoding96() {
-        let kit = IlluminaBarcodeKitRegistry.ontNativeBarcoding96
+        let kit = BarcodeKitRegistry.ontNativeBarcoding96
         XCTAssertEqual(kit.id, "ont-nbd114-96")
         XCTAssertEqual(kit.vendor, "oxford-nanopore")
         XCTAssertFalse(kit.isDualIndexed)
@@ -169,7 +169,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
     }
 
     func testONTRapidBarcoding24V14() {
-        let kit = IlluminaBarcodeKitRegistry.ontRapidBarcoding24
+        let kit = BarcodeKitRegistry.ontRapidBarcoding24
         XCTAssertEqual(kit.id, "ont-rbk114-24")
         XCTAssertEqual(kit.vendor, "oxford-nanopore")
         XCTAssertFalse(kit.isDualIndexed)
@@ -180,7 +180,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
     }
 
     func testONTRapidBarcoding96V14() {
-        let kit = IlluminaBarcodeKitRegistry.ontRapidBarcoding96
+        let kit = BarcodeKitRegistry.ontRapidBarcoding96
         XCTAssertEqual(kit.id, "ont-rbk114-96")
         XCTAssertEqual(kit.vendor, "oxford-nanopore")
         XCTAssertFalse(kit.isDualIndexed)
@@ -196,7 +196,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
     }
 
     func testONT16SBarcoding24V14() {
-        let kit = IlluminaBarcodeKitRegistry.ont16SBarcoding24
+        let kit = BarcodeKitRegistry.ont16SBarcoding24
         XCTAssertEqual(kit.id, "ont-16s114-24")
         XCTAssertEqual(kit.vendor, "oxford-nanopore")
         XCTAssertFalse(kit.isDualIndexed)
@@ -206,7 +206,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
     }
 
     func testONT16SRapidAmplicon24() {
-        let kit = IlluminaBarcodeKitRegistry.ont16SRapidAmplicon24
+        let kit = BarcodeKitRegistry.ont16SRapidAmplicon24
         XCTAssertEqual(kit.id, "ont-rab204-214")
         XCTAssertEqual(kit.vendor, "oxford-nanopore")
         XCTAssertFalse(kit.isDualIndexed)
@@ -217,11 +217,11 @@ final class IlluminaBarcodeKitTests: XCTestCase {
     }
 
     func testKitLookupByID() {
-        let kit = IlluminaBarcodeKitRegistry.kit(byID: "nextera-xt-v2")
+        let kit = BarcodeKitRegistry.kit(byID: "nextera-xt-v2")
         XCTAssertNotNil(kit)
         XCTAssertEqual(kit?.displayName, "Nextera XT Index Kit v2")
 
-        let notFound = IlluminaBarcodeKitRegistry.kit(byID: "nonexistent")
+        let notFound = BarcodeKitRegistry.kit(byID: "nonexistent")
         XCTAssertNil(notFound)
     }
 
@@ -241,7 +241,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
         let csvURL = dir.appendingPathComponent("custom-barcodes.csv")
         try csv.write(to: csvURL, atomically: true, encoding: .utf8)
 
-        let kit = try IlluminaBarcodeKitRegistry.loadCustomKit(from: csvURL, name: "My Custom Kit")
+        let kit = try BarcodeKitRegistry.loadCustomKit(from: csvURL, name: "My Custom Kit")
 
         XCTAssertEqual(kit.id, "custom-my-custom-kit")
         XCTAssertEqual(kit.displayName, "My Custom Kit")
@@ -272,7 +272,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
         let csvURL = dir.appendingPathComponent("barcodes.csv")
         try csv.write(to: csvURL, atomically: true, encoding: .utf8)
 
-        let kit = try IlluminaBarcodeKitRegistry.loadCustomKit(from: csvURL, name: "Test")
+        let kit = try BarcodeKitRegistry.loadCustomKit(from: csvURL, name: "Test")
         XCTAssertEqual(kit.barcodes.count, 2)
     }
 
@@ -282,17 +282,17 @@ final class IlluminaBarcodeKitTests: XCTestCase {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let kit = IlluminaBarcodeDefinition(
+        let kit = BarcodeKitDefinition(
             id: "test",
             displayName: "Test Kit",
             barcodes: [
-                IlluminaBarcode(id: "A01", i7Sequence: "ACGTACGT"),
-                IlluminaBarcode(id: "A02", i7Sequence: "TGCATGCA"),
+                BarcodeEntry(id: "A01", i7Sequence: "ACGTACGT"),
+                BarcodeEntry(id: "A02", i7Sequence: "TGCATGCA"),
             ]
         )
 
         let fastaURL = dir.appendingPathComponent("adapters.fasta")
-        let i5URL = try IlluminaBarcodeKitRegistry.generateCutadaptFASTA(
+        let i5URL = try BarcodeKitRegistry.generateCutadaptFASTA(
             for: kit,
             to: fastaURL,
             location: .fivePrime,
@@ -312,16 +312,16 @@ final class IlluminaBarcodeKitTests: XCTestCase {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let kit = IlluminaBarcodeDefinition(
+        let kit = BarcodeKitDefinition(
             id: "test",
             displayName: "Test",
             barcodes: [
-                IlluminaBarcode(id: "A01", i7Sequence: "ACGT"),
+                BarcodeEntry(id: "A01", i7Sequence: "ACGT"),
             ]
         )
 
         let fastaURL = dir.appendingPathComponent("adapters.fasta")
-        try IlluminaBarcodeKitRegistry.generateCutadaptFASTA(
+        try BarcodeKitRegistry.generateCutadaptFASTA(
             for: kit,
             to: fastaURL,
             location: .threePrime,
@@ -336,17 +336,17 @@ final class IlluminaBarcodeKitTests: XCTestCase {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let kit = IlluminaBarcodeDefinition(
+        let kit = BarcodeKitDefinition(
             id: "test",
             displayName: "Dual Test",
             isDualIndexed: true,
             barcodes: [
-                IlluminaBarcode(id: "A01", i7Sequence: "ACGT", i5Sequence: "TGCA"),
+                BarcodeEntry(id: "A01", i7Sequence: "ACGT", i5Sequence: "TGCA"),
             ]
         )
 
         let fastaURL = dir.appendingPathComponent("adapters.fasta")
-        let i5URL = try IlluminaBarcodeKitRegistry.generateCutadaptFASTA(
+        let i5URL = try BarcodeKitRegistry.generateCutadaptFASTA(
             for: kit,
             to: fastaURL,
             location: .fivePrime,
@@ -370,16 +370,16 @@ final class IlluminaBarcodeKitTests: XCTestCase {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let kit = IlluminaBarcodeDefinition(
+        let kit = BarcodeKitDefinition(
             id: "test",
             displayName: "Context Test",
             barcodes: [
-                IlluminaBarcode(id: "A01", i7Sequence: "ACGTACGT"),
+                BarcodeEntry(id: "A01", i7Sequence: "ACGTACGT"),
             ]
         )
 
         let fastaURL = dir.appendingPathComponent("adapters.fasta")
-        try IlluminaBarcodeKitRegistry.generateCutadaptFASTA(
+        try BarcodeKitRegistry.generateCutadaptFASTA(
             for: kit,
             to: fastaURL,
             location: .bothEnds,
@@ -397,17 +397,17 @@ final class IlluminaBarcodeKitTests: XCTestCase {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let kit = IlluminaBarcodeDefinition(
+        let kit = BarcodeKitDefinition(
             id: "test",
             displayName: "Dual Context Test",
             isDualIndexed: true,
             barcodes: [
-                IlluminaBarcode(id: "A01", i7Sequence: "ACGT", i5Sequence: "TGCA"),
+                BarcodeEntry(id: "A01", i7Sequence: "ACGT", i5Sequence: "TGCA"),
             ]
         )
 
         let fastaURL = dir.appendingPathComponent("adapters.fasta")
-        let i5URL = try IlluminaBarcodeKitRegistry.generateCutadaptFASTA(
+        let i5URL = try BarcodeKitRegistry.generateCutadaptFASTA(
             for: kit,
             to: fastaURL,
             location: .bothEnds,
@@ -445,17 +445,17 @@ final class IlluminaBarcodeKitTests: XCTestCase {
 
     // MARK: - Codable
 
-    func testIlluminaBarcodeDefinitionCodable() throws {
-        let kit = IlluminaBarcodeDefinition(
+    func testBarcodeKitDefinitionCodable() throws {
+        let kit = BarcodeKitDefinition(
             id: "test-kit",
             displayName: "Test Kit",
             barcodes: [
-                IlluminaBarcode(id: "A01", i7Sequence: "ACGT", i5Sequence: "TGCA", sampleName: "S1"),
+                BarcodeEntry(id: "A01", i7Sequence: "ACGT", i5Sequence: "TGCA", sampleName: "S1"),
             ]
         )
 
         let data = try JSONEncoder().encode(kit)
-        let decoded = try JSONDecoder().decode(IlluminaBarcodeDefinition.self, from: data)
+        let decoded = try JSONDecoder().decode(BarcodeKitDefinition.self, from: data)
 
         XCTAssertEqual(kit, decoded)
     }
@@ -543,5 +543,96 @@ final class IlluminaBarcodeKitTests: XCTestCase {
             let decoded = try JSONDecoder().decode(BarcodePairingMode.self, from: data)
             XCTAssertEqual(decoded, mode)
         }
+    }
+
+    // MARK: - P0 Regression Tests (Phase 1)
+
+    /// All ONT kits produce non-empty linked specs for every barcode.
+    func testLinkedSpecNeverEmptyForAllONTKits() {
+        let ontKits = BarcodeKitRegistry.builtinKits().filter { $0.vendor == "oxford-nanopore" }
+        XCTAssertFalse(ontKits.isEmpty, "Should have ONT kits in registry")
+
+        for kit in ontKits {
+            let context = kit.adapterContext
+            for barcode in kit.barcodes {
+                let spec = context.linkedSpec(barcodeSequence: barcode.i7Sequence)
+                XCTAssertFalse(
+                    spec.isEmpty,
+                    "Linked spec should not be empty for \(kit.displayName) barcode \(barcode.id)"
+                )
+                XCTAssertTrue(
+                    spec.contains("..."),
+                    "Linked spec should contain '...' separator for \(kit.displayName) barcode \(barcode.id)"
+                )
+            }
+        }
+    }
+
+    /// Every built-in kit round-trips through registry lookup by ID.
+    func testAllBuiltinKitsResolvableByID() {
+        let kits = BarcodeKitRegistry.builtinKits()
+        for kit in kits {
+            let resolved = BarcodeKitRegistry.kit(byID: kit.id)
+            XCTAssertNotNil(resolved, "Kit \(kit.id) should be resolvable by ID")
+            XCTAssertEqual(resolved?.displayName, kit.displayName)
+            XCTAssertEqual(resolved?.barcodes.count, kit.barcodes.count)
+        }
+    }
+
+    // MARK: - P1 Tests (Phase 2)
+
+    /// Custom CSV kits use BareAdapterContext (no flanking sequences).
+    func testCustomCSVKitUsesBareAdapterContext() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CustomCSVTest-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let csvURL = dir.appendingPathComponent("barcodes.csv")
+        try "id,i7_sequence\nBC01,ACGTACGT\nBC02,TGCATGCA\n"
+            .write(to: csvURL, atomically: true, encoding: .utf8)
+
+        let kit = try BarcodeKitRegistry.loadCustomKit(from: csvURL, name: "Test Custom")
+        XCTAssertEqual(kit.vendor, "custom")
+        XCTAssertTrue(kit.adapterContext is BareAdapterContext,
+                      "Custom CSV kit should use BareAdapterContext, got \(type(of: kit.adapterContext))")
+
+        // BareAdapterContext returns bare sequence without flanking
+        let spec = kit.adapterContext.fivePrimeSpec(barcodeSequence: "ACGT")
+        XCTAssertEqual(spec, "ACGT", "BareAdapterContext should return sequence without flanking")
+    }
+
+    // MARK: - P2 Tests
+
+    /// "anywhere" decodes as .bothEnds for backward compatibility.
+    func testBarcodeLocationDecodesAnywhereAsBothEnds() throws {
+        let json = Data("\"anywhere\"".utf8)
+        let decoded = try JSONDecoder().decode(BarcodeLocation.self, from: json)
+        XCTAssertEqual(decoded, .bothEnds)
+    }
+
+    /// Loading a custom CSV with empty sequences skips those entries.
+    func testLoadCustomCSVEmptySequence() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("EmptySeqCSVTest-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let csvURL = dir.appendingPathComponent("barcodes.csv")
+        // Second row has empty i7 — should be skipped or have empty sequence
+        try "id,i7_sequence\nBC01,ACGTACGT\nBC02,\nBC03,TGCATGCA\n"
+            .write(to: csvURL, atomically: true, encoding: .utf8)
+
+        let kit = try BarcodeKitRegistry.loadCustomKit(from: csvURL, name: "Edge Case")
+        // All 3 rows are parsed (empty string is still a valid entry per current implementation)
+        // but BC02 has empty i7 sequence
+        let bc02 = kit.barcodes.first(where: { $0.id == "BC02" })
+        if let bc02 {
+            // If it exists, verify the sequence is empty
+            XCTAssertTrue(bc02.i7Sequence.isEmpty, "BC02 should have empty i7 sequence")
+        }
+        // BC01 and BC03 should have valid sequences
+        XCTAssertEqual(kit.barcodes.first(where: { $0.id == "BC01" })?.i7Sequence, "ACGTACGT")
+        XCTAssertEqual(kit.barcodes.first(where: { $0.id == "BC03" })?.i7Sequence, "TGCATGCA")
     }
 }

@@ -178,7 +178,7 @@ public class ViewerViewController: NSViewController {
     private var quickLookURL: URL?
 
     /// FASTQ dataset dashboard (shown in place of sequence viewer for FASTQ files)
-    private var fastqDatasetController: FASTQDatasetViewController?
+    var fastqDatasetController: FASTQDatasetViewController?
 
     /// VCF dataset dashboard (shown in place of sequence viewer for standalone VCF files)
     private var vcfDatasetController: VCFDatasetViewController?
@@ -975,6 +975,9 @@ public class ViewerViewController: NSViewController {
             derivativeManifest: fastqDerivativeManifest
         )
         controller.onRunOperation = onRunOperation
+        controller.onOpenDemuxDrawer = { [weak self] in
+            self?.openDemuxSetupDrawer()
+        }
         controller.onStatisticsUpdated = { [weak self] updatedStats in
             guard let self else { return }
             var updatedUserInfo: [String: Any] = ["statistics": updatedStats]
@@ -992,6 +995,8 @@ public class ViewerViewController: NSViewController {
         fastqDatasetController = controller
         fastqDashboardView = dashView
         fastqDashboardBottomConstraint = dashBottomConstraint
+        // Sync any existing drawer demux config into the new controller
+        syncDemuxConfigToController()
         currentFASTQDatasetURL = fastqURL
 
         // Hide normal genomic viewer components

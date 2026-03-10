@@ -152,7 +152,9 @@ public class SidebarViewController: NSViewController {
         // Create the main container view as a drop target
         // This ensures file drops are accepted even when outline view doesn't handle them
         let containerView = SidebarDropTargetView()
-        containerView.translatesAutoresizingMaskIntoConstraints = false
+        // Do NOT set translatesAutoresizingMaskIntoConstraints = false on the root view.
+        // NSSplitView manages child view frames via autoresizing masks; disabling TARIC
+        // prevents the split view from resizing the sidebar when dividers are dragged.
         containerView.sidebarController = self
 
         // Create search field

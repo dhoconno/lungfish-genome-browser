@@ -69,12 +69,21 @@ final class FASTQSummaryBar: NSView {
             ctx.addPath(path)
             ctx.strokePath()
 
-            // Label (top)
+            // Clip text to card bounds
+            ctx.saveGState()
+            ctx.clip(to: cardRect.insetBy(dx: 4, dy: 0))
+
+            // Label (top) — use abbreviated label when card is narrow
             let labelAttrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 9, weight: .medium),
                 .foregroundColor: NSColor.secondaryLabelColor,
             ]
-            let labelStr = NSAttributedString(string: card.0, attributes: labelAttrs)
+            let cardContentWidth = cardRect.width - 8
+            let fullLabelSize = (card.0 as NSString).size(withAttributes: labelAttrs)
+            let displayLabel = fullLabelSize.width > cardContentWidth
+                ? abbreviatedLabel(for: card.0)
+                : card.0
+            let labelStr = NSAttributedString(string: displayLabel, attributes: labelAttrs)
             let labelSize = labelStr.size()
             let labelX = cardRect.midX - labelSize.width / 2
             labelStr.draw(at: CGPoint(x: labelX, y: cardRect.minY + 4))
@@ -88,6 +97,8 @@ final class FASTQSummaryBar: NSView {
             let valueSize = valueStr.size()
             let valueX = cardRect.midX - valueSize.width / 2
             valueStr.draw(at: CGPoint(x: valueX, y: cardRect.minY + 18))
+
+            ctx.restoreGState()
         }
     }
 
@@ -102,6 +113,22 @@ final class FASTQSummaryBar: NSView {
         if count >= 1_000_000 { return String(format: "%.2f Mb", Double(count) / 1_000_000) }
         if count >= 1_000 { return String(format: "%.1f Kb", Double(count) / 1_000) }
         return "\(count) bp"
+    }
+
+    private func abbreviatedLabel(for label: String) -> String {
+        switch label {
+        case "Median Length": return "Med. Len"
+        case "Mean Length": return "Mean Len"
+        case "Total Reads": return "Reads"
+        case "Total Bases": return "Bases"
+        case "Mean Quality": return "Mean Q"
+        case "Median Quality": return "Med. Q"
+        case "Min Length": return "Min Len"
+        case "Max Length": return "Max Len"
+        case "GC Content": return "GC%"
+        case "Mean Q": return "Q"
+        default: return String(label.prefix(8))
+        }
     }
 }
 
