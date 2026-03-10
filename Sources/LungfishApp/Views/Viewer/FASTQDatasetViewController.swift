@@ -335,6 +335,7 @@ public final class FASTQDatasetViewController: NSViewController {
     public override func viewDidLayout() {
         super.viewDidLayout()
         applyInitialSplitPositionsIfNeeded()
+        normalizeTopPaneHeightIfNeeded()
     }
 
     public override func viewDidAppear() {
@@ -823,6 +824,13 @@ public final class FASTQDatasetViewController: NSViewController {
 
     private var didApplyInitialSplitPositions = false
 
+    private var targetTopPaneHeight: CGFloat {
+        max(
+            LayoutDefaults.minTopPaneHeight,
+            min(LayoutDefaults.preferredTopPaneHeight, LayoutDefaults.maxTopPaneHeight)
+        )
+    }
+
     private func applyInitialSplitPositionsIfNeeded() {
         guard !didApplyInitialSplitPositions else { return }
 
@@ -832,10 +840,7 @@ public final class FASTQDatasetViewController: NSViewController {
               middleWidth > LayoutDefaults.minGeometryForInitialLayout else { return }
 
         // Give sparklines enough vertical budget to show full distributions by default.
-        let topHeight = max(
-            LayoutDefaults.minTopPaneHeight,
-            min(LayoutDefaults.preferredTopPaneHeight, LayoutDefaults.maxTopPaneHeight)
-        )
+        let topHeight = targetTopPaneHeight
         mainSplitView.setPosition(topHeight, ofDividerAt: 0)
 
         // Keep operation list compact by default to prioritize preview/read content width.
@@ -846,6 +851,17 @@ public final class FASTQDatasetViewController: NSViewController {
         middleSplitView.setPosition(sidebarWidth, ofDividerAt: 0)
 
         didApplyInitialSplitPositions = true
+    }
+
+    private func normalizeTopPaneHeightIfNeeded() {
+        guard didApplyInitialSplitPositions,
+              mainSplitView.subviews.count >= 2 else { return }
+
+        let currentTopHeight = mainSplitView.subviews[0].frame.height
+        let target = targetTopPaneHeight
+        if abs(currentTopHeight - target) > 0.5 {
+            mainSplitView.setPosition(target, ofDividerAt: 0)
+        }
     }
 
     // MARK: - Parameter Bar Updates
@@ -2130,5 +2146,15 @@ extension FASTQDatasetViewController: NSSplitViewDelegate {
 
     public func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool {
         false
+    }
+
+    public func splitViewDidResizeSubviews(_ notification: Notification) {
+        guard let splitView = notification.object as? NSSplitView,
+              splitView === mainSplitView,
+              didApplyInitialSplitPositions else { return }
+
+        // Keep the top strip compact on window resize so tabs remain directly
+        // beneath sparklines instead of accumulating empty whitespace.
+        normalizeTopPaneHeightIfNeeded()
     }
 }
