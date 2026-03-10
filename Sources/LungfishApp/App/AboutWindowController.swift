@@ -35,7 +35,6 @@ final class AboutWindowController: NSWindowController {
 
     private func setupContent() {
         guard let window, let contentView = window.contentView else { return }
-        contentView.wantsLayer = true
 
         let container = NSView(frame: contentView.bounds)
         container.translatesAutoresizingMaskIntoConstraints = false

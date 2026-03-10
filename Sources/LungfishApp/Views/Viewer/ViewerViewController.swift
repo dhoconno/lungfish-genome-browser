@@ -231,7 +231,6 @@ public class ViewerViewController: NSViewController {
     public override func loadView() {
         let containerView = NSView()
         containerView.translatesAutoresizingMaskIntoConstraints = false
-        containerView.wantsLayer = true
 
         // Create enhanced ruler view with mini-map and navigation
         enhancedRulerView = EnhancedCoordinateRulerView()
@@ -256,7 +255,6 @@ public class ViewerViewController: NSViewController {
         viewerView.viewController = self
         viewerView.trackY = sequenceTrackY
         viewerView.trackHeight = sequenceTrackHeight
-        viewerView.wantsLayer = true
         viewerView.layer?.masksToBounds = true
         containerView.addSubview(viewerView)
 
@@ -2024,7 +2022,6 @@ public class ProgressOverlayView: NSView {
     }
 
     private func setupViews() {
-        wantsLayer = true
         layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.85).cgColor
 
         // Spinner
@@ -6375,11 +6372,12 @@ public class SequenceViewerView: NSView {
             NSGraphicsContext.restoreGraphicsState()
 
             // Draw tinted version
-            let tintedImage = symbolImage.copy() as! NSImage
-            tintedImage.lockFocus()
-            NSColor.tertiaryLabelColor.withAlphaComponent(0.5).set()
-            NSRect(origin: .zero, size: tintedImage.size).fill(using: .sourceAtop)
-            tintedImage.unlockFocus()
+            let tintedImage = NSImage(size: symbolImage.size, flipped: false) { rect in
+                symbolImage.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
+                NSColor.tertiaryLabelColor.withAlphaComponent(0.5).set()
+                rect.fill(using: .sourceAtop)
+                return true
+            }
             tintedImage.draw(in: imageRect, from: .zero, operation: .sourceOver, fraction: 1.0)
         }
 
@@ -9647,7 +9645,6 @@ public class TrackHeaderView: NSView {
     }
 
     private func setupView() {
-        wantsLayer = true
     }
 
     func setTrackNames(_ names: [String]) {
@@ -10319,7 +10316,6 @@ public class ViewerStatusBar: NSView {
     }
 
     private func setupViews() {
-        wantsLayer = true
 
         positionLabel = createLabel()
         positionLabel.stringValue = "No sequence loaded"

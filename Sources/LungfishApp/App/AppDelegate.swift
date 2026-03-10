@@ -712,7 +712,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
     private func saveApplicationState() {
         // Persist user preferences and window state
-        UserDefaults.standard.synchronize()
+        // UserDefaults auto-saves; no manual synchronize needed
     }
 
     private func openDocument(at url: URL) -> Bool {

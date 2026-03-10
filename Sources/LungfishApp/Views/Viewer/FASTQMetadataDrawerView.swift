@@ -111,7 +111,6 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         self.delegate = delegate
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        wantsLayer = true
         layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         allKits = BarcodeKitRegistry.builtinKits()
         setupUI()

@@ -176,13 +176,13 @@ public class MainWindowController: NSWindowController {
                 return image
             }
         }
-        let generated = NSImage(size: NSSize(width: 14, height: 14))
-        generated.lockFocus()
-        let path = NSBezierPath(ovalIn: NSRect(x: 1, y: 1, width: 12, height: 12))
-        NSColor.labelColor.setStroke()
-        path.lineWidth = 1.5
-        path.stroke()
-        generated.unlockFocus()
+        let generated = NSImage(size: NSSize(width: 14, height: 14), flipped: false) { _ in
+            let path = NSBezierPath(ovalIn: NSRect(x: 1, y: 1, width: 12, height: 12))
+            NSColor.labelColor.setStroke()
+            path.lineWidth = 1.5
+            path.stroke()
+            return true
+        }
         generated.isTemplate = true
         return generated
     }

@@ -234,9 +234,6 @@ public class SidebarViewController: NSViewController {
     public override func viewDidLoad() {
         super.viewDidLoad()
 
-        // Configure visual effect for sidebar vibrancy
-        view.wantsLayer = true
-
         // Load initial data
         loadSampleData()
 

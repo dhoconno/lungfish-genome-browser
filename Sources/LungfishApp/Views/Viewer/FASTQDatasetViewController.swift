@@ -284,7 +284,6 @@ public final class FASTQDatasetViewController: NSViewController {
     // Error banner (replaces modal NSAlert for operation failures)
     private lazy var errorBannerView: NSView = {
         let banner = NSView()
-        banner.wantsLayer = true
         banner.layer?.backgroundColor = NSColor.systemRed.withAlphaComponent(0.1).cgColor
         banner.layer?.cornerRadius = 6
         banner.isHidden = true
@@ -316,7 +315,6 @@ public final class FASTQDatasetViewController: NSViewController {
 
     public override func loadView() {
         view = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
-        view.wantsLayer = true
 
         configureMainSplitView()
         configureTopPane()
@@ -432,6 +430,10 @@ public final class FASTQDatasetViewController: NSViewController {
         for pane in [topPane, middlePane] {
             mainSplitView.addSubview(pane)
         }
+
+        // Top pane holds its size; bottom pane flexes on window resize.
+        mainSplitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+        mainSplitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
 
         NSLayoutConstraint.activate([
             mainSplitView.topAnchor.constraint(equalTo: view.topAnchor),
@@ -571,7 +573,6 @@ public final class FASTQDatasetViewController: NSViewController {
         previewPane.addSubview(parameterBar)
 
         previewCanvas.translatesAutoresizingMaskIntoConstraints = false
-        previewCanvas.wantsLayer = true
         previewPane.addSubview(previewCanvas)
 
         configureRunBar()
@@ -2364,7 +2365,15 @@ extension FASTQDatasetViewController: NSTextFieldDelegate {
     }
 }
 
-// MARK: - NSSplitViewDelegate (sidebar constraints)
+// MARK: - NSSplitViewDelegate (pane size constraints)
+//
+// These delegate methods are the CORRECT API for constraining divider positions
+// on raw NSSplitView instances (mainSplitView, middleSplitView). They are NOT
+// needed — and should NOT be used — on NSSplitViewController, which exposes
+// minimumThickness / maximumThickness on its split view items instead.
+//
+// Holding priorities (set in configureMainSplitView / configureMiddlePane)
+// complement these constraints by controlling which pane absorbs resize delta.
 
 extension FASTQDatasetViewController: NSSplitViewDelegate {
     public func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {

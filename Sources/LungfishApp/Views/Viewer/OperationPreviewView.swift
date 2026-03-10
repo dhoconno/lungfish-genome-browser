@@ -174,7 +174,6 @@ final class OperationPreviewView: NSView {
     }
 
     private func configureFASTAPreview() {
-        wantsLayer = true
 
         fastaScrollView.translatesAutoresizingMaskIntoConstraints = false
         fastaScrollView.borderType = .noBorder
