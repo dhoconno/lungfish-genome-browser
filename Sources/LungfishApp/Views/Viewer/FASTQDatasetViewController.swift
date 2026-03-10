@@ -73,11 +73,11 @@ public final class FASTQDatasetViewController: NSViewController {
         static let summaryBarHeight: CGFloat = 48
         static let summaryToSparklineSpacing: CGFloat = 2
         static let sparklineHeight: CGFloat = 64
-        static let topPaneBottomPadding: CGFloat = 2
+        static let topPaneBottomPadding: CGFloat = 1
 
         static let minTopPaneHeight: CGFloat = summaryBarHeight + summaryToSparklineSpacing + sparklineHeight + topPaneBottomPadding
-        static let preferredTopPaneHeight: CGFloat = minTopPaneHeight + 2
-        static let maxTopPaneHeight: CGFloat = 126
+        static let preferredTopPaneHeight: CGFloat = minTopPaneHeight + 1
+        static let maxTopPaneHeight: CGFloat = 125
 
         static let minSidebarWidth: CGFloat = 140
         static let maxSidebarWidth: CGFloat = 260
@@ -462,7 +462,7 @@ public final class FASTQDatasetViewController: NSViewController {
         tabTop.priority = .defaultHigh
         let tabHeight = middleTabControl.heightAnchor.constraint(equalToConstant: 24)
         tabHeight.priority = .defaultHigh
-        let tabSeparatorTop = middleTabSeparator.topAnchor.constraint(equalTo: middleTabControl.bottomAnchor, constant: 1)
+        let tabSeparatorTop = middleTabSeparator.topAnchor.constraint(equalTo: middleTabControl.bottomAnchor)
         tabSeparatorTop.priority = .defaultHigh
         let contentTop = middleContentContainer.topAnchor.constraint(equalTo: middleTabSeparator.bottomAnchor)
         contentTop.priority = .defaultHigh
@@ -540,11 +540,11 @@ public final class FASTQDatasetViewController: NSViewController {
         sidebarPane.addSubview(operationScrollView)
 
         NSLayoutConstraint.activate([
-            operationSidebarHeader.topAnchor.constraint(equalTo: sidebarPane.topAnchor, constant: 4),
+            operationSidebarHeader.topAnchor.constraint(equalTo: sidebarPane.topAnchor, constant: 3),
             operationSidebarHeader.leadingAnchor.constraint(equalTo: sidebarPane.leadingAnchor, constant: 8),
             operationSidebarHeader.trailingAnchor.constraint(lessThanOrEqualTo: sidebarPane.trailingAnchor, constant: -8),
 
-            operationScrollView.topAnchor.constraint(equalTo: operationSidebarHeader.bottomAnchor, constant: 2),
+            operationScrollView.topAnchor.constraint(equalTo: operationSidebarHeader.bottomAnchor, constant: 1),
             operationScrollView.leadingAnchor.constraint(equalTo: sidebarPane.leadingAnchor),
             operationScrollView.trailingAnchor.constraint(equalTo: sidebarPane.trailingAnchor),
             operationScrollView.bottomAnchor.constraint(equalTo: sidebarPane.bottomAnchor),
