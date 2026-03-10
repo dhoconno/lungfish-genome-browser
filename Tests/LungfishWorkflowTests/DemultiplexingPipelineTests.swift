@@ -118,6 +118,69 @@ final class DemultiplexingPipelineTests: XCTestCase {
         XCTAssertEqual(config.threads, 8)
     }
 
+    // MARK: - resolvedAdapterContext
+
+    func testResolvedAdapterContextDefaultsToKit() {
+        let config = DemultiplexConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/test.fastq.gz"),
+            barcodeKit: BarcodeKitRegistry.ontNativeBarcoding24,
+            outputDirectory: URL(fileURLWithPath: "/tmp/output")
+        )
+
+        XCTAssertNil(config.adapterContext)
+        XCTAssertTrue(config.resolvedAdapterContext is ONTNativeAdapterContext)
+    }
+
+    func testResolvedAdapterContextUsesOverride() {
+        let override = IlluminaTruSeqAdapterContext()
+        let config = DemultiplexConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/test.fastq.gz"),
+            barcodeKit: BarcodeKitRegistry.ontNativeBarcoding24,
+            outputDirectory: URL(fileURLWithPath: "/tmp/output"),
+            adapterContext: override
+        )
+
+        XCTAssertNotNil(config.adapterContext)
+        // Override should win over kit default (ONTNative → IlluminaTruSeq)
+        XCTAssertTrue(config.resolvedAdapterContext is IlluminaTruSeqAdapterContext)
+    }
+
+    func testSymmetryModeDefaultsFromPairingMode() {
+        // ONT native → symmetric
+        let ontConfig = DemultiplexConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/test.fastq.gz"),
+            barcodeKit: BarcodeKitRegistry.ontNativeBarcoding24,
+            outputDirectory: URL(fileURLWithPath: "/tmp/output")
+        )
+        XCTAssertEqual(ontConfig.symmetryMode, .symmetric)
+
+        // Illumina fixedDual → asymmetric
+        let illConfig = DemultiplexConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/test.fastq.gz"),
+            barcodeKit: BarcodeKitRegistry.truseqHTDual,
+            outputDirectory: URL(fileURLWithPath: "/tmp/output")
+        )
+        XCTAssertEqual(illConfig.symmetryMode, .asymmetric)
+
+        // ONT rapid → singleEnd
+        let rapidConfig = DemultiplexConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/test.fastq.gz"),
+            barcodeKit: BarcodeKitRegistry.ontRapidBarcoding12,
+            outputDirectory: URL(fileURLWithPath: "/tmp/output")
+        )
+        XCTAssertEqual(rapidConfig.symmetryMode, .singleEnd)
+    }
+
+    func testSymmetryModeCanBeOverridden() {
+        let config = DemultiplexConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/test.fastq.gz"),
+            barcodeKit: BarcodeKitRegistry.ontNativeBarcoding24,
+            outputDirectory: URL(fileURLWithPath: "/tmp/output"),
+            symmetryMode: .asymmetric
+        )
+        XCTAssertEqual(config.symmetryMode, .asymmetric)
+    }
+
     func testFixedDualLinkedAdaptersMatchBothOrientations() async throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }

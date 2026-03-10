@@ -1,18 +1,20 @@
-// IlluminaBarcodeKits.swift - Built-in Illumina barcode kit definitions
+// IlluminaBarcodeKits.swift - Built-in barcode kit definitions for all platforms
 // Copyright (c) 2024 Lungfish Contributors
 // SPDX-License-Identifier: MIT
 
 import Foundation
 
-// MARK: - Illumina Barcode Definition
+// MARK: - Barcode Pairing Mode
 
 /// How barcode sequences are paired within a read during demultiplexing.
 public enum BarcodePairingMode: String, Codable, Sendable, CaseIterable {
-    /// A single barcode sequence is used for assignment.
+    /// Barcode at one end only (e.g., ONT rapid barcoding).
     case singleEnd
-    /// Barcode entries define explicit forward/reverse pairs.
+    /// Same barcode on both ends, forward + reverse complement (e.g., ONT native barcoding).
+    case symmetric
+    /// Barcode entries define explicit forward/reverse pairs (e.g., Illumina TruSeq HT dual index).
     case fixedDual
-    /// Any two barcodes from the same set may form a valid asymmetric pair.
+    /// Any two barcodes from the same set may form a valid asymmetric pair (e.g., PacBio).
     case combinatorialDual
 }
 
@@ -616,7 +618,7 @@ public enum BarcodeKitRegistry {
             platform: .oxfordNanopore,
             kitType: .nativeBarcoding,
             isDualIndexed: false,
-            pairingMode: .singleEnd,
+            pairingMode: .symmetric,
             barcodes: barcodes
         )
     }()
@@ -632,7 +634,7 @@ public enum BarcodeKitRegistry {
             platform: .oxfordNanopore,
             kitType: .nativeBarcoding,
             isDualIndexed: false,
-            pairingMode: .singleEnd,
+            pairingMode: .symmetric,
             barcodes: barcodes
         )
     }()
@@ -647,7 +649,7 @@ public enum BarcodeKitRegistry {
             platform: .oxfordNanopore,
             kitType: .nativeBarcoding,
             isDualIndexed: false,
-            pairingMode: .singleEnd,
+            pairingMode: .symmetric,
             barcodes: barcodes
         )
     }()
@@ -662,7 +664,7 @@ public enum BarcodeKitRegistry {
             platform: .oxfordNanopore,
             kitType: .pcrBarcoding,
             isDualIndexed: false,
-            pairingMode: .singleEnd,
+            pairingMode: .symmetric,
             barcodes: barcodes
         )
     }()
@@ -693,7 +695,7 @@ public enum BarcodeKitRegistry {
             platform: .oxfordNanopore,
             kitType: .nativeBarcoding,
             isDualIndexed: false,
-            pairingMode: .singleEnd,
+            pairingMode: .symmetric,
             barcodes: barcodes
         )
     }()
@@ -760,7 +762,7 @@ public enum BarcodeKitRegistry {
             platform: .oxfordNanopore,
             kitType: .sixteenS,
             isDualIndexed: false,
-            pairingMode: .singleEnd,
+            pairingMode: .symmetric,
             barcodes: barcodes
         )
     }()

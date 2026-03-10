@@ -106,7 +106,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
         XCTAssertEqual(kit.id, "ont-nbd104")
         XCTAssertEqual(kit.vendor, "oxford-nanopore")
         XCTAssertFalse(kit.isDualIndexed)
-        XCTAssertEqual(kit.pairingMode, .singleEnd)
+        XCTAssertEqual(kit.pairingMode, .symmetric)
         XCTAssertEqual(kit.barcodes.count, 12)
         XCTAssertEqual(kit.barcodes.first?.id, "barcode01")
     }
@@ -116,7 +116,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
         XCTAssertEqual(kit.id, "ont-nbd114")
         XCTAssertEqual(kit.vendor, "oxford-nanopore")
         XCTAssertFalse(kit.isDualIndexed)
-        XCTAssertEqual(kit.pairingMode, .singleEnd)
+        XCTAssertEqual(kit.pairingMode, .symmetric)
         XCTAssertEqual(kit.barcodes.count, 12)
         XCTAssertEqual(kit.barcodes.first?.id, "barcode13")
     }
@@ -126,7 +126,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
         XCTAssertEqual(kit.id, "ont-nbd104-114")
         XCTAssertEqual(kit.vendor, "oxford-nanopore")
         XCTAssertFalse(kit.isDualIndexed)
-        XCTAssertEqual(kit.pairingMode, .singleEnd)
+        XCTAssertEqual(kit.pairingMode, .symmetric)
         XCTAssertEqual(kit.barcodes.count, 24)
         XCTAssertEqual(kit.barcodes.first?.id, "barcode01")
         XCTAssertEqual(kit.barcodes.first?.i7Sequence, "CACAAAGACACCGACAACTTTCTT")
@@ -137,7 +137,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
         XCTAssertEqual(kit.id, "ont-pbc096")
         XCTAssertEqual(kit.vendor, "oxford-nanopore")
         XCTAssertFalse(kit.isDualIndexed)
-        XCTAssertEqual(kit.pairingMode, .singleEnd)
+        XCTAssertEqual(kit.pairingMode, .symmetric)
         XCTAssertEqual(kit.barcodes.count, 96)
         XCTAssertEqual(kit.barcodes.first?.id, "barcode01")
         XCTAssertEqual(kit.barcodes.first?.i7Sequence, "AAGAAAGTTGTCGGTGTCTTTGTG")
@@ -160,7 +160,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
         XCTAssertEqual(kit.id, "ont-nbd114-96")
         XCTAssertEqual(kit.vendor, "oxford-nanopore")
         XCTAssertFalse(kit.isDualIndexed)
-        XCTAssertEqual(kit.pairingMode, .singleEnd)
+        XCTAssertEqual(kit.pairingMode, .symmetric)
         XCTAssertEqual(kit.barcodes.count, 96)
         XCTAssertEqual(kit.barcodes.first?.id, "NB01")
         XCTAssertEqual(kit.barcodes.first?.i7Sequence, "CACAAAGACACCGACAACTTTCTT")
@@ -200,7 +200,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
         XCTAssertEqual(kit.id, "ont-16s114-24")
         XCTAssertEqual(kit.vendor, "oxford-nanopore")
         XCTAssertFalse(kit.isDualIndexed)
-        XCTAssertEqual(kit.pairingMode, .singleEnd)
+        XCTAssertEqual(kit.pairingMode, .symmetric)
         XCTAssertEqual(kit.barcodes.count, 24)
         XCTAssertEqual(kit.barcodes.first?.id, "BC01")
     }
@@ -458,5 +458,90 @@ final class IlluminaBarcodeKitTests: XCTestCase {
         let decoded = try JSONDecoder().decode(IlluminaBarcodeDefinition.self, from: data)
 
         XCTAssertEqual(kit, decoded)
+    }
+
+    // MARK: - Platform-Neutral Aliases
+
+    func testBarcodeEntrySequenceAlias() {
+        let entry = BarcodeEntry(id: "BC01", i7Sequence: "ACGTACGT", i5Sequence: "TGCATGCA")
+        XCTAssertEqual(entry.sequence, entry.i7Sequence)
+        XCTAssertEqual(entry.secondarySequence, entry.i5Sequence)
+    }
+
+    func testBarcodeEntrySequenceAliasNilSecondary() {
+        let entry = BarcodeEntry(id: "BC01", i7Sequence: "ACGTACGT")
+        XCTAssertEqual(entry.sequence, "ACGTACGT")
+        XCTAssertNil(entry.secondarySequence)
+    }
+
+    // MARK: - Platform and KitType Fields
+
+    func testIlluminaKitPlatformAndKitType() {
+        let kit = BarcodeKitRegistry.truseqSingleA
+        XCTAssertEqual(kit.platform, .illumina)
+        XCTAssertEqual(kit.kitType, .truseq)
+    }
+
+    func testNexteraKitType() {
+        let kit = BarcodeKitRegistry.nexteraXTv2
+        XCTAssertEqual(kit.platform, .illumina)
+        XCTAssertEqual(kit.kitType, .nextera)
+    }
+
+    func testONTNativeKitPlatformAndKitType() {
+        let kit = BarcodeKitRegistry.ontNativeBarcoding24
+        XCTAssertEqual(kit.platform, .oxfordNanopore)
+        XCTAssertEqual(kit.kitType, .nativeBarcoding)
+        XCTAssertEqual(kit.pairingMode, .symmetric)
+    }
+
+    func testONTRapidKitPlatformAndKitType() {
+        let kit = BarcodeKitRegistry.ontRapidBarcoding12
+        XCTAssertEqual(kit.platform, .oxfordNanopore)
+        XCTAssertEqual(kit.kitType, .rapidBarcoding)
+        XCTAssertEqual(kit.pairingMode, .singleEnd)
+    }
+
+    func testPacBioKitPlatformAndKitType() {
+        let kit = BarcodeKitRegistry.pacbioSequel16V3
+        XCTAssertEqual(kit.platform, .pacbio)
+        XCTAssertEqual(kit.kitType, .pacbioStandard)
+        XCTAssertEqual(kit.pairingMode, .combinatorialDual)
+    }
+
+    // MARK: - Adapter Context from Kit
+
+    func testONTNativeKitAdapterContext() {
+        let kit = BarcodeKitRegistry.ontNativeBarcoding24
+        XCTAssertTrue(kit.adapterContext is ONTNativeAdapterContext)
+    }
+
+    func testONTRapidKitAdapterContext() {
+        let kit = BarcodeKitRegistry.ontRapidBarcoding12
+        XCTAssertTrue(kit.adapterContext is ONTRapidAdapterContext)
+    }
+
+    func testIlluminaKitAdapterContext() {
+        let kit = BarcodeKitRegistry.truseqSingleA
+        XCTAssertTrue(kit.adapterContext is IlluminaTruSeqAdapterContext)
+    }
+
+    func testPacBioKitAdapterContext() {
+        let kit = BarcodeKitRegistry.pacbioSequel16V3
+        XCTAssertTrue(kit.adapterContext is PacBioAdapterContext)
+    }
+
+    // MARK: - BarcodePairingMode
+
+    func testBarcodePairingModeCaseCount() {
+        XCTAssertEqual(BarcodePairingMode.allCases.count, 4)
+    }
+
+    func testBarcodePairingModeCodableRoundTrip() throws {
+        for mode in BarcodePairingMode.allCases {
+            let data = try JSONEncoder().encode(mode)
+            let decoded = try JSONDecoder().decode(BarcodePairingMode.self, from: data)
+            XCTAssertEqual(decoded, mode)
+        }
     }
 }

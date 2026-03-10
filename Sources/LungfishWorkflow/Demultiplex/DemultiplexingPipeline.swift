@@ -99,7 +99,8 @@ public struct DemultiplexConfig: Sendable {
         self.symmetryMode = symmetryMode ?? {
             switch barcodeKit.pairingMode {
             case .singleEnd: return .singleEnd
-            case .fixedDual: return .symmetric
+            case .symmetric: return .symmetric
+            case .fixedDual: return .asymmetric
             case .combinatorialDual: return .asymmetric
             }
         }()
@@ -458,8 +459,8 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
 
                 return (
                     name: sanitizedSampleIdentifier(assignment.sampleID),
-                    first: contextualizedSequence(forward, role: .i7, kit: config.barcodeKit),
-                    second: contextualizedSequence(reverse, role: .i5, kit: config.barcodeKit)
+                    first: contextualizedSequence(forward, role: .i7, context: config.resolvedAdapterContext),
+                    second: contextualizedSequence(reverse, role: .i5, context: config.resolvedAdapterContext)
                 )
             }
 
@@ -478,7 +479,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         }
 
         switch config.barcodeKit.pairingMode {
-        case .singleEnd:
+        case .singleEnd, .symmetric:
             // For long-read platforms (ONT, PacBio), use linked adapter specs that match
             // both 5' and 3' barcode constructs. This provides better discrimination and
             // prevents false positives (e.g., barcode05 matching ONT flank sequences).
@@ -499,7 +500,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
             let entries: [(name: String, sequence: String)] = config.barcodeKit.barcodes.map { barcode in
                 (
                     name: barcode.id,
-                    sequence: contextualizedSequence(barcode.i7Sequence, role: .i7, kit: config.barcodeKit)
+                    sequence: contextualizedSequence(barcode.i7Sequence, role: .i7, context: config.resolvedAdapterContext)
                 )
             }
             try writeSingleEndAdapterFASTA(
@@ -522,12 +523,12 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                     first: contextualizedSequence(
                         barcode.i7Sequence,
                         role: .i7,
-                        kit: config.barcodeKit
+                        context: config.resolvedAdapterContext
                     ),
                     second: contextualizedSequence(
                         i5,
                         role: .i5,
-                        kit: config.barcodeKit
+                        context: config.resolvedAdapterContext
                     )
                 )
             }
@@ -557,13 +558,12 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
     /// Y-adapter + barcode + flank sequence. For Illumina, it adds
     /// P7/P5 flanking. For PacBio HiFi, returns bare barcode (CCS
     /// already removed SMRTbell adapters).
-    private func contextualizedSequence(_ sequence: String, role: BarcodeRole, kit: BarcodeKitDefinition) -> String {
-        let ctx = kit.adapterContext
+    private func contextualizedSequence(_ sequence: String, role: BarcodeRole, context: any PlatformAdapterContext) -> String {
         switch role {
         case .i7:
-            return ctx.fivePrimeSpec(barcodeSequence: sequence)
+            return context.fivePrimeSpec(barcodeSequence: sequence)
         case .i5:
-            return ctx.threePrimeSpec(barcodeSequence: sequence)
+            return context.threePrimeSpec(barcodeSequence: sequence)
         }
     }
 
@@ -778,7 +778,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         }
 
         switch kit.pairingMode {
-        case .singleEnd, .fixedDual:
+        case .singleEnd, .symmetric, .fixedDual:
             if let barcode = kit.barcodes.first(where: { $0.id == outputName }) {
                 return (barcode.sampleName, barcode.i7Sequence, barcode.i5Sequence)
             }
@@ -918,6 +918,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
     public func scout(
         inputURL: URL,
         kit: BarcodeKitDefinition,
+        adapterContext: (any PlatformAdapterContext)? = nil,
         readLimit: Int = 10_000,
         acceptThreshold: Int = 10,
         rejectThreshold: Int = 3,
@@ -953,8 +954,8 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         progress(0.2, "Preparing barcode adapters...")
         let adapterFASTA = workDir.appendingPathComponent("scout-adapters.fasta")
 
-        // Build single-end adapter specs using platform context
-        let ctx = kit.adapterContext
+        // Build adapter specs using platform context (or override)
+        let ctx = adapterContext ?? kit.adapterContext
         var lines: [String] = []
         for barcode in kit.barcodes {
             let spec = ctx.linkedSpec(barcodeSequence: barcode.i7Sequence)
