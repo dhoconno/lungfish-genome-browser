@@ -90,8 +90,9 @@ public enum FASTQDerivativePayload: Codable, Sendable, Equatable {
     case fullPaired(r1Filename: String, r2Filename: String)
     /// Stores multiple FASTQ files with classified roles (after merge/repair producing mixed read types).
     case fullMixed(ReadClassification)
-    /// A single demultiplexed barcode bundle (stores full FASTQ for one barcode).
-    case demuxed(barcodeID: String, fastqFilename: String)
+    /// A virtual demuxed barcode bundle: stores a read ID list and a small preview FASTQ,
+    /// referencing the root FASTQ for full materialization on demand.
+    case demuxedVirtual(barcodeID: String, readIDListFilename: String, previewFilename: String)
     /// The demux group directory containing all per-barcode bundles.
     case demuxGroup(barcodeCount: Int)
 
@@ -103,7 +104,7 @@ public enum FASTQDerivativePayload: Codable, Sendable, Equatable {
         case .full: return "full"
         case .fullPaired: return "full-paired"
         case .fullMixed: return "full-mixed"
-        case .demuxed: return "demuxed"
+        case .demuxedVirtual: return "demuxed-virtual"
         case .demuxGroup: return "demux-group"
         }
     }

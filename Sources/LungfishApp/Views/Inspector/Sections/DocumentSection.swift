@@ -620,8 +620,8 @@ public struct DocumentSection: View {
                     metadataRow(label: "Storage", value: "Materialized R1/R2")
                 case .fullMixed(let classification):
                     metadataRow(label: "Storage", value: "Materialized (\(classification.compositionLabel))")
-                case .demuxed(let barcodeID, _):
-                    metadataRow(label: "Storage", value: "Demuxed barcode (\(barcodeID))")
+                case .demuxedVirtual(let barcodeID, _, _):
+                    metadataRow(label: "Storage", value: "Virtual demuxed barcode (\(barcodeID))")
                 case .demuxGroup(let count):
                     metadataRow(label: "Storage", value: "Demux group (\(count) barcodes)")
                 }

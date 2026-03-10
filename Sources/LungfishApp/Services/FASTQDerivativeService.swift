@@ -1265,13 +1265,14 @@ public actor FASTQDerivativeService {
                 try concatenateFASTQFiles(filesToConcat, to: outputURL)
             }
 
-        case .demuxed(_, let fastqFilename):
-            // Demuxed barcode bundle — contains a full FASTQ for one barcode
-            let demuxFASTQURL = bundleURL.appendingPathComponent(fastqFilename)
-            guard FileManager.default.fileExists(atPath: demuxFASTQURL.path) else {
-                throw FASTQDerivativeError.sourceFASTQMissing
-            }
-            try FileManager.default.copyItem(at: demuxFASTQURL, to: outputURL)
+        case .demuxedVirtual(_, let readIDFilename, _):
+            // Virtual demuxed barcode bundle — extract reads from root FASTQ using read ID list
+            let readIDListURL = bundleURL.appendingPathComponent(readIDFilename)
+            try await extractReads(
+                fromRootFASTQ: rootFASTQURL,
+                readIDsFile: readIDListURL,
+                outputFASTQ: outputURL
+            )
 
         case .demuxGroup:
             // Demux group is a directory, not a materializable payload
