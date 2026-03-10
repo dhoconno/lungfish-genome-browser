@@ -4,6 +4,7 @@
 
 import AppKit
 import LungfishIO
+import LungfishWorkflow
 
 @MainActor
 public protocol FASTQMetadataDrawerViewDelegate: AnyObject {
@@ -12,6 +13,18 @@ public protocol FASTQMetadataDrawerViewDelegate: AnyObject {
         fastqURL: URL?,
         metadata: FASTQDemultiplexMetadata
     )
+    func fastqMetadataDrawerViewDidRequestScout(
+        _ drawer: FASTQMetadataDrawerView,
+        step: DemultiplexStep
+    )
+}
+
+// Default no-op for scout so existing conformers don't break.
+public extension FASTQMetadataDrawerViewDelegate {
+    func fastqMetadataDrawerViewDidRequestScout(
+        _ drawer: FASTQMetadataDrawerView,
+        step: DemultiplexStep
+    ) {}
 }
 
 @MainActor
@@ -19,17 +32,35 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
 
     private enum Tab: Int {
         case samples = 0
-        case barcodeSets = 1
+        case demuxSetup = 1
+        case barcodeKits = 2
     }
+
+    // Tag constants for distinguishing table views in data source/delegate
+    private static let mainTableTag = 100
+    private static let kitDetailTableTag = 101
+    private static let stepTableTag = 102
+
+    private var isSuppressingDelegateCallbacks = false
 
     private weak var delegate: FASTQMetadataDrawerViewDelegate?
 
     private var fastqURL: URL?
     private var activeTab: Tab = .samples
     private var sampleAssignments: [FASTQSampleBarcodeAssignment] = []
-    private var customBarcodeSets: [IlluminaBarcodeDefinition] = []
+    private var customBarcodeSets: [BarcodeKitDefinition] = []
     private var preferredBarcodeSetID: String?
     private var preferredSetIDByPopupIndex: [Int: String] = [:]
+
+    // Demux Setup state
+    private var demuxSteps: [DemultiplexStep] = []
+    private var compositeSampleNames: [String: String] = [:]
+    private var selectedStepIndex: Int = -1
+
+    // Barcode Kits detail state
+    private var allKits: [BarcodeKitDefinition] = []
+    private var selectedKitBarcodes: [BarcodeEntry] = []
+    private var selectedKitName: String = ""
 
     private let headerBar = NSView()
     private let tabControl = NSSegmentedControl()
@@ -41,10 +72,39 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
     private let exportButton = NSButton(title: "Export CSV", target: nil, action: nil)
     private let saveButton = NSButton(title: "Save", target: nil, action: nil)
 
+    // Shared content area
+    private let contentContainer = NSView()
     private let scrollView = NSScrollView()
     private let tableView = NSTableView()
     private let statusLabel = NSTextField(labelWithString: "")
     private let topDivider = NSBox()
+
+    // Barcode Kits detail split
+    private let kitDetailScrollView = NSScrollView()
+    private let kitDetailTable = NSTableView()
+    private let kitDetailLabel = NSTextField(labelWithString: "Select a kit to view its barcodes.")
+
+    // Demux Setup: step list (top) + detail panel (bottom)
+    private let stepScrollView = NSScrollView()
+    private let stepTable = NSTableView()
+    private let stepDetailContainer = NSView()
+    private let stepKitLabel = NSTextField(labelWithString: "Kit:")
+    private let stepKitPopup = NSPopUpButton()
+    private let stepLocationLabel = NSTextField(labelWithString: "Location:")
+    private let stepLocationControl = NSSegmentedControl()
+    private let stepSymmetryLabel = NSTextField(labelWithString: "Symmetry:")
+    private let stepSymmetryPopup = NSPopUpButton()
+    private let stepErrorLabel = NSTextField(labelWithString: "Error Rate:")
+    private let stepErrorRateField = NSTextField(string: "0.15")
+    private let stepTrimCheckbox = NSButton(checkboxWithTitle: "Trim barcodes", target: nil, action: nil)
+    private let stepScoutButton = NSButton(title: "Scout", target: nil, action: nil)
+    private let stepAddButton = NSButton(title: "+", target: nil, action: nil)
+    private let stepRemoveButton = NSButton(title: "−", target: nil, action: nil)
+
+    // Constraint groups toggled per-tab
+    private var samplesConstraints: [NSLayoutConstraint] = []
+    private var demuxSetupConstraints: [NSLayoutConstraint] = []
+    private var barcodeKitsConstraints: [NSLayoutConstraint] = []
 
     public init(delegate: FASTQMetadataDrawerViewDelegate? = nil) {
         self.delegate = delegate
@@ -52,8 +112,13 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        allKits = BarcodeKitRegistry.builtinKits()
         setupUI()
         rebuildColumns()
+    }
+
+    public override func updateLayer() {
+        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
     }
 
     @available(*, unavailable)
@@ -76,6 +141,7 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
             customBarcodeSets = []
             preferredBarcodeSetID = nil
         }
+        allKits = BarcodeKitRegistry.builtinKits() + customBarcodeSets
         rebuildPreferredSetPopup()
         tableView.reloadData()
         statusLabel.stringValue = sampleAssignments.isEmpty
@@ -91,6 +157,13 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         )
     }
 
+    /// Returns the current demux plan built from the Demux Setup tab.
+    public func currentDemuxPlan() -> DemultiplexPlan {
+        DemultiplexPlan(steps: demuxSteps, compositeSampleNames: compositeSampleNames)
+    }
+
+    // MARK: - Setup UI
+
     private func setupUI() {
         topDivider.boxType = .separator
         topDivider.translatesAutoresizingMaskIntoConstraints = false
@@ -99,9 +172,11 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         headerBar.translatesAutoresizingMaskIntoConstraints = false
         addSubview(headerBar)
 
-        tabControl.segmentCount = 2
+        // 3-segment tab control
+        tabControl.segmentCount = 3
         tabControl.setLabel("Samples", forSegment: 0)
-        tabControl.setLabel("Barcode Sets", forSegment: 1)
+        tabControl.setLabel("Demux Setup", forSegment: 1)
+        tabControl.setLabel("Barcode Kits", forSegment: 2)
         tabControl.selectedSegment = 0
         tabControl.segmentStyle = .texturedRounded
         tabControl.controlSize = .small
@@ -137,12 +212,14 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         saveButton.target = self
         saveButton.action = #selector(saveClicked(_:))
 
+        // Main table (Samples tab + Barcode Kits list)
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = true
         addSubview(scrollView)
 
+        tableView.tag = Self.mainTableTag
         tableView.headerView = NSTableHeaderView()
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.rowHeight = 24
@@ -150,11 +227,170 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         tableView.delegate = self
         scrollView.documentView = tableView
 
+        // Kit detail table (Barcode Kits tab bottom half)
+        kitDetailScrollView.translatesAutoresizingMaskIntoConstraints = false
+        kitDetailScrollView.hasVerticalScroller = true
+        kitDetailScrollView.autohidesScrollers = true
+        addSubview(kitDetailScrollView)
+
+        kitDetailTable.tag = Self.kitDetailTableTag
+        kitDetailTable.headerView = NSTableHeaderView()
+        kitDetailTable.usesAlternatingRowBackgroundColors = true
+        kitDetailTable.rowHeight = 22
+        kitDetailTable.dataSource = self
+        kitDetailTable.delegate = self
+        kitDetailScrollView.documentView = kitDetailTable
+
+        kitDetailLabel.font = .systemFont(ofSize: 11)
+        kitDetailLabel.textColor = .secondaryLabelColor
+        kitDetailLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(kitDetailLabel)
+
+        // Demux Setup: step list table
+        stepScrollView.translatesAutoresizingMaskIntoConstraints = false
+        stepScrollView.hasVerticalScroller = true
+        stepScrollView.autohidesScrollers = true
+        addSubview(stepScrollView)
+
+        stepTable.tag = Self.stepTableTag
+        stepTable.headerView = NSTableHeaderView()
+        stepTable.usesAlternatingRowBackgroundColors = true
+        stepTable.rowHeight = 24
+        stepTable.dataSource = self
+        stepTable.delegate = self
+        stepScrollView.documentView = stepTable
+
+        setupStepTableColumns()
+
+        // Step detail panel
+        stepDetailContainer.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stepDetailContainer)
+        setupStepDetailPanel()
+
+        // Step list buttons
+        for btn in [stepAddButton, stepRemoveButton] {
+            btn.bezelStyle = .rounded
+            btn.controlSize = .small
+            btn.translatesAutoresizingMaskIntoConstraints = false
+            headerBar.addSubview(btn)
+        }
+        stepAddButton.target = self
+        stepAddButton.action = #selector(addStepClicked(_:))
+        stepRemoveButton.target = self
+        stepRemoveButton.action = #selector(removeStepClicked(_:))
+
+        // Status bar
         statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(statusLabel)
 
+        setupConstraints()
+        rebuildPreferredSetPopup()
+    }
+
+    private func setupStepTableColumns() {
+        addColumn(to: stepTable, id: "stepOrdinal", title: "#", width: 30, editable: false)
+        addColumn(to: stepTable, id: "stepLabel", title: "Label", width: 120, editable: true)
+        addColumn(to: stepTable, id: "stepKit", title: "Kit", width: 180, editable: false)
+        addColumn(to: stepTable, id: "stepSymmetry", title: "Symmetry", width: 90, editable: false)
+    }
+
+    private func setupStepDetailPanel() {
+        let labels: [NSTextField] = [stepKitLabel, stepLocationLabel, stepSymmetryLabel, stepErrorLabel]
+        for label in labels {
+            label.font = .systemFont(ofSize: 11, weight: .medium)
+            label.translatesAutoresizingMaskIntoConstraints = false
+            stepDetailContainer.addSubview(label)
+        }
+
+        stepKitPopup.controlSize = .small
+        stepKitPopup.translatesAutoresizingMaskIntoConstraints = false
+        stepKitPopup.target = self
+        stepKitPopup.action = #selector(stepKitChanged(_:))
+        stepDetailContainer.addSubview(stepKitPopup)
+        rebuildStepKitPopup()
+
+        stepLocationControl.segmentCount = 3
+        stepLocationControl.setLabel("5'", forSegment: 0)
+        stepLocationControl.setLabel("3'", forSegment: 1)
+        stepLocationControl.setLabel("Both", forSegment: 2)
+        stepLocationControl.selectedSegment = 2
+        stepLocationControl.controlSize = .small
+        stepLocationControl.translatesAutoresizingMaskIntoConstraints = false
+        stepLocationControl.target = self
+        stepLocationControl.action = #selector(stepDetailChanged(_:))
+        stepDetailContainer.addSubview(stepLocationControl)
+
+        stepSymmetryPopup.controlSize = .small
+        stepSymmetryPopup.translatesAutoresizingMaskIntoConstraints = false
+        stepSymmetryPopup.addItems(withTitles: ["Symmetric", "Asymmetric", "Single End"])
+        stepSymmetryPopup.target = self
+        stepSymmetryPopup.action = #selector(stepDetailChanged(_:))
+        stepDetailContainer.addSubview(stepSymmetryPopup)
+
+        stepErrorRateField.controlSize = .small
+        stepErrorRateField.translatesAutoresizingMaskIntoConstraints = false
+        stepErrorRateField.alignment = .right
+        stepErrorRateField.target = self
+        stepErrorRateField.action = #selector(stepDetailChanged(_:))
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimum = 0.01
+        formatter.maximum = 0.50
+        formatter.maximumFractionDigits = 2
+        stepErrorRateField.formatter = formatter
+        stepDetailContainer.addSubview(stepErrorRateField)
+
+        stepTrimCheckbox.controlSize = .small
+        stepTrimCheckbox.translatesAutoresizingMaskIntoConstraints = false
+        stepTrimCheckbox.state = .on
+        stepTrimCheckbox.target = self
+        stepTrimCheckbox.action = #selector(stepDetailChanged(_:))
+        stepDetailContainer.addSubview(stepTrimCheckbox)
+
+        stepScoutButton.bezelStyle = .rounded
+        stepScoutButton.controlSize = .small
+        stepScoutButton.translatesAutoresizingMaskIntoConstraints = false
+        stepScoutButton.target = self
+        stepScoutButton.action = #selector(stepScoutClicked(_:))
+        stepDetailContainer.addSubview(stepScoutButton)
+
+        // Layout within detail panel — flow left-to-right, wrapping
+        NSLayoutConstraint.activate([
+            stepKitLabel.topAnchor.constraint(equalTo: stepDetailContainer.topAnchor, constant: 6),
+            stepKitLabel.leadingAnchor.constraint(equalTo: stepDetailContainer.leadingAnchor, constant: 8),
+            stepKitPopup.centerYAnchor.constraint(equalTo: stepKitLabel.centerYAnchor),
+            stepKitPopup.leadingAnchor.constraint(equalTo: stepKitLabel.trailingAnchor, constant: 4),
+            stepKitPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 200),
+
+            stepLocationLabel.topAnchor.constraint(equalTo: stepKitLabel.bottomAnchor, constant: 8),
+            stepLocationLabel.leadingAnchor.constraint(equalTo: stepDetailContainer.leadingAnchor, constant: 8),
+            stepLocationControl.centerYAnchor.constraint(equalTo: stepLocationLabel.centerYAnchor),
+            stepLocationControl.leadingAnchor.constraint(equalTo: stepLocationLabel.trailingAnchor, constant: 4),
+
+            stepSymmetryLabel.centerYAnchor.constraint(equalTo: stepLocationLabel.centerYAnchor),
+            stepSymmetryLabel.leadingAnchor.constraint(equalTo: stepLocationControl.trailingAnchor, constant: 16),
+            stepSymmetryPopup.centerYAnchor.constraint(equalTo: stepSymmetryLabel.centerYAnchor),
+            stepSymmetryPopup.leadingAnchor.constraint(equalTo: stepSymmetryLabel.trailingAnchor, constant: 4),
+            stepSymmetryPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 100),
+
+            stepErrorLabel.centerYAnchor.constraint(equalTo: stepLocationLabel.centerYAnchor),
+            stepErrorLabel.leadingAnchor.constraint(equalTo: stepSymmetryPopup.trailingAnchor, constant: 16),
+            stepErrorRateField.centerYAnchor.constraint(equalTo: stepErrorLabel.centerYAnchor),
+            stepErrorRateField.leadingAnchor.constraint(equalTo: stepErrorLabel.trailingAnchor, constant: 4),
+            stepErrorRateField.widthAnchor.constraint(equalToConstant: 50),
+
+            stepTrimCheckbox.topAnchor.constraint(equalTo: stepLocationLabel.bottomAnchor, constant: 8),
+            stepTrimCheckbox.leadingAnchor.constraint(equalTo: stepDetailContainer.leadingAnchor, constant: 8),
+
+            stepScoutButton.centerYAnchor.constraint(equalTo: stepTrimCheckbox.centerYAnchor),
+            stepScoutButton.leadingAnchor.constraint(equalTo: stepTrimCheckbox.trailingAnchor, constant: 16),
+        ])
+    }
+
+    private func setupConstraints() {
+        // Common/fixed constraints
         NSLayoutConstraint.activate([
             topDivider.topAnchor.constraint(equalTo: topAnchor),
             topDivider.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -191,24 +427,186 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
             addButton.trailingAnchor.constraint(equalTo: removeButton.leadingAnchor, constant: -6),
             addButton.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
 
-            scrollView.topAnchor.constraint(equalTo: headerBar.bottomAnchor, constant: 6),
-            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            scrollView.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -6),
+            // Step list buttons (used only on Demux Setup tab)
+            stepAddButton.leadingAnchor.constraint(equalTo: tabControl.trailingAnchor, constant: 10),
+            stepAddButton.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
+            stepRemoveButton.leadingAnchor.constraint(equalTo: stepAddButton.trailingAnchor, constant: 4),
+            stepRemoveButton.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
 
             statusLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             statusLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             statusLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
         ])
 
-        rebuildPreferredSetPopup()
+        // Samples tab constraints (main table fills content area)
+        samplesConstraints = [
+            scrollView.topAnchor.constraint(equalTo: headerBar.bottomAnchor, constant: 6),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            scrollView.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -6),
+        ]
+
+        // Barcode Kits tab constraints (kit list top half, detail table bottom half)
+        barcodeKitsConstraints = [
+            scrollView.topAnchor.constraint(equalTo: headerBar.bottomAnchor, constant: 6),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            scrollView.heightAnchor.constraint(equalTo: heightAnchor, multiplier: 0.35),
+
+            kitDetailLabel.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 4),
+            kitDetailLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+
+            kitDetailScrollView.topAnchor.constraint(equalTo: kitDetailLabel.bottomAnchor, constant: 2),
+            kitDetailScrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            kitDetailScrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            kitDetailScrollView.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -6),
+        ]
+
+        // Demux Setup tab constraints (step list top, detail panel bottom)
+        demuxSetupConstraints = [
+            stepScrollView.topAnchor.constraint(equalTo: headerBar.bottomAnchor, constant: 6),
+            stepScrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            stepScrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            stepScrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 60),
+            stepScrollView.heightAnchor.constraint(equalTo: heightAnchor, multiplier: 0.3),
+
+            stepDetailContainer.topAnchor.constraint(equalTo: stepScrollView.bottomAnchor, constant: 4),
+            stepDetailContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            stepDetailContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            stepDetailContainer.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -6),
+        ]
+
+        // Start with samples tab active
+        NSLayoutConstraint.activate(samplesConstraints)
     }
+
+    // MARK: - Tab Switching
+
+    @objc private func tabChanged(_ sender: NSSegmentedControl) {
+        let newTab = Tab(rawValue: sender.selectedSegment) ?? .samples
+        guard newTab != activeTab else { return }
+        activeTab = newTab
+        rebuildColumns()
+    }
+
+    private func updateTabVisibility() {
+        // Deactivate all constraint groups
+        NSLayoutConstraint.deactivate(samplesConstraints)
+        NSLayoutConstraint.deactivate(barcodeKitsConstraints)
+        NSLayoutConstraint.deactivate(demuxSetupConstraints)
+
+        // Hide everything first
+        scrollView.isHidden = true
+        kitDetailScrollView.isHidden = true
+        kitDetailLabel.isHidden = true
+        stepScrollView.isHidden = true
+        stepDetailContainer.isHidden = true
+
+        // Header bar button visibility
+        preferredSetLabel.isHidden = true
+        preferredSetPopup.isHidden = true
+        addButton.isHidden = true
+        removeButton.isHidden = true
+        importButton.isHidden = true
+        exportButton.isHidden = true
+        stepAddButton.isHidden = true
+        stepRemoveButton.isHidden = true
+
+        switch activeTab {
+        case .samples:
+            scrollView.isHidden = false
+            preferredSetLabel.isHidden = false
+            preferredSetPopup.isHidden = false
+            addButton.isHidden = false
+            removeButton.isHidden = false
+            importButton.isHidden = false
+            exportButton.isHidden = false
+            NSLayoutConstraint.activate(samplesConstraints)
+
+        case .demuxSetup:
+            stepScrollView.isHidden = false
+            stepDetailContainer.isHidden = false
+            stepAddButton.isHidden = false
+            stepRemoveButton.isHidden = false
+            NSLayoutConstraint.activate(demuxSetupConstraints)
+            stepTable.reloadData()
+            refreshStepDetail()
+
+        case .barcodeKits:
+            scrollView.isHidden = false
+            kitDetailScrollView.isHidden = false
+            kitDetailLabel.isHidden = false
+            importButton.isHidden = false
+            removeButton.isHidden = false
+            // Reset kit detail to avoid stale state from prior selection
+            selectedKitBarcodes = []
+            selectedKitName = ""
+            kitDetailLabel.stringValue = "Select a kit to view its barcodes."
+            kitDetailTable.reloadData()
+            NSLayoutConstraint.activate(barcodeKitsConstraints)
+        }
+    }
+
+    // MARK: - Column Rebuild
+
+    private func rebuildColumns() {
+        for column in tableView.tableColumns.reversed() {
+            tableView.removeTableColumn(column)
+        }
+        for column in kitDetailTable.tableColumns.reversed() {
+            kitDetailTable.removeTableColumn(column)
+        }
+
+        switch activeTab {
+        case .samples:
+            addColumn(to: tableView, id: "sampleID", title: "Sample ID", width: 140, editable: true)
+            addColumn(to: tableView, id: "sampleName", title: "Sample Name", width: 140, editable: true)
+            addColumn(to: tableView, id: "forwardBarcodeID", title: "5' Barcode ID", width: 120, editable: true)
+            addColumn(to: tableView, id: "forwardSequence", title: "5' Sequence", width: 190, editable: true)
+            addColumn(to: tableView, id: "reverseBarcodeID", title: "3' Barcode ID", width: 120, editable: true)
+            addColumn(to: tableView, id: "reverseSequence", title: "3' Sequence", width: 190, editable: true)
+            addColumn(to: tableView, id: "metadataCount", title: "Metadata", width: 80, editable: false)
+
+        case .demuxSetup:
+            break // Step table columns are set up once in setupStepTableColumns()
+
+        case .barcodeKits:
+            addColumn(to: tableView, id: "kitDisplayName", title: "Kit", width: 220, editable: false)
+            addColumn(to: tableView, id: "kitVendor", title: "Platform", width: 110, editable: false)
+            addColumn(to: tableView, id: "kitBarcodeCount", title: "Barcodes", width: 70, editable: false)
+            addColumn(to: tableView, id: "kitPairing", title: "Pairing", width: 100, editable: false)
+
+            // Detail table columns
+            addColumn(to: kitDetailTable, id: "bcID", title: "ID", width: 80, editable: false)
+            addColumn(to: kitDetailTable, id: "bcSequence", title: "Sequence", width: 260, editable: false)
+            addColumn(to: kitDetailTable, id: "bcSecondary", title: "Secondary", width: 260, editable: false)
+        }
+
+        tableView.reloadData()
+        kitDetailTable.reloadData()
+        updateTabVisibility()
+    }
+
+    private func addColumn(to table: NSTableView, id: String, title: String, width: CGFloat, editable: Bool) {
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
+        column.title = title
+        column.width = width
+        column.minWidth = min(width, 50)
+        column.maxWidth = max(width, 800)
+        if let cell = column.dataCell as? NSTextFieldCell {
+            cell.isEditable = editable
+            cell.lineBreakMode = .byTruncatingTail
+        }
+        table.addTableColumn(column)
+    }
+
+    // MARK: - Preferred Set Popup
 
     private func rebuildPreferredSetPopup() {
         preferredSetPopup.removeAllItems()
         preferredSetIDByPopupIndex.removeAll(keepingCapacity: true)
 
-        let allSets = IlluminaBarcodeKitRegistry.builtinKits() + customBarcodeSets
+        let allSets = BarcodeKitRegistry.builtinKits() + customBarcodeSets
         for (index, set) in allSets.enumerated() {
             preferredSetPopup.addItem(withTitle: set.displayName)
             preferredSetIDByPopupIndex[index] = set.id
@@ -223,94 +621,118 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         }
     }
 
-    private func rebuildColumns() {
-        for column in tableView.tableColumns.reversed() {
-            tableView.removeTableColumn(column)
+    // MARK: - Step Kit Popup
+
+    private func rebuildStepKitPopup() {
+        stepKitPopup.removeAllItems()
+        for kit in allKits {
+            stepKitPopup.addItem(withTitle: kit.displayName)
         }
-
-        switch activeTab {
-        case .samples:
-            addColumn(id: "sampleID", title: "Sample ID", width: 140, editable: true)
-            addColumn(id: "sampleName", title: "Sample Name", width: 140, editable: true)
-            addColumn(id: "forwardBarcodeID", title: "5' Barcode ID", width: 120, editable: true)
-            addColumn(id: "forwardSequence", title: "5' Sequence", width: 190, editable: true)
-            addColumn(id: "reverseBarcodeID", title: "3' Barcode ID", width: 120, editable: true)
-            addColumn(id: "reverseSequence", title: "3' Sequence", width: 190, editable: true)
-            addColumn(id: "metadataCount", title: "Metadata", width: 80, editable: false)
-            preferredSetLabel.isHidden = false
-            preferredSetPopup.isHidden = false
-            addButton.isHidden = false
-            removeButton.isHidden = false
-
-        case .barcodeSets:
-            addColumn(id: "id", title: "Set ID", width: 190, editable: false)
-            addColumn(id: "displayName", title: "Display Name", width: 220, editable: true)
-            addColumn(id: "vendor", title: "Vendor", width: 120, editable: false)
-            addColumn(id: "barcodeCount", title: "Barcodes", width: 90, editable: false)
-            preferredSetLabel.isHidden = true
-            preferredSetPopup.isHidden = true
-            addButton.isHidden = true
-            removeButton.isHidden = false
-        }
-
-        tableView.reloadData()
     }
 
-    private func addColumn(id: String, title: String, width: CGFloat, editable: Bool) {
-        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
-        column.title = title
-        column.width = width
-        column.minWidth = min(width, 80)
-        column.maxWidth = max(width, 800)
-        if let cell = column.dataCell as? NSTextFieldCell {
-            cell.isEditable = editable
-            cell.lineBreakMode = .byTruncatingTail
-        }
-        tableView.addTableColumn(column)
-    }
+    // MARK: - NSTableViewDataSource
 
     public func numberOfRows(in tableView: NSTableView) -> Int {
-        switch activeTab {
-        case .samples:
-            return sampleAssignments.count
-        case .barcodeSets:
-            return customBarcodeSets.count
+        switch tableView.tag {
+        case Self.mainTableTag:
+            switch activeTab {
+            case .samples: return sampleAssignments.count
+            case .barcodeKits: return allKits.count
+            case .demuxSetup: return 0
+            }
+        case Self.kitDetailTableTag:
+            return selectedKitBarcodes.count
+        case Self.stepTableTag:
+            return demuxSteps.count
+        default:
+            return 0
         }
     }
 
     public func tableView(_ tableView: NSTableView, objectValueFor tableColumn: NSTableColumn?, row: Int) -> Any? {
-        guard let tableColumn else { return nil }
+        guard let colID = tableColumn?.identifier.rawValue else { return nil }
+
+        switch tableView.tag {
+        case Self.mainTableTag:
+            return mainTableValue(column: colID, row: row)
+        case Self.kitDetailTableTag:
+            return kitDetailValue(column: colID, row: row)
+        case Self.stepTableTag:
+            return stepTableValue(column: colID, row: row)
+        default:
+            return nil
+        }
+    }
+
+    private func mainTableValue(column: String, row: Int) -> Any? {
         switch activeTab {
         case .samples:
             guard row >= 0, row < sampleAssignments.count else { return nil }
-            let assignment = sampleAssignments[row]
-            switch tableColumn.identifier.rawValue {
-            case "sampleID": return assignment.sampleID
-            case "sampleName": return assignment.sampleName ?? ""
-            case "forwardBarcodeID": return assignment.forwardBarcodeID ?? ""
-            case "forwardSequence": return assignment.forwardSequence ?? ""
-            case "reverseBarcodeID": return assignment.reverseBarcodeID ?? ""
-            case "reverseSequence": return assignment.reverseSequence ?? ""
-            case "metadataCount": return assignment.metadata.isEmpty ? "" : "\(assignment.metadata.count) field(s)"
+            let a = sampleAssignments[row]
+            switch column {
+            case "sampleID": return a.sampleID
+            case "sampleName": return a.sampleName ?? ""
+            case "forwardBarcodeID": return a.forwardBarcodeID ?? ""
+            case "forwardSequence": return a.forwardSequence ?? ""
+            case "reverseBarcodeID": return a.reverseBarcodeID ?? ""
+            case "reverseSequence": return a.reverseSequence ?? ""
+            case "metadataCount": return a.metadata.isEmpty ? "" : "\(a.metadata.count) field(s)"
             default: return nil
             }
-
-        case .barcodeSets:
-            guard row >= 0, row < customBarcodeSets.count else { return nil }
-            let set = customBarcodeSets[row]
-            switch tableColumn.identifier.rawValue {
-            case "id": return set.id
-            case "displayName": return set.displayName
-            case "vendor": return set.vendor
-            case "barcodeCount": return "\(set.barcodes.count)"
+        case .barcodeKits:
+            guard row >= 0, row < allKits.count else { return nil }
+            let kit = allKits[row]
+            switch column {
+            case "kitDisplayName": return kit.displayName
+            case "kitVendor": return kit.platform.displayName
+            case "kitBarcodeCount": return "\(kit.barcodes.count)"
+            case "kitPairing": return kit.pairingMode.rawValue
             default: return nil
             }
+        case .demuxSetup:
+            return nil
         }
     }
+
+    private func kitDetailValue(column: String, row: Int) -> Any? {
+        guard row >= 0, row < selectedKitBarcodes.count else { return nil }
+        let bc = selectedKitBarcodes[row]
+        switch column {
+        case "bcID": return bc.id
+        case "bcSequence": return bc.i7Sequence
+        case "bcSecondary": return bc.i5Sequence ?? ""
+        default: return nil
+        }
+    }
+
+    private func stepTableValue(column: String, row: Int) -> Any? {
+        guard row >= 0, row < demuxSteps.count else { return nil }
+        let step = demuxSteps[row]
+        switch column {
+        case "stepOrdinal": return "\(step.ordinal + 1)"
+        case "stepLabel": return step.label
+        case "stepKit": return BarcodeKitRegistry.kit(byID: step.barcodeKitID)?.displayName ?? step.barcodeKitID
+        case "stepSymmetry": return step.symmetryMode.rawValue
+        default: return nil
+        }
+    }
+
+    // MARK: - NSTableViewDelegate
 
     public func tableView(_ tableView: NSTableView, setObjectValue object: Any?, for tableColumn: NSTableColumn?, row: Int) {
         guard let tableColumn, let value = object as? String else { return }
 
+        switch tableView.tag {
+        case Self.mainTableTag:
+            setMainTableValue(column: tableColumn.identifier.rawValue, row: row, value: value)
+        case Self.stepTableTag:
+            setStepTableValue(column: tableColumn.identifier.rawValue, row: row, value: value)
+        default:
+            break
+        }
+    }
+
+    private func setMainTableValue(column: String, row: Int, value: String) {
         switch activeTab {
         case .samples:
             guard row >= 0, row < sampleAssignments.count else { return }
@@ -322,12 +744,10 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
             var reverseBarcodeID = current.reverseBarcodeID
             var reverseSequence = current.reverseSequence
 
-            switch tableColumn.identifier.rawValue {
+            switch column {
             case "sampleID":
                 let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    sampleID = trimmed
-                }
+                if !trimmed.isEmpty { sampleID = trimmed }
             case "sampleName":
                 sampleName = value.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
             case "forwardBarcodeID":
@@ -353,30 +773,127 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
             )
             statusLabel.stringValue = "Updated sample '\(sampleID)'."
 
-        case .barcodeSets:
-            guard row >= 0, row < customBarcodeSets.count else { return }
-            guard tableColumn.identifier.rawValue == "displayName" else { return }
-            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return }
-
-            let current = customBarcodeSets[row]
-            customBarcodeSets[row] = IlluminaBarcodeDefinition(
-                id: current.id,
-                displayName: trimmed,
-                vendor: current.vendor,
-                isDualIndexed: current.isDualIndexed,
-                pairingMode: current.pairingMode,
-                barcodes: current.barcodes
-            )
-            rebuildPreferredSetPopup()
-            statusLabel.stringValue = "Renamed barcode set '\(trimmed)'."
+        case .barcodeKits, .demuxSetup:
+            break
         }
     }
 
-    @objc private func tabChanged(_ sender: NSSegmentedControl) {
-        activeTab = Tab(rawValue: sender.selectedSegment) ?? .samples
-        rebuildColumns()
+    private func setStepTableValue(column: String, row: Int, value: String) {
+        guard row >= 0, row < demuxSteps.count, column == "stepLabel" else { return }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        demuxSteps[row].label = trimmed
+        statusLabel.stringValue = "Renamed step to '\(trimmed)'."
     }
+
+    public func tableViewSelectionDidChange(_ notification: Notification) {
+        guard !isSuppressingDelegateCallbacks,
+              let table = notification.object as? NSTableView else { return }
+        switch table.tag {
+        case Self.mainTableTag:
+            if activeTab == .barcodeKits {
+                let row = tableView.selectedRow
+                if row >= 0, row < allKits.count {
+                    let kit = allKits[row]
+                    selectedKitBarcodes = kit.barcodes
+                    selectedKitName = kit.displayName
+                    kitDetailLabel.stringValue = "\(kit.displayName) — \(kit.barcodes.count) barcode(s)"
+                } else {
+                    selectedKitBarcodes = []
+                    selectedKitName = ""
+                    kitDetailLabel.stringValue = "Select a kit to view its barcodes."
+                }
+                kitDetailTable.reloadData()
+            }
+        case Self.stepTableTag:
+            selectedStepIndex = stepTable.selectedRow
+            refreshStepDetail()
+        default:
+            break
+        }
+    }
+
+    // MARK: - Step Detail
+
+    private func refreshStepDetail() {
+        let hasSelection = selectedStepIndex >= 0 && selectedStepIndex < demuxSteps.count
+        stepDetailContainer.alphaValue = hasSelection ? 1.0 : 0.4
+        stepKitPopup.isEnabled = hasSelection
+        stepLocationControl.isEnabled = hasSelection
+        stepSymmetryPopup.isEnabled = hasSelection
+        stepErrorRateField.isEnabled = hasSelection
+        stepTrimCheckbox.isEnabled = hasSelection
+        stepScoutButton.isEnabled = hasSelection
+
+        guard hasSelection else { return }
+        let step = demuxSteps[selectedStepIndex]
+
+        // Kit popup
+        if let kitIndex = allKits.firstIndex(where: { $0.id == step.barcodeKitID }) {
+            stepKitPopup.selectItem(at: kitIndex)
+        }
+
+        // Location
+        switch step.barcodeLocation {
+        case .fivePrime: stepLocationControl.selectedSegment = 0
+        case .threePrime: stepLocationControl.selectedSegment = 1
+        case .bothEnds: stepLocationControl.selectedSegment = 2
+        }
+
+        // Symmetry
+        switch step.symmetryMode {
+        case .symmetric: stepSymmetryPopup.selectItem(at: 0)
+        case .asymmetric: stepSymmetryPopup.selectItem(at: 1)
+        case .singleEnd: stepSymmetryPopup.selectItem(at: 2)
+        }
+
+        stepErrorRateField.stringValue = String(format: "%.2f", step.errorRate)
+        stepTrimCheckbox.state = step.trimBarcodes ? .on : .off
+    }
+
+    @objc private func stepKitChanged(_ sender: NSPopUpButton) {
+        guard selectedStepIndex >= 0, selectedStepIndex < demuxSteps.count else { return }
+        let kitIndex = sender.indexOfSelectedItem
+        guard kitIndex >= 0, kitIndex < allKits.count else { return }
+        demuxSteps[selectedStepIndex].barcodeKitID = allKits[kitIndex].id
+        stepTable.reloadData()
+        statusLabel.stringValue = "Step kit changed to '\(allKits[kitIndex].displayName)'."
+    }
+
+    @objc private func stepDetailChanged(_ sender: Any) {
+        guard selectedStepIndex >= 0, selectedStepIndex < demuxSteps.count else { return }
+
+        let location: BarcodeLocation
+        switch stepLocationControl.selectedSegment {
+        case 0: location = .fivePrime
+        case 1: location = .threePrime
+        default: location = .bothEnds
+        }
+        demuxSteps[selectedStepIndex].barcodeLocation = location
+
+        let symmetry: BarcodeSymmetryMode
+        switch stepSymmetryPopup.indexOfSelectedItem {
+        case 1: symmetry = .asymmetric
+        case 2: symmetry = .singleEnd
+        default: symmetry = .symmetric
+        }
+        demuxSteps[selectedStepIndex].symmetryMode = symmetry
+
+        if let rate = Double(stepErrorRateField.stringValue) {
+            demuxSteps[selectedStepIndex].errorRate = max(0.01, min(0.50, rate))
+        }
+
+        demuxSteps[selectedStepIndex].trimBarcodes = stepTrimCheckbox.state == .on
+
+        stepTable.reloadData()
+    }
+
+    @objc private func stepScoutClicked(_ sender: NSButton) {
+        guard selectedStepIndex >= 0, selectedStepIndex < demuxSteps.count else { return }
+        delegate?.fastqMetadataDrawerViewDidRequestScout(self, step: demuxSteps[selectedStepIndex])
+    }
+
+    // MARK: - Button Actions
 
     @objc private func preferredSetChanged(_ sender: NSPopUpButton) {
         preferredBarcodeSetID = preferredSetIDByPopupIndex[sender.indexOfSelectedItem]
@@ -407,6 +924,41 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         statusLabel.stringValue = "Added \(sampleID)."
     }
 
+    @objc private func addStepClicked(_ sender: NSButton) {
+        let ordinal = demuxSteps.count
+        let label = ordinal == 0 ? "Outer" : "Inner \(ordinal)"
+        let defaultKit = allKits.first?.id ?? ""
+        let step = DemultiplexStep(
+            label: label,
+            barcodeKitID: defaultKit,
+            ordinal: ordinal
+        )
+        demuxSteps.append(step)
+        stepTable.reloadData()
+        stepTable.selectRowIndexes(IndexSet(integer: ordinal), byExtendingSelection: false)
+        selectedStepIndex = ordinal
+        refreshStepDetail()
+        statusLabel.stringValue = "Added step '\(label)'."
+    }
+
+    @objc private func removeStepClicked(_ sender: NSButton) {
+        guard selectedStepIndex >= 0, selectedStepIndex < demuxSteps.count else { return }
+        let removed = demuxSteps.remove(at: selectedStepIndex)
+        // Re-number ordinals
+        for i in demuxSteps.indices {
+            demuxSteps[i].ordinal = i
+        }
+        selectedStepIndex = min(selectedStepIndex, demuxSteps.count - 1)
+        isSuppressingDelegateCallbacks = true
+        stepTable.reloadData()
+        if selectedStepIndex >= 0 {
+            stepTable.selectRowIndexes(IndexSet(integer: selectedStepIndex), byExtendingSelection: false)
+        }
+        isSuppressingDelegateCallbacks = false
+        refreshStepDetail()
+        statusLabel.stringValue = "Removed step '\(removed.label)'."
+    }
+
     @objc private func removeClicked(_ sender: NSButton) {
         let row = tableView.selectedRow
         guard row >= 0 else { return }
@@ -417,15 +969,31 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
             let removed = sampleAssignments.remove(at: row)
             tableView.reloadData()
             statusLabel.stringValue = "Removed sample '\(removed.sampleID)'."
-        case .barcodeSets:
-            guard row < customBarcodeSets.count else { return }
-            let removed = customBarcodeSets.remove(at: row)
+
+        case .barcodeKits:
+            // Only allow removing custom kits (those beyond builtin count)
+            let builtinCount = BarcodeKitRegistry.builtinKits().count
+            guard row >= builtinCount else {
+                statusLabel.stringValue = "Built-in kits cannot be removed."
+                return
+            }
+            let customIndex = row - builtinCount
+            guard customIndex < customBarcodeSets.count else { return }
+            let removed = customBarcodeSets.remove(at: customIndex)
             if preferredBarcodeSetID == removed.id {
                 preferredBarcodeSetID = nil
             }
+            allKits = BarcodeKitRegistry.builtinKits() + customBarcodeSets
             rebuildPreferredSetPopup()
+            rebuildStepKitPopup()
             tableView.reloadData()
-            statusLabel.stringValue = "Removed custom set '\(removed.displayName)'."
+            selectedKitBarcodes = []
+            kitDetailTable.reloadData()
+            kitDetailLabel.stringValue = "Select a kit to view its barcodes."
+            statusLabel.stringValue = "Removed custom kit '\(removed.displayName)'."
+
+        case .demuxSetup:
+            break
         }
     }
 
@@ -454,21 +1022,26 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
                     self.statusLabel.stringValue = "Import failed: \(error.localizedDescription)"
                 }
 
-            case .barcodeSets:
+            case .barcodeKits:
                 do {
                     let name = url.deletingPathExtension().lastPathComponent
-                    let set = try IlluminaBarcodeKitRegistry.loadCustomKit(from: url, name: name)
+                    let set = try BarcodeKitRegistry.loadCustomKit(from: url, name: name)
                     if let idx = self.customBarcodeSets.firstIndex(where: { $0.id == set.id }) {
                         self.customBarcodeSets[idx] = set
                     } else {
                         self.customBarcodeSets.append(set)
                     }
+                    self.allKits = BarcodeKitRegistry.builtinKits() + self.customBarcodeSets
                     self.rebuildPreferredSetPopup()
+                    self.rebuildStepKitPopup()
                     self.tableView.reloadData()
-                    self.statusLabel.stringValue = "Imported custom barcode set '\(set.displayName)'."
+                    self.statusLabel.stringValue = "Imported custom barcode kit '\(set.displayName)'."
                 } catch {
                     self.statusLabel.stringValue = "Import failed: \(error.localizedDescription)"
                 }
+
+            case .demuxSetup:
+                break
             }
         }
     }
@@ -483,27 +1056,15 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         switch activeTab {
         case .samples:
             panel.nameFieldStringValue = "fastq-sample-metadata.csv"
-
-        case .barcodeSets:
-            guard tableView.selectedRow >= 0, tableView.selectedRow < customBarcodeSets.count else {
-                statusLabel.stringValue = "Select a custom barcode set to export."
-                return
-            }
-            let selected = customBarcodeSets[tableView.selectedRow]
-            panel.nameFieldStringValue = "\(selected.id).csv"
+        case .barcodeKits, .demuxSetup:
+            statusLabel.stringValue = "Export is only available on the Samples tab."
+            return
         }
 
         panel.beginSheetModal(for: window) { [weak self] response in
             guard let self, response == .OK, let outputURL = panel.url else { return }
             do {
-                let content: String
-                switch self.activeTab {
-                case .samples:
-                    content = FASTQSampleBarcodeCSV.exportCSV(self.sampleAssignments)
-                case .barcodeSets:
-                    let selected = self.customBarcodeSets[self.tableView.selectedRow]
-                    content = self.csvString(for: selected)
-                }
+                let content = FASTQSampleBarcodeCSV.exportCSV(self.sampleAssignments)
                 try content.write(to: outputURL, atomically: true, encoding: .utf8)
                 self.statusLabel.stringValue = "Exported \(outputURL.lastPathComponent)."
             } catch {
@@ -515,28 +1076,6 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
     @objc private func saveClicked(_ sender: NSButton) {
         delegate?.fastqMetadataDrawerViewDidSave(self, fastqURL: fastqURL, metadata: currentMetadata())
         statusLabel.stringValue = "Saved FASTQ metadata."
-    }
-
-    private func csvString(for set: IlluminaBarcodeDefinition) -> String {
-        var lines = ["id,i7_sequence,i5_sequence,sample_name"]
-        lines.reserveCapacity(set.barcodes.count + 1)
-        for barcode in set.barcodes {
-            let row = [
-                escapeCSV(barcode.id),
-                escapeCSV(barcode.i7Sequence),
-                escapeCSV(barcode.i5Sequence ?? ""),
-                escapeCSV(barcode.sampleName ?? ""),
-            ].joined(separator: ",")
-            lines.append(row)
-        }
-        return lines.joined(separator: "\n") + "\n"
-    }
-
-    private func escapeCSV(_ value: String) -> String {
-        if value.contains(",") || value.contains("\"") || value.contains("\n") {
-            return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
-        }
-        return value
     }
 }
 
