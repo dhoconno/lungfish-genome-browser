@@ -52,6 +52,12 @@ public struct DemultiplexConfig: Sendable {
     /// What to do with reads that don't match any barcode.
     public let unassignedDisposition: UnassignedDisposition
 
+    /// Poly-G trim quality threshold for two-color SBS platforms (cutadapt --nextseq-trim=N).
+    ///
+    /// Set to a quality score (e.g. 20) to enable poly-G trimming, or nil to disable.
+    /// Defaults from platform: Illumina/Element = 20, others = nil (disabled).
+    public let polyGTrimQuality: Int?
+
     /// Number of threads for cutadapt (--cores).
     public let threads: Int
 
@@ -86,6 +92,7 @@ public struct DemultiplexConfig: Sendable {
         trimBarcodes: Bool = true,
         searchReverseComplement: Bool? = nil,
         unassignedDisposition: UnassignedDisposition = .keep,
+        polyGTrimQuality: Int? = nil,
         threads: Int = 4,
         adapterContext: (any PlatformAdapterContext)? = nil,
         sampleAssignments: [FASTQSampleBarcodeAssignment] = []
@@ -116,6 +123,8 @@ public struct DemultiplexConfig: Sendable {
         self.searchReverseComplement = searchReverseComplement
             ?? barcodeKit.platform.readsCanBeReverseComplemented
         self.unassignedDisposition = unassignedDisposition
+        // Default poly-G trimming from platform (nil for non-two-color platforms)
+        self.polyGTrimQuality = polyGTrimQuality ?? barcodeKit.platform.defaultPolyGTrimQuality
         self.threads = threads
         self.sampleAssignments = sampleAssignments
     }
@@ -836,8 +845,8 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         args += ["--untrimmed-output", unassignedPath]
 
         // Poly-G trimming for two-color chemistry platforms (NextSeq, Element AVITI)
-        if config.barcodeKit.platform.mayNeedPolyGTrimming {
-            args += ["--nextseq-trim=20"]
+        if let polyGQuality = config.polyGTrimQuality {
+            args += ["--nextseq-trim=\(polyGQuality)"]
         }
 
         // JSON report

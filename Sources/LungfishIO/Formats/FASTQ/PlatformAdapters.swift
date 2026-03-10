@@ -85,6 +85,8 @@ public enum PlatformAdapters {
 
     /// SMRTbell adapter v3 (current, used with Revio and Sequel IIe).
     /// Already removed by CCS processing — presence in HiFi FASTQ indicates a QC issue.
+    /// NOTE: This sequence is from PacBio technical notes. Verify against SMRT Link's
+    /// `adapter.fasta` reference for your specific chemistry version if needed.
     public static let smrtbellV3 = "AAAAAAAAAAAAAAAAAATTAACGGAGGAGGAGGA"
 
     /// SMRTbell adapter v2.
@@ -111,6 +113,33 @@ public enum PlatformAdapters {
     /// MGI Read 2 adapter (read-through contamination in R2).
     public static let mgiR2 = "AAGTCGGATCGTAGCCATGTCGTTCTGTGAGCCAAGGAGTTG"
 
+    // MARK: - SMRTbell Contamination Check
+
+    /// All known SMRTbell adapter sequences for contamination scanning.
+    public static let smrtbellAdapters: [(label: String, sequence: String)] = [
+        ("SMRTbell v3", smrtbellV3),
+        ("SMRTbell v2", smrtbellV2),
+        ("SMRTbell v1", smrtbellV1),
+    ]
+
+    /// Scans a sequence for the presence of any SMRTbell adapter subsequence.
+    ///
+    /// Returns the label of the first matching adapter, or nil if none found.
+    /// Uses a sliding window with the minimum adapter length for O(n) scanning.
+    public static func detectSMRTbellContamination(in sequence: String) -> String? {
+        let upper = sequence.uppercased()
+        for (label, adapter) in smrtbellAdapters {
+            // Check for at least a 16-base substring match (robust against partial adapters)
+            let matchLen = min(adapter.count, 16)
+            let prefix = String(adapter.prefix(matchLen))
+            if upper.contains(prefix) { return label }
+            // Also check reverse complement
+            let rcPrefix = String(reverseComplement(adapter).prefix(matchLen))
+            if upper.contains(rcPrefix) { return label }
+        }
+        return nil
+    }
+
     // MARK: - Reverse Complement Helper
 
     /// Computes the reverse complement of a DNA sequence.
@@ -128,5 +157,47 @@ public enum PlatformAdapters {
         case "N", "n": return "N"
         default: return base
         }
+    }
+}
+
+// MARK: - Adapter QC Result
+
+/// Result of scanning reads for residual adapter contamination.
+public struct AdapterQCResult: Codable, Sendable, Equatable {
+    /// Number of reads scanned.
+    public let readsScanned: Int
+
+    /// Number of reads with detected adapter contamination.
+    public let contaminatedReadCount: Int
+
+    /// Per-adapter hit counts, keyed by adapter label.
+    public let hitsByAdapter: [String: Int]
+
+    /// Contamination rate (0.0–1.0).
+    public var contaminationRate: Double {
+        readsScanned > 0 ? Double(contaminatedReadCount) / Double(readsScanned) : 0
+    }
+
+    /// Whether contamination is above the warning threshold (>0.1%).
+    public var isWarning: Bool {
+        contaminationRate > 0.001
+    }
+
+    /// Human-readable summary.
+    public var summary: String {
+        if contaminatedReadCount == 0 {
+            return "No adapter contamination detected in \(readsScanned) reads."
+        }
+        let pct = String(format: "%.2f%%", contaminationRate * 100)
+        let adapters = hitsByAdapter.sorted { $0.value > $1.value }
+            .map { "\($0.key): \($0.value)" }
+            .joined(separator: ", ")
+        return "\(contaminatedReadCount)/\(readsScanned) reads (\(pct)) contain residual adapter sequences [\(adapters)]."
+    }
+
+    public init(readsScanned: Int, contaminatedReadCount: Int, hitsByAdapter: [String: Int]) {
+        self.readsScanned = readsScanned
+        self.contaminatedReadCount = contaminatedReadCount
+        self.hitsByAdapter = hitsByAdapter
     }
 }

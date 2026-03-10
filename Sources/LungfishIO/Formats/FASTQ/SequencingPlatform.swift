@@ -65,23 +65,37 @@ public enum SequencingPlatform: String, Codable, Sendable, CaseIterable {
         }
     }
 
+    /// Default poly-G trim quality threshold for two-color platforms.
+    ///
+    /// cutadapt `--nextseq-trim=N` uses this quality score to trim trailing
+    /// poly-G artifacts. Only meaningful when `mayNeedPolyGTrimming` is true.
+    /// Returns nil for platforms that don't need poly-G trimming.
+    public var defaultPolyGTrimQuality: Int? {
+        mayNeedPolyGTrimming ? 20 : nil
+    }
+
     /// Recommended cutadapt error rate for this platform.
     ///
-    /// ONT has higher error rates at read ends / adapter junctions (~5-10%).
+    /// ONT has higher error rates at read ends / adapter junctions (~5-10%),
+    /// but 0.20 is overly permissive and risks false barcode matches.
+    /// 0.15 balances sensitivity with specificity for noisy long reads.
     /// PacBio HiFi and short-read platforms are Q30+ (~0.1% error).
     public var recommendedErrorRate: Double {
         switch self {
-        case .oxfordNanopore: return 0.20
+        case .oxfordNanopore: return 0.15
         default:              return 0.10
         }
     }
 
     /// Recommended minimum overlap for cutadapt barcode matching.
+    ///
+    /// Short-read platforms use 5 bp minimum to reduce spurious matches
+    /// while retaining sensitivity for standard 6-8 bp index sequences.
     public var recommendedMinimumOverlap: Int {
         switch self {
         case .oxfordNanopore: return 20
         case .pacbio:         return 14
-        default:              return 3
+        default:              return 5
         }
     }
 

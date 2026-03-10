@@ -73,7 +73,6 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
     private let saveButton = NSButton(title: "Save", target: nil, action: nil)
 
     // Shared content area
-    private let contentContainer = NSView()
     private let scrollView = NSScrollView()
     private let tableView = NSTableView()
     private let statusLabel = NSTextField(labelWithString: "")
@@ -88,6 +87,8 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
     private let stepScrollView = NSScrollView()
     private let stepTable = NSTableView()
     private let stepDetailContainer = NSView()
+    private let stepDetailSeparator = NSBox()
+    private let stepEmptyLabel = NSTextField(labelWithString: "Add a step with + to configure demultiplexing.")
     private let stepKitLabel = NSTextField(labelWithString: "Kit:")
     private let stepKitPopup = NSPopUpButton()
     private let stepLocationLabel = NSTextField(labelWithString: "Location:")
@@ -212,6 +213,16 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         saveButton.target = self
         saveButton.action = #selector(saveClicked(_:))
 
+        // Accessibility
+        tabControl.setAccessibilityLabel("Metadata tab selector")
+        addButton.setAccessibilityLabel("Add sample")
+        removeButton.setAccessibilityLabel("Remove selected")
+        importButton.setAccessibilityLabel("Import CSV file")
+        exportButton.setAccessibilityLabel("Export CSV file")
+        saveButton.setAccessibilityLabel("Save metadata")
+        preferredSetPopup.setAccessibilityLabel("Preferred barcode set")
+        tableView.setAccessibilityLabel("Sample assignments")
+
         // Main table (Samples tab + Barcode Kits list)
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
@@ -297,6 +308,27 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
     }
 
     private func setupStepDetailPanel() {
+        // Visual separator between step list and detail panel
+        stepDetailSeparator.boxType = .separator
+        stepDetailSeparator.translatesAutoresizingMaskIntoConstraints = false
+        stepDetailContainer.addSubview(stepDetailSeparator)
+
+        // Empty state label (shown when no step selected)
+        stepEmptyLabel.font = .systemFont(ofSize: 12)
+        stepEmptyLabel.textColor = .tertiaryLabelColor
+        stepEmptyLabel.alignment = .center
+        stepEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        stepDetailContainer.addSubview(stepEmptyLabel)
+        NSLayoutConstraint.activate([
+            stepDetailSeparator.topAnchor.constraint(equalTo: stepDetailContainer.topAnchor),
+            stepDetailSeparator.leadingAnchor.constraint(equalTo: stepDetailContainer.leadingAnchor),
+            stepDetailSeparator.trailingAnchor.constraint(equalTo: stepDetailContainer.trailingAnchor),
+            stepDetailSeparator.heightAnchor.constraint(equalToConstant: 1),
+
+            stepEmptyLabel.centerXAnchor.constraint(equalTo: stepDetailContainer.centerXAnchor),
+            stepEmptyLabel.centerYAnchor.constraint(equalTo: stepDetailContainer.centerYAnchor),
+        ])
+
         let labels: [NSTextField] = [stepKitLabel, stepLocationLabel, stepSymmetryLabel, stepErrorLabel]
         for label in labels {
             label.font = .systemFont(ofSize: 11, weight: .medium)
@@ -356,9 +388,21 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         stepScoutButton.action = #selector(stepScoutClicked(_:))
         stepDetailContainer.addSubview(stepScoutButton)
 
+        // Accessibility labels for step detail controls
+        stepKitPopup.setAccessibilityLabel("Step barcode kit")
+        stepLocationControl.setAccessibilityLabel("Barcode location")
+        stepSymmetryPopup.setAccessibilityLabel("Barcode symmetry mode")
+        stepErrorRateField.setAccessibilityLabel("Error rate")
+        stepTrimCheckbox.setAccessibilityLabel("Trim barcodes from reads")
+        stepScoutButton.setAccessibilityLabel("Scout barcode matches")
+        stepTable.setAccessibilityLabel("Demultiplexing steps")
+        stepAddButton.setAccessibilityLabel("Add demux step")
+        stepRemoveButton.setAccessibilityLabel("Remove demux step")
+        kitDetailTable.setAccessibilityLabel("Barcode sequences")
+
         // Layout within detail panel — flow left-to-right, wrapping
         NSLayoutConstraint.activate([
-            stepKitLabel.topAnchor.constraint(equalTo: stepDetailContainer.topAnchor, constant: 6),
+            stepKitLabel.topAnchor.constraint(equalTo: stepDetailSeparator.bottomAnchor, constant: 6),
             stepKitLabel.leadingAnchor.constraint(equalTo: stepDetailContainer.leadingAnchor, constant: 8),
             stepKitPopup.centerYAnchor.constraint(equalTo: stepKitLabel.centerYAnchor),
             stepKitPopup.leadingAnchor.constraint(equalTo: stepKitLabel.trailingAnchor, constant: 4),
@@ -447,11 +491,13 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         ]
 
         // Barcode Kits tab constraints (kit list top half, detail table bottom half)
+        let kitHeightConstraint = scrollView.heightAnchor.constraint(equalTo: heightAnchor, multiplier: 0.35)
+        kitHeightConstraint.priority = .defaultHigh
         barcodeKitsConstraints = [
             scrollView.topAnchor.constraint(equalTo: headerBar.bottomAnchor, constant: 6),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            scrollView.heightAnchor.constraint(equalTo: heightAnchor, multiplier: 0.35),
+            kitHeightConstraint,
 
             kitDetailLabel.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 4),
             kitDetailLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
@@ -463,12 +509,14 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         ]
 
         // Demux Setup tab constraints (step list top, detail panel bottom)
+        let stepHeightConstraint = stepScrollView.heightAnchor.constraint(equalTo: heightAnchor, multiplier: 0.3)
+        stepHeightConstraint.priority = .defaultHigh
         demuxSetupConstraints = [
             stepScrollView.topAnchor.constraint(equalTo: headerBar.bottomAnchor, constant: 6),
             stepScrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             stepScrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             stepScrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 60),
-            stepScrollView.heightAnchor.constraint(equalTo: heightAnchor, multiplier: 0.3),
+            stepHeightConstraint,
 
             stepDetailContainer.topAnchor.constraint(equalTo: stepScrollView.bottomAnchor, constant: 4),
             stepDetailContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
@@ -817,13 +865,25 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
 
     private func refreshStepDetail() {
         let hasSelection = selectedStepIndex >= 0 && selectedStepIndex < demuxSteps.count
-        stepDetailContainer.alphaValue = hasSelection ? 1.0 : 0.4
-        stepKitPopup.isEnabled = hasSelection
-        stepLocationControl.isEnabled = hasSelection
-        stepSymmetryPopup.isEnabled = hasSelection
-        stepErrorRateField.isEnabled = hasSelection
-        stepTrimCheckbox.isEnabled = hasSelection
-        stepScoutButton.isEnabled = hasSelection
+
+        // Show empty state or detail controls
+        stepEmptyLabel.isHidden = hasSelection
+        let detailControls: [NSView] = [
+            stepKitLabel, stepKitPopup,
+            stepLocationLabel, stepLocationControl,
+            stepSymmetryLabel, stepSymmetryPopup,
+            stepErrorLabel, stepErrorRateField,
+            stepTrimCheckbox, stepScoutButton,
+        ]
+        for control in detailControls {
+            control.isHidden = !hasSelection
+        }
+
+        if demuxSteps.isEmpty {
+            stepEmptyLabel.stringValue = "Add a step with + to configure demultiplexing."
+        } else if !hasSelection {
+            stepEmptyLabel.stringValue = "Select a step to edit its settings."
+        }
 
         guard hasSelection else { return }
         let step = demuxSteps[selectedStepIndex]
@@ -1001,47 +1061,44 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         guard let window else { return }
 
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [
-            .init(filenameExtension: "csv")!,
-            .init(filenameExtension: "tsv")!,
-            .init(filenameExtension: "txt")!,
-        ]
+        panel.allowedContentTypes = [.commaSeparatedText, .tabSeparatedText, .plainText]
         panel.allowsMultipleSelection = false
         panel.prompt = "Import"
 
         panel.beginSheetModal(for: window) { [weak self] response in
             guard let self, response == .OK, let url = panel.url else { return }
-
-            switch self.activeTab {
-            case .samples:
-                do {
-                    self.sampleAssignments = try FASTQSampleBarcodeCSV.load(from: url)
-                    self.tableView.reloadData()
-                    self.statusLabel.stringValue = "Imported \(self.sampleAssignments.count) sample assignment(s)."
-                } catch {
-                    self.statusLabel.stringValue = "Import failed: \(error.localizedDescription)"
-                }
-
-            case .barcodeKits:
-                do {
-                    let name = url.deletingPathExtension().lastPathComponent
-                    let set = try BarcodeKitRegistry.loadCustomKit(from: url, name: name)
-                    if let idx = self.customBarcodeSets.firstIndex(where: { $0.id == set.id }) {
-                        self.customBarcodeSets[idx] = set
-                    } else {
-                        self.customBarcodeSets.append(set)
+            MainActor.assumeIsolated {
+                switch self.activeTab {
+                case .samples:
+                    do {
+                        self.sampleAssignments = try FASTQSampleBarcodeCSV.load(from: url)
+                        self.tableView.reloadData()
+                        self.statusLabel.stringValue = "Imported \(self.sampleAssignments.count) sample assignment(s)."
+                    } catch {
+                        self.statusLabel.stringValue = "Import failed: \(error.localizedDescription)"
                     }
-                    self.allKits = BarcodeKitRegistry.builtinKits() + self.customBarcodeSets
-                    self.rebuildPreferredSetPopup()
-                    self.rebuildStepKitPopup()
-                    self.tableView.reloadData()
-                    self.statusLabel.stringValue = "Imported custom barcode kit '\(set.displayName)'."
-                } catch {
-                    self.statusLabel.stringValue = "Import failed: \(error.localizedDescription)"
-                }
 
-            case .demuxSetup:
-                break
+                case .barcodeKits:
+                    do {
+                        let name = url.deletingPathExtension().lastPathComponent
+                        let set = try BarcodeKitRegistry.loadCustomKit(from: url, name: name)
+                        if let idx = self.customBarcodeSets.firstIndex(where: { $0.id == set.id }) {
+                            self.customBarcodeSets[idx] = set
+                        } else {
+                            self.customBarcodeSets.append(set)
+                        }
+                        self.allKits = BarcodeKitRegistry.builtinKits() + self.customBarcodeSets
+                        self.rebuildPreferredSetPopup()
+                        self.rebuildStepKitPopup()
+                        self.tableView.reloadData()
+                        self.statusLabel.stringValue = "Imported custom barcode kit '\(set.displayName)'."
+                    } catch {
+                        self.statusLabel.stringValue = "Import failed: \(error.localizedDescription)"
+                    }
+
+                case .demuxSetup:
+                    break
+                }
             }
         }
     }
@@ -1050,7 +1107,7 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         guard let window else { return }
 
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.init(filenameExtension: "csv")!]
+        panel.allowedContentTypes = [.commaSeparatedText]
         panel.prompt = "Export"
 
         switch activeTab {
@@ -1062,13 +1119,15 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         }
 
         panel.beginSheetModal(for: window) { [weak self] response in
-            guard let self, response == .OK, let outputURL = panel.url else { return }
-            do {
-                let content = FASTQSampleBarcodeCSV.exportCSV(self.sampleAssignments)
-                try content.write(to: outputURL, atomically: true, encoding: .utf8)
-                self.statusLabel.stringValue = "Exported \(outputURL.lastPathComponent)."
-            } catch {
-                self.statusLabel.stringValue = "Export failed: \(error.localizedDescription)"
+            MainActor.assumeIsolated {
+                guard let self, response == .OK, let outputURL = panel.url else { return }
+                do {
+                    let content = FASTQSampleBarcodeCSV.exportCSV(self.sampleAssignments)
+                    try content.write(to: outputURL, atomically: true, encoding: .utf8)
+                    self.statusLabel.stringValue = "Exported \(outputURL.lastPathComponent)."
+                } catch {
+                    self.statusLabel.stringValue = "Export failed: \(error.localizedDescription)"
+                }
             }
         }
     }

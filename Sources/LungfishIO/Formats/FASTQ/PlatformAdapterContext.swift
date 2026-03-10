@@ -4,6 +4,18 @@
 
 import Foundation
 
+// MARK: - Read Direction
+
+/// Which read in a paired-end sequencing run.
+///
+/// For single-end or long-read data, always use `.read1`.
+/// For paired-end short-read adapter trimming, `.read2` selects
+/// the platform-specific R2 adapter sequence.
+public enum ReadDirection: String, Codable, Sendable, CaseIterable {
+    case read1
+    case read2
+}
+
 // MARK: - Protocol
 
 /// Constructs the full cutadapt adapter specification for a barcode,
@@ -21,6 +33,20 @@ public protocol PlatformAdapterContext: Sendable {
 
     /// Build a linked adapter spec (`5'...3'`) for cutadapt.
     func linkedSpec(barcodeSequence: String) -> String
+
+    /// The 3' adapter sequence for a specific read direction.
+    ///
+    /// Short-read platforms use different adapter sequences for R1 vs R2.
+    /// Long-read platforms return the same sequence for both directions.
+    /// Default implementation delegates to `threePrimeSpec`.
+    func threePrimeSpec(barcodeSequence: String, readDirection: ReadDirection) -> String
+}
+
+extension PlatformAdapterContext {
+    /// Default: both directions use the same 3' spec.
+    public func threePrimeSpec(barcodeSequence: String, readDirection: ReadDirection) -> String {
+        threePrimeSpec(barcodeSequence: barcodeSequence)
+    }
 }
 
 // MARK: - BarcodeKitType
@@ -133,12 +159,18 @@ public struct IlluminaTruSeqAdapterContext: PlatformAdapterContext {
     public init() {}
 
     public func fivePrimeSpec(barcodeSequence: String) -> String {
-        // No 5' adapter in Illumina read-through
         ""
     }
 
     public func threePrimeSpec(barcodeSequence: String) -> String {
         PlatformAdapters.truseqR1
+    }
+
+    public func threePrimeSpec(barcodeSequence: String, readDirection: ReadDirection) -> String {
+        switch readDirection {
+        case .read1: return PlatformAdapters.truseqR1
+        case .read2: return PlatformAdapters.truseqR2
+        }
     }
 
     public func linkedSpec(barcodeSequence: String) -> String {
@@ -158,6 +190,13 @@ public struct IlluminaNexteraAdapterContext: PlatformAdapterContext {
 
     public func threePrimeSpec(barcodeSequence: String) -> String {
         PlatformAdapters.nexteraR1
+    }
+
+    public func threePrimeSpec(barcodeSequence: String, readDirection: ReadDirection) -> String {
+        switch readDirection {
+        case .read1: return PlatformAdapters.nexteraR1
+        case .read2: return PlatformAdapters.nexteraR2
+        }
     }
 
     public func linkedSpec(barcodeSequence: String) -> String {
@@ -180,6 +219,13 @@ public struct MGIAdapterContext: PlatformAdapterContext {
 
     public func threePrimeSpec(barcodeSequence: String) -> String {
         PlatformAdapters.mgiR1
+    }
+
+    public func threePrimeSpec(barcodeSequence: String, readDirection: ReadDirection) -> String {
+        switch readDirection {
+        case .read1: return PlatformAdapters.mgiR1
+        case .read2: return PlatformAdapters.mgiR2
+        }
     }
 
     public func linkedSpec(barcodeSequence: String) -> String {

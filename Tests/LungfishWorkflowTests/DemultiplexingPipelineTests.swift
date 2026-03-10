@@ -66,7 +66,7 @@ final class DemultiplexingPipelineTests: XCTestCase {
 
         XCTAssertEqual(config.barcodeLocation, .bothEnds)
         XCTAssertEqual(config.errorRate, 0.10, accuracy: 0.001)
-        XCTAssertEqual(config.minimumOverlap, 3)
+        XCTAssertEqual(config.minimumOverlap, 5)
         XCTAssertTrue(config.trimBarcodes)
         XCTAssertEqual(config.threads, 4)
     }
@@ -227,5 +227,70 @@ final class DemultiplexingPipelineTests: XCTestCase {
         XCTAssertEqual(result.manifest.barcodes.first?.barcodeID, "P01")
         XCTAssertEqual(result.manifest.barcodes.first?.readCount, 2)
         XCTAssertEqual(result.manifest.unassigned.readCount, 1)
+    }
+
+    // MARK: - Poly-G Trim Config
+
+    func testPolyGTrimDefaultsFromPlatform() {
+        let illuminaKit = BarcodeKitDefinition(
+            id: "test-illumina",
+            displayName: "Test Illumina",
+            vendor: "illumina",
+            barcodes: [BarcodeEntry(id: "BC01", i7Sequence: "ACGT")]
+        )
+        let config = DemultiplexConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/input.fastq"),
+            barcodeKit: illuminaKit,
+            outputDirectory: URL(fileURLWithPath: "/tmp/out")
+        )
+        // Illumina platform defaults to poly-G trim quality 20
+        XCTAssertEqual(config.polyGTrimQuality, 20)
+    }
+
+    func testPolyGTrimNilForONT() {
+        let ontKit = BarcodeKitDefinition(
+            id: "test-ont",
+            displayName: "Test ONT",
+            vendor: "oxford_nanopore",
+            barcodes: [BarcodeEntry(id: "BC01", i7Sequence: "ACGT")]
+        )
+        let config = DemultiplexConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/input.fastq"),
+            barcodeKit: ontKit,
+            outputDirectory: URL(fileURLWithPath: "/tmp/out")
+        )
+        XCTAssertNil(config.polyGTrimQuality)
+    }
+
+    func testPolyGTrimExplicitOverride() {
+        let ontKit = BarcodeKitDefinition(
+            id: "test-ont",
+            displayName: "Test ONT",
+            vendor: "oxford_nanopore",
+            barcodes: [BarcodeEntry(id: "BC01", i7Sequence: "ACGT")]
+        )
+        // Force poly-G trimming even on ONT (unusual but user-configurable)
+        let config = DemultiplexConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/input.fastq"),
+            barcodeKit: ontKit,
+            outputDirectory: URL(fileURLWithPath: "/tmp/out"),
+            polyGTrimQuality: 15
+        )
+        XCTAssertEqual(config.polyGTrimQuality, 15)
+    }
+
+    func testPolyGTrimElementDefaults() {
+        let elementKit = BarcodeKitDefinition(
+            id: "test-element",
+            displayName: "Test Element",
+            vendor: "element",
+            barcodes: [BarcodeEntry(id: "BC01", i7Sequence: "ACGT")]
+        )
+        let config = DemultiplexConfig(
+            inputURL: URL(fileURLWithPath: "/tmp/input.fastq"),
+            barcodeKit: elementKit,
+            outputDirectory: URL(fileURLWithPath: "/tmp/out")
+        )
+        XCTAssertEqual(config.polyGTrimQuality, 20)
     }
 }

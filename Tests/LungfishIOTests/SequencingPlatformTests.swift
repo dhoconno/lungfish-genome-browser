@@ -48,7 +48,7 @@ final class SequencingPlatformTests: XCTestCase {
     }
 
     func testRecommendedErrorRate() {
-        XCTAssertEqual(SequencingPlatform.oxfordNanopore.recommendedErrorRate, 0.20, accuracy: 0.001)
+        XCTAssertEqual(SequencingPlatform.oxfordNanopore.recommendedErrorRate, 0.15, accuracy: 0.001)
         XCTAssertEqual(SequencingPlatform.illumina.recommendedErrorRate, 0.10, accuracy: 0.001)
         XCTAssertEqual(SequencingPlatform.pacbio.recommendedErrorRate, 0.10, accuracy: 0.001)
         XCTAssertEqual(SequencingPlatform.element.recommendedErrorRate, 0.10, accuracy: 0.001)
@@ -58,9 +58,9 @@ final class SequencingPlatformTests: XCTestCase {
     func testRecommendedMinimumOverlap() {
         XCTAssertEqual(SequencingPlatform.oxfordNanopore.recommendedMinimumOverlap, 20)
         XCTAssertEqual(SequencingPlatform.pacbio.recommendedMinimumOverlap, 14)
-        XCTAssertEqual(SequencingPlatform.illumina.recommendedMinimumOverlap, 3)
-        XCTAssertEqual(SequencingPlatform.element.recommendedMinimumOverlap, 3)
-        XCTAssertEqual(SequencingPlatform.mgi.recommendedMinimumOverlap, 3)
+        XCTAssertEqual(SequencingPlatform.illumina.recommendedMinimumOverlap, 5)
+        XCTAssertEqual(SequencingPlatform.element.recommendedMinimumOverlap, 5)
+        XCTAssertEqual(SequencingPlatform.mgi.recommendedMinimumOverlap, 5)
     }
 
     // MARK: - Vendor String Init
@@ -113,5 +113,30 @@ final class SequencingPlatformTests: XCTestCase {
 
     func testCaseIterable() {
         XCTAssertEqual(SequencingPlatform.allCases.count, 7)
+    }
+
+    // MARK: - Poly-G Trim Quality
+
+    func testDefaultPolyGTrimQualityForTwoColorPlatforms() {
+        XCTAssertEqual(SequencingPlatform.illumina.defaultPolyGTrimQuality, 20)
+        XCTAssertEqual(SequencingPlatform.element.defaultPolyGTrimQuality, 20)
+    }
+
+    func testDefaultPolyGTrimQualityNilForOtherPlatforms() {
+        XCTAssertNil(SequencingPlatform.oxfordNanopore.defaultPolyGTrimQuality)
+        XCTAssertNil(SequencingPlatform.pacbio.defaultPolyGTrimQuality)
+        XCTAssertNil(SequencingPlatform.ultima.defaultPolyGTrimQuality)
+        XCTAssertNil(SequencingPlatform.mgi.defaultPolyGTrimQuality)
+        XCTAssertNil(SequencingPlatform.unknown.defaultPolyGTrimQuality)
+    }
+
+    func testPolyGTrimQualityConsistentWithMayNeedFlag() {
+        for platform in SequencingPlatform.allCases {
+            if platform.mayNeedPolyGTrimming {
+                XCTAssertNotNil(platform.defaultPolyGTrimQuality, "\(platform) needs poly-G but has nil quality")
+            } else {
+                XCTAssertNil(platform.defaultPolyGTrimQuality, "\(platform) doesn't need poly-G but has quality")
+            }
+        }
     }
 }
