@@ -925,10 +925,6 @@ public class ViewerViewController: NSViewController {
         fastqDatasetController?.updateOperationStatus(message)
     }
 
-    func refreshFASTQDemultiplexMetadata() {
-        fastqDatasetController?.refreshDemultiplexMetadata()
-    }
-
     // MARK: - FASTQ Dataset Display
 
     /// Displays the FASTQ dataset dashboard in place of the normal sequence viewer.

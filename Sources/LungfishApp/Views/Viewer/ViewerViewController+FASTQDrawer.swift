@@ -8,7 +8,7 @@ import LungfishWorkflow
 import os.log
 
 private let fastqDrawerLogger = Logger(subsystem: "com.lungfish.browser", category: "ViewerFASTQDrawer")
-private let fastqDrawerHeight: CGFloat = 240
+private let fastqDrawerHeight: CGFloat = 360
 
 extension ViewerViewController: FASTQMetadataDrawerViewDelegate {
 
@@ -97,9 +97,58 @@ extension ViewerViewController: FASTQMetadataDrawerViewDelegate {
         var persisted = FASTQMetadataStore.load(for: targetURL) ?? PersistedFASTQMetadata()
         persisted.demultiplexMetadata = metadata
         FASTQMetadataStore.save(persisted, for: targetURL)
-        refreshFASTQDemultiplexMetadata()
         syncDemuxConfigToController()
         fastqDrawerLogger.info("Saved FASTQ demultiplex metadata for \(targetURL.lastPathComponent, privacy: .public)")
+    }
+
+    public func fastqMetadataDrawerViewDidRequestScout(
+        _ drawer: FASTQMetadataDrawerView,
+        step: DemultiplexStep
+    ) {
+        guard let fastqURL = currentFASTQDatasetURL else {
+            fastqDrawerLogger.warning("Scout requested but no FASTQ URL is set")
+            return
+        }
+        guard let kit = BarcodeKitRegistry.kit(byID: step.barcodeKitID) else {
+            fastqDrawerLogger.warning("Scout requested but barcode kit '\(step.barcodeKitID)' not found")
+            return
+        }
+
+        let pipeline = DemultiplexingPipeline()
+        fastqDrawerLogger.info("Starting barcode scout for \(fastqURL.lastPathComponent, privacy: .public) with kit \(step.barcodeKitID, privacy: .public)")
+
+        Task.detached { [weak self] in
+            do {
+                let result = try await pipeline.scout(
+                    inputURL: fastqURL,
+                    kit: kit,
+                    readLimit: 10_000,
+                    progress: { _, _ in }
+                )
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self, let window = self.view.window else { return }
+                        BarcodeScoutSheet.present(
+                            on: window,
+                            scoutResult: result,
+                            kitDisplayName: kit.displayName
+                        )
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        fastqDrawerLogger.error("Barcode scout failed: \(error)")
+                        let alert = NSAlert()
+                        alert.messageText = "Barcode Detection Failed"
+                        alert.informativeText = error.localizedDescription
+                        alert.alertStyle = .warning
+                        alert.runModal()
+                    }
+                }
+            }
+        }
     }
 
     /// Syncs the drawer's first demux step to the operations panel as the current config.
@@ -120,6 +169,37 @@ extension ViewerViewController: FASTQMetadataDrawerViewDelegate {
         }
         fastqMetadataDrawerView?.selectDemuxSetupTab()
     }
+
+    // MARK: - Drag-to-Resize
+
+    public func fastqMetadataDrawerDidDragDivider(_ drawer: FASTQMetadataDrawerView, deltaY: CGFloat) {
+        guard let heightConstraint = fastqMetadataDrawerHeightConstraint else { return }
+        let maxHeight = view.bounds.height * 0.7
+        let newHeight = max(150, min(maxHeight, heightConstraint.constant + deltaY))
+        heightConstraint.constant = newHeight
+        fastqMetadataDrawerBottomConstraint?.constant = 0  // Keep visible while dragging
+        view.layoutSubtreeIfNeeded()
+        // Defer UserDefaults write -- mouseDragged fires at 60+ Hz
+        _fastqDrawerHeightSaveWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let height = self.fastqMetadataDrawerHeightConstraint?.constant ?? fastqDrawerHeight
+                UserDefaults.standard.set(Double(height), forKey: "fastqMetadataDrawerHeight")
+            }
+        }
+        _fastqDrawerHeightSaveWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)
+    }
+
+    public func fastqMetadataDrawerDidFinishDraggingDivider(_ drawer: FASTQMetadataDrawerView) {
+        // Flush the debounced save immediately on drag end
+        _fastqDrawerHeightSaveWorkItem?.cancel()
+        _fastqDrawerHeightSaveWorkItem = nil
+        if let height = fastqMetadataDrawerHeightConstraint?.constant {
+            UserDefaults.standard.set(Double(height), forKey: "fastqMetadataDrawerHeight")
+        }
+    }
 }
 
 extension ViewerViewController {
@@ -130,6 +210,7 @@ extension ViewerViewController {
     private static var fastqDashboardViewKey: UInt8 = 0
     private static var fastqDashboardBottomKey: UInt8 = 0
     private static var currentFASTQDatasetURLKey: UInt8 = 0
+    private static var fastqDrawerHeightSaveWorkItemKey: UInt8 = 0
 
     var fastqMetadataDrawerView: FASTQMetadataDrawerView? {
         get { objc_getAssociatedObject(self, &Self.fastqMetadataDrawerViewKey) as? FASTQMetadataDrawerView }
@@ -164,5 +245,10 @@ extension ViewerViewController {
     var currentFASTQDatasetURL: URL? {
         get { objc_getAssociatedObject(self, &Self.currentFASTQDatasetURLKey) as? URL }
         set { objc_setAssociatedObject(self, &Self.currentFASTQDatasetURLKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
+    }
+
+    var _fastqDrawerHeightSaveWorkItem: DispatchWorkItem? {
+        get { objc_getAssociatedObject(self, &Self.fastqDrawerHeightSaveWorkItemKey) as? DispatchWorkItem }
+        set { objc_setAssociatedObject(self, &Self.fastqDrawerHeightSaveWorkItemKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
     }
 }

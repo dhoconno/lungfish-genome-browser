@@ -17,14 +17,65 @@ public protocol FASTQMetadataDrawerViewDelegate: AnyObject {
         _ drawer: FASTQMetadataDrawerView,
         step: DemultiplexStep
     )
+    func fastqMetadataDrawerDidDragDivider(_ drawer: FASTQMetadataDrawerView, deltaY: CGFloat)
+    func fastqMetadataDrawerDidFinishDraggingDivider(_ drawer: FASTQMetadataDrawerView)
 }
 
-// Default no-op for scout so existing conformers don't break.
+// Default no-op implementations so existing conformers don't break.
 public extension FASTQMetadataDrawerViewDelegate {
     func fastqMetadataDrawerViewDidRequestScout(
         _ drawer: FASTQMetadataDrawerView,
         step: DemultiplexStep
     ) {}
+    func fastqMetadataDrawerDidDragDivider(_ drawer: FASTQMetadataDrawerView, deltaY: CGFloat) {}
+    func fastqMetadataDrawerDidFinishDraggingDivider(_ drawer: FASTQMetadataDrawerView) {}
+}
+
+// MARK: - FASTQDrawerDividerView
+
+/// Drag-to-resize handle for the FASTQ metadata drawer, matching the annotation drawer divider.
+@MainActor
+final class FASTQDrawerDividerView: NSView {
+
+    /// Called during mouse drag with the vertical delta (positive = dragging up = taller drawer).
+    var onDrag: ((CGFloat) -> Void)?
+
+    /// Called when the drag gesture ends.
+    var onDragEnd: (() -> Void)?
+
+    private var dragStartY: CGFloat = 0
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .resizeUpDown)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        // 1px separator line at the bottom of the divider
+        NSColor.separatorColor.setFill()
+        NSBezierPath.fill(NSRect(x: 0, y: 0, width: bounds.width, height: 1))
+        // Three subtle horizontal grip indicator lines
+        let cx = bounds.midX
+        let cy = bounds.midY
+        NSColor.tertiaryLabelColor.setFill()
+        for offset: CGFloat in [-2, 0, 2] {
+            NSBezierPath.fill(NSRect(x: cx - 8, y: cy + offset, width: 16, height: 0.5))
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        dragStartY = NSEvent.mouseLocation.y
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        let currentY = NSEvent.mouseLocation.y
+        let delta = dragStartY - currentY  // dragging up = positive = taller
+        dragStartY = currentY
+        onDrag?(delta)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        onDragEnd?()
+    }
 }
 
 @MainActor
@@ -76,7 +127,7 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
     private let scrollView = NSScrollView()
     private let tableView = NSTableView()
     private let statusLabel = NSTextField(labelWithString: "")
-    private let topDivider = NSBox()
+    private let drawerDivider = FASTQDrawerDividerView()
 
     // Barcode Kits detail split
     private let kitDetailScrollView = NSScrollView()
@@ -172,9 +223,16 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
     // MARK: - Setup UI
 
     private func setupUI() {
-        topDivider.boxType = .separator
-        topDivider.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(topDivider)
+        drawerDivider.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(drawerDivider)
+        drawerDivider.onDrag = { [weak self] deltaY in
+            guard let self else { return }
+            self.delegate?.fastqMetadataDrawerDidDragDivider(self, deltaY: deltaY)
+        }
+        drawerDivider.onDragEnd = { [weak self] in
+            guard let self else { return }
+            self.delegate?.fastqMetadataDrawerDidFinishDraggingDivider(self)
+        }
 
         headerBar.translatesAutoresizingMaskIntoConstraints = false
         addSubview(headerBar)
@@ -464,12 +522,12 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
     private func setupConstraints() {
         // Common/fixed constraints
         NSLayoutConstraint.activate([
-            topDivider.topAnchor.constraint(equalTo: topAnchor),
-            topDivider.leadingAnchor.constraint(equalTo: leadingAnchor),
-            topDivider.trailingAnchor.constraint(equalTo: trailingAnchor),
-            topDivider.heightAnchor.constraint(equalToConstant: 1),
+            drawerDivider.topAnchor.constraint(equalTo: topAnchor),
+            drawerDivider.leadingAnchor.constraint(equalTo: leadingAnchor),
+            drawerDivider.trailingAnchor.constraint(equalTo: trailingAnchor),
+            drawerDivider.heightAnchor.constraint(equalToConstant: 8),
 
-            headerBar.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            headerBar.topAnchor.constraint(equalTo: drawerDivider.bottomAnchor, constant: 2),
             headerBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             headerBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             headerBar.heightAnchor.constraint(equalToConstant: 28),
