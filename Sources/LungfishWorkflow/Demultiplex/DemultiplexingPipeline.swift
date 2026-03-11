@@ -103,6 +103,30 @@ public struct DemultiplexConfig: Sendable {
         return max(errorRate, sourcePlatform.recommendedErrorRate)
     }
 
+    /// Effective minimum overlap accounting for cross-platform scenarios.
+    ///
+    /// For long-read platforms with short barcodes (e.g., 16bp PacBio barcodes on ONT),
+    /// a high overlap threshold relative to barcode length is overly strict.
+    /// Caps overlap at barcode_length - 4 to allow partial boundary matches.
+    public var effectiveMinimumOverlap: Int {
+        let minBarcodeLen = barcodeKit.barcodes.reduce(Int.max) { currentMin, barcode in
+            let i7Len = barcode.i7Sequence.count
+            let i5Len = barcode.i5Sequence?.count ?? i7Len
+            return min(currentMin, min(i7Len, i5Len))
+        }
+        let barcodeLen = minBarcodeLen == Int.max ? 16 : minBarcodeLen
+        // Don't require more than barcode_length - 4 overlap
+        return min(minimumOverlap, max(3, barcodeLen - 4))
+    }
+
+    /// Whether to disallow indels in barcode matching (cutadapt --no-indels).
+    ///
+    /// Defaults to `false` (indels allowed). ONT reads have significant indel
+    /// rates even in barcode regions — benchmarking showed that allowing indels
+    /// improved detection by 18% (50→59 both-end reads on 100-read test set).
+    /// See `docs/research/cutadapt-demux-pipeline-spec.md`.
+    public let useNoIndels: Bool
+
     public init(
         inputURL: URL,
         barcodeKit: BarcodeKitDefinition,
@@ -122,7 +146,8 @@ public struct DemultiplexConfig: Sendable {
         sampleAssignments: [FASTQSampleBarcodeAssignment] = [],
         sourcePlatform: SequencingPlatform? = nil,
         rootBundleURL: URL? = nil,
-        rootFASTQFilename: String? = nil
+        rootFASTQFilename: String? = nil,
+        useNoIndels: Bool = false
     ) {
         self.inputURL = inputURL
         self.barcodeKit = barcodeKit
@@ -157,6 +182,7 @@ public struct DemultiplexConfig: Sendable {
         self.sourcePlatform = sourcePlatform
         self.rootBundleURL = rootBundleURL
         self.rootFASTQFilename = rootFASTQFilename
+        self.useNoIndels = useNoIndels
     }
 }
 
@@ -298,13 +324,20 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         let jsonReportPath = workDir
             .appendingPathComponent("cutadapt-report.json").path
 
+        // Capture per-read trim info when in virtual mode (for trim position storage)
+        let isVirtualMode = config.rootBundleURL != nil
+        let infoFilePath = isVirtualMode
+            ? workDir.appendingPathComponent("cutadapt-info.tsv").path
+            : nil
+
         var args = buildCutadaptArguments(
             config: config,
             adapterFASTA: adapterConfig.adapterFASTA,
             adapterFlag: adapterConfig.adapterFlag,
             outputPattern: outputPattern,
             unassignedPath: unassignedPath,
-            jsonReportPath: jsonReportPath
+            jsonReportPath: jsonReportPath,
+            infoFilePath: infoFilePath
         )
 
         args.append(inputFASTQ.path)
@@ -329,9 +362,98 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
             )
         }
 
-        progress(0.80, "cutadapt complete, creating bundles...")
+        progress(0.75, "cutadapt complete, processing trim info...")
 
-        // Step 4: Create virtual per-barcode .lungfishfastq bundles (15% progress)
+        // Step 4: Parse per-read trim positions from info file (if captured)
+        // Key = barcode name, Value = array of (readID, trim5prime, trim3prime) tuples
+        var trimPositionsByBarcode: [String: [(readID: String, trim5p: Int, trim3p: Int)]] = [:]
+        if let infoFilePath, fm.fileExists(atPath: infoFilePath) {
+            trimPositionsByBarcode = parseCutadaptInfoFile(URL(fileURLWithPath: infoFilePath))
+        }
+
+        // Step 4b: For symmetric long-read kits, enforce both-end matching.
+        // Pass 1 (above) used 5'-only specs with --revcomp, which assigns reads where
+        // the barcode appears on ANY end. Pass 1 also normalizes all output reads to
+        // forward orientation (cutadapt outputs RC'd reads in their matched orientation).
+        // For symmetric mode, we filter each per-barcode file to keep only reads that
+        // ALSO have the 3' adapter — i.e., both ends present.
+        //
+        // We skip the 5' re-trim step (pass 2a) that the scout uses, because:
+        // - When trimBarcodes is true, pass 1 already removed the 5' adapter
+        // - When trimBarcodes is false, reads are already forward-oriented by --revcomp
+        // Either way, the 3' adapter (if present) is at the 3' end and detectable.
+        // No --revcomp here: avoids false positives where RC of 5' mimics the 3' spec.
+        let isSymmetricLongRead = config.symmetryMode == .symmetric
+            && config.barcodeKit.platform.readsCanBeReverseComplemented
+            && config.searchReverseComplement
+        if isSymmetricLongRead {
+            progress(0.78, "Enforcing both-end barcode matching...")
+            let ctx = config.resolvedAdapterContext
+            let pass2Dir = workDir.appendingPathComponent("symmetric-pass2", isDirectory: true)
+            try fm.createDirectory(at: pass2Dir, withIntermediateDirectories: true)
+
+            let barcodeOutputFiles = try fm.contentsOfDirectory(
+                at: demuxOutputDir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+            ).filter { $0.pathExtension == "gz" || $0.pathExtension == "fastq" }
+
+            for outputFile in barcodeOutputFiles {
+                let baseName = outputFile.deletingPathExtension().deletingPathExtension().lastPathComponent
+                guard baseName != "unassigned" else { continue }
+                guard fileSize(outputFile) > 20 else { continue }
+
+                // Find the barcode sequence for this output file
+                let barcodeSeq: String?
+                if let barcode = config.barcodeKit.barcodes.first(where: { $0.id == baseName }) {
+                    barcodeSeq = barcode.i7Sequence
+                } else if let assignment = config.sampleAssignments.first(where: {
+                    sanitizedSampleIdentifier($0.sampleID) == baseName
+                }) {
+                    barcodeSeq = resolveSequence(
+                        explicitSequence: assignment.forwardSequence,
+                        barcodeID: assignment.forwardBarcodeID,
+                        kit: config.barcodeKit
+                    )
+                } else {
+                    barcodeSeq = nil
+                }
+                guard let seq = barcodeSeq else { continue }
+
+                let barcodeDir = pass2Dir.appendingPathComponent(baseName, isDirectory: true)
+                try fm.createDirectory(at: barcodeDir, withIntermediateDirectories: true)
+
+                // Check for 3' adapter to keep only both-end reads.
+                // Pass 1 output is already forward-oriented (--revcomp normalizes),
+                // so the 3' adapter is at the 3' end. No --revcomp needed.
+                let threePrimeFASTA = barcodeDir.appendingPathComponent("3prime.fasta")
+                try ">\(baseName)\n\(ctx.threePrimeSpec(barcodeSequence: seq))\n"
+                    .write(to: threePrimeFASTA, atomically: true, encoding: .utf8)
+
+                let bothEndFile = barcodeDir.appendingPathComponent("both-end.fastq.gz")
+                var pass2bArgs: [String] = [
+                    "-a", "file:\(threePrimeFASTA.path)",
+                    "-e", String(config.effectiveErrorRate),
+                    "--overlap", String(config.effectiveMinimumOverlap),
+                    "--action", "none", "--discard-untrimmed",
+                    "-o", bothEndFile.path, "--cores", "1", outputFile.path
+                ]
+                if config.useNoIndels { pass2bArgs.insert("--no-indels", at: 6) }
+
+                let p2bResult = try await runner.run(
+                    .cutadapt, arguments: pass2bArgs, workingDirectory: workDir, timeout: 300
+                )
+                guard p2bResult.isSuccess else { continue }
+
+                // Replace the original per-barcode output with only both-end reads.
+                try fm.removeItem(at: outputFile)
+                if fm.fileExists(atPath: bothEndFile.path), fileSize(bothEndFile) > 20 {
+                    try fm.moveItem(at: bothEndFile, to: outputFile)
+                }
+            }
+        }
+
+        progress(0.80, "Creating bundles...")
+
+        // Step 5: Create virtual per-barcode .lungfishfastq bundles (15% progress)
         // Each bundle contains a read ID list and a small preview (first 1000 reads),
         // NOT a full copy of the barcode's FASTQ. The full cutadapt output stays in
         // workDir and is cleaned up by the defer block.
@@ -379,7 +501,6 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
 
         // Virtual mode: extract read IDs + preview (default for single-step and final multi-step)
         // Full mode: move entire cutadapt output into bundle (intermediate multi-step)
-        let isVirtualMode = config.rootBundleURL != nil
 
         let bundleResults: [VirtualBundleResult] = try await withThrowingTaskGroup(
             of: VirtualBundleResult?.self,
@@ -404,6 +525,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
 
                 let capturedRunner = self.runner
                 let capturedIsVirtual = isVirtualMode
+                let capturedTrimPositions = trimPositionsByBarcode[file.baseName]
                 group.addTask {
                     try Task.checkCancellation()
 
@@ -429,6 +551,16 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                         guard previewResult.isSuccess else {
                             logger.error("seqkit head failed for \(file.baseName): \(previewResult.stderr)")
                             return nil
+                        }
+
+                        // Write trim positions file if available
+                        if let trimPositions = capturedTrimPositions, !trimPositions.isEmpty {
+                            let trimURL = bundleURL.appendingPathComponent("trim-positions.tsv")
+                            var trimContent = "read_id\ttrim_5p\ttrim_3p\n"
+                            for entry in trimPositions {
+                                trimContent += "\(entry.readID)\t\(entry.trim5p)\t\(entry.trim3p)\n"
+                            }
+                            try? trimContent.write(to: trimURL, atomically: true, encoding: .utf8)
                         }
                     } else {
                         // Full mode: move cutadapt output file into bundle for downstream steps
@@ -509,7 +641,8 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                     payload: .demuxedVirtual(
                         barcodeID: result.baseName,
                         readIDListFilename: "read-ids.txt",
-                        previewFilename: "preview.fastq.gz"
+                        previewFilename: "preview.fastq.gz",
+                        trimPositionsFilename: trimPositionsByBarcode[result.baseName] != nil ? "trim-positions.tsv" : nil
                     ),
                     lineage: [demuxOp],
                     operation: demuxOp,
@@ -658,9 +791,8 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
             && config.barcodeKit.pairingMode == .symmetric
             && config.barcodeKit.platform.readsCanBeReverseComplemented {
             // Symmetric long-read kits with sample assignments from scout:
-            // Use 5'-only specs (not linked) when --revcomp is active. Linked adapter
-            // syntax in FASTA files is incompatible with --revcomp, causing ~50% of
-            // reverse-oriented reads to go unassigned.
+            // Use 5'-only specs with --revcomp for pass 1 (barcode identity detection).
+            // The actual demux enforces both-end matching via a second pass with 3' adapter.
             let ctx = config.resolvedAdapterContext
             let useRevcomp = config.searchReverseComplement
             var lines: [String] = []
@@ -722,11 +854,9 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
 
         switch config.barcodeKit.pairingMode {
         case .singleEnd, .symmetric:
-            // For long-read platforms (ONT, PacBio), use 5'-only adapter specs when
-            // --revcomp is active. Linked adapter syntax (5'...3') in FASTA files is
-            // incompatible with --revcomp, causing ~50% of reverse-oriented reads to go
-            // unassigned. The 5' spec (Y-adapter + flank + barcode) is sufficient for
-            // barcode identification; --revcomp handles orientation detection.
+            // For long-read platforms, use 5'-only adapter specs with --revcomp.
+            // Pass 1 detects barcode identity; for symmetric mode, the demux pipeline
+            // runs a second pass with 3' adapter to enforce both-end matching.
             if config.barcodeKit.platform.readsCanBeReverseComplemented {
                 let ctx = config.resolvedAdapterContext
                 let useRevcomp = config.searchReverseComplement
@@ -1071,7 +1201,8 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         adapterFlag: String,
         outputPattern: String,
         unassignedPath: String,
-        jsonReportPath: String
+        jsonReportPath: String,
+        infoFilePath: String? = nil
     ) -> [String] {
         var args: [String] = []
 
@@ -1080,7 +1211,10 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
 
         // Error rate (cross-platform aware) and overlap
         args += ["-e", String(config.effectiveErrorRate)]
-        args += ["--overlap", String(config.minimumOverlap)]
+        args += ["--overlap", String(config.effectiveMinimumOverlap)]
+        if config.useNoIndels {
+            args += ["--no-indels"]
+        }
 
         // Search both strand orientations for long-read platforms.
         // --revcomp is incompatible with linked adapter syntax (5'...3'), so skip it
@@ -1113,10 +1247,82 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         // JSON report
         args += ["--json", jsonReportPath]
 
+        // Per-read adapter match info (for trim position capture)
+        if let infoFilePath {
+            args += ["--info-file", infoFilePath]
+        }
+
         // Threading
         args += ["--cores", String(max(1, config.threads))]
 
         return args
+    }
+
+    /// Parses cutadapt's `--info-file` output to extract per-read trim positions.
+    ///
+    /// The info file is tab-separated with columns:
+    /// 0: read_name, 1: errors, 2: adapter_start, 3: adapter_end,
+    /// 4: sequence_before, 5: matched_sequence, 6: sequence_after,
+    /// 7: adapter_name, 8: quality_before, 9: quality_of_match, 10: quality_after
+    ///
+    /// For linked adapters (5'...3'), each read produces two lines (one per arm).
+    /// Returns: dictionary keyed by barcode name → array of (readID, trim5p, trim3p).
+    /// trim5p = number of bases to trim from 5' end (adapter match end position).
+    /// trim3p = number of bases to trim from 3' end (read length - adapter match start).
+    private func parseCutadaptInfoFile(_ url: URL) -> [String: [(readID: String, trim5p: Int, trim3p: Int)]] {
+        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return [:] }
+
+        // Accumulate per-read match info: readID → (barcode, 5p trim end, 3p trim start)
+        struct ReadTrimInfo {
+            var barcode: String = ""
+            var trim5p: Int = 0
+            var trim3p: Int = 0  // stored as offset from read start where 3' adapter begins
+            var readLength: Int = 0
+        }
+
+        var readInfos: [String: ReadTrimInfo] = [:]
+
+        for line in content.split(separator: "\n") where !line.isEmpty {
+            let cols = line.split(separator: "\t", omittingEmptySubsequences: false)
+            guard cols.count >= 8 else { continue }
+
+            let readID = String(cols[0])
+            let errors = Int(cols[1]) ?? -1
+            guard errors >= 0 else { continue }  // -1 means no match
+
+            let adapterName = String(cols[7])
+            let seqBefore = cols[4]
+            let matchedSeq = cols[5]
+            let seqAfter = cols[6]
+
+            let totalLen = seqBefore.count + matchedSeq.count + seqAfter.count
+
+            var info = readInfos[readID] ?? ReadTrimInfo()
+            info.barcode = adapterName
+            info.readLength = max(info.readLength, totalLen)
+
+            // If sequence_before is short (< 100bp) and sequence_after is long,
+            // this is likely the 5' adapter match → trim from start
+            if seqBefore.count < seqAfter.count {
+                info.trim5p = max(info.trim5p, seqBefore.count + matchedSeq.count)
+            } else {
+                // 3' adapter match → trim from this position onward
+                let trim3pStart = seqBefore.count
+                if info.trim3p == 0 || trim3pStart < info.trim3p {
+                    info.trim3p = trim3pStart
+                }
+            }
+            readInfos[readID] = info
+        }
+
+        // Group by barcode and compute final trim positions
+        var result: [String: [(readID: String, trim5p: Int, trim3p: Int)]] = [:]
+        for (readID, info) in readInfos {
+            let finalTrim3p = info.trim3p > 0 ? info.readLength - info.trim3p : 0
+            result[info.barcode, default: []].append((readID: readID, trim5p: info.trim5p, trim3p: finalTrim3p))
+        }
+
+        return result
     }
 
     /// Returns file size in bytes.
@@ -1189,6 +1395,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         inputURL: URL,
         kit: BarcodeKitDefinition,
         adapterContext: (any PlatformAdapterContext)? = nil,
+        sourcePlatform: SequencingPlatform? = nil,
         readLimit: Int = 10_000,
         acceptThreshold: Int = 10,
         rejectThreshold: Int = 3,
@@ -1227,6 +1434,9 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         let ctx = adapterContext ?? kit.adapterContext
         let useRevcomp = kit.platform.readsCanBeReverseComplemented
 
+        // Compute effective parameters (cross-platform aware)
+        let scoutParams = ScoutEffectiveParameters.compute(kit: kit, sourcePlatform: sourcePlatform)
+
         // For combinatorial kits, use a two-phase scout:
         //   Phase 1: Individual barcodes (N entries) to find which barcodes are present
         //   Phase 2: Linked pairs for detected barcodes only (M×M << N×N)
@@ -1237,6 +1447,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                 ctx: ctx,
                 subsetFile: subsetFile,
                 workDir: workDir,
+                effectiveParams: scoutParams,
                 acceptThreshold: acceptThreshold,
                 rejectThreshold: rejectThreshold,
                 startTime: startTime,
@@ -1264,7 +1475,6 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
             }
         } else {
             // Symmetric/single-end kits: use 5'-only specs with --revcomp for orientation.
-            // Linked adapter syntax is incompatible with --revcomp.
             for barcode in kit.barcodes {
                 let spec = useRevcomp
                     ? ctx.fivePrimeSpec(barcodeSequence: barcode.i7Sequence)
@@ -1277,7 +1487,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         try adapterContent.write(to: adapterFASTA, atomically: true, encoding: .utf8)
         try validateAdapterFASTA(at: adapterFASTA, kitName: kit.displayName)
 
-        // Step 3: Run cutadapt
+        // Step 3: Run cutadapt (pass 1 — 5' adapter detection)
         progress(0.3, "Running cutadapt scout scan...")
         let isLinkedPairMode = kit.pairingMode == .fixedDual
         let scoutResult = try await runScoutCutadapt(
@@ -1285,17 +1495,140 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
             subsetFile: subsetFile,
             workDir: workDir,
             kit: kit,
+            effectiveParams: scoutParams,
             useRevcomp: useRevcomp && !isLinkedPairMode
         )
 
-        progress(0.8, "Analyzing scout results...")
+        progress(0.7, "Analyzing scout results...")
 
-        let (detections, totalScanned, unassignedCount) = try collectScoutDetections(
+        var (detections, totalScanned, unassignedCount) = try collectScoutDetections(
             outputDir: scoutResult.outputDir,
             kit: kit,
             acceptThreshold: acceptThreshold,
             rejectThreshold: rejectThreshold
         )
+
+        // Step 4: For symmetric long-read kits, run pass 2 with 3' adapter to count
+        // both-end matches. The research pipeline showed 98% 5' detection but only 59%
+        // both-end — the scout must report the both-end count for symmetric mode.
+        if kit.pairingMode == .symmetric && useRevcomp && !detections.isEmpty {
+            progress(0.75, "Validating 3' barcode matches...")
+            let pass2Dir = workDir.appendingPathComponent("scout-pass2", isDirectory: true)
+            try FileManager.default.createDirectory(at: pass2Dir, withIntermediateDirectories: true)
+
+            var updatedDetections: [BarcodeDetection] = []
+            var pass2UnassignedTotal = 0
+
+            for detection in detections {
+                guard detection.hitCount > 0,
+                      let barcode = kit.barcodes.first(where: { $0.id == detection.barcodeID }) else {
+                    updatedDetections.append(detection)
+                    continue
+                }
+
+                let seq = barcode.i7Sequence
+                let barcodeDir = pass2Dir.appendingPathComponent(barcode.id, isDirectory: true)
+                try FileManager.default.createDirectory(at: barcodeDir, withIntermediateDirectories: true)
+
+                // Input is the per-barcode output from pass 1
+                let pass1Output = scoutResult.outputDir.appendingPathComponent("\(barcode.id).fastq.gz")
+                guard FileManager.default.fileExists(atPath: pass1Output.path) else {
+                    updatedDetections.append(detection)
+                    continue
+                }
+
+                // Pass 2a: Trim the 5' adapter with --revcomp to normalize orientation.
+                // After this, all reads are in forward orientation with the 5' adapter removed.
+                // This prevents pass 2b from falsely matching the RC of the 5' adapter as a 3' hit.
+                let fivePrimeFASTA = barcodeDir.appendingPathComponent("5prime.fasta")
+                let fiveSpec = ctx.fivePrimeSpec(barcodeSequence: seq)
+                try ">\(barcode.id)\n\(fiveSpec)\n".write(to: fivePrimeFASTA, atomically: true, encoding: .utf8)
+
+                let trimmedOutput = barcodeDir.appendingPathComponent("trimmed.fastq.gz")
+                var pass2aArgs: [String] = []
+                pass2aArgs += ["-g", "file:\(fivePrimeFASTA.path)"]
+                pass2aArgs += ["-e", String(scoutParams.errorRate)]
+                pass2aArgs += ["--overlap", String(scoutParams.minimumOverlap)]
+                if scoutParams.noIndels { pass2aArgs += ["--no-indels"] }
+                pass2aArgs += ["--revcomp"]
+                pass2aArgs += ["--action", "trim"]
+                pass2aArgs += ["--discard-untrimmed"]
+                pass2aArgs += ["-o", trimmedOutput.path]
+                pass2aArgs += ["--cores", "1"]
+                pass2aArgs += [pass1Output.path]
+
+                let pass2aResult = try await runner.run(
+                    .cutadapt, arguments: pass2aArgs, workingDirectory: workDir, timeout: 120
+                )
+                guard pass2aResult.isSuccess,
+                      FileManager.default.fileExists(atPath: trimmedOutput.path) else {
+                    updatedDetections.append(detection)
+                    continue
+                }
+
+                // Pass 2b: Check for the 3' adapter on the trimmed reads.
+                // Reads are now in forward orientation with 5' adapter removed, so the
+                // 3' adapter (if present) is intact at the 3' end.
+                let threePrimeFASTA = barcodeDir.appendingPathComponent("3prime.fasta")
+                let threeSpec = ctx.threePrimeSpec(barcodeSequence: seq)
+                try ">\(barcode.id)\n\(threeSpec)\n".write(to: threePrimeFASTA, atomically: true, encoding: .utf8)
+
+                let bothEndOutput = barcodeDir.appendingPathComponent("both-end.fastq.gz")
+                var pass2bArgs: [String] = []
+                pass2bArgs += ["-a", "file:\(threePrimeFASTA.path)"]
+                pass2bArgs += ["-e", String(scoutParams.errorRate)]
+                pass2bArgs += ["--overlap", String(scoutParams.minimumOverlap)]
+                if scoutParams.noIndels { pass2bArgs += ["--no-indels"] }
+                pass2bArgs += ["--action", "none"]
+                pass2bArgs += ["--discard-untrimmed"]
+                pass2bArgs += ["-o", bothEndOutput.path]
+                pass2bArgs += ["--cores", "1"]
+                pass2bArgs += [trimmedOutput.path]
+
+                let pass2bResult = try await runner.run(
+                    .cutadapt, arguments: pass2bArgs, workingDirectory: workDir, timeout: 120
+                )
+                guard pass2bResult.isSuccess else {
+                    updatedDetections.append(detection)
+                    continue
+                }
+
+                // Count reads that matched both ends
+                let bothEndCount = countReadsInFASTQ(url: bothEndOutput)
+                let singleEndOnly = detection.hitCount - bothEndCount
+                pass2UnassignedTotal += singleEndOnly
+
+                let updated = BarcodeDetection(
+                    id: detection.id,
+                    barcodeID: detection.barcodeID,
+                    kitID: detection.kitID,
+                    hitCount: bothEndCount,
+                    hitPercentage: detection.hitPercentage,
+                    matchedEnds: .bothEnds,
+                    meanEditDistance: detection.meanEditDistance,
+                    disposition: detection.disposition,
+                    sampleName: detection.sampleName
+                )
+                updatedDetections.append(updated)
+            }
+
+            // Recalculate percentages and dispositions with both-end counts
+            unassignedCount += pass2UnassignedTotal
+            detections = updatedDetections
+            for i in detections.indices {
+                if totalScanned > 0 {
+                    detections[i].hitPercentage = Double(detections[i].hitCount) / Double(totalScanned) * 100
+                }
+                if detections[i].hitCount >= acceptThreshold {
+                    detections[i].disposition = .accepted
+                } else if detections[i].hitCount <= rejectThreshold {
+                    detections[i].disposition = .rejected
+                } else {
+                    detections[i].disposition = .undecided
+                }
+            }
+            detections.sort { $0.hitCount > $1.hitCount }
+        }
 
         let elapsed = Date().timeIntervalSince(startTime)
         progress(1.0, "Scout complete: \(detections.count) barcodes detected")
@@ -1319,6 +1652,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         ctx: any PlatformAdapterContext,
         subsetFile: URL,
         workDir: URL,
+        effectiveParams: ScoutEffectiveParameters,
         acceptThreshold: Int,
         rejectThreshold: Int,
         startTime: Date,
@@ -1344,7 +1678,8 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
             subsetFile: subsetFile,
             workDir: workDir,
             kit: kit,
-            useRevcomp: kit.platform.readsCanBeReverseComplemented,
+            effectiveParams: effectiveParams,
+            useRevcomp: effectiveParams.isLongRead,
             outputSubdir: "scout-phase1-output"
         )
 
@@ -1375,15 +1710,27 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         progress(0.50, "Phase 2: Testing \(detectedBarcodes.count) barcodes (\(pairCount) pairs)...")
         let phase2FASTA = workDir.appendingPathComponent("scout-phase2-adapters.fasta")
         var phase2Lines: [String] = []
+        let isLongRead = effectiveParams.isLongRead
+        var emittedPairs = Set<String>()
         for fwd in detectedBarcodes {
             for rev in detectedBarcodes {
                 let canonicalName = fwd.id <= rev.id
                     ? "\(fwd.id)--\(rev.id)"
                     : "\(rev.id)--\(fwd.id)"
+                // Skip if we already emitted this canonical pair
+                guard emittedPairs.insert(canonicalName).inserted else { continue }
+                // Forward orientation: fwd at 5', rev at 3'
                 let fwdSpec = ctx.fivePrimeSpec(barcodeSequence: fwd.i7Sequence)
                 let revSpec = ctx.threePrimeSpec(barcodeSequence: rev.i7Sequence)
                 phase2Lines.append(">\(canonicalName)")
                 phase2Lines.append("\(fwdSpec)...\(revSpec)")
+                // Reverse orientation for long-read platforms: rev at 5', fwd at 3'
+                if isLongRead && fwd.i7Sequence != rev.i7Sequence {
+                    let revFwdSpec = ctx.fivePrimeSpec(barcodeSequence: rev.i7Sequence)
+                    let revRevSpec = ctx.threePrimeSpec(barcodeSequence: fwd.i7Sequence)
+                    phase2Lines.append(">\(canonicalName)")
+                    phase2Lines.append("\(revFwdSpec)...\(revRevSpec)")
+                }
             }
         }
         let phase2Content = phase2Lines.joined(separator: "\n") + "\n"
@@ -1396,6 +1743,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
             subsetFile: subsetFile,
             workDir: workDir,
             kit: kit,
+            effectiveParams: effectiveParams,
             useRevcomp: false,
             outputSubdir: "scout-phase2-output"
         )
@@ -1423,6 +1771,34 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
 
     // MARK: - Scout Helpers
 
+    /// Effective cutadapt parameters for scouting, accounting for cross-platform scenarios.
+    private struct ScoutEffectiveParameters: Sendable {
+        let errorRate: Double
+        let minimumOverlap: Int
+        let noIndels: Bool
+        let isLongRead: Bool
+
+        static func compute(kit: BarcodeKitDefinition, sourcePlatform: SequencingPlatform?) -> ScoutEffectiveParameters {
+            let platform = sourcePlatform ?? kit.platform
+            let errorRate: Double
+            if let sourcePlatform, sourcePlatform != kit.platform {
+                errorRate = max(kit.platform.recommendedErrorRate, sourcePlatform.recommendedErrorRate)
+            } else {
+                errorRate = kit.platform.recommendedErrorRate
+            }
+
+            let minBarcodeLen = kit.barcodes.reduce(Int.max) { currentMin, barcode in
+                let i7Len = barcode.i7Sequence.count
+                let i5Len = barcode.i5Sequence?.count ?? i7Len
+                return min(currentMin, min(i7Len, i5Len))
+            }
+            let barcodeLen = minBarcodeLen == Int.max ? 16 : minBarcodeLen
+            let overlap = min(kit.platform.recommendedMinimumOverlap, max(3, barcodeLen - 4))
+            let isLongRead = platform.readsCanBeReverseComplemented
+            return ScoutEffectiveParameters(errorRate: errorRate, minimumOverlap: overlap, noIndels: false, isLongRead: isLongRead)
+        }
+    }
+
     private struct ScoutCutadaptResult {
         let outputDir: URL
     }
@@ -1433,6 +1809,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         subsetFile: URL,
         workDir: URL,
         kit: BarcodeKitDefinition,
+        effectiveParams: ScoutEffectiveParameters,
         useRevcomp: Bool,
         outputSubdir: String = "scout-output"
     ) async throws -> ScoutCutadaptResult {
@@ -1446,12 +1823,15 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
 
         var args: [String] = []
         args += ["-g", "file:\(adapterFASTA.path)"]
-        args += ["-e", String(kit.platform.recommendedErrorRate)]
-        args += ["--overlap", String(kit.platform.recommendedMinimumOverlap)]
+        args += ["-e", String(effectiveParams.errorRate)]
+        args += ["--overlap", String(effectiveParams.minimumOverlap)]
+        if effectiveParams.noIndels {
+            args += ["--no-indels"]
+        }
         if useRevcomp {
             args += ["--revcomp"]
         }
-        args += ["--action", "trim"]
+        args += ["--action", "none"]
         args += ["-o", outputPattern]
         args += ["--untrimmed-output", unassignedPath]
         args += ["--json", jsonReportPath]
@@ -1726,12 +2106,15 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
             symmetryMode: step.symmetryMode,
             errorRate: step.errorRate,
             minimumOverlap: step.minimumOverlap,
+            maxDistanceFrom5Prime: step.maxSearchDistance5Prime,
+            maxDistanceFrom3Prime: step.maxSearchDistance3Prime,
             trimBarcodes: step.trimBarcodes,
             searchReverseComplement: step.searchReverseComplement,
             unassignedDisposition: step.unassignedDisposition,
             sampleAssignments: step.sampleAssignments,
             rootBundleURL: rootBundleURL,
-            rootFASTQFilename: rootFASTQFilename
+            rootFASTQFilename: rootFASTQFilename,
+            useNoIndels: !step.allowIndels
         )
     }
 

@@ -14,7 +14,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
 
     func testBuiltinKitCount() {
         let kits = BarcodeKitRegistry.builtinKits()
-        XCTAssertEqual(kits.count, 18)
+        XCTAssertEqual(kits.count, 19)
     }
 
     func testTruSeqSingleA() {
@@ -505,7 +505,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
     func testPacBioKitPlatformAndKitType() {
         let kit = BarcodeKitRegistry.pacbioSequel16V3
         XCTAssertEqual(kit.platform, .pacbio)
-        XCTAssertEqual(kit.kitType, .pacbioStandard)
+        XCTAssertEqual(kit.kitType, .pacbioM13Amplicon)
         XCTAssertEqual(kit.pairingMode, .combinatorialDual)
     }
 
@@ -528,7 +528,7 @@ final class IlluminaBarcodeKitTests: XCTestCase {
 
     func testPacBioKitAdapterContext() {
         let kit = BarcodeKitRegistry.pacbioSequel16V3
-        XCTAssertTrue(kit.adapterContext is PacBioAdapterContext)
+        XCTAssertTrue(kit.adapterContext is PacBioM13AdapterContext)
     }
 
     // MARK: - BarcodePairingMode

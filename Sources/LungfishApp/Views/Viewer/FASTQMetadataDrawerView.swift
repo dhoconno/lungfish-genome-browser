@@ -148,7 +148,14 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
     private let stepSymmetryPopup = NSPopUpButton()
     private let stepErrorLabel = NSTextField(labelWithString: "Error Rate:")
     private let stepErrorRateField = NSTextField(string: "0.15")
+    private let stepOverlapLabel = NSTextField(labelWithString: "Min Overlap:")
+    private let stepOverlapField = NSTextField(string: "3")
+    private let stepIndelsCheckbox = NSButton(checkboxWithTitle: "Allow indels", target: nil, action: nil)
     private let stepTrimCheckbox = NSButton(checkboxWithTitle: "Trim barcodes", target: nil, action: nil)
+    private let stepDistance5Label = NSTextField(labelWithString: "5' Window:")
+    private let stepDistance5Field = NSTextField(string: "0")
+    private let stepDistance3Label = NSTextField(labelWithString: "3' Window:")
+    private let stepDistance3Field = NSTextField(string: "0")
     private let stepScoutButton = NSButton(title: "Detect", target: nil, action: nil)
     private let stepAddButton = NSButton(title: "+", target: nil, action: nil)
     private let stepRemoveButton = NSButton(title: "−", target: nil, action: nil)
@@ -324,8 +331,10 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         kitDetailTable.headerView = NSTableHeaderView()
         kitDetailTable.usesAlternatingRowBackgroundColors = true
         kitDetailTable.rowHeight = 22
+        kitDetailTable.allowsMultipleSelection = true
         kitDetailTable.dataSource = self
         kitDetailTable.delegate = self
+        kitDetailTable.menu = buildKitDetailContextMenu()
         kitDetailScrollView.documentView = kitDetailTable
 
         kitDetailLabel.font = .systemFont(ofSize: 11)
@@ -405,7 +414,8 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
             stepEmptyLabel.centerYAnchor.constraint(equalTo: stepDetailContainer.centerYAnchor),
         ])
 
-        let labels: [NSTextField] = [stepKitLabel, stepLocationLabel, stepSymmetryLabel, stepErrorLabel]
+        let labels: [NSTextField] = [stepKitLabel, stepLocationLabel, stepSymmetryLabel, stepErrorLabel,
+                                      stepOverlapLabel, stepDistance5Label, stepDistance3Label]
         for label in labels {
             label.font = .systemFont(ofSize: 11, weight: .medium)
             label.translatesAutoresizingMaskIntoConstraints = false
@@ -450,12 +460,48 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         stepErrorRateField.formatter = formatter
         stepDetailContainer.addSubview(stepErrorRateField)
 
+        stepOverlapField.controlSize = .small
+        stepOverlapField.translatesAutoresizingMaskIntoConstraints = false
+        stepOverlapField.alignment = .right
+        stepOverlapField.target = self
+        stepOverlapField.action = #selector(stepDetailChanged(_:))
+        let overlapFormatter = NumberFormatter()
+        overlapFormatter.numberStyle = .none
+        overlapFormatter.minimum = 1
+        overlapFormatter.maximum = 50
+        overlapFormatter.allowsFloats = false
+        stepOverlapField.formatter = overlapFormatter
+        stepDetailContainer.addSubview(stepOverlapField)
+
+        stepIndelsCheckbox.controlSize = .small
+        stepIndelsCheckbox.translatesAutoresizingMaskIntoConstraints = false
+        stepIndelsCheckbox.state = .on
+        stepIndelsCheckbox.target = self
+        stepIndelsCheckbox.action = #selector(stepDetailChanged(_:))
+        stepDetailContainer.addSubview(stepIndelsCheckbox)
+
         stepTrimCheckbox.controlSize = .small
         stepTrimCheckbox.translatesAutoresizingMaskIntoConstraints = false
         stepTrimCheckbox.state = .on
         stepTrimCheckbox.target = self
         stepTrimCheckbox.action = #selector(stepDetailChanged(_:))
         stepDetailContainer.addSubview(stepTrimCheckbox)
+
+        let distanceFormatter = NumberFormatter()
+        distanceFormatter.numberStyle = .none
+        distanceFormatter.minimum = 0
+        distanceFormatter.maximum = 500
+        distanceFormatter.allowsFloats = false
+
+        for field in [stepDistance5Field, stepDistance3Field] {
+            field.controlSize = .small
+            field.translatesAutoresizingMaskIntoConstraints = false
+            field.alignment = .right
+            field.target = self
+            field.action = #selector(stepDetailChanged(_:))
+            field.formatter = distanceFormatter.copy() as? NumberFormatter
+            stepDetailContainer.addSubview(field)
+        }
 
         stepScoutButton.bezelStyle = .rounded
         stepScoutButton.controlSize = .small
@@ -469,7 +515,11 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         stepLocationControl.setAccessibilityLabel("Barcode location")
         stepSymmetryPopup.setAccessibilityLabel("Barcode symmetry mode")
         stepErrorRateField.setAccessibilityLabel("Error rate")
+        stepOverlapField.setAccessibilityLabel("Minimum overlap")
+        stepIndelsCheckbox.setAccessibilityLabel("Allow indels in barcode matching")
         stepTrimCheckbox.setAccessibilityLabel("Trim barcodes from reads")
+        stepDistance5Field.setAccessibilityLabel("Maximum search distance from 5-prime end")
+        stepDistance3Field.setAccessibilityLabel("Maximum search distance from 3-prime end")
         stepScoutButton.setAccessibilityLabel("Detect barcode matches")
         stepTable.setAccessibilityLabel("Demultiplexing steps")
         stepAddButton.setAccessibilityLabel("Add demux step")
@@ -477,12 +527,12 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         kitDetailTable.setAccessibilityLabel("Barcode sequences")
 
         // Layout within detail panel — two-column grid that stays within container bounds
-        // Row 1: Kit label + popup
-        // Row 2: Location label + segmented control
-        // Row 3: Symmetry label + popup, Error rate label + field
-        // Row 4: Trim checkbox + Scout button
+        // Row 1: Kit
+        // Row 2: Location
+        // Row 3: Error Rate + Min Overlap + Symmetry
+        // Row 4: Allow Indels + Trim + Scout
+        // Row 5: 5' Window + 3' Window
 
-        // Allow popups to compress below their preferred width when space is tight
         stepKitPopup.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         stepSymmetryPopup.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
 
@@ -500,34 +550,56 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
             kitMinWidth,
             stepKitPopup.trailingAnchor.constraint(lessThanOrEqualTo: stepDetailContainer.trailingAnchor, constant: -8),
 
-            // Row 2: Location
+            // Row 2: Location + Symmetry
             stepLocationLabel.topAnchor.constraint(equalTo: stepKitLabel.bottomAnchor, constant: 8),
             stepLocationLabel.leadingAnchor.constraint(equalTo: stepDetailContainer.leadingAnchor, constant: 8),
             stepLocationControl.centerYAnchor.constraint(equalTo: stepLocationLabel.centerYAnchor),
             stepLocationControl.leadingAnchor.constraint(equalTo: stepLocationLabel.trailingAnchor, constant: 4),
-            stepLocationControl.trailingAnchor.constraint(lessThanOrEqualTo: stepDetailContainer.trailingAnchor, constant: -8),
 
-            // Row 3: Symmetry + Error Rate (below Location row)
-            stepSymmetryLabel.topAnchor.constraint(equalTo: stepLocationLabel.bottomAnchor, constant: 8),
-            stepSymmetryLabel.leadingAnchor.constraint(equalTo: stepDetailContainer.leadingAnchor, constant: 8),
+            stepSymmetryLabel.centerYAnchor.constraint(equalTo: stepLocationLabel.centerYAnchor),
+            stepSymmetryLabel.leadingAnchor.constraint(equalTo: stepLocationControl.trailingAnchor, constant: 16),
             stepSymmetryPopup.centerYAnchor.constraint(equalTo: stepSymmetryLabel.centerYAnchor),
             stepSymmetryPopup.leadingAnchor.constraint(equalTo: stepSymmetryLabel.trailingAnchor, constant: 4),
             symMinWidth,
+            stepSymmetryPopup.trailingAnchor.constraint(lessThanOrEqualTo: stepDetailContainer.trailingAnchor, constant: -8),
 
-            stepErrorLabel.centerYAnchor.constraint(equalTo: stepSymmetryLabel.centerYAnchor),
-            stepErrorLabel.leadingAnchor.constraint(equalTo: stepSymmetryPopup.trailingAnchor, constant: 16),
+            // Row 3: Error Rate + Min Overlap
+            stepErrorLabel.topAnchor.constraint(equalTo: stepLocationLabel.bottomAnchor, constant: 8),
+            stepErrorLabel.leadingAnchor.constraint(equalTo: stepDetailContainer.leadingAnchor, constant: 8),
             stepErrorRateField.centerYAnchor.constraint(equalTo: stepErrorLabel.centerYAnchor),
             stepErrorRateField.leadingAnchor.constraint(equalTo: stepErrorLabel.trailingAnchor, constant: 4),
             stepErrorRateField.widthAnchor.constraint(equalToConstant: 50),
-            stepErrorRateField.trailingAnchor.constraint(lessThanOrEqualTo: stepDetailContainer.trailingAnchor, constant: -8),
 
-            // Row 4: Trim + Scout
-            stepTrimCheckbox.topAnchor.constraint(equalTo: stepSymmetryLabel.bottomAnchor, constant: 8),
-            stepTrimCheckbox.leadingAnchor.constraint(equalTo: stepDetailContainer.leadingAnchor, constant: 8),
+            stepOverlapLabel.centerYAnchor.constraint(equalTo: stepErrorLabel.centerYAnchor),
+            stepOverlapLabel.leadingAnchor.constraint(equalTo: stepErrorRateField.trailingAnchor, constant: 16),
+            stepOverlapField.centerYAnchor.constraint(equalTo: stepOverlapLabel.centerYAnchor),
+            stepOverlapField.leadingAnchor.constraint(equalTo: stepOverlapLabel.trailingAnchor, constant: 4),
+            stepOverlapField.widthAnchor.constraint(equalToConstant: 40),
+            stepOverlapField.trailingAnchor.constraint(lessThanOrEqualTo: stepDetailContainer.trailingAnchor, constant: -8),
 
-            stepScoutButton.centerYAnchor.constraint(equalTo: stepTrimCheckbox.centerYAnchor),
-            stepScoutButton.leadingAnchor.constraint(equalTo: stepTrimCheckbox.trailingAnchor, constant: 16),
-            stepScoutButton.trailingAnchor.constraint(lessThanOrEqualTo: stepDetailContainer.trailingAnchor, constant: -8),
+            // Row 4: Allow Indels + Trim + Scout
+            stepIndelsCheckbox.topAnchor.constraint(equalTo: stepErrorLabel.bottomAnchor, constant: 8),
+            stepIndelsCheckbox.leadingAnchor.constraint(equalTo: stepDetailContainer.leadingAnchor, constant: 8),
+
+            stepTrimCheckbox.centerYAnchor.constraint(equalTo: stepIndelsCheckbox.centerYAnchor),
+            stepTrimCheckbox.leadingAnchor.constraint(equalTo: stepIndelsCheckbox.trailingAnchor, constant: 16),
+
+            stepScoutButton.centerYAnchor.constraint(equalTo: stepIndelsCheckbox.centerYAnchor),
+            stepScoutButton.trailingAnchor.constraint(equalTo: stepDetailContainer.trailingAnchor, constant: -8),
+
+            // Row 5: 5' Window + 3' Window
+            stepDistance5Label.topAnchor.constraint(equalTo: stepIndelsCheckbox.bottomAnchor, constant: 8),
+            stepDistance5Label.leadingAnchor.constraint(equalTo: stepDetailContainer.leadingAnchor, constant: 8),
+            stepDistance5Field.centerYAnchor.constraint(equalTo: stepDistance5Label.centerYAnchor),
+            stepDistance5Field.leadingAnchor.constraint(equalTo: stepDistance5Label.trailingAnchor, constant: 4),
+            stepDistance5Field.widthAnchor.constraint(equalToConstant: 44),
+
+            stepDistance3Label.centerYAnchor.constraint(equalTo: stepDistance5Label.centerYAnchor),
+            stepDistance3Label.leadingAnchor.constraint(equalTo: stepDistance5Field.trailingAnchor, constant: 16),
+            stepDistance3Field.centerYAnchor.constraint(equalTo: stepDistance3Label.centerYAnchor),
+            stepDistance3Field.leadingAnchor.constraint(equalTo: stepDistance3Label.trailingAnchor, constant: 4),
+            stepDistance3Field.widthAnchor.constraint(equalToConstant: 44),
+            stepDistance3Field.trailingAnchor.constraint(lessThanOrEqualTo: stepDetailContainer.trailingAnchor, constant: -8),
         ])
     }
 
@@ -979,7 +1051,10 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
             stepLocationLabel, stepLocationControl,
             stepSymmetryLabel, stepSymmetryPopup,
             stepErrorLabel, stepErrorRateField,
-            stepTrimCheckbox, stepScoutButton,
+            stepOverlapLabel, stepOverlapField,
+            stepIndelsCheckbox, stepTrimCheckbox, stepScoutButton,
+            stepDistance5Label, stepDistance5Field,
+            stepDistance3Label, stepDistance3Field,
         ]
         for control in detailControls {
             control.isHidden = !hasSelection
@@ -1014,7 +1089,11 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         }
 
         stepErrorRateField.stringValue = String(format: "%.2f", step.errorRate)
+        stepOverlapField.stringValue = "\(step.minimumOverlap)"
+        stepIndelsCheckbox.state = step.allowIndels ? .on : .off
         stepTrimCheckbox.state = step.trimBarcodes ? .on : .off
+        stepDistance5Field.stringValue = "\(step.maxSearchDistance5Prime)"
+        stepDistance3Field.stringValue = "\(step.maxSearchDistance3Prime)"
         updateLocationControlState()
     }
 
@@ -1042,8 +1121,9 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
             break // keep current location
         }
 
-        // Auto-set error rate and revcomp from platform
+        // Auto-set error rate, overlap, and revcomp from platform
         demuxSteps[selectedStepIndex].errorRate = kit.platform.recommendedErrorRate
+        demuxSteps[selectedStepIndex].minimumOverlap = kit.platform.recommendedMinimumOverlap
         demuxSteps[selectedStepIndex].searchReverseComplement = kit.platform.readsCanBeReverseComplemented
 
         refreshStepDetail()
@@ -1098,6 +1178,17 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
         }
 
         demuxSteps[selectedStepIndex].trimBarcodes = stepTrimCheckbox.state == .on
+        demuxSteps[selectedStepIndex].allowIndels = stepIndelsCheckbox.state == .on
+
+        if let overlap = Int(stepOverlapField.stringValue) {
+            demuxSteps[selectedStepIndex].minimumOverlap = max(1, min(30, overlap))
+        }
+        if let dist5 = Int(stepDistance5Field.stringValue) {
+            demuxSteps[selectedStepIndex].maxSearchDistance5Prime = max(0, dist5)
+        }
+        if let dist3 = Int(stepDistance3Field.stringValue) {
+            demuxSteps[selectedStepIndex].maxSearchDistance3Prime = max(0, dist3)
+        }
 
         stepTable.reloadData()
     }
@@ -1289,6 +1380,71 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
     @objc private func saveClicked(_ sender: NSButton) {
         delegate?.fastqMetadataDrawerViewDidSave(self, fastqURL: fastqURL, metadata: currentMetadata())
         statusLabel.stringValue = "Saved FASTQ metadata."
+    }
+
+    // MARK: - Barcode Detail Copy Support
+
+    private func buildKitDetailContextMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Copy Selected Barcodes", action: #selector(copySelectedBarcodes(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Copy Barcode IDs", action: #selector(copyBarcodeIDs(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Copy Sequences", action: #selector(copyBarcodeSequences(_:)), keyEquivalent: "")
+        return menu
+    }
+
+    /// Standard copy: responder for Cmd+C.
+    @objc func copy(_ sender: Any?) {
+        guard window?.firstResponder === kitDetailTable else { return }
+        copySelectedBarcodes(sender)
+    }
+
+    @objc private func copySelectedBarcodes(_ sender: Any?) {
+        let rows = kitDetailTable.selectedRowIndexes
+        guard !rows.isEmpty else { return }
+        var lines: [String] = ["ID\tSequence\tSecondary"]
+        for row in rows {
+            guard row < selectedKitBarcodes.count else { continue }
+            let bc = selectedKitBarcodes[row]
+            lines.append("\(bc.id)\t\(bc.i7Sequence)\t\(bc.i5Sequence ?? "")")
+        }
+        let text = lines.joined(separator: "\n")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        statusLabel.stringValue = "Copied \(rows.count) barcode(s) to clipboard."
+    }
+
+    @objc private func copyBarcodeIDs(_ sender: Any?) {
+        let rows = kitDetailTable.selectedRowIndexes
+        guard !rows.isEmpty else { return }
+        let ids = rows.compactMap { row -> String? in
+            guard row < selectedKitBarcodes.count else { return nil }
+            return selectedKitBarcodes[row].id
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(ids.joined(separator: "\n"), forType: .string)
+        statusLabel.stringValue = "Copied \(ids.count) barcode ID(s) to clipboard."
+    }
+
+    @objc private func copyBarcodeSequences(_ sender: Any?) {
+        let rows = kitDetailTable.selectedRowIndexes
+        guard !rows.isEmpty else { return }
+        var lines: [String] = []
+        for row in rows {
+            guard row < selectedKitBarcodes.count else { continue }
+            lines.append(selectedKitBarcodes[row].i7Sequence)
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
+        statusLabel.stringValue = "Copied \(lines.count) sequence(s) to clipboard."
+    }
+
+    public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(copySelectedBarcodes(_:))
+            || menuItem.action == #selector(copyBarcodeIDs(_:))
+            || menuItem.action == #selector(copyBarcodeSequences(_:)) {
+            return !kitDetailTable.selectedRowIndexes.isEmpty
+        }
+        return true
     }
 }
 

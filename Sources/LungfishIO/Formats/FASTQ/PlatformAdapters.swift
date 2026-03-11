@@ -83,6 +83,24 @@ public enum PlatformAdapters {
 
     // MARK: - PacBio
 
+    /// M13 Forward (-20) universal primer (17-mer).
+    ///
+    /// Used in PacBio barcoded amplicon workflows. Sits between the barcode
+    /// and the gene-specific primer on the 5' side of the amplicon.
+    /// Read structure: [barcode]-[M13F]-[gene primer]-[amplicon]-[gene primer]-[M13R_RC]-[barcode_RC]
+    public static let m13Forward = "GTAAAACGACGGCCAGT"
+
+    /// M13 Reverse universal primer (17-mer).
+    ///
+    /// Sits between the amplicon and the barcode on the 3' side.
+    public static let m13Reverse = "CAGGAAACAGCTATGAC"
+
+    /// M13 Forward RC (reverse complement of M13 Forward).
+    public static let m13ForwardRC = "ACTGGCCGTCGTTTTAC"
+
+    /// M13 Reverse RC (reverse complement of M13 Reverse).
+    public static let m13ReverseRC = "GTCATAGCTGTTTCCTG"
+
     /// SMRTbell adapter v3 (current, used with Revio and Sequel IIe).
     /// Already removed by CCS processing — presence in HiFi FASTQ indicates a QC issue.
     /// NOTE: This sequence is from PacBio technical notes. Verify against SMRT Link's

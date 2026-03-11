@@ -241,6 +241,7 @@ public enum BarcodeKitRegistry {
             pacbioSequel16V3,
             pacbioSequel96V2,
             pacbioSequel384V1,
+            m13UniversalPrimers,
             ontNativeBarcoding12NBD104,
             ontNativeBarcoding12NBD114,
             ontNativeBarcoding24,
@@ -569,7 +570,7 @@ public enum BarcodeKitRegistry {
             displayName: "PacBio Sequel 16 (v3)",
             vendor: "pacbio",
             platform: .pacbio,
-            kitType: .pacbioStandard,
+            kitType: .pacbioM13Amplicon,
             isDualIndexed: true,
             pairingMode: .combinatorialDual,
             barcodes: barcodes
@@ -586,7 +587,7 @@ public enum BarcodeKitRegistry {
             displayName: "PacBio Sequel 96 (v2)",
             vendor: "pacbio",
             platform: .pacbio,
-            kitType: .pacbioStandard,
+            kitType: .pacbioM13Amplicon,
             isDualIndexed: true,
             pairingMode: .combinatorialDual,
             barcodes: barcodes
@@ -603,12 +604,32 @@ public enum BarcodeKitRegistry {
             displayName: "PacBio Sequel 384 (v1)",
             vendor: "pacbio",
             platform: .pacbio,
-            kitType: .pacbioStandard,
+            kitType: .pacbioM13Amplicon,
             isDualIndexed: true,
             pairingMode: .combinatorialDual,
             barcodes: barcodes
         )
     }()
+
+    /// M13 Universal Primers for amplicon barcoding workflows.
+    ///
+    /// Contains M13 Forward (-20) and M13 Reverse as adapter sequences.
+    /// Used with PacBio barcoded amplicon kits where M13 universal primer tails
+    /// flank the gene-specific primers. Select this kit to trim M13 primer
+    /// sequences from demultiplexed reads.
+    public static let m13UniversalPrimers = BarcodeKitDefinition(
+        id: "m13-universal-primers",
+        displayName: "M13 Universal Primers",
+        vendor: "universal",
+        platform: .pacbio,
+        kitType: .pacbioM13Amplicon,
+        isDualIndexed: false,
+        pairingMode: .singleEnd,
+        barcodes: [
+            BarcodeEntry(id: "M13F", i7Sequence: PlatformAdapters.m13Forward),
+            BarcodeEntry(id: "M13R", i7Sequence: PlatformAdapters.m13Reverse),
+        ]
+    )
 
     /// ONT Native Barcoding (NBD104, 12 barcodes).
     public static let ontNativeBarcoding12NBD104: BarcodeKitDefinition = {

@@ -1274,14 +1274,24 @@ public actor FASTQDerivativeService {
                 try concatenateFASTQFiles(filesToConcat, to: outputURL)
             }
 
-        case .demuxedVirtual(_, let readIDFilename, _):
+        case .demuxedVirtual(_, let readIDFilename, _, let trimPositionsFilename):
             // Virtual demuxed barcode bundle — extract reads from root FASTQ using read ID list
             let readIDListURL = bundleURL.appendingPathComponent(readIDFilename)
-            try await extractReads(
-                fromRootFASTQ: rootFASTQURL,
-                readIDsFile: readIDListURL,
-                outputFASTQ: outputURL
-            )
+            if let trimFilename = trimPositionsFilename {
+                let trimURL = bundleURL.appendingPathComponent(trimFilename)
+                try await extractAndTrimReads(
+                    fromRootFASTQ: rootFASTQURL,
+                    readIDsFile: readIDListURL,
+                    trimPositionsFile: trimURL,
+                    outputFASTQ: outputURL
+                )
+            } else {
+                try await extractReads(
+                    fromRootFASTQ: rootFASTQURL,
+                    readIDsFile: readIDListURL,
+                    outputFASTQ: outputURL
+                )
+            }
 
         case .demuxGroup:
             // Demux group is a directory, not a materializable payload
@@ -1308,6 +1318,91 @@ public actor FASTQDerivativeService {
         )
         guard result.isSuccess else {
             throw FASTQDerivativeError.invalidOperation("seqkit grep failed: \(result.stderr)")
+        }
+    }
+
+    /// Extracts reads from root FASTQ by ID list, then applies stored trim positions
+    /// to remove adapter/barcode/primer sequences from each read.
+    ///
+    /// Uses a two-step approach: seqkit grep (extract by ID) → seqkit subseq (apply trims).
+    /// The trim positions file is a TSV with columns: read_id, trim_5p, trim_3p
+    /// where trim_5p is bases to remove from 5' end and trim_3p is bases to remove from 3' end.
+    private func extractAndTrimReads(
+        fromRootFASTQ rootFASTQ: URL,
+        readIDsFile: URL,
+        trimPositionsFile: URL,
+        outputFASTQ: URL
+    ) async throws {
+        let fm = FileManager.default
+        let tempDir = fm.temporaryDirectory.appendingPathComponent("lungfish-trim-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: tempDir) }
+
+        // Step 1: Extract reads by ID into temp file
+        let extractedURL = tempDir.appendingPathComponent("extracted.fastq.gz")
+        try await extractReads(fromRootFASTQ: rootFASTQ, readIDsFile: readIDsFile, outputFASTQ: extractedURL)
+
+        // Step 2: Parse trim positions
+        guard let trimContent = try? String(contentsOf: trimPositionsFile, encoding: .utf8) else {
+            // No trim positions — just move extracted reads to output
+            try fm.moveItem(at: extractedURL, to: outputFASTQ)
+            return
+        }
+
+        var trimMap: [String: (trim5p: Int, trim3p: Int)] = [:]
+        for line in trimContent.split(separator: "\n").dropFirst() {  // skip header
+            let cols = line.split(separator: "\t")
+            guard cols.count >= 3,
+                  let t5 = Int(cols[1]),
+                  let t3 = Int(cols[2]) else { continue }
+            trimMap[String(cols[0])] = (t5, t3)
+        }
+
+        guard !trimMap.isEmpty else {
+            try fm.moveItem(at: extractedURL, to: outputFASTQ)
+            return
+        }
+
+        // Step 3: Apply trims using native Swift FASTQ reader/writer
+        let reader = FASTQReader(validateSequence: false)
+        var outputContent = ""
+
+        for try await record in reader.records(from: extractedURL) {
+            let readID = record.identifier
+            let seq = record.sequence
+            let qual = record.quality.toAscii()
+            let header = record.description != nil
+                ? "\(record.identifier) \(record.description!)"
+                : record.identifier
+
+            if let trim = trimMap[readID] {
+                let startIndex = min(trim.trim5p, seq.count)
+                let endIndex = max(startIndex, seq.count - trim.trim3p)
+                let trimmedSeq = String(seq[seq.index(seq.startIndex, offsetBy: startIndex)..<seq.index(seq.startIndex, offsetBy: endIndex)])
+                let trimmedQual = String(qual[qual.index(qual.startIndex, offsetBy: startIndex)..<qual.index(qual.startIndex, offsetBy: endIndex)])
+                outputContent += "@\(header)\n\(trimmedSeq)\n+\n\(trimmedQual)\n"
+            } else {
+                outputContent += "@\(header)\n\(seq)\n+\n\(qual)\n"
+            }
+        }
+
+        // Write trimmed FASTQ, then use seqkit to convert to gzipped output if needed
+        let plainURL = tempDir.appendingPathComponent("trimmed.fastq")
+        try outputContent.write(to: plainURL, atomically: true, encoding: .utf8)
+
+        if outputFASTQ.pathExtension == "gz" {
+            // Use seqkit seq to copy and gzip the output
+            let gzipResult = try await runner.run(
+                .seqkit,
+                arguments: ["seq", plainURL.path, "-o", outputFASTQ.path],
+                timeout: 300
+            )
+            if !gzipResult.isSuccess {
+                // Fallback: copy uncompressed
+                try fm.moveItem(at: plainURL, to: outputFASTQ)
+            }
+        } else {
+            try fm.moveItem(at: plainURL, to: outputFASTQ)
         }
     }
 

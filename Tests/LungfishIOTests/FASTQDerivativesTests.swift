@@ -592,7 +592,7 @@ final class FASTQDerivativesTests: XCTestCase {
         XCTAssertNotNil(loaded)
         XCTAssertEqual(loaded?.name, "bc1001")
         XCTAssertEqual(loaded?.rootFASTQFilename, "reads.fastq.gz")
-        if case .demuxedVirtual(let barcodeID, let readIDFile, let previewFile) = loaded?.payload {
+        if case .demuxedVirtual(let barcodeID, let readIDFile, let previewFile, _) = loaded?.payload {
             XCTAssertEqual(barcodeID, "bc1001")
             XCTAssertEqual(readIDFile, "read-ids.txt")
             XCTAssertEqual(previewFile, "preview.fastq.gz")

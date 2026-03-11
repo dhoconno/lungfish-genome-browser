@@ -115,7 +115,9 @@ extension ViewerViewController: FASTQMetadataDrawerViewDelegate {
         }
 
         let pipeline = DemultiplexingPipeline()
-        fastqDrawerLogger.info("Starting barcode scout for \(fastqURL.lastPathComponent, privacy: .public) with kit \(step.barcodeKitID, privacy: .public)")
+        // Detect the sequencing platform from the FASTQ headers for cross-platform parameter adjustment
+        let detectedPlatform = SequencingPlatform.detect(fromFASTQ: FASTQBundle.resolvePrimaryFASTQURL(for: fastqURL) ?? fastqURL)
+        fastqDrawerLogger.info("Starting barcode scout for \(fastqURL.lastPathComponent, privacy: .public) with kit \(step.barcodeKitID, privacy: .public), detected platform: \(detectedPlatform?.displayName ?? "unknown", privacy: .public)")
 
         // Update drawer status to show scouting is in progress
         drawer.updateScoutStatus("Scouting barcodes...")
@@ -125,6 +127,7 @@ extension ViewerViewController: FASTQMetadataDrawerViewDelegate {
                 let result = try await pipeline.scout(
                     inputURL: fastqURL,
                     kit: kit,
+                    sourcePlatform: detectedPlatform,
                     readLimit: 10_000,
                     progress: { _, message in
                         DispatchQueue.main.async {

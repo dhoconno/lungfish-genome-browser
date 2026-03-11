@@ -92,7 +92,8 @@ public enum FASTQDerivativePayload: Codable, Sendable, Equatable {
     case fullMixed(ReadClassification)
     /// A virtual demuxed barcode bundle: stores a read ID list and a small preview FASTQ,
     /// referencing the root FASTQ for full materialization on demand.
-    case demuxedVirtual(barcodeID: String, readIDListFilename: String, previewFilename: String)
+    /// Optionally includes a trim positions file for adapter/barcode removal during materialization.
+    case demuxedVirtual(barcodeID: String, readIDListFilename: String, previewFilename: String, trimPositionsFilename: String? = nil)
     /// The demux group directory containing all per-barcode bundles.
     case demuxGroup(barcodeCount: Int)
 

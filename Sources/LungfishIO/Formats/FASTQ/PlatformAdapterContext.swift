@@ -59,7 +59,8 @@ public enum BarcodeKitType: String, Codable, Sendable, CaseIterable {
     case sixteenS           // ONT 16S barcoding kits
     case truseq             // Illumina TruSeq
     case nextera            // Illumina Nextera / DNA Prep
-    case pacbioStandard     // PacBio barcoded adapters
+    case pacbioStandard     // PacBio barcoded adapters (CCS/HiFi, bare barcodes)
+    case pacbioM13Amplicon  // PacBio barcoded amplicon with M13 universal primers
     case custom             // User-defined
 }
 
@@ -69,11 +70,13 @@ public enum BarcodeKitType: String, Codable, Sendable, CaseIterable {
 ///
 /// Read structure:
 /// ```
-/// 5'-[Y-adapter]-[AAGGTTAA]-[Barcode_Fwd]-[INSERT]-[Barcode_RC]-[TTAACCTT]-[Y-adapter_RC]-3'
+/// 5'-[Y-adapter]-[AAGGTTAA]-[Barcode_Fwd]-[CAGCACCT]-[INSERT]-[AGGTGCTG]-[Barcode_RC]-[TTAACCTT]-[Y-adapter_RC]-3'
 /// ```
 /// The outer flanks (AAGGTTAA / TTAACCTT) are part of the ONT adapter construct.
-/// Primer flanks (e.g. CAGCACCT) are NOT included — they belong to a
-/// separate primer-trimming step, not demultiplexing.
+/// The rear flanks (CAGCACCT / AGGTGCTG) sit between the barcode and insert DNA.
+/// They are concatenated into the adapter definition so cutadapt trims both in a
+/// single pass — this is more robust to indels than a separate flank-trimming step.
+/// See `docs/research/cutadapt-demux-pipeline-spec.md` for benchmarking details.
 public struct ONTNativeAdapterContext: PlatformAdapterContext {
     public init() {}
 
@@ -81,10 +84,12 @@ public struct ONTNativeAdapterContext: PlatformAdapterContext {
         PlatformAdapters.ontYAdapterTop
             + PlatformAdapters.ontNativeOuterFlank5
             + barcodeSequence.uppercased()
+            + PlatformAdapters.ontNativeBarcodeFlank5
     }
 
     public func threePrimeSpec(barcodeSequence: String) -> String {
-        PlatformAdapters.reverseComplement(barcodeSequence)
+        PlatformAdapters.ontNativeBarcodeFlank3
+            + PlatformAdapters.reverseComplement(barcodeSequence)
             + PlatformAdapters.ontNativeOuterFlank3
             + PlatformAdapters.ontYAdapterBottom
     }
@@ -146,6 +151,53 @@ public struct PacBioAdapterContext: PlatformAdapterContext {
         barcodeSequence.uppercased()
             + "..."
             + PlatformAdapters.reverseComplement(barcodeSequence)
+    }
+}
+
+// MARK: - PacBio M13 Barcoded Amplicon Context
+
+/// Adapter context for PacBio barcoded amplicon kits using M13 universal primers.
+///
+/// Used when PacBio barcodes are combined with M13 universal primer tails in
+/// amplicon sequencing workflows. The M13 primer sits between the barcode and
+/// the gene-specific primer:
+/// ```
+/// 5'-[barcode_fwd]-[M13F]-[gene_primer]-[amplicon]-[gene_primer]-[M13R_RC]-[barcode_rc]-3'
+/// ```
+///
+/// For **demultiplexing** (barcode assignment), only the bare barcode is used in the
+/// adapter spec — including flanking context reduces matching accuracy (validated
+/// empirically: 56.5% with bare barcodes vs 25-27% with flanking context).
+///
+/// For **trimming** (removing adapter/primer from exported reads), the spec includes
+/// both the barcode AND the M13 primer so cutadapt trims the full construct.
+public struct PacBioM13AdapterContext: PlatformAdapterContext {
+    /// When true, include M13 primer in the adapter spec for trimming.
+    /// When false, use bare barcodes only (better for demux matching accuracy).
+    public let includePrimerInSpec: Bool
+
+    public init(includePrimerInSpec: Bool = false) {
+        self.includePrimerInSpec = includePrimerInSpec
+    }
+
+    public func fivePrimeSpec(barcodeSequence: String) -> String {
+        if includePrimerInSpec {
+            return barcodeSequence.uppercased() + PlatformAdapters.m13Forward
+        }
+        return barcodeSequence.uppercased()
+    }
+
+    public func threePrimeSpec(barcodeSequence: String) -> String {
+        if includePrimerInSpec {
+            return PlatformAdapters.m13ReverseRC + PlatformAdapters.reverseComplement(barcodeSequence)
+        }
+        return PlatformAdapters.reverseComplement(barcodeSequence)
+    }
+
+    public func linkedSpec(barcodeSequence: String) -> String {
+        fivePrimeSpec(barcodeSequence: barcodeSequence)
+            + "..."
+            + threePrimeSpec(barcodeSequence: barcodeSequence)
     }
 }
 
@@ -270,7 +322,12 @@ extension SequencingPlatform {
                 return ONTNativeAdapterContext()
             }
         case .pacbio:
-            return PacBioAdapterContext()
+            switch kitType {
+            case .pacbioM13Amplicon:
+                return PacBioM13AdapterContext(includePrimerInSpec: false)
+            default:
+                return PacBioAdapterContext()
+            }
         case .illumina:
             switch kitType {
             case .nextera: return IlluminaNexteraAdapterContext()

@@ -38,6 +38,23 @@ public struct DemultiplexStep: Codable, Sendable, Equatable, Identifiable {
     /// Whether to trim barcode sequences from output reads.
     public var trimBarcodes: Bool
 
+    /// Whether to allow indels in barcode matching.
+    ///
+    /// When true (the default), cutadapt uses edit-distance alignment.
+    /// When false, cutadapt uses `--no-indels` (Hamming distance only).
+    /// ONT reads have significant indel rates — benchmarking showed allowing
+    /// indels improved detection by 18%. Should almost always be true.
+    public var allowIndels: Bool
+
+    /// Maximum bases from the 5' end where a barcode may be found (cutadapt adapter distance).
+    /// 0 means no constraint (search the full read). Useful for restricting barcode
+    /// search to a window near the read ends to prevent amplicon false positives.
+    public var maxSearchDistance5Prime: Int
+
+    /// Maximum bases from the 3' end where a barcode may be found.
+    /// 0 means no constraint. Same rationale as `maxSearchDistance5Prime`.
+    public var maxSearchDistance3Prime: Int
+
     /// What to do with reads that don't match any barcode.
     public var unassignedDisposition: UnassignedDisposition
 
@@ -54,9 +71,12 @@ public struct DemultiplexStep: Codable, Sendable, Equatable, Identifiable {
         barcodeLocation: BarcodeLocation = .bothEnds,
         symmetryMode: BarcodeSymmetryMode = .symmetric,
         errorRate: Double = 0.15,
-        minimumOverlap: Int = 3,
+        minimumOverlap: Int = 20,
         searchReverseComplement: Bool = true,
         trimBarcodes: Bool = true,
+        allowIndels: Bool = true,
+        maxSearchDistance5Prime: Int = 0,
+        maxSearchDistance3Prime: Int = 0,
         unassignedDisposition: UnassignedDisposition = .keep,
         sampleAssignments: [FASTQSampleBarcodeAssignment] = [],
         ordinal: Int = 0
@@ -70,6 +90,9 @@ public struct DemultiplexStep: Codable, Sendable, Equatable, Identifiable {
         self.minimumOverlap = minimumOverlap
         self.searchReverseComplement = searchReverseComplement
         self.trimBarcodes = trimBarcodes
+        self.allowIndels = allowIndels
+        self.maxSearchDistance5Prime = maxSearchDistance5Prime
+        self.maxSearchDistance3Prime = maxSearchDistance3Prime
         self.unassignedDisposition = unassignedDisposition
         self.sampleAssignments = sampleAssignments
         self.ordinal = ordinal

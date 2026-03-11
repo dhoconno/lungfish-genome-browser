@@ -13,7 +13,7 @@ final class DemultiplexPlanTests: XCTestCase {
         XCTAssertEqual(step.barcodeLocation, .bothEnds)
         XCTAssertEqual(step.symmetryMode, .symmetric)
         XCTAssertEqual(step.errorRate, 0.15, accuracy: 0.001)
-        XCTAssertEqual(step.minimumOverlap, 3)
+        XCTAssertEqual(step.minimumOverlap, 20)
         XCTAssertTrue(step.searchReverseComplement)
         XCTAssertTrue(step.sampleAssignments.isEmpty)
         XCTAssertEqual(step.ordinal, 0)

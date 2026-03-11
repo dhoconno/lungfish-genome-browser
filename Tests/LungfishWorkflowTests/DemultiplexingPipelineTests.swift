@@ -365,8 +365,8 @@ final class DemultiplexingPipelineTests: XCTestCase {
                 XCTAssertTrue(ctx is IlluminaTruSeqAdapterContext || ctx is IlluminaNexteraAdapterContext,
                               "Illumina kit \(kit.id) should have Illumina adapter context")
             case "pacbio":
-                XCTAssertTrue(ctx is PacBioAdapterContext,
-                              "PacBio kit \(kit.id) should have PacBioAdapterContext")
+                XCTAssertTrue(ctx is PacBioAdapterContext || ctx is PacBioM13AdapterContext,
+                              "PacBio kit \(kit.id) should have PacBio adapter context")
             default:
                 break
             }
