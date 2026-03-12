@@ -1209,8 +1209,8 @@ final class OutputFormatTests: XCTestCase {
     }
 
     /// Verifies that GlobalOptions output mode reflects the output format.
-    func testOutputModeFromFormat() {
-        var options = GlobalOptions()
+    func testOutputModeFromFormat() throws {
+        var options = try GlobalOptions.parse([])
 
         options.outputFormat = .json
         XCTAssertEqual(options.outputMode, .json)
@@ -1224,8 +1224,8 @@ final class OutputFormatTests: XCTestCase {
     }
 
     /// Verifies that debug mode overrides output format in output mode.
-    func testOutputModeDebugOverride() {
-        var options = GlobalOptions()
+    func testOutputModeDebugOverride() throws {
+        var options = try GlobalOptions.parse([])
         options.outputFormat = .json
         options.debug = true
         XCTAssertEqual(options.outputMode, .debug)
