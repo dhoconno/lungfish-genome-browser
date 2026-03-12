@@ -96,6 +96,9 @@ public enum FASTQDerivativePayload: Codable, Sendable, Equatable {
     case demuxedVirtual(barcodeID: String, readIDListFilename: String, previewFilename: String, trimPositionsFilename: String? = nil)
     /// The demux group directory containing all per-barcode bundles.
     case demuxGroup(barcodeCount: Int)
+    /// Stores an orientation map TSV (read_id → +/-) and a preview FASTQ.
+    /// Oriented FASTQ is materialized on demand using seqkit to RC the marked reads.
+    case orientMap(orientMapFilename: String, previewFilename: String)
 
     /// The category for display purposes.
     public var category: String {
@@ -107,6 +110,7 @@ public enum FASTQDerivativePayload: Codable, Sendable, Equatable {
         case .fullMixed: return "full-mixed"
         case .demuxedVirtual: return "demuxed-virtual"
         case .demuxGroup: return "demux-group"
+        case .orientMap: return "orient-map"
         }
     }
 }
@@ -137,6 +141,9 @@ public enum FASTQDerivativeOperationKind: String, Codable, Sendable, CaseIterabl
     // Demultiplexing
     case demultiplex
 
+    // Orientation
+    case orient
+
     /// Whether this operation produces a subset (read IDs) or trim (positions).
     public var isSubsetOperation: Bool {
         switch self {
@@ -146,7 +153,8 @@ public enum FASTQDerivativeOperationKind: String, Codable, Sendable, CaseIterabl
         case .qualityTrim, .adapterTrim, .fixedTrim:
             return false
         case .pairedEndMerge, .pairedEndRepair, .primerRemoval,
-             .errorCorrection, .interleaveReformat, .demultiplex:
+             .errorCorrection, .interleaveReformat, .demultiplex,
+             .orient:
             return false
         }
     }
@@ -160,6 +168,11 @@ public enum FASTQDerivativeOperationKind: String, Codable, Sendable, CaseIterabl
         default:
             return false
         }
+    }
+
+    /// Whether this operation produces an orient map (orientation metadata).
+    public var isOrientOperation: Bool {
+        self == .orient
     }
 }
 
@@ -225,6 +238,20 @@ public struct FASTQDerivativeOperation: Codable, Sendable, Equatable {
     public var sampleName: String?
     public var demuxRunID: UUID?
 
+    // Orient parameters
+    /// Relative path to the reference FASTA used for orientation (within Reference Sequences/).
+    public var orientReferencePath: String?
+    /// Word length for vsearch orient k-mer matching (3-15, default 12).
+    public var orientWordLength: Int?
+    /// Whether low-complexity masking was applied to the database (dust/none).
+    public var orientDbMask: String?
+    /// Whether unoriented reads were saved as a separate derivative.
+    public var orientSaveUnoriented: Bool?
+    /// Number of reads that were reverse-complemented during orientation.
+    public var orientRCCount: Int?
+    /// Number of reads that could not be oriented.
+    public var orientUnmatchedCount: Int?
+
     /// Which external tool performed the operation (for provenance).
     public var toolUsed: String?
 
@@ -269,6 +296,12 @@ public struct FASTQDerivativeOperation: Codable, Sendable, Equatable {
         barcodeID: String? = nil,
         sampleName: String? = nil,
         demuxRunID: UUID? = nil,
+        orientReferencePath: String? = nil,
+        orientWordLength: Int? = nil,
+        orientDbMask: String? = nil,
+        orientSaveUnoriented: Bool? = nil,
+        orientRCCount: Int? = nil,
+        orientUnmatchedCount: Int? = nil,
         toolUsed: String? = nil,
         toolCommand: String? = nil
     ) {
@@ -309,6 +342,12 @@ public struct FASTQDerivativeOperation: Codable, Sendable, Equatable {
         self.barcodeID = barcodeID
         self.sampleName = sampleName
         self.demuxRunID = demuxRunID
+        self.orientReferencePath = orientReferencePath
+        self.orientWordLength = orientWordLength
+        self.orientDbMask = orientDbMask
+        self.orientSaveUnoriented = orientSaveUnoriented
+        self.orientRCCount = orientRCCount
+        self.orientUnmatchedCount = orientUnmatchedCount
         self.toolUsed = toolUsed
         self.toolCommand = toolCommand
     }
@@ -367,6 +406,8 @@ public struct FASTQDerivativeOperation: Codable, Sendable, Equatable {
                 return "demux-\(barcodeID)"
             }
             return "demultiplex"
+        case .orient:
+            return "orient"
         }
     }
 
@@ -464,7 +505,77 @@ public struct FASTQDerivativeOperation: Codable, Sendable, Equatable {
                 return "Demultiplex → \(label)"
             }
             return "Demultiplex"
+        case .orient:
+            let ref = orientReferencePath ?? "reference"
+            let refName = URL(fileURLWithPath: ref).deletingPathExtension().lastPathComponent
+            if let rc = orientRCCount, let unmatched = orientUnmatchedCount {
+                return "Orient against \(refName) (\(rc) RC'd, \(unmatched) unmatched)"
+            }
+            return "Orient against \(refName)"
         }
+    }
+}
+
+// MARK: - Orient Map File I/O
+
+/// Reads and writes `orient-map.tsv` files used by orient derivative bundles.
+public enum FASTQOrientMapFile {
+
+    /// Writes orientation records to a TSV file. Format: `readID\torientation\n`
+    /// where orientation is "+" (forward) or "-" (reverse complemented).
+    ///
+    /// - Precondition: Each record's orientation must be "+" or "-".
+    public static func write(_ records: [(readID: String, orientation: String)], to url: URL) throws {
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        for record in records {
+            precondition(record.orientation == "+" || record.orientation == "-",
+                         "Orientation must be + or -, got \(record.orientation)")
+            guard let data = "\(record.readID)\t\(record.orientation)\n"
+                .data(using: .utf8) else { continue }
+            handle.write(data)
+        }
+    }
+
+    /// Loads orientation records from a TSV file into a dictionary keyed by read ID.
+    /// Values are "+" (already forward) or "-" (was reverse complemented).
+    public static func load(from url: URL) throws -> [String: String] {
+        let content = try String(contentsOf: url, encoding: .utf8)
+        var orientations: [String: String] = [:]
+        for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
+            let fields = line.split(separator: "\t")
+            guard fields.count >= 2 else { continue }
+            let readID = String(fields[0])
+            let orientation = String(fields[1])
+            guard orientation == "+" || orientation == "-" else { continue }
+            orientations[readID] = orientation
+        }
+        return orientations
+    }
+
+    /// Returns the set of read IDs that need reverse complementing.
+    public static func loadRCReadIDs(from url: URL) throws -> Set<String> {
+        let content = try String(contentsOf: url, encoding: .utf8)
+        var rcIDs: Set<String> = []
+        for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
+            let fields = line.split(separator: "\t")
+            guard fields.count >= 2, fields[1] == "-" else { continue }
+            rcIDs.insert(String(fields[0]))
+        }
+        return rcIDs
+    }
+
+    /// Returns the set of forward-oriented read IDs ("+").
+    public static func loadForwardReadIDs(from url: URL) throws -> Set<String> {
+        let content = try String(contentsOf: url, encoding: .utf8)
+        var fwdIDs: Set<String> = []
+        for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
+            let fields = line.split(separator: "\t")
+            guard fields.count >= 2, fields[1] == "+" else { continue }
+            fwdIDs.insert(String(fields[0]))
+        }
+        return fwdIDs
     }
 }
 

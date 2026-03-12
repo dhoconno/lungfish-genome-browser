@@ -47,6 +47,14 @@ public enum FASTQDerivativeRequest: Sendable {
     // Multi-step demultiplexing (produces per-barcode bundles via DemultiplexPlan)
     case multiStepDemultiplex(plan: DemultiplexPlan, sourcePlatform: SequencingPlatform?)
 
+    // Orient sequences against a reference
+    case orient(
+        referenceURL: URL,
+        wordLength: Int,
+        dbMask: String,
+        saveUnoriented: Bool
+    )
+
     /// Human-readable label for this operation, used in the Operations panel.
     var operationLabel: String {
         switch self {
@@ -67,6 +75,7 @@ public enum FASTQDerivativeRequest: Sendable {
         case .interleaveReformat: return "Interleave Reformat"
         case .demultiplex: return "Demultiplex"
         case .multiStepDemultiplex: return "Multi-Step Demultiplex"
+        case .orient: return "Orient Sequences"
         }
     }
 
@@ -80,7 +89,7 @@ public enum FASTQDerivativeRequest: Sendable {
             return false
         case .pairedEndMerge, .pairedEndRepair, .primerRemoval,
              .errorCorrection, .interleaveReformat, .demultiplex,
-             .multiStepDemultiplex:
+             .multiStepDemultiplex, .orient:
             return false
         }
     }
@@ -95,6 +104,12 @@ public enum FASTQDerivativeRequest: Sendable {
         default:
             return false
         }
+    }
+
+    /// Whether this request produces an orient-map derivative.
+    var isOrientOperation: Bool {
+        if case .orient = self { return true }
+        return false
     }
 
     /// Whether this request produces paired R1/R2 output files.
@@ -236,6 +251,24 @@ public actor FASTQDerivativeService {
                 sourceFASTQ: materializedSourceFASTQ,
                 sourceBundleURL: sourceBundleURL,
                 rootFASTQFilename: rootFASTQFilename,
+                progress: progress
+            )
+        }
+
+        // Orient has its own execution path — produces an orient-map derivative
+        if case .orient(let referenceURL, let wordLength, let dbMask, let saveUnoriented) = request {
+            return try await createOrientDerivative(
+                sourceFASTQ: materializedSourceFASTQ,
+                sourceBundleURL: sourceBundleURL,
+                parentRelativePath: parentRelativePath,
+                rootRelativePath: rootRelativePath,
+                rootFASTQFilename: rootFASTQFilename,
+                pairingMode: pairingMode,
+                baseLineage: baseLineage,
+                referenceURL: referenceURL,
+                wordLength: wordLength,
+                dbMask: dbMask,
+                saveUnoriented: saveUnoriented,
                 progress: progress
             )
         }
@@ -416,6 +449,191 @@ public actor FASTQDerivativeService {
     }
 
     // MARK: - Mixed Output Derivatives
+
+    /// Runs vsearch orient and creates an orient-map derivative bundle.
+    ///
+    /// The orient-map derivative stores a TSV mapping read IDs to orientation (+/-)
+    /// and a preview FASTQ of the first 1000 oriented reads. The full oriented FASTQ
+    /// is materialized on demand using seqkit.
+    private func createOrientDerivative(
+        sourceFASTQ: URL,
+        sourceBundleURL: URL,
+        parentRelativePath: String,
+        rootRelativePath: String,
+        rootFASTQFilename: String,
+        pairingMode: IngestionMetadata.PairingMode?,
+        baseLineage: [FASTQDerivativeOperation],
+        referenceURL: URL,
+        wordLength: Int,
+        dbMask: String,
+        saveUnoriented: Bool,
+        progress: (@Sendable (String) -> Void)?
+    ) async throws -> URL {
+        progress?("Running vsearch orient...")
+
+        let pipeline = OrientPipeline(runner: runner)
+        let config = OrientConfig(
+            inputURL: sourceFASTQ,
+            referenceURL: referenceURL,
+            wordLength: wordLength,
+            dbMask: dbMask,
+            qMask: dbMask,
+            saveUnoriented: saveUnoriented
+        )
+
+        let result = try await pipeline.run(config: config) { fraction, msg in
+            progress?(msg)
+        }
+
+        progress?("Creating orient derivative bundle...")
+
+        // Create the derivative bundle in the Derivatives folder
+        let derivativesDir = sourceBundleURL.appendingPathComponent("Derivatives", isDirectory: true)
+        try FileManager.default.createDirectory(at: derivativesDir, withIntermediateDirectories: true)
+
+        let bundleName = "oriented.lungfishfastq"
+        let bundleURL = derivativesDir.appendingPathComponent(bundleName, isDirectory: true)
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+
+        // Create the orient-map TSV from vsearch tabbed output
+        let orientMapFilename = "orient-map.tsv"
+        let orientMapURL = bundleURL.appendingPathComponent(orientMapFilename)
+        let (fwdCount, rcCount) = try pipeline.createOrientMap(
+            from: result.tabbedOutput,
+            to: orientMapURL
+        )
+
+        // Create a preview FASTQ (first 1000 oriented reads)
+        let previewFilename = "preview.fastq"
+        let previewURL = bundleURL.appendingPathComponent(previewFilename)
+        let previewResult = try await runner.run(
+            .seqkit,
+            arguments: [
+                "head", "-n", "1000",
+                result.orientedFASTQ.path,
+                "-o", previewURL.path,
+            ],
+            timeout: 60
+        )
+        if !previewResult.isSuccess {
+            derivativeLogger.warning("Failed to create orient preview: \(previewResult.stderr)")
+        }
+
+        // Compute statistics on the oriented output
+        let statsResult = try await runner.run(
+            .seqkit,
+            arguments: ["stats", "--tabular", result.orientedFASTQ.path],
+            timeout: 120
+        )
+        let stats = parseFASTQStats(statsResult.stdout)
+
+        // Build the operation record
+        let operation = FASTQDerivativeOperation(
+            kind: .orient,
+            orientReferencePath: referenceURL.lastPathComponent,
+            orientWordLength: wordLength,
+            orientDbMask: dbMask,
+            orientSaveUnoriented: saveUnoriented,
+            orientRCCount: rcCount,
+            orientUnmatchedCount: result.unmatchedCount,
+            toolUsed: "vsearch",
+            toolCommand: "vsearch --orient \(sourceFASTQ.lastPathComponent) --db \(referenceURL.lastPathComponent) --wordlength \(wordLength) --dbmask \(dbMask)"
+        )
+
+        var lineage = baseLineage
+        lineage.append(operation)
+
+        let manifest = FASTQDerivedBundleManifest(
+            name: "Oriented",
+            parentBundleRelativePath: parentRelativePath,
+            rootBundleRelativePath: rootRelativePath,
+            rootFASTQFilename: rootFASTQFilename,
+            payload: .orientMap(orientMapFilename: orientMapFilename, previewFilename: previewFilename),
+            lineage: lineage,
+            operation: operation,
+            cachedStatistics: stats ?? .placeholder(readCount: fwdCount + rcCount, baseCount: 0),
+            pairingMode: pairingMode
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let manifestData = try encoder.encode(manifest)
+        try manifestData.write(to: bundleURL.appendingPathComponent("manifest.json"))
+
+        // Optionally create unoriented reads derivative
+        if saveUnoriented, let unorientedFASTQ = result.unorientedFASTQ,
+           FileManager.default.fileExists(atPath: unorientedFASTQ.path) {
+            let unorientedBundleName = "unoriented.lungfishfastq"
+            let unorientedBundleURL = derivativesDir.appendingPathComponent(unorientedBundleName, isDirectory: true)
+            try FileManager.default.createDirectory(at: unorientedBundleURL, withIntermediateDirectories: true)
+
+            // Copy the unoriented FASTQ
+            let unorientedDest = unorientedBundleURL.appendingPathComponent("unoriented.fastq")
+            try FileManager.default.copyItem(at: unorientedFASTQ, to: unorientedDest)
+
+            let unorientedStats = parseFASTQStats(
+                (try? await runner.run(.seqkit, arguments: ["stats", "--tabular", unorientedDest.path], timeout: 120))?.stdout ?? ""
+            )
+
+            let unorientedOp = FASTQDerivativeOperation(
+                kind: .orient,
+                orientReferencePath: referenceURL.lastPathComponent,
+                orientSaveUnoriented: true,
+                orientUnmatchedCount: result.unmatchedCount,
+                toolUsed: "vsearch"
+            )
+
+            var unorientedLineage = baseLineage
+            unorientedLineage.append(unorientedOp)
+
+            let unorientedManifest = FASTQDerivedBundleManifest(
+                name: "Unoriented",
+                parentBundleRelativePath: parentRelativePath,
+                rootBundleRelativePath: rootRelativePath,
+                rootFASTQFilename: rootFASTQFilename,
+                payload: .full(fastqFilename: "unoriented.fastq"),
+                lineage: unorientedLineage,
+                operation: unorientedOp,
+                cachedStatistics: unorientedStats ?? .placeholder(readCount: result.unmatchedCount, baseCount: 0),
+                pairingMode: pairingMode
+            )
+
+            let unorientedManifestData = try encoder.encode(unorientedManifest)
+            try unorientedManifestData.write(to: unorientedBundleURL.appendingPathComponent("manifest.json"))
+        }
+
+        // Clean up vsearch work directory
+        let workDir = result.orientedFASTQ.deletingLastPathComponent()
+        try? FileManager.default.removeItem(at: workDir)
+
+        progress?("Orient complete: \(fwdCount) forward, \(rcCount) reverse-complemented, \(result.unmatchedCount) unmatched")
+        return bundleURL
+    }
+
+    /// Parses seqkit stats tabular output into FASTQDatasetStatistics.
+    private func parseFASTQStats(_ output: String) -> FASTQDatasetStatistics? {
+        let lines = output.split(separator: "\n")
+        guard lines.count >= 2 else { return nil }
+        let values = lines[1].split(separator: "\t")
+        // seqkit stats --tabular: file, format, type, num_seqs, sum_len, min_len, avg_len, max_len
+        guard values.count >= 8,
+              let readCount = Int(values[3].trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: "")),
+              let totalBases = Int(values[4].trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: "")),
+              let minLength = Int(values[5].trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: "")),
+              let avgLength = Double(values[6].trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: "")),
+              let maxLength = Int(values[7].trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ""))
+        else { return nil }
+
+        return FASTQDatasetStatistics(
+            readCount: readCount, baseCount: Int64(totalBases),
+            meanReadLength: avgLength, minReadLength: minLength, maxReadLength: maxLength,
+            medianReadLength: Int(avgLength), n50ReadLength: 0,
+            meanQuality: 0, q20Percentage: 0, q30Percentage: 0, gcContent: 0,
+            readLengthHistogram: [:], qualityScoreHistogram: [:],
+            perPositionQuality: []
+        )
+    }
 
     /// Runs cutadapt-based demultiplexing and returns the most representative output bundle.
     ///
@@ -1128,6 +1346,10 @@ public actor FASTQDerivativeService {
             throw FASTQDerivativeError.invalidOperation(
                 "Multi-step demultiplexing is handled via createMultiStepDemultiplexDerivative."
             )
+        case .orient:
+            throw FASTQDerivativeError.invalidOperation(
+                "Orient is handled via createOrientDerivative."
+            )
         }
     }
 
@@ -1296,6 +1518,18 @@ public actor FASTQDerivativeService {
         case .demuxGroup:
             // Demux group is a directory, not a materializable payload
             throw FASTQDerivativeError.invalidOperation("Cannot materialize a demux group directory")
+
+        case .orientMap(let orientMapFilename, _):
+            // Orient map: extract forward reads + RC reads from orient map, excluding unmatched.
+            let mapURL = bundleURL.appendingPathComponent(orientMapFilename)
+            let fwdReadIDs = try FASTQOrientMapFile.loadForwardReadIDs(from: mapURL)
+            let rcReadIDs = try FASTQOrientMapFile.loadRCReadIDs(from: mapURL)
+            try await materializeOrientedReads(
+                fromRootFASTQ: rootFASTQURL,
+                forwardReadIDs: fwdReadIDs,
+                rcReadIDs: rcReadIDs,
+                outputFASTQ: outputURL
+            )
         }
 
         return outputURL
@@ -1319,6 +1553,87 @@ public actor FASTQDerivativeService {
         guard result.isSuccess else {
             throw FASTQDerivativeError.invalidOperation("seqkit grep failed: \(result.stderr)")
         }
+    }
+
+    /// Materializes an oriented FASTQ by streaming through the root FASTQ and
+    /// reverse-complementing reads marked in the RC set using seqkit.
+    ///
+    /// Strategy: Extract RC reads → reverse complement them → concatenate with forward reads.
+    private func materializeOrientedReads(
+        fromRootFASTQ rootFASTQ: URL,
+        forwardReadIDs: Set<String>,
+        rcReadIDs: Set<String>,
+        outputFASTQ: URL
+    ) async throws {
+        let fm = FileManager.default
+        let tempDir = fm.temporaryDirectory.appendingPathComponent(
+            "lungfish-orient-\(UUID().uuidString)", isDirectory: true
+        )
+        try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: tempDir) }
+
+        // Write forward read ID list
+        let fwdIDFile = tempDir.appendingPathComponent("fwd-read-ids.txt")
+        try forwardReadIDs.joined(separator: "\n").write(to: fwdIDFile, atomically: true, encoding: .utf8)
+
+        // Extract forward reads explicitly (excludes unmatched reads)
+        let fwdExtracted = tempDir.appendingPathComponent("fwd-extracted.fastq.gz")
+        let fwdResult = try await runner.run(
+            .seqkit,
+            arguments: [
+                "grep", "-f", fwdIDFile.path,
+                rootFASTQ.path,
+                "-o", fwdExtracted.path,
+            ],
+            timeout: 600
+        )
+        guard fwdResult.isSuccess else {
+            throw FASTQDerivativeError.invalidOperation("seqkit grep (fwd reads) failed: \(fwdResult.stderr)")
+        }
+
+        guard !rcReadIDs.isEmpty else {
+            // No reads need RC — forward-only output (unmatched reads excluded)
+            try fm.moveItem(at: fwdExtracted, to: outputFASTQ)
+            return
+        }
+
+        // Write RC read ID list
+        let rcIDFile = tempDir.appendingPathComponent("rc-read-ids.txt")
+        try rcReadIDs.joined(separator: "\n").write(to: rcIDFile, atomically: true, encoding: .utf8)
+
+        // Extract and RC the reads that need reverse complementing
+        let rcExtracted = tempDir.appendingPathComponent("rc-extracted.fastq.gz")
+        let rcResult = try await runner.run(
+            .seqkit,
+            arguments: [
+                "grep", "-f", rcIDFile.path,
+                rootFASTQ.path,
+                "-o", rcExtracted.path,
+            ],
+            timeout: 600
+        )
+        guard rcResult.isSuccess else {
+            throw FASTQDerivativeError.invalidOperation("seqkit grep (RC reads) failed: \(rcResult.stderr)")
+        }
+
+        let rcOriented = tempDir.appendingPathComponent("rc-oriented.fastq.gz")
+        let rcSeqResult = try await runner.run(
+            .seqkit,
+            arguments: [
+                "seq", "--reverse", "--complement",
+                rcExtracted.path,
+                "-o", rcOriented.path,
+            ],
+            timeout: 600
+        )
+        guard rcSeqResult.isSuccess else {
+            throw FASTQDerivativeError.invalidOperation("seqkit seq -rp failed: \(rcSeqResult.stderr)")
+        }
+
+        // Concatenate forward + RC'd reads.
+        // Multi-member gzip concatenation is valid per RFC 1952;
+        // downstream tools (seqkit, samtools, cutadapt) handle it correctly.
+        try concatenateFASTQFiles([fwdExtracted, rcOriented], to: outputFASTQ)
     }
 
     /// Extracts reads from root FASTQ by ID list, then applies stored trim positions

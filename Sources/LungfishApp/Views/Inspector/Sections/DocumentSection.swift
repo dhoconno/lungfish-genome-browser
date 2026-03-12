@@ -624,6 +624,8 @@ public struct DocumentSection: View {
                     metadataRow(label: "Storage", value: "Virtual demuxed barcode (\(barcodeID))\(trimFile != nil ? " + trim positions" : "")")
                 case .demuxGroup(let count):
                     metadataRow(label: "Storage", value: "Demux group (\(count) barcodes)")
+                case .orientMap:
+                    metadataRow(label: "Storage", value: "Orientation map (materialized on demand)")
                 }
 
                 // Command block (scrollable monospace with copy button)

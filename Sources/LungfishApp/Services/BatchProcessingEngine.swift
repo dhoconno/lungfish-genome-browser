@@ -424,6 +424,9 @@ public actor BatchProcessingEngine {
             // Demultiplexing is not a derivative request — it's handled separately.
             // This case should never be in a recipe's steps array.
             throw BatchProcessingError.unsupportedStepInRecipe(step.kind.rawValue)
+        case .orient:
+            // Orientation is not yet supported in batch recipes.
+            throw BatchProcessingError.unsupportedStepInRecipe(step.kind.rawValue)
         }
     }
 

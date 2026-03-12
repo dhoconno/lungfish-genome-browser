@@ -230,6 +230,16 @@ public final class FASTQDatasetViewController: NSViewController {
         }
     }
 
+    /// Full demultiplex plan from the metadata drawer.
+    /// Multi-step plans run sequentially when more than one step is configured.
+    public var currentDemuxPlan: DemultiplexPlan? {
+        didSet {
+            if selectedOperation == .demultiplex {
+                updateParameterBar()
+            }
+        }
+    }
+
     // MARK: - Read Preview Data
 
     private var readPreviewRecords: [FASTQReadPreviewRecord] = []
@@ -329,6 +339,13 @@ public final class FASTQDatasetViewController: NSViewController {
         configureMainSplitView()
         configureTopPane()
         configureMiddlePane()
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleOrientRequest(_:)),
+            name: .fastqOrientRequested,
+            object: nil
+        )
     }
 
     public override func viewDidLayout() {
@@ -1535,7 +1552,9 @@ public final class FASTQDatasetViewController: NSViewController {
             return
         }
         // Demux requires a configuration from the drawer
-        if selectedOperation == .demultiplex && currentDemuxConfig == nil {
+        if selectedOperation == .demultiplex
+            && (currentDemuxPlan?.steps.isEmpty ?? true)
+            && currentDemuxConfig == nil {
             setStatus("Configure demultiplexing in the Demux Setup panel below")
             shakeButton(runButton)
             return
@@ -1587,6 +1606,49 @@ public final class FASTQDatasetViewController: NSViewController {
     @objc private func openDemuxDrawerClicked(_ sender: Any) {
         onOpenDemuxDrawer?()
     }
+
+    @objc private func handleOrientRequest(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let referenceURL = userInfo["referenceURL"] as? URL,
+              let wordLength = userInfo["wordLength"] as? Int,
+              let dbMask = userInfo["dbMask"] as? String,
+              let saveUnoriented = userInfo["saveUnoriented"] as? Bool else { return }
+
+        guard let onRunOperation else {
+            setStatus("No FASTQ source selected for orient.")
+            return
+        }
+
+        let request = FASTQDerivativeRequest.orient(
+            referenceURL: referenceURL,
+            wordLength: wordLength,
+            dbMask: dbMask,
+            saveUnoriented: saveUnoriented
+        )
+
+        setStatus("Running: Orient reads against reference...")
+        progressIndicator.startAnimation(nil)
+
+        operationTask = Task { [weak self, onRunOperation] in
+            do {
+                try await onRunOperation(request)
+                guard let self else { return }
+                self.operationTask = nil
+                self.progressIndicator.stopAnimation(nil)
+                self.setStatus("Orient complete.")
+                self.onOrientComplete?("Orient complete.")
+            } catch {
+                guard let self else { return }
+                self.operationTask = nil
+                self.progressIndicator.stopAnimation(nil)
+                self.setStatus("Orient failed: \(error.localizedDescription)", isError: true)
+                self.onOrientComplete?("Orient failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Callback to update the orient drawer when pipeline finishes.
+    public var onOrientComplete: ((String) -> Void)?
 
 
     // MARK: - Sidebar Row Mapping
@@ -1817,6 +1879,12 @@ public final class FASTQDatasetViewController: NSViewController {
                 setStatus("Configure demultiplexing in the Demux Setup drawer first.", isError: true)
                 return nil
             }
+
+            if let plan = currentDemuxPlan, !plan.steps.isEmpty {
+                let sourcePlatform = fastqURL.map { SequencingPlatform.detect(fromFASTQ: $0) } ?? nil
+                return .multiStepDemultiplex(plan: plan, sourcePlatform: sourcePlatform)
+            }
+
             let drawerLocation: String
             switch drawerConfig.barcodeLocation {
             case .fivePrime: drawerLocation = "fivePrime"
@@ -1888,6 +1956,8 @@ public final class FASTQDatasetViewController: NSViewController {
             return "Demultiplex (\(kitID), \(location), w5=\(maxDistanceFrom5Prime), w3=\(maxDistanceFrom3Prime), e=\(String(format: "%.2f", errorRate))\(source))"
         case .multiStepDemultiplex(let plan, _):
             return "Multi-step demultiplex (\(plan.steps.count) steps)"
+        case .orient(let referenceURL, let wordLength, let dbMask, _):
+            return "Orient against \(referenceURL.lastPathComponent) (w=\(wordLength), mask=\(dbMask))"
         }
     }
 
@@ -1911,7 +1981,8 @@ public final class FASTQDatasetViewController: NSViewController {
             runButton.isEnabled = !hasQualityData && qualityReportTask == nil
             runButton.title = "Compute"
         case .demultiplex:
-            runButton.isEnabled = currentDemuxConfig != nil
+            let hasPlan = !(currentDemuxPlan?.steps.isEmpty ?? true)
+            runButton.isEnabled = hasPlan || currentDemuxConfig != nil
             runButton.title = "Run"
         default:
             runButton.isEnabled = true
