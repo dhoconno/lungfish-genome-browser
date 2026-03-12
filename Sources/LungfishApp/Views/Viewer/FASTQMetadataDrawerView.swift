@@ -5,6 +5,7 @@
 import AppKit
 import LungfishIO
 import LungfishWorkflow
+import UniformTypeIdentifiers
 
 @MainActor
 public protocol FASTQMetadataDrawerViewDelegate: AnyObject {
@@ -1636,9 +1637,13 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
     @objc private func orientBrowseClicked(_ sender: NSButton) {
         guard let window else { return }
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.plainText]
+        let fastaExtensions = [
+            "fasta", "fa", "fna", "ffn", "faa", "fas", "fsa", "seq"
+        ]
+        let fastaTypes = fastaExtensions.compactMap { UTType(filenameExtension: $0) }
+        panel.allowedContentTypes = fastaTypes + [.gzip]
         panel.allowsMultipleSelection = false
-        panel.message = "Select a reference FASTA file (.fasta, .fa, .fna)"
+        panel.message = "Select a reference FASTA file (.fasta, .fa, .fna, .ffn, .faa, .fas, .fsa, .seq, or .gz FASTA)"
         panel.prompt = "Select"
 
         panel.beginSheetModal(for: window) { [weak self] response in
