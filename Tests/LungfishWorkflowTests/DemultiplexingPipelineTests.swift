@@ -10,6 +10,17 @@ final class DemultiplexingPipelineTests: XCTestCase {
         return dir
     }
 
+    private func makeTempBundle(
+        named name: String = "input",
+        fastqFilename: String = "reads.fastq"
+    ) throws -> (tempDir: URL, bundleURL: URL, fastqURL: URL) {
+        let tempDir = try makeTempDir()
+        let bundleURL = tempDir.appendingPathComponent("\(name).\(FASTQBundle.directoryExtension)", isDirectory: true)
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+        let fastqURL = bundleURL.appendingPathComponent(fastqFilename)
+        return (tempDir, bundleURL, fastqURL)
+    }
+
     private func writeFASTQ(sequences: [String], to url: URL) throws {
         var lines: [String] = []
         lines.reserveCapacity(sequences.count * 4)
@@ -227,6 +238,61 @@ final class DemultiplexingPipelineTests: XCTestCase {
         XCTAssertEqual(result.manifest.barcodes.first?.barcodeID, "P01")
         XCTAssertEqual(result.manifest.barcodes.first?.readCount, 2)
         XCTAssertEqual(result.manifest.unassigned.readCount, 1)
+    }
+
+    func testVirtualDemuxPreservesInterleavedPairingModeFromBundleMetadata() async throws {
+        let (tempDir, bundleURL, fastqURL) = try makeTempBundle(named: "root")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        try writeFASTQ(
+            sequences: [
+                "ACGTAAAAAA",
+                "GGGGGGGGGG",
+            ],
+            to: fastqURL
+        )
+
+        FASTQMetadataStore.save(
+            PersistedFASTQMetadata(
+                ingestion: IngestionMetadata(
+                    isClumpified: false,
+                    isCompressed: false,
+                    pairingMode: .interleaved,
+                    originalFilenames: [fastqURL.lastPathComponent]
+                )
+            ),
+            for: fastqURL
+        )
+
+        let outputDir = tempDir.appendingPathComponent("demux-out", isDirectory: true)
+        let kit = BarcodeKitDefinition(
+            id: "single-test",
+            displayName: "Single Test",
+            vendor: "custom",
+            isDualIndexed: false,
+            pairingMode: .singleEnd,
+            barcodes: [BarcodeEntry(id: "BC01", i7Sequence: "ACGT")]
+        )
+
+        let pipeline = DemultiplexingPipeline()
+        let result = try await pipeline.run(
+            config: DemultiplexConfig(
+                inputURL: bundleURL,
+                barcodeKit: kit,
+                outputDirectory: outputDir,
+                errorRate: 0.0,
+                minimumOverlap: 4,
+                trimBarcodes: true,
+                threads: 1,
+                rootBundleURL: bundleURL,
+                rootFASTQFilename: fastqURL.lastPathComponent
+            ),
+            progress: { _, _ in }
+        )
+
+        let derivedManifests = result.outputBundleURLs.compactMap(FASTQBundle.loadDerivedManifest(in:))
+        XCTAssertEqual(derivedManifests.count, 1)
+        XCTAssertEqual(derivedManifests.first?.pairingMode, .interleaved)
     }
 
     // MARK: - Poly-G Trim Config

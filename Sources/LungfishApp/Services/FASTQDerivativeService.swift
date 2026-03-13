@@ -352,6 +352,7 @@ public actor FASTQDerivativeService {
                 sourceBundleURL: sourceBundleURL,
                 rootBundleURL: resolvedRootBundleURL,
                 rootFASTQFilename: rootFASTQFilename,
+                pairingMode: pairingMode,
                 progress: progress
             )
         }
@@ -392,6 +393,7 @@ public actor FASTQDerivativeService {
                 sourceBundleURL: sourceBundleURL,
                 rootBundleURL: resolvedRootBundleURL,
                 rootFASTQFilename: rootFASTQFilename,
+                pairingMode: pairingMode,
                 kitID: kitID,
                 customCSVPath: customCSVPath,
                 location: location,
@@ -633,6 +635,10 @@ public actor FASTQDerivativeService {
             wallClockSeconds: elapsed
         )
 
+        for outputURL in outputURLs {
+            attachBatchOperationID(record.id, to: outputURL)
+        }
+
         // Persist the batch record to the common parent directory
         if let parentDir = commonParentDirectory {
             do {
@@ -649,6 +655,29 @@ public actor FASTQDerivativeService {
             record: record,
             wallClockSeconds: elapsed
         )
+    }
+
+    private func attachBatchOperationID(_ batchOperationID: UUID, to bundleURL: URL) {
+        guard let manifest = FASTQBundle.loadDerivedManifest(in: bundleURL) else { return }
+        let updatedManifest = FASTQDerivedBundleManifest(
+            id: manifest.id,
+            name: manifest.name,
+            createdAt: manifest.createdAt,
+            parentBundleRelativePath: manifest.parentBundleRelativePath,
+            rootBundleRelativePath: manifest.rootBundleRelativePath,
+            rootFASTQFilename: manifest.rootFASTQFilename,
+            payload: manifest.payload,
+            lineage: manifest.lineage,
+            operation: manifest.operation,
+            cachedStatistics: manifest.cachedStatistics,
+            pairingMode: manifest.pairingMode,
+            readClassification: manifest.readClassification,
+            batchOperationID: batchOperationID,
+            sequenceFormat: manifest.sequenceFormat,
+            provenance: manifest.provenance,
+            payloadChecksums: manifest.payloadChecksums
+        )
+        try? FASTQBundle.saveDerivedManifest(updatedManifest, in: bundleURL)
     }
 
     /// Computes a relative path from one URL to another.
@@ -875,6 +904,7 @@ public actor FASTQDerivativeService {
         sourceBundleURL: URL,
         rootBundleURL: URL,
         rootFASTQFilename: String,
+        pairingMode: IngestionMetadata.PairingMode?,
         kitID: String,
         customCSVPath: String?,
         location: String,
@@ -938,6 +968,7 @@ public actor FASTQDerivativeService {
         let result = try await pipeline.run(
             config: DemultiplexConfig(
                 inputURL: sourceFASTQ,
+                sourceBundleURL: sourceBundleURL,
                 barcodeKit: barcodeKit,
                 outputDirectory: outputDirectory,
                 barcodeLocation: barcodeLocation,
@@ -952,6 +983,7 @@ public actor FASTQDerivativeService {
                 sampleAssignments: sampleAssignments,
                 rootBundleURL: rootBundleURL,
                 rootFASTQFilename: rootFASTQFilename,
+                inputPairingMode: pairingMode,
                 useNoIndels: !allowIndels
             ),
             progress: { fraction, message in
@@ -1014,6 +1046,7 @@ public actor FASTQDerivativeService {
         sourceBundleURL: URL,
         rootBundleURL: URL,
         rootFASTQFilename: String,
+        pairingMode: IngestionMetadata.PairingMode?,
         progress: (@Sendable (String) -> Void)?
     ) async throws -> URL {
         try plan.validate()
@@ -1032,6 +1065,7 @@ public actor FASTQDerivativeService {
                 sourceBundleURL: sourceBundleURL,
                 rootBundleURL: rootBundleURL,
                 rootFASTQFilename: rootFASTQFilename,
+                pairingMode: pairingMode,
                 kitID: step.barcodeKitID,
                 customCSVPath: nil,
                 location: location,
@@ -1062,10 +1096,11 @@ public actor FASTQDerivativeService {
         let pipeline = DemultiplexingPipeline()
         let result = try await pipeline.runMultiStep(
             plan: plan,
-            inputURL: sourceFASTQ,
+            inputURL: sourceBundleURL,
             outputDirectory: outputDirectory,
             rootBundleURL: rootBundleURL,
             rootFASTQFilename: rootFASTQFilename,
+            inputPairingMode: pairingMode,
             progress: { fraction, message in
                 let percent = Int((fraction * 100.0).rounded())
                 progress?("Multi-step demux (\(percent)%): \(message)")
@@ -1651,7 +1686,7 @@ public actor FASTQDerivativeService {
                     id: manifest.id,
                     name: manifest.name,
                     createdAt: manifest.createdAt,
-                    parentBundleRelativePath: projectPath,
+                    parentBundleRelativePath: manifest.parentBundleRelativePath,
                     rootBundleRelativePath: projectPath,
                     rootFASTQFilename: manifest.rootFASTQFilename,
                     payload: manifest.payload,
@@ -1661,7 +1696,9 @@ public actor FASTQDerivativeService {
                     pairingMode: manifest.pairingMode,
                     readClassification: manifest.readClassification,
                     batchOperationID: manifest.batchOperationID,
-                    sequenceFormat: manifest.sequenceFormat
+                    sequenceFormat: manifest.sequenceFormat,
+                    provenance: manifest.provenance,
+                    payloadChecksums: manifest.payloadChecksums
                 )
                 try? FASTQBundle.saveDerivedManifest(repairedManifest, in: bundleURL)
             }
@@ -1903,75 +1940,25 @@ public actor FASTQDerivativeService {
         rcReadIDs: Set<String>,
         outputFASTQ: URL
     ) async throws {
-        let fm = FileManager.default
-        let tempDir = fm.temporaryDirectory.appendingPathComponent(
-            "lungfish-orient-\(UUID().uuidString)", isDirectory: true
-        )
-        try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: tempDir) }
-
-        // Write forward read ID list
-        let fwdIDFile = tempDir.appendingPathComponent("fwd-read-ids.txt")
-        try forwardReadIDs.joined(separator: "\n").write(to: fwdIDFile, atomically: true, encoding: .utf8)
-
-        // Extract forward reads explicitly (excludes unmatched reads)
-        let fwdExtracted = tempDir.appendingPathComponent("fwd-extracted.fastq.gz")
-        let fwdResult = try await runner.run(
-            .seqkit,
-            arguments: [
-                "grep", "-f", fwdIDFile.path,
-                rootFASTQ.path,
-                "-o", fwdExtracted.path,
-            ],
-            timeout: 600
-        )
-        guard fwdResult.isSuccess else {
-            throw FASTQDerivativeError.invalidOperation("seqkit grep (fwd reads) failed: \(fwdResult.stderr)")
+        let selectedReadIDs = forwardReadIDs.union(rcReadIDs)
+        guard !selectedReadIDs.isEmpty else {
+            throw FASTQDerivativeError.emptyResult
         }
 
-        guard !rcReadIDs.isEmpty else {
-            // No reads need RC — forward-only output (unmatched reads excluded)
-            try fm.moveItem(at: fwdExtracted, to: outputFASTQ)
-            return
+        let reader = FASTQReader(validateSequence: false)
+        let writer = FASTQWriter(url: outputFASTQ)
+        try writer.open()
+        defer { try? writer.close() }
+
+        for try await record in reader.records(from: rootFASTQ) {
+            let readID = normalizedIdentifier(record.identifier)
+            guard selectedReadIDs.contains(readID) || selectedReadIDs.contains(record.identifier) else { continue }
+            if rcReadIDs.contains(readID) || rcReadIDs.contains(record.identifier) {
+                try writer.write(record.reverseComplement())
+            } else {
+                try writer.write(record)
+            }
         }
-
-        // Write RC read ID list
-        let rcIDFile = tempDir.appendingPathComponent("rc-read-ids.txt")
-        try rcReadIDs.joined(separator: "\n").write(to: rcIDFile, atomically: true, encoding: .utf8)
-
-        // Extract and RC the reads that need reverse complementing
-        let rcExtracted = tempDir.appendingPathComponent("rc-extracted.fastq.gz")
-        let rcResult = try await runner.run(
-            .seqkit,
-            arguments: [
-                "grep", "-f", rcIDFile.path,
-                rootFASTQ.path,
-                "-o", rcExtracted.path,
-            ],
-            timeout: 600
-        )
-        guard rcResult.isSuccess else {
-            throw FASTQDerivativeError.invalidOperation("seqkit grep (RC reads) failed: \(rcResult.stderr)")
-        }
-
-        let rcOriented = tempDir.appendingPathComponent("rc-oriented.fastq.gz")
-        let rcSeqResult = try await runner.run(
-            .seqkit,
-            arguments: [
-                "seq", "--reverse", "--complement",
-                rcExtracted.path,
-                "-o", rcOriented.path,
-            ],
-            timeout: 600
-        )
-        guard rcSeqResult.isSuccess else {
-            throw FASTQDerivativeError.invalidOperation("seqkit seq -rp failed: \(rcSeqResult.stderr)")
-        }
-
-        // Concatenate forward + RC'd reads.
-        // Multi-member gzip concatenation is valid per RFC 1952;
-        // downstream tools (seqkit, samtools, cutadapt) handle it correctly.
-        try concatenateFASTQFiles([fwdExtracted, rcOriented], to: outputFASTQ)
     }
 
     /// Extracts reads from root FASTQ by ID list, then applies stored trim positions

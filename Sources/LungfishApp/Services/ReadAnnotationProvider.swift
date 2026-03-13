@@ -70,13 +70,12 @@ public final class ReadAnnotationProvider: @unchecked Sendable {
         }
 
         do {
-            let annotations = try ReadAnnotationFile.load(from: annotURL)
+            let annotations = try ReadAnnotationFile.load(from: annotURL).filter(shouldRender)
             allAnnotations = annotations
 
             var grouped: [String: [SequenceAnnotation]] = [:]
             for annotation in annotations {
-                let seqAnnotation = convert(annotation)
-                grouped[annotation.readID, default: []].append(seqAnnotation)
+                grouped[annotation.readID, default: []].append(convert(annotation))
             }
             cache = grouped
         } catch {
@@ -84,6 +83,15 @@ public final class ReadAnnotationProvider: @unchecked Sendable {
             cache = [:]
             allAnnotations = []
         }
+    }
+
+    private func shouldRender(_ annotation: ReadAnnotationFile.Annotation) -> Bool {
+        // Legacy demux bundles stored barcode_3p as a 3' offset placeholder.
+        // Hiding those avoids rendering them at the wrong end of the read.
+        if annotation.annotationType == "barcode_3p", annotation.start == 0, annotation.end > 0 {
+            return false
+        }
+        return true
     }
 
     private func convert(_ annotation: ReadAnnotationFile.Annotation) -> SequenceAnnotation {

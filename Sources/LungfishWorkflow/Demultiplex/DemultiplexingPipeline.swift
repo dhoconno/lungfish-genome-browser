@@ -15,6 +15,12 @@ public struct DemultiplexConfig: Sendable {
     /// Input FASTQ file URL (may be inside a .lungfishfastq bundle or standalone).
     public let inputURL: URL
 
+    /// Logical source bundle for lineage propagation and parent-manifest links.
+    ///
+    /// This may differ from `inputURL` when demultiplexing operates on a temporary
+    /// materialized FASTQ derived from an existing bundle.
+    public let sourceBundleURL: URL?
+
     /// Barcode kit definition (built-in or custom).
     public let barcodeKit: BarcodeKitDefinition
 
@@ -87,6 +93,11 @@ public struct DemultiplexConfig: Sendable {
     /// Root FASTQ filename inside the root bundle (e.g., "reads.fastq.gz").
     public let rootFASTQFilename: String?
 
+    /// Pairing mode of the logical input dataset.
+    ///
+    /// When nil, the pipeline infers pairing from `sourceBundleURL`/`inputURL`.
+    public let inputPairingMode: IngestionMetadata.PairingMode?
+
     /// Resolved adapter context (uses override if set, otherwise derives from kit).
     public var resolvedAdapterContext: any PlatformAdapterContext {
         adapterContext ?? barcodeKit.adapterContext
@@ -134,6 +145,7 @@ public struct DemultiplexConfig: Sendable {
 
     public init(
         inputURL: URL,
+        sourceBundleURL: URL? = nil,
         barcodeKit: BarcodeKitDefinition,
         outputDirectory: URL,
         barcodeLocation: BarcodeLocation = .bothEnds,
@@ -152,10 +164,18 @@ public struct DemultiplexConfig: Sendable {
         sourcePlatform: SequencingPlatform? = nil,
         rootBundleURL: URL? = nil,
         rootFASTQFilename: String? = nil,
+        inputPairingMode: IngestionMetadata.PairingMode? = nil,
         useNoIndels: Bool = false,
         captureTrimsForChaining: Bool = false
     ) {
         self.inputURL = inputURL
+        if let sourceBundleURL {
+            self.sourceBundleURL = sourceBundleURL
+        } else if FASTQBundle.isBundleURL(inputURL) {
+            self.sourceBundleURL = inputURL
+        } else {
+            self.sourceBundleURL = nil
+        }
         self.barcodeKit = barcodeKit
         self.outputDirectory = outputDirectory
         self.barcodeLocation = barcodeLocation
@@ -188,6 +208,7 @@ public struct DemultiplexConfig: Sendable {
         self.sourcePlatform = sourcePlatform
         self.rootBundleURL = rootBundleURL
         self.rootFASTQFilename = rootFASTQFilename
+        self.inputPairingMode = inputPairingMode
         self.useNoIndels = useNoIndels
         self.captureTrimsForChaining = captureTrimsForChaining
     }
@@ -272,6 +293,14 @@ public enum DemultiplexError: Error, LocalizedError, Sendable {
 public final class DemultiplexingPipeline: @unchecked Sendable {
 
     private let runner = NativeToolRunner.shared
+
+    private struct DemuxTrimEntry: Sendable {
+        let readID: String
+        let mate: Int
+        let trim5p: Int
+        let trim3p: Int
+        let rootReadLength: Int?
+    }
 
     public init() {}
 
@@ -393,7 +422,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
 
         // Step 4: Parse per-read trim positions from info file (if captured)
         // Key = barcode name, Value = array of (readID, trim5prime, trim3prime) tuples
-        var trimPositionsByBarcode: [String: [(readID: String, mate: Int, trim5p: Int, trim3p: Int)]] = [:]
+        var trimPositionsByBarcode: [String: [DemuxTrimEntry]] = [:]
         if let infoFilePath, fm.fileExists(atPath: infoFilePath) {
             trimPositionsByBarcode = parseCutadaptInfoFile(URL(fileURLWithPath: infoFilePath))
         }
@@ -404,8 +433,10 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         // to the parent's output. Cumulative = parent + inner.
         // Key: "readID\tmate" → (trim5p, trim3p)
         var parentTrimMap: [String: (trim5p: Int, trim3p: Int)] = [:]
-        if isVirtualMode && FASTQBundle.isBundleURL(config.inputURL) {
-            let parentTrimURL = config.inputURL.appendingPathComponent(FASTQBundle.trimPositionFilename)
+        let lineageBundleURL = config.sourceBundleURL
+        let needsLineagePropagation = (isVirtualMode || config.captureTrimsForChaining) && lineageBundleURL != nil
+        if needsLineagePropagation, let lineageBundleURL {
+            let parentTrimURL = lineageBundleURL.appendingPathComponent(FASTQBundle.trimPositionFilename)
             if let parentContent = try? String(contentsOf: parentTrimURL, encoding: .utf8) {
                 for line in parentContent.split(separator: "\n") {
                     // Skip format headers and column headers
@@ -427,7 +458,13 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                         trimPositionsByBarcode[barcode] = entries.map { entry in
                             let key = "\(entry.readID)\t\(entry.mate)"
                             if let parentTrim = parentTrimMap[key] {
-                                return (entry.readID, entry.mate, entry.trim5p + parentTrim.trim5p, entry.trim3p + parentTrim.trim3p)
+                                return DemuxTrimEntry(
+                                    readID: entry.readID,
+                                    mate: entry.mate,
+                                    trim5p: entry.trim5p + parentTrim.trim5p,
+                                    trim3p: entry.trim3p + parentTrim.trim3p,
+                                    rootReadLength: entry.rootReadLength.map { $0 + parentTrim.trim5p + parentTrim.trim3p }
+                                )
                             }
                             return entry
                         }
@@ -441,8 +478,8 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         // Cutadapt computed trims on oriented reads, but materialization reads from root.
         // For RC'd reads: swap trim_5p ↔ trim_3p to correct for the orientation flip.
         var parentOrientMap: [String: String] = [:]
-        if isVirtualMode && FASTQBundle.isBundleURL(config.inputURL) {
-            let orientMapURL = config.inputURL.appendingPathComponent("orient-map.tsv")
+        if needsLineagePropagation, let lineageBundleURL {
+            let orientMapURL = lineageBundleURL.appendingPathComponent("orient-map.tsv")
             if let loaded = try? FASTQOrientMapFile.load(from: orientMapURL) {
                 parentOrientMap = loaded
                 logger.info("Loaded orient map with \(loaded.count) entries for trim adjustment")
@@ -452,7 +489,13 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                         if parentOrientMap[entry.readID] == "-" {
                             // Read was RC'd by orient step — cutadapt saw it flipped,
                             // so what cutadapt called 5' trim is actually 3' in root orientation
-                            return (entry.readID, entry.mate, entry.trim3p, entry.trim5p)
+                            return DemuxTrimEntry(
+                                readID: entry.readID,
+                                mate: entry.mate,
+                                trim5p: entry.trim3p,
+                                trim3p: entry.trim5p,
+                                rootReadLength: entry.rootReadLength
+                            )
                         }
                         return entry
                     }
@@ -639,21 +682,49 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                 let capturedTrimPositions = trimPositionsByBarcode[file.baseName]
                 let capturedParentTrimMap = parentTrimMap
                 let capturedParentOrientMap = parentOrientMap
+                let capturedLineageBundleURL = lineageBundleURL
                 group.addTask {
                     try Task.checkCancellation()
 
-                    if capturedIsVirtual {
-                        // Virtual mode: extract read IDs + small preview
-                        let readIDsURL = bundleURL.appendingPathComponent("read-ids.txt")
-                        let readIDResult = try await capturedRunner.run(
-                            .seqkit,
-                            arguments: ["seq", "--name", "--only-id", file.url.path, "-o", readIDsURL.path],
-                            timeout: 300
-                        )
-                        guard readIDResult.isSuccess else {
-                            logger.error("seqkit seq failed for \(file.baseName): \(readIDResult.stderr)")
-                            return nil
+                    let readIDsURL = bundleURL.appendingPathComponent("read-ids.txt")
+                    let readIDResult = try await capturedRunner.run(
+                        .seqkit,
+                        arguments: ["seq", "--name", "--only-id", file.url.path, "-o", readIDsURL.path],
+                        timeout: 300
+                    )
+                    guard readIDResult.isSuccess else {
+                        logger.error("seqkit seq failed for \(file.baseName): \(readIDResult.stderr)")
+                        return nil
+                    }
+
+                    let innerTrimKeys = Set((capturedTrimPositions ?? []).map { "\($0.readID)\t\($0.mate)" })
+                    var allTrimEntries = capturedTrimPositions ?? []
+
+                    // Add parent-only trims for reads in this barcode's output
+                    // that weren't trimmed by the inner step's cutadapt
+                    if !capturedParentTrimMap.isEmpty,
+                       let readIDContent = try? String(contentsOf: readIDsURL, encoding: .utf8) {
+                        for line in readIDContent.split(separator: "\n") where !line.isEmpty {
+                            let readID = String(line)
+                            // Try mate=0 (single-end) first, then mate 1 and 2 for PE
+                            for mate in [0, 1, 2] {
+                                let key = "\(readID)\t\(mate)"
+                                if !innerTrimKeys.contains(key),
+                                   let parentTrim = capturedParentTrimMap[key] {
+                                    allTrimEntries.append(DemuxTrimEntry(
+                                        readID: readID,
+                                        mate: mate,
+                                        trim5p: parentTrim.trim5p,
+                                        trim3p: parentTrim.trim3p,
+                                        rootReadLength: nil
+                                    ))
+                                }
+                            }
                         }
+                    }
+
+                    if capturedIsVirtual {
+                        // Virtual mode: create a small preview alongside the read ID list
 
                         let previewURL = bundleURL.appendingPathComponent("preview.fastq.gz")
                         let previewResult = try await capturedRunner.run(
@@ -664,29 +735,6 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                         guard previewResult.isSuccess else {
                             logger.error("seqkit head failed for \(file.baseName): \(previewResult.stderr)")
                             return nil
-                        }
-
-                        // Write trim positions file: includes chained (parent + inner) positions
-                        // and parent-only positions for reads not in the cutadapt info file.
-                        let innerTrimKeys = Set((capturedTrimPositions ?? []).map { "\($0.readID)\t\($0.mate)" })
-                        var allTrimEntries = capturedTrimPositions ?? []
-
-                        // Add parent-only trims for reads in this barcode's output
-                        // that weren't trimmed by the inner step's cutadapt
-                        if !capturedParentTrimMap.isEmpty {
-                            if let readIDContent = try? String(contentsOf: readIDsURL, encoding: .utf8) {
-                                for line in readIDContent.split(separator: "\n") where !line.isEmpty {
-                                    let readID = String(line)
-                                    // Try mate=0 (single-end) first, then mate 1 and 2 for PE
-                                    for mate in [0, 1, 2] {
-                                        let key = "\(readID)\t\(mate)"
-                                        if !innerTrimKeys.contains(key),
-                                           let parentTrim = capturedParentTrimMap[key] {
-                                            allTrimEntries.append((readID, mate, parentTrim.trim5p, parentTrim.trim3p))
-                                        }
-                                    }
-                                }
-                            }
                         }
 
                         if !allTrimEntries.isEmpty {
@@ -730,16 +778,14 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                                     label: file.baseName
                                 ))
                             }
-                            if entry.trim3p > 0 {
-                                // trim3p is relative offset from 3' end — we store as
-                                // a marker annotation with negative-offset semantics
-                                // (resolved to absolute coords at materialization time)
+                            if entry.trim3p > 0, let rootReadLength = entry.rootReadLength {
+                                let start = max(0, rootReadLength - entry.trim3p)
                                 annotations.append(ReadAnnotationFile.Annotation(
                                     readID: entry.readID,
                                     mate: entry.mate,
                                     annotationType: "barcode_3p",
-                                    start: 0,  // placeholder — resolved when read length known
-                                    end: entry.trim3p,  // stores offset from 3' end
+                                    start: start,
+                                    end: rootReadLength,
                                     label: file.baseName
                                 ))
                             }
@@ -748,8 +794,8 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                         // Propagate parent annotations and write combined file
                         if !annotations.isEmpty || capturedParentOrientMap.isEmpty == false {
                             let parentAnnotURL: URL? = {
-                                guard FASTQBundle.isBundleURL(config.inputURL) else { return nil }
-                                let url = config.inputURL.appendingPathComponent(ReadAnnotationFile.filename)
+                                guard let capturedLineageBundleURL else { return nil }
+                                let url = capturedLineageBundleURL.appendingPathComponent(ReadAnnotationFile.filename)
                                 return FileManager.default.fileExists(atPath: url.path) ? url : nil
                             }()
                             let readIDsForBarcode: Set<String> = Set(allTrimEntries.map(\.readID))
@@ -771,15 +817,30 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
 
                         // Write trim positions for chaining: inner steps will combine these
                         // with their own trim positions to compute cumulative trims vs root FASTQ
-                        if let trimPositions = capturedTrimPositions, !trimPositions.isEmpty {
+                        if !allTrimEntries.isEmpty {
                             let trimURL = bundleURL.appendingPathComponent("trim-positions.tsv")
                             // Note: demux trim files use relative offsets (trim_5p/trim_3p) consumed by
                             // FASTQDerivativeService.extractAndTrimReads, NOT by FASTQTrimPositionFile.load.
                             var trimContent = "#format lungfish-demux-trim-v1\nread_id\tmate\ttrim_5p\ttrim_3p\n"
-                            for entry in trimPositions {
+                            for entry in allTrimEntries {
                                 trimContent += "\(entry.readID)\t\(entry.mate)\t\(entry.trim5p)\t\(entry.trim3p)\n"
                             }
                             try trimContent.write(to: trimURL, atomically: true, encoding: .utf8)
+                        }
+
+                        if !capturedParentOrientMap.isEmpty,
+                           let readIDContent = try? String(contentsOf: readIDsURL, encoding: .utf8) {
+                            var barcodeOrientRecords: [(readID: String, orientation: String)] = []
+                            for line in readIDContent.split(separator: "\n") where !line.isEmpty {
+                                let readID = String(line)
+                                if let orient = capturedParentOrientMap[readID] {
+                                    barcodeOrientRecords.append((readID, orient))
+                                }
+                            }
+                            if !barcodeOrientRecords.isEmpty {
+                                let orientURL = bundleURL.appendingPathComponent("orient-map.tsv")
+                                try FASTQOrientMapFile.write(barcodeOrientRecords, to: orientURL)
+                            }
                         }
                     }
 
@@ -843,7 +904,11 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                let rootFASTQFilename = config.rootFASTQFilename {
                 let rootRelativePath = FASTQBundle.projectRelativePath(for: rootBundleURL, from: result.bundleURL)
                     ?? relativePath(from: result.bundleURL, to: rootBundleURL)
-                let parentRelativePath = rootRelativePath
+                let parentBundleURL = config.sourceBundleURL
+                let parentRelativePath = parentBundleURL.flatMap {
+                    FASTQBundle.projectRelativePath(for: $0, from: result.bundleURL)
+                        ?? relativePath(from: result.bundleURL, to: $0)
+                } ?? rootRelativePath
                 let demuxOp = FASTQDerivativeOperation(
                     kind: .demultiplex,
                     toolUsed: "cutadapt",
@@ -864,7 +929,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                     lineage: [demuxOp],
                     operation: demuxOp,
                     cachedStatistics: stats,
-                    pairingMode: nil
+                    pairingMode: config.inputPairingMode ?? inferredPairingMode(from: parentBundleURL ?? config.inputURL)
                 )
                 do {
                     try FASTQBundle.saveDerivedManifest(derivedManifest, in: result.bundleURL)
@@ -946,6 +1011,19 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
             return FASTQBundle.resolvePrimaryFASTQURL(for: url) ?? url
         }
         return url
+    }
+
+    private func inferredPairingMode(from url: URL) -> IngestionMetadata.PairingMode? {
+        if FASTQBundle.isBundleURL(url) {
+            if let manifest = FASTQBundle.loadDerivedManifest(in: url), let pairingMode = manifest.pairingMode {
+                return pairingMode
+            }
+            if let fastqURL = FASTQBundle.resolvePrimaryFASTQURL(for: url) {
+                return FASTQMetadataStore.load(for: fastqURL)?.ingestion?.pairingMode
+            }
+            return nil
+        }
+        return FASTQMetadataStore.load(for: url)?.ingestion?.pairingMode
     }
 
     private struct AdapterConfiguration {
@@ -1486,7 +1564,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
     /// Direction detection uses adapter_start/adapter_end positions (columns 2-3) rather
     /// than sequence length comparison, which is unreliable for symmetric barcodes or
     /// adapters near the read midpoint.
-    private func parseCutadaptInfoFile(_ url: URL) -> [String: [(readID: String, mate: Int, trim5p: Int, trim3p: Int)]] {
+    private func parseCutadaptInfoFile(_ url: URL) -> [String: [DemuxTrimEntry]] {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return [:] }
         defer { try? handle.close() }
 
@@ -1567,13 +1645,19 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         }
 
         // Group by barcode and compute final trim positions
-        var result: [String: [(readID: String, mate: Int, trim5p: Int, trim3p: Int)]] = [:]
+        var result: [String: [DemuxTrimEntry]] = [:]
         for (compositeKey, info) in readInfos {
             let parts = compositeKey.split(separator: "\t")
             let readID = String(parts[0])
             let mate = Int(parts[1]) ?? 0
             let finalTrim3p = info.trim3p > 0 ? info.readLength - info.trim3p : 0
-            result[info.barcode, default: []].append((readID: readID, mate: mate, trim5p: info.trim5p, trim3p: finalTrim3p))
+            result[info.barcode, default: []].append(DemuxTrimEntry(
+                readID: readID,
+                mate: mate,
+                trim5p: info.trim5p,
+                trim3p: finalTrim3p,
+                rootReadLength: info.readLength
+            ))
         }
 
         return result
@@ -1856,7 +1940,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                 pass2aArgs += ["--overlap", String(scoutParams.minimumOverlap)]
                 if scoutParams.noIndels { pass2aArgs += ["--no-indels"] }
                 pass2aArgs += ["--revcomp"]
-                pass2aArgs += ["--action", "none"]
+                pass2aArgs += ["--action", "trim"]
                 pass2aArgs += ["--discard-untrimmed"]
                 pass2aArgs += ["-o", trimmedOutput.path]
                 pass2aArgs += ["--cores", "1"]
@@ -2021,23 +2105,20 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         var emittedPairs = Set<String>()
         for fwd in detectedBarcodes {
             for rev in detectedBarcodes {
-                let canonicalName = fwd.id <= rev.id
-                    ? "\(fwd.id)--\(rev.id)"
-                    : "\(rev.id)--\(fwd.id)"
-                // Skip if we already emitted this canonical pair
-                guard emittedPairs.insert(canonicalName).inserted else { continue }
+                let pairName = "\(fwd.id)--\(rev.id)"
+                guard emittedPairs.insert(pairName).inserted else { continue }
                 // Forward orientation: fwd at 5', rev at 3'
                 let fwdSpec = ctx.fivePrimeSpec(barcodeSequence: fwd.i7Sequence)
                 let revSpec = ctx.threePrimeSpec(barcodeSequence: rev.i7Sequence)
-                phase2Lines.append(">\(canonicalName)")
+                phase2Lines.append(">\(pairName)")
                 phase2Lines.append("\(fwdSpec)...\(revSpec)")
                 // Reverse orientation for long-read platforms: rev at 5', fwd at 3'
                 // Must use a distinct header name so cutadapt treats it as a separate adapter
-                // that maps to the same canonical pair (counts will be summed by canonicalName prefix)
+                // that maps to the same ordered pair (counts will be summed by base name prefix)
                 if isLongRead && fwd.i7Sequence != rev.i7Sequence {
                     let revFwdSpec = ctx.fivePrimeSpec(barcodeSequence: rev.i7Sequence)
                     let revRevSpec = ctx.threePrimeSpec(barcodeSequence: fwd.i7Sequence)
-                    phase2Lines.append(">\(canonicalName)_rev")
+                    phase2Lines.append(">\(pairName)_rev")
                     phase2Lines.append("\(revFwdSpec)...\(revRevSpec)")
                 }
             }
@@ -2273,6 +2354,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         outputDirectory: URL,
         rootBundleURL: URL? = nil,
         rootFASTQFilename: String? = nil,
+        inputPairingMode: IngestionMetadata.PairingMode? = nil,
         progress: @escaping @Sendable (Double, String) -> Void
     ) async throws -> MultiStepDemultiplexResult {
         try plan.validate()
@@ -2377,12 +2459,13 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                     let binBaseProgress = stepBaseProgress + Double(binIndex) * progressPerBin
                     let config = buildStepConfig(
                         step: step, kit: kit, binInputURL: binInputURL,
-                        outputDirectory: outputDirectory,
-                        isInnerStep: stepIndex > 0,
-                        rootBundleURL: stepRootBundleURL,
-                        rootFASTQFilename: stepRootFASTQFilename,
-                        captureTrimsForChaining: !isFinalStep
-                    )
+                            outputDirectory: outputDirectory,
+                            isInnerStep: stepIndex > 0,
+                            rootBundleURL: stepRootBundleURL,
+                            rootFASTQFilename: stepRootFASTQFilename,
+                            inputPairingMode: inputPairingMode,
+                            captureTrimsForChaining: !isFinalStep
+                        )
                     if stepIndex == 0 {
                         // Step 0 failure is fatal — no inputs to fall back on
                         let result = try await run(config: config) { fraction, message in
@@ -2422,6 +2505,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                                 isInnerStep: stepIndex > 0,
                                 rootBundleURL: stepRootBundleURL,
                                 rootFASTQFilename: stepRootFASTQFilename,
+                                inputPairingMode: inputPairingMode,
                                 captureTrimsForChaining: !isFinalStep
                             )
                             nextBinIndex += 1
@@ -2457,6 +2541,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                                     isInnerStep: stepIndex > 0,
                                     rootBundleURL: stepRootBundleURL,
                                     rootFASTQFilename: stepRootFASTQFilename,
+                                    inputPairingMode: inputPairingMode,
                                     captureTrimsForChaining: !isFinalStep
                                 )
                                 nextBinIndex += 1
@@ -2496,7 +2581,8 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                     await convertToVirtualBundle(
                         binURL: binURL,
                         rootBundleURL: rootBundleURL,
-                        rootFASTQFilename: rootFASTQFilename
+                        rootFASTQFilename: rootFASTQFilename,
+                        pairingMode: inputPairingMode
                     )
                 }
                 logger.info("Converted \(previousInputURLs.count) intermediate bin(s) to virtual bundles")
@@ -2592,6 +2678,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         isInnerStep: Bool = false,
         rootBundleURL: URL? = nil,
         rootFASTQFilename: String? = nil,
+        inputPairingMode: IngestionMetadata.PairingMode? = nil,
         captureTrimsForChaining: Bool = false
     ) -> DemultiplexConfig {
         let stepOutputDir: URL
@@ -2606,6 +2693,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
 
         return DemultiplexConfig(
             inputURL: binInputURL,
+            sourceBundleURL: FASTQBundle.isBundleURL(binInputURL) ? binInputURL : nil,
             barcodeKit: kit,
             outputDirectory: stepOutputDir,
             barcodeLocation: step.barcodeLocation,
@@ -2621,6 +2709,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
             sourcePlatform: step.sourcePlatform,
             rootBundleURL: rootBundleURL,
             rootFASTQFilename: rootFASTQFilename,
+            inputPairingMode: inputPairingMode,
             useNoIndels: !step.allowIndels,
             captureTrimsForChaining: captureTrimsForChaining
         )
@@ -2634,7 +2723,8 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
     private func convertToVirtualBundle(
         binURL: URL,
         rootBundleURL: URL?,
-        rootFASTQFilename: String?
+        rootFASTQFilename: String?,
+        pairingMode: IngestionMetadata.PairingMode?
     ) async {
         guard FASTQBundle.isBundleURL(binURL) else { return }
         guard let fullFASTQ = FASTQBundle.resolvePrimaryFASTQURL(for: binURL) else { return }
@@ -2698,7 +2788,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                     lineage: [demuxOp],
                     operation: demuxOp,
                     cachedStatistics: statistics,
-                    pairingMode: nil
+                    pairingMode: pairingMode
                 )
                 try FASTQBundle.saveDerivedManifest(manifest, in: binURL)
             }

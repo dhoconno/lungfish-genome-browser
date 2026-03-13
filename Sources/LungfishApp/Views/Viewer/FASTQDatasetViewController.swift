@@ -1658,7 +1658,9 @@ public final class FASTQDatasetViewController: NSViewController {
         orientReferencePopup.removeAllItems()
         orientProjectReferences = []
 
-        if let projectURL = fastqURL?.deletingLastPathComponent() {
+        let projectURL = orientProjectURL()
+
+        if let projectURL {
             orientProjectReferences = ReferenceSequenceFolder.listReferences(in: projectURL)
             for ref in orientProjectReferences {
                 orientReferencePopup.addItem(withTitle: ref.manifest.name)
@@ -1674,11 +1676,32 @@ public final class FASTQDatasetViewController: NSViewController {
 
         // If an external reference was previously selected, add it as an extra item
         if let orientReferenceURL,
-           !ReferenceSequenceFolder.isProjectReference(orientReferenceURL, in: fastqURL?.deletingLastPathComponent() ?? URL(fileURLWithPath: "/")) {
+           let projectURL,
+           !ReferenceSequenceFolder.isProjectReference(orientReferenceURL, in: projectURL) {
+            orientReferencePopup.addItem(withTitle: orientReferenceURL.lastPathComponent)
+            orientReferencePopup.selectItem(at: orientReferencePopup.numberOfItems - 1)
+            orientReferencePopup.isEnabled = true
+        } else if let orientReferenceURL, projectURL == nil {
             orientReferencePopup.addItem(withTitle: orientReferenceURL.lastPathComponent)
             orientReferencePopup.selectItem(at: orientReferencePopup.numberOfItems - 1)
             orientReferencePopup.isEnabled = true
         }
+    }
+
+    private func orientProjectURL() -> URL? {
+        let candidateURL = sourceURL?.standardizedFileURL ?? fastqURL?.standardizedFileURL
+        guard let candidateURL else { return nil }
+
+        if FASTQBundle.isBundleURL(candidateURL) {
+            return candidateURL.deletingLastPathComponent()
+        }
+
+        let parentDirectory = candidateURL.deletingLastPathComponent()
+        if parentDirectory.pathExtension.lowercased() == FASTQBundle.directoryExtension {
+            return parentDirectory.deletingLastPathComponent()
+        }
+
+        return parentDirectory
     }
 
     @objc private func orientReferenceChanged(_ sender: NSPopUpButton) {

@@ -195,28 +195,33 @@ public final class OrientPipeline: @unchecked Sendable {
         from tabbedOutput: URL,
         to outputURL: URL
     ) throws -> (forwardCount: Int, rcCount: Int) {
-        let content = try String(contentsOf: tabbedOutput, encoding: .utf8)
-        FileManager.default.createFile(atPath: outputURL.path, contents: nil)
-        let handle = try FileHandle(forWritingTo: outputURL)
-        defer { try? handle.close() }
-
+        let fm = FileManager.default
+        let tmpURL = outputURL.appendingPathExtension("tmp")
+        _ = fm.createFile(atPath: tmpURL.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: tmpURL)
         var forwardCount = 0
         var rcCount = 0
 
-        for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
-            let fields = line.split(separator: "\t")
-            guard fields.count >= 2 else { continue }
-            let readID = String(fields[0])
-            let orientation = String(fields[1])
-
-            if orientation == "+" {
-                handle.write(Data("\(readID)\t+\n".utf8))
-                forwardCount += 1
-            } else if orientation == "-" {
-                handle.write(Data("\(readID)\t-\n".utf8))
-                rcCount += 1
+        do {
+            try forEachOrientRecord(in: tabbedOutput) { readID, orientation in
+                if orientation == "+" {
+                    handle.write(Data("\(readID)\t+\n".utf8))
+                    forwardCount += 1
+                } else if orientation == "-" {
+                    handle.write(Data("\(readID)\t-\n".utf8))
+                    rcCount += 1
+                }
             }
-            // Skip "?" (unmatched) reads
+            try handle.close()
+        } catch {
+            try? handle.close()
+            try? fm.removeItem(at: tmpURL)
+            throw error
+        }
+
+        if rename(tmpURL.path, outputURL.path) != 0 {
+            try? fm.removeItem(at: outputURL)
+            try fm.moveItem(at: tmpURL, to: outputURL)
         }
 
         return (forwardCount, rcCount)
@@ -225,22 +230,75 @@ public final class OrientPipeline: @unchecked Sendable {
     // MARK: - Private
 
     /// Parses vsearch tabbed output to count orientations.
-    private func parseOrientResults(_ url: URL) throws -> (forward: Int, rc: Int, unmatched: Int) {
-        let content = try String(contentsOf: url, encoding: .utf8)
+    func parseOrientResults(_ url: URL) throws -> (forward: Int, rc: Int, unmatched: Int) {
         var forward = 0
         var rc = 0
         var unmatched = 0
 
-        for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
-            let fields = line.split(separator: "\t")
-            guard fields.count >= 2 else { continue }
-            switch fields[1] {
+        try forEachOrientRecord(in: url) { _, orientation in
+            switch orientation {
             case "+": forward += 1
             case "-": rc += 1
             default: unmatched += 1
             }
         }
         return (forward, rc, unmatched)
+    }
+
+    private func forEachOrientRecord(
+        in url: URL,
+        _ body: (String, String) throws -> Void
+    ) throws {
+        try streamLines(in: url) { line in
+            let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
+            guard fields.count >= 2 else { return }
+            try body(String(fields[0]), String(fields[1]))
+        }
+    }
+
+    private func streamLines(
+        in url: URL,
+        _ body: (String) throws -> Void
+    ) throws {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+
+        var buffer = Data()
+        while let chunk = try handle.read(upToCount: 64 * 1024), !chunk.isEmpty {
+            buffer.append(chunk)
+            try drainLines(from: &buffer, flushRemainder: false, body)
+        }
+        try drainLines(from: &buffer, flushRemainder: true, body)
+    }
+
+    private func drainLines(
+        from buffer: inout Data,
+        flushRemainder: Bool,
+        _ body: (String) throws -> Void
+    ) throws {
+        var lineStart = buffer.startIndex
+        while let newlineIndex = buffer[lineStart...].firstIndex(of: 0x0A) {
+            try emitLine(buffer[lineStart..<newlineIndex], body)
+            lineStart = buffer.index(after: newlineIndex)
+        }
+
+        if lineStart > buffer.startIndex {
+            buffer.removeSubrange(buffer.startIndex..<lineStart)
+        }
+
+        if flushRemainder, !buffer.isEmpty {
+            try emitLine(buffer[buffer.startIndex..<buffer.endIndex], body)
+            buffer.removeAll(keepingCapacity: true)
+        }
+    }
+
+    private func emitLine(
+        _ rawLine: Data.SubSequence,
+        _ body: (String) throws -> Void
+    ) throws {
+        let lineBytes = rawLine.last == 0x0D ? rawLine.dropLast() : rawLine
+        guard !lineBytes.isEmpty else { return }
+        try body(String(decoding: lineBytes, as: UTF8.self))
     }
 }
 
