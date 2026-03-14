@@ -27,7 +27,7 @@ public enum FASTQDerivativeRequest: Sendable {
     case contaminantFilter(mode: FASTQContaminantFilterMode, referenceFasta: String?, kmerSize: Int, hammingDistance: Int)
     case pairedEndMerge(strictness: FASTQMergeStrictness, minOverlap: Int)
     case pairedEndRepair
-    case primerRemoval(source: FASTQPrimerSource, literalSequence: String?, referenceFasta: String?, kmerSize: Int, minKmer: Int, hammingDistance: Int)
+    case primerRemoval(configuration: FASTQPrimerTrimConfiguration)
     case errorCorrection(kmerSize: Int)
     case interleaveReformat(direction: FASTQInterleaveDirection)
 
@@ -36,6 +36,7 @@ public enum FASTQDerivativeRequest: Sendable {
         kitID: String,
         customCSVPath: String?,
         location: String,
+        symmetryMode: BarcodeSymmetryMode?,
         maxDistanceFrom5Prime: Int,
         maxDistanceFrom3Prime: Int,
         errorRate: Double,
@@ -43,9 +44,6 @@ public enum FASTQDerivativeRequest: Sendable {
         sampleAssignments: [FASTQSampleBarcodeAssignment]?,
         kitOverride: BarcodeKitDefinition?
     )
-
-    // Multi-step demultiplexing (produces per-barcode bundles via DemultiplexPlan)
-    case multiStepDemultiplex(plan: DemultiplexPlan, sourcePlatform: SequencingPlatform?)
 
     // Orient sequences against a reference
     case orient(
@@ -70,11 +68,10 @@ public enum FASTQDerivativeRequest: Sendable {
         case .contaminantFilter: return "Contaminant Filter"
         case .pairedEndMerge: return "Paired-End Merge"
         case .pairedEndRepair: return "Paired-End Repair"
-        case .primerRemoval: return "Primer Removal"
+        case .primerRemoval: return "PCR Primer Trimming"
         case .errorCorrection: return "Error Correction"
         case .interleaveReformat: return "Interleave Reformat"
         case .demultiplex: return "Demultiplex"
-        case .multiStepDemultiplex: return "Multi-Step Demultiplex"
         case .orient: return "Orient Sequences"
         }
     }
@@ -82,14 +79,14 @@ public enum FASTQDerivativeRequest: Sendable {
     /// Whether this request produces a trim derivative (vs subset).
     var isTrimOperation: Bool {
         switch self {
-        case .qualityTrim, .adapterTrim, .fixedTrim:
+        case .qualityTrim, .adapterTrim, .fixedTrim, .primerRemoval:
             return true
         case .subsampleProportion, .subsampleCount, .lengthFilter,
              .searchText, .searchMotif, .deduplicate, .contaminantFilter:
             return false
-        case .pairedEndMerge, .pairedEndRepair, .primerRemoval,
+        case .pairedEndMerge, .pairedEndRepair,
              .errorCorrection, .interleaveReformat, .demultiplex,
-             .multiStepDemultiplex, .orient:
+             .orient:
             return false
         }
     }
@@ -97,9 +94,8 @@ public enum FASTQDerivativeRequest: Sendable {
     /// Whether this request produces a full materialized FASTQ (content-transforming).
     var isFullOperation: Bool {
         switch self {
-        case .pairedEndMerge, .pairedEndRepair, .primerRemoval,
-             .errorCorrection, .interleaveReformat, .demultiplex,
-             .multiStepDemultiplex:
+        case .pairedEndMerge, .pairedEndRepair,
+             .errorCorrection, .interleaveReformat, .demultiplex:
             return true
         default:
             return false
@@ -166,7 +162,6 @@ public enum FASTQDerivativeRequest: Sendable {
         case .errorCorrection: return "errorCorrection"
         case .interleaveReformat: return "interleaveReformat"
         case .demultiplex: return "demultiplex"
-        case .multiStepDemultiplex: return "multiStepDemultiplex"
         case .orient: return "orient"
         }
     }
@@ -203,16 +198,21 @@ public enum FASTQDerivativeRequest: Sendable {
             return ["strictness": "\(strictness)", "minOverlap": "\(minOverlap)"]
         case .pairedEndRepair:
             return [:]
-        case .primerRemoval(let source, _, _, let kmerSize, let minKmer, let hammingDistance):
-            return ["source": "\(source)", "kmerSize": "\(kmerSize)", "minKmer": "\(minKmer)", "hammingDistance": "\(hammingDistance)"]
+        case .primerRemoval(let configuration):
+            return [
+                "source": configuration.source.rawValue,
+                "readMode": configuration.readMode.rawValue,
+                "mode": configuration.mode.rawValue,
+                "minimumOverlap": "\(configuration.minimumOverlap)",
+                "errorRate": String(format: "%.2f", configuration.errorRate),
+                "keepUntrimmed": "\(configuration.keepUntrimmed)",
+            ]
         case .errorCorrection(let kmerSize):
             return ["kmerSize": "\(kmerSize)"]
         case .interleaveReformat(let direction):
             return ["direction": "\(direction)"]
-        case .demultiplex(let kitID, _, let location, _, _, let errorRate, let trimBarcodes, _, _):
+        case .demultiplex(let kitID, _, let location, _, _, _, let errorRate, let trimBarcodes, _, _):
             return ["kitID": kitID, "location": location, "errorRate": "\(errorRate)", "trimBarcodes": "\(trimBarcodes)"]
-        case .multiStepDemultiplex:
-            return ["type": "multiStep"]
         case .orient(_, let wordLength, _, _):
             return ["wordLength": "\(wordLength)"]
         }
@@ -340,23 +340,6 @@ public actor FASTQDerivativeService {
             baseLineage = []
         }
 
-        // Multi-step demultiplexing has its own execution path
-        if case .multiStepDemultiplex(var plan, let sourcePlatform) = request {
-            // Propagate detected source platform to all steps that don't have one set
-            for i in plan.steps.indices where plan.steps[i].sourcePlatform == nil {
-                plan.steps[i].sourcePlatform = sourcePlatform
-            }
-            return try await createMultiStepDemultiplexDerivative(
-                plan: plan,
-                sourceFASTQ: materializedSourceFASTQ,
-                sourceBundleURL: sourceBundleURL,
-                rootBundleURL: resolvedRootBundleURL,
-                rootFASTQFilename: rootFASTQFilename,
-                pairingMode: pairingMode,
-                progress: progress
-            )
-        }
-
         // Orient has its own execution path — produces an orient-map derivative
         if case .orient(let referenceURL, let wordLength, let dbMask, let saveUnoriented) = request {
             return try await createOrientDerivative(
@@ -381,6 +364,7 @@ public actor FASTQDerivativeService {
             let kitID,
             let customCSVPath,
             let location,
+            let symmetryMode,
             let maxDistanceFrom5Prime,
             let maxDistanceFrom3Prime,
             let errorRate,
@@ -400,6 +384,7 @@ public actor FASTQDerivativeService {
                 maxDistanceFrom5Prime: maxDistanceFrom5Prime,
                 maxDistanceFrom3Prime: maxDistanceFrom3Prime,
                 errorRate: errorRate,
+                symmetryMode: symmetryMode,
                 trimBarcodes: trimBarcodes,
                 sampleAssignments: sampleAssignments ?? [],
                 kitOverride: kitOverride,
@@ -1036,95 +1021,6 @@ public actor FASTQDerivativeService {
         return selectedBundle
     }
 
-    /// Runs a multi-step demultiplexing pipeline and returns the most representative output bundle.
-    ///
-    /// - Parameters:
-    ///   - plan: The multi-step demultiplexing plan.
-    ///   - sourceFASTQ: Materialized source FASTQ file.
-    ///   - sourceBundleURL: Source bundle URL.
-    ///   - progress: Progress callback.
-    /// - Returns: URL of the largest output bundle for immediate selection.
-    private func createMultiStepDemultiplexDerivative(
-        plan: DemultiplexPlan,
-        sourceFASTQ: URL,
-        sourceBundleURL: URL,
-        rootBundleURL: URL,
-        rootFASTQFilename: String,
-        pairingMode: IngestionMetadata.PairingMode?,
-        progress: (@Sendable (String) -> Void)?
-    ) async throws -> URL {
-        try plan.validate()
-
-        // For single-step plans, delegate to existing single-step implementation
-        if plan.steps.count == 1, let step = plan.steps.first {
-            let location: String
-            switch step.barcodeLocation {
-            case .fivePrime: location = "fivePrime"
-            case .threePrime: location = "threePrime"
-            case .bothEnds: location = "bothEnds"
-            }
-            let resolvedKit = BarcodeKitRegistry.kit(byID: step.barcodeKitID)
-            return try await createDemultiplexDerivative(
-                sourceFASTQ: sourceFASTQ,
-                sourceBundleURL: sourceBundleURL,
-                rootBundleURL: rootBundleURL,
-                rootFASTQFilename: rootFASTQFilename,
-                pairingMode: pairingMode,
-                kitID: step.barcodeKitID,
-                customCSVPath: nil,
-                location: location,
-                maxDistanceFrom5Prime: 0,
-                maxDistanceFrom3Prime: 0,
-                errorRate: step.errorRate,
-                minimumOverlap: step.minimumOverlap,
-                symmetryMode: step.symmetryMode,
-                searchReverseComplement: step.searchReverseComplement,
-                unassignedDisposition: step.unassignedDisposition,
-                allowIndels: step.allowIndels,
-                trimBarcodes: step.trimBarcodes,
-                sampleAssignments: step.sampleAssignments,
-                kitOverride: resolvedKit,
-                progress: progress
-            )
-        }
-
-        // Multi-step: use DemultiplexingPipeline.runMultiStep
-        // Output directory is a child inside the source bundle (parent-child hierarchy)
-        let outputDirectory = sourceBundleURL.appendingPathComponent("demux", isDirectory: true)
-        if FileManager.default.fileExists(atPath: outputDirectory.path) {
-            try FileManager.default.removeItem(at: outputDirectory)
-        }
-        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
-
-        progress?("Running multi-step demultiplexing (\(plan.steps.count) steps)...")
-        let pipeline = DemultiplexingPipeline()
-        let result = try await pipeline.runMultiStep(
-            plan: plan,
-            inputURL: sourceFASTQ,
-            sourceBundleURL: sourceBundleURL,
-            outputDirectory: outputDirectory,
-            rootBundleURL: rootBundleURL,
-            rootFASTQFilename: rootFASTQFilename,
-            inputPairingMode: pairingMode,
-            progress: { fraction, message in
-                let percent = Int((fraction * 100.0).rounded())
-                progress?("Multi-step demux (\(percent)%): \(message)")
-            }
-        )
-
-        // Select the largest final output bundle
-        guard let topBundle = result.outputBundleURLs.max(by: {
-            (try? FileManager.default.attributesOfItem(atPath: $0.path)[.size] as? Int64) ?? 0 <
-            (try? FileManager.default.attributesOfItem(atPath: $1.path)[.size] as? Int64) ?? 0
-        }) else {
-            throw FASTQDerivativeError.emptyResult
-        }
-
-        progress?("Multi-step demux complete: \(result.outputBundleURLs.count) output bundle(s)")
-        derivativeLogger.info("Created multi-step demux output at \(outputDirectory.path, privacy: .public)")
-        return topBundle
-    }
-
     private func persistDemultiplexedSampleMetadata(
         for result: DemultiplexResult,
         outputDirectory: URL,
@@ -1398,6 +1294,18 @@ public actor FASTQDerivativeService {
             )
 
         case .lengthFilter(let minLength, let maxLength):
+            if minLength == nil, maxLength == nil {
+                throw FASTQDerivativeError.invalidOperation("Specify a minimum length, a maximum length, or both.")
+            }
+            if let minLength, minLength < 0 {
+                throw FASTQDerivativeError.invalidOperation("Minimum length must be >= 0.")
+            }
+            if let maxLength, maxLength < 0 {
+                throw FASTQDerivativeError.invalidOperation("Maximum length must be >= 0.")
+            }
+            if let minLength, let maxLength, minLength > maxLength {
+                throw FASTQDerivativeError.invalidOperation("Minimum length cannot exceed maximum length.")
+            }
             if isInterleaved {
                 // Use bbduk for pair-aware length filtering
                 try await runPairedAwareFilter(
@@ -1582,28 +1490,32 @@ public actor FASTQDerivativeService {
                 "Mixed-output operations must be handled via createMixedOutputDerivative"
             )
 
-        case .primerRemoval(let source, let literalSequence, let referenceFasta, let kmerSize, let minKmer, let hammingDistance):
-            let result = try await runBBDukPrimerRemoval(
+        case .primerRemoval(let configuration):
+            let result = try await runCutadaptPrimerTrim(
                 sourceFASTQ: sourceFASTQ,
                 outputFASTQ: outputFASTQ,
-                source: source,
-                literalSequence: literalSequence,
-                referenceFasta: referenceFasta,
-                kmerSize: kmerSize,
-                minKmer: minKmer,
-                hammingDistance: hammingDistance,
+                configuration: configuration,
                 sourceBundleURL: sourceBundleURL,
                 isInterleaved: isInterleaved
             )
             return FASTQDerivativeOperation(
                 kind: .primerRemoval,
-                primerSource: source,
-                primerLiteralSequence: literalSequence,
-                primerReferenceFasta: referenceFasta,
-                primerKmerSize: kmerSize,
-                primerMinKmer: minKmer,
-                primerHammingDistance: hammingDistance,
-                toolUsed: "bbduk",
+                primerSource: configuration.source,
+                primerLiteralSequence: configuration.forwardSequence,
+                primerReferenceFasta: configuration.referenceFasta,
+                primerReadMode: configuration.readMode,
+                primerTrimMode: configuration.mode,
+                primerForwardSequence: configuration.forwardSequence,
+                primerReverseSequence: configuration.reverseSequence,
+                primerAnchored5Prime: configuration.anchored5Prime,
+                primerAnchored3Prime: configuration.anchored3Prime,
+                primerErrorRate: configuration.errorRate,
+                primerMinimumOverlap: configuration.minimumOverlap,
+                primerAllowIndels: configuration.allowIndels,
+                primerKeepUntrimmed: configuration.keepUntrimmed,
+                primerSearchReverseComplement: configuration.searchReverseComplement,
+                primerPairFilter: configuration.pairFilter,
+                toolUsed: "cutadapt",
                 toolCommand: result.toolCommand
             )
 
@@ -1640,10 +1552,6 @@ public actor FASTQDerivativeService {
                 "Demultiplexing is not implemented in FASTQDerivativeService. Use the demultiplexing pipeline."
             )
 
-        case .multiStepDemultiplex:
-            throw FASTQDerivativeError.invalidOperation(
-                "Multi-step demultiplexing is handled via createMultiStepDemultiplexDerivative."
-            )
         case .orient:
             throw FASTQDerivativeError.invalidOperation(
                 "Orient is handled via createOrientDerivative."
@@ -2872,40 +2780,100 @@ public actor FASTQDerivativeService {
         return (BBToolResult(toolCommand: "repair.sh \(args.joined(separator: " "))"), classification)
     }
 
-    /// Runs bbduk.sh for custom primer/adapter removal via literal sequence or reference FASTA.
-    private func runBBDukPrimerRemoval(
+    /// Runs cutadapt for PCR primer trimming.
+    private func runCutadaptPrimerTrim(
         sourceFASTQ: URL,
         outputFASTQ: URL,
-        source: FASTQPrimerSource,
-        literalSequence: String?,
-        referenceFasta: String?,
-        kmerSize: Int,
-        minKmer: Int,
-        hammingDistance: Int,
+        configuration: FASTQPrimerTrimConfiguration,
         sourceBundleURL: URL,
         isInterleaved: Bool = false
     ) async throws -> BBToolResult {
-        var args = [
-            "in=\(sourceFASTQ.path)",
-            "out=\(outputFASTQ.path)",
-            "ktrim=r",
-            "k=\(kmerSize)",
-            "mink=\(minKmer)",
-            "hdist=\(hammingDistance)",
+        try validatePrimerTrimConfiguration(configuration)
+        let primerSpec = try await resolvePrimerTrimSpecification(
+            configuration: configuration,
+            sourceBundleURL: sourceBundleURL
+        )
+
+        var args: [String] = [
+            "-e", String(configuration.errorRate),
+            "--overlap", String(configuration.minimumOverlap),
+            "--action", "trim",
+            "--cores", "1",
         ]
-        if isInterleaved {
-            args.append("interleaved=t")
+        if !configuration.allowIndels {
+            args.append("--no-indels")
+        }
+        if !configuration.keepUntrimmed {
+            args.append("--discard-untrimmed")
         }
 
-        switch source {
-        case .literal:
-            guard let seq = literalSequence, !seq.isEmpty else {
-                throw FASTQDerivativeError.invalidOperation("Primer removal requires a non-empty literal sequence")
+        switch configuration.readMode {
+        case .single:
+            if configuration.searchReverseComplement {
+                args.append("--revcomp")
             }
-            args.append("literal=\(seq)")
+            switch configuration.mode {
+            case .fivePrime:
+                guard let forward = primerSpec.forward else {
+                    throw FASTQDerivativeError.invalidOperation("Primer trimming requires a 5' primer sequence")
+                }
+                args += ["-g", cutadaptFivePrimeAdapter(forward, anchored: configuration.anchored5Prime)]
+            case .threePrime:
+                guard let forward = primerSpec.forward else {
+                    throw FASTQDerivativeError.invalidOperation("Primer trimming requires a 3' primer sequence")
+                }
+                args += ["-a", cutadaptThreePrimeAdapter(forward, anchored: configuration.anchored3Prime)]
+            case .linked:
+                guard let forward = primerSpec.forward, let reverse = primerSpec.reverse else {
+                    throw FASTQDerivativeError.invalidOperation("Linked primer trimming requires both 5' and 3' primers")
+                }
+                args += ["-g", cutadaptLinkedAdapter(
+                    forward: forward,
+                    reverse: reverse,
+                    anchored5Prime: configuration.anchored5Prime,
+                    anchored3Prime: configuration.anchored3Prime
+                )]
+            case .paired:
+                throw FASTQDerivativeError.invalidOperation("Paired primer mode requires paired/interleaved reads")
+            }
+            args += ["-o", outputFASTQ.path, sourceFASTQ.path]
+
+        case .paired:
+            guard isInterleaved else {
+                throw FASTQDerivativeError.invalidOperation("Paired primer trimming currently requires interleaved input")
+            }
+            guard configuration.mode == .paired else {
+                throw FASTQDerivativeError.invalidOperation("Paired read mode supports only paired R1/R2 primer trimming")
+            }
+            guard let forward = primerSpec.forward, let reverse = primerSpec.reverse else {
+                throw FASTQDerivativeError.invalidOperation("Paired primer trimming requires both R1 and R2 primer sequences")
+            }
+            args.append("--interleaved")
+            args += ["--pair-filter", configuration.pairFilter.rawValue]
+            args += ["-g", cutadaptFivePrimeAdapter(forward, anchored: configuration.anchored5Prime)]
+            args += ["-G", cutadaptFivePrimeAdapter(reverse, anchored: configuration.anchored5Prime)]
+            args += ["-o", outputFASTQ.path, sourceFASTQ.path]
+        }
+
+        let result = try await runner.run(.cutadapt, arguments: args, timeout: 1800)
+        guard result.isSuccess else {
+            throw FASTQDerivativeError.invalidOperation("cutadapt primer trimming failed: \(result.stderr)")
+        }
+        return BBToolResult(toolCommand: "cutadapt \(args.joined(separator: " "))")
+    }
+
+    private func resolvePrimerTrimSpecification(
+        configuration: FASTQPrimerTrimConfiguration,
+        sourceBundleURL: URL
+    ) async throws -> (forward: String?, reverse: String?) {
+        switch configuration.source {
+        case .literal:
+            let forward = configuration.forwardSequence
+            let reverse = configuration.reverseSequence
+            return (forward, reverse)
         case .reference:
-            guard let refPath = referenceFasta, !refPath.isEmpty else {
-                throw FASTQDerivativeError.invalidOperation("Primer removal requires a reference FASTA path")
+            guard let refPath = configuration.referenceFasta, !refPath.isEmpty else {
+                throw FASTQDerivativeError.invalidOperation("Primer trimming requires a reference FASTA path")
             }
             let refURL: URL
             if refPath.hasPrefix("/") {
@@ -2916,15 +2884,42 @@ public actor FASTQDerivativeService {
             guard FileManager.default.fileExists(atPath: refURL.path) else {
                 throw FASTQDerivativeError.invalidOperation("Primer reference FASTA not found: \(refURL.path)")
             }
-            args.append("ref=\(refURL.path)")
+            let reader = try FASTAReader(url: refURL)
+            let sequences = try await reader.readAll()
+            guard let first = sequences.first?.asString(), !first.isEmpty else {
+                throw FASTQDerivativeError.invalidOperation("Primer reference FASTA did not contain any primer sequences")
+            }
+            let second = sequences.count > 1 ? sequences[1].asString() : nil
+            return (first.uppercased(), second?.uppercased())
         }
+    }
 
-        let env = await bbToolsEnvironment()
-        let result = try await runner.run(.bbduk, arguments: args, environment: env, timeout: 1800)
-        guard result.isSuccess else {
-            throw FASTQDerivativeError.invalidOperation("bbduk primer removal failed: \(result.stderr)")
+    private func validatePrimerTrimConfiguration(_ configuration: FASTQPrimerTrimConfiguration) throws {
+        guard configuration.minimumOverlap > 0 else {
+            throw FASTQDerivativeError.invalidOperation("Primer minimum overlap must be > 0.")
         }
-        return BBToolResult(toolCommand: "bbduk.sh \(args.joined(separator: " "))")
+        guard configuration.errorRate >= 0.0, configuration.errorRate <= 1.0 else {
+            throw FASTQDerivativeError.invalidOperation("Primer error rate must be between 0.0 and 1.0.")
+        }
+    }
+
+    private func cutadaptFivePrimeAdapter(_ sequence: String, anchored: Bool) -> String {
+        anchored ? "^\(sequence)" : sequence
+    }
+
+    private func cutadaptThreePrimeAdapter(_ sequence: String, anchored: Bool) -> String {
+        anchored ? "\(sequence)$" : sequence
+    }
+
+    private func cutadaptLinkedAdapter(
+        forward: String,
+        reverse: String,
+        anchored5Prime: Bool,
+        anchored3Prime: Bool
+    ) -> String {
+        let left = cutadaptFivePrimeAdapter(forward, anchored: anchored5Prime)
+        let right = cutadaptThreePrimeAdapter(reverse, anchored: anchored3Prime)
+        return "\(left)...\(right)"
     }
 
     /// Runs tadpole.sh for k-mer-based error correction.

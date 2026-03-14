@@ -366,9 +366,10 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         let jsonReportPath = workDir
             .appendingPathComponent("cutadapt-report.json").path
 
-        // Capture per-read trim info when in virtual mode (for trim position storage)
-        // or when chaining trims for multi-step pipelines (full-mode intermediate steps)
-        let isVirtualMode = config.rootBundleURL != nil
+        // Final outputs can be virtual when root lineage is known. Intermediate multi-step
+        // outputs must stay materialized so the next cutadapt stage consumes full FASTQ,
+        // not a preview/read-ID pointer bundle.
+        let isVirtualMode = config.rootBundleURL != nil && !config.captureTrimsForChaining
         let needsTrimCapture = isVirtualMode || config.captureTrimsForChaining
         let infoFilePath = needsTrimCapture
             ? workDir.appendingPathComponent("cutadapt-info.tsv").path
@@ -732,7 +733,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                     if capturedIsVirtual {
                         // Virtual mode: create a small preview alongside the read ID list
 
-                        let previewURL = bundleURL.appendingPathComponent("preview.fastq.gz")
+                        let previewURL = bundleURL.appendingPathComponent("preview.fastq")
                         if let capturedRootFASTQURL,
                            FileManager.default.fileExists(atPath: capturedRootFASTQURL.path) {
                             try await self.writeVirtualPreviewFASTQ(
@@ -961,7 +962,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                     payload: .demuxedVirtual(
                         barcodeID: result.baseName,
                         readIDListFilename: "read-ids.txt",
-                        previewFilename: "preview.fastq.gz",
+                        previewFilename: "preview.fastq",
                         trimPositionsFilename: hasTrimPositionsFile(in: result.bundleURL) ? "trim-positions.tsv" : nil,
                         orientMapFilename: hasOrientMapFile(in: result.bundleURL) ? "orient-map.tsv" : nil
                     ),
@@ -994,11 +995,19 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
             name: config.barcodeKit.displayName,
             vendor: config.barcodeKit.vendor,
             barcodeCount: usesExplicitAssignments ? config.sampleAssignments.count : config.barcodeKit.barcodes.count,
-            isDualIndexed: usesExplicitAssignments ? true : config.barcodeKit.isDualIndexed,
-            barcodeType: usesExplicitAssignments
-                ? .asymmetric
-                : (config.barcodeKit.pairingMode == .singleEnd ? .singleEnd : .asymmetric)
+            isDualIndexed: config.symmetryMode == .singleEnd ? false : (usesExplicitAssignments ? true : config.barcodeKit.isDualIndexed),
+            barcodeType: config.symmetryMode == .singleEnd ? .singleEnd : .asymmetric
         )
+
+        let requireBothEnds: Bool
+        switch config.symmetryMode {
+        case .singleEnd:
+            requireBothEnds = false
+        case .symmetric:
+            requireBothEnds = config.barcodeLocation == .bothEnds
+        case .asymmetric:
+            requireBothEnds = config.barcodeKit.isDualIndexed || config.barcodeLocation == .bothEnds
+        }
 
         let manifest = DemultiplexManifest(
             barcodeKit: kitForManifest,
@@ -1006,7 +1015,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                 tool: "cutadapt",
                 toolVersion: cutadaptVersion,
                 maxMismatches: Int(config.errorRate * Double(config.barcodeKit.barcodes[0].i7Sequence.count)),
-                requireBothEnds: config.barcodeLocation == .bothEnds || config.barcodeKit.isDualIndexed || usesExplicitAssignments,
+                requireBothEnds: requireBothEnds,
                 trimBarcodes: config.trimBarcodes,
                 commandLine: "cutadapt \(args.joined(separator: " "))",
                 wallClockSeconds: elapsed
@@ -1076,7 +1085,35 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
     ) async throws -> AdapterConfiguration {
         let adapterFASTA = workDirectory.appendingPathComponent("adapters.fasta")
 
-        if !config.sampleAssignments.isEmpty
+        if !config.sampleAssignments.isEmpty && config.symmetryMode == .singleEnd {
+            let ctx = config.resolvedAdapterContext
+            let useRevcomp = config.searchReverseComplement
+            var lines: [String] = []
+            for assignment in config.sampleAssignments {
+                guard let sequence = resolveSequence(
+                    explicitSequence: assignment.forwardSequence,
+                    barcodeID: assignment.forwardBarcodeID,
+                    kit: config.barcodeKit
+                ) ?? resolveSequence(
+                    explicitSequence: assignment.reverseSequence,
+                    barcodeID: assignment.reverseBarcodeID,
+                    kit: config.barcodeKit
+                ) else { continue }
+                let spec = useRevcomp
+                    ? ctx.fivePrimeSpec(barcodeSequence: sequence)
+                    : ctx.linkedSpec(barcodeSequence: sequence)
+                let name = sanitizedSampleIdentifier(assignment.sampleID)
+                lines.append(">\(name)")
+                lines.append(spec)
+            }
+            guard !lines.isEmpty else {
+                throw DemultiplexError.combinatorialRequiresSampleAssignments
+            }
+            let content = lines.joined(separator: "\n") + "\n"
+            try content.write(to: adapterFASTA, atomically: true, encoding: .utf8)
+            try validateAdapterFASTA(at: adapterFASTA, kitName: config.barcodeKit.displayName)
+            return AdapterConfiguration(adapterFASTA: adapterFASTA, adapterFlag: "-g")
+        } else if !config.sampleAssignments.isEmpty
             && (config.barcodeKit.pairingMode == .combinatorialDual
                 || config.barcodeKit.pairingMode == .fixedDual) {
             // Asymmetric/combinatorial kits with sample assignments from scout:
@@ -3018,7 +3055,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
             }
 
             // Create preview
-            let previewURL = binURL.appendingPathComponent("preview.fastq.gz")
+            let previewURL = binURL.appendingPathComponent("preview.fastq")
             if !FileManager.default.fileExists(atPath: previewURL.path) {
                 let previewResult = try await runner.run(
                     .seqkit,
@@ -3052,7 +3089,7 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                     payload: .demuxedVirtual(
                         barcodeID: binName,
                         readIDListFilename: "read-ids.txt",
-                        previewFilename: "preview.fastq.gz",
+                        previewFilename: "preview.fastq",
                         trimPositionsFilename: hasTrimPositionsFile(in: binURL) ? "trim-positions.tsv" : nil,
                         orientMapFilename: hasOrientMapFile(in: binURL) ? "orient-map.tsv" : nil
                     ),

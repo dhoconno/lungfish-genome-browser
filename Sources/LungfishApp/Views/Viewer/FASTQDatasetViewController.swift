@@ -129,7 +129,7 @@ public final class FASTQDatasetViewController: NSViewController {
             case .contaminantFilter: return "Contaminant Filter"
             case .pairedEndMerge: return "Merge Overlapping Pairs"
             case .pairedEndRepair: return "Repair Paired Reads"
-            case .primerRemoval: return "Custom Primer Removal"
+            case .primerRemoval: return "PCR Primer Trimming"
             case .errorCorrection: return "Error Correction"
             case .orient: return "Orient Reads"
             case .demultiplex: return "Demultiplex (Barcodes)"
@@ -224,8 +224,9 @@ public final class FASTQDatasetViewController: NSViewController {
     public var onStatisticsUpdated: ((FASTQDatasetStatistics) -> Void)?
     public var onRunOperation: ((FASTQDerivativeRequest) async throws -> Void)?
 
-    /// Callback to open/focus the Demux Setup tab in the metadata drawer.
+    /// Callback to open/focus the Demux tab in the metadata drawer.
     public var onOpenDemuxDrawer: (() -> Void)?
+    public var onOpenPrimerTrimDrawer: (() -> Void)?
 
     /// Current demux configuration from the metadata drawer. Set by the drawer view.
     /// When present, the demultiplex operation uses this configuration.
@@ -237,11 +238,9 @@ public final class FASTQDatasetViewController: NSViewController {
         }
     }
 
-    /// Full demultiplex plan from the metadata drawer.
-    /// Multi-step plans run sequentially when more than one step is configured.
-    public var currentDemuxPlan: DemultiplexPlan? {
+    public var currentPrimerTrimConfiguration: FASTQPrimerTrimConfiguration? {
         didSet {
-            if selectedOperation == .demultiplex {
+            if selectedOperation == .primerRemoval {
                 updateParameterBar()
             }
         }
@@ -308,6 +307,7 @@ public final class FASTQDatasetViewController: NSViewController {
     private let mergeStrictnessPopup = NSPopUpButton()
     private let primerSourcePopup = NSPopUpButton()
     private let interleaveDirectionPopup = NSPopUpButton()
+    private let primerTrimDrawerButton = NSButton(title: "Configure Primer Trim…", target: nil, action: nil)
 
     // Orient-specific controls
     private let orientReferencePopup = NSPopUpButton()
@@ -735,6 +735,12 @@ public final class FASTQDatasetViewController: NSViewController {
         pairedAwareCheckbox.translatesAutoresizingMaskIntoConstraints = false
         pairedAwareCheckbox.target = self
         pairedAwareCheckbox.action = #selector(parameterCheckboxChanged(_:))
+
+        primerTrimDrawerButton.translatesAutoresizingMaskIntoConstraints = false
+        primerTrimDrawerButton.bezelStyle = .rounded
+        primerTrimDrawerButton.controlSize = .small
+        primerTrimDrawerButton.target = self
+        primerTrimDrawerButton.action = #selector(openPrimerTrimDrawer(_:))
     }
 
     private func configureErrorBanner() {
@@ -989,15 +995,13 @@ public final class FASTQDatasetViewController: NSViewController {
             parameterBar.addArrangedSubview(label)
 
         case .primerRemoval:
-            fieldOneLabel.stringValue = "Sequence/Path:"
-            fieldOneInput.placeholderString = "AGATCGGAAGAGC"
-            fieldTwoLabel.stringValue = "K-mer:"
-            fieldTwoInput.placeholderString = "23"
-            parameterBar.addArrangedSubview(primerSourcePopup)
-            parameterBar.addArrangedSubview(fieldOneLabel)
-            parameterBar.addArrangedSubview(fieldOneInput)
-            parameterBar.addArrangedSubview(fieldTwoLabel)
-            parameterBar.addArrangedSubview(fieldTwoInput)
+            let status = NSTextField(labelWithString: currentPrimerTrimConfiguration == nil
+                ? "Configure PCR primer trimming in the bottom drawer."
+                : "Primer trim drawer configured.")
+            status.font = .systemFont(ofSize: 11)
+            status.textColor = .secondaryLabelColor
+            parameterBar.addArrangedSubview(status)
+            parameterBar.addArrangedSubview(primerTrimDrawerButton)
 
         case .errorCorrection:
             fieldOneLabel.stringValue = "K-mer Size:"
@@ -1057,7 +1061,7 @@ public final class FASTQDatasetViewController: NSViewController {
                 summaryLabel.lineBreakMode = .byTruncatingTail
                 parameterBar.addArrangedSubview(summaryLabel)
             } else {
-                let placeholder = NSTextField(labelWithString: "Select a kit in the Demux Setup panel below")
+                let placeholder = NSTextField(labelWithString: "Configure demultiplexing in the Demux drawer")
                 placeholder.font = .systemFont(ofSize: 11)
                 placeholder.textColor = .secondaryLabelColor
                 parameterBar.addArrangedSubview(placeholder)
@@ -1598,9 +1602,8 @@ public final class FASTQDatasetViewController: NSViewController {
         }
         // Demux requires a configuration from the drawer
         if selectedOperation == .demultiplex
-            && (currentDemuxPlan?.steps.isEmpty ?? true)
             && currentDemuxConfig == nil {
-            setStatus("Configure demultiplexing in the Demux Setup panel below")
+            setStatus("Configure demultiplexing in the Demux panel below")
             shakeButton(runButton)
             return
         }
@@ -1650,6 +1653,10 @@ public final class FASTQDatasetViewController: NSViewController {
 
     @objc private func openDemuxDrawerClicked(_ sender: Any) {
         onOpenDemuxDrawer?()
+    }
+
+    @objc private func openPrimerTrimDrawer(_ sender: Any) {
+        onOpenPrimerTrimDrawer?()
     }
 
     // MARK: - Orient Reference Management
@@ -1924,28 +1931,11 @@ public final class FASTQDatasetViewController: NSViewController {
             return .pairedEndRepair
 
         case .primerRemoval:
-            let source: FASTQPrimerSource = primerSourcePopup.indexOfSelectedItem == 1 ? .reference : .literal
-            let kmerSize = Int(fieldTwoInput.stringValue) ?? 23
-            guard kmerSize > 0, kmerSize <= 63 else {
-                setStatus("K-mer size must be between 1 and 63.", isError: true)
+            guard let configuration = currentPrimerTrimConfiguration else {
+                setStatus("Configure PCR primer trimming in the Primer Trim drawer first.", isError: true)
                 return nil
             }
-            let input = fieldOneInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !input.isEmpty else {
-                setStatus("Provide a primer sequence (literal) or reference FASTA path.", isError: true)
-                return nil
-            }
-            switch source {
-            case .literal:
-                let validChars = CharacterSet(charactersIn: "ACGTUacgtuNnRYSWKMBDHVryswkmbdhv")
-                guard input.unicodeScalars.allSatisfy({ validChars.contains($0) }) else {
-                    setStatus("Primer sequence contains invalid characters. Use IUPAC nucleotide codes.", isError: true)
-                    return nil
-                }
-                return .primerRemoval(source: .literal, literalSequence: input, referenceFasta: nil, kmerSize: kmerSize, minKmer: 11, hammingDistance: 1)
-            case .reference:
-                return .primerRemoval(source: .reference, literalSequence: nil, referenceFasta: input, kmerSize: kmerSize, minKmer: 11, hammingDistance: 1)
-            }
+            return .primerRemoval(configuration: configuration)
 
         case .errorCorrection:
             let kmerSize = Int(fieldOneInput.stringValue) ?? 50
@@ -1966,17 +1956,28 @@ public final class FASTQDatasetViewController: NSViewController {
             return .orient(referenceURL: refURL, wordLength: wordLength, dbMask: dbMask, saveUnoriented: saveUnoriented)
 
         case .demultiplex:
-            let effectivePlan: DemultiplexPlan
-            if let plan = currentDemuxPlan, !plan.steps.isEmpty {
-                effectivePlan = plan
-            } else if let step = currentDemuxConfig {
-                effectivePlan = DemultiplexPlan(steps: [step], compositeSampleNames: [:])
-            } else {
-                setStatus("Configure demultiplexing in the Demux Setup drawer first.", isError: true)
+            guard let step = currentDemuxConfig else {
+                setStatus("Configure demultiplexing in the Demux drawer first.", isError: true)
                 return nil
             }
-            let sourcePlatform = fastqURL.map { SequencingPlatform.detect(fromFASTQ: $0) } ?? nil
-            return .multiStepDemultiplex(plan: effectivePlan, sourcePlatform: sourcePlatform)
+            let location: String
+            switch step.barcodeLocation {
+            case .fivePrime: location = "fivePrime"
+            case .threePrime: location = "threePrime"
+            case .bothEnds: location = "bothEnds"
+            }
+            return .demultiplex(
+                kitID: step.barcodeKitID,
+                customCSVPath: nil,
+                location: location,
+                symmetryMode: step.symmetryMode,
+                maxDistanceFrom5Prime: step.maxSearchDistance5Prime,
+                maxDistanceFrom3Prime: step.maxSearchDistance3Prime,
+                errorRate: step.errorRate,
+                trimBarcodes: step.trimBarcodes,
+                sampleAssignments: step.sampleAssignments,
+                kitOverride: nil
+            )
         }
     }
 
@@ -2006,9 +2007,11 @@ public final class FASTQDatasetViewController: NSViewController {
             return "PE merge (\(strictness.rawValue), min overlap: \(minOverlap))"
         case .pairedEndRepair:
             return "PE read repair"
-        case .primerRemoval(let source, let literalSeq, let refFasta, let kmerSize, _, _):
-            let srcDesc = source == .literal ? (literalSeq ?? "literal") : (refFasta ?? "reference")
-            return "Primer removal (\(source.rawValue): \(srcDesc), k=\(kmerSize))"
+        case .primerRemoval(let configuration):
+            let source = configuration.source == .literal
+                ? (configuration.forwardSequence ?? "literal")
+                : (configuration.referenceFasta ?? "reference")
+            return "PCR primer trim (\(configuration.mode.rawValue), \(configuration.readMode.rawValue), \(source))"
         case .errorCorrection(let kmerSize):
             return "Error correction (k=\(kmerSize))"
         case .interleaveReformat(let direction):
@@ -2017,6 +2020,7 @@ public final class FASTQDatasetViewController: NSViewController {
             let kitID,
             _,
             let location,
+            _,
             let maxDistanceFrom5Prime,
             let maxDistanceFrom3Prime,
             let errorRate,
@@ -2027,8 +2031,6 @@ public final class FASTQDatasetViewController: NSViewController {
             let sampleCount = sampleAssignments?.count ?? 0
             let source = sampleCount > 0 ? ", \(sampleCount) sample-pairs" : ""
             return "Demultiplex (\(kitID), \(location), w5=\(maxDistanceFrom5Prime), w3=\(maxDistanceFrom3Prime), e=\(String(format: "%.2f", errorRate))\(source))"
-        case .multiStepDemultiplex(let plan, _):
-            return "Multi-step demultiplex (\(plan.steps.count) steps)"
         case .orient(let referenceURL, let wordLength, let dbMask, _):
             return "Orient against \(referenceURL.lastPathComponent) (w=\(wordLength), mask=\(dbMask))"
         }
@@ -2057,8 +2059,10 @@ public final class FASTQDatasetViewController: NSViewController {
             runButton.isEnabled = orientReferenceURL != nil
             runButton.title = "Run"
         case .demultiplex:
-            let hasPlan = !(currentDemuxPlan?.steps.isEmpty ?? true)
-            runButton.isEnabled = hasPlan || currentDemuxConfig != nil
+            runButton.isEnabled = currentDemuxConfig != nil
+            runButton.title = "Run"
+        case .primerRemoval:
+            runButton.isEnabled = currentPrimerTrimConfiguration != nil
             runButton.title = "Run"
         default:
             runButton.isEnabled = true
@@ -2169,6 +2173,7 @@ extension FASTQDatasetViewController: NSTableViewDataSource, NSTableViewDelegate
         selectedOperation = operationKindForRow(row)
         updateParameterBar()
         if selectedOperation == .demultiplex { onOpenDemuxDrawer?() }
+        if selectedOperation == .primerRemoval { onOpenPrimerTrimDrawer?() }
     }
 
     // MARK: - Read Preview Cell Views

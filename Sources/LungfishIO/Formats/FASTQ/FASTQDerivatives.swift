@@ -41,6 +41,80 @@ public enum FASTQPrimerSource: String, Codable, Sendable, CaseIterable {
     case reference
 }
 
+public enum FASTQPrimerTrimMode: String, Codable, Sendable, CaseIterable {
+    case fivePrime
+    case threePrime
+    case linked
+    case paired
+}
+
+public enum FASTQPrimerReadMode: String, Codable, Sendable, CaseIterable {
+    case single
+    case paired
+}
+
+public enum FASTQPrimerPairFilter: String, Codable, Sendable, CaseIterable {
+    case any
+    case both
+    case first
+}
+
+public struct FASTQPrimerTrimConfiguration: Codable, Sendable, Equatable {
+    public let source: FASTQPrimerSource
+    public let readMode: FASTQPrimerReadMode
+    public let mode: FASTQPrimerTrimMode
+    public let forwardSequence: String?
+    public let reverseSequence: String?
+    public let referenceFasta: String?
+    public let anchored5Prime: Bool
+    public let anchored3Prime: Bool
+    public let errorRate: Double
+    public let minimumOverlap: Int
+    public let allowIndels: Bool
+    public let keepUntrimmed: Bool
+    public let searchReverseComplement: Bool
+    public let pairFilter: FASTQPrimerPairFilter
+
+    public init(
+        source: FASTQPrimerSource,
+        readMode: FASTQPrimerReadMode = .single,
+        mode: FASTQPrimerTrimMode = .fivePrime,
+        forwardSequence: String? = nil,
+        reverseSequence: String? = nil,
+        referenceFasta: String? = nil,
+        anchored5Prime: Bool = true,
+        anchored3Prime: Bool = true,
+        errorRate: Double = 0.12,
+        minimumOverlap: Int = 12,
+        allowIndels: Bool = true,
+        keepUntrimmed: Bool = false,
+        searchReverseComplement: Bool = true,
+        pairFilter: FASTQPrimerPairFilter = .any
+    ) {
+        self.source = source
+        self.readMode = readMode
+        self.mode = mode
+        self.forwardSequence = forwardSequence?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased().trimmedNilIfEmpty
+        self.reverseSequence = reverseSequence?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased().trimmedNilIfEmpty
+        self.referenceFasta = referenceFasta?.trimmingCharacters(in: .whitespacesAndNewlines).trimmedNilIfEmpty
+        self.anchored5Prime = anchored5Prime
+        self.anchored3Prime = anchored3Prime
+        self.errorRate = errorRate
+        self.minimumOverlap = minimumOverlap
+        self.allowIndels = allowIndels
+        self.keepUntrimmed = keepUntrimmed
+        self.searchReverseComplement = searchReverseComplement
+        self.pairFilter = pairFilter
+    }
+}
+
+private extension String {
+    var trimmedNilIfEmpty: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
 /// Interleave/deinterleave direction for reformat.sh.
 public enum FASTQInterleaveDirection: String, Codable, Sendable, CaseIterable {
     /// Two files -> one interleaved file.
@@ -156,9 +230,9 @@ public enum FASTQDerivativeOperationKind: String, Codable, Sendable, CaseIterabl
         case .subsampleProportion, .subsampleCount, .lengthFilter,
              .searchText, .searchMotif, .deduplicate, .contaminantFilter:
             return true
-        case .qualityTrim, .adapterTrim, .fixedTrim:
+        case .qualityTrim, .adapterTrim, .fixedTrim, .primerRemoval:
             return false
-        case .pairedEndMerge, .pairedEndRepair, .primerRemoval,
+        case .pairedEndMerge, .pairedEndRepair,
              .errorCorrection, .interleaveReformat, .demultiplex,
              .orient:
             return false
@@ -168,7 +242,7 @@ public enum FASTQDerivativeOperationKind: String, Codable, Sendable, CaseIterabl
     /// Whether this operation produces a full materialized FASTQ (content-transforming).
     public var isFullOperation: Bool {
         switch self {
-        case .pairedEndMerge, .pairedEndRepair, .primerRemoval,
+        case .pairedEndMerge, .pairedEndRepair,
              .errorCorrection, .interleaveReformat, .demultiplex:
             return true
         default:
@@ -246,6 +320,18 @@ public struct FASTQDerivativeOperation: Codable, Sendable, Equatable {
     public var primerKmerSize: Int?
     public var primerMinKmer: Int?
     public var primerHammingDistance: Int?
+    public var primerReadMode: FASTQPrimerReadMode?
+    public var primerTrimMode: FASTQPrimerTrimMode?
+    public var primerForwardSequence: String?
+    public var primerReverseSequence: String?
+    public var primerAnchored5Prime: Bool?
+    public var primerAnchored3Prime: Bool?
+    public var primerErrorRate: Double?
+    public var primerMinimumOverlap: Int?
+    public var primerAllowIndels: Bool?
+    public var primerKeepUntrimmed: Bool?
+    public var primerSearchReverseComplement: Bool?
+    public var primerPairFilter: FASTQPrimerPairFilter?
 
     // Error correction parameters
     public var errorCorrectionKmerSize: Int?
@@ -318,6 +404,18 @@ public struct FASTQDerivativeOperation: Codable, Sendable, Equatable {
         primerKmerSize: Int? = nil,
         primerMinKmer: Int? = nil,
         primerHammingDistance: Int? = nil,
+        primerReadMode: FASTQPrimerReadMode? = nil,
+        primerTrimMode: FASTQPrimerTrimMode? = nil,
+        primerForwardSequence: String? = nil,
+        primerReverseSequence: String? = nil,
+        primerAnchored5Prime: Bool? = nil,
+        primerAnchored3Prime: Bool? = nil,
+        primerErrorRate: Double? = nil,
+        primerMinimumOverlap: Int? = nil,
+        primerAllowIndels: Bool? = nil,
+        primerKeepUntrimmed: Bool? = nil,
+        primerSearchReverseComplement: Bool? = nil,
+        primerPairFilter: FASTQPrimerPairFilter? = nil,
         errorCorrectionKmerSize: Int? = nil,
         interleaveDirection: FASTQInterleaveDirection? = nil,
         barcodeID: String? = nil,
@@ -366,6 +464,18 @@ public struct FASTQDerivativeOperation: Codable, Sendable, Equatable {
         self.primerKmerSize = primerKmerSize
         self.primerMinKmer = primerMinKmer
         self.primerHammingDistance = primerHammingDistance
+        self.primerReadMode = primerReadMode
+        self.primerTrimMode = primerTrimMode
+        self.primerForwardSequence = primerForwardSequence
+        self.primerReverseSequence = primerReverseSequence
+        self.primerAnchored5Prime = primerAnchored5Prime
+        self.primerAnchored3Prime = primerAnchored3Prime
+        self.primerErrorRate = primerErrorRate
+        self.primerMinimumOverlap = primerMinimumOverlap
+        self.primerAllowIndels = primerAllowIndels
+        self.primerKeepUntrimmed = primerKeepUntrimmed
+        self.primerSearchReverseComplement = primerSearchReverseComplement
+        self.primerPairFilter = primerPairFilter
         self.errorCorrectionKmerSize = errorCorrectionKmerSize
         self.interleaveDirection = interleaveDirection
         self.barcodeID = barcodeID
@@ -423,9 +533,10 @@ public struct FASTQDerivativeOperation: Codable, Sendable, Equatable {
         case .pairedEndRepair:
             return "repair"
         case .primerRemoval:
-            let src = primerSource ?? .literal
-            let k = primerKmerSize ?? 23
-            return "primer-\(src.rawValue)-k\(k)"
+            let mode = primerTrimMode ?? .fivePrime
+            let readMode = primerReadMode ?? .single
+            let overlap = primerMinimumOverlap ?? 12
+            return "primer-\(mode.rawValue)-\(readMode.rawValue)-ov\(overlap)"
         case .errorCorrection:
             let k = errorCorrectionKmerSize ?? 50
             return "ecc-k\(k)"
@@ -509,15 +620,16 @@ public struct FASTQDerivativeOperation: Codable, Sendable, Equatable {
             return "PE read repair"
         case .primerRemoval:
             let src = primerSource ?? .literal
-            let k = primerKmerSize ?? 23
+            let mode = primerTrimMode ?? .fivePrime
+            let overlap = primerMinimumOverlap ?? 12
             switch src {
             case .literal:
-                let seq = primerLiteralSequence ?? ""
+                let seq = primerForwardSequence ?? primerLiteralSequence ?? ""
                 let preview = seq.prefix(20)
-                return "Primer removal (literal: \(preview)\(seq.count > 20 ? "…" : ""), k=\(k))"
+                return "Primer trim (\(mode.rawValue), literal: \(preview)\(seq.count > 20 ? "…" : ""), ov=\(overlap))"
             case .reference:
                 let ref = primerReferenceFasta ?? "reference"
-                return "Primer removal (ref: \(ref), k=\(k))"
+                return "Primer trim (\(mode.rawValue), ref: \(ref), ov=\(overlap))"
             }
         case .errorCorrection:
             let k = errorCorrectionKmerSize ?? 50

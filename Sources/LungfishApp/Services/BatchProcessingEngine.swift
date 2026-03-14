@@ -408,14 +408,22 @@ public actor BatchProcessingEngine {
         case .pairedEndRepair:
             return .pairedEndRepair
         case .primerRemoval:
-            return .primerRemoval(
+            return .primerRemoval(configuration: FASTQPrimerTrimConfiguration(
                 source: step.primerSource ?? .literal,
-                literalSequence: step.primerLiteralSequence,
+                readMode: step.primerReadMode ?? .single,
+                mode: step.primerTrimMode ?? .fivePrime,
+                forwardSequence: step.primerForwardSequence ?? step.primerLiteralSequence,
+                reverseSequence: step.primerReverseSequence,
                 referenceFasta: step.primerReferenceFasta,
-                kmerSize: step.primerKmerSize ?? 23,
-                minKmer: step.primerMinKmer ?? 11,
-                hammingDistance: step.primerHammingDistance ?? 1
-            )
+                anchored5Prime: step.primerAnchored5Prime ?? true,
+                anchored3Prime: step.primerAnchored3Prime ?? true,
+                errorRate: step.primerErrorRate ?? 0.15,
+                minimumOverlap: step.primerMinimumOverlap ?? 12,
+                allowIndels: step.primerAllowIndels ?? true,
+                keepUntrimmed: step.primerKeepUntrimmed ?? false,
+                searchReverseComplement: step.primerSearchReverseComplement ?? false,
+                pairFilter: step.primerPairFilter ?? .any
+            ))
         case .errorCorrection:
             return .errorCorrection(kmerSize: step.errorCorrectionKmerSize ?? 50)
         case .interleaveReformat:

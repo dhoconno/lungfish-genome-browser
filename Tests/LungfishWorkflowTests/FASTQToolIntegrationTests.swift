@@ -342,23 +342,23 @@ final class FASTQToolIntegrationTests: XCTestCase {
         XCTAssertEqual(count, 22, "All reads should pass contaminant filter")
     }
 
-    func testBBDukPrimerRemoval() async throws {
+    func testCutadaptPrimerRemoval() async throws {
         let outputURL = tempDir.appendingPathComponent("primer_trimmed.fastq")
-        let env = await bbToolsEnv()
 
-        // Use a literal primer that matches the start of read_001
-        let result = try await runner.run(.bbduk, arguments: [
-            "in=\(inputFastqURL.path)",
-            "out=\(outputURL.path)",
-            "ktrim=r",
-            "k=23",
-            "mink=11",
-            "hdist=1",
-            "literal=ATCGATCGTTAGCAATCCGGTACA",
-        ], environment: env, timeout: 120)
+        // Trim a 5' primer that matches the start of read_001 and read_011.
+        let primer = "ATCGATCGTTAGCAATCCGGTACA"
+        let result = try await runner.run(.cutadapt, arguments: [
+            "-g", "^\(primer)",
+            "--overlap", "12",
+            "-e", "0.15",
+            "-o", outputURL.path,
+            inputFastqURL.path,
+        ], timeout: 120)
 
-        XCTAssertTrue(result.isSuccess, "bbduk primer removal should succeed: \(result.stderr)")
+        XCTAssertTrue(result.isSuccess, "cutadapt primer removal should succeed: \(result.stderr)")
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
+        let trimmed = try String(contentsOf: outputURL, encoding: .utf8)
+        XCTAssertFalse(trimmed.contains(primer), "Trimmed FASTQ should not retain the 5' primer prefix")
     }
 
     func testBBMergePairedEnd() async throws {

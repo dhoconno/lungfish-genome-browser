@@ -188,8 +188,4 @@ final class FASTQVirtualSubsetTests: XCTestCase {
         let materializedText = try String(contentsOf: materializedURL, encoding: .utf8)
         XCTAssertEqual(materializedText, "@read1 runid=abc sample=demo\nTAACCGG\n+\nIIIIIII\n")
     }
-
-    func testMultiStepDemuxUsesMaterializedInputInsteadOfDerivedPreview() async throws {
-        throw XCTSkip("Covered by manual integration verification against the real project data.")
-    }
 }

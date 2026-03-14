@@ -62,16 +62,21 @@ public struct FASTQDemultiplexMetadata: Codable, Sendable, Equatable {
     /// Serialized demultiplex plan JSON (app-layer model persisted without cross-module type coupling).
     public var demuxPlanJSON: String?
 
+    /// Serialized primer trimming configuration JSON.
+    public var primerTrimConfigJSON: String?
+
     public init(
         sampleAssignments: [FASTQSampleBarcodeAssignment] = [],
         customBarcodeSets: [BarcodeKitDefinition] = [],
         preferredBarcodeSetID: String? = nil,
-        demuxPlanJSON: String? = nil
+        demuxPlanJSON: String? = nil,
+        primerTrimConfigJSON: String? = nil
     ) {
         self.sampleAssignments = sampleAssignments
         self.customBarcodeSets = customBarcodeSets
         self.preferredBarcodeSetID = preferredBarcodeSetID?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         self.demuxPlanJSON = demuxPlanJSON?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.primerTrimConfigJSON = primerTrimConfigJSON?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
     }
 }
 

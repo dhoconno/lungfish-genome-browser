@@ -349,7 +349,7 @@ final class DemultiplexingPipelineTests: XCTestCase {
             return
         }
 
-        let previewURL = barcodeBundle.appendingPathComponent("preview.fastq.gz")
+        let previewURL = barcodeBundle.appendingPathComponent("preview.fastq")
         let previewLines = try String(contentsOf: previewURL, encoding: .utf8).split(separator: "\n").map(String.init)
         XCTAssertGreaterThanOrEqual(previewLines.count, 2)
 
@@ -360,6 +360,48 @@ final class DemultiplexingPipelineTests: XCTestCase {
         XCTAssertEqual(manifest.cachedStatistics.minReadLength, previewLength)
         XCTAssertEqual(manifest.cachedStatistics.maxReadLength, previewLength)
         XCTAssertEqual(manifest.cachedStatistics.readLengthHistogram, [previewLength: 1])
+    }
+
+    func testSingleEndExplicitAssignmentsDoNotRequireBothEnds() async throws {
+        let tempDir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let inputFASTQ = tempDir.appendingPathComponent("input.fastq")
+        let outputDir = tempDir.appendingPathComponent("demux-out", isDirectory: true)
+        let kit = BarcodeKitRegistry.ontNativeBarcoding24
+        let barcode = try XCTUnwrap(kit.barcodes.first(where: { $0.id == "barcode13" }))
+        let context = ONTNativeAdapterContext()
+        let sequence = context.fivePrimeSpec(barcodeSequence: barcode.i7Sequence) + "GATTACAGATTACA"
+        try writeFASTQ(sequences: [sequence], to: inputFASTQ)
+
+        let pipeline = DemultiplexingPipeline()
+        let result = try await pipeline.run(
+            config: DemultiplexConfig(
+                inputURL: inputFASTQ,
+                barcodeKit: kit,
+                outputDirectory: outputDir,
+                barcodeLocation: .bothEnds,
+                symmetryMode: .singleEnd,
+                errorRate: 0.0,
+                minimumOverlap: 20,
+                trimBarcodes: true,
+                threads: 1,
+                sampleAssignments: [
+                    FASTQSampleBarcodeAssignment(
+                        sampleID: "sample13",
+                        forwardBarcodeID: "barcode13"
+                    )
+                ]
+            ),
+            progress: { _, _ in }
+        )
+
+        XCTAssertEqual(result.manifest.barcodes.count, 1)
+        XCTAssertEqual(result.manifest.barcodes.first?.barcodeID, "sample13")
+        XCTAssertEqual(result.manifest.barcodes.first?.readCount, 1)
+        XCTAssertFalse(result.manifest.parameters.requireBothEnds)
+        XCTAssertEqual(result.manifest.barcodeKit.barcodeType, BarcodeType.singleEnd)
+        XCTAssertFalse(result.manifest.barcodeKit.isDualIndexed)
     }
 
     // MARK: - Poly-G Trim Config

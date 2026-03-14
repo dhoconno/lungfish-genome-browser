@@ -176,9 +176,15 @@ extension ProcessingRecipe {
                 kind: .primerRemoval,
                 createdAt: .distantPast,
                 primerSource: .literal,
-                primerKmerSize: 23,
-                primerMinKmer: 11,
-                primerHammingDistance: 1
+                primerReadMode: .paired,
+                primerTrimMode: .paired,
+                primerAnchored5Prime: true,
+                primerAnchored3Prime: true,
+                primerErrorRate: 0.12,
+                primerMinimumOverlap: 12,
+                primerAllowIndels: true,
+                primerKeepUntrimmed: false,
+                primerPairFilter: .any
             ),
             FASTQDerivativeOperation(
                 kind: .qualityTrim,

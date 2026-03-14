@@ -454,22 +454,31 @@ final class FASTQDerivativesTests: XCTestCase {
         let literalOp = FASTQDerivativeOperation(
             kind: .primerRemoval,
             primerSource: .literal,
-            primerLiteralSequence: "AGATCGGAAGAGC",
-            primerKmerSize: 23,
-            primerMinKmer: 11,
-            primerHammingDistance: 1
+            primerReadMode: .single,
+            primerTrimMode: .linked,
+            primerForwardSequence: "AGATCGGAAGAGC",
+            primerReverseSequence: "CTCTTCCGATCT",
+            primerAnchored5Prime: true,
+            primerAnchored3Prime: true,
+            primerErrorRate: 0.15,
+            primerMinimumOverlap: 12,
+            primerAllowIndels: true
         )
-        XCTAssertEqual(literalOp.shortLabel, "primer-literal-k23")
+        XCTAssertEqual(literalOp.shortLabel, "primer-linked-single-ov12")
         XCTAssertTrue(literalOp.displaySummary.contains("AGATCGGAAGAGC"))
+        XCTAssertTrue(literalOp.displaySummary.contains("linked"))
         XCTAssertTrue(literalOp.displaySummary.contains("literal"))
 
         let refOp = FASTQDerivativeOperation(
             kind: .primerRemoval,
             primerSource: .reference,
             primerReferenceFasta: "primers.fa",
-            primerKmerSize: 27
+            primerReadMode: .paired,
+            primerTrimMode: .paired,
+            primerMinimumOverlap: 18,
+            primerPairFilter: .both
         )
-        XCTAssertEqual(refOp.shortLabel, "primer-reference-k27")
+        XCTAssertEqual(refOp.shortLabel, "primer-paired-paired-ov18")
         XCTAssertTrue(refOp.displaySummary.contains("primers.fa"))
     }
 
@@ -494,9 +503,9 @@ final class FASTQDerivativesTests: XCTestCase {
     }
 
     func testPhase8OperationCategories() {
-        // Primer removal: full operation, not subset
+        // Primer removal: trim-like operation, not subset or full copy
         XCTAssertFalse(FASTQDerivativeOperationKind.primerRemoval.isSubsetOperation)
-        XCTAssertTrue(FASTQDerivativeOperationKind.primerRemoval.isFullOperation)
+        XCTAssertFalse(FASTQDerivativeOperationKind.primerRemoval.isFullOperation)
 
         // Error correction: full operation, not subset
         XCTAssertFalse(FASTQDerivativeOperationKind.errorCorrection.isSubsetOperation)
@@ -557,7 +566,7 @@ final class FASTQDerivativesTests: XCTestCase {
         XCTAssertEqual(FASTQDerivativePayload.full(fastqFilename: "reads.fq").category, "full")
         XCTAssertEqual(FASTQDerivativePayload.fullPaired(r1Filename: "R1.fq", r2Filename: "R2.fq").category, "full-paired")
         XCTAssertEqual(
-            FASTQDerivativePayload.demuxedVirtual(barcodeID: "bc1", readIDListFilename: "ids.txt", previewFilename: "preview.fastq.gz").category,
+            FASTQDerivativePayload.demuxedVirtual(barcodeID: "bc1", readIDListFilename: "ids.txt", previewFilename: "preview.fastq").category,
             "demuxed-virtual"
         )
     }
@@ -578,7 +587,7 @@ final class FASTQDerivativesTests: XCTestCase {
             payload: .demuxedVirtual(
                 barcodeID: "bc1001",
                 readIDListFilename: "read-ids.txt",
-                previewFilename: "preview.fastq.gz"
+                previewFilename: "preview.fastq"
             ),
             lineage: [op],
             operation: op,
@@ -595,7 +604,7 @@ final class FASTQDerivativesTests: XCTestCase {
         if case .demuxedVirtual(let barcodeID, let readIDFile, let previewFile, _, _) = loaded?.payload {
             XCTAssertEqual(barcodeID, "bc1001")
             XCTAssertEqual(readIDFile, "read-ids.txt")
-            XCTAssertEqual(previewFile, "preview.fastq.gz")
+            XCTAssertEqual(previewFile, "preview.fastq")
         } else {
             XCTFail("Expected demuxedVirtual payload, got \(String(describing: loaded?.payload))")
         }
@@ -906,7 +915,7 @@ final class FASTQDerivativesTests: XCTestCase {
             payload: .demuxedVirtual(
                 barcodeID: "bc1001",
                 readIDListFilename: "read-ids.txt",
-                previewFilename: "preview.fastq.gz",
+                previewFilename: "preview.fastq",
                 trimPositionsFilename: "trim-positions.tsv",
                 orientMapFilename: "orient-map.tsv"
             ),
@@ -940,7 +949,7 @@ final class FASTQDerivativesTests: XCTestCase {
             payload: .demuxedVirtual(
                 barcodeID: "bc1001",
                 readIDListFilename: "read-ids.txt",
-                previewFilename: "preview.fastq.gz",
+                previewFilename: "preview.fastq",
                 trimPositionsFilename: "trim-positions.tsv"
             ),
             lineage: [op],
@@ -1195,7 +1204,7 @@ final class FASTQDerivativesTests: XCTestCase {
         let payload = FASTQDerivativePayload.demuxedVirtual(
             barcodeID: "bc1",
             readIDListFilename: "ids.txt",
-            previewFilename: "preview.fastq.gz",
+            previewFilename: "preview.fastq",
             trimPositionsFilename: "trims.tsv",
             orientMapFilename: "orient-map.tsv"
         )
@@ -1361,7 +1370,7 @@ final class FASTQDerivativesTests: XCTestCase {
             payload: .demuxedVirtual(
                 barcodeID: "bc1001",
                 readIDListFilename: "read-ids.txt",
-                previewFilename: "preview.fastq.gz",
+                previewFilename: "preview.fastq",
                 trimPositionsFilename: "trim-positions.tsv",
                 orientMapFilename: "orient-map.tsv"
             ),
