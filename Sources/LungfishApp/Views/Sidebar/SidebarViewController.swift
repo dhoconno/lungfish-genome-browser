@@ -633,12 +633,18 @@ public class SidebarViewController: NSViewController {
             ? url.deletingPathExtension().lastPathComponent
             : filename
 
-        // Load composition subtitle for FASTQ bundles with mixed read types
+        // Load composition subtitle for FASTQ bundles with mixed read types,
+        // and materialization state badge for virtual derivatives.
         var subtitle: String?
         if itemType == .fastqBundle {
-            if let manifest = FASTQBundle.loadDerivedManifest(in: url),
-               let classification = manifest.readClassification {
-                subtitle = classification.compositionLabel
+            if let manifest = FASTQBundle.loadDerivedManifest(in: url) {
+                if let classification = manifest.readClassification {
+                    subtitle = classification.compositionLabel
+                }
+                // Show virtual/materialized status for derivative bundles
+                if case .virtual = manifest.resolvedState {
+                    subtitle = (subtitle.map { $0 + " · " } ?? "") + "Virtual"
+                }
             } else if let readManifest = ReadManifest.load(from: url) {
                 subtitle = readManifest.classification.compositionLabel
             }
@@ -682,6 +688,16 @@ public class SidebarViewController: NSViewController {
             if let manifest = batchManifest {
                 let batchGroups = buildBatchGroupNodes(manifest: manifest, baseDirectory: demuxDir)
                 item.children.append(contentsOf: batchGroups)
+            }
+
+            // Scan derivatives/ directory for non-demux child bundles.
+            // These are displayed with operation labels instead of filenames.
+            let derivatives = FASTQBundle.scanDerivatives(in: url)
+            for deriv in derivatives {
+                let childItem = buildSidebarTree(from: deriv.url, isRoot: false)
+                // Use the operation label as the display name instead of the auto-generated filename
+                childItem.title = deriv.manifest.operation.displaySummary
+                item.children.append(childItem)
             }
         }
 

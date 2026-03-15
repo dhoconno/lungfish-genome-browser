@@ -253,4 +253,43 @@ public enum FASTQBundle {
         }
         return url.lastPathComponent
     }
+
+    // MARK: - Derivatives Directory
+
+    /// Subdirectory name for non-demux derivative bundles.
+    public static let derivativesDirectoryName = "derivatives"
+
+    /// Returns the URL for the `derivatives/` subdirectory inside a bundle.
+    public static func derivativesDirectoryURL(in bundleURL: URL) -> URL {
+        bundleURL.appendingPathComponent(derivativesDirectoryName, isDirectory: true)
+    }
+
+    /// Ensures the `derivatives/` subdirectory exists inside a bundle.
+    @discardableResult
+    public static func ensureDerivativesDirectory(in bundleURL: URL) throws -> URL {
+        let url = derivativesDirectoryURL(in: bundleURL)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    /// Scans the `derivatives/` subdirectory for child `.lungfishfastq` bundles.
+    ///
+    /// Returns an array of `(bundleURL, manifest)` pairs sorted by creation date,
+    /// skipping bundles with missing or invalid manifests.
+    public static func scanDerivatives(in bundleURL: URL) -> [(url: URL, manifest: FASTQDerivedBundleManifest)] {
+        let derivDir = derivativesDirectoryURL(in: bundleURL)
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: derivDir,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        return contents
+            .filter { $0.pathExtension.lowercased() == directoryExtension }
+            .compactMap { url -> (url: URL, manifest: FASTQDerivedBundleManifest)? in
+                guard let manifest = loadDerivedManifest(in: url) else { return nil }
+                return (url, manifest)
+            }
+            .sorted { $0.manifest.createdAt < $1.manifest.createdAt }
+    }
 }

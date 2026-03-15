@@ -311,29 +311,23 @@ public actor FASTQDerivativeService {
 
         // Resolve lineage and root bundle info (needed for all operation types)
         let sourceManifest = FASTQBundle.loadDerivedManifest(in: sourceBundleURL)
-        let parentRelativePath = FASTQBundle.projectRelativePath(for: sourceBundleURL, from: sourceBundleURL)
-            ?? "../\(sourceBundleURL.lastPathComponent)"
-        let rootRelativePath: String
         let rootFASTQFilename: String
         let resolvedRootBundleURL: URL  // Actual root bundle containing the physical FASTQ
         let pairingMode: IngestionMetadata.PairingMode?
         let baseLineage: [FASTQDerivativeOperation]
 
         if let sourceManifest {
-            rootRelativePath = sourceManifest.rootBundleRelativePath
-            rootFASTQFilename = sourceManifest.rootFASTQFilename
             resolvedRootBundleURL = FASTQBundle.resolveBundle(
                 relativePath: sourceManifest.rootBundleRelativePath,
                 from: sourceBundleURL
             )
+            rootFASTQFilename = sourceManifest.rootFASTQFilename
             pairingMode = sourceManifest.pairingMode
             baseLineage = sourceManifest.lineage
         } else {
             guard let rootFASTQURL = FASTQBundle.resolvePrimaryFASTQURL(for: sourceBundleURL) else {
                 throw FASTQDerivativeError.sourceFASTQMissing
             }
-            rootRelativePath = FASTQBundle.projectRelativePath(for: sourceBundleURL, from: sourceBundleURL)
-                ?? "../\(sourceBundleURL.lastPathComponent)"
             rootFASTQFilename = rootFASTQURL.lastPathComponent
             resolvedRootBundleURL = sourceBundleURL
             pairingMode = FASTQMetadataStore.load(for: rootFASTQURL)?.ingestion?.pairingMode
@@ -345,8 +339,7 @@ public actor FASTQDerivativeService {
             return try await createOrientDerivative(
                 sourceFASTQ: materializedSourceFASTQ,
                 sourceBundleURL: sourceBundleURL,
-                parentRelativePath: parentRelativePath,
-                rootRelativePath: rootRelativePath,
+                resolvedRootBundleURL: resolvedRootBundleURL,
                 rootFASTQFilename: rootFASTQFilename,
                 pairingMode: pairingMode,
                 baseLineage: baseLineage,
@@ -397,8 +390,7 @@ public actor FASTQDerivativeService {
                 request: request,
                 sourceFASTQ: materializedSourceFASTQ,
                 sourceBundleURL: sourceBundleURL,
-                parentRelativePath: parentRelativePath,
-                rootRelativePath: rootRelativePath,
+                resolvedRootBundleURL: resolvedRootBundleURL,
                 rootFASTQFilename: rootFASTQFilename,
                 pairingMode: pairingMode,
                 baseLineage: baseLineage,
@@ -525,6 +517,13 @@ public actor FASTQDerivativeService {
             )
             payload = .subset(readIDListFilename: destinationReadIDURL.lastPathComponent)
         }
+
+        // Compute relative paths from the output bundle to parent and root bundles.
+        // Prefer project-relative paths (@/...); fall back to filesystem-relative.
+        let parentRelativePath = FASTQBundle.projectRelativePath(for: sourceBundleURL, from: outputBundle)
+            ?? relativePathFromBundle(outputBundle, to: sourceBundleURL)
+        let rootRelativePath = FASTQBundle.projectRelativePath(for: resolvedRootBundleURL, from: outputBundle)
+            ?? relativePathFromBundle(outputBundle, to: resolvedRootBundleURL)
 
         let manifest = FASTQDerivedBundleManifest(
             name: outputBundle.deletingPathExtension().lastPathComponent,
@@ -691,8 +690,7 @@ public actor FASTQDerivativeService {
     private func createOrientDerivative(
         sourceFASTQ: URL,
         sourceBundleURL: URL,
-        parentRelativePath: String,
-        rootRelativePath: String,
+        resolvedRootBundleURL: URL,
         rootFASTQFilename: String,
         pairingMode: IngestionMetadata.PairingMode?,
         baseLineage: [FASTQDerivativeOperation],
@@ -720,14 +718,11 @@ public actor FASTQDerivativeService {
 
         progress?("Creating orient derivative bundle...")
 
-        // Create the derivative bundle next to the source bundle so it is visible in the project sidebar.
-        let parentDir = sourceBundleURL.deletingLastPathComponent()
-        let sourceName = sourceBundleURL.deletingPathExtension().lastPathComponent
-        let timestamp = ISO8601DateFormatter().string(from: Date())
-            .replacingOccurrences(of: ":", with: "")
-            .replacingOccurrences(of: "-", with: "")
-        let initialBundleURL = parentDir.appendingPathComponent(
-            "\(sourceName)-orient-\(timestamp).\(FASTQBundle.directoryExtension)",
+        // Create the derivative bundle inside the source bundle's derivatives/ directory.
+        let derivDir = try FASTQBundle.ensureDerivativesDirectory(in: sourceBundleURL)
+        let shortID = UUID().uuidString.prefix(8).lowercased()
+        let initialBundleURL = derivDir.appendingPathComponent(
+            "orient-\(shortID).\(FASTQBundle.directoryExtension)",
             isDirectory: true
         )
         let bundleURL = uniqueDirectoryURL(startingAt: initialBundleURL)
@@ -794,10 +789,15 @@ public actor FASTQDerivativeService {
         var lineage = baseLineage
         lineage.append(operation)
 
+        let orientParentPath = FASTQBundle.projectRelativePath(for: sourceBundleURL, from: bundleURL)
+            ?? relativePathFromBundle(bundleURL, to: sourceBundleURL)
+        let orientRootPath = FASTQBundle.projectRelativePath(for: resolvedRootBundleURL, from: bundleURL)
+            ?? relativePathFromBundle(bundleURL, to: resolvedRootBundleURL)
+
         let manifest = FASTQDerivedBundleManifest(
             name: "Oriented",
-            parentBundleRelativePath: parentRelativePath,
-            rootBundleRelativePath: rootRelativePath,
+            parentBundleRelativePath: orientParentPath,
+            rootBundleRelativePath: orientRootPath,
             rootFASTQFilename: rootFASTQFilename,
             payload: .orientMap(orientMapFilename: orientMapFilename, previewFilename: previewFilename),
             lineage: lineage,
@@ -811,8 +811,9 @@ public actor FASTQDerivativeService {
         // Optionally create unoriented reads derivative
         if saveUnoriented, let unorientedFASTQ = result.unorientedFASTQ,
            FileManager.default.fileExists(atPath: unorientedFASTQ.path) {
-            let unorientedBaseName = "\(sourceName)-unoriented-\(timestamp).\(FASTQBundle.directoryExtension)"
-            let initialUnorientedBundleURL = parentDir.appendingPathComponent(unorientedBaseName, isDirectory: true)
+            let unorientedShortID = UUID().uuidString.prefix(8).lowercased()
+            let unorientedBaseName = "unoriented-\(unorientedShortID).\(FASTQBundle.directoryExtension)"
+            let initialUnorientedBundleURL = derivDir.appendingPathComponent(unorientedBaseName, isDirectory: true)
             let unorientedBundleURL = uniqueDirectoryURL(startingAt: initialUnorientedBundleURL)
             try FileManager.default.createDirectory(at: unorientedBundleURL, withIntermediateDirectories: true)
 
@@ -836,10 +837,15 @@ public actor FASTQDerivativeService {
             var unorientedLineage = baseLineage
             unorientedLineage.append(unorientedOp)
 
+            let unorientedParentPath = FASTQBundle.projectRelativePath(for: sourceBundleURL, from: unorientedBundleURL)
+                ?? relativePathFromBundle(unorientedBundleURL, to: sourceBundleURL)
+            let unorientedRootPath = FASTQBundle.projectRelativePath(for: resolvedRootBundleURL, from: unorientedBundleURL)
+                ?? relativePathFromBundle(unorientedBundleURL, to: resolvedRootBundleURL)
+
             let unorientedManifest = FASTQDerivedBundleManifest(
                 name: "Unoriented",
-                parentBundleRelativePath: parentRelativePath,
-                rootBundleRelativePath: rootRelativePath,
+                parentBundleRelativePath: unorientedParentPath,
+                rootBundleRelativePath: unorientedRootPath,
                 rootFASTQFilename: rootFASTQFilename,
                 payload: .full(fastqFilename: "unoriented.fastq"),
                 lineage: unorientedLineage,
@@ -1083,8 +1089,7 @@ public actor FASTQDerivativeService {
         request: FASTQDerivativeRequest,
         sourceFASTQ: URL,
         sourceBundleURL: URL,
-        parentRelativePath: String,
-        rootRelativePath: String,
+        resolvedRootBundleURL: URL,
         rootFASTQFilename: String,
         pairingMode: IngestionMetadata.PairingMode?,
         baseLineage: [FASTQDerivativeOperation],
@@ -1174,10 +1179,15 @@ public actor FASTQDerivativeService {
         )
         try readManifest.save(to: outputBundle)
 
+        let mixedParentPath = FASTQBundle.projectRelativePath(for: sourceBundleURL, from: outputBundle)
+            ?? relativePathFromBundle(outputBundle, to: sourceBundleURL)
+        let mixedRootPath = FASTQBundle.projectRelativePath(for: resolvedRootBundleURL, from: outputBundle)
+            ?? relativePathFromBundle(outputBundle, to: resolvedRootBundleURL)
+
         let manifest = FASTQDerivedBundleManifest(
             name: outputBundle.deletingPathExtension().lastPathComponent,
-            parentBundleRelativePath: parentRelativePath,
-            rootBundleRelativePath: rootRelativePath,
+            parentBundleRelativePath: mixedParentPath,
+            rootBundleRelativePath: mixedRootPath,
             rootFASTQFilename: rootFASTQFilename,
             payload: .fullMixed(classification),
             lineage: lineage,
@@ -1198,16 +1208,16 @@ public actor FASTQDerivativeService {
         sourceBundleURL: URL,
         request: FASTQDerivativeRequest
     ) throws -> URL {
-        let baseName = FASTQBundle.deriveBaseName(from: sourceBundleURL)
+        let derivDir = try FASTQBundle.ensureDerivativesDirectory(in: sourceBundleURL)
         let suffix: String
         switch request {
-        case .pairedEndMerge: suffix = "merge-normal"
+        case .pairedEndMerge: suffix = "merge"
         case .pairedEndRepair: suffix = "repair"
         default: suffix = "derived"
         }
-        let bundleName = "\(baseName)-\(suffix).\(FASTQBundle.directoryExtension)"
-        let parentDir = sourceBundleURL.deletingLastPathComponent()
-        return parentDir.appendingPathComponent(bundleName)
+        let shortID = UUID().uuidString.prefix(8).lowercased()
+        let bundleName = "\(suffix)-\(shortID).\(FASTQBundle.directoryExtension)"
+        return derivDir.appendingPathComponent(bundleName)
     }
 
     // MARK: - Transformations
@@ -3364,25 +3374,12 @@ public actor FASTQDerivativeService {
         originalFASTQ: URL,
         trimmedFASTQ: URL
     ) async throws -> [FASTQTrimRecord] {
-        // Build a dictionary of trimmed records keyed by positional ID.
-        // Using read index ensures uniqueness even when base IDs are shared.
-        let trimmedReader = FASTQReader(validateSequence: false)
-        var trimmedByKey: [String: FASTQRecord] = [:]
-        var trimmedIndex = 0
-        for try await record in trimmedReader.records(from: trimmedFASTQ) {
-            let baseID = normalizedIdentifier(record.identifier)
-            let key = "\(baseID)#\(trimmedIndex)"
-            trimmedByKey[key] = record
-            trimmedIndex += 1
-        }
-
-        // For order-preserving matching, also build a lookup by base ID to
-        // handle the common case where fastp drops some reads entirely.
-        // We use a dictionary of arrays to handle PE reads with same base ID.
+        // Build a lookup by base ID in a single pass.
+        // Dictionary of arrays handles PE reads with same base ID (R1/R2).
         var trimmedByBaseID: [String: [(index: Int, record: FASTQRecord)]] = [:]
         var idx = 0
-        let trimmedReader2 = FASTQReader(validateSequence: false)
-        for try await record in trimmedReader2.records(from: trimmedFASTQ) {
+        let trimmedReader = FASTQReader(validateSequence: false)
+        for try await record in trimmedReader.records(from: trimmedFASTQ) {
             let baseID = normalizedIdentifier(record.identifier)
             trimmedByBaseID[baseID, default: []].append((index: idx, record: record))
             idx += 1
@@ -3551,17 +3548,14 @@ public actor FASTQDerivativeService {
         sourceBundleURL: URL,
         operation: FASTQDerivativeOperation
     ) throws -> URL {
-        let parent = sourceBundleURL.deletingLastPathComponent()
-        let sourceName = sourceBundleURL.deletingPathExtension().lastPathComponent
-        let timestamp = ISO8601DateFormatter().string(from: Date())
-            .replacingOccurrences(of: ":", with: "")
-            .replacingOccurrences(of: "-", with: "")
-        let base = "\(sourceName)-\(operation.shortLabel)-\(timestamp)"
+        let derivDir = try FASTQBundle.ensureDerivativesDirectory(in: sourceBundleURL)
+        let shortID = UUID().uuidString.prefix(8).lowercased()
+        let base = "\(operation.shortLabel)-\(shortID)"
 
-        var candidate = parent.appendingPathComponent("\(base).\(FASTQBundle.directoryExtension)", isDirectory: true)
+        var candidate = derivDir.appendingPathComponent("\(base).\(FASTQBundle.directoryExtension)", isDirectory: true)
         var suffix = 1
         while FileManager.default.fileExists(atPath: candidate.path) {
-            candidate = parent.appendingPathComponent("\(base)-\(suffix).\(FASTQBundle.directoryExtension)", isDirectory: true)
+            candidate = derivDir.appendingPathComponent("\(base)-\(suffix).\(FASTQBundle.directoryExtension)", isDirectory: true)
             suffix += 1
         }
         return candidate
@@ -3599,6 +3593,13 @@ public actor FASTQDerivativeService {
         let down = Array(targetComponents.dropFirst(common))
         let parts = up + down
         return parts.isEmpty ? "." : parts.joined(separator: "/")
+    }
+
+    /// Computes a filesystem-relative path from one bundle to another.
+    ///
+    /// Used as a fallback when no `.lungfish` project root exists (e.g. in tests).
+    private func relativePathFromBundle(_ fromBundle: URL, to targetBundle: URL) -> String {
+        relativePath(from: fromBundle, to: targetBundle)
     }
 
     private func isInterleavedBundle(_ bundleURL: URL) -> Bool {

@@ -36,6 +36,29 @@ public enum BatchProcessingError: Error, LocalizedError {
     }
 }
 
+// MARK: - Batch Source
+
+/// A generalized input source for batch processing.
+///
+/// Wraps any `.lungfishfastq` bundle (demux barcode, selected bundle, etc.)
+/// with display metadata for progress reporting and manifest generation.
+public struct BatchSource: Sendable {
+    /// URL to the `.lungfishfastq` bundle.
+    public let bundleURL: URL
+
+    /// Human-readable label (e.g. "BC01", "sample-A").
+    public let displayName: String
+
+    /// Approximate read count (for progress estimates).
+    public let readCount: Int
+
+    public init(bundleURL: URL, displayName: String, readCount: Int = 0) {
+        self.bundleURL = bundleURL
+        self.displayName = displayName
+        self.readCount = readCount
+    }
+}
+
 // MARK: - Batch Progress
 
 /// Progress tracking for a batch processing run.
@@ -96,89 +119,91 @@ public actor BatchProcessingEngine {
         isCancelled = true
     }
 
-    /// Executes a recipe across all barcode bundles in a demux group.
+    // MARK: - Generalized Batch Execution
+
+    /// Executes a recipe across an array of batch sources with bounded concurrency.
+    ///
+    /// This is the primary batch execution method. Each source is processed through
+    /// all recipe steps sequentially. Sources are processed concurrently up to
+    /// `maxConcurrency`.
     ///
     /// - Parameters:
-    ///   - demuxGroupURL: URL to the demux group directory (e.g., `multiplexed-demux/`).
-    ///   - manifest: The demultiplex manifest from the parent bundle.
+    ///   - sources: The input bundles to process.
     ///   - recipe: The processing recipe to apply.
     ///   - batchName: Human-readable name for this batch run.
+    ///   - outputDirectory: Directory to write batch results into.
     ///   - progress: Callback for progress updates.
     /// - Returns: The completed `BatchManifest` with timing info.
     public func executeBatch(
-        demuxGroupURL: URL,
-        manifest: DemultiplexManifest,
+        sources: [BatchSource],
         recipe: ProcessingRecipe,
         batchName: String,
+        outputDirectory: URL,
         progress: (@Sendable (BatchProgress) -> Void)? = nil
     ) async throws -> BatchManifest {
-        guard !manifest.barcodes.isEmpty else { throw BatchProcessingError.noBarcodes }
+        guard !sources.isEmpty else { throw BatchProcessingError.noBarcodes }
         guard !recipe.steps.isEmpty else { throw BatchProcessingError.recipeEmpty }
 
         isCancelled = false
 
         // Create batch run directory
-        let batchRunsDir = demuxGroupURL.appendingPathComponent("batch-runs", isDirectory: true)
+        let batchRunsDir = outputDirectory.appendingPathComponent("batch-runs", isDirectory: true)
         let batchDir = batchRunsDir.appendingPathComponent(batchName, isDirectory: true)
         try FileManager.default.createDirectory(at: batchDir, withIntermediateDirectories: true)
 
         // Save recipe snapshot
         try recipe.save(to: batchDir.appendingPathComponent("recipe.json"))
 
-        // Build barcode labels
-        let barcodeLabels = manifest.barcodes.map { $0.displayName }
+        let sourceLabels = sources.map(\.displayName)
 
         var batchManifest = BatchManifest(
             recipeName: recipe.name,
             recipeID: recipe.id,
             batchName: batchName,
-            barcodeCount: manifest.barcodes.count,
+            barcodeCount: sources.count,
             stepCount: recipe.steps.count,
-            barcodeLabels: barcodeLabels
+            barcodeLabels: sourceLabels
         )
 
-        // Process barcodes with bounded concurrency
+        // Process sources with bounded concurrency
         let results = try await withThrowingTaskGroup(of: (Int, BarcodeSummary).self) { group in
             var activeTasks = 0
-            var barcodeIndex = 0
+            var sourceIndex = 0
             var collectedResults: [(Int, BarcodeSummary)] = []
 
-            while barcodeIndex < manifest.barcodes.count || activeTasks > 0 {
-                // Launch tasks up to concurrency limit
-                while activeTasks < maxConcurrency && barcodeIndex < manifest.barcodes.count {
+            while sourceIndex < sources.count || activeTasks > 0 {
+                while activeTasks < maxConcurrency && sourceIndex < sources.count {
                     guard !isCancelled else { throw BatchProcessingError.cancelled }
 
-                    let barcode = manifest.barcodes[barcodeIndex]
-                    let idx = barcodeIndex
-                    barcodeIndex += 1
+                    let source = sources[sourceIndex]
+                    let idx = sourceIndex
+                    sourceIndex += 1
                     activeTasks += 1
 
                     group.addTask { [self] in
-                        let summary = try await self.processBarcode(
-                            barcode: barcode,
-                            barcodeIndex: idx,
-                            demuxGroupURL: demuxGroupURL,
+                        let summary = try await self.processSource(
+                            source: source,
+                            sourceIndex: idx,
                             batchDir: batchDir,
                             recipe: recipe,
-                            totalBarcodes: manifest.barcodes.count,
+                            totalSources: sources.count,
                             progress: progress
                         )
                         return (idx, summary)
                     }
                 }
 
-                // Wait for one task to complete
                 if let result = try await group.next() {
                     collectedResults.append(result)
                     activeTasks -= 1
 
                     progress?(BatchProgress(
-                        totalBarcodes: manifest.barcodes.count,
+                        totalBarcodes: sources.count,
                         completedBarcodes: collectedResults.count,
                         currentBarcode: nil,
                         currentStep: nil,
                         totalSteps: recipe.steps.count,
-                        message: "Completed \(collectedResults.count)/\(manifest.barcodes.count) barcodes"
+                        message: "Completed \(collectedResults.count)/\(sources.count) sources"
                     ))
                 }
             }
@@ -186,10 +211,8 @@ public actor BatchProcessingEngine {
             return collectedResults
         }
 
-        // Sort results by original index
         let sortedSummaries = results.sorted(by: { $0.0 < $1.0 }).map(\.1)
 
-        // Build step definitions for the comparison manifest
         let stepDefs = recipe.steps.enumerated().map { index, step in
             StepDefinition(
                 index: index,
@@ -199,7 +222,6 @@ public actor BatchProcessingEngine {
             )
         }
 
-        // Generate comparison manifest
         let comparison = BatchComparisonManifest(
             batchID: batchManifest.batchID,
             recipeName: recipe.name,
@@ -208,13 +230,41 @@ public actor BatchProcessingEngine {
         )
         try comparison.save(to: batchDir)
 
-        // Finalize batch manifest
         batchManifest.completedAt = Date()
         try batchManifest.save(to: batchDir)
 
-        logger.info("Batch '\(batchName)' completed: \(manifest.barcodes.count) barcodes × \(recipe.steps.count) steps")
+        logger.info("Batch '\(batchName)' completed: \(sources.count) sources × \(recipe.steps.count) steps")
 
         return batchManifest
+    }
+
+    // MARK: - Demux Convenience Wrapper
+
+    /// Executes a recipe across all barcode bundles in a demux group.
+    ///
+    /// Convenience wrapper around `executeBatch(sources:...)` that converts
+    /// `DemultiplexManifest` barcodes into `BatchSource` objects.
+    public func executeBatch(
+        demuxGroupURL: URL,
+        manifest: DemultiplexManifest,
+        recipe: ProcessingRecipe,
+        batchName: String,
+        progress: (@Sendable (BatchProgress) -> Void)? = nil
+    ) async throws -> BatchManifest {
+        let sources = manifest.barcodes.map { barcode in
+            BatchSource(
+                bundleURL: demuxGroupURL.appendingPathComponent(barcode.bundleRelativePath),
+                displayName: barcode.displayName,
+                readCount: barcode.readCount
+            )
+        }
+        return try await executeBatch(
+            sources: sources,
+            recipe: recipe,
+            batchName: batchName,
+            outputDirectory: demuxGroupURL,
+            progress: progress
+        )
     }
 
     // MARK: - Per-Barcode Processing
@@ -346,6 +396,131 @@ public actor BatchProcessingEngine {
 
         return BarcodeSummary(
             label: barcode.displayName,
+            inputMetrics: inputMetrics,
+            stepResults: stepResults
+        )
+    }
+
+    /// Processes a single `BatchSource` through all recipe steps sequentially.
+    private func processSource(
+        source: BatchSource,
+        sourceIndex: Int,
+        batchDir: URL,
+        recipe: ProcessingRecipe,
+        totalSources: Int,
+        progress: (@Sendable (BatchProgress) -> Void)?
+    ) async throws -> BarcodeSummary {
+        let sourceDir = batchDir.appendingPathComponent(source.displayName, isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceDir, withIntermediateDirectories: true)
+
+        guard FileManager.default.fileExists(atPath: source.bundleURL.path) else {
+            throw BatchProcessingError.barcodeNotFound(source.displayName)
+        }
+
+        let inputStats = loadBundleStatistics(from: source.bundleURL)
+        let inputMetrics = StepMetrics(
+            readCount: inputStats?.readCount ?? source.readCount,
+            baseCount: inputStats?.baseCount ?? 0,
+            meanReadLength: inputStats?.meanReadLength ?? 0,
+            medianReadLength: inputStats?.medianReadLength ?? 0,
+            n50ReadLength: inputStats?.n50ReadLength ?? 0,
+            meanQuality: inputStats?.meanQuality ?? 0,
+            q20Percentage: inputStats?.q20Percentage ?? 0,
+            q30Percentage: inputStats?.q30Percentage ?? 0,
+            gcContent: inputStats?.gcContent ?? 0
+        )
+
+        var currentInputURL = source.bundleURL
+        var stepResults: [StepResult] = []
+        let rawReadCount = inputMetrics.readCount
+
+        for (stepIndex, step) in recipe.steps.enumerated() {
+            guard !isCancelled else { throw BatchProcessingError.cancelled }
+
+            progress?(BatchProgress(
+                totalBarcodes: totalSources,
+                completedBarcodes: sourceIndex,
+                currentBarcode: source.displayName,
+                currentStep: stepIndex,
+                totalSteps: recipe.steps.count,
+                message: "\(source.displayName): \(step.shortLabel) (\(stepIndex + 1)/\(recipe.steps.count))"
+            ))
+
+            let stepDir = sourceDir.appendingPathComponent(
+                "step-\(stepIndex + 1)-\(step.shortLabel)",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(at: stepDir, withIntermediateDirectories: true)
+
+            do {
+                let request = try convertStepToRequest(step)
+                let outputURL = try await derivativeService.createDerivative(
+                    from: currentInputURL,
+                    request: request,
+                    progress: { message in
+                        progress?(BatchProgress(
+                            totalBarcodes: totalSources,
+                            completedBarcodes: sourceIndex,
+                            currentBarcode: source.displayName,
+                            currentStep: stepIndex,
+                            totalSteps: recipe.steps.count,
+                            message: "\(source.displayName): \(message)"
+                        ))
+                    }
+                )
+
+                let destURL = stepDir.appendingPathComponent(outputURL.lastPathComponent)
+                if FileManager.default.fileExists(atPath: destURL.path) {
+                    _ = try FileManager.default.replaceItemAt(destURL, withItemAt: outputURL)
+                } else {
+                    try FileManager.default.moveItem(at: outputURL, to: destURL)
+                }
+
+                let outputStats = loadBundleStatistics(from: destURL)
+                let previousReadCount = stepResults.last?.metrics.readCount ?? rawReadCount
+                let outputMetrics: StepMetrics
+                if let stats = outputStats {
+                    outputMetrics = StepMetrics(
+                        from: stats,
+                        inputReadCount: previousReadCount,
+                        rawInputReadCount: rawReadCount
+                    )
+                } else {
+                    outputMetrics = .empty
+                }
+
+                stepResults.append(StepResult(
+                    stepIndex: stepIndex,
+                    status: .completed,
+                    metrics: outputMetrics,
+                    bundleRelativePath: destURL.lastPathComponent
+                ))
+
+                currentInputURL = destURL
+
+            } catch {
+                logger.warning("Step \(stepIndex) failed for \(source.displayName): \(error)")
+
+                stepResults.append(StepResult(
+                    stepIndex: stepIndex,
+                    status: .failed,
+                    metrics: .empty,
+                    errorMessage: error.localizedDescription
+                ))
+
+                for remainingIndex in (stepIndex + 1)..<recipe.steps.count {
+                    stepResults.append(StepResult(
+                        stepIndex: remainingIndex,
+                        status: .skipped,
+                        metrics: .empty
+                    ))
+                }
+                break
+            }
+        }
+
+        return BarcodeSummary(
+            label: source.displayName,
             inputMetrics: inputMetrics,
             stepResults: stepResults
         )

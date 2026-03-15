@@ -1043,6 +1043,49 @@ public struct FASTQDerivedBundleManifest: Codable, Sendable, Equatable {
     /// Nil for bundles without checksum tracking.
     public let payloadChecksums: PayloadChecksum?
 
+    /// Materialization lifecycle state. Nil for legacy manifests (treated as virtual
+    /// for derived bundles, materialized for bundles with full/fullPaired/fullMixed payloads).
+    public var materializationState: MaterializationState?
+
+    /// Resolved materialization state, applying defaults for nil values and
+    /// treating stale `.materializing` states (from crashed sessions) as `.virtual`.
+    public var resolvedState: MaterializationState {
+        if let state = materializationState {
+            if case .materializing = state {
+                return .virtual
+            }
+            return state
+        }
+        switch payload {
+        case .full, .fullPaired, .fullMixed, .fullFASTA:
+            return .materialized(checksum: payloadChecksums?.checksums.values.first ?? "")
+        default:
+            return .virtual
+        }
+    }
+
+    /// Whether this bundle has been materialized to a full FASTQ on disk.
+    public var isMaterialized: Bool {
+        if case .materialized = resolvedState { return true }
+        return false
+    }
+
+    /// Checks whether the root FASTQ file has been modified after this derivative was created.
+    ///
+    /// A stale derivative means the root data has changed since this bundle's creation,
+    /// so the derivative's pointer-based or materialized data may no longer be correct.
+    /// Returns `nil` if the root bundle cannot be resolved.
+    public func isStale(bundleURL: URL) -> Bool? {
+        let rootURL = FASTQBundle.resolveBundle(relativePath: rootBundleRelativePath, from: bundleURL)
+        let rootFASTQ = rootURL.appendingPathComponent(rootFASTQFilename)
+
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: rootFASTQ.path),
+              let rootModDate = attrs[.modificationDate] as? Date else {
+            return nil
+        }
+        return rootModDate > createdAt
+    }
+
     public init(
         id: UUID = UUID(),
         name: String,
@@ -1059,7 +1102,8 @@ public struct FASTQDerivedBundleManifest: Codable, Sendable, Equatable {
         batchOperationID: UUID? = nil,
         sequenceFormat: SequenceFormat? = .fastq,
         provenance: SampleProvenance? = nil,
-        payloadChecksums: PayloadChecksum? = nil
+        payloadChecksums: PayloadChecksum? = nil,
+        materializationState: MaterializationState? = nil
     ) {
         self.schemaVersion = Self.currentSchemaVersion
         self.id = id
@@ -1078,6 +1122,7 @@ public struct FASTQDerivedBundleManifest: Codable, Sendable, Equatable {
         self.sequenceFormat = sequenceFormat
         self.provenance = provenance
         self.payloadChecksums = payloadChecksums
+        self.materializationState = materializationState
     }
 
     // Custom decoding for backward compatibility with schema version 1 manifests
@@ -1100,6 +1145,7 @@ public struct FASTQDerivedBundleManifest: Codable, Sendable, Equatable {
         self.sequenceFormat = try container.decodeIfPresent(SequenceFormat.self, forKey: .sequenceFormat)
         self.provenance = try container.decodeIfPresent(SampleProvenance.self, forKey: .provenance)
         self.payloadChecksums = try container.decodeIfPresent(PayloadChecksum.self, forKey: .payloadChecksums)
+        self.materializationState = try container.decodeIfPresent(MaterializationState.self, forKey: .materializationState)
     }
 
     // MARK: - Referential Integrity Validation
@@ -1198,5 +1244,148 @@ public struct FASTQDerivedBundleManifest: Codable, Sendable, Equatable {
             payloadFilesExist: payloadExists,
             checksumValid: checksumValid
         )
+    }
+
+    // MARK: - Methods Text Export
+
+    /// Generates a publication-ready methods paragraph describing the processing pipeline.
+    ///
+    /// Includes tool names, versions, and non-default parameters for each step.
+    /// Optionally includes per-step read count statistics.
+    ///
+    /// Example output:
+    /// ```
+    /// Raw reads were processed using the following pipeline: Quality trimming was
+    /// performed using fastp (Q20, window size 4, cut-right mode). Adapter sequences
+    /// were removed using fastp with auto-detection. 150,000 reads (95.2%) were
+    /// retained after processing.
+    /// ```
+    public func generateMethodsText(includeStats: Bool = true) -> String {
+        let allSteps = lineage + [operation]
+        guard !allSteps.isEmpty else { return "No processing steps were applied." }
+
+        var sentences: [String] = []
+        sentences.append("Raw reads were processed using the following pipeline:")
+
+        for step in allSteps {
+            sentences.append(step.methodsSentence)
+        }
+
+        if includeStats {
+            let stats = cachedStatistics
+            if stats.readCount > 0 {
+                let formatter = NumberFormatter()
+                formatter.numberStyle = .decimal
+                let readStr = formatter.string(from: NSNumber(value: stats.readCount)) ?? "\(stats.readCount)"
+                let meanQ = String(format: "%.1f", stats.meanQuality)
+                let meanLen = String(format: "%.0f", stats.meanReadLength)
+                sentences.append(
+                    "\(readStr) reads were retained after processing"
+                    + " (mean quality: \(meanQ), mean length: \(meanLen) bp)."
+                )
+            }
+        }
+
+        return sentences.joined(separator: " ")
+    }
+}
+
+// MARK: - Methods Text for Individual Operations
+
+extension FASTQDerivativeOperation {
+    /// Generates a single methods-text sentence for this operation.
+    public var methodsSentence: String {
+        let tool = toolUsed.map { name in
+            if let version = toolVersion {
+                return " using \(name) v\(version)"
+            }
+            return " using \(name)"
+        } ?? ""
+
+        switch kind {
+        case .qualityTrim:
+            let q = qualityThreshold ?? 20
+            let w = windowSize ?? 4
+            let mode = qualityTrimMode ?? .cutRight
+            return "Quality trimming was performed\(tool) (Q\(q), window size \(w), \(mode.rawValue) mode)."
+
+        case .adapterTrim:
+            let mode = adapterMode ?? .autoDetect
+            switch mode {
+            case .autoDetect:
+                return "Adapter sequences were removed\(tool) with auto-detection."
+            case .specified:
+                return "Adapter sequences were removed\(tool) with specified adapter sequence."
+            case .fastaFile:
+                return "Adapter sequences were removed\(tool) using a custom adapter FASTA file."
+            }
+
+        case .fixedTrim:
+            let f = trimFrom5Prime ?? 0
+            let t = trimFrom3Prime ?? 0
+            return "Fixed trimming was applied\(tool) (\(f) bp from 5' end, \(t) bp from 3' end)."
+
+        case .primerRemoval:
+            let mode = primerTrimMode ?? .fivePrime
+            let err = primerErrorRate.map { String(format: "%.0f%%", $0 * 100) } ?? "12%"
+            let overlap = primerMinimumOverlap ?? 12
+            return "Primer sequences were removed\(tool) (\(mode.rawValue) mode, error rate \(err), minimum overlap \(overlap) bp)."
+
+        case .contaminantFilter:
+            let mode = contaminantFilterMode ?? .phix
+            switch mode {
+            case .phix:
+                return "PhiX contaminant sequences were filtered\(tool)."
+            case .custom:
+                let ref = contaminantReferenceFasta ?? "custom reference"
+                return "Contaminant sequences were filtered\(tool) against \(ref)."
+            }
+
+        case .pairedEndMerge:
+            let s = mergeStrictness ?? .normal
+            let o = mergeMinOverlap ?? 12
+            return "Paired-end reads were merged\(tool) (\(s.rawValue) mode, minimum overlap \(o) bp)."
+
+        case .pairedEndRepair:
+            return "Paired-end reads were repaired\(tool)."
+
+        case .lengthFilter:
+            let minStr = minLength.map { "\($0) bp" } ?? "none"
+            let maxStr = maxLength.map { "\($0) bp" } ?? "none"
+            return "Reads were filtered by length\(tool) (min: \(minStr), max: \(maxStr))."
+
+        case .subsampleProportion:
+            let p = proportion.map { String(format: "%.2f%%", $0 * 100) } ?? "unknown"
+            return "Reads were randomly subsampled\(tool) to \(p) of the original dataset."
+
+        case .subsampleCount:
+            let n = count.map(String.init) ?? "unknown"
+            return "Reads were randomly subsampled\(tool) to \(n) reads."
+
+        case .deduplicate:
+            let mode = deduplicateMode ?? .identifier
+            return "Duplicate reads were removed\(tool) based on \(mode.rawValue)."
+
+        case .errorCorrection:
+            let k = errorCorrectionKmerSize ?? 50
+            return "Error correction was performed\(tool) (k-mer size \(k))."
+
+        case .orient:
+            let ref = orientReferencePath ?? "reference"
+            let w = orientWordLength ?? 12
+            return "Reads were oriented\(tool) against \(ref) (word length \(w))."
+
+        case .demultiplex:
+            let sample = sampleName ?? barcodeID ?? "unknown"
+            return "Reads were demultiplexed\(tool) (sample: \(sample))."
+
+        case .searchText, .searchMotif:
+            let q = query ?? ""
+            return "Reads were filtered by sequence search\(tool) (query: \(q))."
+
+        case .interleaveReformat:
+            let dir = interleaveDirection ?? .interleave
+            return "Reads were reformatted\(tool) (\(dir.rawValue))."
+        }
     }
 }
