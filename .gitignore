@@ -55,3 +55,9 @@ coverage/
 
 # Claude/AI session files
 .claude/
+
+# Large reference databases (>100 MB; cannot be stored in git)
+# Download from the source URLs in manifest.json and place in the same directory.
+# DatabaseRegistry will discover them automatically.
+Sources/LungfishWorkflow/Resources/Databases/**/*.db
+Sources/LungfishWorkflow/Resources/Databases/**/*.db.*
