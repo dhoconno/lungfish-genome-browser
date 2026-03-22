@@ -36,6 +36,9 @@ import LungfishCore
 ///
 /// // Or read all at once
 /// let allSequences = try await reader.readAll()
+///
+/// // Synchronous alternative for non-async contexts
+/// let allSync = try reader.readAllSync()
 /// ```
 public final class FASTAReader: Sendable {
     /// The file URL being read
@@ -62,15 +65,28 @@ public final class FASTAReader: Sendable {
         self.isCompressed = url.pathExtension == "gz"
     }
 
-    /// Reads all sequences from the file.
+    /// Reads all sequences from the file asynchronously.
     ///
     /// - Parameter alphabet: The expected alphabet (auto-detected if nil)
     /// - Returns: Array of sequences
     /// - Throws: `FASTAError` if parsing fails
     public func readAll(alphabet: SequenceAlphabet? = nil) async throws -> [Sequence] {
-        // Directly parse the file - caller is responsible for running off main actor
+        // Delegate to the synchronous implementation. The caller is responsible
+        // for running off the main actor when needed.
+        try readAllSync(alphabet: alphabet)
+    }
+
+    /// Reads all sequences synchronously. For use in contexts where async is unavailable.
+    ///
+    /// This performs the same parsing as ``readAll(alphabet:)`` but can be called
+    /// from synchronous code (e.g., AppKit callbacks, `@objc` action methods).
+    ///
+    /// - Parameter alphabet: The expected alphabet (auto-detected if nil)
+    /// - Returns: Array of sequences
+    /// - Throws: `FASTAError` if parsing fails
+    public func readAllSync(alphabet: SequenceAlphabet? = nil) throws -> [Sequence] {
         var sequences: [Sequence] = []
-        try await parseFile(alphabet: alphabet) { sequence in
+        try parseFileSync(alphabet: alphabet) { sequence in
             sequences.append(sequence)
         }
         return sequences
@@ -87,7 +103,7 @@ public final class FASTAReader: Sendable {
         AsyncThrowingStream { continuation in
             Task {
                 do {
-                    try await self.parseFile(alphabet: alphabet) { sequence in
+                    try self.parseFileSync(alphabet: alphabet) { sequence in
                         continuation.yield(sequence)
                     }
                     continuation.finish()
@@ -104,6 +120,16 @@ public final class FASTAReader: Sendable {
     ///
     /// - Returns: Array of (name, description) tuples
     public func readHeaders() async throws -> [(name: String, description: String?)] {
+        try readHeadersSync()
+    }
+
+    /// Reads only the sequence headers synchronously.
+    ///
+    /// This is much faster than reading full sequences as it skips sequence data.
+    /// For use in contexts where async is unavailable.
+    ///
+    /// - Returns: Array of (name, description) tuples
+    public func readHeadersSync() throws -> [(name: String, description: String?)] {
         var headers: [(String, String?)] = []
 
         let handle = try FileHandle(forReadingFrom: url)
@@ -132,10 +158,12 @@ public final class FASTAReader: Sendable {
 
     // MARK: - Private Implementation
 
-    private func parseFile(
+    /// Core synchronous parsing implementation. Both ``readAll(alphabet:)`` and
+    /// ``readAllSync(alphabet:)`` delegate to this method.
+    private func parseFileSync(
         alphabet: SequenceAlphabet?,
-        onSequence: @escaping (Sequence) -> Void
-    ) async throws {
+        onSequence: (Sequence) -> Void
+    ) throws {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
 

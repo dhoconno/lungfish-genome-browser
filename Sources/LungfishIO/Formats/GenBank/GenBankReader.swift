@@ -43,6 +43,9 @@ import LungfishCore
 ///
 /// // Or read all at once
 /// let allRecords = try await reader.readAll()
+///
+/// // Synchronous alternative for non-async contexts
+/// let allSync = try reader.readAllSync()
 /// ```
 public final class GenBankReader: Sendable {
     /// Internal qualifier key used to preserve the original GenBank feature key.
@@ -67,13 +70,26 @@ public final class GenBankReader: Sendable {
         self.url = url
     }
 
-    /// Reads all records from the file.
+    /// Reads all records from the file asynchronously.
     ///
     /// - Returns: Array of GenBank records
     /// - Throws: `GenBankError` if parsing fails
     public func readAll() async throws -> [GenBankRecord] {
+        // Delegate to the synchronous implementation. The caller is responsible
+        // for running off the main actor when needed.
+        try readAllSync()
+    }
+
+    /// Reads all records synchronously. For use in contexts where async is unavailable.
+    ///
+    /// This performs the same parsing as ``readAll()`` but can be called from
+    /// synchronous code (e.g., AppKit callbacks, `@objc` action methods).
+    ///
+    /// - Returns: Array of GenBank records
+    /// - Throws: `GenBankError` if parsing fails
+    public func readAllSync() throws -> [GenBankRecord] {
         var records: [GenBankRecord] = []
-        try await parseFile { record in
+        try parseFileSync { record in
             records.append(record)
         }
         return records
@@ -89,7 +105,7 @@ public final class GenBankReader: Sendable {
         AsyncThrowingStream { continuation in
             Task {
                 do {
-                    try await self.parseFile { record in
+                    try self.parseFileSync { record in
                         continuation.yield(record)
                     }
                     continuation.finish()
@@ -102,9 +118,11 @@ public final class GenBankReader: Sendable {
 
     // MARK: - Private Implementation
 
-    private func parseFile(
-        onRecord: @escaping (GenBankRecord) -> Void
-    ) async throws {
+    /// Core synchronous parsing implementation. Both ``readAll()`` and
+    /// ``readAllSync()`` delegate to this method.
+    private func parseFileSync(
+        onRecord: (GenBankRecord) -> Void
+    ) throws {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
 

@@ -124,7 +124,7 @@ extension GenomicDocument {
         }
 
         // Document type specific capabilities
-        switch documentType {
+        switch documentCategory {
         case .reference:
             caps.insert(.referenceSequence)
         case .alignment:
