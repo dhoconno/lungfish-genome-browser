@@ -1290,6 +1290,16 @@ public class ViewerViewController: NSViewController {
 
         logger.info("displayDocument: Document has \(document.sequences.count) sequences, \(document.annotations.count) annotations")
 
+        // Multi-sequence FASTA: show collection view instead of genome browser
+        if document.sequences.count > 1 {
+            logger.info("displayDocument: Multi-sequence document (\(document.sequences.count) seqs), showing collection view")
+            displayFASTACollection(
+                sequences: document.sequences,
+                annotations: document.annotations
+            )
+            return
+        }
+
         currentDocument = document
 
         // Update reference frame based on first sequence
