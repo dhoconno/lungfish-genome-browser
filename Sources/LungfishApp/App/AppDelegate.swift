@@ -3521,6 +3521,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         showDatabaseBrowser(source: .pathoplexus)
     }
 
+    @objc func showPluginManager(_ sender: Any?) {
+        PluginManagerWindowController.show()
+    }
+
     /// Shows the database browser for the specified source.
     private func showDatabaseBrowser(source: DatabaseSource) {
         guard let window = mainWindowController?.window else { return }

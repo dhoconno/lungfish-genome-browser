@@ -642,6 +642,16 @@ public final class MainMenu {
         searchDatabasesItem.submenu = searchDatabasesMenu
         toolsMenu.addItem(searchDatabasesItem)
 
+        toolsMenu.addItem(.separator())
+
+        // Plugin Manager (Cmd-Shift-B for "Bioconda")
+        let pluginItem = toolsMenu.addItem(
+            withTitle: "Plugin Manager\u{2026}",
+            action: #selector(ToolsMenuActions.showPluginManager(_:)),
+            keyEquivalent: "b"
+        )
+        pluginItem.keyEquivalentModifierMask = [.command, .shift]
+
         toolsMenuItem.submenu = toolsMenu
         return toolsMenuItem
     }
@@ -847,6 +857,8 @@ public final class MainMenu {
     func searchNCBI(_ sender: Any?)
     func searchSRA(_ sender: Any?)
     func searchPathoplexus(_ sender: Any?)
+    /// Opens the Plugin Manager window for browsing and installing bioconda tools.
+    func showPluginManager(_ sender: Any?)
 }
 
 /// Operations menu action handlers.
