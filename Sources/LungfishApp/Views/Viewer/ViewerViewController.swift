@@ -1090,6 +1090,9 @@ public class ViewerViewController: NSViewController {
         let controller = FASTACollectionViewController()
         addChild(controller)
 
+        // Hide annotation drawer so it doesn't overlap the collection view
+        annotationDrawerView?.isHidden = true
+
         let dashView = controller.view
         dashView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(dashView)
@@ -1174,18 +1177,23 @@ public class ViewerViewController: NSViewController {
         enhancedRulerView.isHidden = false
         viewerView.isHidden = false
         statusBar.isHidden = false
+        annotationDrawerView?.isHidden = false
     }
 
     // MARK: - Collection Back Button
 
     private var collectionBackButton: NSButton?
 
-    /// Shows a "Back to Collection" button at the top of the viewer.
+    /// Shows a navigation bar with "Back to Collection" above the viewer content.
     private func showCollectionBackButton(
         sequences: [LungfishCore.Sequence],
         annotations: [SequenceAnnotation]
     ) {
         hideCollectionBackButton()
+
+        // Create a thin navigation bar that sits above the viewer content
+        let navBar = NSView()
+        navBar.translatesAutoresizingMaskIntoConstraints = false
 
         let button = NSButton()
         button.translatesAutoresizingMaskIntoConstraints = false
@@ -1196,26 +1204,48 @@ public class ViewerViewController: NSViewController {
         button.font = .systemFont(ofSize: 12, weight: .medium)
         button.target = self
         button.action = #selector(collectionBackButtonTapped(_:))
-        view.addSubview(button)
 
+        // Separator line at bottom of nav bar
+        let separator = NSBox()
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        separator.boxType = .separator
+
+        navBar.addSubview(button)
+        navBar.addSubview(separator)
+        view.addSubview(navBar)
+
+        // Position nav bar at the very top of the safe area, pushing content down
+        // by adjusting the enhanced ruler's top constraint
         NSLayoutConstraint.activate([
-            button.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
-            button.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 4),
+            navBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            navBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            navBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            navBar.heightAnchor.constraint(equalToConstant: 28),
+
+            button.leadingAnchor.constraint(equalTo: navBar.leadingAnchor, constant: 6),
+            button.centerYAnchor.constraint(equalTo: navBar.centerYAnchor),
+
+            separator.leadingAnchor.constraint(equalTo: navBar.leadingAnchor),
+            separator.trailingAnchor.constraint(equalTo: navBar.trailingAnchor),
+            separator.bottomAnchor.constraint(equalTo: navBar.bottomAnchor),
         ])
 
         // Store the collection data so we can return to it
         collectionBackSequences = sequences
         collectionBackAnnotations = annotations
         collectionBackButton = button
+        collectionNavBar = navBar
     }
 
     private func hideCollectionBackButton() {
-        collectionBackButton?.removeFromSuperview()
+        collectionNavBar?.removeFromSuperview()
+        collectionNavBar = nil
         collectionBackButton = nil
         collectionBackSequences = nil
         collectionBackAnnotations = nil
     }
 
+    private var collectionNavBar: NSView?
     private var collectionBackSequences: [LungfishCore.Sequence]?
     private var collectionBackAnnotations: [SequenceAnnotation]?
 

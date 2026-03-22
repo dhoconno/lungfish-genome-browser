@@ -42,9 +42,15 @@ public final class FASTACollectionViewController: NSViewController,
     /// Invoked when the user double-clicks a sequence or presses "Open in Browser".
     public var onOpenSequence: ((LungfishCore.Sequence, [SequenceAnnotation]) -> Void)?
 
+    // MARK: - Filter State
+
+    private var filterText: String = ""
+
     // MARK: - UI Components
 
     private let summaryBar = FASTACollectionSummaryBar()
+    private let searchField = NSSearchField()
+    private let countLabel = NSTextField(labelWithString: "")
     private let scrollView = NSScrollView()
     private let tableView = NSTableView()
     private let emptyStateLabel = NSTextField(labelWithString: "")
@@ -61,6 +67,7 @@ public final class FASTACollectionViewController: NSViewController,
         view = container
 
         setupSummaryBar()
+        setupSearchBar()
         setupTableView()
         setupDetailPanel()
         setupEmptyState()
@@ -109,6 +116,7 @@ public final class FASTACollectionViewController: NSViewController,
         detailPanel.isHidden = true
 
         tableView.reloadData()
+        updateCountLabel()
 
         logger.info("Configured with \(sequences.count) sequences, \(totalAnnotations) annotations")
     }
@@ -118,6 +126,64 @@ public final class FASTACollectionViewController: NSViewController,
     private func setupSummaryBar() {
         summaryBar.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(summaryBar)
+    }
+
+    // MARK: - Setup: Search Bar
+
+    private func setupSearchBar() {
+        let searchBar = NSView()
+        searchBar.translatesAutoresizingMaskIntoConstraints = false
+        searchBar.identifier = NSUserInterfaceItemIdentifier("searchBar")
+        view.addSubview(searchBar)
+
+        searchField.translatesAutoresizingMaskIntoConstraints = false
+        searchField.placeholderString = "Filter sequences by name or description\u{2026}"
+        searchField.sendsSearchStringImmediately = true
+        searchField.target = self
+        searchField.action = #selector(searchFieldChanged(_:))
+        searchBar.addSubview(searchField)
+
+        countLabel.translatesAutoresizingMaskIntoConstraints = false
+        countLabel.font = .systemFont(ofSize: 11)
+        countLabel.textColor = .secondaryLabelColor
+        countLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        searchBar.addSubview(countLabel)
+
+        NSLayoutConstraint.activate([
+            searchField.leadingAnchor.constraint(equalTo: searchBar.leadingAnchor, constant: 8),
+            searchField.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
+            searchField.trailingAnchor.constraint(equalTo: countLabel.leadingAnchor, constant: -8),
+
+            countLabel.trailingAnchor.constraint(equalTo: searchBar.trailingAnchor, constant: -8),
+            countLabel.centerYAnchor.constraint(equalTo: searchBar.centerYAnchor),
+        ])
+    }
+
+    @objc private func searchFieldChanged(_ sender: NSSearchField) {
+        filterText = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        applyFilter()
+    }
+
+    private func applyFilter() {
+        if filterText.isEmpty {
+            displayedSequences = sequences
+        } else {
+            let query = filterText.lowercased()
+            displayedSequences = sequences.filter { seq in
+                seq.name.lowercased().contains(query)
+                || (seq.description?.lowercased().contains(query) ?? false)
+            }
+        }
+        tableView.reloadData()
+        updateCountLabel()
+    }
+
+    private func updateCountLabel() {
+        if filterText.isEmpty {
+            countLabel.stringValue = "\(sequences.count) sequences"
+        } else {
+            countLabel.stringValue = "\(displayedSequences.count) of \(sequences.count)"
+        }
     }
 
     // MARK: - Setup: Table View
@@ -150,7 +216,7 @@ public final class FASTACollectionViewController: NSViewController,
         tableView.delegate = self
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.rowHeight = 24
-        tableView.allowsMultipleSelection = false
+        tableView.allowsMultipleSelection = true
         tableView.headerView = NSTableHeaderView()
         tableView.style = .plain
         tableView.doubleAction = #selector(tableDoubleClicked(_:))
@@ -247,6 +313,10 @@ public final class FASTACollectionViewController: NSViewController,
     // MARK: - Layout
 
     private func layoutSubviews() {
+        guard let searchBarView = view.subviews.first(where: {
+            $0.identifier == NSUserInterfaceItemIdentifier("searchBar")
+        }) else { return }
+
         NSLayoutConstraint.activate([
             // Summary bar (top, below safe area to avoid overlapping title bar)
             summaryBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -254,14 +324,20 @@ public final class FASTACollectionViewController: NSViewController,
             summaryBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             summaryBar.heightAnchor.constraint(equalToConstant: 48),
 
+            // Search bar (below summary)
+            searchBarView.topAnchor.constraint(equalTo: summaryBar.bottomAnchor),
+            searchBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            searchBarView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            searchBarView.heightAnchor.constraint(equalToConstant: 30),
+
             // Detail panel (bottom, fixed height)
             detailPanel.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             detailPanel.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             detailPanel.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             detailPanel.heightAnchor.constraint(equalToConstant: 80),
 
-            // Table (middle, fills remaining space)
-            scrollView.topAnchor.constraint(equalTo: summaryBar.bottomAnchor),
+            // Table (middle, fills remaining space between search bar and detail)
+            scrollView.topAnchor.constraint(equalTo: searchBarView.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: detailPanel.topAnchor),
