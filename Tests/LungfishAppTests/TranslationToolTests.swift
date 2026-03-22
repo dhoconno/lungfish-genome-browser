@@ -258,7 +258,7 @@ final class TranslationToolConfigurationTests: XCTestCase {
 
     func testAllCodonTablesAccessible() {
         let tables = CodonTable.allTables
-        XCTAssertEqual(tables.count, 4)
+        XCTAssertEqual(tables.count, 7)
 
         for table in tables {
             let config = TranslationToolConfiguration(

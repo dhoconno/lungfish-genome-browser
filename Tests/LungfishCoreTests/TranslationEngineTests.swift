@@ -118,7 +118,7 @@ final class TranslationEngineTests: XCTestCase {
     }
 
     func testAllTablesCount() {
-        XCTAssertEqual(CodonTable.allTables.count, 4)
+        XCTAssertEqual(CodonTable.allTables.count, 7)
     }
 
     // MARK: - Reverse Complement

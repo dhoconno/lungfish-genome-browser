@@ -10,6 +10,7 @@ import Foundation
 /// Provides headless access to Lungfish functionality for:
 /// - File format conversion
 /// - Sequence analysis and statistics
+/// - Sequence translation, search, and extraction
 /// - Workflow execution via Apple Containerization
 /// - Debugging and troubleshooting
 @main
@@ -31,6 +32,9 @@ struct LungfishCLI: AsyncParsableCommand {
         subcommands: [
             ConvertCommand.self,
             AnalyzeCommand.self,
+            TranslateCommand.self,
+            SearchCommand.self,
+            ExtractCommand.self,
             FastqCommand.self,
             WorkflowCommand.self,
             FetchCommand.self,

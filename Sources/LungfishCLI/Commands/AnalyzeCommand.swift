@@ -14,6 +14,7 @@ struct AnalyzeCommand: AsyncParsableCommand {
         abstract: "Analyze sequences and generate statistics",
         subcommands: [
             StatsSubcommand.self,
+            CompositionSubcommand.self,
             FileValidateSubcommand.self,
         ],
         defaultSubcommand: StatsSubcommand.self

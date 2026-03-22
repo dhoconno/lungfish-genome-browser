@@ -32,15 +32,6 @@ public struct CodonTable: Sendable {
         startCodons: ["ATG", "ATA", "ATC", "ATT", "GTG"]
     )
 
-    /// Bacterial/Archaeal/Plant Plastid (Table 11)
-    public static let bacterial = CodonTable(
-        id: 11,
-        name: "Bacterial, Archaeal and Plant Plastid",
-        shortName: "bacterial",
-        translations: standardTranslations,  // Same as standard but different starts
-        startCodons: ["ATG", "GTG", "TTG"]
-    )
-
     /// Yeast Mitochondrial (Table 3)
     public static let yeastMitochondrial = CodonTable(
         id: 3,
@@ -50,7 +41,49 @@ public struct CodonTable: Sendable {
         startCodons: ["ATG", "ATA"]
     )
 
-    public init(id: Int, name: String, shortName: String, translations: [String: Character], startCodons: Set<String>) {
+    /// Mold, Protozoan, and Coelenterate Mitochondrial (Table 4)
+    public static let moldMitochondrial = CodonTable(
+        id: 4,
+        name: "Mold, Protozoan, and Coelenterate Mitochondrial",
+        shortName: "mold_mito",
+        translations: moldMitoTranslations,
+        startCodons: ["ATG", "TTA", "TTG", "CTG", "ATA", "ATT", "ATC", "GTG"]
+    )
+
+    /// Invertebrate Mitochondrial (Table 5)
+    public static let invertebrateMitochondrial = CodonTable(
+        id: 5,
+        name: "Invertebrate Mitochondrial",
+        shortName: "invertebrate_mito",
+        translations: invertebrateMitoTranslations,
+        startCodons: ["ATG", "ATA", "ATC", "ATT", "GTG", "TTG"]
+    )
+
+    /// Ciliate, Dasycladacean, and Hexamita Nuclear (Table 6)
+    public static let ciliate = CodonTable(
+        id: 6,
+        name: "Ciliate, Dasycladacean, and Hexamita Nuclear",
+        shortName: "ciliate",
+        translations: ciliateTranslations,
+        startCodons: ["ATG"]
+    )
+
+    /// Bacterial/Archaeal/Plant Plastid (Table 11)
+    public static let bacterial = CodonTable(
+        id: 11,
+        name: "Bacterial, Archaeal and Plant Plastid",
+        shortName: "bacterial",
+        translations: standardTranslations, // Same as standard but different starts
+        startCodons: ["ATG", "GTG", "TTG"]
+    )
+
+    public init(
+        id: Int,
+        name: String,
+        shortName: String,
+        translations: [String: Character],
+        startCodons: Set<String>
+    ) {
         self.id = id
         self.name = name
         self.shortName = shortName
@@ -77,7 +110,15 @@ public struct CodonTable: Sendable {
 
     /// All available codon tables.
     public static var allTables: [CodonTable] {
-        [standard, vertebrateMitochondrial, bacterial, yeastMitochondrial]
+        [
+            standard,
+            vertebrateMitochondrial,
+            yeastMitochondrial,
+            moldMitochondrial,
+            invertebrateMitochondrial,
+            ciliate,
+            bacterial
+        ]
     }
 
     /// Returns a table by name.
@@ -114,20 +155,48 @@ private let standardTranslations: [String: Character] = [
 
 private let vertebrateMitoTranslations: [String: Character] = {
     var table = standardTranslations
-    table["AGA"] = "*"  // Stop instead of Arg
-    table["AGG"] = "*"  // Stop instead of Arg
-    table["ATA"] = "M"  // Met instead of Ile
-    table["TGA"] = "W"  // Trp instead of Stop
+    table["AGA"] = "*" // Stop instead of Arg
+    table["AGG"] = "*" // Stop instead of Arg
+    table["ATA"] = "M" // Met instead of Ile
+    table["TGA"] = "W" // Trp instead of Stop
     return table
 }()
 
 private let yeastMitoTranslations: [String: Character] = {
     var table = standardTranslations
-    table["CTA"] = "T"  // Thr instead of Leu
-    table["CTC"] = "T"  // Thr instead of Leu
-    table["CTG"] = "T"  // Thr instead of Leu
-    table["CTT"] = "T"  // Thr instead of Leu
-    table["TGA"] = "W"  // Trp instead of Stop
-    table["ATA"] = "M"  // Met instead of Ile
+    table["CTA"] = "T" // Thr instead of Leu
+    table["CTC"] = "T" // Thr instead of Leu
+    table["CTG"] = "T" // Thr instead of Leu
+    table["CTT"] = "T" // Thr instead of Leu
+    table["TGA"] = "W" // Trp instead of Stop
+    table["ATA"] = "M" // Met instead of Ile
+    return table
+}()
+
+/// Mold, Protozoan, and Coelenterate Mitochondrial (NCBI Table 4)
+/// Difference from standard: TGA = Trp instead of Stop
+private let moldMitoTranslations: [String: Character] = {
+    var table = standardTranslations
+    table["TGA"] = "W" // Trp instead of Stop
+    return table
+}()
+
+/// Invertebrate Mitochondrial (NCBI Table 5)
+/// Differences from standard: TGA=Trp, AGA=Ser, AGG=Ser, ATA=Met
+private let invertebrateMitoTranslations: [String: Character] = {
+    var table = standardTranslations
+    table["TGA"] = "W" // Trp instead of Stop
+    table["AGA"] = "S" // Ser instead of Arg
+    table["AGG"] = "S" // Ser instead of Arg
+    table["ATA"] = "M" // Met instead of Ile
+    return table
+}()
+
+/// Ciliate, Dasycladacean, and Hexamita Nuclear (NCBI Table 6)
+/// Differences from standard: TAA=Gln, TAG=Gln (standard stop codons become Gln)
+private let ciliateTranslations: [String: Character] = {
+    var table = standardTranslations
+    table["TAA"] = "Q" // Gln instead of Stop
+    table["TAG"] = "Q" // Gln instead of Stop
     return table
 }()
