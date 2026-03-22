@@ -1082,6 +1082,29 @@ public class ViewerViewController: NSViewController {
         sequences: [LungfishCore.Sequence],
         annotations: [SequenceAnnotation]
     ) {
+        displayFASTACollection(
+            sequences: sequences,
+            annotations: annotations,
+            sourceNames: [:]
+        )
+    }
+
+    /// Displays a FASTA collection view with sequences from multiple source documents.
+    ///
+    /// When `sourceNames` is non-empty, the collection table shows a "Source" column
+    /// indicating which file each sequence came from. The summary bar also reflects
+    /// the number of source files.
+    ///
+    /// - Parameters:
+    ///   - sequences: Combined sequences from all selected documents.
+    ///   - annotations: Combined annotations from all selected documents.
+    ///   - sourceNames: Maps sequence IDs to source file names. Pass empty for
+    ///                  single-document display.
+    public func displayFASTACollection(
+        sequences: [LungfishCore.Sequence],
+        annotations: [SequenceAnnotation],
+        sourceNames: [UUID: String]
+    ) {
         hideQuickLookPreview()
         hideFASTQDatasetView()
         hideVCFDatasetView()
@@ -1104,10 +1127,15 @@ public class ViewerViewController: NSViewController {
             dashView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
 
-        controller.configure(sequences: sequences, annotations: annotations)
+        controller.configure(
+            sequences: sequences,
+            annotations: annotations,
+            sourceNames: sourceNames
+        )
         // Store collection data so we can return to it via the back button
         let allSequences = sequences
         let allAnnotations = annotations
+        let allSourceNames = sourceNames
 
         controller.onOpenSequence = { [weak self] sequence, sequenceAnnotations in
             guard let self else { return }
@@ -1144,7 +1172,8 @@ public class ViewerViewController: NSViewController {
             // Add "Back to Collection" button above the viewer
             self.showCollectionBackButton(
                 sequences: allSequences,
-                annotations: allAnnotations
+                annotations: allAnnotations,
+                sourceNames: allSourceNames
             )
 
             self.viewerView.needsDisplay = true
@@ -1187,7 +1216,8 @@ public class ViewerViewController: NSViewController {
     /// Shows a navigation bar with "Back to Collection" above the viewer content.
     private func showCollectionBackButton(
         sequences: [LungfishCore.Sequence],
-        annotations: [SequenceAnnotation]
+        annotations: [SequenceAnnotation],
+        sourceNames: [UUID: String] = [:]
     ) {
         hideCollectionBackButton()
 
@@ -1233,6 +1263,7 @@ public class ViewerViewController: NSViewController {
         // Store the collection data so we can return to it
         collectionBackSequences = sequences
         collectionBackAnnotations = annotations
+        collectionBackSourceNames = sourceNames
         collectionBackButton = button
         collectionNavBar = navBar
     }
@@ -1243,17 +1274,24 @@ public class ViewerViewController: NSViewController {
         collectionBackButton = nil
         collectionBackSequences = nil
         collectionBackAnnotations = nil
+        collectionBackSourceNames = nil
     }
 
     private var collectionNavBar: NSView?
     private var collectionBackSequences: [LungfishCore.Sequence]?
     private var collectionBackAnnotations: [SequenceAnnotation]?
+    private var collectionBackSourceNames: [UUID: String]?
 
     @objc private func collectionBackButtonTapped(_ sender: Any?) {
         guard let sequences = collectionBackSequences,
               let annotations = collectionBackAnnotations else { return }
+        let sourceNames = collectionBackSourceNames ?? [:]
         hideCollectionBackButton()
-        displayFASTACollection(sequences: sequences, annotations: annotations)
+        displayFASTACollection(
+            sequences: sequences,
+            annotations: annotations,
+            sourceNames: sourceNames
+        )
     }
 
     /// Invalidates the offscreen annotation tile so it will be re-rendered

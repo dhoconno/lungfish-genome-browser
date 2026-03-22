@@ -17,6 +17,10 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "FASTACollect
 /// sequences in the middle, and a detail panel at the bottom showing feature
 /// breakdowns and an "Open in Browser" action.
 ///
+/// When displaying sequences from multiple source documents (via multi-selection
+/// in the sidebar), a "Source" column appears showing which file each sequence
+/// originated from.
+///
 /// Follows the same child-VC pattern as ``FASTQDatasetViewController`` and
 /// ``VCFDatasetViewController``.
 @MainActor
@@ -28,6 +32,16 @@ public final class FASTACollectionViewController: NSViewController,
     private var sequences: [LungfishCore.Sequence] = []
     private var displayedSequences: [LungfishCore.Sequence] = []
     private var annotationsBySequence: [String: [SequenceAnnotation]] = [:]
+
+    /// Source file names keyed by sequence ID.
+    ///
+    /// When sequences come from multiple documents (multi-select), this maps
+    /// each sequence to the name of the file it was loaded from. Empty when
+    /// displaying a single document.
+    private var sourceNames: [UUID: String] = [:]
+
+    /// Whether the view is showing sequences from multiple source documents.
+    private var isMultiSource: Bool { !sourceNames.isEmpty }
 
     /// Cached GC percentages keyed by sequence ID to avoid recomputation.
     private var gcCache: [UUID: Double] = [:]
@@ -88,8 +102,37 @@ public final class FASTACollectionViewController: NSViewController,
         sequences: [LungfishCore.Sequence],
         annotations: [SequenceAnnotation]
     ) {
+        configure(sequences: sequences, annotations: annotations, sourceNames: [:])
+    }
+
+    /// Configures the collection view with sequences from multiple source documents.
+    ///
+    /// When `sourceNames` is non-empty, a "Source" column appears in the table
+    /// showing which file each sequence originated from. The summary bar also
+    /// shows the number of source files.
+    ///
+    /// - Parameters:
+    ///   - sequences: Combined sequences from all selected documents.
+    ///   - annotations: Combined annotations from all selected documents.
+    ///   - sourceNames: Maps sequence IDs to the source file name they came from.
+    ///                  Pass an empty dictionary for single-document display.
+    public func configure(
+        sequences: [LungfishCore.Sequence],
+        annotations: [SequenceAnnotation],
+        sourceNames: [UUID: String]
+    ) {
         self.sequences = sequences
         self.displayedSequences = sequences
+
+        let wasMultiSource = isMultiSource
+        self.sourceNames = sourceNames
+
+        // Add or remove the Source column based on multi-source state
+        if isMultiSource && !wasMultiSource {
+            insertSourceColumn()
+        } else if !isMultiSource && wasMultiSource {
+            removeSourceColumn()
+        }
 
         // Group annotations by chromosome/sequence name
         var grouped: [String: [SequenceAnnotation]] = [:]
@@ -106,7 +149,27 @@ public final class FASTACollectionViewController: NSViewController,
         }
 
         let totalAnnotations = annotations.count
-        summaryBar.update(sequences: sequences, annotationCount: totalAnnotations, gcCache: gcCache)
+        let sourceCount = isMultiSource ? Set(sourceNames.values).count : 0
+        summaryBar.update(
+            sequences: sequences,
+            annotationCount: totalAnnotations,
+            gcCache: gcCache,
+            sourceFileCount: sourceCount
+        )
+
+        // Update search placeholder for multi-source mode
+        if isMultiSource {
+            searchField.placeholderString = "Filter sequences by name, description, or source\u{2026}"
+        } else {
+            searchField.placeholderString = "Filter sequences by name or description\u{2026}"
+        }
+
+        // Update empty state message
+        if isMultiSource {
+            emptyStateLabel.stringValue = "No sequences found in the selected documents."
+        } else {
+            emptyStateLabel.stringValue = "No sequences found in this FASTA file."
+        }
 
         applySortOrder()
 
@@ -118,7 +181,11 @@ public final class FASTACollectionViewController: NSViewController,
         tableView.reloadData()
         updateCountLabel()
 
-        logger.info("Configured with \(sequences.count) sequences, \(totalAnnotations) annotations")
+        if isMultiSource {
+            logger.info("Configured with \(sequences.count) sequences from \(sourceCount) files, \(totalAnnotations) annotations")
+        } else {
+            logger.info("Configured with \(sequences.count) sequences, \(totalAnnotations) annotations")
+        }
     }
 
     // MARK: - Setup: Summary Bar
@@ -172,15 +239,22 @@ public final class FASTACollectionViewController: NSViewController,
             displayedSequences = sequences.filter { seq in
                 seq.name.lowercased().contains(query)
                 || (seq.description?.lowercased().contains(query) ?? false)
+                || (sourceNames[seq.id]?.lowercased().contains(query) ?? false)
             }
         }
+        applySortOrder()
         tableView.reloadData()
         updateCountLabel()
     }
 
     private func updateCountLabel() {
         if filterText.isEmpty {
-            countLabel.stringValue = "\(sequences.count) sequences"
+            if isMultiSource {
+                let fileCount = Set(sourceNames.values).count
+                countLabel.stringValue = "\(sequences.count) sequences from \(fileCount) files"
+            } else {
+                countLabel.stringValue = "\(sequences.count) sequences"
+            }
         } else {
             countLabel.stringValue = "\(displayedSequences.count) of \(sequences.count)"
         }
@@ -227,6 +301,34 @@ public final class FASTACollectionViewController: NSViewController,
         scrollView.hasHorizontalScroller = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(scrollView)
+    }
+
+    /// Inserts the "Source" column after "Name" when showing multi-document sequences.
+    private func insertSourceColumn() {
+        let sourceID = NSUserInterfaceItemIdentifier("source")
+        // Guard against duplicate insertion
+        guard tableView.tableColumn(withIdentifier: sourceID) == nil else { return }
+
+        let column = NSTableColumn(identifier: sourceID)
+        column.title = "Source"
+        column.width = 140
+        column.minWidth = 60
+        column.sortDescriptorPrototype = NSSortDescriptor(key: "source", ascending: true)
+
+        // Insert after the "name" column (index 0)
+        let insertIndex = 1
+        tableView.addTableColumn(column)
+        if tableView.numberOfColumns > insertIndex + 1 {
+            tableView.moveColumn(tableView.numberOfColumns - 1, toColumn: insertIndex)
+        }
+    }
+
+    /// Removes the "Source" column when returning to single-document display.
+    private func removeSourceColumn() {
+        let sourceID = NSUserInterfaceItemIdentifier("source")
+        if let column = tableView.tableColumn(withIdentifier: sourceID) {
+            tableView.removeTableColumn(column)
+        }
     }
 
     // MARK: - Setup: Detail Panel
@@ -366,11 +468,12 @@ public final class FASTACollectionViewController: NSViewController,
 
     private func applySortOrder() {
         guard !sortKey.isEmpty else {
-            displayedSequences = sequences
+            // When filtering, displayedSequences is already filtered; only re-sort
+            // the current displayed set rather than resetting to all sequences
             return
         }
 
-        displayedSequences = sequences.sorted { a, b in
+        displayedSequences.sort { a, b in
             let result: Bool
             switch sortKey {
             case "name":
@@ -387,6 +490,10 @@ public final class FASTACollectionViewController: NSViewController,
                 let gcA = gcCache[a.id] ?? 0
                 let gcB = gcCache[b.id] ?? 0
                 result = gcA < gcB
+            case "source":
+                let srcA = sourceNames[a.id] ?? ""
+                let srcB = sourceNames[b.id] ?? ""
+                result = srcA.localizedStandardCompare(srcB) == .orderedAscending
             default:
                 return false
             }
@@ -462,7 +569,12 @@ public final class FASTACollectionViewController: NSViewController,
         let seq = displayedSequences[selectedRow]
         let annotations = annotationsBySequence[seq.name] ?? []
 
-        detailNameLabel.stringValue = seq.name
+        // Show source file in the detail panel name when in multi-source mode
+        if let source = sourceNames[seq.id] {
+            detailNameLabel.stringValue = "\(seq.name)  \u{2014}  \(source)"
+        } else {
+            detailNameLabel.stringValue = seq.name
+        }
         detailDescLabel.stringValue = seq.description ?? "No description"
 
         if annotations.isEmpty {
@@ -524,11 +636,17 @@ public final class FASTACollectionViewController: NSViewController,
 
         textField.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         textField.textColor = .labelColor
+        textField.alignment = .left
 
         switch identifier.rawValue {
         case "name":
             textField.stringValue = seq.name
             textField.font = .systemFont(ofSize: 11, weight: .medium)
+
+        case "source":
+            textField.stringValue = sourceNames[seq.id] ?? ""
+            textField.textColor = .secondaryLabelColor
+            textField.font = .systemFont(ofSize: 11, weight: .regular)
 
         case "length":
             textField.stringValue = GenomicSummaryCardBar.formatBases(seq.length)
@@ -616,6 +734,8 @@ public final class FASTACollectionViewController: NSViewController,
 /// Summary card bar for the FASTA collection view.
 ///
 /// Displays: Sequences, Total Length, Annotations, GC%, Shortest, Longest.
+/// When showing sequences from multiple source files, also displays a "Sources"
+/// card with the file count.
 @MainActor
 final class FASTACollectionSummaryBar: GenomicSummaryCardBar {
 
@@ -627,22 +747,26 @@ final class FASTACollectionSummaryBar: GenomicSummaryCardBar {
     private var meanGCPercent: Double = 0
     private var shortestLength: Int = 0
     private var longestLength: Int = 0
+    private var sourceFileCount: Int = 0
 
     // MARK: - Update
 
     /// Recomputes summary statistics from the provided sequences.
     ///
     /// - Parameters:
-    ///   - sequences: All sequences in the FASTA file.
+    ///   - sequences: All sequences in the collection.
     ///   - annotationCount: Total number of annotations across all sequences.
     ///   - gcCache: Pre-computed GC percentages keyed by sequence ID.
+    ///   - sourceFileCount: Number of distinct source files (0 for single-document).
     func update(
         sequences: [LungfishCore.Sequence],
         annotationCount: Int,
-        gcCache: [UUID: Double]
+        gcCache: [UUID: Double],
+        sourceFileCount: Int = 0
     ) {
         self.sequenceCount = sequences.count
         self.annotationCount = annotationCount
+        self.sourceFileCount = sourceFileCount
 
         if sequences.isEmpty {
             totalLength = 0
@@ -675,13 +799,25 @@ final class FASTACollectionSummaryBar: GenomicSummaryCardBar {
     // MARK: - Cards
 
     override var cards: [Card] {
-        [
+        var result = [
             Card(label: "Sequences", value: GenomicSummaryCardBar.formatCount(sequenceCount)),
+        ]
+
+        // Show "Sources" card when combining multiple documents
+        if sourceFileCount > 0 {
+            result.append(
+                Card(label: "Sources", value: "\(sourceFileCount) files")
+            )
+        }
+
+        result.append(contentsOf: [
             Card(label: "Total Length", value: GenomicSummaryCardBar.formatBases(totalLength)),
             Card(label: "Annotations", value: GenomicSummaryCardBar.formatCount(annotationCount)),
             Card(label: "GC Content", value: String(format: "%.1f%%", meanGCPercent)),
             Card(label: "Shortest", value: GenomicSummaryCardBar.formatBases(shortestLength)),
             Card(label: "Longest", value: GenomicSummaryCardBar.formatBases(longestLength)),
-        ]
+        ])
+
+        return result
     }
 }

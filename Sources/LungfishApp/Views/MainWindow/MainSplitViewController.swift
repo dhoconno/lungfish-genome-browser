@@ -341,6 +341,14 @@ public class MainSplitViewController: NSSplitViewController {
         let itemNames = displayableItems.map { $0.title }.joined(separator: ", ")
         logger.info("handleMultipleItemsSelected: Processing \(displayableItems.count) items: [\(itemNames, privacy: .public)]")
 
+        // Cancel any in-flight FASTQ load since we are switching to multi-select
+        cancelFASTQLoadIfNeeded(hideProgress: true, reason: "multi-select")
+
+        // Clear bundle display so collection view is unobstructed
+        viewerController.clearBundleDisplay()
+        viewerController.hideFASTACollectionView()
+        viewerController.hideCollectionBackButton()
+
         // Categorize documents: fully loaded, placeholders (need lazy load), or unregistered
         var fullyLoadedDocuments: [LoadedDocument] = []
         var placeholderDocuments: [(LoadedDocument, URL, DocumentType)] = []
@@ -405,17 +413,55 @@ public class MainSplitViewController: NSSplitViewController {
 
                 self.viewerController.hideProgress()
 
-                // Display all documents with multi-sequence stacking
-                if !loadedDocs.isEmpty {
-                    self.viewerController.displayDocuments(loadedDocs)
-                    logger.info("handleMultipleItemsSelected: Displayed \(loadedDocs.count) documents with multi-sequence stacking")
-                }
+                // Display combined sequences from all documents in the collection view
+                self.displayMultiDocumentCollection(loadedDocs)
             }
         } else if !fullyLoadedDocuments.isEmpty {
             // All documents already loaded, display immediately
-            viewerController.displayDocuments(fullyLoadedDocuments)
-            logger.info("handleMultipleItemsSelected: Displayed \(fullyLoadedDocuments.count) already-loaded documents")
+            displayMultiDocumentCollection(fullyLoadedDocuments)
         }
+    }
+
+    /// Combines sequences from multiple documents and displays them in a
+    /// ``FASTACollectionViewController`` with source file attribution.
+    ///
+    /// Each sequence is tagged with the name of the document it came from,
+    /// allowing the user to see the origin of every sequence in the collection.
+    ///
+    /// - Parameter documents: The loaded documents to combine.
+    private func displayMultiDocumentCollection(_ documents: [LoadedDocument]) {
+        guard !documents.isEmpty else {
+            logger.warning("displayMultiDocumentCollection: No documents provided")
+            return
+        }
+
+        var allSequences: [LungfishCore.Sequence] = []
+        var allAnnotations: [SequenceAnnotation] = []
+        var sourceNames: [UUID: String] = [:]
+
+        for document in documents {
+            let sourceName = document.name
+            for seq in document.sequences {
+                sourceNames[seq.id] = sourceName
+            }
+            allSequences.append(contentsOf: document.sequences)
+            allAnnotations.append(contentsOf: document.annotations)
+            logger.debug("displayMultiDocumentCollection: Added \(document.sequences.count) sequences from '\(document.name, privacy: .public)'")
+        }
+
+        logger.info("displayMultiDocumentCollection: Total \(allSequences.count) sequences from \(documents.count) documents, \(allAnnotations.count) annotations")
+
+        guard !allSequences.isEmpty else {
+            logger.warning("displayMultiDocumentCollection: No sequences found in any document")
+            return
+        }
+
+        viewerController.displayFASTACollection(
+            sequences: allSequences,
+            annotations: allAnnotations,
+            sourceNames: sourceNames
+        )
+        logger.info("displayMultiDocumentCollection: Displayed collection with \(allSequences.count) sequences from \(documents.count) files")
     }
 
     @objc private func handleDocumentLoaded(_ notification: Notification) {
