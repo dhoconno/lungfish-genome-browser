@@ -111,7 +111,7 @@ final class CondaManagerTests: XCTestCase {
 
     func testBuiltInPacksExist() {
         XCTAssertFalse(PluginPack.builtIn.isEmpty)
-        XCTAssertGreaterThanOrEqual(PluginPack.builtIn.count, 7)
+        XCTAssertEqual(PluginPack.builtIn.count, 13, "Should have exactly 13 built-in packs")
     }
 
     func testBuiltInPacksHaveUniqueIDs() {
@@ -133,7 +133,9 @@ final class CondaManagerTests: XCTestCase {
         XCTAssertNotNil(pack)
         XCTAssertTrue(pack!.packages.contains("fastqc"))
         XCTAssertTrue(pack!.packages.contains("multiqc"))
-        XCTAssertTrue(pack!.packages.contains("fastp"))
+        XCTAssertTrue(pack!.packages.contains("trimmomatic"))
+        // fastp is a Tier 1 native tool, should NOT be in any conda pack
+        XCTAssertFalse(pack!.packages.contains("fastp"))
     }
 
     func testAlignmentPack() {
@@ -141,12 +143,109 @@ final class CondaManagerTests: XCTestCase {
         XCTAssertNotNil(pack)
         XCTAssertTrue(pack!.packages.contains("minimap2"))
         XCTAssertTrue(pack!.packages.contains("bwa-mem2"))
+        XCTAssertTrue(pack!.packages.contains("hisat2"))
     }
 
     func testMetagenomicsPack() {
         let pack = PluginPack.builtIn.first { $0.id == "metagenomics" }
         XCTAssertNotNil(pack)
+        XCTAssertTrue(pack!.packages.contains("kraken2"))
+        XCTAssertTrue(pack!.packages.contains("bracken"))
+        XCTAssertTrue(pack!.packages.contains("metaphlan"))
+        // freyja moved to wastewater-surveillance pack
+        XCTAssertFalse(pack!.packages.contains("freyja"))
+    }
+
+    func testWastewaterSurveillancePack() {
+        let pack = PluginPack.builtIn.first { $0.id == "wastewater-surveillance" }
+        XCTAssertNotNil(pack)
         XCTAssertTrue(pack!.packages.contains("freyja"))
+        XCTAssertTrue(pack!.packages.contains("ivar"))
+        XCTAssertTrue(pack!.packages.contains("pangolin"))
+        XCTAssertTrue(pack!.packages.contains("nextclade"))
+        XCTAssertTrue(pack!.packages.contains("minimap2"))
+        // Should have post-install hooks for freyja update and pangolin update
+        XCTAssertEqual(pack!.postInstallHooks.count, 2)
+        XCTAssertTrue(pack!.postInstallHooks.contains { $0.environment == "freyja" })
+        XCTAssertTrue(pack!.postInstallHooks.contains { $0.environment == "pangolin" })
+    }
+
+    func testRNASeqPack() {
+        let pack = PluginPack.builtIn.first { $0.id == "rna-seq" }
+        XCTAssertNotNil(pack)
+        XCTAssertTrue(pack!.packages.contains("star"))
+        XCTAssertTrue(pack!.packages.contains("salmon"))
+        XCTAssertTrue(pack!.packages.contains("subread"))
+        XCTAssertTrue(pack!.packages.contains("stringtie"))
+    }
+
+    func testSingleCellPack() {
+        let pack = PluginPack.builtIn.first { $0.id == "single-cell" }
+        XCTAssertNotNil(pack)
+        XCTAssertTrue(pack!.packages.contains("scanpy"))
+        XCTAssertTrue(pack!.packages.contains("scvi-tools"))
+        XCTAssertTrue(pack!.packages.contains("star"))
+    }
+
+    func testAmpliconAnalysisPack() {
+        let pack = PluginPack.builtIn.first { $0.id == "amplicon-analysis" }
+        XCTAssertNotNil(pack)
+        XCTAssertTrue(pack!.packages.contains("ivar"))
+        XCTAssertTrue(pack!.packages.contains("pangolin"))
+        XCTAssertTrue(pack!.packages.contains("nextclade"))
+        XCTAssertEqual(pack!.postInstallHooks.count, 1)
+    }
+
+    func testGenomeAnnotationPack() {
+        let pack = PluginPack.builtIn.first { $0.id == "genome-annotation" }
+        XCTAssertNotNil(pack)
+        XCTAssertTrue(pack!.packages.contains("prokka"))
+        XCTAssertTrue(pack!.packages.contains("bakta"))
+        XCTAssertTrue(pack!.packages.contains("snpeff"))
+        XCTAssertEqual(pack!.postInstallHooks.count, 1)
+        XCTAssertTrue(pack!.postInstallHooks[0].environment == "bakta")
+    }
+
+    func testDataFormatUtilsPack() {
+        let pack = PluginPack.builtIn.first { $0.id == "data-format-utils" }
+        XCTAssertNotNil(pack)
+        XCTAssertTrue(pack!.packages.contains("bedtools"))
+        XCTAssertTrue(pack!.packages.contains("picard"))
+    }
+
+    func testNoPackContainsNativeTierOneTools() {
+        // These tools are bundled natively and should NOT appear in any conda pack
+        let nativeTools = ["samtools", "bcftools", "fastp", "seqkit", "cutadapt",
+                           "pigz", "bgzip", "tabix"]
+        for pack in PluginPack.builtIn {
+            for tool in nativeTools {
+                XCTAssertFalse(pack.packages.contains(tool),
+                    "Pack '\(pack.id)' should not contain native tool '\(tool)'")
+            }
+        }
+    }
+
+    func testPostInstallHooksHaveValidStructure() {
+        for pack in PluginPack.builtIn {
+            for hook in pack.postInstallHooks {
+                XCTAssertFalse(hook.description.isEmpty,
+                    "Hook in pack '\(pack.id)' should have a description")
+                XCTAssertFalse(hook.environment.isEmpty,
+                    "Hook in pack '\(pack.id)' should have an environment")
+                XCTAssertFalse(hook.command.isEmpty,
+                    "Hook in pack '\(pack.id)' should have a command")
+                // The hook's environment must be one of the pack's packages
+                XCTAssertTrue(pack.packages.contains(hook.environment),
+                    "Hook environment '\(hook.environment)' must be a package in pack '\(pack.id)'")
+            }
+        }
+    }
+
+    func testEstimatedSizesAreSet() {
+        for pack in PluginPack.builtIn {
+            XCTAssertGreaterThan(pack.estimatedSizeMB, 0,
+                "Pack '\(pack.id)' should have a non-zero estimated size")
+        }
     }
 
     func testPluginPackCodable() throws {

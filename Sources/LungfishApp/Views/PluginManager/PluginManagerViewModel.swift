@@ -241,7 +241,7 @@ final class PluginManagerViewModel {
 
     // MARK: - Packs Tab Actions
 
-    /// Installs all packages in a plugin pack.
+    /// Installs all packages in a plugin pack, then runs post-install hooks.
     func installPack(_ pack: PluginPack) {
         installingPacks.insert(pack.id)
         packProgressMessage[pack.id] = "Preparing..."
@@ -251,6 +251,8 @@ final class PluginManagerViewModel {
                 installingPacks.remove(pack.id)
                 packProgressMessage.removeValue(forKey: pack.id)
             }
+
+            var allSucceeded = true
 
             for (index, packageName) in pack.packages.enumerated() {
                 let progressMessage = "Installing \(packageName) (\(index + 1)/\(pack.packages.count))"
@@ -268,12 +270,64 @@ final class PluginManagerViewModel {
                     )
                     logger.info("Pack '\(pack.id, privacy: .public)': installed \(packageName, privacy: .public)")
                 } catch {
+                    allSucceeded = false
                     logger.error("Pack '\(pack.id, privacy: .public)': failed to install \(packageName, privacy: .public): \(error.localizedDescription, privacy: .public)")
                     // Continue installing remaining packages
                 }
             }
 
+            // Run post-install hooks if all packages installed (or at least the
+            // environments referenced by the hooks exist).
+            if !pack.postInstallHooks.isEmpty {
+                await runPostInstallHooks(for: pack, force: allSucceeded)
+            }
+
             refreshInstalled()
+        }
+    }
+
+    /// Runs post-install hooks for a pack.
+    ///
+    /// Each hook runs a command inside its target conda environment (e.g.
+    /// `freyja update` to download lineage barcodes). Failures are logged
+    /// but do not prevent subsequent hooks from running.
+    ///
+    /// - Parameters:
+    ///   - pack: The plugin pack whose hooks to run.
+    ///   - force: If `true`, run all hooks regardless of refresh interval.
+    private func runPostInstallHooks(for pack: PluginPack, force: Bool) async {
+        for hook in pack.postInstallHooks {
+            // Verify the target environment exists before running the hook
+            guard installedEnvironmentNames.contains(hook.environment) else {
+                logger.warning("Skipping hook '\(hook.description, privacy: .public)': environment '\(hook.environment, privacy: .public)' not installed")
+                continue
+            }
+
+            guard hook.command.count >= 1 else { continue }
+            let toolName = hook.command[0]
+            let arguments = Array(hook.command.dropFirst())
+
+            packProgressMessage[pack.id] = hook.description
+
+            do {
+                let result = try await CondaManager.shared.runTool(
+                    name: toolName,
+                    arguments: arguments,
+                    environment: hook.environment,
+                    timeout: 600 // 10 minutes for database downloads
+                )
+
+                if result.exitCode == 0 {
+                    logger.info(
+                        "Hook '\(hook.description, privacy: .public)' completed successfully"
+                    )
+                } else {
+                    logger.warning("Hook '\(hook.description, privacy: .public)' exited with code \(result.exitCode): \(result.stderr, privacy: .public)")
+                }
+            } catch {
+                // Non-fatal: log and continue to next hook
+                logger.error("Hook '\(hook.description, privacy: .public)' failed: \(error.localizedDescription, privacy: .public)")
+            }
         }
     }
 

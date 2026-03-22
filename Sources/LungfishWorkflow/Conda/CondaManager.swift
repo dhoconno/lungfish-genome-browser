@@ -104,9 +104,66 @@ public struct CondaPackageInfo: Sendable, Codable, Identifiable, Hashable {
     }
 }
 
+// MARK: - PostInstallHook
+
+/// A command to run after a plugin pack is installed.
+///
+/// Post-install hooks download reference data, update databases, or perform
+/// other setup that tools need before they can function. Hooks may also be
+/// re-run periodically to keep data current.
+public struct PostInstallHook: Sendable, Codable, Hashable {
+    /// Human-readable description of what this hook does.
+    public let description: String
+
+    /// The conda environment in which to run the command.
+    public let environment: String
+
+    /// The command to execute. First element is the tool name; remaining
+    /// elements are arguments. Passed to ``CondaManager/runTool(name:arguments:environment:)``.
+    public let command: [String]
+
+    /// Whether this hook requires network access.
+    public let requiresNetwork: Bool
+
+    /// How often this hook should be re-run, in days.
+    /// `nil` means run only once at install time.
+    /// `7` means weekly, `30` monthly, `90` quarterly.
+    public let refreshIntervalDays: Int?
+
+    /// Approximate download size (human-readable, e.g. "~15 MB").
+    public let estimatedDownloadSize: String?
+
+    public init(
+        description: String,
+        environment: String,
+        command: [String],
+        requiresNetwork: Bool = true,
+        refreshIntervalDays: Int? = nil,
+        estimatedDownloadSize: String? = nil
+    ) {
+        self.description = description
+        self.environment = environment
+        self.command = command
+        self.requiresNetwork = requiresNetwork
+        self.refreshIntervalDays = refreshIntervalDays
+        self.estimatedDownloadSize = estimatedDownloadSize
+    }
+}
+
 // MARK: - PluginPack
 
-/// A curated set of tools for a specific workflow.
+/// A curated set of bioinformatics tools for a specific workflow.
+///
+/// Each pack installs one isolated conda environment per tool (not a single
+/// shared environment). The micromamba package cache is shared across all
+/// environments, so tools that appear in multiple packs are downloaded once.
+///
+/// ## Post-Install Hooks
+///
+/// Some packs require reference data downloads after tool installation.
+/// These are defined in ``postInstallHooks`` and run automatically after
+/// all packages in the pack are installed. Hooks with a non-nil
+/// ``PostInstallHook/refreshIntervalDays`` are re-run periodically.
 public struct PluginPack: Sendable, Codable, Identifiable {
     public let id: String
     public let name: String
@@ -114,74 +171,213 @@ public struct PluginPack: Sendable, Codable, Identifiable {
     public let sfSymbol: String
     public let packages: [String]
     public let category: String
+    public let postInstallHooks: [PostInstallHook]
+    public let estimatedSizeMB: Int
 
     public init(id: String, name: String, description: String,
-                sfSymbol: String, packages: [String], category: String) {
+                sfSymbol: String, packages: [String], category: String,
+                postInstallHooks: [PostInstallHook] = [],
+                estimatedSizeMB: Int = 0) {
         self.id = id
         self.name = name
         self.description = description
         self.sfSymbol = sfSymbol
         self.packages = packages
         self.category = category
+        self.postInstallHooks = postInstallHooks
+        self.estimatedSizeMB = estimatedSizeMB
     }
 
-    /// Built-in plugin packs.
+    /// All 13 built-in plugin packs covering major bioinformatics workflows.
+    ///
+    /// Tools already bundled natively (samtools, bcftools, fastp, seqkit,
+    /// cutadapt, pigz, BBTools, bgzip, tabix) are NOT included in any pack.
+    /// They are always available as Tier 1 tools.
+    ///
+    /// Tools that appear in multiple packs share a single conda environment.
+    /// The ``CondaManager/install(packages:environment:)`` method skips
+    /// creation if the environment already exists.
     public static let builtIn: [PluginPack] = [
+        // MARK: Quality Control
         PluginPack(
             id: "illumina-qc",
             name: "Illumina QC",
-            description: "Quality control for Illumina sequencing data",
+            description: "Quality control and reporting for Illumina short-read sequencing data",
             sfSymbol: "waveform.badge.magnifyingglass",
-            packages: ["fastqc", "multiqc", "fastp", "trimmomatic"],
-            category: "Quality Control"
+            packages: ["fastqc", "multiqc", "trimmomatic"],
+            category: "Quality Control",
+            estimatedSizeMB: 1000
         ),
+
+        // MARK: Alignment
         PluginPack(
             id: "alignment",
             name: "Alignment",
-            description: "Short and long read alignment tools",
+            description: "Map short and long reads to reference genomes",
             sfSymbol: "arrow.left.and.right.text.vertical",
-            packages: ["bwa-mem2", "minimap2", "bowtie2"],
-            category: "Alignment"
+            packages: ["bwa-mem2", "minimap2", "bowtie2", "hisat2"],
+            category: "Alignment",
+            estimatedSizeMB: 220
         ),
+
+        // MARK: Variant Calling
         PluginPack(
             id: "variant-calling",
             name: "Variant Calling",
-            description: "Variant detection and genotyping",
+            description: "Discover SNPs, indels, and structural variants from aligned reads",
             sfSymbol: "diamond.fill",
-            packages: ["freebayes", "bcftools", "lofreq"],
-            category: "Variant Calling"
+            packages: ["freebayes", "lofreq", "gatk4", "ivar"],
+            category: "Variant Calling",
+            estimatedSizeMB: 850
         ),
+
+        // MARK: Assembly
         PluginPack(
             id: "assembly",
             name: "Genome Assembly",
-            description: "De novo genome assembly tools",
+            description: "De novo genome assembly from short and long reads",
             sfSymbol: "puzzlepiece.extension.fill",
-            packages: ["spades", "flye", "megahit"],
-            category: "Assembly"
+            packages: ["spades", "megahit", "flye", "quast"],
+            category: "Assembly",
+            estimatedSizeMB: 950
         ),
+
+        // MARK: Phylogenetics
         PluginPack(
             id: "phylogenetics",
             name: "Phylogenetics",
-            description: "Phylogenetic analysis and tree building",
+            description: "Multiple sequence alignment and phylogenetic tree construction",
             sfSymbol: "tree",
-            packages: ["iqtree", "mafft", "muscle"],
-            category: "Phylogenetics"
+            packages: ["iqtree", "mafft", "muscle", "raxml-ng", "treetime"],
+            category: "Phylogenetics",
+            estimatedSizeMB: 400
         ),
+
+        // MARK: Metagenomics
         PluginPack(
             id: "metagenomics",
             name: "Metagenomics",
-            description: "Metagenomic classification and analysis",
+            description: "Taxonomic classification and community profiling of metagenomic samples",
             sfSymbol: "leaf.fill",
-            packages: ["kraken2", "freyja"],
-            category: "Metagenomics"
+            packages: ["kraken2", "bracken", "metaphlan"],
+            category: "Metagenomics",
+            estimatedSizeMB: 500
         ),
+
+        // MARK: Long Read
         PluginPack(
             id: "long-read",
             name: "Long Read Analysis",
-            description: "PacBio and Oxford Nanopore tools",
+            description: "Oxford Nanopore and PacBio long-read alignment, assembly, and polishing",
             sfSymbol: "ruler",
-            packages: ["minimap2", "flye", "medaka", "hifiasm"],
-            category: "Long Read"
+            packages: ["minimap2", "flye", "medaka", "hifiasm", "nanoplot"],
+            category: "Long Read",
+            estimatedSizeMB: 700
+        ),
+
+        // MARK: Wastewater Surveillance
+        PluginPack(
+            id: "wastewater-surveillance",
+            name: "Wastewater Surveillance",
+            description: "SARS-CoV-2 and multi-pathogen lineage de-mixing from wastewater sequencing data",
+            sfSymbol: "drop.triangle",
+            packages: ["freyja", "ivar", "pangolin", "nextclade", "minimap2"],
+            category: "Surveillance",
+            postInstallHooks: [
+                PostInstallHook(
+                    description: "Download latest SARS-CoV-2 lineage barcodes",
+                    environment: "freyja",
+                    command: ["freyja", "update"],
+                    requiresNetwork: true,
+                    refreshIntervalDays: 7,
+                    estimatedDownloadSize: "~15 MB"
+                ),
+                PostInstallHook(
+                    description: "Update Pango lineage designation data",
+                    environment: "pangolin",
+                    command: ["pangolin", "--update-data"],
+                    requiresNetwork: true,
+                    refreshIntervalDays: 7,
+                    estimatedDownloadSize: "~50 MB"
+                ),
+            ],
+            estimatedSizeMB: 1500
+        ),
+
+        // MARK: RNA-Seq
+        PluginPack(
+            id: "rna-seq",
+            name: "RNA-Seq Analysis",
+            description: "Spliced alignment and transcript quantification for bulk RNA sequencing",
+            sfSymbol: "bolt.horizontal",
+            packages: ["star", "salmon", "subread", "stringtie"],
+            category: "Transcriptomics",
+            estimatedSizeMB: 600
+        ),
+
+        // MARK: Single Cell
+        PluginPack(
+            id: "single-cell",
+            name: "Single-Cell Analysis",
+            description: "Preprocessing and analysis of droplet-based single-cell RNA-seq data",
+            sfSymbol: "circle.grid.3x3",
+            // STAR includes STARsolo mode for single-cell barcode-aware alignment
+            packages: ["scanpy", "scvi-tools", "star"],
+            category: "Single Cell",
+            estimatedSizeMB: 1800
+        ),
+
+        // MARK: Amplicon Analysis
+        PluginPack(
+            id: "amplicon-analysis",
+            name: "Amplicon Analysis",
+            description: "Primer trimming, variant calling, and consensus generation for tiled-amplicon protocols",
+            sfSymbol: "waveform.badge.magnifyingglass",
+            packages: ["ivar", "pangolin", "nextclade"],
+            category: "Amplicon",
+            postInstallHooks: [
+                PostInstallHook(
+                    description: "Update Pango lineage designation data",
+                    environment: "pangolin",
+                    command: ["pangolin", "--update-data"],
+                    requiresNetwork: true,
+                    refreshIntervalDays: 7,
+                    estimatedDownloadSize: "~50 MB"
+                ),
+            ],
+            estimatedSizeMB: 550
+        ),
+
+        // MARK: Genome Annotation
+        PluginPack(
+            id: "genome-annotation",
+            name: "Genome Annotation",
+            description: "Gene prediction and functional annotation for prokaryotic and viral genomes",
+            sfSymbol: "tag.fill",
+            packages: ["prokka", "bakta", "snpeff"],
+            category: "Annotation",
+            postInstallHooks: [
+                PostInstallHook(
+                    description: "Download Bakta light annotation database",
+                    environment: "bakta",
+                    command: ["bakta_db", "download", "--type", "light"],
+                    requiresNetwork: true,
+                    refreshIntervalDays: 90,
+                    estimatedDownloadSize: "~1.3 GB"
+                ),
+            ],
+            estimatedSizeMB: 1200
+        ),
+
+        // MARK: Data Format Utilities
+        PluginPack(
+            id: "data-format-utils",
+            name: "Data Format Utilities",
+            description: "File conversion, indexing, and interval manipulation for bioinformatics formats",
+            sfSymbol: "arrow.triangle.2.circlepath",
+            packages: ["bedtools", "picard"],
+            category: "Utilities",
+            estimatedSizeMB: 650
         ),
     ]
 }

@@ -616,11 +616,27 @@ private struct PackCard: View {
             .padding(.leading, 48)
             .padding(.vertical, 10)
 
-            // Status bar
-            HStack {
+            // Status bar with install count, estimated size, and hook info
+            HStack(spacing: 12) {
                 Text("\(installedCount) of \(pack.packages.count) installed")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                if pack.estimatedSizeMB > 0 {
+                    Text(formatPackSize(pack.estimatedSizeMB))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+
+                if !pack.postInstallHooks.isEmpty {
+                    Label(
+                        "\(pack.postInstallHooks.count) post-install \(pack.postInstallHooks.count == 1 ? "step" : "steps")",
+                        systemImage: "arrow.down.circle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help(pack.postInstallHooks.map(\.description).joined(separator: "\n"))
+                }
 
                 Spacer()
             }
@@ -647,4 +663,14 @@ private func formatBytes(_ bytes: Int64) -> String {
     let formatter = ByteCountFormatter()
     formatter.countStyle = .file
     return formatter.string(fromByteCount: bytes)
+}
+
+/// Formats a megabyte estimate into a human-readable string.
+private func formatPackSize(_ megabytes: Int) -> String {
+    if megabytes >= 1000 {
+        let gb = Double(megabytes) / 1000.0
+        return String(format: "~%.1f GB", gb)
+    } else {
+        return "~\(megabytes) MB"
+    }
 }
