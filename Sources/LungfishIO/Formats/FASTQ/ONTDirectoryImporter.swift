@@ -675,7 +675,7 @@ public final class ONTDirectoryImporter: @unchecked Sendable {
 
     /// Returns the file size in bytes, or 0 on failure.
     private func fileSize(_ url: URL) -> Int64 {
-        (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
+        url.fileSizeBytes
     }
 
     /// Extracts ONT metadata from the first read of the first chunk in a barcode directory.

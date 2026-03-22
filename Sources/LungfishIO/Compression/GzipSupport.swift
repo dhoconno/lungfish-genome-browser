@@ -234,6 +234,11 @@ public final class GzipInputStream: Sendable {
 // MARK: - URL Extension for Gzip Detection
 
 extension URL {
+    /// File size in bytes, or 0 if the file doesn't exist or can't be read.
+    public var fileSizeBytes: Int64 {
+        (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0
+    }
+
     /// Whether this URL points to a gzip-compressed file (based on extension).
     public var isGzipCompressed: Bool {
         pathExtension.lowercased() == "gz"

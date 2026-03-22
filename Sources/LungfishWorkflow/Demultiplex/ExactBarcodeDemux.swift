@@ -188,9 +188,7 @@ public enum ExactBarcodeDemux {
         let rc = PlatformAdapters.reverseComplement
 
         // Estimate total bytes for progress reporting
-        let totalInputBytes = config.inputURLs.reduce(Int64(0)) { total, url in
-            total + ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0)
-        }
+        let totalInputBytes = config.inputURLs.reduce(Int64(0)) { $0 + $1.fileSizeBytes }
 
         // Build lookup table: leftBarcode → [(rightBarcode, sampleIndex)]
         var leftToRight: [String: [(rightBarcode: String, sampleIndex: Int)]] = [:]
