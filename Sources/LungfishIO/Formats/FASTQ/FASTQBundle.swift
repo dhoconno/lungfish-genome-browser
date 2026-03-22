@@ -52,7 +52,8 @@ public enum FASTQBundle {
         guard isBundleURL(candidateURL) else { return nil }
 
         // Multi-file bundles: return first chunk from source-files.json
-        if let manifest = try? FASTQSourceFileManifest.load(from: candidateURL) {
+        if FASTQSourceFileManifest.exists(in: candidateURL),
+           let manifest = try? FASTQSourceFileManifest.load(from: candidateURL) {
             let urls = manifest.resolveFileURLs(relativeTo: candidateURL)
             if let first = urls.first, FileManager.default.fileExists(atPath: first.path) {
                 return first

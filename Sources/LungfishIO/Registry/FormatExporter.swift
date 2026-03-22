@@ -149,48 +149,6 @@ public struct DataLossWarning: Sendable, Equatable {
     }
 }
 
-// MARK: - ExportOptions
-
-/// Options for export operations
-public struct ExportOptions: Sendable {
-
-    /// Whether to compress the output
-    public var compress: Bool
-
-    /// Compression type if compressing
-    public var compressionType: CompressionType
-
-    /// Line width for text formats (e.g., 60 for FASTA)
-    public var lineWidth: Int
-
-    /// Whether to include annotations in export
-    public var includeAnnotations: Bool
-
-    /// Quality encoding for FASTQ output
-    public var qualityEncoding: QualityEncoding
-
-    /// Custom options dictionary for format-specific settings
-    public var customOptions: [String: String]
-
-    public init(
-        compress: Bool = false,
-        compressionType: CompressionType = .gzip,
-        lineWidth: Int = 60,
-        includeAnnotations: Bool = true,
-        qualityEncoding: QualityEncoding = .phred33,
-        customOptions: [String: String] = [:]
-    ) {
-        self.compress = compress
-        self.compressionType = compressionType
-        self.lineWidth = lineWidth
-        self.includeAnnotations = includeAnnotations
-        self.qualityEncoding = qualityEncoding
-        self.customOptions = customOptions
-    }
-
-    /// Default export options
-    public static let `default` = ExportOptions()
-}
 
 // MARK: - ExportError
 

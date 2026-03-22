@@ -1868,10 +1868,7 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
                 switch self.activeTab {
                 case .samples, .demux:
                     do {
-                        let content = try String(contentsOf: url, encoding: .utf8)
-                        NSLog("[FASTQDrawer] Read \(content.count) chars from \(url.lastPathComponent), first 200: \(String(content.prefix(200)))")
                         let imported = try FASTQSampleBarcodeCSV.load(from: url)
-                        NSLog("[FASTQDrawer] Imported \(imported.count) sample assignment(s) from \(url.lastPathComponent)")
                         self.sampleAssignments = imported
                         self.ensureSingleDemuxStep()
                         self.demuxSteps[0].sampleAssignments = self.sampleAssignments
@@ -1881,7 +1878,6 @@ public final class FASTQMetadataDrawerView: NSView, NSTableViewDataSource, NSTab
                             self.notifyDemuxPlanChanged()
                         }
                     } catch {
-                        NSLog("[FASTQDrawer] Import failed: \(error)")
                         self.statusLabel.stringValue = "Import failed: \(error.localizedDescription)"
                     }
                 case .primerTrim, .dedup:
