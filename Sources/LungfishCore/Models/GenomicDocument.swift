@@ -16,7 +16,7 @@ import Foundation
 /// document.addAnnotation(myAnnotation, to: mySequence.id)
 /// ```
 @MainActor
-public final class GenomicDocument: ObservableObject, Identifiable, Sendable {
+public final class GenomicDocument: ObservableObject, Identifiable {
     /// Unique identifier
     public let id: UUID
 
@@ -26,8 +26,8 @@ public final class GenomicDocument: ObservableObject, Identifiable, Sendable {
     /// File path if loaded from disk
     @Published public var filePath: URL?
 
-    /// Document type (determines available operations)
-    @Published public var documentType: DocumentType
+    /// Document category (determines available operations)
+    @Published public var documentCategory: DocumentCategory
 
     /// Document metadata
     @Published public var metadata: DocumentMetadata
@@ -45,12 +45,12 @@ public final class GenomicDocument: ObservableObject, Identifiable, Sendable {
     public init(
         id: UUID = UUID(),
         name: String,
-        documentType: DocumentType = .generic,
+        documentCategory: DocumentCategory = .generic,
         filePath: URL? = nil
     ) {
         self.id = id
         self.name = name
-        self.documentType = documentType
+        self.documentCategory = documentCategory
         self.filePath = filePath
         self.metadata = DocumentMetadata()
         self.sequences = []
@@ -134,10 +134,13 @@ public final class GenomicDocument: ObservableObject, Identifiable, Sendable {
     }
 }
 
-// MARK: - DocumentType
+// MARK: - DocumentCategory
 
-/// Type of genomic document
-public enum DocumentType: String, Codable, Sendable {
+/// Semantic category of a genomic document, describing what kind of data it contains.
+///
+/// Renamed from `DocumentType` to avoid collision with `LungfishApp.DocumentType`
+/// which represents file-format-level document types for the NSDocument system.
+public enum DocumentCategory: String, Codable, Sendable {
     /// Generic sequence document
     case generic
     /// Reference genome
@@ -155,6 +158,11 @@ public enum DocumentType: String, Codable, Sendable {
     /// Variant collection
     case variants
 }
+
+/// Backwards-compatibility alias for code that still references the old name.
+/// Prefer ``DocumentCategory`` in new code.
+@available(*, deprecated, renamed: "DocumentCategory")
+public typealias DocumentType = DocumentCategory
 
 // MARK: - DocumentMetadata
 

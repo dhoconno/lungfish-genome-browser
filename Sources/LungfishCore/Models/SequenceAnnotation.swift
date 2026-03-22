@@ -222,6 +222,10 @@ public enum AnnotationType: String, Codable, Sendable, CaseIterable {
     case utr5 = "5'UTR"
     case utr3 = "3'UTR"
 
+    // RNA features
+    case tRNA
+    case rRNA
+
     // Regulatory
     case promoter
     case enhancer
@@ -249,6 +253,8 @@ public enum AnnotationType: String, Codable, Sendable, CaseIterable {
     case repeatRegion = "repeat_region"
     case stem_loop
     case misc_feature
+    case pseudogene
+    case mobileElement = "mobile_element"
 
     // Protein processing
     case mat_peptide
@@ -292,6 +298,8 @@ public enum AnnotationType: String, Codable, Sendable, CaseIterable {
         case .exon: return AnnotationColor(red: 0.6, green: 0.6, blue: 0.2)       // Yellow-green
         case .intron: return AnnotationColor(red: 0.6, green: 0.5, blue: 0.4)     // Tan
         case .utr5, .utr3: return AnnotationColor(red: 0.7, green: 0.3, blue: 0.3) // Muted red
+        case .tRNA: return AnnotationColor(red: 0.2, green: 0.7, blue: 0.6)       // Cyan-teal
+        case .rRNA: return AnnotationColor(red: 0.4, green: 0.6, blue: 0.8)       // Sky blue
         case .region: return AnnotationColor(red: 0.55, green: 0.5, blue: 0.45)   // Warm neutral
         case .promoter: return AnnotationColor(red: 0.9, green: 0.6, blue: 0.1)   // Gold
         case .enhancer: return AnnotationColor(red: 0.85, green: 0.7, blue: 0.2)  // Amber
@@ -308,6 +316,8 @@ public enum AnnotationType: String, Codable, Sendable, CaseIterable {
         case .repeatRegion: return AnnotationColor(red: 0.6, green: 0.3, blue: 0.6) // Purple
         case .stem_loop: return AnnotationColor(red: 0.5, green: 0.6, blue: 0.4)  // Sage
         case .misc_feature: return AnnotationColor(red: 0.55, green: 0.55, blue: 0.55) // Medium gray
+        case .pseudogene: return AnnotationColor(red: 0.5, green: 0.5, blue: 0.65) // Slate blue
+        case .mobileElement: return AnnotationColor(red: 0.7, green: 0.4, blue: 0.7) // Orchid
         case .mat_peptide: return AnnotationColor(red: 0.7, green: 0.2, blue: 0.5) // Magenta
         case .sig_peptide: return AnnotationColor(red: 0.5, green: 0.8, blue: 0.3) // Lime green
         case .transit_peptide: return AnnotationColor(red: 0.3, green: 0.5, blue: 0.7) // Steel blue
@@ -351,6 +361,8 @@ extension AnnotationType {
         case "cds", "coding_sequence": return .cds
         case "5'utr", "five_prime_utr": return .utr5
         case "3'utr", "three_prime_utr": return .utr3
+        case "trna": return .tRNA
+        case "rrna": return .rRNA
         case "promoter": return .promoter
         case "enhancer": return .enhancer
         case "silencer": return .silencer
@@ -367,6 +379,8 @@ extension AnnotationType {
         case "repeat_region": return .repeatRegion
         case "stem_loop": return .stem_loop
         case "misc_feature": return .misc_feature
+        case "pseudogene": return .pseudogene
+        case "mobile_element", "transposon": return .mobileElement
         case "contig": return .contig
         case "gap": return .gap
         case "scaffold": return .scaffold

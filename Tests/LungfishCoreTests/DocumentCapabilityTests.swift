@@ -432,7 +432,7 @@ final class DocumentCapabilityTests: XCTestCase {
 
     @MainActor
     func testReferenceDocumentType() throws {
-        let document = GenomicDocument(name: "reference", documentType: .reference)
+        let document = GenomicDocument(name: "reference", documentCategory: .reference)
         let sequence = try Sequence(name: "chr1", alphabet: .dna, bases: "ATCGATCG")
         document.addSequence(sequence)
 
@@ -443,7 +443,7 @@ final class DocumentCapabilityTests: XCTestCase {
 
     @MainActor
     func testAlignmentDocumentType() throws {
-        let document = GenomicDocument(name: "alignment", documentType: .alignment)
+        let document = GenomicDocument(name: "alignment", documentCategory: .alignment)
         let sequence = try Sequence(name: "aligned_seq", alphabet: .dna, bases: "ATCGATCG")
         document.addSequence(sequence)
 

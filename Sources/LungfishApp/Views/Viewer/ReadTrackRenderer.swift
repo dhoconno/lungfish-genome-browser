@@ -76,12 +76,12 @@ public enum ReadTrackRenderer {
     /// Reverse coverage area fill.
     static let reverseCoverageColor = NSColor(red: 0.77, green: 0.42, blue: 0.42, alpha: 0.7).cgColor
 
-    /// Base colors for mismatches (matches BaseColors used in sequence track).
-    static let baseA = NSColor(red: 0, green: 0.8, blue: 0, alpha: 1.0).cgColor
-    static let baseT = NSColor(red: 0.8, green: 0, blue: 0, alpha: 1.0).cgColor
-    static let baseC = NSColor(red: 0, green: 0, blue: 0.8, alpha: 1.0).cgColor
-    static let baseG = NSColor(red: 1.0, green: 0.7, blue: 0, alpha: 1.0).cgColor
-    static let baseN = NSColor.gray.cgColor
+    /// Base colors for mismatches (delegated to SemanticColors.DNA).
+    static let baseA = SemanticColors.DNA.baseA.cgColor
+    static let baseT = SemanticColors.DNA.baseT.cgColor
+    static let baseC = SemanticColors.DNA.baseC.cgColor
+    static let baseG = SemanticColors.DNA.baseG.cgColor
+    static let baseN = SemanticColors.DNA.baseN.cgColor
     /// Match dot color.
     static let matchDotColor = NSColor(white: 0.48, alpha: 0.82).cgColor
     /// Insertion indicator color (magenta).

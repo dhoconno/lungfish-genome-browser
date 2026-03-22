@@ -9,7 +9,7 @@ import AppKit
 import os.log
 
 /// Logger for appearance settings persistence.
-private let logger = Logger(subsystem: "com.lungfish.core", category: "SequenceAppearance")
+private let logger = Logger(subsystem: LogSubsystem.core, category: "SequenceAppearance")
 
 /// User preferences for sequence visualization appearance.
 ///
@@ -17,12 +17,12 @@ private let logger = Logger(subsystem: "com.lungfish.core", category: "SequenceA
 /// Settings are persisted to UserDefaults for cross-session persistence.
 ///
 /// ## Default Colors
-/// Uses standard bioinformatics colors:
-/// - A (Adenine): Green (#00A000)
-/// - T (Thymine): Red (#FF0000)
-/// - G (Guanine): Yellow/Gold (#FFD700)
-/// - C (Cytosine): Blue (#0000FF)
-/// - N (Unknown): Gray (#808080)
+/// Uses standard IGV bioinformatics colors (sourced from ``SemanticColors.DNA``):
+/// - A (Adenine): Green (#00CC00)
+/// - T (Thymine): Red (#CC0000)
+/// - G (Guanine): Orange/Gold (#FFB300)
+/// - C (Cytosine): Blue (#0000CC)
+/// - N (Unknown): Gray (#888888)
 ///
 /// ## Example Usage
 /// ```swift
@@ -61,24 +61,21 @@ public struct SequenceAppearance: Codable, Sendable {
 
     // MARK: - Default Values
 
-    /// Default appearance settings using standard bioinformatics colors.
+    /// Default appearance settings using standard IGV bioinformatics colors.
     ///
-    /// - A (Adenine): Green (#00A000)
-    /// - T (Thymine): Red (#FF0000)
-    /// - G (Guanine): Yellow/Gold (#FFD700)
-    /// - C (Cytosine): Blue (#0000FF)
-    /// - N (Unknown): Gray (#808080)
-    /// - U (Uracil/RNA): Same as T (#FF0000)
+    /// Colors are sourced from ``SemanticColors.DNA.defaultHexColors`` to
+    /// ensure consistency across the application. Users can override these
+    /// per-base via the Appearance settings panel.
+    ///
+    /// - A (Adenine): Green (#00CC00)
+    /// - T (Thymine): Red (#CC0000)
+    /// - G (Guanine): Orange/Gold (#FFB300)
+    /// - C (Cytosine): Blue (#0000CC)
+    /// - N (Unknown): Gray (#888888)
+    /// - U (Uracil/RNA): Same as T (#CC0000)
     public static var `default`: SequenceAppearance {
         SequenceAppearance(
-            baseColors: [
-                "A": "#00A000",  // Green - Adenine
-                "T": "#FF0000",  // Red - Thymine
-                "G": "#FFD700",  // Yellow/Gold - Guanine
-                "C": "#0000FF",  // Blue - Cytosine
-                "N": "#808080",  // Gray - Unknown
-                "U": "#FF0000"   // Red - Uracil (RNA equivalent of T)
-            ],
+            baseColors: SemanticColors.DNA.defaultHexColors,
             trackHeight: 20.0,  // Compact default for sequence tracks
             showQualityOverlay: false
         )

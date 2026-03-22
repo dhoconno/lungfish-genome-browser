@@ -140,22 +140,53 @@ public struct VCFVariant: Identifiable, Codable, Sendable, Hashable {
     // MARK: - Computed Properties
 
     /// The type of variant based on reference and alternate alleles.
+    ///
+    /// For multi-allelic sites, examines all alternate alleles:
+    /// - All same length as REF and single-base: SNP
+    /// - All same length as REF and multi-base: MNP
+    /// - All longer than REF: insertion
+    /// - All shorter than REF: deletion
+    /// - Mixed lengths: complex
     public var variantType: VariantType {
-        guard let firstAlt = alternates.first, !firstAlt.isEmpty else {
+        let nonEmpty = alternates.filter { !$0.isEmpty }
+        guard !nonEmpty.isEmpty else {
             return .reference
         }
 
-        if reference.count == 1 && firstAlt.count == 1 {
-            return .snp
-        } else if reference.count > firstAlt.count {
-            return .deletion
-        } else if reference.count < firstAlt.count {
-            return .insertion
-        } else if reference.count == firstAlt.count && reference.count > 1 {
-            return .mnp
-        } else {
+        let refLen = reference.count
+        var hasEqual = false
+        var hasLonger = false
+        var hasShorter = false
+
+        for alt in nonEmpty {
+            let altLen = alt.count
+            if altLen == refLen {
+                hasEqual = true
+            } else if altLen > refLen {
+                hasLonger = true
+            } else {
+                hasShorter = true
+            }
+        }
+
+        // Mixed length classes means complex
+        let classes = [hasEqual, hasLonger, hasShorter].filter { $0 }.count
+        if classes > 1 {
             return .complex
         }
+
+        if hasLonger {
+            return .insertion
+        }
+        if hasShorter {
+            return .deletion
+        }
+
+        // All alternates are same length as reference
+        if refLen == 1 {
+            return .snp
+        }
+        return .mnp
     }
 
     /// The length of the variant in reference coordinates.

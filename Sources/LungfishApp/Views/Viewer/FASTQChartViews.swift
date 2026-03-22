@@ -11,12 +11,12 @@ import LungfishIO
 ///
 /// Displays key metrics: Read Count, Base Count, Mean Length, Mean Quality,
 /// GC Content, Q20%, Q30%, N50.
+///
+/// Extends `GenomicSummaryCardBar` with FASTQ-specific metrics.
 @MainActor
-final class FASTQSummaryBar: NSView {
+final class FASTQSummaryBar: GenomicSummaryCardBar {
 
     private var statistics: FASTQDatasetStatistics?
-
-    override var isFlipped: Bool { true }
 
     func update(with stats: FASTQDatasetStatistics) {
         self.statistics = stats
@@ -24,111 +24,26 @@ final class FASTQSummaryBar: NSView {
         updateAccessibility(stats)
     }
 
+    override var cards: [Card] {
+        guard let stats = statistics else { return [] }
+        return [
+            Card(label: "Reads", value: Self.formatCount(stats.readCount)),
+            Card(label: "Bases", value: Self.formatBases(stats.baseCount)),
+            Card(label: "Mean Length", value: String(format: "%.0f bp", stats.meanReadLength)),
+            Card(label: "Median Length", value: "\(stats.medianReadLength) bp"),
+            Card(label: "N50", value: "\(stats.n50ReadLength) bp"),
+            Card(label: "Mean Q", value: String(format: "%.1f", stats.meanQuality)),
+            Card(label: "Q20", value: String(format: "%.1f%%", stats.q20Percentage)),
+            Card(label: "Q30", value: String(format: "%.1f%%", stats.q30Percentage)),
+            Card(label: "GC", value: String(format: "%.1f%%", stats.gcContent * 100)),
+        ]
+    }
+
     private func updateAccessibility(_ stats: FASTQDatasetStatistics) {
         setAccessibilityRole(.group)
         setAccessibilityLabel("FASTQ Summary Statistics")
         let desc = "\(stats.readCount) reads, mean length \(Int(stats.meanReadLength)) bp, mean quality \(String(format: "%.1f", stats.meanQuality)), GC \(String(format: "%.1f%%", stats.gcContent * 100))"
         setAccessibilityValue(desc)
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        guard let stats = statistics else { return }
-
-        let cards: [(String, String)] = [
-            ("Reads", formatCount(stats.readCount)),
-            ("Bases", formatBases(stats.baseCount)),
-            ("Mean Length", String(format: "%.0f bp", stats.meanReadLength)),
-            ("Median Length", "\(stats.medianReadLength) bp"),
-            ("N50", "\(stats.n50ReadLength) bp"),
-            ("Mean Q", String(format: "%.1f", stats.meanQuality)),
-            ("Q20", String(format: "%.1f%%", stats.q20Percentage)),
-            ("Q30", String(format: "%.1f%%", stats.q30Percentage)),
-            ("GC", String(format: "%.1f%%", stats.gcContent * 100)),
-        ]
-
-        let padding: CGFloat = 8
-        let cardSpacing: CGFloat = 6
-        let availableWidth = bounds.width - padding * 2
-        let cardWidth = (availableWidth - cardSpacing * CGFloat(cards.count - 1)) / CGFloat(cards.count)
-
-        for (i, card) in cards.enumerated() {
-            let x = padding + CGFloat(i) * (cardWidth + cardSpacing)
-            let cardRect = CGRect(x: x, y: 4, width: cardWidth, height: bounds.height - 8)
-
-            // Card background
-            let bgColor = NSColor.controlBackgroundColor.withAlphaComponent(0.6).cgColor
-            ctx.setFillColor(bgColor)
-            let path = CGPath(roundedRect: cardRect, cornerWidth: 4, cornerHeight: 4, transform: nil)
-            ctx.addPath(path)
-            ctx.fillPath()
-
-            // Border
-            ctx.setStrokeColor(NSColor.separatorColor.cgColor)
-            ctx.setLineWidth(0.5)
-            ctx.addPath(path)
-            ctx.strokePath()
-
-            // Clip text to card bounds
-            ctx.saveGState()
-            ctx.clip(to: cardRect.insetBy(dx: 4, dy: 0))
-
-            // Label (top) — use abbreviated label when card is narrow
-            let labelAttrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 9, weight: .medium),
-                .foregroundColor: NSColor.secondaryLabelColor,
-            ]
-            let cardContentWidth = cardRect.width - 8
-            let fullLabelSize = (card.0 as NSString).size(withAttributes: labelAttrs)
-            let displayLabel = fullLabelSize.width > cardContentWidth
-                ? abbreviatedLabel(for: card.0)
-                : card.0
-            let labelStr = NSAttributedString(string: displayLabel, attributes: labelAttrs)
-            let labelSize = labelStr.size()
-            let labelX = cardRect.midX - labelSize.width / 2
-            labelStr.draw(at: CGPoint(x: labelX, y: cardRect.minY + 4))
-
-            // Value (bottom)
-            let valueAttrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold),
-                .foregroundColor: NSColor.labelColor,
-            ]
-            let valueStr = NSAttributedString(string: card.1, attributes: valueAttrs)
-            let valueSize = valueStr.size()
-            let valueX = cardRect.midX - valueSize.width / 2
-            valueStr.draw(at: CGPoint(x: valueX, y: cardRect.minY + 18))
-
-            ctx.restoreGState()
-        }
-    }
-
-    private func formatCount(_ count: Int) -> String {
-        if count >= 1_000_000 { return String(format: "%.1fM", Double(count) / 1_000_000) }
-        if count >= 1_000 { return String(format: "%.1fK", Double(count) / 1_000) }
-        return "\(count)"
-    }
-
-    private func formatBases(_ count: Int64) -> String {
-        if count >= 1_000_000_000 { return String(format: "%.2f Gb", Double(count) / 1_000_000_000) }
-        if count >= 1_000_000 { return String(format: "%.2f Mb", Double(count) / 1_000_000) }
-        if count >= 1_000 { return String(format: "%.1f Kb", Double(count) / 1_000) }
-        return "\(count) bp"
-    }
-
-    private func abbreviatedLabel(for label: String) -> String {
-        switch label {
-        case "Median Length": return "Med. Len"
-        case "Mean Length": return "Mean Len"
-        case "Total Reads": return "Reads"
-        case "Total Bases": return "Bases"
-        case "Mean Quality": return "Mean Q"
-        case "Median Quality": return "Med. Q"
-        case "Min Length": return "Min Len"
-        case "Max Length": return "Max Len"
-        case "GC Content": return "GC%"
-        case "Mean Q": return "Q"
-        default: return String(label.prefix(8))
-        }
     }
 }
 

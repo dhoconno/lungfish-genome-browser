@@ -9,7 +9,7 @@ import LungfishWorkflow
 import os.log
 
 /// Logger for sidebar operations
-private let logger = Logger(subsystem: "com.lungfish.browser", category: "SidebarViewController")
+private let logger = Logger(subsystem: LogSubsystem.app, category: "SidebarViewController")
 
 /// Pasteboard type for internal sidebar item dragging
 private let sidebarItemPasteboardType = NSPasteboard.PasteboardType("com.lungfish.browser.sidebaritem")
@@ -2354,11 +2354,10 @@ extension SidebarViewController: NSMenuDelegate {
             alert.alertStyle = .informational
             alert.addButton(withTitle: "OK")
 
-            if let window = self.view.window {
+            if let window = self.view.window ?? NSApp.keyWindow {
                 alert.beginSheetModal(for: window)
-            } else {
-                alert.runModal()
             }
+
         }
     }
 
@@ -2501,10 +2500,8 @@ extension SidebarViewController: NSMenuDelegate {
                         alert.informativeText = finalErrors.joined(separator: "\n")
                         alert.alertStyle = .warning
                         alert.addButton(withTitle: "OK")
-                        if let window = self.view.window {
+                        if let window = self.view.window ?? NSApp.keyWindow {
                             alert.beginSheetModal(for: window)
-                        } else {
-                            alert.runModal()
                         }
                     }
                 }

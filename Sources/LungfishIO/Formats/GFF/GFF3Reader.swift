@@ -41,9 +41,22 @@ public struct GFF3Feature: Sendable, Identifiable {
     /// Key-value attributes
     public let attributes: [String: String]
 
-    /// Parent feature ID (from Parent attribute)
+    /// Parent feature IDs (from Parent attribute).
+    ///
+    /// The GFF3 spec allows comma-separated values for multi-parent features,
+    /// e.g. `Parent=mRNA1,mRNA2`. This property splits on commas and returns
+    /// all parent IDs.
+    public var parentIDs: [String] {
+        guard let raw = attributes["Parent"] else { return [] }
+        return raw.split(separator: ",").map(String.init)
+    }
+
+    /// First parent feature ID (from Parent attribute).
+    ///
+    /// For features with multiple parents, returns only the first.
+    /// Use `parentIDs` to get all parents.
     public var parentID: String? {
-        attributes["Parent"]
+        parentIDs.first
     }
 
     /// Feature name (from Name attribute or ID)
@@ -78,10 +91,11 @@ public struct GFF3Feature: Sendable, Identifiable {
     public func toAnnotation() -> SequenceAnnotation {
         let annotationType = AnnotationType.from(rawString: type) ?? .region
 
-        // Convert qualifiers
+        // Convert qualifiers, splitting comma-separated values per GFF3 spec
         var qualifiers: [String: AnnotationQualifier] = [:]
         for (key, value) in attributes {
-            qualifiers[key] = AnnotationQualifier(value)
+            let values = value.split(separator: ",").map(String.init)
+            qualifiers[key] = AnnotationQualifier(values)
         }
 
         return SequenceAnnotation(
@@ -737,6 +751,8 @@ public final class GFF3Writer {
         case .polyASignal: return "polyA_signal"
         case .regulatory: return "regulatory"
         case .ncRNA: return "ncRNA"
+        case .tRNA: return "tRNA"
+        case .rRNA: return "rRNA"
         case .primer: return "primer"
         case .primerPair: return "primer_pair"
         case .amplicon: return "amplicon"
@@ -748,6 +764,8 @@ public final class GFF3Writer {
         case .repeatRegion: return "repeat_region"
         case .stem_loop: return "stem_loop"
         case .misc_feature: return "misc_feature"
+        case .pseudogene: return "pseudogene"
+        case .mobileElement: return "mobile_element"
         case .mat_peptide: return "mat_peptide"
         case .sig_peptide: return "sig_peptide"
         case .transit_peptide: return "transit_peptide"

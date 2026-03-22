@@ -9,25 +9,11 @@ import LungfishWorkflow
 import UniformTypeIdentifiers
 import os
 
-/// Debug logging to file for troubleshooting (only writes to disk in DEBUG builds)
+private let appDelegateLogger = Logger(subsystem: LogSubsystem.app, category: "AppDelegate")
+
+/// Debug logging using os.log (replaces file-based debugLog)
 private func debugLog(_ message: String) {
-    #if DEBUG
-    let timestamp = ISO8601DateFormatter().string(from: Date())
-    let threadInfo = Thread.isMainThread ? "main" : "bg"
-    let logMessage = "[\(timestamp)][\(threadInfo)] \(message)\n"
-    print("[\(threadInfo)] \(message)")  // Also print to console
-    if let data = logMessage.data(using: .utf8) {
-        let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("lungfish-debug.log")
-        if !FileManager.default.fileExists(atPath: logURL.path) {
-            FileManager.default.createFile(atPath: logURL.path, contents: nil)
-        }
-        if let fileHandle = try? FileHandle(forWritingTo: logURL) {
-            fileHandle.seekToEndOfFile()
-            fileHandle.write(data)
-            fileHandle.closeFile()
-        }
-    }
-    #endif
+    appDelegateLogger.debug("\(message, privacy: .public)")
 }
 
 /// Schedules a MainActor-isolated block to execute on the main run loop.
@@ -466,7 +452,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         let controller = createAndShowMainWindow()
 
         // Activate the app to ensure menu bar switches properly
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
 
         // Close welcome window if open
         welcomeWindowController?.close()
@@ -479,7 +465,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         _ = createAndShowMainWindow()
 
         // Activate the app to ensure menu bar switches properly
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
 
         // Close welcome window if open
         welcomeWindowController?.close()
@@ -738,7 +724,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 alert.informativeText = error.localizedDescription
                 alert.alertStyle = .warning
                 alert.addButton(withTitle: "OK")
-                alert.runModal()
+                if let window = self.mainWindowController?.window ?? NSApp.keyWindow {
+                    await alert.beginSheetModal(for: window)
+                }
             }
         }
         return true
@@ -790,7 +778,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             guard let self = self else { return }
 
             let controller = self.createAndShowMainWindow()
-            NSApp.activate(ignoringOtherApps: true)
+            NSApp.activate()
             self.openProject(url, in: controller)
         }
     }
@@ -823,7 +811,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             alert.alertStyle = .warning
             alert.addButton(withTitle: "OK")
             alert.applyLungfishBranding()
-            alert.runModal()
+            if let window = mainWindowController?.window ?? NSApp.keyWindow {
+                alert.beginSheetModal(for: window)
+            }
             return
         }
 
@@ -920,7 +910,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                                 alert.alertStyle = .warning
                                 alert.addButton(withTitle: "OK")
                                 alert.applyLungfishBranding()
-                                alert.runModal()
+                                if let window = NSApp.keyWindow {
+                                    await alert.beginSheetModal(for: window)
+                                }
                             }
                         }
                     }
@@ -1067,10 +1059,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             self?.performSampleMetadataImport(metadataURL: metadataURL, bundleURL: bundleURL)
         }
 
-        if let window = presentingWindow {
+        if let window = presentingWindow ?? mainWindowController?.window ?? NSApp.keyWindow {
             panel.beginSheetModal(for: window, completionHandler: handleSelection)
-        } else {
-            handleSelection(panel.runModal())
         }
     }
 
@@ -2645,7 +2635,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         alert.informativeText = message
         alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")
-        alert.runModal()
+        if let window = mainWindowController?.window ?? NSApp.keyWindow {
+            alert.beginSheetModal(for: window)
+        }
     }
 
     /// Shows a success alert after export
@@ -2656,7 +2648,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         alert.informativeText = "Successfully exported \(count) \(plural) to \(filename)."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
-        alert.runModal()
+        if let window = mainWindowController?.window ?? NSApp.keyWindow {
+            alert.beginSheetModal(for: window)
+        }
     }
 
     // MARK: - ViewMenuActions
@@ -2725,7 +2719,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             alert.informativeText = "Enable AI-powered search in Settings > AI Services to use the assistant."
             alert.alertStyle = .informational
             alert.addButton(withTitle: "OK")
-            alert.runModal()
+            if let window = mainWindowController?.window ?? NSApp.keyWindow {
+                alert.beginSheetModal(for: window)
+            }
             return
         }
 
@@ -3105,18 +3101,85 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         // Make the text field first responder
         alert.window.initialFirstResponder = textField
 
-        if alert.runModal() == .alertFirstButtonReturn {
-            let input = textField.stringValue.trimmingCharacters(in: .whitespaces)
+        guard let window = mainWindowController?.window ?? NSApp.keyWindow else { return }
+        Task {
+            let response = await alert.beginSheetModal(for: window)
+            if response == .alertFirstButtonReturn {
+                let input = textField.stringValue.trimmingCharacters(in: .whitespaces)
 
-            guard !input.isEmpty else {
-                showAlert(title: "Invalid Input", message: "Please enter a position or range.")
-                return
+                guard !input.isEmpty else {
+                    showAlert(title: "Invalid Input", message: "Please enter a position or range.")
+                    return
+                }
+
+                // Parse the input and navigate
+                let result = parseAndNavigate(input: input, viewerController: viewerController)
+                if !result.success {
+                    showAlert(title: "Navigation Error", message: result.errorMessage ?? "Failed to navigate to the specified position.")
+                }
             }
+        }
+    }
 
-            // Parse the input and navigate
-            let result = parseAndNavigate(input: input, viewerController: viewerController)
-            if !result.success {
-                showAlert(title: "Navigation Error", message: result.errorMessage ?? "Failed to navigate to the specified position.")
+    @objc func goToGene(_ sender: Any?) {
+        // Ensure we have a viewer controller with annotations loaded
+        guard let viewerController = mainWindowController?.mainSplitViewController?.viewerController else {
+            showAlert(title: "No Viewer", message: "No sequence viewer is available.")
+            return
+        }
+
+        guard viewerController.referenceFrame != nil else {
+            showAlert(title: "No Sequence", message: "Please load a sequence before searching for genes.")
+            return
+        }
+
+        guard let searchIndex = viewerController.annotationSearchIndex else {
+            showAlert(title: "No Annotations", message: "No annotation data is loaded. Import a genome bundle with annotations first.")
+            return
+        }
+
+        // Show go-to-gene dialog
+        let alert = NSAlert()
+        alert.messageText = "Go to Gene"
+        alert.informativeText = "Enter a gene name or symbol to navigate to its location."
+        alert.addButton(withTitle: "Go")
+        alert.addButton(withTitle: "Cancel")
+
+        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 250, height: 24))
+        textField.placeholderString = "e.g., BRCA1 or TP53"
+        alert.accessoryView = textField
+
+        // Make the text field first responder
+        alert.window.initialFirstResponder = textField
+
+        guard let window = mainWindowController?.window ?? NSApp.keyWindow else { return }
+        Task {
+            let response = await alert.beginSheetModal(for: window)
+            if response == .alertFirstButtonReturn {
+                let query = textField.stringValue.trimmingCharacters(in: .whitespaces)
+
+                guard !query.isEmpty else {
+                    showAlert(title: "Invalid Input", message: "Please enter a gene name.")
+                    return
+                }
+
+                let results = searchIndex.search(query: query, limit: 1)
+                guard let match = results.first else {
+                    showAlert(title: "Gene Not Found", message: "No annotation matching \"\(query)\" was found in the current dataset.")
+                    return
+                }
+
+                let success = viewerController.navigateToPosition(
+                    chromosome: match.chromosome,
+                    start: match.start,
+                    end: match.end
+                )
+
+                if success {
+                    debugLog("goToGene: Navigated to \(match.name) at \(match.chromosome):\(match.start)-\(match.end)")
+                } else {
+                    showAlert(title: "Navigation Error", message: "Could not navigate to \(match.name) at \(match.chromosome):\(match.start)-\(match.end).")
+                }
             }
         }
     }
@@ -3326,30 +3389,34 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         alert.accessoryView = accessoryView
 
-        if alert.runModal() == .alertFirstButtonReturn {
-            let name = nameField.stringValue.isEmpty ? "New Annotation" : nameField.stringValue
-            let typeString = typePopup.selectedItem?.title ?? "region"
-            let strandString = strandPopup.selectedItem?.title ?? "none"
+        guard let window = mainWindowController?.window ?? NSApp.keyWindow else { return }
+        Task {
+            let response = await alert.beginSheetModal(for: window)
+            if response == .alertFirstButtonReturn {
+                let name = nameField.stringValue.isEmpty ? "New Annotation" : nameField.stringValue
+                let typeString = typePopup.selectedItem?.title ?? "region"
+                let strandString = strandPopup.selectedItem?.title ?? "none"
 
-            // Create the annotation
-            let annotationType = AnnotationType(rawValue: typeString) ?? .region
-            let strand: Strand = strandString == "+" ? .forward : (strandString == "-" ? .reverse : .unknown)
+                // Create the annotation
+                let annotationType = AnnotationType(rawValue: typeString) ?? .region
+                let strand: Strand = strandString == "+" ? .forward : (strandString == "-" ? .reverse : .unknown)
 
-            let annotation = SequenceAnnotation(
-                type: annotationType,
-                name: name,
-                intervals: [AnnotationInterval(start: selectionRange.lowerBound, end: selectionRange.upperBound)],
-                strand: strand
-            )
+                let annotation = SequenceAnnotation(
+                    type: annotationType,
+                    name: name,
+                    intervals: [AnnotationInterval(start: selectionRange.lowerBound, end: selectionRange.upperBound)],
+                    strand: strand
+                )
 
-            // Add to the current document
-            if let document = DocumentManager.shared.activeDocument {
-                document.annotations.append(annotation)
+                // Add to the current document
+                if let document = DocumentManager.shared.activeDocument {
+                    document.annotations.append(annotation)
 
-                // Refresh the viewer to show the new annotation
-                viewerController.displayDocument(document)
+                    // Refresh the viewer to show the new annotation
+                    viewerController.displayDocument(document)
 
-                debugLog("Added annotation: \(name) (\(typeString)) at \(selectionRange)")
+                    debugLog("Added annotation: \(name) (\(typeString)) at \(selectionRange)")
+                }
             }
         }
     }
@@ -3360,7 +3427,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         alert.informativeText = message
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
-        alert.runModal()
+        if let window = mainWindowController?.window ?? NSApp.keyWindow {
+            alert.beginSheetModal(for: window)
+        }
     }
 
     @objc func findORFs(_ sender: Any?) {
@@ -3394,7 +3463,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             alert.messageText = "No FASTQ Files Selected"
             alert.informativeText = "Select one or more FASTQ files or FASTQ bundles in the sidebar, then choose Assemble with SPAdes."
             alert.addButton(withTitle: "OK")
-            alert.runModal()
+            if let window = mainWindowController?.window ?? NSApp.keyWindow {
+                alert.beginSheetModal(for: window)
+            }
             return
         }
 
@@ -3791,7 +3862,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             alert.messageText = "Export Failed"
             alert.informativeText = error.localizedDescription
             alert.alertStyle = .warning
-            alert.runModal()
+            if let window = mainWindowController?.window ?? NSApp.keyWindow {
+                alert.beginSheetModal(for: window)
+            }
             return
         }
 
@@ -3800,16 +3873,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         savePanel.allowedContentTypes = [.plainText]
         savePanel.canCreateDirectories = true
 
-        guard let window = mainWindowController?.window else {
-            // Fallback: run as modal
-            if savePanel.runModal() == .OK, let url = savePanel.url {
-                do {
-                    try content.write(to: url, atomically: true, encoding: .utf8)
-                    debugLog("Provenance exported to \(url.path)")
-                } catch {
-                    debugLog("Provenance export write failed: \(error)")
-                }
-            }
+        guard let window = mainWindowController?.window ?? NSApp.keyWindow else {
             return
         }
 
@@ -3832,7 +3896,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 alert.messageText = "Export Failed"
                 alert.informativeText = "Could not write file: \(error.localizedDescription)"
                 alert.alertStyle = .warning
-                alert.runModal()
+                alert.beginSheetModal(for: window)
             }
         }
     }
@@ -3843,7 +3907,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         alert.informativeText = "No provenance record was found for the selected file. Provenance is recorded when files are created through tool operations (assembly, import, conversion, etc.)."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
-        alert.runModal()
+        if let window = mainWindowController?.window ?? NSApp.keyWindow {
+            alert.beginSheetModal(for: window)
+        }
     }
 
     private func showNotImplementedAlert(_ feature: String) {
@@ -3852,7 +3918,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         alert.informativeText = "\(feature) will be available in a future release."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
-        alert.runModal()
+        if let window = mainWindowController?.window ?? NSApp.keyWindow {
+            alert.beginSheetModal(for: window)
+        }
     }
 
     // MARK: - Import ONT Run
@@ -3864,7 +3932,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             alert.informativeText = "Please open or create a project before importing an ONT run."
             alert.alertStyle = .warning
             alert.addButton(withTitle: "OK")
-            alert.runModal()
+            if let window = mainWindowController?.window ?? NSApp.keyWindow {
+                alert.beginSheetModal(for: window)
+            }
             return
         }
 
@@ -4053,8 +4123,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         alert.addButton(withTitle: "Cancel Operations")
         alert.addButton(withTitle: "Keep Running")
 
-        if alert.runModal() == .alertFirstButtonReturn {
-            OperationCenter.shared.cancelAll()
+        guard let window = mainWindowController?.window ?? NSApp.keyWindow else { return }
+        Task {
+            let response = await alert.beginSheetModal(for: window)
+            if response == .alertFirstButtonReturn {
+                OperationCenter.shared.cancelAll()
+            }
         }
     }
 
@@ -4076,8 +4150,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         alert.addButton(withTitle: "Cancel Operation")
         alert.addButton(withTitle: "Keep Running")
 
-        if alert.runModal() == .alertFirstButtonReturn {
-            OperationCenter.shared.cancel(id: operationID)
+        guard let window = mainWindowController?.window ?? NSApp.keyWindow else { return }
+        Task {
+            let response = await alert.beginSheetModal(for: window)
+            if response == .alertFirstButtonReturn {
+                OperationCenter.shared.cancel(id: operationID)
+            }
         }
     }
 

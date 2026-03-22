@@ -283,6 +283,9 @@ public final class VCFReader: Sendable {
 
     /// Returns an async stream of VCF variants.
     ///
+    /// Supports both plain text (.vcf) and bgzipped (.vcf.gz) files transparently
+    /// via `url.linesAutoDecompressing()`.
+    ///
     /// - Parameter url: URL of the VCF file
     /// - Returns: AsyncThrowingStream of variants
     public func variants(from url: URL) -> AsyncThrowingStream<VCFVariant, Error> {
@@ -293,7 +296,7 @@ public final class VCFReader: Sendable {
                     var sampleNames: [String] = []
                     var lineNumber = 0
 
-                    for try await line in url.lines {
+                    for try await line in url.linesAutoDecompressing() {
                         lineNumber += 1
 
                         // Skip empty lines
@@ -358,7 +361,7 @@ public final class VCFReader: Sendable {
         var sampleNames: [String] = []
         var otherHeaders: [String: String] = [:]
 
-        for try await line in url.lines {
+        for try await line in url.linesAutoDecompressing() {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
             if trimmed.hasPrefix("##fileformat=") {

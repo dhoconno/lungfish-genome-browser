@@ -88,6 +88,7 @@ public actor FormatRegistry {
             FASTAFormatImporter(),
             GenBankFormatImporter(),
             GFF3FormatImporter(),
+            GTFFormatImporter(),
         ]
         for importer in builtInImporters {
             self.importers[importer.descriptor.identifier] = importer
@@ -423,7 +424,7 @@ public actor FormatRegistry {
             mimeTypes: ["text/x-gtf"],
             capabilities: .annotations,
             canRead: true,
-            canWrite: true,
+            canWrite: false,
             uiCategory: .annotation
         )
         result[gtf.identifier] = gtf
