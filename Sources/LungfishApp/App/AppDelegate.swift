@@ -3121,6 +3121,69 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         }
     }
 
+    @objc func goToGene(_ sender: Any?) {
+        // Ensure we have a viewer controller with annotations loaded
+        guard let viewerController = mainWindowController?.mainSplitViewController?.viewerController else {
+            showAlert(title: "No Viewer", message: "No sequence viewer is available.")
+            return
+        }
+
+        guard viewerController.referenceFrame != nil else {
+            showAlert(title: "No Sequence", message: "Please load a sequence before searching for genes.")
+            return
+        }
+
+        guard let searchIndex = viewerController.annotationSearchIndex else {
+            showAlert(title: "No Annotations", message: "No annotation data is loaded. Import a genome bundle with annotations first.")
+            return
+        }
+
+        // Show go-to-gene dialog
+        let alert = NSAlert()
+        alert.messageText = "Go to Gene"
+        alert.informativeText = "Enter a gene name or symbol to navigate to its location."
+        alert.addButton(withTitle: "Go")
+        alert.addButton(withTitle: "Cancel")
+
+        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 250, height: 24))
+        textField.placeholderString = "e.g., BRCA1 or TP53"
+        alert.accessoryView = textField
+
+        // Make the text field first responder
+        alert.window.initialFirstResponder = textField
+
+        guard let window = mainWindowController?.window ?? NSApp.keyWindow else { return }
+        Task {
+            let response = await alert.beginSheetModal(for: window)
+            if response == .alertFirstButtonReturn {
+                let query = textField.stringValue.trimmingCharacters(in: .whitespaces)
+
+                guard !query.isEmpty else {
+                    showAlert(title: "Invalid Input", message: "Please enter a gene name.")
+                    return
+                }
+
+                let results = searchIndex.search(query: query, limit: 1)
+                guard let match = results.first else {
+                    showAlert(title: "Gene Not Found", message: "No annotation matching \"\(query)\" was found in the current dataset.")
+                    return
+                }
+
+                let success = viewerController.navigateToPosition(
+                    chromosome: match.chromosome,
+                    start: match.start,
+                    end: match.end
+                )
+
+                if success {
+                    debugLog("goToGene: Navigated to \(match.name) at \(match.chromosome):\(match.start)-\(match.end)")
+                } else {
+                    showAlert(title: "Navigation Error", message: "Could not navigate to \(match.name) at \(match.chromosome):\(match.start)-\(match.end).")
+                }
+            }
+        }
+    }
+
     /// Parses genomic position input and navigates the viewer.
     ///
     /// Supported formats:

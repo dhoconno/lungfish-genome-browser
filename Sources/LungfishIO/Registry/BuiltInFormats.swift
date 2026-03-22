@@ -207,6 +207,44 @@ public final class GFF3FormatImporter: FormatImporter, @unchecked Sendable {
     }
 }
 
+// MARK: - GTF Importer
+
+/// Imports GTF (Gene Transfer Format) annotation files.
+///
+/// Supports GENCODE, Ensembl, and other standard GTF files.
+/// GTF uses the same nine-column layout as GFF3 but with a different
+/// attribute syntax (`key "value"; key "value";`).
+public final class GTFFormatImporter: FormatImporter, @unchecked Sendable {
+
+    public let descriptor = FormatDescriptor(
+        identifier: .gtf,
+        displayName: "GTF",
+        formatDescription: "Gene Transfer Format for annotations",
+        extensions: ["gtf"],
+        capabilities: .annotations,
+        uiCategory: .annotation
+    )
+
+    public init() {}
+
+    public func importDocument(from url: URL) async throws -> ImportResult {
+        let reader = GTFReader(url: url)
+        let annotations = try await reader.readAll()
+
+        var annotationsBySequence: [String: [SequenceAnnotation]] = [:]
+        for annotation in annotations {
+            let chrom = annotation.chromosome ?? "unknown"
+            annotationsBySequence[chrom, default: []].append(annotation)
+        }
+
+        return ImportResult(
+            annotationsBySequence: annotationsBySequence,
+            sourceURL: url,
+            sourceFormat: .gtf
+        )
+    }
+}
+
 // MARK: - GFF3 Exporter
 
 /// Exports annotations to GFF3 format.

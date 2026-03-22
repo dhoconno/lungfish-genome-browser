@@ -62,6 +62,9 @@ public class ViewerViewController: NSViewController {
     /// VCF dataset dashboard (shown in place of sequence viewer for standalone VCF files)
     private var vcfDatasetController: VCFDatasetViewController?
 
+    /// FASTA collection browser (shown in place of sequence viewer for multi-sequence FASTA files)
+    private var fastaCollectionController: FASTACollectionViewController?
+
     // MARK: - State
 
     /// Current reference frame for coordinate mapping
@@ -1017,6 +1020,7 @@ public class ViewerViewController: NSViewController {
         hideQuickLookPreview()
         hideFASTQDatasetView()
         hideVCFDatasetView()
+        hideFASTACollectionView()
 
         let controller = VCFDatasetViewController()
         controller.onDownloadReferenceRequested = onDownloadReference
@@ -1059,6 +1063,102 @@ public class ViewerViewController: NSViewController {
         controller.view.removeFromSuperview()
         controller.removeFromParent()
         vcfDatasetController = nil
+
+        // Restore normal viewer components
+        enhancedRulerView.isHidden = false
+        viewerView.isHidden = false
+        statusBar.isHidden = false
+    }
+
+    // MARK: - FASTA Collection Display
+
+    /// Displays the multi-sequence FASTA collection browser in place of the
+    /// normal sequence viewer.
+    ///
+    /// - Parameters:
+    ///   - sequences: All sequences from the FASTA file.
+    ///   - annotations: Associated annotations (grouped by chromosome internally).
+    public func displayFASTACollection(
+        sequences: [LungfishCore.Sequence],
+        annotations: [SequenceAnnotation]
+    ) {
+        hideQuickLookPreview()
+        hideFASTQDatasetView()
+        hideVCFDatasetView()
+        hideFASTACollectionView()
+
+        let controller = FASTACollectionViewController()
+        addChild(controller)
+
+        let dashView = controller.view
+        dashView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(dashView)
+
+        NSLayoutConstraint.activate([
+            dashView.topAnchor.constraint(equalTo: view.topAnchor),
+            dashView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            dashView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            dashView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+
+        controller.configure(sequences: sequences, annotations: annotations)
+        controller.onOpenSequence = { [weak self] sequence, sequenceAnnotations in
+            guard let self else { return }
+            self.hideFASTACollectionView()
+            self.clearBundleDisplay()
+
+            // Set up the viewer directly with the selected sequence
+            self.view.layoutSubtreeIfNeeded()
+            let effectiveWidth = max(800, Int(self.viewerView.bounds.width))
+
+            self.referenceFrame = ReferenceFrame(
+                chromosome: sequence.name,
+                start: 0,
+                end: Double(min(sequence.length, 10000)),
+                pixelWidth: effectiveWidth,
+                sequenceLength: sequence.length
+            )
+
+            self.viewerView.setSequence(sequence)
+            self.viewerView.setAnnotations(sequenceAnnotations)
+
+            let trackNames = [sequence.name]
+                + (sequenceAnnotations.isEmpty ? [] : ["Annotations"])
+            self.headerView.setTrackNames(trackNames)
+            self.enhancedRulerView.referenceFrame = self.referenceFrame
+
+            // Restore and redraw
+            self.enhancedRulerView.isHidden = false
+            self.viewerView.isHidden = false
+            self.headerView.isHidden = false
+            self.statusBar.isHidden = false
+            self.geneTabBarView.isHidden = true
+
+            self.viewerView.needsDisplay = true
+            self.enhancedRulerView.needsDisplay = true
+            self.headerView.needsDisplay = true
+            self.updateStatusBar()
+            self.scheduleDeferredRedraw()
+        }
+
+        fastaCollectionController = controller
+
+        // Hide normal genomic viewer components
+        enhancedRulerView.isHidden = true
+        viewerView.isHidden = true
+        headerView.isHidden = true
+        statusBar.isHidden = true
+        geneTabBarView.isHidden = true
+
+        logger.info("displayFASTACollection: Showing browser with \(sequences.count) sequences")
+    }
+
+    /// Removes the FASTA collection browser and restores normal viewer components.
+    public func hideFASTACollectionView() {
+        guard let controller = fastaCollectionController else { return }
+        controller.view.removeFromSuperview()
+        controller.removeFromParent()
+        fastaCollectionController = nil
 
         // Restore normal viewer components
         enhancedRulerView.isHidden = false
@@ -1182,6 +1282,7 @@ public class ViewerViewController: NSViewController {
         hideQuickLookPreview()
         hideFASTQDatasetView()
         hideVCFDatasetView()
+        hideFASTACollectionView()
 
         // Clear any stale reference bundle state so the viewer uses
         // the document's sequences instead of trying to fetch from a bundle
@@ -1277,6 +1378,7 @@ public class ViewerViewController: NSViewController {
         // Hide any dataset-specific views that may be covering the viewer
         hideFASTQDatasetView()
         hideVCFDatasetView()
+        hideFASTACollectionView()
 
         // Hide the progress overlay first - it may be covering the view area
         hideProgress()
