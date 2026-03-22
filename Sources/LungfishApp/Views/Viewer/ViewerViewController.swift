@@ -1237,7 +1237,7 @@ public class ViewerViewController: NSViewController {
         collectionNavBar = navBar
     }
 
-    private func hideCollectionBackButton() {
+    public func hideCollectionBackButton() {
         collectionNavBar?.removeFromSuperview()
         collectionNavBar = nil
         collectionBackButton = nil

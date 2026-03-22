@@ -1536,6 +1536,10 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             viewerController.clearBundleDisplay()
         }
 
+        // Always clear FASTA collection view when switching sidebar items
+        viewerController.hideFASTACollectionView()
+        viewerController.hideCollectionBackButton()
+
         // QuickLook preview for document, image, unknown types
         if item.type.usesQuickLook, let url = item.url {
             logger.info("displayContent: Using QuickLook preview for '\(item.title, privacy: .public)'")
