@@ -29,6 +29,7 @@ struct CondaCommand: AsyncParsableCommand {
             EnvsSubcommand.self,
             SetupSubcommand.self,
             PacksSubcommand.self,
+            ClassifyCommand.self,
         ]
     )
 }
