@@ -234,8 +234,12 @@ public actor CondaManager {
     private let micromambaDownloadURL = "https://github.com/mamba-org/micromamba-releases/releases/latest/download/micromamba-osx-arm64"
 
     private init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        self.rootPrefix = appSupport.appendingPathComponent("Lungfish/conda")
+        // Use ~/.lungfish/conda instead of ~/Library/Application Support/Lungfish/conda
+        // because many bioinformatics tools break on paths containing spaces.
+        // The "Application Support" space in the standard macOS location causes
+        // samtools, bcftools, and other tools that use internal shell pipes to fail.
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        self.rootPrefix = home.appendingPathComponent(".lungfish/conda")
     }
 
     // MARK: - Micromamba Bootstrap
