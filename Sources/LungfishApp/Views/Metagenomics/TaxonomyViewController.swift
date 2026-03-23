@@ -195,6 +195,27 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
             self?.presentExtractionSheet(for: node, includeChildren: true)
         }
 
+        // Wire table right-click NCBI links
+        taxonomyTableView.onNCBITaxonomyRequested = { node in
+            let url = URL(string: "https://www.ncbi.nlm.nih.gov/datasets/taxonomy/\(node.taxId)/")!
+            NSWorkspace.shared.open(url)
+        }
+        taxonomyTableView.onNCBIGenBankRequested = { node in
+            let url = URL(string: "https://www.ncbi.nlm.nih.gov/nuccore/?term=txid\(node.taxId)[Organism:exp]")!
+            NSWorkspace.shared.open(url)
+        }
+        taxonomyTableView.onNCBIPubMedRequested = { node in
+            let encodedName = node.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? node.name
+            let url = URL(string: "https://pubmed.ncbi.nlm.nih.gov/?term=\(encodedName)")!
+            NSWorkspace.shared.open(url)
+        }
+
+        // Wire table right-click BLAST
+        taxonomyTableView.onBlastRequested = { [weak self] node in
+            guard let self else { return }
+            self.showBlastConfigPopover(for: node, relativeTo: self.sunburstView)
+        }
+
         actionBar.configure(totalReads: result.tree.totalReads)
         actionBar.updateSelection(nil)
         breadcrumbBar.update(zoomNode: nil)

@@ -72,6 +72,12 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     /// Called when the user right-clicks a row to extract sequences including children.
     public var onExtractWithChildrenRequested: ((TaxonNode) -> Void)?
 
+    /// Called when the user right-clicks and selects an NCBI link or BLAST.
+    public var onNCBITaxonomyRequested: ((TaxonNode) -> Void)?
+    public var onNCBIGenBankRequested: ((TaxonNode) -> Void)?
+    public var onNCBIPubMedRequested: ((TaxonNode) -> Void)?
+    public var onBlastRequested: ((TaxonNode) -> Void)?
+
     // MARK: - Search / Filter
 
     /// Current filter text. Empty string means no filter.
@@ -473,6 +479,35 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
 
         menu.addItem(.separator())
 
+        // BLAST
+        let blastItem = NSMenuItem(
+            title: "BLAST Matching Reads\u{2026}",
+            action: #selector(contextBlastReads(_:)),
+            keyEquivalent: ""
+        )
+        blastItem.image = NSImage(systemSymbolName: "bolt.circle", accessibilityDescription: "BLAST")
+        menu.addItem(blastItem)
+
+        menu.addItem(.separator())
+
+        // NCBI links
+        let ncbiSubmenu = NSMenu()
+        ncbiSubmenu.addItem(withTitle: "NCBI Taxonomy",
+                           action: #selector(contextOpenNCBITaxonomy(_:)),
+                           keyEquivalent: "")
+        ncbiSubmenu.addItem(withTitle: "GenBank Sequences",
+                           action: #selector(contextOpenNCBIGenBank(_:)),
+                           keyEquivalent: "")
+        ncbiSubmenu.addItem(withTitle: "PubMed Literature",
+                           action: #selector(contextOpenNCBIPubMed(_:)),
+                           keyEquivalent: "")
+        let ncbiItem = NSMenuItem(title: "Look Up on NCBI", action: nil, keyEquivalent: "")
+        ncbiItem.submenu = ncbiSubmenu
+        ncbiItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: "NCBI")
+        menu.addItem(ncbiItem)
+
+        menu.addItem(.separator())
+
         // Copy
         menu.addItem(withTitle: "Copy Taxon Name",
                      action: #selector(contextCopyName(_:)),
@@ -524,6 +559,30 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
 
     @objc private func contextCollapseAll(_ sender: Any?) {
         collapseAll()
+    }
+
+    @objc private func contextBlastReads(_ sender: Any?) {
+        let row = outlineView.clickedRow
+        guard row >= 0, let node = outlineView.item(atRow: row) as? TaxonNode else { return }
+        onBlastRequested?(node)
+    }
+
+    @objc private func contextOpenNCBITaxonomy(_ sender: Any?) {
+        let row = outlineView.clickedRow
+        guard row >= 0, let node = outlineView.item(atRow: row) as? TaxonNode else { return }
+        onNCBITaxonomyRequested?(node)
+    }
+
+    @objc private func contextOpenNCBIGenBank(_ sender: Any?) {
+        let row = outlineView.clickedRow
+        guard row >= 0, let node = outlineView.item(atRow: row) as? TaxonNode else { return }
+        onNCBIGenBankRequested?(node)
+    }
+
+    @objc private func contextOpenNCBIPubMed(_ sender: Any?) {
+        let row = outlineView.clickedRow
+        guard row >= 0, let node = outlineView.item(atRow: row) as? TaxonNode else { return }
+        onNCBIPubMedRequested?(node)
     }
 
     // MARK: - NSOutlineViewDataSource

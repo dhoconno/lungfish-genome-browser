@@ -80,8 +80,10 @@ extension ViewerViewController {
         let controller = TaxonomyViewController()
         addChild(controller)
 
-        // Hide annotation drawer so it doesn't overlap the taxonomy view
+        // Hide annotation drawer so it doesn't overlap the taxonomy view.
+        // Also hide the FASTQ metadata drawer if present.
         annotationDrawerView?.isHidden = true
+        fastqMetadataDrawerView?.isHidden = true
 
         let taxView = controller.view
         taxView.translatesAutoresizingMaskIntoConstraints = false
