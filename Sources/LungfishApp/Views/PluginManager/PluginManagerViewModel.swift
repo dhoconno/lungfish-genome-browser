@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import AppKit
 import LungfishWorkflow
 import os.log
 import LungfishCore
@@ -175,9 +176,30 @@ final class PluginManagerViewModel {
     }
 
     /// The base directory where databases are stored.
+    ///
+    /// Reads from AppSettings/databaseStorageURL so it reflects any
+    /// custom storage location the user has configured.
     var databaseStoragePath: String {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return home.appendingPathComponent(".lungfish/databases/kraken2").path
+        AppSettings.shared.databaseStorageURL.path
+    }
+
+    /// Presents an NSOpenPanel to choose a new database storage directory.
+    ///
+    /// On selection, updates AppSettings/databaseStorageURL and posts
+    /// the databaseStorageLocationChanged notification so the registry
+    /// and other observers update.
+    func chooseDatabaseStorageLocation() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        panel.message = "Select a directory for database storage"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        AppSettings.shared.databaseStorageURL = url
+        refreshDatabases()
     }
 
     // MARK: - Lifecycle

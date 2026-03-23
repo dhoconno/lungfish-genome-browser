@@ -221,6 +221,13 @@ extension Notification.Name {
     /// - `"dbMask"`: `String` masking mode ("dust" or "none").
     /// - `"saveUnoriented"`: `Bool` whether to save unoriented reads.
     public static let fastqOrientRequested = Notification.Name("fastqOrientRequested")
+
+    /// Posted when the user changes the database storage location in Settings
+    /// or the Plugin Manager.
+    ///
+    /// Observers (e.g. ``MetagenomicsDatabaseRegistry``) should re-read the
+    /// storage path from UserDefaults and update their base directory accordingly.
+    public static let databaseStorageLocationChanged = Notification.Name("databaseStorageLocationChanged")
 }
 
 // MARK: - Notification UserInfo Keys

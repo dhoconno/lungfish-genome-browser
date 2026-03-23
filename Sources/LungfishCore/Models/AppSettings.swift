@@ -16,6 +16,7 @@ public enum SettingsSection: String, Sendable {
     case appearance
     case rendering
     case aiServices
+    case storage
 }
 
 /// Scroll direction behavior for custom viewport interaction handling.
@@ -134,6 +135,50 @@ public final class AppSettings: Sendable {
 
     /// Which AI provider to use for the AI assistant.
     public var preferredAIProvider: String = "anthropic"
+
+    // MARK: - Storage
+
+    /// UserDefaults key for the custom database storage path.
+    ///
+    /// Stored as a standalone UserDefaults key (not inside the JSON snapshot)
+    /// so that ``MetagenomicsDatabaseRegistry`` in LungfishWorkflow can read
+    /// it independently without depending on LungfishCore's `AppSettings`.
+    public static let databaseStorageLocationKey = "DatabaseStorageLocation"
+
+    /// The default database storage directory (`~/.lungfish/databases/`).
+    public static var defaultDatabaseStorageURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".lungfish/databases")
+    }
+
+    /// The configured database storage directory.
+    ///
+    /// Falls back to ``defaultDatabaseStorageURL`` when no custom path is set.
+    /// Changes are persisted to UserDefaults under ``databaseStorageLocationKey``
+    /// and also update ``MetagenomicsDatabaseRegistry`` via a notification.
+    public var databaseStorageURL: URL {
+        get {
+            if let path = UserDefaults.standard.string(forKey: Self.databaseStorageLocationKey),
+               !path.isEmpty {
+                return URL(fileURLWithPath: path, isDirectory: true)
+            }
+            return Self.defaultDatabaseStorageURL
+        }
+        set {
+            if newValue == Self.defaultDatabaseStorageURL {
+                UserDefaults.standard.removeObject(forKey: Self.databaseStorageLocationKey)
+            } else {
+                UserDefaults.standard.set(newValue.path, forKey: Self.databaseStorageLocationKey)
+            }
+            settingsLogger.info("Database storage location set to: \(newValue.path, privacy: .public)")
+            NotificationCenter.default.post(name: .databaseStorageLocationChanged, object: nil)
+        }
+    }
+
+    /// Whether the database storage location is using the default path.
+    public var isDatabaseStorageDefault: Bool {
+        UserDefaults.standard.string(forKey: Self.databaseStorageLocationKey) == nil
+    }
 
     // MARK: - Defaults
 
@@ -449,6 +494,9 @@ public final class AppSettings: Sendable {
             anthropicModel = fresh.anthropicModel
             geminiModel = fresh.geminiModel
             preferredAIProvider = fresh.preferredAIProvider
+        case .storage:
+            UserDefaults.standard.removeObject(forKey: Self.databaseStorageLocationKey)
+            NotificationCenter.default.post(name: .databaseStorageLocationChanged, object: nil)
         }
         settingsLogger.info("Section '\(section.rawValue)' reset to defaults")
     }

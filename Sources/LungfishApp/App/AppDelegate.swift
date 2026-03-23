@@ -3615,6 +3615,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
     /// Runs the classification pipeline, dispatching based on the config's goal.
     ///
+    /// Registers the operation with ``OperationCenter`` so it appears in the
+    /// Operations Panel with live progress updates.
+    ///
     /// - `.classify`: Runs Kraken2 only, displays taxonomy browser.
     /// - `.profile`: Runs Kraken2 + Bracken, displays taxonomy browser with abundances.
     /// - `.extract`: Runs Kraken2, displays taxonomy browser, then auto-presents
@@ -3622,12 +3625,34 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     private func runClassification(config: ClassificationConfig, viewerController: ViewerViewController) {
         let pipeline = ClassificationPipeline()
 
+        // Build a descriptive title from the first input file and the goal.
+        let inputName = config.inputFiles.first?.lastPathComponent ?? "reads"
+        let goalLabel: String
+        switch config.goal {
+        case .classify: goalLabel = "Classifying"
+        case .profile:  goalLabel = "Profiling"
+        case .extract:  goalLabel = "Classifying (extract)"
+        }
+        let operationTitle = "\(goalLabel) \(inputName)"
+
+        // Register the operation with OperationCenter so it appears in the Operations Panel.
+        let opID = OperationCenter.shared.start(
+            title: operationTitle,
+            detail: "Starting Kraken2 with \(config.databaseName)...",
+            operationType: .classification
+        )
+
         Task.detached {
             do {
-                let progressCallback: @Sendable (Double, String) -> Void = { _, message in
+                let progressCallback: @Sendable (Double, String) -> Void = { progress, message in
                     DispatchQueue.main.async {
                         MainActor.assumeIsolated {
                             viewerController.showProgress(message)
+                            OperationCenter.shared.update(
+                                id: opID,
+                                progress: max(0, min(1, progress)),
+                                detail: message
+                            )
                         }
                     }
                 }
@@ -3643,6 +3668,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         viewerController.hideProgress()
+
+                        let readCount = result.tree.totalReads
+                        let classifiedCount = result.tree.classifiedReads
+                        let summaryDetail = "\(classifiedCount) of \(readCount) reads classified"
+                        OperationCenter.shared.complete(id: opID, detail: summaryDetail)
+
                         viewerController.displayTaxonomyResult(result)
 
                         // For the extract goal, auto-present the extraction sheet
@@ -3660,6 +3691,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         viewerController.hideProgress()
+                        OperationCenter.shared.fail(id: opID, detail: error.localizedDescription)
+
                         let alert = NSAlert()
                         alert.messageText = "Classification Failed"
                         alert.informativeText = error.localizedDescription

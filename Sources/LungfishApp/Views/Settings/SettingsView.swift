@@ -7,8 +7,8 @@ import LungfishCore
 
 /// Root settings view containing all preference tabs.
 ///
-/// Follows macOS HIG tab-based settings layout with four categories:
-/// General, Appearance, Rendering, and AI Services.
+/// Follows macOS HIG tab-based settings layout with five categories:
+/// General, Appearance, Rendering, Storage, and AI Services.
 struct SettingsView: View {
     var body: some View {
         TabView {
@@ -18,6 +18,8 @@ struct SettingsView: View {
                 .tabItem { Label("Appearance", systemImage: "paintbrush") }
             RenderingSettingsTab()
                 .tabItem { Label("Rendering", systemImage: "slider.horizontal.3") }
+            StorageSettingsTab()
+                .tabItem { Label("Storage", systemImage: "internaldrive") }
             AIServicesSettingsTab()
                 .tabItem { Label("AI Services", systemImage: "brain") }
         }

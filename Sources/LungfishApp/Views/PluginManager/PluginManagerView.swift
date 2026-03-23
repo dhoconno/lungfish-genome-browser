@@ -778,7 +778,7 @@ struct DatabasesTabView: View {
     // MARK: - Storage Footer
 
     private var storageFooter: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             Label {
                 Text(viewModel.databaseStoragePath)
                     .font(.system(.caption, design: .monospaced))
@@ -790,6 +790,12 @@ struct DatabasesTabView: View {
                     .foregroundStyle(.secondary)
                     .font(.caption)
             }
+
+            Button("Change Location...") {
+                viewModel.chooseDatabaseStorageLocation()
+            }
+            .controlSize(.small)
+            .font(.caption)
 
             Spacer()
 
