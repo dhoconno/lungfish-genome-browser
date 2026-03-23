@@ -22,6 +22,17 @@ import LungfishIO
 /// - Dark mode support via dynamic colors
 /// - Keyboard shortcuts: Escape (zoom out), Cmd+0 (zoom to root)
 ///
+/// ## Right-Click Behavior
+///
+/// Right-click is consolidated into two distinct paths:
+/// - **On a segment**: Fires ``onNodeRightClicked`` with the node and window point,
+///   so the hosting controller can show a taxon-specific context menu.
+/// - **On empty space**: Fires ``onEmptySpaceRightClicked`` with the window point,
+///   so the hosting controller can show a chart-level context menu (e.g., Copy Chart as PNG).
+///
+/// The `menu(for:)` override is intentionally removed to avoid conflicts between
+/// AppKit's automatic right-click menu and the explicit `rightMouseDown` handler.
+///
 /// ## Usage
 ///
 /// ```swift
@@ -84,6 +95,12 @@ public class TaxonomySunburstView: NSView {
 
     /// Called when the user right-clicks a segment.
     public var onNodeRightClicked: ((TaxonNode, NSPoint) -> Void)?
+
+    /// Called when the user right-clicks empty space (no segment hit).
+    ///
+    /// The parameter is the click location in window coordinates, suitable
+    /// for positioning a context menu via `NSMenu.popUp(positioning:at:in:)`.
+    public var onEmptySpaceRightClicked: ((NSPoint) -> Void)?
 
     /// Called when the zoom level changes via keyboard or mouse interaction.
     ///
@@ -554,16 +571,32 @@ public class TaxonomySunburstView: NSView {
         hideTooltip()
     }
 
+    /// Handles right-click events with consolidated behavior.
+    ///
+    /// - **On a segment**: Fires ``onNodeRightClicked`` so the hosting controller
+    ///   can show a taxon-specific context menu (extract, copy, zoom).
+    /// - **On empty space**: Fires ``onEmptySpaceRightClicked`` so the hosting
+    ///   controller can show a chart-level context menu (Copy Chart as PNG).
+    ///
+    /// This replaces the previous dual-path approach where `rightMouseDown` handled
+    /// segments and `menu(for:)` handled empty space. The two paths conflicted
+    /// because AppKit calls `menu(for:)` after `rightMouseDown`, causing both
+    /// menus to appear.
     public override func rightMouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        let windowPoint = event.locationInWindow
 
-        guard let layout = currentLayout else { return }
+        guard let layout = currentLayout else {
+            onEmptySpaceRightClicked?(windowPoint)
+            return
+        }
         ensureSegmentCache()
 
         if let segment = layout.hitTest(point: point, segments: cachedSegments),
            !segment.isOther {
-            let windowPoint = event.locationInWindow
             onNodeRightClicked?(segment.node, windowPoint)
+        } else {
+            onEmptySpaceRightClicked?(windowPoint)
         }
     }
 
@@ -622,20 +655,11 @@ public class TaxonomySunburstView: NSView {
 
     // MARK: - Copy to Clipboard
 
-    public override func menu(for event: NSEvent) -> NSMenu? {
-        guard tree != nil else { return nil }
-        let menu = NSMenu()
-        let copyItem = NSMenuItem(
-            title: "Copy Chart as PNG",
-            action: #selector(copyChartToPasteboard(_:)),
-            keyEquivalent: ""
-        )
-        copyItem.target = self
-        menu.addItem(copyItem)
-        return menu
-    }
-
-    @objc private func copyChartToPasteboard(_ sender: Any) {
+    /// Copies the sunburst chart as a 2x PNG image to the system pasteboard.
+    ///
+    /// This method is exposed as `@objc` so it can be invoked from an `NSMenuItem`
+    /// in the empty-space context menu built by the hosting controller.
+    @objc public func copyChartToPasteboard(_ sender: Any) {
         let scale: CGFloat = 2.0
         let width = Int(bounds.width * scale)
         let height = Int(bounds.height * scale)

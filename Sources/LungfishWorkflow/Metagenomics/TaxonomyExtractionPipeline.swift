@@ -11,17 +11,25 @@ private let logger = Logger(subsystem: LogSubsystem.workflow, category: "Taxonom
 
 // MARK: - TaxonomyExtractionPipeline
 
-/// Actor that extracts reads classified to specific taxa from a FASTQ file.
+/// Actor that extracts reads classified to specific taxa from FASTQ file(s).
 ///
 /// The extraction flow:
 /// 1. Parse the Kraken2 per-read classification output to build a set of
 ///    read IDs assigned to the target tax IDs.
 /// 2. If ``TaxonomyExtractionConfig/includeChildren`` is `true`, collect all
 ///    descendant tax IDs from the ``TaxonTree`` before filtering.
-/// 3. Read the source FASTQ file using buffered I/O, handling both plain
-///    and gzip-compressed input.
-/// 4. Write matching reads (4-line FASTQ records) to the output file.
-/// 5. Record provenance via ``ProvenanceRecorder``.
+/// 3. For each source FASTQ file, read using buffered I/O (handling both plain
+///    and gzip-compressed input), writing matching reads to the corresponding
+///    output file.
+/// 4. Record provenance via ``ProvenanceRecorder``.
+///
+/// ## Paired-End Support
+///
+/// When ``TaxonomyExtractionConfig/sourceFiles`` contains two files (R1, R2),
+/// the pipeline builds the read ID set from the classification output (which
+/// was generated from both files), then filters each file independently using
+/// the same set. This preserves pair ordering -- if read X appears in both R1
+/// and R2, it is extracted from both.
 ///
 /// ## Progress Reporting
 ///
@@ -31,7 +39,7 @@ private let logger = Logger(subsystem: LogSubsystem.workflow, category: "Taxonom
 /// |-------------|-------|
 /// | 0.0 -- 0.20 | Parsing classification output |
 /// | 0.20 -- 0.30 | Building read ID set |
-/// | 0.30 -- 0.95 | Filtering FASTQ |
+/// | 0.30 -- 0.95 | Filtering FASTQ(s) |
 /// | 0.95 -- 1.00 | Provenance recording |
 ///
 /// ## Thread Safety
@@ -50,7 +58,7 @@ private let logger = Logger(subsystem: LogSubsystem.workflow, category: "Taxonom
 ///     classificationOutput: krakenOutput
 /// )
 /// let tree = classificationResult.tree
-/// let outputURL = try await pipeline.extract(config: config, tree: tree) { pct, msg in
+/// let outputURLs = try await pipeline.extract(config: config, tree: tree) { pct, msg in
 ///     print("\(Int(pct * 100))% \(msg)")
 /// }
 /// ```
@@ -64,20 +72,31 @@ public actor TaxonomyExtractionPipeline {
 
     // MARK: - Public API
 
-    /// Extracts reads classified to specific taxa from a FASTQ file.
+    /// Extracts reads classified to specific taxa from FASTQ file(s).
+    ///
+    /// For single-file configs, returns a single-element array containing the
+    /// output URL. For paired-end configs, returns one URL per source file.
     ///
     /// - Parameters:
     ///   - config: The extraction configuration.
     ///   - tree: The taxonomy tree for descendant lookup.
     ///   - progress: Optional progress callback.
-    /// - Returns: The URL of the output FASTQ file.
+    /// - Returns: The URLs of the output FASTQ file(s).
     /// - Throws: ``TaxonomyExtractionError`` for extraction failures.
     public func extract(
         config: TaxonomyExtractionConfig,
         tree: TaxonTree,
         progress: (@Sendable (Double, String) -> Void)? = nil
-    ) async throws -> URL {
+    ) async throws -> [URL] {
         let startTime = Date()
+
+        // Validate source/output count parity.
+        guard config.sourceFiles.count == config.outputFiles.count else {
+            throw TaxonomyExtractionError.sourceOutputCountMismatch(
+                sources: config.sourceFiles.count,
+                outputs: config.outputFiles.count
+            )
+        }
 
         // Phase 1: Parse classification output (0.0 -- 0.20)
         progress?(0.0, "Reading classification output...")
@@ -86,8 +105,10 @@ public actor TaxonomyExtractionPipeline {
         guard fm.fileExists(atPath: config.classificationOutput.path) else {
             throw TaxonomyExtractionError.classificationOutputNotFound(config.classificationOutput)
         }
-        guard fm.fileExists(atPath: config.sourceFile.path) else {
-            throw TaxonomyExtractionError.sourceFileNotFound(config.sourceFile)
+        for source in config.sourceFiles {
+            guard fm.fileExists(atPath: source.path) else {
+                throw TaxonomyExtractionError.sourceFileNotFound(source)
+            }
         }
 
         // Build the complete set of target tax IDs
@@ -117,27 +138,54 @@ public actor TaxonomyExtractionPipeline {
         logger.info("Found \(matchCount, privacy: .public) matching reads")
         progress?(0.30, "Extracting \(matchCount) reads...")
 
-        // Phase 3: Filter FASTQ (0.30 -- 0.95)
+        // Phase 3: Filter each FASTQ file (0.30 -- 0.95)
         try Task.checkCancellation()
 
-        let extractedCount = try filterFASTQ(
-            source: config.sourceFile,
-            output: config.outputFile,
-            readIds: matchingReadIds,
-            progress: progress
-        )
+        let fileCount = config.sourceFiles.count
+        var totalExtracted = 0
+        var outputURLs: [URL] = []
 
-        logger.info("Extracted \(extractedCount, privacy: .public) reads to \(config.outputFile.lastPathComponent, privacy: .public)")
+        for (index, (source, output)) in zip(config.sourceFiles, config.outputFiles).enumerated() {
+            let fileLabel = fileCount > 1 ? " (file \(index + 1)/\(fileCount))" : ""
+            let fileProgressBase = 0.30 + 0.65 * (Double(index) / Double(fileCount))
+            let fileProgressRange = 0.65 / Double(fileCount)
+
+            // Build a per-file progress callback that maps sub-progress into
+            // the parent's overall range. The explicit type annotations resolve
+            // ambiguity when mapping an optional @Sendable closure.
+            let fileProgress: (@Sendable (Double, String) -> Void)?
+            if let parentProgress = progress {
+                fileProgress = { (fraction: Double, message: String) in
+                    let overall = fileProgressBase + fileProgressRange * fraction
+                    parentProgress(min(overall, 0.95), "\(message)\(fileLabel)")
+                }
+            } else {
+                fileProgress = nil
+            }
+
+            let extractedCount = try filterFASTQ(
+                source: source,
+                output: output,
+                readIds: matchingReadIds,
+                progress: fileProgress
+            )
+
+            totalExtracted += extractedCount
+            outputURLs.append(output)
+            logger.info("Extracted \(extractedCount, privacy: .public) reads to \(output.lastPathComponent, privacy: .public)")
+        }
 
         // Phase 4: Provenance recording (0.95 -- 1.00)
         progress?(0.95, "Recording provenance...")
 
         let runtime = Date().timeIntervalSince(startTime)
-        await recordProvenance(config: config, extractedCount: extractedCount, runtime: runtime)
+        await recordProvenance(config: config, extractedCount: totalExtracted, runtime: runtime)
 
-        progress?(1.0, "Extraction complete: \(extractedCount) reads")
-        return config.outputFile
+        progress?(1.0, "Extraction complete: \(totalExtracted) reads")
+        return outputURLs
     }
+
+
 
     // MARK: - Descendant Collection
 
@@ -230,8 +278,11 @@ public actor TaxonomyExtractionPipeline {
                     let taxIdStr = columns[2].trimmingCharacters(in: .whitespaces)
                     guard let taxId = Int(taxIdStr), targetTaxIds.contains(taxId) else { continue }
 
-                    // Column 1: read ID
-                    let readId = String(columns[1].trimmingCharacters(in: .whitespaces))
+                    // Column 1: read ID (strip /1 or /2 paired-end suffix for matching)
+                    var readId = String(columns[1].trimmingCharacters(in: .whitespaces))
+                    if readId.hasSuffix("/1") || readId.hasSuffix("/2") {
+                        readId = String(readId.dropLast(2))
+                    }
                     matchingReadIds.insert(readId)
                 }
             }
@@ -252,7 +303,10 @@ public actor TaxonomyExtractionPipeline {
                 guard status == "C" else { continue }
                 let taxIdStr = columns[2].trimmingCharacters(in: .whitespaces)
                 guard let taxId = Int(taxIdStr), targetTaxIds.contains(taxId) else { continue }
-                let readId = String(columns[1].trimmingCharacters(in: .whitespaces))
+                var readId = String(columns[1].trimmingCharacters(in: .whitespaces))
+                if readId.hasSuffix("/1") || readId.hasSuffix("/2") {
+                    readId = String(readId.dropLast(2))
+                }
                 matchingReadIds.insert(readId)
             }
         }
@@ -271,7 +325,7 @@ public actor TaxonomyExtractionPipeline {
     ///   - source: Input FASTQ file (plain or .gz).
     ///   - output: Output FASTQ file.
     ///   - readIds: Set of read IDs to extract.
-    ///   - progress: Optional progress callback.
+    ///   - progress: Optional progress callback (0.0 to 1.0 within this file).
     /// - Returns: The number of reads extracted.
     /// - Throws: ``TaxonomyExtractionError`` on I/O failure.
     private func filterFASTQ(
@@ -359,10 +413,10 @@ public actor TaxonomyExtractionPipeline {
                 }
             }
 
-            // Report progress
+            // Report progress (normalized to 0.0 -- 1.0 for this file)
             if fileSize > 0 {
-                let fraction = 0.30 + 0.65 * (Double(bytesRead) / Double(fileSize))
-                progress?(min(fraction, 0.95), "Extracting: \(extractedCount) reads...")
+                let fraction = Double(bytesRead) / Double(fileSize)
+                progress?(min(fraction, 1.0), "Extracting: \(extractedCount) reads...")
             }
         }
 
@@ -454,7 +508,7 @@ public actor TaxonomyExtractionPipeline {
                 }
             }
 
-            progress?(0.60, "Extracting: \(extractedCount) reads...")
+            progress?(0.5, "Extracting: \(extractedCount) reads...")
         }
 
         // Process remaining residual
@@ -483,9 +537,11 @@ public actor TaxonomyExtractionPipeline {
     ///
     /// FASTQ headers have the format `@readId [optional description]`.
     /// The read ID is everything after `@` up to the first whitespace.
+    /// For paired-end reads, strips the `/1` or `/2` suffix to produce
+    /// a canonical ID that matches both mates.
     ///
     /// - Parameter header: The FASTQ header line.
-    /// - Returns: The read ID string.
+    /// - Returns: The read ID string (without paired-end suffix).
     private func extractReadId(from header: String) -> String {
         var id = header
         if id.hasPrefix("@") {
@@ -494,6 +550,10 @@ public actor TaxonomyExtractionPipeline {
         // Read ID ends at first whitespace
         if let spaceIndex = id.firstIndex(where: { $0.isWhitespace }) {
             id = String(id[id.startIndex..<spaceIndex])
+        }
+        // Strip paired-end suffix for canonical matching
+        if id.hasSuffix("/1") || id.hasSuffix("/2") {
+            id = String(id.dropLast(2))
         }
         return id
     }
@@ -513,16 +573,18 @@ public actor TaxonomyExtractionPipeline {
                 "taxIds": .string(config.taxIds.sorted().map(String.init).joined(separator: ",")),
                 "includeChildren": .boolean(config.includeChildren),
                 "extractedReads": .integer(extractedCount),
+                "pairedEnd": .boolean(config.isPairedEnd),
             ]
         )
 
-        let inputs = [
-            FileRecord(path: config.sourceFile.path, format: .fastq, role: .input),
+        let inputs = config.sourceFiles.map { url in
+            FileRecord(path: url.path, format: .fastq, role: .input)
+        } + [
             FileRecord(path: config.classificationOutput.path, format: .text, role: .input),
         ]
-        let outputs = [
-            FileRecord(path: config.outputFile.path, format: .fastq, role: .output),
-        ]
+        let outputs = config.outputFiles.map { url in
+            FileRecord(path: url.path, format: .fastq, role: .output)
+        }
 
         await recorder.recordStep(
             runID: runID,

@@ -12,6 +12,12 @@ import LungfishWorkflow
 /// The wizard guides the user through selecting a goal, database, and sensitivity
 /// preset. Advanced settings are available in a collapsed disclosure group.
 ///
+/// ## RAM Warning
+///
+/// When a database is selected that requires more RAM than the system has available,
+/// a warning banner is shown below the database picker. The warning also suggests
+/// enabling memory mapping and, when enabled, auto-checks the memory mapping toggle.
+///
 /// ## Presentation
 ///
 /// Accessible from:
@@ -31,6 +37,7 @@ import LungfishWorkflow
 /// +----------------------------------------------------+
 /// | Database: [ Standard-8 (8 GB, ~8 GB RAM)     v ]   |
 /// |           Download more databases...               |
+/// |  [!] This database requires X GB RAM...            |
 /// +----------------------------------------------------+
 /// | Sensitivity: [ Sensitive | Balanced | Precise ]    |
 /// |              General-purpose classification         |
@@ -161,6 +168,30 @@ struct ClassificationWizardSheet: View {
         }
     }
 
+    /// The system's physical memory in bytes.
+    private var systemRAMBytes: Int64 {
+        Int64(ProcessInfo.processInfo.physicalMemory)
+    }
+
+    /// Whether the selected database requires more RAM than available.
+    ///
+    /// Returns `true` when the database's ``MetagenomicsDatabaseInfo/recommendedRAM``
+    /// exceeds the system's physical memory.
+    private var databaseExceedsRAM: Bool {
+        guard let db = selectedDatabase else { return false }
+        return db.recommendedRAM > systemRAMBytes
+    }
+
+    /// Human-readable warning text when the database exceeds available RAM.
+    var ramWarningText: String {
+        guard let db = selectedDatabase else { return "" }
+        let requiredGB = Double(db.recommendedRAM) / 1_073_741_824
+        let availableGB = Double(systemRAMBytes) / 1_073_741_824
+        return "This database requires \(String(format: "%.0f", requiredGB)) GB RAM. "
+            + "Your system has \(String(format: "%.0f", availableGB)) GB. "
+            + "Consider enabling memory mapping."
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -246,6 +277,12 @@ struct ClassificationWizardSheet: View {
         .frame(width: 520, height: 520)
         .onChange(of: preset) { _, newPreset in
             applyPreset(newPreset)
+        }
+        .onChange(of: selectedDatabaseName) { _, _ in
+            // Auto-enable memory mapping when database exceeds RAM
+            if databaseExceedsRAM && !memoryMapping {
+                memoryMapping = true
+            }
         }
     }
 
@@ -355,7 +392,35 @@ struct ClassificationWizardSheet: View {
                     }
                 }
             }
+
+            // RAM warning banner
+            if databaseExceedsRAM {
+                ramWarningBanner
+            }
         }
+    }
+
+    /// Warning banner shown when the selected database exceeds available RAM.
+    private var ramWarningBanner: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.yellow)
+                .font(.system(size: 12))
+            Text(ramWarningText)
+                .font(.system(size: 11))
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.yellow.opacity(0.1))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.yellow.opacity(0.3), lineWidth: 0.5)
+        )
+        .accessibilityLabel("RAM warning: \(ramWarningText)")
     }
 
     // MARK: - Preset Selector
@@ -482,5 +547,45 @@ struct ClassificationWizardSheet: View {
         }
         let mb = Double(bytes) / 1_048_576
         return String(format: "%.0f MB", mb)
+    }
+}
+
+// MARK: - RAM Checking Utility
+
+extension ClassificationWizardSheet {
+
+    /// Checks whether a database exceeds available system RAM.
+    ///
+    /// This is exposed as a static method for unit testing without rendering
+    /// the SwiftUI view.
+    ///
+    /// - Parameters:
+    ///   - database: The database to check.
+    ///   - systemRAM: The system's physical RAM in bytes. Defaults to the
+    ///     current system's physical memory.
+    /// - Returns: `true` if the database's recommended RAM exceeds the
+    ///   system's physical memory.
+    static func databaseExceedsSystemRAM(
+        _ database: MetagenomicsDatabaseInfo,
+        systemRAM: Int64 = Int64(ProcessInfo.processInfo.physicalMemory)
+    ) -> Bool {
+        database.recommendedRAM > systemRAM
+    }
+
+    /// Builds the RAM warning text for a database that exceeds available RAM.
+    ///
+    /// - Parameters:
+    ///   - database: The database that exceeds RAM.
+    ///   - systemRAM: The system's physical RAM in bytes.
+    /// - Returns: A warning string suitable for display.
+    static func buildRAMWarningText(
+        for database: MetagenomicsDatabaseInfo,
+        systemRAM: Int64 = Int64(ProcessInfo.processInfo.physicalMemory)
+    ) -> String {
+        let requiredGB = Double(database.recommendedRAM) / 1_073_741_824
+        let availableGB = Double(systemRAM) / 1_073_741_824
+        return "This database requires \(String(format: "%.0f", requiredGB)) GB RAM. "
+            + "Your system has \(String(format: "%.0f", availableGB)) GB. "
+            + "Consider enabling memory mapping."
     }
 }

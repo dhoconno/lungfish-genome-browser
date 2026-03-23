@@ -747,12 +747,27 @@ public actor CondaManager {
     /// more than 64 KB of output. The actor thread is never blocked --
     /// the method suspends via `CheckedContinuation` until the process
     /// terminates or the timeout expires.
+    ///
+    /// - Parameters:
+    ///   - name: The tool executable name (e.g., "kraken2").
+    ///   - arguments: Command-line arguments to pass to the tool.
+    ///   - environment: The conda environment name containing the tool.
+    ///   - workingDirectory: Optional working directory for the process.
+    ///   - timeout: Maximum execution time in seconds (default: 3600).
+    ///   - stderrHandler: Optional callback that receives stderr lines in
+    ///     real-time as they are written by the subprocess. Useful for parsing
+    ///     progress output from tools like kraken2 that report progress to
+    ///     stderr. The full stderr is still accumulated and returned in the
+    ///     result tuple regardless of whether this handler is set.
+    /// - Returns: A tuple of (stdout, stderr, exitCode).
+    /// - Throws: ``CondaError`` on tool-not-found, timeout, or launch failure.
     public func runTool(
         name: String,
         arguments: [String] = [],
         environment: String,
         workingDirectory: URL? = nil,
-        timeout: TimeInterval = 3600
+        timeout: TimeInterval = 3600,
+        stderrHandler: (@Sendable (String) -> Void)? = nil
     ) async throws -> (stdout: String, stderr: String, exitCode: Int32) {
         try await ensureMicromamba()
 
@@ -805,6 +820,13 @@ public actor CondaManager {
                     stderrPipe.fileHandleForReading.readabilityHandler = nil
                 } else {
                     stderrBuffer.append(data)
+                    // Forward lines to the stderrHandler if provided.
+                    if let handler = stderrHandler,
+                       let text = String(data: data, encoding: .utf8) {
+                        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+                            handler(String(line))
+                        }
+                    }
                 }
             }
 

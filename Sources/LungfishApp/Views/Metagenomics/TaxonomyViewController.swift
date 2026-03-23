@@ -40,6 +40,18 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "TaxonomyView
 /// and clicking a table row highlights the corresponding sunburst segment. A
 /// suppression flag prevents infinite feedback loops (per project conventions).
 ///
+/// ## Export
+///
+/// The action bar provides export capabilities:
+/// - **Export as CSV/TSV**: Writes the full taxonomy table in depth-first order
+///   via ``NSSavePanel`` (using `beginSheetModal`, not `runModal`, per macOS 26 rules).
+/// - **Copy Summary**: Copies the classification summary text to the pasteboard.
+///
+/// ## Provenance
+///
+/// A collapsible provenance popover shows pipeline metadata (tool version, database,
+/// preset, confidence, runtime, input file) when a classification result is loaded.
+///
 /// ## Extraction
 ///
 /// When the user clicks "Extract Sequences" in the action bar or context menu,
@@ -294,10 +306,16 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
             self.breadcrumbBar.update(zoomNode: newCenter)
         }
 
-        // Sunburst right-click -> context menu
+        // Sunburst right-click on segment -> taxon context menu
         sunburstView.onNodeRightClicked = { [weak self] node, windowPoint in
             guard let self else { return }
             self.showContextMenu(for: node, at: windowPoint)
+        }
+
+        // Sunburst right-click on empty space -> chart context menu
+        sunburstView.onEmptySpaceRightClicked = { [weak self] windowPoint in
+            guard let self else { return }
+            self.showChartContextMenu(at: windowPoint)
         }
 
         // Table selection -> sunburst sync
@@ -348,7 +366,7 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
         min(proposedMaximumPosition, splitView.bounds.width - 260)
     }
 
-    // MARK: - Context Menu
+    // MARK: - Context Menu (Taxon)
 
     /// Builds and shows a context menu for a taxon node at the given window point.
     ///
@@ -431,6 +449,32 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
         menu.addItem(zoomOutItem)
 
         // Convert window point to view coordinates and show
+        let viewPoint = view.convert(windowPoint, from: nil)
+        menu.popUp(positioning: nil, at: viewPoint, in: view)
+    }
+
+    // MARK: - Context Menu (Chart / Empty Space)
+
+    /// Builds and shows a chart-level context menu at the given window point.
+    ///
+    /// This menu appears when the user right-clicks empty space in the sunburst
+    /// chart (not on a segment). It provides chart-level actions like copying the
+    /// chart as a PNG image.
+    ///
+    /// - Parameter windowPoint: The click location in window coordinates.
+    private func showChartContextMenu(at windowPoint: NSPoint) {
+        guard tree != nil else { return }
+
+        let menu = NSMenu()
+
+        let copyItem = NSMenuItem(
+            title: "Copy Chart as PNG",
+            action: #selector(sunburstView.copyChartToPasteboard(_:)),
+            keyEquivalent: ""
+        )
+        copyItem.target = sunburstView
+        menu.addItem(copyItem)
+
         let viewPoint = view.convert(windowPoint, from: nil)
         menu.popUp(positioning: nil, at: viewPoint, in: view)
     }
@@ -555,6 +599,247 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
         breadcrumbBar.update(zoomNode: nil)
     }
 
+    // MARK: - Export
+
+    /// Exports the taxonomy table as CSV via an NSSavePanel.
+    ///
+    /// The export writes all nodes from the tree in depth-first order with columns:
+    /// Name, Rank, Reads (Clade), Reads (Direct), Clade %, Direct %.
+    ///
+    /// Uses `beginSheetModal` (not `runModal`) per macOS 26 deprecated API rules.
+    private func exportCSV() {
+        exportDelimited(separator: ",", fileExtension: "csv", fileTypeName: "CSV")
+    }
+
+    /// Exports the taxonomy table as TSV via an NSSavePanel.
+    ///
+    /// Same columns as CSV but tab-separated.
+    private func exportTSV() {
+        exportDelimited(separator: "\t", fileExtension: "tsv", fileTypeName: "TSV")
+    }
+
+    /// Shared implementation for CSV/TSV export.
+    ///
+    /// - Parameters:
+    ///   - separator: Column separator character.
+    ///   - fileExtension: File extension without dot (e.g., "csv").
+    ///   - fileTypeName: Human-readable format name for the panel.
+    private func exportDelimited(separator: String, fileExtension: String, fileTypeName: String) {
+        guard let tree, let window = view.window else {
+            logger.warning("Cannot export: no tree or window")
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.title = "Export Taxonomy as \(fileTypeName)"
+        panel.allowedContentTypes = [.plainText]
+        panel.canCreateDirectories = true
+
+        // Default filename from input file
+        let baseName = classificationResult?.config.inputFiles.first?
+            .deletingPathExtension().lastPathComponent ?? "classification"
+        panel.nameFieldStringValue = "\(baseName)_classification.\(fileExtension)"
+
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+
+            let content = self.buildDelimitedExport(tree: tree, separator: separator)
+            do {
+                try content.write(to: url, atomically: true, encoding: .utf8)
+                logger.info("Exported taxonomy \(fileTypeName, privacy: .public) to \(url.lastPathComponent, privacy: .public)")
+            } catch {
+                logger.error("Export failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    /// Builds the delimited text content for export.
+    ///
+    /// Writes a header row followed by all nodes in depth-first order.
+    ///
+    /// - Parameters:
+    ///   - tree: The taxonomy tree to export.
+    ///   - separator: Column separator character.
+    /// - Returns: The complete file content as a string.
+    func buildDelimitedExport(tree: TaxonTree, separator: String) -> String {
+        var lines: [String] = []
+
+        // Header
+        let headers = ["Name", "Rank", "Reads (Clade)", "Reads (Direct)", "Clade %", "Direct %"]
+        lines.append(headers.joined(separator: separator))
+
+        // Depth-first traversal
+        let allNodes = tree.allNodes()
+        for node in allNodes {
+            let cladePercent = tree.totalReads > 0
+                ? String(format: "%.4f", Double(node.readsClade) / Double(tree.totalReads) * 100)
+                : "0.0000"
+            let directPercent = tree.totalReads > 0
+                ? String(format: "%.4f", Double(node.readsDirect) / Double(tree.totalReads) * 100)
+                : "0.0000"
+
+            // Escape fields that may contain the separator (mainly for CSV)
+            let name = escapeField(node.name, separator: separator)
+            let rank = escapeField(node.rank.displayName, separator: separator)
+
+            let row = [
+                name,
+                rank,
+                "\(node.readsClade)",
+                "\(node.readsDirect)",
+                cladePercent,
+                directPercent,
+            ]
+            lines.append(row.joined(separator: separator))
+        }
+
+        // Include unclassified node if present
+        if let unclassified = tree.unclassifiedNode {
+            let cladePercent = tree.totalReads > 0
+                ? String(format: "%.4f", Double(unclassified.readsClade) / Double(tree.totalReads) * 100)
+                : "0.0000"
+            let row = [
+                escapeField(unclassified.name, separator: separator),
+                escapeField(unclassified.rank.displayName, separator: separator),
+                "\(unclassified.readsClade)",
+                "\(unclassified.readsDirect)",
+                cladePercent,
+                cladePercent,
+            ]
+            lines.append(row.joined(separator: separator))
+        }
+
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// Escapes a field value for delimited output.
+    ///
+    /// For CSV, fields containing commas, quotes, or newlines are quoted.
+    /// For TSV, fields are returned unmodified (tabs in taxon names are rare).
+    ///
+    /// - Parameters:
+    ///   - value: The field value.
+    ///   - separator: The column separator.
+    /// - Returns: The escaped field value.
+    private func escapeField(_ value: String, separator: String) -> String {
+        guard separator == "," else { return value }
+        if value.contains(",") || value.contains("\"") || value.contains("\n") {
+            let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
+            return "\"\(escaped)\""
+        }
+        return value
+    }
+
+    /// Copies the classification summary text to the system pasteboard.
+    private func copySummaryToClipboard() {
+        guard let result = classificationResult else {
+            logger.warning("Cannot copy summary: no classification result")
+            return
+        }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(result.summary, forType: .string)
+
+        logger.info("Copied classification summary to clipboard")
+    }
+
+    // MARK: - Export Actions (for NSMenuItem targets)
+
+    @objc private func exportCSVAction(_ sender: Any) {
+        exportCSV()
+    }
+
+    @objc private func exportTSVAction(_ sender: Any) {
+        exportTSV()
+    }
+
+    @objc private func copySummaryAction(_ sender: Any) {
+        copySummaryToClipboard()
+    }
+
+    @objc private func showProvenanceAction(_ sender: Any) {
+        showProvenancePopover(relativeTo: sender)
+    }
+
+    // MARK: - Provenance Popover
+
+    /// Shows a provenance popover with classification pipeline metadata.
+    ///
+    /// Displays tool version, database, preset, confidence, runtime, and input
+    /// file information from the ``ClassificationResult``.
+    ///
+    /// - Parameter sender: The view or button to anchor the popover to.
+    private func showProvenancePopover(relativeTo sender: Any) {
+        guard let result = classificationResult else { return }
+
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentSize = NSSize(width: 320, height: 220)
+
+        let provenanceView = TaxonomyProvenanceView(result: result)
+        popover.contentViewController = NSHostingController(rootView: provenanceView)
+
+        // Anchor to the action bar or the sender button
+        let anchorView: NSView
+        let anchorRect: NSRect
+        if let button = sender as? NSView {
+            anchorView = button
+            anchorRect = button.bounds
+        } else {
+            anchorView = actionBar
+            anchorRect = actionBar.bounds
+        }
+
+        popover.show(relativeTo: anchorRect, of: anchorView, preferredEdge: .maxY)
+    }
+
+    /// Returns the export menu for the action bar or toolbar.
+    ///
+    /// This builds an NSMenu with export and provenance items that can be
+    /// attached to a button or presented programmatically.
+    func buildExportMenu() -> NSMenu {
+        let menu = NSMenu()
+
+        let csvItem = NSMenuItem(
+            title: "Export as CSV\u{2026}",
+            action: #selector(exportCSVAction(_:)),
+            keyEquivalent: ""
+        )
+        csvItem.target = self
+        menu.addItem(csvItem)
+
+        let tsvItem = NSMenuItem(
+            title: "Export as TSV\u{2026}",
+            action: #selector(exportTSVAction(_:)),
+            keyEquivalent: ""
+        )
+        tsvItem.target = self
+        menu.addItem(tsvItem)
+
+        menu.addItem(.separator())
+
+        let copyItem = NSMenuItem(
+            title: "Copy Summary",
+            action: #selector(copySummaryAction(_:)),
+            keyEquivalent: ""
+        )
+        copyItem.target = self
+        menu.addItem(copyItem)
+
+        menu.addItem(.separator())
+
+        let provenanceItem = NSMenuItem(
+            title: "Show Provenance\u{2026}",
+            action: #selector(showProvenanceAction(_:)),
+            keyEquivalent: ""
+        )
+        provenanceItem.target = self
+        menu.addItem(provenanceItem)
+
+        return menu
+    }
+
     // MARK: - Testing Accessors
 
     /// Returns the summary bar for testing.
@@ -574,4 +859,7 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
 
     /// Returns the split view for testing.
     var testSplitView: NSSplitView { splitView }
+
+    /// Returns the current classification result for testing.
+    var testClassificationResult: ClassificationResult? { classificationResult }
 }

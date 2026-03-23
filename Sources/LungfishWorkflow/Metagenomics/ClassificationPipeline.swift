@@ -62,11 +62,12 @@ public enum ClassificationPipelineError: Error, LocalizedError, Sendable {
 /// The pipeline performs these steps:
 ///
 /// 1. **Validate** the configuration (database exists, input files present).
-/// 2. **Detect** kraken2 version for provenance recording.
-/// 3. **Run kraken2** with the configured arguments.
-/// 4. **Parse** the kreport output into a ``TaxonTree``.
-/// 5. **(Optional) Run Bracken** to re-estimate abundances.
-/// 6. **Record provenance** via ``ProvenanceRecorder``.
+/// 2. **Auto-enable memory mapping** if the database exceeds 80% of system RAM.
+/// 3. **Detect** kraken2 and bracken versions for provenance recording.
+/// 4. **Run kraken2** with the configured arguments.
+/// 5. **Parse** the kreport output into a ``TaxonTree``.
+/// 6. **(Optional) Run Bracken** to re-estimate abundances.
+/// 7. **Record provenance** via ``ProvenanceRecorder``.
 ///
 /// ## Progress
 ///
@@ -212,11 +213,34 @@ public actor ClassificationPipeline {
             }
         }
 
-        progress?(0.10, "Detecting kraken2 version...")
+        // Auto-enable memory mapping if database exceeds 80% of system RAM (Gap 19).
+        var effectiveConfig = config
+        if shouldAutoEnableMemoryMapping(config: config) {
+            effectiveConfig.memoryMapping = true
+            let systemGB = String(
+                format: "%.0f",
+                Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824
+            )
+            logger.info(
+                "Auto-enabled memory mapping: database exceeds 80%% of \(systemGB, privacy: .public) GB system RAM"
+            )
+        }
+
+        progress?(0.10, "Detecting tool versions...")
 
         // Phase 2: Version detection (0.10 -- 0.30)
         let toolVersion = await detectKraken2Version()
         logger.info("Detected kraken2 version: \(toolVersion, privacy: .public)")
+
+        // Detect bracken version separately when profiling (Gap 22 fix).
+        let brackenVersion: String
+        if runBracken {
+            brackenVersion = await detectBrackenVersion()
+            logger.info("Detected bracken version: \(brackenVersion, privacy: .public)")
+        } else {
+            brackenVersion = "unknown"
+        }
+
         progress?(0.30, "Running kraken2...")
 
         // Begin provenance recording.
@@ -224,29 +248,42 @@ public actor ClassificationPipeline {
         let runID = await provenanceRecorder.beginRun(
             name: runBracken ? "Metagenomics Profiling" : "Metagenomics Classification",
             parameters: [
-                "database": .string(config.databaseName),
-                "confidence": .number(config.confidence),
-                "minimumHitGroups": .integer(config.minimumHitGroups),
-                "threads": .integer(config.threads),
-                "pairedEnd": .boolean(config.isPairedEnd),
-                "memoryMapping": .boolean(config.memoryMapping),
+                "database": .string(effectiveConfig.databaseName),
+                "confidence": .number(effectiveConfig.confidence),
+                "minimumHitGroups": .integer(effectiveConfig.minimumHitGroups),
+                "threads": .integer(effectiveConfig.threads),
+                "pairedEnd": .boolean(effectiveConfig.isPairedEnd),
+                "memoryMapping": .boolean(effectiveConfig.memoryMapping),
             ]
         )
 
         // Phase 3: Run kraken2 (0.30 -- 0.80)
-        let kraken2Args = config.kraken2Arguments()
+        let kraken2Args = effectiveConfig.kraken2Arguments()
         let kraken2Command = ["kraken2"] + kraken2Args
 
         logger.info("Running: kraken2 \(kraken2Args.joined(separator: " "), privacy: .public)")
 
         let kraken2Start = Date()
+        // Build an optional stderr handler that forwards kraken2 progress
+        // lines to the caller's progress callback. Explicit if/else avoids
+        // type ambiguity with Optional.map and nested @Sendable closures.
+        let kraken2StderrHandler: (@Sendable (String) -> Void)?
+        if let progressCallback = progress {
+            kraken2StderrHandler = { (line: String) in
+                parseKraken2ProgressLine(line, progress: progressCallback)
+            }
+        } else {
+            kraken2StderrHandler = nil
+        }
+
         let kraken2Result: (stdout: String, stderr: String, exitCode: Int32)
         do {
             kraken2Result = try await condaManager.runTool(
                 name: "kraken2",
                 arguments: kraken2Args,
                 environment: Self.kraken2Environment,
-                timeout: 7200 // 2 hour timeout for large datasets
+                timeout: 7200, // 2 hour timeout for large datasets
+                stderrHandler: kraken2StderrHandler
             )
         } catch let error as CondaError {
             await provenanceRecorder.completeRun(runID, status: .failed)
@@ -259,12 +296,12 @@ public actor ClassificationPipeline {
         let kraken2WallTime = Date().timeIntervalSince(kraken2Start)
 
         // Record kraken2 provenance step.
-        let inputRecords = config.inputFiles.map { url in
+        let inputRecords = effectiveConfig.inputFiles.map { url in
             FileRecord(path: url.path, format: .fastq, role: .input)
         }
         let kraken2Outputs = [
-            FileRecord(path: config.reportURL.path, format: .text, role: .report),
-            FileRecord(path: config.outputURL.path, format: .text, role: .output),
+            FileRecord(path: effectiveConfig.reportURL.path, format: .text, role: .report),
+            FileRecord(path: effectiveConfig.outputURL.path, format: .text, role: .output),
         ]
         let kraken2StepID = await provenanceRecorder.recordStep(
             runID: runID,
@@ -289,12 +326,12 @@ public actor ClassificationPipeline {
         progress?(0.80, "Parsing classification report...")
 
         // Phase 4: Parse kreport (0.80 -- 0.90)
-        guard fm.fileExists(atPath: config.reportURL.path) else {
+        guard fm.fileExists(atPath: effectiveConfig.reportURL.path) else {
             await provenanceRecorder.completeRun(runID, status: .failed)
-            throw ClassificationPipelineError.kreportNotProduced(config.reportURL)
+            throw ClassificationPipelineError.kreportNotProduced(effectiveConfig.reportURL)
         }
 
-        var tree = try KreportParser.parse(url: config.reportURL)
+        var tree = try KreportParser.parse(url: effectiveConfig.reportURL)
 
         let totalReads = tree.totalReads
         let speciesCount = tree.speciesCount
@@ -307,9 +344,9 @@ public actor ClassificationPipeline {
         if runBracken {
             let levelCode = brackenLevelCode(for: brackenLevel)
             let brackenArgs = [
-                "-d", config.databasePath.path,
-                "-i", config.reportURL.path,
-                "-o", config.brackenURL.path,
+                "-d", effectiveConfig.databasePath.path,
+                "-i", effectiveConfig.reportURL.path,
+                "-o", effectiveConfig.brackenURL.path,
                 "-r", String(brackenReadLength),
                 "-l", levelCode,
                 "-t", String(brackenThreshold),
@@ -338,17 +375,18 @@ public actor ClassificationPipeline {
             let brackenWallTime = Date().timeIntervalSince(brackenStart)
 
             // Record bracken provenance step with dependency on kraken2.
+            // Uses separately detected bracken version (Gap 22 fix).
             let brackenInputs = [
-                FileRecord(path: config.reportURL.path, format: .text, role: .input),
+                FileRecord(path: effectiveConfig.reportURL.path, format: .text, role: .input),
             ]
             let brackenOutputRecords = [
-                FileRecord(path: config.brackenURL.path, format: .text, role: .output),
+                FileRecord(path: effectiveConfig.brackenURL.path, format: .text, role: .output),
             ]
             let dependsOn: [UUID] = kraken2StepID.map { [$0] } ?? []
             await provenanceRecorder.recordStep(
                 runID: runID,
                 toolName: "bracken",
-                toolVersion: toolVersion, // bracken version typically matches the install
+                toolVersion: brackenVersion,
                 command: brackenCommand,
                 inputs: brackenInputs,
                 outputs: brackenOutputRecords,
@@ -363,10 +401,10 @@ public actor ClassificationPipeline {
                 let exitCode = brackenResult.exitCode
                 let stderrText = brackenResult.stderr
                 logger.warning("Bracken failed (exit \(exitCode, privacy: .public)): \(stderrText, privacy: .public)")
-            } else if fm.fileExists(atPath: config.brackenURL.path) {
+            } else if fm.fileExists(atPath: effectiveConfig.brackenURL.path) {
                 // Merge bracken results into the tree.
-                try BrackenParser.mergeBracken(url: config.brackenURL, into: &tree)
-                brackenOutputURL = config.brackenURL
+                try BrackenParser.mergeBracken(url: effectiveConfig.brackenURL, into: &tree)
+                brackenOutputURL = effectiveConfig.brackenURL
                 logger.info("Bracken profiling merged successfully")
             }
         }
@@ -377,7 +415,7 @@ public actor ClassificationPipeline {
         await provenanceRecorder.completeRun(runID, status: .completed)
 
         do {
-            try await provenanceRecorder.save(runID: runID, to: config.outputDirectory)
+            try await provenanceRecorder.save(runID: runID, to: effectiveConfig.outputDirectory)
         } catch {
             // Provenance save failure is non-fatal.
             logger.warning("Failed to save provenance: \(error.localizedDescription, privacy: .public)")
@@ -386,10 +424,10 @@ public actor ClassificationPipeline {
         let totalRuntime = Date().timeIntervalSince(startTime)
 
         let result = ClassificationResult(
-            config: config,
+            config: effectiveConfig,
             tree: tree,
-            reportURL: config.reportURL,
-            outputURL: config.outputURL,
+            reportURL: effectiveConfig.reportURL,
+            outputURL: effectiveConfig.outputURL,
             brackenURL: brackenOutputURL,
             runtime: totalRuntime,
             toolVersion: toolVersion,
@@ -404,7 +442,48 @@ public actor ClassificationPipeline {
         return result
     }
 
-    // MARK: - Helpers
+    // MARK: - Memory Mapping Auto-Enable
+
+    /// Determines whether memory mapping should be auto-enabled for the given config.
+    ///
+    /// Memory mapping is auto-enabled when the database size exceeds 80% of the
+    /// system's physical RAM and the user has not already enabled it.
+    ///
+    /// - Parameter config: The classification configuration.
+    /// - Returns: `true` if memory mapping should be auto-enabled.
+    func shouldAutoEnableMemoryMapping(config: ClassificationConfig) -> Bool {
+        guard !config.memoryMapping else { return false }
+
+        let systemRAM = ProcessInfo.processInfo.physicalMemory
+        let threshold = UInt64(Double(systemRAM) * 0.8)
+
+        let dbSize = estimateDatabaseSize(at: config.databasePath)
+        return dbSize > threshold
+    }
+
+    /// Estimates the total size of a Kraken2 database directory.
+    ///
+    /// Sums the sizes of the key database files (hash.k2d, taxo.k2d, opts.k2d).
+    ///
+    /// - Parameter path: Path to the database directory.
+    /// - Returns: Total estimated size in bytes.
+    private func estimateDatabaseSize(at path: URL) -> UInt64 {
+        let fm = FileManager.default
+        let keyFiles = ["hash.k2d", "taxo.k2d", "opts.k2d"]
+        var totalSize: UInt64 = 0
+
+        for filename in keyFiles {
+            let filePath = path.appendingPathComponent(filename).path
+            if let attrs = try? fm.attributesOfItem(atPath: filePath),
+               let size = attrs[.size] as? UInt64 {
+                totalSize += size
+            }
+        }
+
+        return totalSize
+    }
+
+    // MARK: - Version Detection
 
     /// Detects the kraken2 version by running `kraken2 --version`.
     ///
@@ -430,6 +509,48 @@ public actor ClassificationPipeline {
         }
     }
 
+    /// Detects the bracken version by running `bracken --version` or `bracken -v`.
+    ///
+    /// Bracken may report its version differently from kraken2, so this method
+    /// detects it independently rather than assuming it matches the kraken2 install
+    /// (Gap 22 fix). Tries `--version` first, then `-v` as a fallback.
+    ///
+    /// - Returns: The version string, or "unknown" if detection fails.
+    private func detectBrackenVersion() async -> String {
+        for flag in ["--version", "-v"] {
+            do {
+                let result = try await condaManager.runTool(
+                    name: "bracken",
+                    arguments: [flag],
+                    environment: Self.brackenEnvironment,
+                    timeout: 30
+                )
+                // Bracken may output "Bracken v2.9" or "bracken 2.9" or similar.
+                // Check both stdout and stderr since different versions may write
+                // the version to different streams.
+                let combined = result.stdout + result.stderr
+                let trimmed = combined.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let range = trimmed.range(
+                    of: #"\d+\.\d+(\.\d+)?"#,
+                    options: .regularExpression
+                ) {
+                    return String(trimmed[range])
+                }
+                if !trimmed.isEmpty {
+                    return trimmed.components(separatedBy: .newlines).first ?? trimmed
+                }
+            } catch {
+                // Try next flag variant
+                continue
+            }
+        }
+
+        logger.debug("bracken version detection failed with both --version and -v")
+        return "unknown"
+    }
+
+    // MARK: - Helpers
+
     /// Maps a ``TaxonomicRank`` to the Bracken `-l` flag letter.
     ///
     /// - Parameter rank: The taxonomic rank.
@@ -446,4 +567,48 @@ public actor ClassificationPipeline {
         default: return "S" // Default to species
         }
     }
+}
+
+// MARK: - Kraken2 Progress Parsing
+
+/// Parses a Kraken2 stderr progress line and reports it via the progress callback.
+///
+/// Kraken2 writes lines like:
+/// ```
+///   12345 sequences (1.2 Mbp) processed
+/// ```
+///
+/// This function extracts the sequence count and reports it in the 0.30--0.80
+/// progress range used by the classification pipeline. Since we don't know the
+/// total sequence count upfront, we use the count itself as an informational
+/// message without computing a fraction.
+///
+/// - Parameters:
+///   - line: A single line from kraken2's stderr output.
+///   - progress: The pipeline's progress callback.
+func parseKraken2ProgressLine(
+    _ line: String,
+    progress: @Sendable (Double, String) -> Void
+) {
+    // Match lines like "  12345 sequences (1.2 Mbp) processed"
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+    guard trimmed.contains("sequences") && trimmed.contains("processed") else { return }
+
+    // Extract the sequence count (first number in the line)
+    let parts = trimmed.split(separator: " ", omittingEmptySubsequences: true)
+    guard let countStr = parts.first, let count = Int(countStr) else { return }
+
+    // Report in the kraken2 execution progress range (0.30 -- 0.80).
+    // We can't compute a true fraction since we don't know total reads,
+    // so report a fixed 0.50 progress with a descriptive message.
+    let formattedCount: String
+    if count >= 1_000_000 {
+        formattedCount = String(format: "%.1fM", Double(count) / 1_000_000)
+    } else if count >= 1_000 {
+        formattedCount = String(format: "%.1fK", Double(count) / 1_000)
+    } else {
+        formattedCount = String(count)
+    }
+
+    progress(0.50, "Classifying: \(formattedCount) sequences processed...")
 }

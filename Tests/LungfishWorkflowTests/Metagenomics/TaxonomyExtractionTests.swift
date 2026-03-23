@@ -339,7 +339,7 @@ final class TaxonomyExtractionPipelineTests: XCTestCase {
             classificationOutput: classOutput
         )
 
-        let result = try await pipeline.extract(config: config, tree: tree)
+        let result = try await pipeline.extract(config: config, tree: tree).first!
 
         // Should extract read1 and read3 (classified to 562)
         XCTAssertEqual(result, outputURL)
@@ -376,7 +376,7 @@ final class TaxonomyExtractionPipelineTests: XCTestCase {
             classificationOutput: classOutput
         )
 
-        let result = try await pipeline.extract(config: config, tree: tree)
+        let result = try await pipeline.extract(config: config, tree: tree).first!
 
         XCTAssertEqual(result, outputURL)
         let content = try String(contentsOf: outputURL, encoding: .utf8)
@@ -409,7 +409,7 @@ final class TaxonomyExtractionPipelineTests: XCTestCase {
             classificationOutput: classOutput
         )
 
-        let result = try await pipeline.extract(config: config, tree: tree)
+        let result = try await pipeline.extract(config: config, tree: tree).first!
 
         XCTAssertEqual(result, outputURL)
         let content = try String(contentsOf: outputURL, encoding: .utf8)
@@ -536,9 +536,9 @@ final class TaxonomyExtractionPipelineTests: XCTestCase {
         )
 
         let accumulator = ProgressAccumulator()
-        _ = try await pipeline.extract(config: config, tree: tree) { pct, msg in
+        _ = try await pipeline.extract(config: config, tree: tree, progress: { pct, msg in
             Task { await accumulator.append(pct, msg) }
-        }
+        })
 
         // Give the async tasks a moment to complete
         try await Task.sleep(for: .milliseconds(100))
@@ -657,12 +657,12 @@ final class TaxonomyExtractionPipelineTests: XCTestCase {
         )
 
         let accumulator = ProgressAccumulator()
-        let resultURL = try await pipeline.extract(config: config, tree: tree) { pct, msg in
+        let resultURLs = try await pipeline.extract(config: config, tree: tree, progress: { pct, msg in
             Task { await accumulator.append(pct, msg) }
-        }
+        })
 
         // Verify output file was created
-        XCTAssertEqual(resultURL, outputURL)
+        XCTAssertEqual(resultURLs.first!, outputURL)
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
 
         // Read and verify output content
@@ -751,7 +751,7 @@ final class TaxonomyExtractionPipelineTests: XCTestCase {
         )
 
         // Run extraction
-        let extractedURL = try await pipeline.extract(config: config, tree: tree)
+        let extractedURL = try await pipeline.extract(config: config, tree: tree).first!
         XCTAssertTrue(fm.fileExists(atPath: extractedURL.path))
 
         // Simulate bundle creation (mirrors ViewerViewController.createExtractedFASTQBundle)
@@ -832,5 +832,279 @@ final class TaxonomyExtractionPipelineTests: XCTestCase {
         let parsedTaxIds = parsed?["taxIds"] as? [Int]
         XCTAssertNotNil(parsedTaxIds)
         XCTAssertEqual(parsedTaxIds, [562])
+    }
+}
+
+// MARK: - Paired-End Extraction Tests (Phase G5)
+
+extension TaxonomyExtractionPipelineTests {
+
+    /// Verifies that paired-end extraction filters both R1 and R2 files using the same read ID set.
+    func testPairedEndExtraction() async throws {
+        let tree = makeTestTree()
+        let pipeline = TaxonomyExtractionPipeline()
+
+        // Create classification output with reads from both mates
+        let classOutput = try makeClassificationOutput(reads: [
+            (readId: "read1", taxId: 562, classified: true),   // E. coli
+            (readId: "read2", taxId: 1280, classified: true),  // S. aureus
+            (readId: "read3", taxId: 562, classified: true),   // E. coli
+        ])
+
+        // Create paired FASTQ files (R1 and R2)
+        let r1URL = tempDir.appendingPathComponent("sample_R1.fastq")
+        let r2URL = tempDir.appendingPathComponent("sample_R2.fastq")
+        _ = try makeFASTQ(reads: ["read1", "read2", "read3"], at: r1URL)
+        _ = try makeFASTQ(reads: ["read1", "read2", "read3"], at: r2URL)
+
+        let outputR1 = tempDir.appendingPathComponent("extracted_R1.fastq")
+        let outputR2 = tempDir.appendingPathComponent("extracted_R2.fastq")
+
+        let config = TaxonomyExtractionConfig(
+            taxIds: [562],
+            includeChildren: false,
+            sourceFiles: [r1URL, r2URL],
+            outputFiles: [outputR1, outputR2],
+            classificationOutput: classOutput
+        )
+
+        let results = try await pipeline.extract(config: config, tree: tree)
+
+        // Should produce two output files
+        XCTAssertEqual(results.count, 2, "Should produce two output files for paired-end")
+        XCTAssertEqual(results[0], outputR1)
+        XCTAssertEqual(results[1], outputR2)
+
+        // Both files should contain read1 and read3 (E. coli) but not read2 (S. aureus)
+        let r1Content = try String(contentsOf: outputR1, encoding: .utf8)
+        XCTAssertTrue(r1Content.contains("@read1"), "R1 should contain read1")
+        XCTAssertTrue(r1Content.contains("@read3"), "R1 should contain read3")
+        XCTAssertFalse(r1Content.contains("@read2"), "R1 should not contain read2")
+
+        let r2Content = try String(contentsOf: outputR2, encoding: .utf8)
+        XCTAssertTrue(r2Content.contains("@read1"), "R2 should contain read1")
+        XCTAssertTrue(r2Content.contains("@read3"), "R2 should contain read3")
+        XCTAssertFalse(r2Content.contains("@read2"), "R2 should not contain read2")
+    }
+
+    /// Verifies that single-file configs still work with the backward-compatible initializer.
+    func testSingleFileBackwardsCompat() async throws {
+        let tree = makeTestTree()
+        let pipeline = TaxonomyExtractionPipeline()
+
+        let classOutput = try makeClassificationOutput(reads: [
+            (readId: "read1", taxId: 562, classified: true),
+            (readId: "read2", taxId: 1280, classified: true),
+        ])
+
+        let fastqURL = try makeFASTQ(reads: ["read1", "read2"])
+        let outputURL = tempDir.appendingPathComponent("compat_extracted.fastq")
+
+        // Use the single-file initializer
+        let config = TaxonomyExtractionConfig(
+            taxIds: [562],
+            includeChildren: false,
+            sourceFile: fastqURL,
+            outputFile: outputURL,
+            classificationOutput: classOutput
+        )
+
+        // Verify backward-compatible properties
+        XCTAssertEqual(config.sourceFile, fastqURL)
+        XCTAssertEqual(config.outputFile, outputURL)
+        XCTAssertEqual(config.sourceFiles.count, 1)
+        XCTAssertEqual(config.outputFiles.count, 1)
+        XCTAssertFalse(config.isPairedEnd)
+
+        let results = try await pipeline.extract(config: config, tree: tree)
+        XCTAssertEqual(results.count, 1)
+        XCTAssertEqual(results[0], outputURL)
+
+        let content = try String(contentsOf: outputURL, encoding: .utf8)
+        XCTAssertTrue(content.contains("@read1"))
+        XCTAssertFalse(content.contains("@read2"))
+    }
+
+    /// Verifies that mismatched source/output counts produce an error.
+    func testSourceOutputCountMismatch() async throws {
+        let tree = makeTestTree()
+        let pipeline = TaxonomyExtractionPipeline()
+
+        let classOutput = try makeClassificationOutput(reads: [
+            (readId: "read1", taxId: 562, classified: true),
+        ])
+
+        let fastqURL = try makeFASTQ(reads: ["read1"])
+
+        let config = TaxonomyExtractionConfig(
+            taxIds: [562],
+            includeChildren: false,
+            sourceFiles: [fastqURL],
+            outputFiles: [
+                tempDir.appendingPathComponent("out1.fastq"),
+                tempDir.appendingPathComponent("out2.fastq"),
+            ],
+            classificationOutput: classOutput
+        )
+
+        do {
+            _ = try await pipeline.extract(config: config, tree: tree)
+            XCTFail("Expected sourceOutputCountMismatch error")
+        } catch let error as TaxonomyExtractionError {
+            if case .sourceOutputCountMismatch(let sources, let outputs) = error {
+                XCTAssertEqual(sources, 1)
+                XCTAssertEqual(outputs, 2)
+            } else {
+                XCTFail("Expected sourceOutputCountMismatch, got \(error)")
+            }
+        }
+    }
+}
+
+// MARK: - Classification Result Persistence Tests (Phase G7)
+
+final class ClassificationResultPersistenceTests: XCTestCase {
+
+    private let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("classification-persist-\(UUID().uuidString)")
+
+    override func setUpWithError() throws {
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: tempDir)
+    }
+
+    /// Creates a minimal kreport file for testing.
+    private func makeMinimalKreport() throws -> URL {
+        let url = tempDir.appendingPathComponent("classification.kreport")
+        let content = """
+        100.00\t1000\t0\tR\t1\troot
+         80.00\t800\t0\tD\t2\t  Bacteria
+         50.00\t500\t200\tG\t561\t    Escherichia
+         20.00\t200\t200\tS\t562\t      Escherichia coli
+         20.00\t200\t200\tD\t2157\t  Archaea
+        """
+        try content.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    /// Creates a mock kraken output file.
+    private func makeKrakenOutput() throws -> URL {
+        let url = tempDir.appendingPathComponent("classification.kraken")
+        try "C\tread1\t562\t150\t0:150\n".write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    /// Verifies that save/load round-trips preserve all metadata.
+    func testSaveLoadRoundTrip() async throws {
+        let kreportURL = try makeMinimalKreport()
+        let krakenURL = try makeKrakenOutput()
+
+        let config = ClassificationConfig(
+            inputFiles: [tempDir.appendingPathComponent("reads.fastq")],
+            isPairedEnd: false,
+            databaseName: "Viral",
+            databasePath: tempDir,
+            confidence: 0.2,
+            minimumHitGroups: 2,
+            threads: 4,
+            memoryMapping: false,
+            quickMode: false,
+            outputDirectory: tempDir
+        )
+
+        let tree = try KreportParser.parse(url: kreportURL)
+        let provenanceId = UUID()
+
+        let result = ClassificationResult(
+            config: config,
+            tree: tree,
+            reportURL: kreportURL,
+            outputURL: krakenURL,
+            brackenURL: nil,
+            runtime: 42.5,
+            toolVersion: "2.1.3",
+            provenanceId: provenanceId
+        )
+
+        // Save
+        try result.save(to: tempDir)
+
+        // Verify file exists
+        XCTAssertTrue(ClassificationResult.exists(in: tempDir))
+
+        // Load
+        let loaded = try ClassificationResult.load(from: tempDir)
+
+        // Verify metadata
+        XCTAssertEqual(loaded.config.databaseName, "Viral")
+        XCTAssertEqual(loaded.config.confidence, 0.2)
+        XCTAssertEqual(loaded.runtime, 42.5)
+        XCTAssertEqual(loaded.toolVersion, "2.1.3")
+        XCTAssertEqual(loaded.provenanceId, provenanceId)
+        XCTAssertNil(loaded.brackenURL)
+
+        // Verify the tree was rebuilt from the kreport
+        XCTAssertEqual(loaded.tree.totalReads, tree.totalReads)
+        XCTAssertEqual(loaded.tree.speciesCount, tree.speciesCount)
+    }
+
+    /// Verifies that loading from a kreport correctly rebuilds the tree.
+    func testLoadFromKreport() async throws {
+        let kreportURL = try makeMinimalKreport()
+        let krakenURL = try makeKrakenOutput()
+
+        let config = ClassificationConfig(
+            inputFiles: [tempDir.appendingPathComponent("reads.fastq")],
+            isPairedEnd: false,
+            databaseName: "Test",
+            databasePath: tempDir,
+            outputDirectory: tempDir
+        )
+
+        let tree = try KreportParser.parse(url: kreportURL)
+
+        let result = ClassificationResult(
+            config: config,
+            tree: tree,
+            reportURL: kreportURL,
+            outputURL: krakenURL,
+            brackenURL: nil,
+            runtime: 10.0,
+            toolVersion: "2.1.3",
+            provenanceId: nil
+        )
+
+        try result.save(to: tempDir)
+
+        let loaded = try ClassificationResult.load(from: tempDir)
+
+        // Tree should have the species node for E. coli
+        let ecoli = loaded.tree.node(taxId: 562)
+        XCTAssertNotNil(ecoli, "Should have E. coli node")
+        XCTAssertEqual(ecoli?.name, "Escherichia coli")
+    }
+
+    /// Verifies that loading fails gracefully when sidecar is missing.
+    func testLoadMissingSidecar() {
+        let emptyDir = tempDir.appendingPathComponent("empty")
+        try? FileManager.default.createDirectory(at: emptyDir, withIntermediateDirectories: true)
+
+        XCTAssertFalse(ClassificationResult.exists(in: emptyDir))
+
+        do {
+            _ = try ClassificationResult.load(from: emptyDir)
+            XCTFail("Expected sidecarNotFound error")
+        } catch let error as ClassificationResultLoadError {
+            if case .sidecarNotFound = error {
+                // Expected
+            } else {
+                XCTFail("Expected sidecarNotFound, got \(error)")
+            }
+        } catch {
+            XCTFail("Unexpected error type: \(error)")
+        }
     }
 }

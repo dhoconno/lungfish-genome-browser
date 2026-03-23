@@ -6,13 +6,13 @@ import Foundation
 
 // MARK: - TaxonomyExtractionConfig
 
-/// Configuration for extracting reads classified to specific taxa from a FASTQ file.
+/// Configuration for extracting reads classified to specific taxa from FASTQ file(s).
 ///
-/// An extraction selects reads from a classified FASTQ based on their Kraken2
-/// per-read taxonomy assignments. When ``includeChildren`` is `true`, all
+/// An extraction selects reads from one or more classified FASTQs based on their
+/// Kraken2 per-read taxonomy assignments. When ``includeChildren`` is `true`, all
 /// descendant tax IDs from the target nodes are included in the filter.
 ///
-/// ## Usage
+/// ## Single-End Usage
 ///
 /// ```swift
 /// let config = TaxonomyExtractionConfig(
@@ -20,6 +20,18 @@ import Foundation
 ///     includeChildren: true,
 ///     sourceFile: inputFASTQ,
 ///     outputFile: outputFASTQ,
+///     classificationOutput: krakenOutputURL
+/// )
+/// ```
+///
+/// ## Paired-End Usage
+///
+/// ```swift
+/// let config = TaxonomyExtractionConfig(
+///     taxIds: [562],
+///     includeChildren: true,
+///     sourceFiles: [r1FASTQ, r2FASTQ],
+///     outputFiles: [r1Output, r2Output],
 ///     classificationOutput: krakenOutputURL
 /// )
 /// ```
@@ -44,15 +56,17 @@ public struct TaxonomyExtractionConfig: Sendable, Equatable {
     /// clade-level extraction.
     public let includeChildren: Bool
 
-    /// The input FASTQ file from which reads are extracted.
+    /// The input FASTQ file(s) from which reads are extracted.
     ///
-    /// May be gzip-compressed (`.fastq.gz`).
-    public let sourceFile: URL
+    /// For single-end data, this contains one URL. For paired-end data, it
+    /// contains two URLs (R1, R2). Each file may be gzip-compressed (`.fastq.gz`).
+    public let sourceFiles: [URL]
 
-    /// The output FASTQ file for matching reads.
+    /// The output FASTQ file(s) for matching reads.
     ///
-    /// The pipeline writes matching reads here in the same format as the source.
-    public let outputFile: URL
+    /// Must have the same count as ``sourceFiles``. The pipeline writes matching
+    /// reads to the corresponding output file, maintaining pair ordering.
+    public let outputFiles: [URL]
 
     /// The Kraken2 per-read classification output file.
     ///
@@ -61,7 +75,33 @@ public struct TaxonomyExtractionConfig: Sendable, Equatable {
     /// determine which reads to extract.
     public let classificationOutput: URL
 
-    /// Creates a taxonomy extraction configuration.
+    /// Creates a taxonomy extraction configuration for paired-end or multi-file input.
+    ///
+    /// - Parameters:
+    ///   - taxIds: Tax IDs to extract.
+    ///   - includeChildren: Whether to include descendant taxa.
+    ///   - sourceFiles: Input FASTQ file(s).
+    ///   - outputFiles: Output FASTQ file(s), one per source file.
+    ///   - classificationOutput: Kraken2 per-read output file.
+    public init(
+        taxIds: Set<Int>,
+        includeChildren: Bool,
+        sourceFiles: [URL],
+        outputFiles: [URL],
+        classificationOutput: URL
+    ) {
+        self.taxIds = taxIds
+        self.includeChildren = includeChildren
+        self.sourceFiles = sourceFiles
+        self.outputFiles = outputFiles
+        self.classificationOutput = classificationOutput
+    }
+
+    /// Creates a taxonomy extraction configuration for a single input file.
+    ///
+    /// Convenience initializer that wraps `sourceFile` and `outputFile` into
+    /// single-element arrays, preserving backward compatibility with existing
+    /// callers.
     ///
     /// - Parameters:
     ///   - taxIds: Tax IDs to extract.
@@ -78,9 +118,30 @@ public struct TaxonomyExtractionConfig: Sendable, Equatable {
     ) {
         self.taxIds = taxIds
         self.includeChildren = includeChildren
-        self.sourceFile = sourceFile
-        self.outputFile = outputFile
+        self.sourceFiles = [sourceFile]
+        self.outputFiles = [outputFile]
         self.classificationOutput = classificationOutput
+    }
+
+    // MARK: - Backward-Compatible Accessors
+
+    /// The first (or only) input FASTQ file.
+    ///
+    /// For single-end data this is the sole input; for paired-end it is R1.
+    public var sourceFile: URL {
+        sourceFiles[0]
+    }
+
+    /// The first (or only) output FASTQ file.
+    ///
+    /// For single-end data this is the sole output; for paired-end it is the R1 output.
+    public var outputFile: URL {
+        outputFiles[0]
+    }
+
+    /// Whether this configuration targets paired-end data.
+    public var isPairedEnd: Bool {
+        sourceFiles.count > 1
     }
 
     /// A human-readable description of this extraction for logging.
@@ -89,7 +150,10 @@ public struct TaxonomyExtractionConfig: Sendable, Equatable {
             ? "taxId \(taxIds.first!)"
             : "\(taxIds.count) taxa"
         let childStr = includeChildren ? " (with children)" : ""
-        return "Extract \(taxStr)\(childStr) from \(sourceFile.lastPathComponent)"
+        let fileStr = sourceFiles.count == 1
+            ? sourceFile.lastPathComponent
+            : "\(sourceFiles.count) files"
+        return "Extract \(taxStr)\(childStr) from \(fileStr)"
     }
 }
 
@@ -113,6 +177,9 @@ public enum TaxonomyExtractionError: Error, LocalizedError, Sendable {
     /// The extraction was cancelled.
     case cancelled
 
+    /// The number of source and output files do not match.
+    case sourceOutputCountMismatch(sources: Int, outputs: Int)
+
     public var errorDescription: String? {
         switch self {
         case .classificationOutputNotFound(let url):
@@ -125,6 +192,8 @@ public enum TaxonomyExtractionError: Error, LocalizedError, Sendable {
             return "Cannot write output to \(url.lastPathComponent): \(reason)"
         case .cancelled:
             return "Extraction was cancelled"
+        case .sourceOutputCountMismatch(let sources, let outputs):
+            return "Source file count (\(sources)) does not match output file count (\(outputs))"
         }
     }
 }

@@ -14,6 +14,12 @@ import LungfishWorkflow
 /// toggle, and an output file name field. On confirmation, it creates a
 /// ``TaxonomyExtractionConfig`` and passes it to the `onExtract` callback.
 ///
+/// ## Paired-End Support
+///
+/// When ``sourceURLs`` contains two files (R1 and R2), the sheet generates
+/// paired output filenames (e.g., `sample_E_coli_R1.fastq` and
+/// `sample_E_coli_R2.fastq`) and creates a multi-file config.
+///
 /// ## Presentation
 ///
 /// Presented via `NSHostingController` wrapped in an `NSPanel`, following the
@@ -44,8 +50,8 @@ struct TaxonomyExtractionSheet: View {
     /// The taxonomy tree for descendant lookup and count estimation.
     let tree: TaxonTree
 
-    /// The source FASTQ file URL.
-    let sourceURL: URL
+    /// The source FASTQ file URL(s). One for single-end, two for paired-end.
+    let sourceURLs: [URL]
 
     /// The Kraken2 per-read classification output URL.
     let classificationOutputURL: URL
@@ -68,10 +74,20 @@ struct TaxonomyExtractionSheet: View {
 
     // MARK: - Initialization
 
+    /// Creates an extraction sheet for one or more source files.
+    ///
+    /// - Parameters:
+    ///   - selectedNodes: Taxon nodes the user selected.
+    ///   - tree: The taxonomy tree.
+    ///   - sourceURLs: One or two FASTQ file URLs.
+    ///   - classificationOutputURL: Kraken2 per-read output.
+    ///   - initialIncludeChildren: Default toggle state.
+    ///   - onExtract: Callback with the built config.
+    ///   - onCancel: Callback on cancel.
     init(
         selectedNodes: [TaxonNode],
         tree: TaxonTree,
-        sourceURL: URL,
+        sourceURLs: [URL],
         classificationOutputURL: URL,
         initialIncludeChildren: Bool = true,
         onExtract: ((TaxonomyExtractionConfig) -> Void)? = nil,
@@ -79,14 +95,15 @@ struct TaxonomyExtractionSheet: View {
     ) {
         self.selectedNodes = selectedNodes
         self.tree = tree
-        self.sourceURL = sourceURL
+        self.sourceURLs = sourceURLs
         self.classificationOutputURL = classificationOutputURL
         self.initialIncludeChildren = initialIncludeChildren
         self.onExtract = onExtract
         self.onCancel = onCancel
 
         // Build a default output name from the source filename and selected taxon
-        let sourceStem = sourceURL.deletingPathExtension().lastPathComponent
+        let primaryURL = sourceURLs.first ?? URL(fileURLWithPath: "reads.fastq")
+        let sourceStem = primaryURL.deletingPathExtension().lastPathComponent
         // Strip .fastq if there's a double extension like .fastq.gz
         let cleanStem: String
         if sourceStem.hasSuffix(".fastq") {
@@ -105,6 +122,27 @@ struct TaxonomyExtractionSheet: View {
 
         _includeChildren = State(initialValue: initialIncludeChildren)
         _outputName = State(initialValue: "\(cleanStem)_\(taxonSuffix).fastq")
+    }
+
+    /// Backward-compatible single-URL initializer.
+    init(
+        selectedNodes: [TaxonNode],
+        tree: TaxonTree,
+        sourceURL: URL,
+        classificationOutputURL: URL,
+        initialIncludeChildren: Bool = true,
+        onExtract: ((TaxonomyExtractionConfig) -> Void)? = nil,
+        onCancel: (() -> Void)? = nil
+    ) {
+        self.init(
+            selectedNodes: selectedNodes,
+            tree: tree,
+            sourceURLs: [sourceURL],
+            classificationOutputURL: classificationOutputURL,
+            initialIncludeChildren: initialIncludeChildren,
+            onExtract: onExtract,
+            onCancel: onCancel
+        )
     }
 
     // MARK: - Computed Properties
@@ -132,6 +170,11 @@ struct TaxonomyExtractionSheet: View {
     /// The estimated reads for direct assignment only (no children).
     private var directReads: Int {
         selectedNodes.reduce(0) { $0 + $1.readsDirect }
+    }
+
+    /// Whether the input is paired-end.
+    private var isPairedEnd: Bool {
+        sourceURLs.count > 1
     }
 
     // MARK: - Body
@@ -170,6 +213,10 @@ struct TaxonomyExtractionSheet: View {
                     )
                 }
 
+                if isPairedEnd {
+                    infoRow(label: "Mode:", value: "Paired-end (\(sourceURLs.count) files)")
+                }
+
                 Divider()
                     .padding(.vertical, 4)
 
@@ -194,6 +241,13 @@ struct TaxonomyExtractionSheet: View {
                     TextField("Output filename", text: $outputName)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 12, design: .monospaced))
+                }
+
+                if isPairedEnd {
+                    Text("Paired files will be named _R1 and _R2 automatically")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 0)
                 }
             }
             .padding(.horizontal, 20)
@@ -244,19 +298,39 @@ struct TaxonomyExtractionSheet: View {
     /// Builds the extraction config and calls the onExtract callback.
     private func performExtract() {
         let taxIds = Set(selectedNodes.map(\.taxId))
-        let outputDir = sourceURL.deletingLastPathComponent()
+        let outputDir = sourceURLs.first!.deletingLastPathComponent()
         let cleanName = outputName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let outputURL = outputDir.appendingPathComponent(cleanName)
 
-        let config = TaxonomyExtractionConfig(
-            taxIds: taxIds,
-            includeChildren: includeChildren,
-            sourceFile: sourceURL,
-            outputFile: outputURL,
-            classificationOutput: classificationOutputURL
-        )
+        if isPairedEnd {
+            // Generate paired output filenames
+            let stem = cleanName.hasSuffix(".fastq")
+                ? String(cleanName.dropLast(6))
+                : cleanName
+            var outputURLs: [URL] = []
+            for (index, _) in sourceURLs.enumerated() {
+                let suffix = "_R\(index + 1).fastq"
+                outputURLs.append(outputDir.appendingPathComponent(stem + suffix))
+            }
 
-        onExtract?(config)
+            let config = TaxonomyExtractionConfig(
+                taxIds: taxIds,
+                includeChildren: includeChildren,
+                sourceFiles: sourceURLs,
+                outputFiles: outputURLs,
+                classificationOutput: classificationOutputURL
+            )
+            onExtract?(config)
+        } else {
+            let outputURL = outputDir.appendingPathComponent(cleanName)
+            let config = TaxonomyExtractionConfig(
+                taxIds: taxIds,
+                includeChildren: includeChildren,
+                sourceFile: sourceURLs[0],
+                outputFile: outputURL,
+                classificationOutput: classificationOutputURL
+            )
+            onExtract?(config)
+        }
     }
 
     // MARK: - Formatting

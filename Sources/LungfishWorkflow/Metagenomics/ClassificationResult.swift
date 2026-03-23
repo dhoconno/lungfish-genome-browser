@@ -4,6 +4,9 @@
 
 import Foundation
 import LungfishIO
+import os.log
+
+private let persistLogger = Logger(subsystem: "com.lungfish.workflow", category: "ClassificationPersist")
 
 // MARK: - ClassificationResult
 
@@ -19,6 +22,12 @@ import LungfishIO
 /// - ``outputURL``: The per-read classification output
 ///
 /// If Bracken profiling was requested, ``brackenURL`` will be non-nil.
+///
+/// ## Persistence
+///
+/// Use ``save(to:)`` to write a JSON sidecar (`classification-result.json`)
+/// into the output directory. The tree is NOT serialized -- it is rebuilt from
+/// the `.kreport` file on ``load(from:)``.
 ///
 /// ## Thread Safety
 ///
@@ -111,5 +120,149 @@ public struct ClassificationResult: Sendable {
         }
 
         return lines.joined(separator: "\n")
+    }
+}
+
+// MARK: - Persistence
+
+/// The filename used for the serialized classification result sidecar.
+private let classificationResultFilename = "classification-result.json"
+
+extension ClassificationResult {
+
+    /// Saves the classification result metadata to a JSON file in the given directory.
+    ///
+    /// The taxonomy tree is NOT serialized. On ``load(from:)``, it is rebuilt
+    /// by re-parsing the `.kreport` file referenced in the saved metadata.
+    ///
+    /// The saved JSON contains:
+    /// - The full ``ClassificationConfig`` (database, input files, parameters)
+    /// - Output file paths (report, kraken output, bracken output)
+    /// - Runtime and tool version
+    /// - Provenance ID
+    ///
+    /// - Parameter directory: The directory to write `classification-result.json` into.
+    /// - Throws: Encoding or file write errors.
+    public func save(to directory: URL) throws {
+        let sidecar = PersistedClassificationResult(
+            config: config,
+            reportPath: reportURL.lastPathComponent,
+            outputPath: outputURL.lastPathComponent,
+            brackenPath: brackenURL?.lastPathComponent,
+            runtime: runtime,
+            toolVersion: toolVersion,
+            provenanceId: provenanceId,
+            savedAt: Date()
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(sidecar)
+
+        let fileURL = directory.appendingPathComponent(classificationResultFilename)
+        try data.write(to: fileURL, options: .atomic)
+
+        persistLogger.info("Saved classification result to \(fileURL.path, privacy: .public)")
+    }
+
+    /// Loads a classification result from a directory containing a saved sidecar.
+    ///
+    /// The taxonomy tree is rebuilt by parsing the `.kreport` file referenced
+    /// in the sidecar. If Bracken output exists, it is merged into the tree.
+    ///
+    /// - Parameter directory: The directory containing `classification-result.json`
+    ///   and the referenced output files.
+    /// - Returns: A fully reconstituted ``ClassificationResult``.
+    /// - Throws: ``ClassificationResultLoadError`` or parsing errors.
+    public static func load(from directory: URL) throws -> ClassificationResult {
+        let fileURL = directory.appendingPathComponent(classificationResultFilename)
+
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            throw ClassificationResultLoadError.sidecarNotFound(directory)
+        }
+
+        let data = try Data(contentsOf: fileURL)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let sidecar = try decoder.decode(PersistedClassificationResult.self, from: data)
+
+        // Resolve file paths relative to the directory.
+        let reportURL = directory.appendingPathComponent(sidecar.reportPath)
+        let outputURL = directory.appendingPathComponent(sidecar.outputPath)
+        let brackenURL = sidecar.brackenPath.map { directory.appendingPathComponent($0) }
+
+        // Rebuild the taxonomy tree from the kreport.
+        guard FileManager.default.fileExists(atPath: reportURL.path) else {
+            throw ClassificationResultLoadError.kreportNotFound(reportURL)
+        }
+
+        var tree = try KreportParser.parse(url: reportURL)
+
+        // Merge Bracken results if available.
+        if let brackenURL, FileManager.default.fileExists(atPath: brackenURL.path) {
+            try BrackenParser.mergeBracken(url: brackenURL, into: &tree)
+        }
+
+        persistLogger.info("Loaded classification result from \(directory.path, privacy: .public)")
+
+        return ClassificationResult(
+            config: sidecar.config,
+            tree: tree,
+            reportURL: reportURL,
+            outputURL: outputURL,
+            brackenURL: brackenURL,
+            runtime: sidecar.runtime,
+            toolVersion: sidecar.toolVersion,
+            provenanceId: sidecar.provenanceId
+        )
+    }
+
+    /// Whether a saved classification result exists in the given directory.
+    ///
+    /// - Parameter directory: The directory to check.
+    /// - Returns: `true` if `classification-result.json` exists.
+    public static func exists(in directory: URL) -> Bool {
+        FileManager.default.fileExists(
+            atPath: directory.appendingPathComponent(classificationResultFilename).path
+        )
+    }
+}
+
+// MARK: - PersistedClassificationResult
+
+/// Codable representation of a classification result for JSON serialization.
+///
+/// File paths are stored as relative filenames (not absolute paths) so the
+/// sidecar remains valid if the output directory is moved.
+struct PersistedClassificationResult: Codable, Sendable {
+    let config: ClassificationConfig
+    let reportPath: String
+    let outputPath: String
+    let brackenPath: String?
+    let runtime: TimeInterval
+    let toolVersion: String
+    let provenanceId: UUID?
+    let savedAt: Date
+}
+
+// MARK: - ClassificationResultLoadError
+
+/// Errors that can occur when loading a persisted classification result.
+public enum ClassificationResultLoadError: Error, LocalizedError, Sendable {
+
+    /// The `classification-result.json` sidecar was not found.
+    case sidecarNotFound(URL)
+
+    /// The kreport file referenced by the sidecar was not found.
+    case kreportNotFound(URL)
+
+    public var errorDescription: String? {
+        switch self {
+        case .sidecarNotFound(let url):
+            return "No saved classification result in \(url.path)"
+        case .kreportNotFound(let url):
+            return "Kreport file not found: \(url.path)"
+        }
     }
 }

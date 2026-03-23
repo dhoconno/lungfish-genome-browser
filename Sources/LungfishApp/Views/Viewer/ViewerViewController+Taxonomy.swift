@@ -127,7 +127,7 @@ extension ViewerViewController {
             let task = Task.detached {
                 do {
                     let pipeline = TaxonomyExtractionPipeline()
-                    let outputURL = try await pipeline.extract(
+                    let outputURLs = try await pipeline.extract(
                         config: config,
                         tree: tree,
                         progress: { fraction, message in
@@ -148,7 +148,7 @@ extension ViewerViewController {
                     // This is safe because the closure executes on the main run
                     // loop and immediately enters MainActor.assumeIsolated.
                     nonisolated(unsafe) let capturedConfig = config
-                    nonisolated(unsafe) let capturedOutputURL = outputURL
+                    nonisolated(unsafe) let capturedOutputURL = outputURLs[0]
                     scheduleTaxonomyOnMainRunLoop {
                         MainActor.assumeIsolated {
                             createExtractedFASTQBundleOnMainThread(
