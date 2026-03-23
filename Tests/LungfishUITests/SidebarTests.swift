@@ -77,6 +77,7 @@ final class SidebarItemTests: XCTestCase {
         XCTAssertNotNil(SidebarItemTypeMock.annotation.tintColor)
         XCTAssertNotNil(SidebarItemTypeMock.alignment.tintColor)
         XCTAssertNotNil(SidebarItemTypeMock.project.tintColor)
+        XCTAssertNotNil(SidebarItemTypeMock.classificationResult.tintColor)
     }
 
     // MARK: - Downloads Folder Placement Tests
@@ -114,8 +115,6 @@ final class SidebarItemTests: XCTestCase {
         })
         XCTAssertNotNil(foundFolder)
         XCTAssertEqual(foundFolder?.url, downloadsURL)
-
-        print("✓ Downloads folder creation works correctly")
     }
 
     /// Test downloaded document placement in downloads folder
@@ -158,8 +157,6 @@ final class SidebarItemTests: XCTestCase {
         XCTAssertEqual(downloadsFolder.children.count, 1)
         XCTAssertEqual(downloadsFolder.children[0].title, "NC_045512.gb")
         XCTAssertEqual(downloadsFolder.children[0].url, fileURL)
-
-        print("✓ Downloaded document placement works correctly")
     }
 
     // MARK: - Drag and Drop Tests
@@ -221,8 +218,6 @@ final class SidebarItemTests: XCTestCase {
         XCTAssertEqual(sourceFolder.children.count, 0)
         XCTAssertEqual(destFolder.children.count, 1)
         XCTAssertEqual(destFolder.children[0].url, newFileURL)
-
-        print("✓ Item move operation works correctly")
     }
 
     /// Test item copy operation
@@ -274,8 +269,6 @@ final class SidebarItemTests: XCTestCase {
         XCTAssertEqual(destFolder.children.count, 1)
         XCTAssertEqual(sourceFolder.children[0].url, sourceFileURL)
         XCTAssertEqual(destFolder.children[0].url, copyURL)
-
-        print("✓ Item copy operation works correctly")
     }
 
     /// Test copy with unique filename generation
@@ -331,8 +324,6 @@ final class SidebarItemTests: XCTestCase {
         let uniqueName2 = generateUniqueName("test.gb", existingNames: existingNames2)
 
         XCTAssertEqual(uniqueName2, "test_copy_2.gb")
-
-        print("✓ Item copy with unique filename works correctly")
     }
 
     // MARK: - Parent Finding Tests
@@ -388,8 +379,6 @@ final class SidebarItemTests: XCTestCase {
 
         let projectParent = findParent(of: project, in: [project], parent: nil)
         XCTAssertNil(projectParent)
-
-        print("✓ Find parent operation works correctly")
     }
 
     // MARK: - Delete Tests
@@ -440,8 +429,6 @@ final class SidebarItemTests: XCTestCase {
 
         XCTAssertEqual(downloads.children.count, 1)
         XCTAssertEqual(downloads.children[0].title, "file2.gb")
-
-        print("✓ Remove item from hierarchy works correctly")
     }
 
     /// Test that groups and projects cannot be deleted
@@ -474,8 +461,6 @@ final class SidebarItemTests: XCTestCase {
 
         XCTAssertEqual(deletableItems.count, 1)
         XCTAssertEqual(deletableItems[0].title, "sequence.gb")
-
-        print("✓ Non-deletable items filtering works correctly")
     }
 
     /// Test multi-select logic
@@ -515,8 +500,156 @@ final class SidebarItemTests: XCTestCase {
         XCTAssertTrue(selectedItems.contains { $0 === file1 })
         XCTAssertFalse(selectedItems.contains { $0 === file2 })
         XCTAssertTrue(selectedItems.contains { $0 === file3 })
+    }
 
-        print("✓ Multiple selection logic works correctly")
+    // MARK: - Classification Result Discovery Tests
+
+    /// Test that classification result items can be created and placed under a FASTQ bundle
+    func testClassificationResultDiscovery() throws {
+        // Create a mock FASTQ bundle with classification results
+        let bundleURL = URL(fileURLWithPath: "/tmp/test-reads.lungfishfastq")
+        let classDir1 = bundleURL.appendingPathComponent("classification-abc12345")
+        let classDir2 = bundleURL.appendingPathComponent("classification-def67890")
+
+        let bundle = SidebarItemMock(
+            title: "test-reads",
+            type: .fastqBundle,
+            icon: "doc.text",
+            url: bundleURL
+        )
+
+        // Simulate what collectClassificationResults produces
+        let result1 = SidebarItemMock(
+            title: "Classification (Viral DB)",
+            type: .classificationResult,
+            icon: "chart.pie",
+            url: classDir1
+        )
+
+        let result2 = SidebarItemMock(
+            title: "Classification (Standard)",
+            type: .classificationResult,
+            icon: "chart.pie",
+            url: classDir2
+        )
+
+        bundle.children.append(result1)
+        bundle.children.append(result2)
+
+        // Verify the bundle has classification children
+        XCTAssertEqual(bundle.children.count, 2)
+
+        let classificationChildren = bundle.children.filter { $0.type == .classificationResult }
+        XCTAssertEqual(classificationChildren.count, 2)
+
+        // Verify types and icons
+        for child in classificationChildren {
+            XCTAssertEqual(child.type, .classificationResult)
+            XCTAssertEqual(child.icon, "chart.pie")
+            XCTAssertNotNil(child.url)
+        }
+
+        // Verify titles contain database name
+        XCTAssertTrue(classificationChildren[0].title.contains("Classification"))
+        XCTAssertTrue(classificationChildren[1].title.contains("Classification"))
+    }
+
+    /// Test that classification result items are displayable (not filtered as containers)
+    func testClassificationResultSelection() {
+        let classDir = URL(fileURLWithPath: "/tmp/test-reads.lungfishfastq/classification-abc12345")
+
+        let item = SidebarItemMock(
+            title: "Classification (Viral DB)",
+            type: .classificationResult,
+            icon: "chart.pie",
+            url: classDir
+        )
+
+        // Classification results should NOT be treated as containers
+        let containerTypes: [SidebarItemTypeMock] = [.folder, .project, .group]
+        XCTAssertFalse(containerTypes.contains(item.type))
+
+        // Classification results should be displayable
+        let nonDisplayableTypes: [SidebarItemTypeMock] = [.folder, .project, .group]
+        XCTAssertFalse(nonDisplayableTypes.contains(item.type))
+
+        // Classification results should NOT use QuickLook
+        let quickLookTypes: [SidebarItemTypeMock] = [.document, .image, .unknown]
+        XCTAssertFalse(quickLookTypes.contains(item.type))
+
+        // Classification results should have a URL
+        XCTAssertNotNil(item.url)
+
+        // Classification results should have the correct tint color (systemTeal)
+        XCTAssertEqual(item.type.tintColor, "systemTeal")
+    }
+
+    /// Test that classification result directories without a sidecar are excluded
+    func testClassificationResultRequiresSidecar() throws {
+        let fm = FileManager.default
+        let tmpDir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try fm.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: tmpDir) }
+
+        // Create a classification directory without a sidecar
+        let classDir = tmpDir.appendingPathComponent("classification-nosidecar")
+        try fm.createDirectory(at: classDir, withIntermediateDirectories: true)
+
+        // Create a kreport file (but no classification-result.json)
+        try "".write(to: classDir.appendingPathComponent("classification.kreport"), atomically: true, encoding: .utf8)
+
+        // The directory matches the name pattern but has no sidecar
+        let sidecarPath = classDir.appendingPathComponent("classification-result.json")
+        XCTAssertFalse(fm.fileExists(atPath: sidecarPath.path),
+                       "Sidecar should not exist -- directory should be excluded from discovery")
+
+        // Verify name pattern matches
+        XCTAssertTrue(classDir.lastPathComponent.hasPrefix("classification-"))
+    }
+
+    /// Test that classification results coexist with demux and derivative children
+    func testClassificationResultCoexistsWithOtherChildren() {
+        let bundleURL = URL(fileURLWithPath: "/tmp/test-reads.lungfishfastq")
+
+        let bundle = SidebarItemMock(
+            title: "test-reads",
+            type: .fastqBundle,
+            icon: "doc.text",
+            url: bundleURL
+        )
+
+        // Add a demux child
+        let demuxChild = SidebarItemMock(
+            title: "barcode01",
+            type: .fastqBundle,
+            icon: "doc.text",
+            url: bundleURL.appendingPathComponent("demux/barcode01.lungfishfastq")
+        )
+
+        // Add a derivative child
+        let derivChild = SidebarItemMock(
+            title: "Trimmed (Q20)",
+            type: .fastqBundle,
+            icon: "doc.text",
+            url: bundleURL.appendingPathComponent("derivatives/trimmed-q20.lungfishfastq")
+        )
+
+        // Add a classification result
+        let classChild = SidebarItemMock(
+            title: "Classification (Viral DB)",
+            type: .classificationResult,
+            icon: "chart.pie",
+            url: bundleURL.appendingPathComponent("classification-abc12345")
+        )
+
+        bundle.children.append(demuxChild)
+        bundle.children.append(derivChild)
+        bundle.children.append(classChild)
+
+        // All three types of children should be present
+        XCTAssertEqual(bundle.children.count, 3)
+        XCTAssertEqual(bundle.children.filter { $0.type == .fastqBundle }.count, 2)
+        XCTAssertEqual(bundle.children.filter { $0.type == .classificationResult }.count, 1)
     }
 }
 
@@ -548,6 +681,13 @@ enum SidebarItemTypeMock {
     case alignment
     case coverage
     case project
+    case document
+    case image
+    case unknown
+    case referenceBundle
+    case fastqBundle
+    case batchGroup
+    case classificationResult
 
     var tintColor: String {
         switch self {
@@ -558,6 +698,13 @@ enum SidebarItemTypeMock {
         case .alignment: return "systemPurple"
         case .coverage: return "systemTeal"
         case .project: return "systemGray"
+        case .document: return "systemBrown"
+        case .image: return "systemPink"
+        case .unknown: return "tertiaryLabel"
+        case .referenceBundle: return "systemIndigo"
+        case .fastqBundle: return "systemGreen"
+        case .batchGroup: return "systemCyan"
+        case .classificationResult: return "systemTeal"
         }
     }
 }

@@ -1599,6 +1599,12 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             return
         }
 
+        // Classification results (Kraken2 kreport/kraken output)
+        if item.type == .classificationResult, let url = item.url {
+            displayClassificationResult(at: url)
+            return
+        }
+
         // Genomics files - check cache first
         if let url = item.url {
             displayGenomicsFile(url: url)
@@ -1656,6 +1662,33 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                         alert.beginSheetModal(for: window)
                     }
                 }
+            }
+        }
+    }
+
+
+    /// Display a saved classification result from a classification directory.
+    ///
+    /// Loads the `ClassificationResult` from the directory's sidecar JSON,
+    /// rebuilds the taxonomy tree from the kreport, and shows the taxonomy browser.
+    ///
+    /// - Parameter url: The classification result directory URL.
+    private func displayClassificationResult(at url: URL) {
+        logger.info("displayClassificationResult: Opening '\(url.lastPathComponent, privacy: .public)'")
+
+        do {
+            let result = try ClassificationResult.load(from: url)
+            viewerController.displayTaxonomyResult(result)
+            logger.info("displayClassificationResult: Loaded \(result.tree.totalReads) reads, \(result.tree.speciesCount) species")
+        } catch {
+            logger.error("displayClassificationResult: Failed - \(error.localizedDescription, privacy: .public)")
+            let alert = NSAlert()
+            alert.messageText = "Failed to Load Classification Result"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            if let window = self.view.window ?? NSApp.keyWindow {
+                alert.beginSheetModal(for: window)
             }
         }
     }

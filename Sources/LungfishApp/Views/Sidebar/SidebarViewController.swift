@@ -697,6 +697,11 @@ public class SidebarViewController: NSViewController {
                 childItem.title = deriv.manifest.operation.displaySummary
                 item.children.append(childItem)
             }
+
+            // Scan for classification result directories (classification-XXXXXXXX/).
+            // These contain Kraken2 kreport/kraken output from metagenomics classification.
+            let classificationChildren = collectClassificationResults(in: url)
+            item.children.append(contentsOf: classificationChildren)
         }
 
         // If it's a directory, scan children (unless it's a bundle)
@@ -844,6 +849,70 @@ public class SidebarViewController: NSViewController {
         }
     }
 
+
+    /// Collects classification result directories from inside a FASTQ bundle.
+    ///
+    /// Scans the bundle's top-level directory for subdirectories matching
+    /// `classification-*` that contain a `classification-result.json` sidecar.
+    /// Returns a sidebar item for each discovered result, sorted by directory name.
+    ///
+    /// - Parameter bundleURL: The `.lungfishfastq` bundle URL to scan.
+    /// - Returns: Array of `SidebarItem` nodes for classification results.
+    private func collectClassificationResults(in bundleURL: URL) -> [SidebarItem] {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: bundleURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        var results: [SidebarItem] = []
+
+        for childURL in contents {
+            // Match directories named classification-XXXXXXXX
+            guard childURL.lastPathComponent.hasPrefix("classification-") else { continue }
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: childURL.path, isDirectory: &isDir), isDir.boolValue else { continue }
+
+            // Require a classification-result.json sidecar (proves the run completed)
+            guard ClassificationResult.exists(in: childURL) else { continue }
+
+            // Derive a display title from the saved config's database name
+            let title = classificationResultTitle(for: childURL)
+
+            let item = SidebarItem(
+                title: title,
+                type: .classificationResult,
+                icon: "chart.pie",
+                children: [],
+                url: childURL
+            )
+            results.append(item)
+        }
+
+        return results.sorted {
+            $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+        }
+    }
+
+    /// Derives a human-readable title for a classification result directory.
+    ///
+    /// Attempts to read the sidecar JSON to extract the database name.
+    /// Falls back to a generic label if the sidecar cannot be parsed.
+    ///
+    /// - Parameter directory: The classification result directory.
+    /// - Returns: A display title such as "Classification (Viral DB)".
+    private func classificationResultTitle(for directory: URL) -> String {
+        // Try to load just the sidecar metadata (lightweight, no tree parsing)
+        let sidecarURL = directory.appendingPathComponent("classification-result.json")
+        if let data = try? Data(contentsOf: sidecarURL),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let config = json["config"] as? [String: Any],
+           let dbName = config["databaseName"] as? String {
+            return "Classification (\(dbName))"
+        }
+        return "Classification"
+    }
     /// Counts the total number of items in a tree.
     private func countItems(in item: SidebarItem) -> Int {
         return 1 + item.children.reduce(0) { $0 + self.countItems(in: $1) }
@@ -1999,6 +2068,7 @@ public enum SidebarItemType {
     case referenceBundle  // .lungfishref reference genome bundle
     case fastqBundle  // .lungfishfastq FASTQ package bundle
     case batchGroup   // Virtual node representing a batch operation across multiple bundles
+    case classificationResult  // Kraken2 classification result folder
 
     var tintColor: NSColor {
         switch self {
@@ -2015,6 +2085,7 @@ public enum SidebarItemType {
         case .referenceBundle: return .systemIndigo
         case .fastqBundle: return .systemGreen
         case .batchGroup: return .systemCyan
+        case .classificationResult: return .systemTeal
         }
     }
 

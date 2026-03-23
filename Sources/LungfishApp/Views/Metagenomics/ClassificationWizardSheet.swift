@@ -525,6 +525,7 @@ struct ClassificationWizardSheet: View {
             inputFiles: inputFiles,
             isPairedEnd: inputFiles.count == 2,
             databaseName: db.name,
+            databaseVersion: db.version ?? "unknown",
             databasePath: dbPath,
             confidence: confidence,
             minimumHitGroups: minimumHitGroups,

@@ -3665,6 +3665,15 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     result = try await pipeline.profile(config: config, progress: progressCallback)
                 }
 
+                // Persist the classification result sidecar so the sidebar can
+                // rediscover this result when the project is reopened.
+                do {
+                    try result.save(to: config.outputDirectory)
+                } catch {
+                    // Non-fatal: the result is still displayed, just not persisted.
+                    appDelegateLogger.warning("runClassification: Failed to save result sidecar - \(error.localizedDescription, privacy: .public)")
+                }
+
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         viewerController.hideProgress()

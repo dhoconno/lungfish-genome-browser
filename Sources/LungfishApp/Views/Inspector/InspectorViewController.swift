@@ -1291,6 +1291,7 @@ extension SidebarItemType: CustomStringConvertible {
         case .referenceBundle: return "Reference Bundle"
         case .fastqBundle: return "FASTQ Bundle"
         case .batchGroup: return "Batch Operation"
+        case .classificationResult: return "Classification Result"
         }
     }
 }

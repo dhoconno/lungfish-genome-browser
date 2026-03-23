@@ -83,6 +83,12 @@ public struct ClassificationConfig: Sendable, Codable, Equatable {
     /// Display name of the database, matching a ``MetagenomicsDatabaseInfo`` entry.
     public let databaseName: String
 
+    /// Database version or build date (e.g., "20240904").
+    ///
+    /// This is critical for reproducibility — knowing which exact database was used
+    /// allows results to be compared or reproduced years later.
+    public let databaseVersion: String
+
     /// Resolved filesystem path to the Kraken2 database directory.
     public let databasePath: URL
 
@@ -147,6 +153,7 @@ public struct ClassificationConfig: Sendable, Codable, Equatable {
         inputFiles: [URL],
         isPairedEnd: Bool,
         databaseName: String,
+        databaseVersion: String = "",
         databasePath: URL,
         confidence: Double = 0.0,
         minimumHitGroups: Int = 2,
@@ -159,6 +166,7 @@ public struct ClassificationConfig: Sendable, Codable, Equatable {
         self.inputFiles = inputFiles
         self.isPairedEnd = isPairedEnd
         self.databaseName = databaseName
+        self.databaseVersion = databaseVersion
         self.databasePath = databasePath
         self.confidence = confidence
         self.minimumHitGroups = minimumHitGroups
@@ -205,6 +213,7 @@ public struct ClassificationConfig: Sendable, Codable, Equatable {
         inputFiles: [URL],
         isPairedEnd: Bool,
         databaseName: String,
+        databaseVersion: String = "",
         databasePath: URL,
         threads: Int = 4,
         memoryMapping: Bool = false,
@@ -217,6 +226,7 @@ public struct ClassificationConfig: Sendable, Codable, Equatable {
             inputFiles: inputFiles,
             isPairedEnd: isPairedEnd,
             databaseName: databaseName,
+            databaseVersion: databaseVersion,
             databasePath: databasePath,
             confidence: confidence,
             minimumHitGroups: minHitGroups,
