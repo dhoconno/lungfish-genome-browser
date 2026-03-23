@@ -24,6 +24,13 @@ import LungfishIO
 /// | Clade | Cumulative clade count |
 /// | % | Clade reads as percent of classified |
 ///
+/// ## Keyboard Shortcuts
+///
+/// In addition to NSOutlineView's built-in Left/Right arrow expand/collapse:
+/// - **Option+Right Arrow**: Expand selected item and all its children recursively
+/// - **Cmd+Shift+Right Arrow**: Expand all items in the tree
+/// - **Cmd+Shift+Left Arrow**: Collapse all items in the tree
+///
 /// ## Usage
 ///
 /// ```swift
@@ -97,7 +104,7 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     // MARK: - Subviews
 
     private let scrollView = NSScrollView()
-    private let outlineView = NSOutlineView()
+    internal let outlineView = TaxonomyOutlineView()
     private let searchField = NSSearchField()
     private let countLabel = NSTextField(labelWithString: "")
 
@@ -165,7 +172,7 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         rankCol.sortDescriptorPrototype = NSSortDescriptor(key: ColumnID.rank, ascending: true)
         outlineView.addTableColumn(rankCol)
 
-        // Reads column — shows CLADE count (all reads in this taxon + descendants)
+        // Reads column -- shows CLADE count (all reads in this taxon + descendants)
         // This is what users expect: "how many reads belong to this group?"
         let readsCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(ColumnID.reads))
         readsCol.title = "Reads"
@@ -174,7 +181,7 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         readsCol.sortDescriptorPrototype = NSSortDescriptor(key: ColumnID.reads, ascending: false)
         outlineView.addTableColumn(readsCol)
 
-        // Direct column — shows reads classified directly to this taxon (not descendants)
+        // Direct column -- shows reads classified directly to this taxon (not descendants)
         let cladeCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(ColumnID.clade))
         cladeCol.title = "Direct"
         cladeCol.width = 80
@@ -200,6 +207,9 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         outlineView.allowsMultipleSelection = false
         outlineView.headerView = NSTableHeaderView()
         outlineView.indentationPerLevel = 16
+
+        // Wire the outline view's keyboard handler to this table view
+        outlineView.taxonomyTableView = self
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.documentView = outlineView
@@ -341,6 +351,37 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
             outlineView.scrollRowToVisible(row)
             suppressSelectionCallback = false
         }
+    }
+
+    // MARK: - Expand / Collapse
+
+    /// Expands all items in the outline view.
+    ///
+    /// Accessible from View > Expand All (Cmd+Shift+Right) and Cmd+Shift+Right
+    /// keyboard shortcut when the outline view has focus.
+    public func expandAll() {
+        guard let tree else { return }
+        outlineView.expandItem(tree.root, expandChildren: true)
+    }
+
+    /// Collapses all items in the outline view.
+    ///
+    /// Accessible from View > Collapse All (Cmd+Shift+Left) and Cmd+Shift+Left
+    /// keyboard shortcut when the outline view has focus.
+    public func collapseAll() {
+        guard let tree else { return }
+        outlineView.collapseItem(tree.root, collapseChildren: true)
+        // Re-expand root so top-level items remain visible
+        outlineView.expandItem(tree.root)
+    }
+
+    /// Recursively expands the selected item and all its descendants.
+    ///
+    /// Triggered by Option+Right Arrow when the outline view has focus.
+    public func expandSelectedRecursively() {
+        let row = outlineView.selectedRow
+        guard row >= 0, let node = outlineView.item(atRow: row) else { return }
+        outlineView.expandItem(node, expandChildren: true)
     }
 
     // MARK: - Sorting
@@ -642,6 +683,59 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         ])
 
         return cellView
+    }
+}
+
+// MARK: - TaxonomyOutlineView
+
+/// Custom NSOutlineView subclass that intercepts keyboard shortcuts for
+/// taxonomy tree navigation.
+///
+/// Handles:
+/// - **Option+Right Arrow**: Expand selected item and all children recursively
+/// - **Cmd+Shift+Right Arrow**: Expand all items in the tree
+/// - **Cmd+Shift+Left Arrow**: Collapse all items in the tree
+///
+/// Left Arrow / Right Arrow for expand/collapse of individual items are
+/// handled by NSOutlineView's built-in behavior and are not overridden here.
+@MainActor
+public class TaxonomyOutlineView: NSOutlineView {
+
+    /// Back-reference to the owning table view for expand/collapse operations.
+    weak var taxonomyTableView: TaxonomyTableView?
+
+    /// Intercepts keyboard shortcuts for tree navigation.
+    ///
+    /// This override catches modifier+arrow combinations before they reach
+    /// the default NSOutlineView handler. Plain Left/Right arrow keys pass
+    /// through to the super implementation for built-in expand/collapse.
+    public override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+        switch event.keyCode {
+        case 124: // Right Arrow
+            if modifiers == [.command, .shift] {
+                // Cmd+Shift+Right: Expand all
+                taxonomyTableView?.expandAll()
+                return
+            } else if modifiers == .option {
+                // Option+Right: Expand selected recursively
+                taxonomyTableView?.expandSelectedRecursively()
+                return
+            }
+
+        case 123: // Left Arrow
+            if modifiers == [.command, .shift] {
+                // Cmd+Shift+Left: Collapse all
+                taxonomyTableView?.collapseAll()
+                return
+            }
+
+        default:
+            break
+        }
+
+        super.keyDown(with: event)
     }
 }
 

@@ -460,6 +460,25 @@ public final class MainMenu {
 
         viewMenu.addItem(.separator())
 
+        // Taxonomy tree expand/collapse
+        // These use nil target (responder chain) so they auto-disable when
+        // no TaxonomyViewController is active.
+        let expandAllItem = viewMenu.addItem(
+            withTitle: "Expand All",
+            action: #selector(TaxonomyViewController.expandAllTaxonomyItems(_:)),
+            keyEquivalent: String(Character(UnicodeScalar(NSRightArrowFunctionKey)!))
+        )
+        expandAllItem.keyEquivalentModifierMask = [.command, .shift]
+
+        let collapseAllItem = viewMenu.addItem(
+            withTitle: "Collapse All",
+            action: #selector(TaxonomyViewController.collapseAllTaxonomyItems(_:)),
+            keyEquivalent: String(Character(UnicodeScalar(NSLeftArrowFunctionKey)!))
+        )
+        collapseAllItem.keyEquivalentModifierMask = [.command, .shift]
+
+        viewMenu.addItem(.separator())
+
         // DNA/RNA mode toggle
         let nucleotideModeItem = viewMenu.addItem(
             withTitle: "Show as RNA (U instead of T)",

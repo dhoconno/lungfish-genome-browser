@@ -83,6 +83,13 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
     private let taxonomyTableView = TaxonomyTableView()
     private let actionBar = TaxonomyActionBar()
 
+    // MARK: - Split View State
+
+    /// Whether the initial divider position has been applied.
+    /// `setPosition` only works after the split view has real bounds, so
+    /// it is deferred to `viewDidLayout`.
+    private var didSetInitialSplitPosition = false
+
     // MARK: - Selection Sync
 
     /// When true, programmatic selection changes don't trigger cross-view sync.
@@ -115,6 +122,19 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
         setupActionBar()
         layoutSubviews()
         wireCallbacks()
+    }
+
+    public override func viewDidLayout() {
+        super.viewDidLayout()
+
+        // Apply the initial 60/40 split once the split view has real bounds.
+        // NSSplitView.setPosition is a no-op when bounds are zero, so we
+        // must wait until after the first layout pass.
+        if !didSetInitialSplitPosition, splitView.bounds.width > 0 {
+            didSetInitialSplitPosition = true
+            let position = round(splitView.bounds.width * 0.6)
+            splitView.setPosition(position, ofDividerAt: 0)
+        }
     }
 
     // MARK: - Public API
@@ -213,6 +233,13 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
     ///
     /// Uses raw NSSplitView (not NSSplitViewController) per macOS 26 rules.
     /// Delegate methods are safe on raw NSSplitView instances.
+    ///
+    /// **Important**: NSSplitView manages its arranged subview frames directly
+    /// using frame-based layout. The container views must keep
+    /// `translatesAutoresizingMaskIntoConstraints = true` (the default) so that
+    /// NSSplitView's frame assignments are not overridden by Auto Layout.
+    /// The child views inside each container use `autoresizingMask` to fill
+    /// the container as its frame changes.
     private func setupSplitView() {
         splitView.translatesAutoresizingMaskIntoConstraints = false
         splitView.isVertical = true
@@ -220,36 +247,25 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
         splitView.delegate = self
 
         // Sunburst container (left pane)
+        // NSSplitView sets this view's frame directly -- do NOT disable
+        // translatesAutoresizingMaskIntoConstraints on the container.
         let sunburstContainer = NSView()
-        sunburstContainer.translatesAutoresizingMaskIntoConstraints = false
-        sunburstView.translatesAutoresizingMaskIntoConstraints = false
+        sunburstView.autoresizingMask = [.width, .height]
         sunburstContainer.addSubview(sunburstView)
-
-        NSLayoutConstraint.activate([
-            sunburstView.topAnchor.constraint(equalTo: sunburstContainer.topAnchor),
-            sunburstView.leadingAnchor.constraint(equalTo: sunburstContainer.leadingAnchor),
-            sunburstView.trailingAnchor.constraint(equalTo: sunburstContainer.trailingAnchor),
-            sunburstView.bottomAnchor.constraint(equalTo: sunburstContainer.bottomAnchor),
-        ])
 
         // Table container (right pane)
         let tableContainer = NSView()
-        tableContainer.translatesAutoresizingMaskIntoConstraints = false
-        taxonomyTableView.translatesAutoresizingMaskIntoConstraints = false
+        taxonomyTableView.autoresizingMask = [.width, .height]
         tableContainer.addSubview(taxonomyTableView)
-
-        NSLayoutConstraint.activate([
-            taxonomyTableView.topAnchor.constraint(equalTo: tableContainer.topAnchor),
-            taxonomyTableView.leadingAnchor.constraint(equalTo: tableContainer.leadingAnchor),
-            taxonomyTableView.trailingAnchor.constraint(equalTo: tableContainer.trailingAnchor),
-            taxonomyTableView.bottomAnchor.constraint(equalTo: tableContainer.bottomAnchor),
-        ])
 
         splitView.addArrangedSubview(sunburstContainer)
         splitView.addArrangedSubview(tableContainer)
 
-        // Default 60/40 split
-        splitView.setPosition(540, ofDividerAt: 0)
+        // Set holding priorities so the table pane is preferred to resize
+        // when the split view itself resizes (e.g., window resize). The left
+        // pane (sunburst) holds its width more firmly.
+        splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+        splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
 
         view.addSubview(splitView)
     }
@@ -847,6 +863,22 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
         menu.addItem(provenanceItem)
 
         return menu
+    }
+
+    // MARK: - Expand / Collapse All (View Menu Actions)
+
+    /// Expands all items in the taxonomy table.
+    ///
+    /// Triggered by the View > Expand All menu item (Cmd+Shift+Right).
+    @objc func expandAllTaxonomyItems(_ sender: Any?) {
+        taxonomyTableView.expandAll()
+    }
+
+    /// Collapses all items in the taxonomy table.
+    ///
+    /// Triggered by the View > Collapse All menu item (Cmd+Shift+Left).
+    @objc func collapseAllTaxonomyItems(_ sender: Any?) {
+        taxonomyTableView.collapseAll()
     }
 
     // MARK: - Testing Accessors
