@@ -17,13 +17,14 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "PluginManage
 /// lazy singleton pattern used by ``SettingsWindowController``.
 ///
 /// The window features a toolbar with a segmented control (Installed /
-/// Available / Packs) and a search field. The content area is a SwiftUI
-/// ``PluginManagerView`` wrapped in an ``NSHostingView``.
+/// Available / Packs / Databases) and a search field. The content area is a
+/// SwiftUI ``PluginManagerView`` wrapped in an ``NSHostingView``.
 ///
 /// ## Usage
 ///
 /// ```swift
 /// PluginManagerWindowController.show()
+/// PluginManagerWindowController.show(tab: .databases)
 /// ```
 @MainActor
 public final class PluginManagerWindowController: NSWindowController, NSToolbarDelegate {
@@ -47,8 +48,25 @@ public final class PluginManagerWindowController: NSWindowController, NSToolbarD
     /// Reuses the singleton window if it already exists. Centers the
     /// window on first display.
     public static func show() {
+        showWindow(tab: nil)
+    }
+
+    /// Shows the Plugin Manager window and switches to the specified tab.
+    ///
+    /// - Parameter tab: The tab to display. Pass `.databases` to navigate
+    ///   directly to the Kraken2 database management view.
+    static func show(tab: PluginManagerViewModel.Tab) {
+        showWindow(tab: tab)
+    }
+
+    /// Internal implementation shared by both `show()` overloads.
+    private static func showWindow(tab: PluginManagerViewModel.Tab?) {
         if shared == nil {
             shared = PluginManagerWindowController()
+        }
+        if let tab {
+            shared?.viewModel.selectedTab = tab
+            shared?.syncSegmentedControl(to: tab)
         }
         shared?.showWindow(nil)
     }
@@ -119,7 +137,7 @@ public final class PluginManagerWindowController: NSWindowController, NSToolbarD
         case ToolbarID.segmentedControl:
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
             let segmented = NSSegmentedControl(
-                labels: ["Installed", "Available", "Packs"],
+                labels: ["Installed", "Available", "Packs", "Databases"],
                 trackingMode: .selectOne,
                 target: self,
                 action: #selector(segmentChanged(_:))
@@ -129,9 +147,14 @@ public final class PluginManagerWindowController: NSWindowController, NSToolbarD
             segmented.setWidth(90, forSegment: 0)
             segmented.setWidth(90, forSegment: 1)
             segmented.setWidth(70, forSegment: 2)
+            segmented.setWidth(90, forSegment: 3)
+            segmented.setImage(
+                NSImage(systemSymbolName: "cylinder.split.1x2", accessibilityDescription: "Databases"),
+                forSegment: 3
+            )
             item.view = segmented
             item.label = "View"
-            item.toolTip = "Switch between Installed, Available, and Packs"
+            item.toolTip = "Switch between Installed, Available, Packs, and Databases"
             return item
 
         case ToolbarID.searchField:
@@ -162,6 +185,21 @@ public final class PluginManagerWindowController: NSWindowController, NSToolbarD
     @objc private func segmentChanged(_ sender: NSSegmentedControl) {
         let tab = PluginManagerViewModel.Tab.from(segmentIndex: sender.selectedSegment)
         viewModel.selectedTab = tab
+    }
+
+    // MARK: - Helpers
+
+    /// Synchronizes the toolbar segmented control to match a given tab.
+    ///
+    /// Called when ``show(tab:)`` programmatically changes the selected tab
+    /// so that the toolbar visual state remains in sync with the view model.
+    private func syncSegmentedControl(to tab: PluginManagerViewModel.Tab) {
+        guard let toolbar = window?.toolbar else { return }
+        for item in toolbar.items where item.itemIdentifier == ToolbarID.segmentedControl {
+            if let segmented = item.view as? NSSegmentedControl {
+                segmented.selectedSegment = tab.segmentIndex
+            }
+        }
     }
 }
 

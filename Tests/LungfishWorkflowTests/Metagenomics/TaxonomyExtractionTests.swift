@@ -228,9 +228,36 @@ final class TaxonomyExtractionPipelineTests: XCTestCase {
         return url
     }
 
+    /// Creates a mock Kraken2 per-read classification output file at a specified path.
+    private func makeClassificationOutput(
+        reads: [(readId: String, taxId: Int, classified: Bool)],
+        at url: URL
+    ) throws -> URL {
+        var lines: [String] = []
+        for read in reads {
+            let status = read.classified ? "C" : "U"
+            lines.append("\(status)\t\(read.readId)\t\(read.taxId)\t150\t0:150")
+        }
+        try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
     /// Creates a mock FASTQ file.
     private func makeFASTQ(reads: [String]) throws -> URL {
         let url = tempDir.appendingPathComponent("input.fastq")
+        var content = ""
+        for readId in reads {
+            content += "@\(readId)\n"
+            content += "ATCGATCGATCGATCG\n"
+            content += "+\n"
+            content += "IIIIIIIIIIIIIIII\n"
+        }
+        try content.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    /// Creates a mock FASTQ file at a specified path.
+    private func makeFASTQ(reads: [String], at url: URL) throws -> URL {
         var content = ""
         for readId in reads {
             content += "@\(readId)\n"
@@ -562,5 +589,248 @@ final class TaxonomyExtractionPipelineTests: XCTestCase {
         let output = try String(contentsOf: outputURL, encoding: .utf8)
         XCTAssertTrue(output.contains("@read1"), "Should match read1 despite description")
         XCTAssertFalse(output.contains("@read2"), "Should not match read2")
+    }
+
+    // MARK: - testExtractionPipelineWithSimulatedData
+
+    /// Verifies end-to-end extraction with a realistic simulated dataset.
+    ///
+    /// Creates a 50-read FASTQ file with reads classified across multiple taxa,
+    /// runs the extraction pipeline targeting E. coli (taxId 562) with children
+    /// included, and verifies that only the expected reads appear in the output
+    /// and that progress was reported.
+    func testExtractionPipelineWithSimulatedData() async throws {
+        let tree = makeTestTree()
+        let pipeline = TaxonomyExtractionPipeline()
+
+        // Build a larger simulated dataset with 50 reads spread across taxa
+        var classReads: [(readId: String, taxId: Int, classified: Bool)] = []
+        var fastqReadIDs: [String] = []
+
+        // 10 reads classified to E. coli (562)
+        for i in 0..<10 {
+            let readId = "ecoli_read_\(i)"
+            classReads.append((readId: readId, taxId: 562, classified: true))
+            fastqReadIDs.append(readId)
+        }
+        // 5 reads classified to Escherichia (561) -- parent of E. coli
+        for i in 0..<5 {
+            let readId = "escherichia_read_\(i)"
+            classReads.append((readId: readId, taxId: 561, classified: true))
+            fastqReadIDs.append(readId)
+        }
+        // 8 reads classified to S. aureus (1280) -- different clade
+        for i in 0..<8 {
+            let readId = "saureus_read_\(i)"
+            classReads.append((readId: readId, taxId: 1280, classified: true))
+            fastqReadIDs.append(readId)
+        }
+        // 12 reads classified to Archaea (2157)
+        for i in 0..<12 {
+            let readId = "archaea_read_\(i)"
+            classReads.append((readId: readId, taxId: 2157, classified: true))
+            fastqReadIDs.append(readId)
+        }
+        // 15 unclassified reads
+        for i in 0..<15 {
+            let readId = "unclassified_read_\(i)"
+            classReads.append((readId: readId, taxId: 0, classified: false))
+            fastqReadIDs.append(readId)
+        }
+
+        let classURL = tempDir.appendingPathComponent("simulated.kraken")
+        _ = try makeClassificationOutput(reads: classReads, at: classURL)
+
+        let fastqURL = tempDir.appendingPathComponent("simulated.fastq")
+        _ = try makeFASTQ(reads: fastqReadIDs, at: fastqURL)
+
+        let outputURL = tempDir.appendingPathComponent("simulated_extracted.fastq")
+
+        // Extract Escherichia genus (561) with children -- should get both
+        // Escherichia (561) and E. coli (562) reads.
+        let config = TaxonomyExtractionConfig(
+            taxIds: [561],
+            includeChildren: true,
+            sourceFile: fastqURL,
+            outputFile: outputURL,
+            classificationOutput: classURL
+        )
+
+        let accumulator = ProgressAccumulator()
+        let resultURL = try await pipeline.extract(config: config, tree: tree) { pct, msg in
+            Task { await accumulator.append(pct, msg) }
+        }
+
+        // Verify output file was created
+        XCTAssertEqual(resultURL, outputURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
+
+        // Read and verify output content
+        let output = try String(contentsOf: outputURL, encoding: .utf8)
+
+        // Should contain all 10 E. coli reads
+        for i in 0..<10 {
+            XCTAssertTrue(output.contains("@ecoli_read_\(i)"),
+                          "Should contain ecoli_read_\(i)")
+        }
+
+        // Should contain all 5 Escherichia reads
+        for i in 0..<5 {
+            XCTAssertTrue(output.contains("@escherichia_read_\(i)"),
+                          "Should contain escherichia_read_\(i)")
+        }
+
+        // Should NOT contain S. aureus reads
+        for i in 0..<8 {
+            XCTAssertFalse(output.contains("@saureus_read_\(i)"),
+                           "Should not contain saureus_read_\(i)")
+        }
+
+        // Should NOT contain Archaea reads
+        for i in 0..<12 {
+            XCTAssertFalse(output.contains("@archaea_read_\(i)"),
+                           "Should not contain archaea_read_\(i)")
+        }
+
+        // Should NOT contain unclassified reads
+        for i in 0..<15 {
+            XCTAssertFalse(output.contains("@unclassified_read_\(i)"),
+                           "Should not contain unclassified_read_\(i)")
+        }
+
+        // Verify each extracted record is a valid 4-line FASTQ record
+        let lines = output.split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.isEmpty }
+        // 15 reads * 4 lines each = 60 lines
+        XCTAssertEqual(lines.count, 60, "Expected 60 lines (15 reads * 4 lines each)")
+
+        // Verify progress was reported
+        try await Task.sleep(for: .milliseconds(100))
+        let progressCalls = await accumulator.getCalls()
+        XCTAssertFalse(progressCalls.isEmpty, "Progress should have been reported")
+
+        // Final progress should be at 1.0
+        if let lastProgress = progressCalls.last {
+            XCTAssertEqual(lastProgress.0, 1.0, accuracy: 0.01,
+                           "Final progress should be 1.0")
+        }
+    }
+
+    // MARK: - testExtractedBundleCreation
+
+    /// Verifies that a `.lungfishfastq` bundle can be correctly created from
+    /// an extraction output FASTQ file.
+    ///
+    /// This test simulates what ``ViewerViewController/createExtractedFASTQBundle``
+    /// does: runs the extraction pipeline, then creates a bundle directory with
+    /// the FASTQ file inside, plus a metadata sidecar and provenance JSON.
+    func testExtractedBundleCreation() async throws {
+        let fm = FileManager.default
+        let tree = makeTestTree()
+        let pipeline = TaxonomyExtractionPipeline()
+
+        // Create simulated input files
+        let classURL = tempDir.appendingPathComponent("bundle_test.kraken")
+        _ = try makeClassificationOutput(reads: [
+            (readId: "r1", taxId: 562, classified: true),
+            (readId: "r2", taxId: 562, classified: true),
+            (readId: "r3", taxId: 1280, classified: true),
+        ], at: classURL)
+
+        let fastqURL = tempDir.appendingPathComponent("bundle_test.fastq")
+        _ = try makeFASTQ(reads: ["r1", "r2", "r3"], at: fastqURL)
+
+        let outputURL = tempDir.appendingPathComponent("bundle_test_Escherichia_coli.fastq")
+
+        let config = TaxonomyExtractionConfig(
+            taxIds: [562],
+            includeChildren: false,
+            sourceFile: fastqURL,
+            outputFile: outputURL,
+            classificationOutput: classURL
+        )
+
+        // Run extraction
+        let extractedURL = try await pipeline.extract(config: config, tree: tree)
+        XCTAssertTrue(fm.fileExists(atPath: extractedURL.path))
+
+        // Simulate bundle creation (mirrors ViewerViewController.createExtractedFASTQBundle)
+        let baseName = FASTQBundle.deriveBaseName(from: extractedURL)
+        let bundleName = "\(baseName).\(FASTQBundle.directoryExtension)"
+        let parentDir = extractedURL.deletingLastPathComponent()
+        let bundleURL = parentDir.appendingPathComponent(bundleName)
+
+        // Create bundle directory
+        try fm.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+
+        // Move extracted FASTQ into bundle
+        let destFASTQ = bundleURL.appendingPathComponent(extractedURL.lastPathComponent)
+        try fm.moveItem(at: extractedURL, to: destFASTQ)
+
+        // Write metadata sidecar
+        var metadata = PersistedFASTQMetadata()
+        metadata.downloadSource = "taxonomy-extraction"
+        metadata.downloadDate = Date()
+        FASTQMetadataStore.save(metadata, for: destFASTQ)
+
+        // Write extraction provenance
+        let provenance: [String: Any] = [
+            "extractionType": "taxonomy",
+            "taxIds": config.taxIds.sorted(),
+            "includeChildren": config.includeChildren,
+            "sourceFile": config.sourceFile.lastPathComponent,
+            "classificationOutput": config.classificationOutput.lastPathComponent,
+            "extractedAt": ISO8601DateFormatter().string(from: Date()),
+        ]
+        let provenanceURL = bundleURL.appendingPathComponent("extraction-provenance.json")
+        if let data = try? JSONSerialization.data(
+            withJSONObject: provenance,
+            options: [.prettyPrinted, .sortedKeys]
+        ) {
+            try data.write(to: provenanceURL, options: .atomic)
+        }
+
+        // Verify bundle structure
+        XCTAssertTrue(FASTQBundle.isBundleURL(bundleURL),
+                      "Should be recognized as a .lungfishfastq bundle")
+
+        // Verify the FASTQ file is inside the bundle
+        XCTAssertTrue(fm.fileExists(atPath: destFASTQ.path),
+                      "Extracted FASTQ should exist inside the bundle")
+
+        // Verify the original extraction output was moved (no longer at original location)
+        XCTAssertFalse(fm.fileExists(atPath: extractedURL.path),
+                       "Original extracted FASTQ should have been moved into the bundle")
+
+        // Verify the primary FASTQ can be resolved
+        let resolvedPrimary = FASTQBundle.resolvePrimaryFASTQURL(for: bundleURL)
+        XCTAssertNotNil(resolvedPrimary, "Should resolve a primary FASTQ from the bundle")
+        XCTAssertEqual(resolvedPrimary?.lastPathComponent, extractedURL.lastPathComponent)
+
+        // Verify the FASTQ content is correct (should contain r1 and r2 but not r3)
+        let content = try String(contentsOf: destFASTQ, encoding: .utf8)
+        XCTAssertTrue(content.contains("@r1"), "Bundle FASTQ should contain r1")
+        XCTAssertTrue(content.contains("@r2"), "Bundle FASTQ should contain r2")
+        XCTAssertFalse(content.contains("@r3"), "Bundle FASTQ should not contain r3 (S. aureus)")
+
+        // Verify metadata sidecar was written
+        let loadedMetadata = FASTQMetadataStore.load(for: destFASTQ)
+        XCTAssertNotNil(loadedMetadata, "Metadata sidecar should be loadable")
+        XCTAssertEqual(loadedMetadata?.downloadSource, "taxonomy-extraction")
+        XCTAssertNotNil(loadedMetadata?.downloadDate)
+
+        // Verify provenance JSON was written and is valid
+        XCTAssertTrue(fm.fileExists(atPath: provenanceURL.path),
+                      "Provenance JSON should exist")
+        let provenanceData = try Data(contentsOf: provenanceURL)
+        let parsed = try JSONSerialization.jsonObject(with: provenanceData) as? [String: Any]
+        XCTAssertNotNil(parsed)
+        XCTAssertEqual(parsed?["extractionType"] as? String, "taxonomy")
+        XCTAssertEqual(parsed?["includeChildren"] as? Bool, false)
+        XCTAssertEqual(parsed?["sourceFile"] as? String, "bundle_test.fastq")
+
+        let parsedTaxIds = parsed?["taxIds"] as? [Int]
+        XCTAssertNotNil(parsedTaxIds)
+        XCTAssertEqual(parsedTaxIds, [562])
     }
 }

@@ -17,6 +17,7 @@ public enum OperationType: String, Sendable {
     case ingestion = "Ingestion"
     case fastqOperation = "FASTQ Op"
     case qualityReport = "Quality Report"
+    case taxonomyExtraction = "Taxonomy Extraction"
 }
 
 @MainActor

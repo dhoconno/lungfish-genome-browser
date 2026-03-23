@@ -21,24 +21,27 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "PluginManage
 /// - **Installed**: Lists conda environments and their packages.
 /// - **Available**: Searches bioconda for packages to install.
 /// - **Packs**: Shows curated ``PluginPack`` bundles.
+/// - **Databases**: Kraken2 database download and management.
 @MainActor
 @Observable
 final class PluginManagerViewModel {
 
     // MARK: - Tab
 
-    /// The three sections of the Plugin Manager.
+    /// The four sections of the Plugin Manager.
     enum Tab: Hashable, Sendable {
         case installed
         case available
         case packs
+        case databases
 
         /// Maps to the segmented control index.
         var segmentIndex: Int {
             switch self {
-            case .installed: return 0
-            case .available: return 1
-            case .packs: return 2
+            case .installed:  return 0
+            case .available:  return 1
+            case .packs:      return 2
+            case .databases:  return 3
             }
         }
 
@@ -48,6 +51,7 @@ final class PluginManagerViewModel {
             case 0: return .installed
             case 1: return .available
             case 2: return .packs
+            case 3: return .databases
             default: return .installed
             }
         }
@@ -60,6 +64,8 @@ final class PluginManagerViewModel {
         didSet {
             if selectedTab == .installed {
                 refreshInstalled()
+            } else if selectedTab == .databases {
+                refreshDatabases()
             }
         }
     }
@@ -132,6 +138,46 @@ final class PluginManagerViewModel {
     /// Set of installed environment names, for status indicators.
     var installedEnvironmentNames: Set<String> {
         Set(environments.map(\.name))
+    }
+
+    // MARK: - Databases Tab State
+
+    /// Available Kraken2 databases from the registry catalog.
+    var databases: [MetagenomicsDatabaseInfo] = []
+
+    /// Set of database names currently being downloaded.
+    var downloadingDatabases: Set<String> = []
+
+    /// Map of database name to download progress (0.0 to 1.0).
+    var downloadProgress: [String: Double] = [:]
+
+    /// Map of database name to progress status message.
+    var downloadMessage: [String: String] = [:]
+
+    /// Map of database name to error message from a failed download.
+    var downloadError: [String: String] = [:]
+
+    /// Set of database names currently being removed.
+    var removingDatabases: Set<String> = []
+
+    /// Name of the recommended database based on system RAM.
+    var recommendedDatabaseName: String = ""
+
+    /// System RAM in bytes, for display and recommendation logic.
+    let systemRAMBytes: UInt64 = ProcessInfo.processInfo.physicalMemory
+
+    /// Total storage used by all installed databases, in bytes.
+    var totalDatabaseStorageBytes: Int64 {
+        databases
+            .filter { $0.status == .ready }
+            .compactMap(\.sizeOnDisk)
+            .reduce(0, +)
+    }
+
+    /// The base directory where databases are stored.
+    var databaseStoragePath: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return home.appendingPathComponent(".lungfish/databases/kraken2").path
     }
 
     // MARK: - Lifecycle
@@ -356,6 +402,110 @@ final class PluginManagerViewModel {
             }
 
             refreshInstalled()
+        }
+    }
+
+    // MARK: - Databases Tab Actions
+
+    /// Refreshes the database catalog from the registry.
+    func refreshDatabases() {
+        Task {
+            do {
+                let registry = MetagenomicsDatabaseRegistry.shared
+                let allDBs = try await registry.availableDatabases()
+                databases = allDBs
+
+                let recommended = try await registry.recommendedDatabase(ramBytes: systemRAMBytes)
+                recommendedDatabaseName = recommended.name
+
+                logger.info(
+                    "Loaded \(allDBs.count, privacy: .public) databases, recommended: \(self.recommendedDatabaseName, privacy: .public)"
+                )
+            } catch {
+                handleError(error, context: "loading database catalog")
+            }
+        }
+    }
+
+    /// Downloads a Kraken2 database by name.
+    ///
+    /// Updates ``downloadingDatabases``, ``downloadProgress``, and
+    /// ``downloadMessage`` as the download progresses. On completion, refreshes
+    /// the database list. On error, stores the error message in ``downloadError``.
+    ///
+    /// - Parameter name: Name of the database to download (e.g., "Viral").
+    func downloadDatabase(name: String) {
+        guard !downloadingDatabases.contains(name) else { return }
+
+        downloadingDatabases.insert(name)
+        downloadProgress[name] = 0.0
+        downloadMessage[name] = "Starting download..."
+        downloadError.removeValue(forKey: name)
+
+        Task {
+            defer {
+                downloadingDatabases.remove(name)
+            }
+
+            do {
+                _ = try await MetagenomicsDatabaseRegistry.shared.downloadDatabase(
+                    name: name,
+                    progress: { [weak self] fraction, message in
+                        DispatchQueue.main.async {
+                            MainActor.assumeIsolated {
+                                self?.downloadProgress[name] = fraction
+                                self?.downloadMessage[name] = message
+                            }
+                        }
+                    }
+                )
+                downloadProgress.removeValue(forKey: name)
+                downloadMessage.removeValue(forKey: name)
+                logger.info("Database '\(name, privacy: .public)' downloaded successfully")
+                refreshDatabases()
+            } catch {
+                downloadProgress.removeValue(forKey: name)
+                downloadMessage.removeValue(forKey: name)
+                downloadError[name] = error.localizedDescription
+                logger.error("Database '\(name, privacy: .public)' download failed: \(error.localizedDescription, privacy: .public)")
+                refreshDatabases()
+            }
+        }
+    }
+
+    /// Removes a downloaded database, deleting its files from disk.
+    ///
+    /// Resets the registry entry to undownloaded state (for catalog entries)
+    /// or removes it entirely (for user-imported databases).
+    ///
+    /// - Parameter name: Name of the database to remove.
+    func removeDatabase(name: String) {
+        guard !removingDatabases.contains(name) else { return }
+
+        removingDatabases.insert(name)
+
+        Task {
+            defer { removingDatabases.remove(name) }
+
+            do {
+                let registry = MetagenomicsDatabaseRegistry.shared
+
+                // Get the database path before removing the registry entry.
+                if let db = try await registry.database(named: name), let path = db.path {
+                    // Delete files from disk.
+                    try? FileManager.default.removeItem(at: path)
+                    logger.info("Deleted database files at \(path.path, privacy: .public)")
+                }
+
+                // Remove or reset the registry entry.
+                try await registry.removeDatabase(name: name)
+                logger.info("Removed database '\(name, privacy: .public)' from registry")
+
+                refreshDatabases()
+            } catch {
+                handleError(error, context: "removing database '\(name)'")
+                refreshDatabases()
+            }
         }
     }
 

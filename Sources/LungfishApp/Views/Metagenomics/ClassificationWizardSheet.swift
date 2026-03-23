@@ -320,8 +320,8 @@ struct ClassificationWizardSheet: View {
                         .foregroundStyle(.secondary)
 
                     Button("Download Database\u{2026}") {
-                        // Open Plugin Manager to the database management section
-                        PluginManagerWindowController.show()
+                        // Open Plugin Manager directly to the Databases tab
+                        PluginManagerWindowController.show(tab: .databases)
                     }
                     .font(.system(size: 12))
                 }

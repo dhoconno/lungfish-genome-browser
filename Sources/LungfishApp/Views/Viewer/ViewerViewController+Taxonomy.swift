@@ -10,8 +10,46 @@ import LungfishIO
 import LungfishWorkflow
 import os.log
 
-/// Logger for taxonomy display operations
+/// Logger for taxonomy display operations.
 private let taxonomyLogger = Logger(subsystem: LogSubsystem.app, category: "ViewerTaxonomy")
+
+/// Schedules a block on the main run loop using `CFRunLoopPerformBlock`.
+///
+/// This avoids the cooperative executor scheduling issues described in MEMORY.md
+/// and matches the pattern in `ViewerViewController+Extraction.swift`.
+private func scheduleTaxonomyOnMainRunLoop(_ block: @escaping @Sendable () -> Void) {
+    CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) {
+        block()
+    }
+    CFRunLoopWakeUp(CFRunLoopGetMain())
+}
+
+/// Writes a small JSON file inside the bundle recording extraction provenance.
+///
+/// This is separate from the ``PersistedFASTQMetadata`` sidecar because it
+/// captures taxonomy-specific information (tax IDs, source classification
+/// output, include-children flag) that doesn't fit the generic metadata model.
+private func writeTaxonomyExtractionProvenance(
+    config: TaxonomyExtractionConfig,
+    bundleURL: URL
+) {
+    let provenance: [String: Any] = [
+        "extractionType": "taxonomy",
+        "taxIds": config.taxIds.sorted(),
+        "includeChildren": config.includeChildren,
+        "sourceFile": config.sourceFile.lastPathComponent,
+        "classificationOutput": config.classificationOutput.lastPathComponent,
+        "extractedAt": ISO8601DateFormatter().string(from: Date()),
+    ]
+
+    let provenanceURL = bundleURL.appendingPathComponent("extraction-provenance.json")
+    if let data = try? JSONSerialization.data(
+        withJSONObject: provenance,
+        options: [.prettyPrinted, .sortedKeys]
+    ) {
+        try? data.write(to: provenanceURL, options: .atomic)
+    }
+}
 
 // MARK: - ViewerViewController Taxonomy Display Extension
 
@@ -22,6 +60,11 @@ extension ViewerViewController {
     /// Hides all other overlay views (FASTQ, VCF, FASTA, QuickLook) and the
     /// normal viewer components, then adds `TaxonomyViewController` as a child
     /// view controller filling the content area.
+    ///
+    /// Wires the ``TaxonomyViewController/onExtractConfirmed`` callback so that
+    /// clicking "Extract Sequences" in the extraction sheet runs the
+    /// ``TaxonomyExtractionPipeline``, creates a `.lungfishfastq` bundle from the
+    /// extracted reads, and refreshes the sidebar.
     ///
     /// Follows the exact same child-VC pattern as ``displayFASTACollection(sequences:annotations:)``.
     ///
@@ -51,6 +94,88 @@ extension ViewerViewController {
         ])
 
         controller.configure(result: result)
+
+        // Wire the extraction confirmed callback so "Extract Sequences" actually works.
+        //
+        // Uses Task.detached because TaxonomyExtractionPipeline is an actor with
+        // potentially long-running buffered I/O. Progress and completion hop back
+        // to the main thread via scheduleTaxonomyOnMainRunLoop + MainActor.assumeIsolated
+        // per project conventions (cooperative executor is unreliable from detached tasks).
+        //
+        // The detached task does NOT capture `self` at all. All main-thread work
+        // uses free functions and NSApp.delegate, matching the pattern in
+        // ViewerViewController+Extraction.swift.
+        controller.onExtractConfirmed = { config in
+            let taxonLabel: String
+            if config.taxIds.count == 1 {
+                taxonLabel = "taxId \(config.taxIds.first!)"
+            } else {
+                taxonLabel = "\(config.taxIds.count) taxa"
+            }
+
+            // Register the operation in OperationCenter for the operations panel.
+            let opID = OperationCenter.shared.start(
+                title: "Extract \(taxonLabel)",
+                detail: "Preparing\u{2026}",
+                operationType: .taxonomyExtraction
+            )
+
+            // Capture the tree from the result for descendant lookup inside the
+            // detached task. ClassificationResult.tree is Sendable.
+            let tree = result.tree
+
+            let task = Task.detached {
+                do {
+                    let pipeline = TaxonomyExtractionPipeline()
+                    let outputURL = try await pipeline.extract(
+                        config: config,
+                        tree: tree,
+                        progress: { fraction, message in
+                            DispatchQueue.main.async {
+                                MainActor.assumeIsolated {
+                                    OperationCenter.shared.update(
+                                        id: opID,
+                                        progress: fraction,
+                                        detail: message
+                                    )
+                                }
+                            }
+                        }
+                    )
+
+                    // Use nonisolated(unsafe) captures for values that need
+                    // to cross the isolation boundary into the @Sendable closure.
+                    // This is safe because the closure executes on the main run
+                    // loop and immediately enters MainActor.assumeIsolated.
+                    nonisolated(unsafe) let capturedConfig = config
+                    nonisolated(unsafe) let capturedOutputURL = outputURL
+                    scheduleTaxonomyOnMainRunLoop {
+                        MainActor.assumeIsolated {
+                            createExtractedFASTQBundleOnMainThread(
+                                from: capturedOutputURL,
+                                config: capturedConfig,
+                                operationID: opID
+                            )
+                        }
+                    }
+                } catch {
+                    let errorDesc = error.localizedDescription
+                    scheduleTaxonomyOnMainRunLoop {
+                        MainActor.assumeIsolated {
+                            OperationCenter.shared.fail(
+                                id: opID,
+                                detail: errorDesc
+                            )
+                            showTaxonomyExtractionErrorAlert(errorDesc)
+                        }
+                    }
+                }
+            }
+
+            // Wire cancellation so the operations panel can cancel this task.
+            OperationCenter.shared.setCancelCallback(for: opID) { task.cancel() }
+        }
+
         taxonomyViewController = controller
 
         // Hide normal genomic viewer components
@@ -75,5 +200,90 @@ extension ViewerViewController {
         viewerView.isHidden = false
         statusBar.isHidden = false
         annotationDrawerView?.isHidden = false
+    }
+}
+
+// MARK: - Bundle Creation (MainActor free function)
+
+/// Creates a `.lungfishfastq` bundle from an extracted FASTQ file.
+///
+/// Called from `MainActor.assumeIsolated` inside `scheduleTaxonomyOnMainRunLoop`.
+/// This is a module-level function to avoid capturing `@MainActor`-isolated `self`
+/// across isolation boundaries in `Task.detached`.
+///
+/// The function accesses `OperationCenter.shared`, `NSApp.delegate`, and sidebar
+/// methods, all of which require `@MainActor` isolation. Since it is called inside
+/// `MainActor.assumeIsolated`, those accesses are safe.
+private func createExtractedFASTQBundleOnMainThread(
+    from outputURL: URL,
+    config: TaxonomyExtractionConfig,
+    operationID: UUID
+) {
+    // We are inside MainActor.assumeIsolated, so all @MainActor calls are valid.
+    // Use assumeIsolated to satisfy the compiler's static checking.
+    MainActor.assumeIsolated {
+        let fm = FileManager.default
+
+        let baseName = FASTQBundle.deriveBaseName(from: outputURL)
+        let bundleName = "\(baseName).\(FASTQBundle.directoryExtension)"
+
+        let parentDir = outputURL.deletingLastPathComponent()
+        let bundleURL = parentDir.appendingPathComponent(bundleName)
+
+        do {
+            try fm.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+
+            let destFASTQ = bundleURL.appendingPathComponent(outputURL.lastPathComponent)
+            try fm.moveItem(at: outputURL, to: destFASTQ)
+
+            var metadata = PersistedFASTQMetadata()
+            metadata.downloadSource = "taxonomy-extraction"
+            metadata.downloadDate = Date()
+            FASTQMetadataStore.save(metadata, for: destFASTQ)
+
+            writeTaxonomyExtractionProvenance(config: config, bundleURL: bundleURL)
+
+            taxonomyLogger.info("createExtractedFASTQBundle: Created \(bundleURL.lastPathComponent)")
+
+            OperationCenter.shared.complete(
+                id: operationID,
+                detail: "Extracted to \(bundleName)",
+                bundleURLs: [bundleURL]
+            )
+
+            if let appDelegate = NSApp.delegate as? AppDelegate {
+                appDelegate.importReadyBundles([bundleURL])
+
+                if let sidebar = appDelegate.mainWindowController?.mainSplitViewController?.sidebarController {
+                    sidebar.reloadFromFilesystem()
+                    _ = sidebar.selectItem(forURL: bundleURL)
+                }
+            }
+
+        } catch {
+            taxonomyLogger.error("createExtractedFASTQBundle: Failed: \(error.localizedDescription, privacy: .public)")
+            OperationCenter.shared.fail(
+                id: operationID,
+                detail: "Bundle creation failed: \(error.localizedDescription)"
+            )
+            showTaxonomyExtractionErrorAlert(error.localizedDescription)
+        }
+    }
+}
+
+/// Presents an error alert for a failed taxonomy extraction.
+///
+/// Uses `beginSheetModal` per macOS 26 conventions (never `runModal()`).
+/// Accesses the window via `NSApp` to avoid capturing `self`.
+private func showTaxonomyExtractionErrorAlert(_ errorDescription: String) {
+    MainActor.assumeIsolated {
+        let alert = NSAlert()
+        alert.messageText = "Taxonomy Extraction Failed"
+        alert.informativeText = errorDescription
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            alert.beginSheetModal(for: window)
+        }
     }
 }
