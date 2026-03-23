@@ -3532,16 +3532,32 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         }
         guard let window = mainWindowController?.window else { return }
 
-        // Collect input FASTQ files — look for open documents with FASTQ extensions
+        // Find FASTQ files from sidebar selection or loaded documents
         var inputFiles: [URL] = []
 
-        for doc in DocumentManager.shared.documents {
-            let url = doc.url
-            let ext = url.pathExtension.lowercased()
-            let baseExt = url.deletingPathExtension().pathExtension.lowercased()
-            if ext == "fastq" || ext == "fq" || ext == "lungfishfastq" ||
-               (ext == "gz" && (baseExt == "fastq" || baseExt == "fq")) {
-                inputFiles.append(url)
+        // First, check the sidebar's selected items for FASTQ URLs
+        if let splitVC = mainWindowController?.mainSplitViewController {
+            let selectedURLs = splitVC.sidebarController.selectedFileURLs()
+            for url in selectedURLs {
+                let ext = url.pathExtension.lowercased()
+                let baseExt = url.deletingPathExtension().pathExtension.lowercased()
+                if ext == "fastq" || ext == "fq" || ext == "lungfishfastq" ||
+                   (ext == "gz" && (baseExt == "fastq" || baseExt == "fq")) {
+                    inputFiles.append(url)
+                }
+            }
+        }
+
+        // Fallback: check DocumentManager for loaded FASTQ documents
+        if inputFiles.isEmpty {
+            for doc in DocumentManager.shared.documents {
+                let url = doc.url
+                let ext = url.pathExtension.lowercased()
+                let baseExt = url.deletingPathExtension().pathExtension.lowercased()
+                if ext == "fastq" || ext == "fq" || ext == "lungfishfastq" ||
+                   (ext == "gz" && (baseExt == "fastq" || baseExt == "fq")) {
+                    inputFiles.append(url)
+                }
             }
         }
 

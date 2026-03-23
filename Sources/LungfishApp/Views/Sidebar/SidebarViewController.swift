@@ -1945,6 +1945,22 @@ extension SidebarViewController: NSOutlineViewDelegate {
     }
 }
 
+// MARK: - Public Selection Accessors
+
+extension SidebarViewController {
+    /// Returns the file URLs of all currently selected sidebar items.
+    public func selectedFileURLs() -> [URL] {
+        var urls: [URL] = []
+        for index in outlineView.selectedRowIndexes {
+            if let item = outlineView.item(atRow: index) as? SidebarItem,
+               let url = item.url {
+                urls.append(url)
+            }
+        }
+        return urls
+    }
+}
+
 // MARK: - SidebarItem Model
 
 /// Represents an item in the sidebar hierarchy
