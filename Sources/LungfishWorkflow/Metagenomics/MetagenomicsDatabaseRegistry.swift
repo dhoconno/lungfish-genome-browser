@@ -765,7 +765,10 @@ public actor MetagenomicsDatabaseRegistry {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-            process.arguments = ["xzf", tarball.path, "-C", destination.path, "--strip-components=1"]
+            // Kraken2 databases from genome-idx.s3.amazonaws.com have files at the
+            // top level (hash.k2d, opts.k2d, taxo.k2d), NOT inside a subdirectory.
+            // Do NOT use --strip-components=1 as it would strip the filenames.
+            process.arguments = ["xzf", tarball.path, "-C", destination.path]
 
             let stderrPipe = Pipe()
             process.standardError = stderrPipe
