@@ -442,16 +442,42 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
 
     private func buildContextMenu() -> NSMenu {
         let menu = NSMenu()
+
+        // Extraction
         menu.addItem(withTitle: "Extract Reads for Taxon\u{2026}",
                      action: #selector(contextExtractReads(_:)),
                      keyEquivalent: "")
         menu.addItem(withTitle: "Extract Reads Including Children\u{2026}",
                      action: #selector(contextExtractWithChildren(_:)),
                      keyEquivalent: "")
+
         menu.addItem(.separator())
+
+        // Expand/Collapse
+        menu.addItem(withTitle: "Expand",
+                     action: #selector(contextExpandItem(_:)),
+                     keyEquivalent: "")
+        menu.addItem(withTitle: "Expand All Below",
+                     action: #selector(contextExpandAllBelow(_:)),
+                     keyEquivalent: "")
+        menu.addItem(withTitle: "Collapse",
+                     action: #selector(contextCollapseItem(_:)),
+                     keyEquivalent: "")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Expand All",
+                     action: #selector(contextExpandAll(_:)),
+                     keyEquivalent: "")
+        menu.addItem(withTitle: "Collapse All",
+                     action: #selector(contextCollapseAll(_:)),
+                     keyEquivalent: "")
+
+        menu.addItem(.separator())
+
+        // Copy
         menu.addItem(withTitle: "Copy Taxon Name",
                      action: #selector(contextCopyName(_:)),
                      keyEquivalent: "")
+
         return menu
     }
 
@@ -472,6 +498,32 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         guard row >= 0, let node = outlineView.item(atRow: row) as? TaxonNode else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(node.name, forType: .string)
+    }
+
+    @objc private func contextExpandItem(_ sender: Any?) {
+        let row = outlineView.clickedRow
+        guard row >= 0, let node = outlineView.item(atRow: row) else { return }
+        outlineView.expandItem(node)
+    }
+
+    @objc private func contextExpandAllBelow(_ sender: Any?) {
+        let row = outlineView.clickedRow
+        guard row >= 0, let node = outlineView.item(atRow: row) else { return }
+        outlineView.expandItem(node, expandChildren: true)
+    }
+
+    @objc private func contextCollapseItem(_ sender: Any?) {
+        let row = outlineView.clickedRow
+        guard row >= 0, let node = outlineView.item(atRow: row) else { return }
+        outlineView.collapseItem(node)
+    }
+
+    @objc private func contextExpandAll(_ sender: Any?) {
+        expandAll()
+    }
+
+    @objc private func contextCollapseAll(_ sender: Any?) {
+        collapseAll()
     }
 
     // MARK: - NSOutlineViewDataSource
