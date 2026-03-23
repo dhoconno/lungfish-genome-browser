@@ -251,12 +251,18 @@ private func createExtractedFASTQBundleOnMainThread(
                 bundleURLs: [bundleURL]
             )
 
+            // Do NOT call importReadyBundles — that triggers full FASTQ ingestion
+            // (including clumpify) which is inappropriate for extracted reads.
+            // Instead, just refresh the sidebar to pick up the new bundle directory.
             if let appDelegate = NSApp.delegate as? AppDelegate {
-                appDelegate.importReadyBundles([bundleURL])
-
                 if let sidebar = appDelegate.mainWindowController?.mainSplitViewController?.sidebarController {
                     sidebar.reloadFromFilesystem()
-                    _ = sidebar.selectItem(forURL: bundleURL)
+                    // Select the new bundle after a brief delay for the filesystem notification to propagate
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        MainActor.assumeIsolated {
+                            _ = sidebar.selectItem(forURL: bundleURL)
+                        }
+                    }
                 }
             }
 

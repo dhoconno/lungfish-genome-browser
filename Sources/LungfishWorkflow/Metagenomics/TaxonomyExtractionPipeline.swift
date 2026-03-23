@@ -375,6 +375,9 @@ public actor TaxonomyExtractionPipeline {
         var residual = ""
         let bufferSize = 4_194_304 // 4 MB
         var lineBuffer: [String] = []
+        // Batch writes for performance — accumulate matched records then write at once
+        var outputBuffer = Data()
+        let flushThreshold = 1_048_576 // Flush every ~1 MB of output
 
         while true {
             try Task.checkCancellation()
@@ -405,12 +408,18 @@ public actor TaxonomyExtractionPipeline {
                         let readId = extractReadId(from: header)
                         if readIds.contains(readId) {
                             let record = lineBuffer.joined(separator: "\n") + "\n"
-                            outputHandle.write(Data(record.utf8))
+                            outputBuffer.append(Data(record.utf8))
                             extractedCount += 1
                         }
                     }
                     lineBuffer.removeAll(keepingCapacity: true)
                 }
+            }
+
+            // Flush output buffer periodically for memory efficiency
+            if outputBuffer.count >= flushThreshold {
+                outputHandle.write(outputBuffer)
+                outputBuffer.removeAll(keepingCapacity: true)
             }
 
             // Report progress (normalized to 0.0 -- 1.0 for this file)
@@ -430,10 +439,15 @@ public actor TaxonomyExtractionPipeline {
                 let readId = extractReadId(from: header)
                 if readIds.contains(readId) {
                     let record = lineBuffer.joined(separator: "\n") + "\n"
-                    outputHandle.write(Data(record.utf8))
+                    outputBuffer.append(Data(record.utf8))
                     extractedCount += 1
                 }
             }
+        }
+
+        // Final flush
+        if !outputBuffer.isEmpty {
+            outputHandle.write(outputBuffer)
         }
 
         return extractedCount
