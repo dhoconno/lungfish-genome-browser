@@ -20,6 +20,7 @@ import LungfishIO
 /// - Phylum-based coloring with depth tinting
 /// - Center label showing zoom root name and read count
 /// - Dark mode support via dynamic colors
+/// - Keyboard shortcuts: Escape (zoom out), Cmd+0 (zoom to root)
 ///
 /// ## Usage
 ///
@@ -83,6 +84,11 @@ public class TaxonomySunburstView: NSView {
 
     /// Called when the user right-clicks a segment.
     public var onNodeRightClicked: ((TaxonNode, NSPoint) -> Void)?
+
+    /// Called when the zoom level changes via keyboard or mouse interaction.
+    ///
+    /// The parameter is the new center node (`nil` = root).
+    public var onZoomChanged: ((TaxonNode?) -> Void)?
 
     // MARK: - Configuration
 
@@ -227,7 +233,8 @@ public class TaxonomySunburstView: NSView {
     public override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
 
-        // Background
+        // Transparent background -- parent view's background shows through.
+        // Use controlBackgroundColor which adapts to light/dark mode automatically.
         ctx.setFillColor(NSColor.controlBackgroundColor.cgColor)
         ctx.fill(bounds)
 
@@ -372,7 +379,7 @@ public class TaxonomySunburstView: NSView {
         let radius = layout.centerRadius
         guard radius > 5 else { return }
 
-        // Circle background
+        // Circle background -- uses system color for dark mode compatibility
         let circlePath = NSBezierPath(
             ovalIn: NSRect(
                 x: center.x - radius,
@@ -478,6 +485,9 @@ public class TaxonomySunburstView: NSView {
     // MARK: - Mouse Interaction
 
     public override func mouseDown(with event: NSEvent) {
+        // Take first responder for keyboard shortcuts
+        window?.makeFirstResponder(self)
+
         let point = convert(event.locationInWindow, from: nil)
 
         guard let layout = currentLayout else { return }
@@ -488,12 +498,15 @@ public class TaxonomySunburstView: NSView {
             if layout.isInCenter(point: point) {
                 // Zoom out
                 if let current = centerNode {
-                    centerNode = current.parent
+                    let newCenter = current.parent
+                    centerNode = newCenter
+                    onZoomChanged?(newCenter)
                     onNodeDoubleClicked?(current)
                 }
             } else if let segment = layout.hitTest(point: point, segments: cachedSegments),
                       !segment.isOther {
                 centerNode = segment.node
+                onZoomChanged?(segment.node)
                 onNodeDoubleClicked?(segment.node)
             }
             return
@@ -503,7 +516,9 @@ public class TaxonomySunburstView: NSView {
         if layout.isInCenter(point: point) {
             // Click center: zoom out one level
             if let current = centerNode {
-                centerNode = current.parent
+                let newCenter = current.parent
+                centerNode = newCenter
+                onZoomChanged?(newCenter)
             }
             selectedNode = nil
             onNodeSelected?(layout.effectiveRoot)
@@ -550,6 +565,59 @@ public class TaxonomySunburstView: NSView {
             let windowPoint = event.locationInWindow
             onNodeRightClicked?(segment.node, windowPoint)
         }
+    }
+
+    // MARK: - Keyboard Interaction
+
+    /// Handles keyboard shortcuts for zoom navigation.
+    ///
+    /// - **Escape**: Zoom out one level (or deselect if already at root).
+    /// - **Cmd+0**: Zoom to root.
+    public override func keyDown(with event: NSEvent) {
+        guard tree != nil else {
+            super.keyDown(with: event)
+            return
+        }
+
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+        switch event.keyCode {
+        case 53: // Escape
+            if centerNode != nil {
+                // Zoom out one level
+                let newCenter = centerNode?.parent
+                centerNode = newCenter
+                onZoomChanged?(newCenter)
+            } else {
+                // Already at root -- deselect
+                selectedNode = nil
+            }
+
+        case 29 where modifiers == .command: // Cmd+0
+            zoomToRoot()
+
+        default:
+            super.keyDown(with: event)
+        }
+    }
+
+    // MARK: - Zoom Actions
+
+    /// Zooms out one level toward the root.
+    ///
+    /// If already at root, this is a no-op.
+    public func zoomOut() {
+        guard let current = centerNode else { return }
+        let newCenter = current.parent
+        centerNode = newCenter
+        onZoomChanged?(newCenter)
+    }
+
+    /// Zooms all the way to the root of the taxonomy tree.
+    public func zoomToRoot() {
+        guard centerNode != nil else { return }
+        centerNode = nil
+        onZoomChanged?(nil)
     }
 
     // MARK: - Copy to Clipboard

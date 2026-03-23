@@ -1,0 +1,566 @@
+// TaxonomyExtractionTests.swift - Tests for taxonomy-based read extraction
+// Copyright (c) 2025 Lungfish Contributors
+// SPDX-License-Identifier: MIT
+
+import XCTest
+@testable import LungfishWorkflow
+@testable import LungfishIO
+
+// MARK: - Progress Accumulator
+
+/// A thread-safe accumulator for progress callback values in tests.
+private actor ProgressAccumulator {
+    var calls: [(Double, String)] = []
+
+    func append(_ value: Double, _ message: String) {
+        calls.append((value, message))
+    }
+
+    func getCalls() -> [(Double, String)] {
+        calls
+    }
+}
+
+// MARK: - TaxonomyExtractionConfigTests
+
+/// Tests for ``TaxonomyExtractionConfig`` construction and properties.
+final class TaxonomyExtractionConfigTests: XCTestCase {
+
+    // MARK: - Test Fixtures
+
+    private let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("extraction-test-\(UUID().uuidString)")
+
+    override func setUpWithError() throws {
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: tempDir)
+    }
+
+    // MARK: - testExtractionConfigCreation
+
+    /// Verifies that TaxonomyExtractionConfig stores all properties correctly.
+    func testExtractionConfigCreation() {
+        let sourceURL = tempDir.appendingPathComponent("input.fastq")
+        let outputURL = tempDir.appendingPathComponent("output.fastq")
+        let classURL = tempDir.appendingPathComponent("classification.kraken")
+
+        let config = TaxonomyExtractionConfig(
+            taxIds: [562, 9606],
+            includeChildren: true,
+            sourceFile: sourceURL,
+            outputFile: outputURL,
+            classificationOutput: classURL
+        )
+
+        XCTAssertEqual(config.taxIds, [562, 9606])
+        XCTAssertTrue(config.includeChildren)
+        XCTAssertEqual(config.sourceFile, sourceURL)
+        XCTAssertEqual(config.outputFile, outputURL)
+        XCTAssertEqual(config.classificationOutput, classURL)
+    }
+
+    /// Verifies that the summary property generates a readable description.
+    func testExtractionConfigSummary() {
+        let config = TaxonomyExtractionConfig(
+            taxIds: [562],
+            includeChildren: true,
+            sourceFile: tempDir.appendingPathComponent("sample.fastq"),
+            outputFile: tempDir.appendingPathComponent("extracted.fastq"),
+            classificationOutput: tempDir.appendingPathComponent("output.kraken")
+        )
+
+        XCTAssertTrue(config.summary.contains("taxId 562"))
+        XCTAssertTrue(config.summary.contains("with children"))
+        XCTAssertTrue(config.summary.contains("sample.fastq"))
+    }
+
+    /// Verifies that the summary uses plural for multiple taxa.
+    func testExtractionConfigSummaryMultipleTaxa() {
+        let config = TaxonomyExtractionConfig(
+            taxIds: [562, 9606, 1280],
+            includeChildren: false,
+            sourceFile: tempDir.appendingPathComponent("input.fastq"),
+            outputFile: tempDir.appendingPathComponent("output.fastq"),
+            classificationOutput: tempDir.appendingPathComponent("class.kraken")
+        )
+
+        XCTAssertTrue(config.summary.contains("3 taxa"))
+        XCTAssertFalse(config.summary.contains("with children"))
+    }
+
+    /// Verifies that TaxonomyExtractionConfig conforms to Equatable.
+    func testExtractionConfigEquatable() {
+        let sourceURL = tempDir.appendingPathComponent("input.fastq")
+        let outputURL = tempDir.appendingPathComponent("output.fastq")
+        let classURL = tempDir.appendingPathComponent("class.kraken")
+
+        let config1 = TaxonomyExtractionConfig(
+            taxIds: [562],
+            includeChildren: true,
+            sourceFile: sourceURL,
+            outputFile: outputURL,
+            classificationOutput: classURL
+        )
+        let config2 = TaxonomyExtractionConfig(
+            taxIds: [562],
+            includeChildren: true,
+            sourceFile: sourceURL,
+            outputFile: outputURL,
+            classificationOutput: classURL
+        )
+
+        XCTAssertEqual(config1, config2)
+    }
+}
+
+// MARK: - TaxonomyExtractionPipelineTests
+
+/// Tests for ``TaxonomyExtractionPipeline`` descendant collection and read extraction.
+final class TaxonomyExtractionPipelineTests: XCTestCase {
+
+    // MARK: - Test Fixtures
+
+    private let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("extraction-pipeline-\(UUID().uuidString)")
+
+    override func setUpWithError() throws {
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: tempDir)
+    }
+
+    /// Creates a simple taxonomy tree for testing.
+    ///
+    /// ```
+    /// root (1) -- 1000 reads
+    ///   +-- Bacteria (2) -- 800 reads
+    ///   |     +-- Proteobacteria (1224) -- 500 reads
+    ///   |     |     +-- Gammaproteobacteria (1236) -- 400 reads
+    ///   |     |           +-- Escherichia (561) -- 300 reads
+    ///   |     |                 +-- E. coli (562) -- 200 reads
+    ///   |     +-- Firmicutes (1239) -- 300 reads
+    ///   |           +-- Staphylococcus (1279) -- 150 reads
+    ///   |                 +-- S. aureus (1280) -- 100 reads
+    ///   +-- Archaea (2157) -- 200 reads
+    /// ```
+    private func makeTestTree() -> TaxonTree {
+        let root = TaxonNode(taxId: 1, name: "root", rank: .root, depth: 0,
+                             readsDirect: 0, readsClade: 1000,
+                             fractionClade: 1.0, fractionDirect: 0.0, parentTaxId: nil)
+
+        let bacteria = TaxonNode(taxId: 2, name: "Bacteria", rank: .domain, depth: 1,
+                                 readsDirect: 0, readsClade: 800,
+                                 fractionClade: 0.8, fractionDirect: 0.0, parentTaxId: 1)
+
+        let proteo = TaxonNode(taxId: 1224, name: "Proteobacteria", rank: .phylum, depth: 2,
+                               readsDirect: 0, readsClade: 500,
+                               fractionClade: 0.5, fractionDirect: 0.0, parentTaxId: 2)
+
+        let gamma = TaxonNode(taxId: 1236, name: "Gammaproteobacteria", rank: .class, depth: 3,
+                              readsDirect: 100, readsClade: 400,
+                              fractionClade: 0.4, fractionDirect: 0.1, parentTaxId: 1224)
+
+        let escherichia = TaxonNode(taxId: 561, name: "Escherichia", rank: .genus, depth: 4,
+                                    readsDirect: 100, readsClade: 300,
+                                    fractionClade: 0.3, fractionDirect: 0.1, parentTaxId: 1236)
+
+        let ecoli = TaxonNode(taxId: 562, name: "Escherichia coli", rank: .species, depth: 5,
+                              readsDirect: 200, readsClade: 200,
+                              fractionClade: 0.2, fractionDirect: 0.2, parentTaxId: 561)
+
+        let firmicutes = TaxonNode(taxId: 1239, name: "Firmicutes", rank: .phylum, depth: 2,
+                                   readsDirect: 150, readsClade: 300,
+                                   fractionClade: 0.3, fractionDirect: 0.15, parentTaxId: 2)
+
+        let staph = TaxonNode(taxId: 1279, name: "Staphylococcus", rank: .genus, depth: 3,
+                              readsDirect: 50, readsClade: 150,
+                              fractionClade: 0.15, fractionDirect: 0.05, parentTaxId: 1239)
+
+        let saureus = TaxonNode(taxId: 1280, name: "Staphylococcus aureus", rank: .species, depth: 4,
+                                readsDirect: 100, readsClade: 100,
+                                fractionClade: 0.1, fractionDirect: 0.1, parentTaxId: 1279)
+
+        let archaea = TaxonNode(taxId: 2157, name: "Archaea", rank: .domain, depth: 1,
+                                readsDirect: 200, readsClade: 200,
+                                fractionClade: 0.2, fractionDirect: 0.2, parentTaxId: 1)
+
+        // Wire up parent-child relationships
+        root.children = [bacteria, archaea]
+        bacteria.parent = root
+        archaea.parent = root
+
+        bacteria.children = [proteo, firmicutes]
+        proteo.parent = bacteria
+        firmicutes.parent = bacteria
+
+        proteo.children = [gamma]
+        gamma.parent = proteo
+
+        gamma.children = [escherichia]
+        escherichia.parent = gamma
+
+        escherichia.children = [ecoli]
+        ecoli.parent = escherichia
+
+        firmicutes.children = [staph]
+        staph.parent = firmicutes
+
+        staph.children = [saureus]
+        saureus.parent = staph
+
+        return TaxonTree(root: root, unclassifiedNode: nil, totalReads: 1000)
+    }
+
+    /// Creates a mock Kraken2 per-read classification output file.
+    private func makeClassificationOutput(reads: [(readId: String, taxId: Int, classified: Bool)]) throws -> URL {
+        let url = tempDir.appendingPathComponent("classification.kraken")
+        var lines: [String] = []
+        for read in reads {
+            let status = read.classified ? "C" : "U"
+            lines.append("\(status)\t\(read.readId)\t\(read.taxId)\t150\t0:150")
+        }
+        try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    /// Creates a mock FASTQ file.
+    private func makeFASTQ(reads: [String]) throws -> URL {
+        let url = tempDir.appendingPathComponent("input.fastq")
+        var content = ""
+        for readId in reads {
+            content += "@\(readId)\n"
+            content += "ATCGATCGATCGATCG\n"
+            content += "+\n"
+            content += "IIIIIIIIIIIIIIII\n"
+        }
+        try content.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    // MARK: - testCollectDescendantTaxIds
+
+    /// Verifies that descendant tax ID collection includes all children.
+    func testCollectDescendantTaxIds() async {
+        let tree = makeTestTree()
+        let pipeline = TaxonomyExtractionPipeline()
+
+        // Collect descendants of Proteobacteria (1224)
+        let descendants = await pipeline.collectDescendantTaxIds([1224], tree: tree)
+
+        // Should include 1224, 1236, 561, 562
+        XCTAssertTrue(descendants.contains(1224), "Should include the root taxId")
+        XCTAssertTrue(descendants.contains(1236), "Should include Gammaproteobacteria")
+        XCTAssertTrue(descendants.contains(561), "Should include Escherichia")
+        XCTAssertTrue(descendants.contains(562), "Should include E. coli")
+        XCTAssertFalse(descendants.contains(1239), "Should not include Firmicutes")
+        XCTAssertFalse(descendants.contains(2157), "Should not include Archaea")
+        XCTAssertEqual(descendants.count, 4)
+    }
+
+    /// Verifies that descendant collection for a leaf node returns just that node.
+    func testCollectDescendantTaxIdsLeafNode() async {
+        let tree = makeTestTree()
+        let pipeline = TaxonomyExtractionPipeline()
+
+        let descendants = await pipeline.collectDescendantTaxIds([562], tree: tree)
+
+        XCTAssertEqual(descendants, [562])
+    }
+
+    /// Verifies that unknown tax IDs in the input set are preserved.
+    func testCollectDescendantTaxIdsUnknownTaxId() async {
+        let tree = makeTestTree()
+        let pipeline = TaxonomyExtractionPipeline()
+
+        let descendants = await pipeline.collectDescendantTaxIds([99999], tree: tree)
+
+        // Unknown taxId is kept in the set (it won't match any node)
+        XCTAssertEqual(descendants, [99999])
+    }
+
+    // MARK: - testExtractReadsFromClassification
+
+    /// Verifies end-to-end extraction of reads matching a single species.
+    func testExtractReadsFromClassification() async throws {
+        let tree = makeTestTree()
+        let pipeline = TaxonomyExtractionPipeline()
+
+        // Create classification output with some reads classified to E. coli (562)
+        let classOutput = try makeClassificationOutput(reads: [
+            (readId: "read1", taxId: 562, classified: true),
+            (readId: "read2", taxId: 1280, classified: true),
+            (readId: "read3", taxId: 562, classified: true),
+            (readId: "read4", taxId: 0, classified: false),
+            (readId: "read5", taxId: 561, classified: true),
+        ])
+
+        // Create FASTQ with all reads
+        let fastqURL = try makeFASTQ(reads: ["read1", "read2", "read3", "read4", "read5"])
+
+        let outputURL = tempDir.appendingPathComponent("extracted.fastq")
+
+        let config = TaxonomyExtractionConfig(
+            taxIds: [562],
+            includeChildren: false,
+            sourceFile: fastqURL,
+            outputFile: outputURL,
+            classificationOutput: classOutput
+        )
+
+        let result = try await pipeline.extract(config: config, tree: tree)
+
+        // Should extract read1 and read3 (classified to 562)
+        XCTAssertEqual(result, outputURL)
+        let content = try String(contentsOf: outputURL, encoding: .utf8)
+        XCTAssertTrue(content.contains("@read1"), "Should contain read1")
+        XCTAssertTrue(content.contains("@read3"), "Should contain read3")
+        XCTAssertFalse(content.contains("@read2"), "Should not contain read2 (S. aureus)")
+        XCTAssertFalse(content.contains("@read4"), "Should not contain read4 (unclassified)")
+        XCTAssertFalse(content.contains("@read5"), "Should not contain read5 (Escherichia)")
+    }
+
+    // MARK: - testExtractWithChildrenIncluded
+
+    /// Verifies that extraction with includeChildren collects clade reads.
+    func testExtractWithChildrenIncluded() async throws {
+        let tree = makeTestTree()
+        let pipeline = TaxonomyExtractionPipeline()
+
+        let classOutput = try makeClassificationOutput(reads: [
+            (readId: "read1", taxId: 562, classified: true),   // E. coli (child of 561)
+            (readId: "read2", taxId: 1280, classified: true),  // S. aureus (not in clade)
+            (readId: "read3", taxId: 561, classified: true),   // Escherichia (target)
+            (readId: "read4", taxId: 1236, classified: true),  // Gammaproteobacteria (not descendant of 561)
+        ])
+
+        let fastqURL = try makeFASTQ(reads: ["read1", "read2", "read3", "read4"])
+        let outputURL = tempDir.appendingPathComponent("clade_extracted.fastq")
+
+        let config = TaxonomyExtractionConfig(
+            taxIds: [561],    // Escherichia genus
+            includeChildren: true,
+            sourceFile: fastqURL,
+            outputFile: outputURL,
+            classificationOutput: classOutput
+        )
+
+        let result = try await pipeline.extract(config: config, tree: tree)
+
+        XCTAssertEqual(result, outputURL)
+        let content = try String(contentsOf: outputURL, encoding: .utf8)
+        XCTAssertTrue(content.contains("@read1"), "Should contain read1 (E. coli, child of 561)")
+        XCTAssertTrue(content.contains("@read3"), "Should contain read3 (Escherichia, direct)")
+        XCTAssertFalse(content.contains("@read2"), "Should not contain read2 (S. aureus)")
+        XCTAssertFalse(content.contains("@read4"), "Should not contain read4 (Gammaproteobacteria)")
+    }
+
+    // MARK: - testExtractWithChildrenExcluded
+
+    /// Verifies that extraction without children only gets direct assignments.
+    func testExtractWithChildrenExcluded() async throws {
+        let tree = makeTestTree()
+        let pipeline = TaxonomyExtractionPipeline()
+
+        let classOutput = try makeClassificationOutput(reads: [
+            (readId: "read1", taxId: 562, classified: true),   // E. coli (child of 561)
+            (readId: "read2", taxId: 561, classified: true),   // Escherichia (direct)
+        ])
+
+        let fastqURL = try makeFASTQ(reads: ["read1", "read2"])
+        let outputURL = tempDir.appendingPathComponent("direct_extracted.fastq")
+
+        let config = TaxonomyExtractionConfig(
+            taxIds: [561],    // Escherichia genus, NOT including children
+            includeChildren: false,
+            sourceFile: fastqURL,
+            outputFile: outputURL,
+            classificationOutput: classOutput
+        )
+
+        let result = try await pipeline.extract(config: config, tree: tree)
+
+        XCTAssertEqual(result, outputURL)
+        let content = try String(contentsOf: outputURL, encoding: .utf8)
+        XCTAssertTrue(content.contains("@read2"), "Should contain read2 (Escherichia, direct)")
+        XCTAssertFalse(content.contains("@read1"), "Should not contain read1 (E. coli, child)")
+    }
+
+    // MARK: - testEmptyExtractionResult
+
+    /// Verifies that extraction throws when no reads match the criteria.
+    func testEmptyExtractionResult() async throws {
+        let tree = makeTestTree()
+        let pipeline = TaxonomyExtractionPipeline()
+
+        let classOutput = try makeClassificationOutput(reads: [
+            (readId: "read1", taxId: 562, classified: true),
+            (readId: "read2", taxId: 1280, classified: true),
+        ])
+
+        let fastqURL = try makeFASTQ(reads: ["read1", "read2"])
+        let outputURL = tempDir.appendingPathComponent("empty_extracted.fastq")
+
+        let config = TaxonomyExtractionConfig(
+            taxIds: [99999],  // Non-existent taxId
+            includeChildren: true,
+            sourceFile: fastqURL,
+            outputFile: outputURL,
+            classificationOutput: classOutput
+        )
+
+        do {
+            _ = try await pipeline.extract(config: config, tree: tree)
+            XCTFail("Expected TaxonomyExtractionError.noMatchingReads")
+        } catch let error as TaxonomyExtractionError {
+            if case .noMatchingReads = error {
+                // Expected
+            } else {
+                XCTFail("Expected noMatchingReads, got \(error)")
+            }
+        }
+    }
+
+    // MARK: - testClassificationOutputNotFound
+
+    /// Verifies that extraction throws when the classification file is missing.
+    func testClassificationOutputNotFound() async throws {
+        let tree = makeTestTree()
+        let pipeline = TaxonomyExtractionPipeline()
+
+        let fastqURL = try makeFASTQ(reads: ["read1"])
+        let outputURL = tempDir.appendingPathComponent("output.fastq")
+
+        let config = TaxonomyExtractionConfig(
+            taxIds: [562],
+            includeChildren: false,
+            sourceFile: fastqURL,
+            outputFile: outputURL,
+            classificationOutput: tempDir.appendingPathComponent("nonexistent.kraken")
+        )
+
+        do {
+            _ = try await pipeline.extract(config: config, tree: tree)
+            XCTFail("Expected TaxonomyExtractionError.classificationOutputNotFound")
+        } catch let error as TaxonomyExtractionError {
+            if case .classificationOutputNotFound = error {
+                // Expected
+            } else {
+                XCTFail("Expected classificationOutputNotFound, got \(error)")
+            }
+        }
+    }
+
+    // MARK: - testSourceFileNotFound
+
+    /// Verifies that extraction throws when the source FASTQ is missing.
+    func testSourceFileNotFound() async throws {
+        let tree = makeTestTree()
+        let pipeline = TaxonomyExtractionPipeline()
+
+        let classOutput = try makeClassificationOutput(reads: [
+            (readId: "read1", taxId: 562, classified: true),
+        ])
+        let outputURL = tempDir.appendingPathComponent("output.fastq")
+
+        let config = TaxonomyExtractionConfig(
+            taxIds: [562],
+            includeChildren: false,
+            sourceFile: tempDir.appendingPathComponent("nonexistent.fastq"),
+            outputFile: outputURL,
+            classificationOutput: classOutput
+        )
+
+        do {
+            _ = try await pipeline.extract(config: config, tree: tree)
+            XCTFail("Expected TaxonomyExtractionError.sourceFileNotFound")
+        } catch let error as TaxonomyExtractionError {
+            if case .sourceFileNotFound = error {
+                // Expected
+            } else {
+                XCTFail("Expected sourceFileNotFound, got \(error)")
+            }
+        }
+    }
+
+    // MARK: - testProgressCallback
+
+    /// Verifies that the progress callback is called during extraction.
+    func testProgressCallback() async throws {
+        let tree = makeTestTree()
+        let pipeline = TaxonomyExtractionPipeline()
+
+        let classOutput = try makeClassificationOutput(reads: [
+            (readId: "read1", taxId: 562, classified: true),
+        ])
+        let fastqURL = try makeFASTQ(reads: ["read1"])
+        let outputURL = tempDir.appendingPathComponent("progress_test.fastq")
+
+        let config = TaxonomyExtractionConfig(
+            taxIds: [562],
+            includeChildren: false,
+            sourceFile: fastqURL,
+            outputFile: outputURL,
+            classificationOutput: classOutput
+        )
+
+        let accumulator = ProgressAccumulator()
+        _ = try await pipeline.extract(config: config, tree: tree) { pct, msg in
+            Task { await accumulator.append(pct, msg) }
+        }
+
+        // Give the async tasks a moment to complete
+        try await Task.sleep(for: .milliseconds(100))
+
+        let progressCalls = await accumulator.getCalls()
+        XCTAssertFalse(progressCalls.isEmpty, "Progress callback should have been called")
+
+        // Check that progress starts near 0 and ends at 1
+        if let first = progressCalls.first {
+            XCTAssertLessThanOrEqual(first.0, 0.1)
+        }
+        if let last = progressCalls.last {
+            XCTAssertEqual(last.0, 1.0, accuracy: 0.01)
+        }
+    }
+
+    // MARK: - testReadIdWithDescription
+
+    /// Verifies that read IDs with description fields are correctly matched.
+    ///
+    /// FASTQ headers can have descriptions after the read ID separated by whitespace:
+    /// `@read1 length=150 comment`
+    func testReadIdWithDescription() async throws {
+        let tree = makeTestTree()
+        let pipeline = TaxonomyExtractionPipeline()
+
+        let classOutput = try makeClassificationOutput(reads: [
+            (readId: "read1", taxId: 562, classified: true),
+        ])
+
+        // FASTQ with description in header
+        let fastqURL = tempDir.appendingPathComponent("described.fastq")
+        let content = "@read1 length=150 runid=abc123\nATCGATCGATCGATCG\n+\nIIIIIIIIIIIIIIII\n@read2 length=150\nATCGATCGATCGATCG\n+\nIIIIIIIIIIIIIIII\n"
+        try content.write(to: fastqURL, atomically: true, encoding: .utf8)
+
+        let outputURL = tempDir.appendingPathComponent("described_out.fastq")
+
+        let config = TaxonomyExtractionConfig(
+            taxIds: [562],
+            includeChildren: false,
+            sourceFile: fastqURL,
+            outputFile: outputURL,
+            classificationOutput: classOutput
+        )
+
+        _ = try await pipeline.extract(config: config, tree: tree)
+
+        let output = try String(contentsOf: outputURL, encoding: .utf8)
+        XCTAssertTrue(output.contains("@read1"), "Should match read1 despite description")
+        XCTAssertFalse(output.contains("@read2"), "Should not match read2")
+    }
+}

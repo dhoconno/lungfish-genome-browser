@@ -5,6 +5,7 @@
 import AppKit
 import LungfishIO
 import LungfishWorkflow
+import SwiftUI
 import os.log
 
 private let logger = Logger(subsystem: LogSubsystem.app, category: "TaxonomyViewController")
@@ -38,6 +39,13 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "TaxonomyView
 /// Clicking a segment in the sunburst selects the corresponding row in the table,
 /// and clicking a table row highlights the corresponding sunburst segment. A
 /// suppression flag prevents infinite feedback loops (per project conventions).
+///
+/// ## Extraction
+///
+/// When the user clicks "Extract Sequences" in the action bar or context menu,
+/// a ``TaxonomyExtractionSheet`` is presented. On confirmation the sheet fires
+/// a callback that the hosting controller can route to
+/// ``TaxonomyExtractionPipeline``.
 ///
 /// ## Thread Safety
 ///
@@ -78,6 +86,11 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
     ///   - includeChildren: Whether to include child taxa in the extraction.
     public var onExtractSequences: ((TaxonNode, Bool) -> Void)?
 
+    /// Called when the user confirms extraction via the extraction sheet.
+    ///
+    /// - Parameter config: The fully configured extraction config.
+    public var onExtractConfirmed: ((TaxonomyExtractionConfig) -> Void)?
+
     // MARK: - Lifecycle
 
     public override func loadView() {
@@ -115,6 +128,48 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
 
         logger.info("Configured with \(result.tree.totalReads) reads, \(result.tree.speciesCount) species")
 
+    }
+
+    /// Presents the extraction sheet for the given node.
+    ///
+    /// - Parameters:
+    ///   - node: The taxon node to extract.
+    ///   - includeChildren: Default value for the "include children" toggle.
+    public func presentExtractionSheet(for node: TaxonNode, includeChildren: Bool) {
+        guard let result = classificationResult, let window = view.window else {
+            logger.warning("Cannot present extraction sheet: no result or window")
+            return
+        }
+
+        let sheet = TaxonomyExtractionSheet(
+            selectedNodes: [node],
+            tree: result.tree,
+            sourceURL: result.config.inputFiles.first ?? URL(fileURLWithPath: "/dev/null"),
+            classificationOutputURL: result.outputURL,
+            initialIncludeChildren: includeChildren,
+            onExtract: { [weak self, weak window] config in
+                guard let window else { return }
+                if let sheetWindow = window.attachedSheet {
+                    window.endSheet(sheetWindow)
+                }
+                self?.onExtractConfirmed?(config)
+            },
+            onCancel: { [weak window] in
+                guard let window else { return }
+                if let sheetWindow = window.attachedSheet {
+                    window.endSheet(sheetWindow)
+                }
+            }
+        )
+
+        let sheetWindow = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 440, height: 360),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        sheetWindow.contentViewController = NSHostingController(rootView: sheet)
+        window.beginSheet(sheetWindow)
     }
 
     // MARK: - Setup: Summary Bar
@@ -233,6 +288,12 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
             self.breadcrumbBar.update(zoomNode: self.sunburstView.centerNode)
         }
 
+        // Sunburst zoom changed (keyboard or mouse) -> update breadcrumb
+        sunburstView.onZoomChanged = { [weak self] newCenter in
+            guard let self else { return }
+            self.breadcrumbBar.update(zoomNode: newCenter)
+        }
+
         // Sunburst right-click -> context menu
         sunburstView.onNodeRightClicked = { [weak self] node, windowPoint in
             guard let self else { return }
@@ -255,9 +316,14 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
             self.breadcrumbBar.update(zoomNode: node)
         }
 
-        // Action bar extract -> callback
+        // Action bar extract -> present extraction sheet
         actionBar.onExtractSequences = { [weak self] node, includeChildren in
-            self?.onExtractSequences?(node, includeChildren)
+            guard let self else { return }
+            if self.classificationResult != nil {
+                self.presentExtractionSheet(for: node, includeChildren: includeChildren)
+            } else {
+                self.onExtractSequences?(node, includeChildren)
+            }
         }
     }
 
@@ -444,12 +510,20 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
 
     @objc private func contextExtractNode(_ sender: NSMenuItem) {
         guard let node = sender.representedObject as? TaxonNode else { return }
-        onExtractSequences?(node, false)
+        if classificationResult != nil {
+            presentExtractionSheet(for: node, includeChildren: false)
+        } else {
+            onExtractSequences?(node, false)
+        }
     }
 
     @objc private func contextExtractNodeWithChildren(_ sender: NSMenuItem) {
         guard let node = sender.representedObject as? TaxonNode else { return }
-        onExtractSequences?(node, true)
+        if classificationResult != nil {
+            presentExtractionSheet(for: node, includeChildren: true)
+        } else {
+            onExtractSequences?(node, true)
+        }
     }
 
     @objc private func contextCopyName(_ sender: NSMenuItem) {
