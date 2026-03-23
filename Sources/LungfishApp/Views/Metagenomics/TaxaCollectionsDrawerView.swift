@@ -117,6 +117,25 @@ enum CollectionScopeFilter: Int, CaseIterable {
     }
 }
 
+// MARK: - DrawerTab
+
+/// Which tab is active in the bottom drawer.
+///
+/// The drawer supports two tabs: Collections (taxa collection browser)
+/// and BLAST Results (BLAST verification results). The tab is selected
+/// via an ``NSSegmentedControl`` in the header bar.
+enum DrawerTab: Int, CaseIterable {
+    case collections = 0
+    case blastResults = 1
+
+    var title: String {
+        switch self {
+        case .collections: return "Collections"
+        case .blastResults: return "BLAST Results"
+        }
+    }
+}
+
 // MARK: - OutlineItem Wrappers
 
 /// Wraps a `TaxaCollection` for use as an NSOutlineView parent item.
@@ -167,7 +186,7 @@ private extension NSUserInterfaceItemIdentifier {
 
 // MARK: - TaxaCollectionsDrawerView
 
-/// A bottom drawer showing taxa collections for batch extraction.
+/// A bottom drawer showing taxa collections and BLAST verification results.
 ///
 /// ## Layout
 ///
@@ -175,22 +194,18 @@ private extension NSUserInterfaceItemIdentifier {
 /// +------------------------------------------------------------------+
 /// | [===== Drag Handle =====] (8pt)                                  |
 /// +------------------------------------------------------------------+
-/// | Taxa Collections                              [+ New] [Toggle ]  |
+/// | [Collections] [BLAST Results]                     [Filter: ____] |
 /// +------------------------------------------------------------------+
-/// | [All] [Built-in] [App] [Project]        [Filter: ____________]   |
-/// +------------------------------------------------------------------+
-/// |  > Respiratory Viruses (12 taxa)                       [Extract] |
-/// |  > Enteric Viruses (6 taxa)                            [Extract] |
-/// |  > Wastewater Surveillance (6 taxa)                    [Extract] |
-/// |  > AMR Organisms (6 taxa)                              [Extract] |
-/// |  ...                                                             |
+/// |  (tab content: Collections or BLAST results)                     |
 /// +------------------------------------------------------------------+
 /// ```
 ///
-/// The drawer uses an `NSOutlineView` to show collections with expandable
-/// taxa entries. Each collection row has an SF Symbol icon, name, taxa count
-/// badge, and an "Extract" button. When expanded, individual taxon rows show
-/// a checkbox, name, tax ID, and a detection status indicator.
+/// The drawer has two tabs controlled by an ``NSSegmentedControl``:
+///
+/// - **Collections**: An `NSOutlineView` showing taxa collections with expandable
+///   taxa entries, scope filtering, and batch extraction.
+/// - **BLAST Results**: A ``BlastResultsDrawerTab`` showing BLAST verification
+///   results with summary bar, results table, and action buttons.
 ///
 /// ## Thread Safety
 ///
@@ -223,20 +238,35 @@ public final class TaxaCollectionsDrawerView: NSView {
     /// The taxonomy tree from the current classification result, for match status.
     private var tree: TaxonTree?
 
+    // MARK: - Tab State
+
+    /// The currently selected drawer tab.
+    private(set) var selectedTab: DrawerTab = .collections
+
     // MARK: - Callbacks
 
     /// Called when the user clicks "Extract" on a collection.
     var onBatchExtract: ((TaxaCollection) -> Void)?
 
-    // MARK: - Subviews
+    // MARK: - Subviews: Shared
 
     let dividerView = TaxaCollectionsDividerView()
     private let headerBar = NSView()
-    private let titleLabel = NSTextField(labelWithString: "Taxa Collections")
-    private let scopeFilterControl = NSSegmentedControl()
+    let tabControl = NSSegmentedControl()
     private let searchField = NSSearchField()
+
+    // MARK: - Subviews: Collections Tab
+
+    /// Container view holding the collections-specific content (scope filter, outline view).
+    private let collectionsContentView = NSView()
+    private let scopeFilterControl = NSSegmentedControl()
     private let scrollView = NSScrollView()
     let outlineView = NSOutlineView()
+
+    // MARK: - Subviews: BLAST Tab
+
+    /// The BLAST results drawer tab view.
+    let blastResultsTab = BlastResultsDrawerTab()
 
     // MARK: - Initialization
 
@@ -253,10 +283,11 @@ public final class TaxaCollectionsDrawerView: NSView {
     private func commonInit() {
         setupDivider()
         setupHeader()
-        setupScopeFilter()
-        setupOutlineView()
+        setupCollectionsContent()
+        setupBlastResultsContent()
         layoutAllSubviews()
         loadCollections()
+        updateTabVisibility()
 
         setAccessibilityRole(.group)
         setAccessibilityLabel("Taxa Collections Drawer")
@@ -287,6 +318,25 @@ public final class TaxaCollectionsDrawerView: NSView {
         return filteredItems[index]
     }
 
+    /// Switches to the specified drawer tab.
+    ///
+    /// - Parameter tab: The tab to switch to.
+    func switchToTab(_ tab: DrawerTab) {
+        selectedTab = tab
+        tabControl.selectedSegment = tab.rawValue
+        updateTabVisibility()
+        drawerLogger.info("Switched to drawer tab: \(tab.title, privacy: .public)")
+    }
+
+    /// Shows BLAST verification results by switching to the BLAST tab
+    /// and populating the results view.
+    ///
+    /// - Parameter result: The BLAST verification result to display.
+    func showBlastResults(_ result: BlastVerificationResult) {
+        blastResultsTab.showResults(result)
+        switchToTab(.blastResults)
+    }
+
     // MARK: - Setup: Divider
 
     private func setupDivider() {
@@ -309,15 +359,38 @@ public final class TaxaCollectionsDrawerView: NSView {
         headerBar.translatesAutoresizingMaskIntoConstraints = false
         addSubview(headerBar)
 
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = .systemFont(ofSize: 13, weight: .bold)
-        titleLabel.textColor = .labelColor
-        headerBar.addSubview(titleLabel)
+        // Tab control replaces the old title label
+        tabControl.translatesAutoresizingMaskIntoConstraints = false
+        tabControl.segmentStyle = .rounded
+        tabControl.trackingMode = .selectOne
+        tabControl.segmentCount = DrawerTab.allCases.count
+        for (index, tab) in DrawerTab.allCases.enumerated() {
+            tabControl.setLabel(tab.title, forSegment: index)
+            tabControl.setWidth(0, forSegment: index)  // auto-width
+        }
+        tabControl.selectedSegment = DrawerTab.collections.rawValue
+        tabControl.target = self
+        tabControl.action = #selector(tabControlChanged(_:))
+        tabControl.setAccessibilityLabel("Drawer tab selector")
+        headerBar.addSubview(tabControl)
+
+        // Search field (shown only on Collections tab)
+        searchField.translatesAutoresizingMaskIntoConstraints = false
+        searchField.placeholderString = "Filter collections..."
+        searchField.delegate = self
+        searchField.sendsSearchStringImmediately = true
+        searchField.sendsWholeSearchString = false
+        headerBar.addSubview(searchField)
     }
 
-    // MARK: - Setup: Scope Filter + Search
+    // MARK: - Setup: Collections Content
 
-    private func setupScopeFilter() {
+    /// Sets up the collections tab content: scope filter and outline view.
+    private func setupCollectionsContent() {
+        collectionsContentView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(collectionsContentView)
+
+        // Scope filter
         scopeFilterControl.translatesAutoresizingMaskIntoConstraints = false
         scopeFilterControl.segmentStyle = .rounded
         scopeFilterControl.segmentCount = CollectionScopeFilter.allCases.count
@@ -328,25 +401,15 @@ public final class TaxaCollectionsDrawerView: NSView {
         scopeFilterControl.selectedSegment = 0
         scopeFilterControl.target = self
         scopeFilterControl.action = #selector(scopeFilterChanged(_:))
-        headerBar.addSubview(scopeFilterControl)
+        collectionsContentView.addSubview(scopeFilterControl)
 
-        searchField.translatesAutoresizingMaskIntoConstraints = false
-        searchField.placeholderString = "Filter collections..."
-        searchField.delegate = self
-        searchField.sendsSearchStringImmediately = true
-        searchField.sendsWholeSearchString = false
-        headerBar.addSubview(searchField)
-    }
-
-    // MARK: - Setup: Outline View
-
-    private func setupOutlineView() {
+        // Outline view in scroll view
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
-        addSubview(scrollView)
+        collectionsContentView.addSubview(scrollView)
 
         outlineView.headerView = nil
         outlineView.rowHeight = 28
@@ -385,6 +448,25 @@ public final class TaxaCollectionsDrawerView: NSView {
         scrollView.documentView = outlineView
 
         outlineView.setAccessibilityLabel("Taxa Collections List")
+
+        // Layout within collections content view
+        NSLayoutConstraint.activate([
+            scopeFilterControl.topAnchor.constraint(equalTo: collectionsContentView.topAnchor, constant: 4),
+            scopeFilterControl.leadingAnchor.constraint(equalTo: collectionsContentView.leadingAnchor, constant: 12),
+
+            scrollView.topAnchor.constraint(equalTo: scopeFilterControl.bottomAnchor, constant: 4),
+            scrollView.leadingAnchor.constraint(equalTo: collectionsContentView.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: collectionsContentView.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: collectionsContentView.bottomAnchor),
+        ])
+    }
+
+    // MARK: - Setup: BLAST Results Content
+
+    /// Sets up the BLAST results tab content.
+    private func setupBlastResultsContent() {
+        blastResultsTab.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(blastResultsTab)
     }
 
     // MARK: - Layout
@@ -397,32 +479,45 @@ public final class TaxaCollectionsDrawerView: NSView {
             dividerView.trailingAnchor.constraint(equalTo: trailingAnchor),
             dividerView.heightAnchor.constraint(equalToConstant: 8),
 
-            // Header bar below divider (60pt: title row + scope/search row)
+            // Header bar below divider (32pt: tab control + search)
             headerBar.topAnchor.constraint(equalTo: dividerView.bottomAnchor),
             headerBar.leadingAnchor.constraint(equalTo: leadingAnchor),
             headerBar.trailingAnchor.constraint(equalTo: trailingAnchor),
-            headerBar.heightAnchor.constraint(equalToConstant: 60),
+            headerBar.heightAnchor.constraint(equalToConstant: 32),
 
-            // Title label (top row of header, 32pt)
-            titleLabel.leadingAnchor.constraint(equalTo: headerBar.leadingAnchor, constant: 12),
-            titleLabel.topAnchor.constraint(equalTo: headerBar.topAnchor, constant: 6),
+            // Tab control (left-aligned in header)
+            tabControl.leadingAnchor.constraint(equalTo: headerBar.leadingAnchor, constant: 12),
+            tabControl.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
 
-            // Scope filter (bottom row of header)
-            scopeFilterControl.leadingAnchor.constraint(equalTo: headerBar.leadingAnchor, constant: 12),
-            scopeFilterControl.bottomAnchor.constraint(equalTo: headerBar.bottomAnchor, constant: -6),
-
-            // Search field (bottom row, right-aligned)
+            // Search field (right-aligned in header)
             searchField.trailingAnchor.constraint(equalTo: headerBar.trailingAnchor, constant: -12),
-            searchField.centerYAnchor.constraint(equalTo: scopeFilterControl.centerYAnchor),
+            searchField.centerYAnchor.constraint(equalTo: headerBar.centerYAnchor),
             searchField.widthAnchor.constraint(equalToConstant: 160),
-            searchField.leadingAnchor.constraint(greaterThanOrEqualTo: scopeFilterControl.trailingAnchor, constant: 12),
+            searchField.leadingAnchor.constraint(greaterThanOrEqualTo: tabControl.trailingAnchor, constant: 12),
 
-            // Scroll view (fills remaining space)
-            scrollView.topAnchor.constraint(equalTo: headerBar.bottomAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            // Collections content (fills remaining space below header)
+            collectionsContentView.topAnchor.constraint(equalTo: headerBar.bottomAnchor),
+            collectionsContentView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            collectionsContentView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            collectionsContentView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            // BLAST results tab (fills same space as collections content)
+            blastResultsTab.topAnchor.constraint(equalTo: headerBar.bottomAnchor),
+            blastResultsTab.leadingAnchor.constraint(equalTo: leadingAnchor),
+            blastResultsTab.trailingAnchor.constraint(equalTo: trailingAnchor),
+            blastResultsTab.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+    }
+
+    // MARK: - Tab Switching
+
+    /// Updates visibility of tab content views based on the selected tab.
+    private func updateTabVisibility() {
+        collectionsContentView.isHidden = (selectedTab != .collections)
+        blastResultsTab.isHidden = (selectedTab != .blastResults)
+
+        // Only show search field on collections tab
+        searchField.isHidden = (selectedTab != .collections)
     }
 
     // MARK: - Data Loading
@@ -490,6 +585,12 @@ public final class TaxaCollectionsDrawerView: NSView {
     }
 
     // MARK: - Actions
+
+    @objc private func tabControlChanged(_ sender: NSSegmentedControl) {
+        selectedTab = DrawerTab(rawValue: sender.selectedSegment) ?? .collections
+        updateTabVisibility()
+        drawerLogger.info("Tab changed to: \(self.selectedTab.title, privacy: .public)")
+    }
 
     @objc private func scopeFilterChanged(_ sender: NSSegmentedControl) {
         scopeFilter = CollectionScopeFilter(rawValue: sender.selectedSegment) ?? .all
