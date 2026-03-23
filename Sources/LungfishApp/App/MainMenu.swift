@@ -576,6 +576,16 @@ public final class MainMenu {
         let toolsMenuItem = NSMenuItem(title: "Tools", action: nil, keyEquivalent: "")
         let toolsMenu = NSMenu(title: "Tools")
 
+        // Metagenomics Classification
+        let classifyItem = toolsMenu.addItem(
+            withTitle: "Classify Reads\u{2026}",
+            action: #selector(ToolsMenuActions.classifyReads(_:)),
+            keyEquivalent: "k"
+        )
+        classifyItem.keyEquivalentModifierMask = [.command, .shift]
+
+        toolsMenu.addItem(.separator())
+
         // Assembly
         toolsMenu.addItem(
             withTitle: "Assemble with SPAdes...",
@@ -849,6 +859,8 @@ public final class MainMenu {
 /// Tools menu action handlers.
 @MainActor
 @objc protocol ToolsMenuActions {
+    /// Opens the classification wizard for the currently selected FASTQ.
+    func classifyReads(_ sender: Any?)
     func runSPAdes(_ sender: Any?)
     func designPrimers(_ sender: Any?)
     func primalScheme(_ sender: Any?)

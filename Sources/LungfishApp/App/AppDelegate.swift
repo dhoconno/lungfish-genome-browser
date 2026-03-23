@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import SwiftUI
 import LungfishCore
 import LungfishIO
 import LungfishWorkflow
@@ -3523,6 +3524,96 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
     @objc func showPluginManager(_ sender: Any?) {
         PluginManagerWindowController.show()
+    }
+
+    @objc func classifyReads(_ sender: Any?) {
+        guard let viewerController = mainWindowController?.mainSplitViewController?.viewerController else {
+            return
+        }
+        guard let window = mainWindowController?.window else { return }
+
+        // Collect input FASTQ files — look for open documents with FASTQ extensions
+        var inputFiles: [URL] = []
+
+        for doc in DocumentManager.shared.documents {
+            let url = doc.url
+            let ext = url.pathExtension.lowercased()
+            let baseExt = url.deletingPathExtension().pathExtension.lowercased()
+            if ext == "fastq" || ext == "fq" || ext == "lungfishfastq" ||
+               (ext == "gz" && (baseExt == "fastq" || baseExt == "fq")) {
+                inputFiles.append(url)
+            }
+        }
+
+        if inputFiles.isEmpty {
+            let alert = NSAlert()
+            alert.messageText = "No FASTQ Selected"
+            alert.informativeText = "Select a FASTQ file in the sidebar, then use Tools > Classify Reads to run metagenomic classification."
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "OK")
+            alert.beginSheetModal(for: window)
+            return
+        }
+
+        // Get installed databases
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let registry = MetagenomicsDatabaseRegistry.shared
+            let databases = (try? await registry.availableDatabases().filter(\.isDownloaded)) ?? []
+
+            // Present the classification wizard
+            let wizardView = ClassificationWizardSheet(
+                inputFiles: inputFiles,
+                installedDatabases: databases,
+                onRun: { [weak self] config in
+                    guard let self else { return }
+                    self.runClassification(config: config, viewerController: viewerController)
+                }
+            )
+
+            let hostingController = NSHostingController(rootView: wizardView)
+            let wizardPanel = NSPanel(contentViewController: hostingController)
+            wizardPanel.title = "Classify Reads"
+            wizardPanel.setContentSize(NSSize(width: 520, height: 580))
+            await window.beginSheet(wizardPanel)
+        }
+    }
+
+    private func runClassification(config: ClassificationConfig, viewerController: ViewerViewController) {
+        let pipeline = ClassificationPipeline()
+
+        Task.detached {
+            do {
+                let result = try await pipeline.classify(config: config) { fraction, message in
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated {
+                            viewerController.showProgress(message)
+                        }
+                    }
+                }
+
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        viewerController.hideProgress()
+                        viewerController.displayTaxonomyResult(result)
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        viewerController.hideProgress()
+                        let alert = NSAlert()
+                        alert.messageText = "Classification Failed"
+                        alert.informativeText = error.localizedDescription
+                        alert.alertStyle = .warning
+                        alert.addButton(withTitle: "OK")
+                        if let window = viewerController.view.window {
+                            alert.beginSheetModal(for: window)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Shows the database browser for the specified source.
