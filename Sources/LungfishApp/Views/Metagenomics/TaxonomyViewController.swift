@@ -134,6 +134,15 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
         sunburstView.centerNode = nil
         sunburstView.selectedNode = nil
         taxonomyTableView.tree = result.tree
+
+        // Wire table right-click extraction
+        taxonomyTableView.onExtractRequested = { [weak self] node in
+            self?.presentExtractionSheet(for: node, includeChildren: false)
+        }
+        taxonomyTableView.onExtractWithChildrenRequested = { [weak self] node in
+            self?.presentExtractionSheet(for: node, includeChildren: true)
+        }
+
         actionBar.configure(totalReads: result.tree.totalReads)
         actionBar.updateSelection(nil)
         breadcrumbBar.update(zoomNode: nil)

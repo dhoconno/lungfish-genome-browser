@@ -59,6 +59,12 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     /// Called when the user selects a row.
     public var onNodeSelected: ((TaxonNode) -> Void)?
 
+    /// Called when the user right-clicks a row to extract sequences.
+    public var onExtractRequested: ((TaxonNode) -> Void)?
+
+    /// Called when the user right-clicks a row to extract sequences including children.
+    public var onExtractWithChildrenRequested: ((TaxonNode) -> Void)?
+
     // MARK: - Search / Filter
 
     /// Current filter text. Empty string means no filter.
@@ -159,7 +165,8 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         rankCol.sortDescriptorPrototype = NSSortDescriptor(key: ColumnID.rank, ascending: true)
         outlineView.addTableColumn(rankCol)
 
-        // Reads column
+        // Reads column — shows CLADE count (all reads in this taxon + descendants)
+        // This is what users expect: "how many reads belong to this group?"
         let readsCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(ColumnID.reads))
         readsCol.title = "Reads"
         readsCol.width = 80
@@ -167,9 +174,9 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         readsCol.sortDescriptorPrototype = NSSortDescriptor(key: ColumnID.reads, ascending: false)
         outlineView.addTableColumn(readsCol)
 
-        // Clade column
+        // Direct column — shows reads classified directly to this taxon (not descendants)
         let cladeCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(ColumnID.clade))
-        cladeCol.title = "Clade"
+        cladeCol.title = "Direct"
         cladeCol.width = 80
         cladeCol.minWidth = 50
         cladeCol.sortDescriptorPrototype = NSSortDescriptor(key: ColumnID.clade, ascending: false)
@@ -186,6 +193,7 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         outlineView.outlineTableColumn = nameCol
         outlineView.dataSource = self
         outlineView.delegate = self
+        outlineView.menu = buildContextMenu()
         outlineView.usesAlternatingRowBackgroundColors = true
         outlineView.rowHeight = 22
         outlineView.allowsColumnReordering = false
@@ -359,14 +367,16 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
                 : $0.rank.ringIndex > $1.rank.ringIndex
             }
         case ColumnID.reads:
-            children.sort { currentSortAscending
-                ? $0.readsDirect < $1.readsDirect
-                : $0.readsDirect > $1.readsDirect
-            }
-        case ColumnID.clade:
+            // "Reads" column shows clade counts
             children.sort { currentSortAscending
                 ? $0.readsClade < $1.readsClade
                 : $0.readsClade > $1.readsClade
+            }
+        case ColumnID.clade:
+            // "Direct" column shows direct counts
+            children.sort { currentSortAscending
+                ? $0.readsDirect < $1.readsDirect
+                : $0.readsDirect > $1.readsDirect
             }
         case ColumnID.percent:
             children.sort { currentSortAscending
@@ -379,6 +389,42 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         }
 
         return children
+    }
+
+    // MARK: - Context Menu
+
+    private func buildContextMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Extract Reads for Taxon\u{2026}",
+                     action: #selector(contextExtractReads(_:)),
+                     keyEquivalent: "")
+        menu.addItem(withTitle: "Extract Reads Including Children\u{2026}",
+                     action: #selector(contextExtractWithChildren(_:)),
+                     keyEquivalent: "")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Copy Taxon Name",
+                     action: #selector(contextCopyName(_:)),
+                     keyEquivalent: "")
+        return menu
+    }
+
+    @objc private func contextExtractReads(_ sender: Any?) {
+        let row = outlineView.clickedRow
+        guard row >= 0, let node = outlineView.item(atRow: row) as? TaxonNode else { return }
+        onExtractRequested?(node)
+    }
+
+    @objc private func contextExtractWithChildren(_ sender: Any?) {
+        let row = outlineView.clickedRow
+        guard row >= 0, let node = outlineView.item(atRow: row) as? TaxonNode else { return }
+        onExtractWithChildrenRequested?(node)
+    }
+
+    @objc private func contextCopyName(_ sender: Any?) {
+        let row = outlineView.clickedRow
+        guard row >= 0, let node = outlineView.item(atRow: row) as? TaxonNode else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(node.name, forType: .string)
     }
 
     // MARK: - NSOutlineViewDataSource
@@ -444,9 +490,9 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         case ColumnID.rank:
             return makeTextCell(text: node.rank.displayName, alignment: .center)
         case ColumnID.reads:
-            return makeNumberCell(value: node.readsDirect)
-        case ColumnID.clade:
             return makeNumberCell(value: node.readsClade)
+        case ColumnID.clade:
+            return makeNumberCell(value: node.readsDirect)
         case ColumnID.percent:
             return makePercentCell(for: node)
         default:
