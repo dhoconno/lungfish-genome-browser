@@ -69,6 +69,9 @@ extension TaxonomyViewController {
         if !isTaxaCollectionsDrawerOpen {
             toggleTaxaCollectionsDrawer()
         }
+
+        // Switch to BLAST Results tab
+        taxaCollectionsDrawerView?.switchToTab(.blastResults)
     }
 
     // MARK: - Testing Accessors

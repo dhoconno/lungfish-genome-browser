@@ -46,6 +46,9 @@ public class MainWindowController: NSWindowController {
     /// Downloads toolbar button so icon can react to active tasks.
     private weak var downloadsToolbarButton: NSButton?
 
+    /// Bottom drawer toolbar button — highlighted when drawer is open.
+    private weak var drawerToolbarButton: NSButton?
+
     /// Popover anchored from the downloads toolbar button.
     private var downloadsPopover: NSPopover?
 
@@ -259,7 +262,19 @@ public class MainWindowController: NSWindowController {
     }
 
     @objc public func toggleAnnotationDrawer(_ sender: Any?) {
-        mainSplitViewController.viewerController?.toggleAnnotationDrawer()
+        let vc = mainSplitViewController.viewerController
+        vc?.toggleAnnotationDrawer()
+
+        // Update toolbar button highlight based on drawer state
+        let isOpen: Bool
+        if let taxVC = vc?.taxonomyViewController {
+            isOpen = taxVC.isTaxaCollectionsDrawerOpen
+        } else if vc?.isDisplayingFASTQDataset == true {
+            isOpen = vc?.isFASTQMetadataDrawerOpen ?? false
+        } else {
+            isOpen = vc?.isAnnotationDrawerOpen ?? false
+        }
+        drawerToolbarButton?.state = isOpen ? .on : .off
     }
 
     @objc public func showDownloadsPopover(_ sender: Any?) {
@@ -420,7 +435,9 @@ extension MainWindowController: NSToolbarDelegate {
             )
             button.target = self
             button.action = #selector(toggleAnnotationDrawer(_:))
+            button.setButtonType(.pushOnPushOff)
             item.view = button
+            drawerToolbarButton = button
             return item
 
         case ToolbarIdentifier.translateTool:
