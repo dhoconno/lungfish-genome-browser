@@ -14,7 +14,7 @@ final class OperationsPanelController: NSWindowController {
 
     init() {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 400),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 400),
             styleMask: [.titled, .closable, .resizable, .utilityWindow],
             backing: .buffered,
             defer: true
@@ -22,7 +22,7 @@ final class OperationsPanelController: NSWindowController {
         panel.title = "Operations"
         panel.isFloatingPanel = true
         panel.isReleasedWhenClosed = false
-        panel.minSize = NSSize(width: 400, height: 250)
+        panel.minSize = NSSize(width: 460, height: 250)
         panel.center()
 
         super.init(window: panel)
@@ -46,11 +46,17 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
     private let tableView = NSTableView()
     private let footerView = NSView()
     private var cancellables = Set<AnyCancellable>()
+    private nonisolated(unsafe) var elapsedRefreshTimer: Timer?
 
     private var items: [OperationCenter.Item] = []
 
+    deinit {
+        elapsedRefreshTimer?.invalidate()
+        elapsedRefreshTimer = nil
+    }
+
     override func loadView() {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 400))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 400))
         view = container
 
         // Table setup
@@ -85,10 +91,47 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
             .receive(on: DispatchQueue.main)
             .sink { [weak self] newItems in
                 guard let self else { return }
-                self.items = newItems
-                self.tableView.reloadData()
+                MainActor.assumeIsolated {
+                    self.items = newItems
+                    self.tableView.reloadData()
+                    self.updateElapsedRefreshTimer()
+                }
             }
             .store(in: &cancellables)
+    }
+
+    // MARK: - Elapsed Refresh Timer
+
+    /// Starts or stops the 1-second elapsed refresh timer based on whether any
+    /// items are currently running.
+    private func updateElapsedRefreshTimer() {
+        let hasRunning = items.contains { $0.state == .running }
+        if hasRunning && elapsedRefreshTimer == nil {
+            elapsedRefreshTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        self?.refreshElapsedColumn()
+                    }
+                }
+            }
+        } else if !hasRunning && elapsedRefreshTimer != nil {
+            elapsedRefreshTimer?.invalidate()
+            elapsedRefreshTimer = nil
+        }
+    }
+
+    /// Reloads only the elapsed column cells for running rows.
+    private func refreshElapsedColumn() {
+        guard let elapsedColumnIndex = tableView.tableColumns.firstIndex(where: {
+            $0.identifier.rawValue == "elapsed"
+        }) else { return }
+
+        var runningRows = IndexSet()
+        for (index, item) in items.enumerated() where item.state == .running {
+            runningRows.insert(index)
+        }
+        guard !runningRows.isEmpty else { return }
+        tableView.reloadData(forRowIndexes: runningRows, columnIndexes: IndexSet(integer: elapsedColumnIndex))
     }
 
     // MARK: - Table Setup
@@ -111,6 +154,13 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
         progressColumn.width = 120
         progressColumn.minWidth = 80
         tableView.addTableColumn(progressColumn)
+
+        let elapsedColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("elapsed"))
+        elapsedColumn.title = "Elapsed"
+        elapsedColumn.width = 70
+        elapsedColumn.minWidth = 50
+        elapsedColumn.maxWidth = 90
+        tableView.addTableColumn(elapsedColumn)
 
         let actionColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("action"))
         actionColumn.title = ""
@@ -264,6 +314,35 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
             }
             return cell
 
+        case "elapsed":
+            let cell = reuseOrCreate(identifier: identifier, in: tableView)
+            let textField = cell.viewWithTag(400) as? NSTextField ?? {
+                let tf = NSTextField(labelWithString: "")
+                tf.tag = 400
+                tf.translatesAutoresizingMaskIntoConstraints = false
+                tf.alignment = .right
+                cell.addSubview(tf)
+                NSLayoutConstraint.activate([
+                    tf.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+                    tf.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                    tf.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                ])
+                return tf
+            }()
+            textField.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+
+            switch item.state {
+            case .running:
+                let elapsed = Date().timeIntervalSince(item.startedAt)
+                textField.stringValue = formatElapsedTime(elapsed)
+                textField.textColor = .secondaryLabelColor
+            case .completed, .failed:
+                let elapsed = (item.finishedAt ?? Date()).timeIntervalSince(item.startedAt)
+                textField.stringValue = formatElapsedTime(elapsed)
+                textField.textColor = .tertiaryLabelColor
+            }
+            return cell
+
         case "action":
             let cell = reuseOrCreate(identifier: identifier, in: tableView)
             if item.state == .running {
@@ -300,4 +379,27 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
         cell.identifier = identifier
         return cell
     }
+}
+
+// MARK: - Elapsed Time Formatting
+
+/// Formats a time interval into a compact human-readable elapsed time string.
+///
+/// Formatting tiers:
+/// - Less than 1 second: `"<1s"`
+/// - 1--59 seconds: `"42s"`
+/// - 1--59 minutes: `"3m 12s"`
+/// - 1 hour or more: `"1h 23m"`
+///
+/// Negative intervals are clamped to zero and displayed as `"<1s"`.
+func formatElapsedTime(_ interval: TimeInterval) -> String {
+    let elapsed = max(0, interval)
+    if elapsed < 1 { return "<1s" }
+    let totalSeconds = Int(elapsed)
+    let hours = totalSeconds / 3600
+    let minutes = (totalSeconds % 3600) / 60
+    let seconds = totalSeconds % 60
+    if hours > 0 { return "\(hours)h \(minutes)m" }
+    if minutes > 0 { return "\(minutes)m \(seconds)s" }
+    return "\(seconds)s"
 }
