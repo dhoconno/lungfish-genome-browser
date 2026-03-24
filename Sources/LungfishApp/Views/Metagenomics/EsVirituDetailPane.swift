@@ -222,13 +222,54 @@ public final class EsVirituDetailPane: NSView {
     private func buildDetailContent() {
         guard let assembly = selectedAssembly else { return }
 
-        // Virus name
+        // Confidence badge + Virus name
+        let headerStack = NSView()
+        headerStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let badgeView = makeConfidenceBadge(for: assembly)
+        badgeView.translatesAutoresizingMaskIntoConstraints = false
+        headerStack.addSubview(badgeView)
+
         virusNameLabel.stringValue = assembly.name
-        contentView.addSubview(virusNameLabel)
+        headerStack.addSubview(virusNameLabel)
+
+        // Family badge
+        let familyLabel = NSTextField(labelWithString: assembly.family ?? "")
+        familyLabel.font = .systemFont(ofSize: 11)
+        familyLabel.textColor = .secondaryLabelColor
+        familyLabel.translatesAutoresizingMaskIntoConstraints = false
+        headerStack.addSubview(familyLabel)
+
+        NSLayoutConstraint.activate([
+            badgeView.leadingAnchor.constraint(equalTo: headerStack.leadingAnchor),
+            badgeView.topAnchor.constraint(equalTo: headerStack.topAnchor, constant: 2),
+            badgeView.widthAnchor.constraint(equalToConstant: 18),
+            badgeView.heightAnchor.constraint(equalToConstant: 18),
+
+            virusNameLabel.leadingAnchor.constraint(equalTo: badgeView.trailingAnchor, constant: 6),
+            virusNameLabel.topAnchor.constraint(equalTo: headerStack.topAnchor),
+            virusNameLabel.trailingAnchor.constraint(equalTo: headerStack.trailingAnchor),
+
+            familyLabel.leadingAnchor.constraint(equalTo: virusNameLabel.leadingAnchor),
+            familyLabel.topAnchor.constraint(equalTo: virusNameLabel.bottomAnchor, constant: 2),
+            familyLabel.bottomAnchor.constraint(equalTo: headerStack.bottomAnchor),
+        ])
+        contentView.addSubview(headerStack)
 
         // Metrics row
         let metricsView = buildMetricsView(for: assembly)
         contentView.addSubview(metricsView)
+
+        // Segment completeness strip (only for segmented viruses with >1 contig)
+        var segmentStripView: SegmentCompletenessView?
+        if assembly.contigs.count > 1,
+           assembly.contigs.contains(where: { $0.segment != nil }) {
+            let strip = SegmentCompletenessView()
+            strip.configure(assembly: assembly)
+            strip.translatesAutoresizingMaskIntoConstraints = false
+            contentView.addSubview(strip)
+            segmentStripView = strip
+        }
 
         // Coverage plot for each contig/segment
         coveragePlotView.configure(
@@ -237,42 +278,55 @@ public final class EsVirituDetailPane: NSView {
         )
         contentView.addSubview(coveragePlotView)
 
-        // BAM alignment summary (shown automatically when BAM is available)
+        // BAM alignment label + "Open in Full Viewer" button
         let alignmentLabel = NSTextField(labelWithString: "")
         if bamAvailable, let primaryAccession = assembly.contigs.first?.accession {
-            alignmentLabel.stringValue = "Alignments to \(primaryAccession)"
-            alignmentLabel.font = .systemFont(ofSize: 11, weight: .medium)
+            alignmentLabel.stringValue = "\(assembly.totalReads) reads aligned to \(primaryAccession)"
+            alignmentLabel.font = .systemFont(ofSize: 11)
             alignmentLabel.textColor = .secondaryLabelColor
             alignmentLabel.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(alignmentLabel)
 
-            // "Open in Full Viewer" link for detailed inspection
             bamButton.title = "Open in Full Viewer"
             bamButton.isHidden = false
             bamButton.controlSize = .small
             bamButton.font = .systemFont(ofSize: 11)
             contentView.addSubview(bamButton)
+        }
 
-            // Notify the host to load alignment data
-            onLoadAlignments?(URL(fileURLWithPath: ""), primaryAccession)
+        // The view chain anchors from: header → metrics → [segment strip] → coverage → [BAM label]
+        let coverageTopAnchor: NSLayoutYAxisAnchor
+        if let strip = segmentStripView {
+            coverageTopAnchor = strip.bottomAnchor
+        } else {
+            coverageTopAnchor = metricsView.bottomAnchor
         }
 
         var constraints = [
-            virusNameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
-            virusNameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            virusNameLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            headerStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
+            headerStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            headerStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
 
-            metricsView.topAnchor.constraint(equalTo: virusNameLabel.bottomAnchor, constant: 12),
+            metricsView.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 12),
             metricsView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             metricsView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
 
-            coveragePlotView.topAnchor.constraint(equalTo: metricsView.bottomAnchor, constant: 16),
+            coveragePlotView.topAnchor.constraint(equalTo: coverageTopAnchor, constant: 16),
             coveragePlotView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             coveragePlotView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             coveragePlotView.heightAnchor.constraint(equalToConstant: 160),
 
             contentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
         ]
+
+        // Segment strip constraints (between metrics and coverage)
+        if let strip = segmentStripView {
+            constraints += [
+                strip.topAnchor.constraint(equalTo: metricsView.bottomAnchor, constant: 12),
+                strip.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+                strip.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16),
+            ]
+        }
 
         if bamAvailable {
             constraints += [
@@ -358,6 +412,39 @@ public final class EsVirituDetailPane: NSView {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         return formatter.string(from: NSNumber(value: n)) ?? "\(n)"
+    }
+
+    // MARK: - Confidence Badge
+
+    /// Creates a confidence badge icon for the given assembly.
+    ///
+    /// Confidence tiers (from EsViritu research):
+    /// - **High** (green ✓): ≥500 reads, ≥95% identity, ≥50% breadth
+    /// - **Medium** (yellow △): ≥100 reads, OR 90-95% identity
+    /// - **Low** (red !): <100 reads, OR <90% identity, OR <10% breadth
+    private func makeConfidenceBadge(for assembly: ViralAssembly) -> NSView {
+        let imageView = NSImageView()
+        imageView.imageScaling = .scaleProportionallyDown
+
+        let reads = assembly.totalReads
+        let identity = assembly.avgReadIdentity
+        let breadth = assembly.meanCoverage  // Using coverage as a proxy for breadth
+
+        if reads >= 500 && identity >= 0.95 && breadth >= 0.5 {
+            // High confidence
+            imageView.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "High confidence")
+            imageView.contentTintColor = .systemGreen
+        } else if reads >= 100 || identity >= 0.90 {
+            // Medium confidence
+            imageView.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Medium confidence")
+            imageView.contentTintColor = .systemYellow
+        } else {
+            // Low confidence
+            imageView.image = NSImage(systemSymbolName: "exclamationmark.circle.fill", accessibilityDescription: "Low confidence")
+            imageView.contentTintColor = .systemRed
+        }
+
+        return imageView
     }
 
     // MARK: - Actions
