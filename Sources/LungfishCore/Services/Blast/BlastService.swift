@@ -404,16 +404,24 @@ public actor BlastService {
         if let handle {
             defer {
                 handle.closeFile()
-                gzipProcess?.waitUntilExit()
             }
             var lineBuffer: [String] = []
             var residual = ""
             let bufferSize = 4_194_304
+            var totalBytesRead = 0
+            var totalRecords = 0
+            var chunksRead = 0
+            var utf8Failures = 0
 
             while true {
                 let chunk = handle.readData(ofLength: bufferSize)
                 if chunk.isEmpty { break }
-                guard let text = String(data: chunk, encoding: .utf8) else { continue }
+                chunksRead += 1
+                totalBytesRead += chunk.count
+                guard let text = String(data: chunk, encoding: .utf8) else {
+                    utf8Failures += 1
+                    continue
+                }
                 let combined = residual + text
                 residual = ""
                 var lines = combined.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
@@ -421,9 +429,13 @@ public actor BlastService {
                     residual = lines.removeLast()
                 }
                 for line in lines {
+                    // Skip empty strings (produced by split when chunk ends
+                    // with \n). These break the 4-line FASTQ record alignment.
+                    if line.isEmpty { continue }
                     lineBuffer.append(line)
                     if lineBuffer.count == 4 {
                         if lineBuffer[0].hasPrefix("@") {
+                            totalRecords += 1
                             var readId = String(lineBuffer[0].dropFirst())
                                 .split(separator: " ", maxSplits: 1).first.map(String.init) ?? ""
                             if readId.hasSuffix("/1") || readId.hasSuffix("/2") {
@@ -441,9 +453,10 @@ public actor BlastService {
             // Check gzip exit status
             if let proc = gzipProcess {
                 proc.waitUntilExit()
-                if proc.terminationStatus != 0 {
-                    logger.warning("extractMatchingSequences: gzip exited with status \(proc.terminationStatus, privacy: .public)")
-                }
+                let status = proc.terminationStatus
+                logger.info("extractMatchingSequences: gzip exited with status \(status, privacy: .public), read \(chunksRead, privacy: .public) chunks (\(totalBytesRead, privacy: .public) bytes), \(totalRecords, privacy: .public) FASTQ records, \(utf8Failures, privacy: .public) UTF8 failures, \(allSequences.count, privacy: .public) matched")
+            } else {
+                logger.info("extractMatchingSequences: read \(chunksRead, privacy: .public) chunks (\(totalBytesRead, privacy: .public) bytes), \(totalRecords, privacy: .public) FASTQ records, \(allSequences.count, privacy: .public) matched")
             }
         }
 
