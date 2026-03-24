@@ -262,9 +262,9 @@ public struct PluginPack: Sendable, Codable, Identifiable {
             name: "Metagenomics",
             description: "Taxonomic classification and community profiling of metagenomic samples",
             sfSymbol: "leaf.fill",
-            packages: ["kraken2", "bracken", "metaphlan"],
+            packages: ["kraken2", "bracken", "metaphlan", "esviritu"],
             category: "Metagenomics",
-            estimatedSizeMB: 500
+            estimatedSizeMB: 800
         ),
 
         // MARK: Long Read
@@ -766,6 +766,7 @@ public actor CondaManager {
         arguments: [String] = [],
         environment: String,
         workingDirectory: URL? = nil,
+        environmentVariables: [String: String]? = nil,
         timeout: TimeInterval = 3600,
         stderrHandler: (@Sendable (String) -> Void)? = nil
     ) async throws -> (stdout: String, stderr: String, exitCode: Int32) {
@@ -781,10 +782,14 @@ public actor CondaManager {
             let process = Process()
             process.executableURL = executablePath
             process.arguments = args
-            process.environment = [
+            var env: [String: String] = [
                 "MAMBA_ROOT_PREFIX": rootPath,
                 "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
             ]
+            if let extraVars = environmentVariables {
+                env.merge(extraVars) { _, new in new }
+            }
+            process.environment = env
             if let wd = workingDirectory {
                 process.currentDirectoryURL = wd
             }

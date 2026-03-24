@@ -1,0 +1,339 @@
+// EsVirituConfig.swift - Configuration for an EsViritu viral detection run
+// Copyright (c) 2025 Lungfish Contributors
+// SPDX-License-Identifier: MIT
+
+import Foundation
+
+// MARK: - EsVirituConfig
+
+/// Configuration for a single EsViritu viral metagenomics detection run.
+///
+/// Captures all parameters needed to execute the EsViritu pipeline: input
+/// FASTQ files, database location, quality control settings, and output paths.
+///
+/// ## EsViritu Overview
+///
+/// EsViritu is a viral metagenomics tool that detects and characterizes
+/// viruses from sequencing data. It performs:
+/// - Quality filtering (via fastp)
+/// - Viral read detection and assembly
+/// - Taxonomic profiling of detected viruses
+/// - Coverage analysis across viral genomes
+///
+/// ## Input Modes
+///
+/// | Mode      | Files | Description |
+/// |-----------|-------|-------------|
+/// | Unpaired  | 1     | Single-end or interleaved reads |
+/// | Paired    | 2     | Forward (R1) and reverse (R2) reads |
+///
+/// ## Thread Safety
+///
+/// `EsVirituConfig` is a value type conforming to `Sendable` and `Codable`,
+/// safe to pass across isolation boundaries.
+public struct EsVirituConfig: Sendable, Codable, Equatable {
+
+    // MARK: - Input
+
+    /// One or two FASTQ input files.
+    ///
+    /// For paired-end data, supply exactly two files (R1, R2). For single-end
+    /// or interleaved reads, supply one file.
+    public let inputFiles: [URL]
+
+    /// Whether the input is paired-end.
+    ///
+    /// When `true`, ``inputFiles`` must contain exactly two elements and
+    /// the `-p paired` flag is passed to EsViritu.
+    public let isPairedEnd: Bool
+
+    /// Sample name used for output file naming.
+    ///
+    /// EsViritu uses this as the prefix for all output files (e.g.,
+    /// `<sampleName>.detected_virus.info.tsv`).
+    public let sampleName: String
+
+    // MARK: - Output
+
+    /// Directory where output files are written.
+    ///
+    /// The pipeline creates multiple output files including detection results,
+    /// assembly summaries, taxonomic profiles, and coverage data.
+    public let outputDirectory: URL
+
+    // MARK: - Database
+
+    /// Path to the EsViritu database directory.
+    ///
+    /// This directory contains the curated viral reference database used
+    /// for detection and classification. Downloaded via
+    /// ``EsVirituDatabaseManager``.
+    public let databasePath: URL
+
+    // MARK: - Parameters
+
+    /// Whether to run fastp quality control before detection.
+    ///
+    /// When enabled, reads are quality-filtered and adapter-trimmed before
+    /// viral detection. Recommended for raw sequencing data.
+    public var qualityFilter: Bool
+
+    /// Minimum read length after quality filtering.
+    ///
+    /// Reads shorter than this threshold are discarded during quality
+    /// filtering. Only applies when ``qualityFilter`` is `true`.
+    public var minReadLength: Int
+
+    /// Number of CPU threads for EsViritu to use.
+    ///
+    /// Passed as part of the command-line arguments. Defaults to the
+    /// number of active processor cores on the system.
+    public var threads: Int
+
+    // MARK: - Initialization
+
+    /// Creates an EsViritu configuration with explicit parameters.
+    ///
+    /// - Parameters:
+    ///   - inputFiles: FASTQ input file(s).
+    ///   - isPairedEnd: Whether the input is paired-end.
+    ///   - sampleName: Sample name for output file prefixes.
+    ///   - outputDirectory: Output directory for results.
+    ///   - databasePath: Path to the EsViritu database directory.
+    ///   - qualityFilter: Run fastp QC (default: true).
+    ///   - minReadLength: Minimum read length filter (default: 100).
+    ///   - threads: Thread count (default: system processor count).
+    public init(
+        inputFiles: [URL],
+        isPairedEnd: Bool,
+        sampleName: String,
+        outputDirectory: URL,
+        databasePath: URL,
+        qualityFilter: Bool = true,
+        minReadLength: Int = 100,
+        threads: Int = ProcessInfo.processInfo.activeProcessorCount
+    ) {
+        self.inputFiles = inputFiles
+        self.isPairedEnd = isPairedEnd
+        self.sampleName = sampleName
+        self.outputDirectory = outputDirectory
+        self.databasePath = databasePath
+        self.qualityFilter = qualityFilter
+        self.minReadLength = minReadLength
+        self.threads = threads
+    }
+
+    // MARK: - Computed Output URLs
+
+    /// Path to the detected virus information TSV.
+    ///
+    /// Contains per-virus detection results including read counts,
+    /// genome coverage, and classification confidence.
+    public var detectionOutputURL: URL {
+        outputDirectory.appendingPathComponent("\(sampleName).detected_virus.info.tsv")
+    }
+
+    /// Path to the assembly summary TSV.
+    ///
+    /// Contains de novo assembly results for detected viral contigs,
+    /// including contig lengths and coverage statistics.
+    public var assemblyOutputURL: URL {
+        outputDirectory.appendingPathComponent("\(sampleName).detected_virus.assembly_summary.tsv")
+    }
+
+    /// Path to the taxonomic profile TSV.
+    ///
+    /// Contains the community-level taxonomic profile of all detected
+    /// viruses with relative abundance estimates.
+    public var taxProfileURL: URL {
+        outputDirectory.appendingPathComponent("\(sampleName).tax_profile.tsv")
+    }
+
+    /// Path to the virus coverage windows TSV.
+    ///
+    /// Contains per-window coverage depth across detected viral genomes,
+    /// useful for identifying partial vs. complete genome recovery.
+    public var coverageURL: URL {
+        outputDirectory.appendingPathComponent("\(sampleName).virus_coverage_windows.tsv")
+    }
+
+    /// Path to the EsViritu run log.
+    ///
+    /// Contains detailed logging output from the pipeline execution,
+    /// useful for debugging and reproducibility.
+    public var logURL: URL {
+        outputDirectory.appendingPathComponent("\(sampleName)_esviritu.log")
+    }
+
+    /// Path to the saved parameters YAML file.
+    ///
+    /// EsViritu records all parameters used for the run in this file
+    /// for reproducibility.
+    public var paramsURL: URL {
+        outputDirectory.appendingPathComponent("\(sampleName)_esviritu.params.yaml")
+    }
+
+    // MARK: - Argument Building
+
+    /// Builds the command-line arguments for the `EsViritu` tool.
+    ///
+    /// This produces a complete argument list suitable for
+    /// ``CondaManager/runTool(name:arguments:environment:workingDirectory:timeout:environmentVariables:)``.
+    ///
+    /// - Returns: An array of argument strings (excluding the tool name itself).
+    public func esVirituArguments() -> [String] {
+        var args: [String] = []
+
+        // Read input
+        args += ["-r"]
+        for file in inputFiles {
+            args.append(file.path)
+        }
+
+        // Sample name
+        args += ["-s", sampleName]
+
+        // Output directory
+        args += ["-o", outputDirectory.path]
+
+        // Paired-end mode
+        if isPairedEnd {
+            args += ["-p", "paired"]
+        }
+
+        // Thread count
+        args += ["-t", String(threads)]
+
+        // Quality filtering
+        if !qualityFilter {
+            args.append("--skip_qc")
+        }
+
+        // Minimum read length
+        args += ["--min_read_length", String(minReadLength)]
+
+        return args
+    }
+
+    /// Formats the EsViritu command as a shell-ready string.
+    ///
+    /// Produces a multi-line command with backslash continuations for
+    /// readability. Each argument pair appears on its own line.
+    ///
+    /// - Returns: A complete `EsViritu ...` command string.
+    public func commandString() -> String {
+        let args = esVirituArguments()
+        let escaped = args.map { esVirituShellEscape($0) }
+        return "EsViritu " + escaped.joined(separator: " \\\n  ")
+    }
+}
+
+// MARK: - Shell Escaping
+
+/// Escapes a string for safe use in a POSIX shell command.
+///
+/// Wraps the value in single quotes if it contains characters that
+/// require escaping (spaces, parentheses, dollar signs, etc.).
+/// Single quotes within the value are escaped as `'\''`.
+///
+/// This is a module-level free function to avoid `@MainActor` isolation
+/// issues when called from `@Sendable` contexts.
+///
+/// - Parameter value: The raw string to escape.
+/// - Returns: A shell-safe representation of the string.
+func esVirituShellEscape(_ value: String) -> String {
+    let safeCharacters = CharacterSet.alphanumerics
+        .union(CharacterSet(charactersIn: "-_./:=@+,"))
+    if !value.isEmpty && value.unicodeScalars.allSatisfy({ safeCharacters.contains($0) }) {
+        return value
+    }
+    let escaped = value.replacingOccurrences(of: "'", with: "'\\''")
+    return "'\(escaped)'"
+}
+
+// MARK: - EsVirituConfigError
+
+/// Errors produced during EsViritu configuration validation.
+public enum EsVirituConfigError: Error, LocalizedError, Sendable {
+
+    /// No input files were provided.
+    case noInputFiles
+
+    /// Paired-end mode requires exactly two input files.
+    case pairedEndRequiresTwoFiles(got: Int)
+
+    /// An input file does not exist at the specified path.
+    case inputFileNotFound(URL)
+
+    /// The database directory does not exist.
+    case databaseNotFound(URL)
+
+    /// The sample name is empty.
+    case emptySampleName
+
+    /// The minimum read length is invalid (must be positive).
+    case invalidMinReadLength(Int)
+
+    /// The output directory could not be created.
+    case outputDirectoryCreationFailed(URL, Error)
+
+    public var errorDescription: String? {
+        switch self {
+        case .noInputFiles:
+            return "No input FASTQ files specified"
+        case .pairedEndRequiresTwoFiles(let got):
+            return "Paired-end mode requires exactly 2 input files, got \(got)"
+        case .inputFileNotFound(let url):
+            return "Input file not found: \(url.lastPathComponent)"
+        case .databaseNotFound(let url):
+            return "EsViritu database directory not found: \(url.path)"
+        case .emptySampleName:
+            return "Sample name cannot be empty"
+        case .invalidMinReadLength(let value):
+            return "Minimum read length must be positive, got \(value)"
+        case .outputDirectoryCreationFailed(let url, let error):
+            return "Cannot create output directory at \(url.path): \(error.localizedDescription)"
+        }
+    }
+}
+
+// MARK: - Validation
+
+extension EsVirituConfig {
+
+    /// Validates this configuration, checking file existence and parameter ranges.
+    ///
+    /// - Throws: ``EsVirituConfigError`` describing the first validation failure.
+    public func validate() throws {
+        // Input files
+        guard !inputFiles.isEmpty else {
+            throw EsVirituConfigError.noInputFiles
+        }
+
+        if isPairedEnd && inputFiles.count != 2 {
+            throw EsVirituConfigError.pairedEndRequiresTwoFiles(got: inputFiles.count)
+        }
+
+        let fm = FileManager.default
+        for file in inputFiles {
+            guard fm.fileExists(atPath: file.path) else {
+                throw EsVirituConfigError.inputFileNotFound(file)
+            }
+        }
+
+        // Sample name
+        guard !sampleName.isEmpty else {
+            throw EsVirituConfigError.emptySampleName
+        }
+
+        // Min read length
+        guard minReadLength > 0 else {
+            throw EsVirituConfigError.invalidMinReadLength(minReadLength)
+        }
+
+        // Database
+        guard fm.fileExists(atPath: databasePath.path) else {
+            throw EsVirituConfigError.databaseNotFound(databasePath)
+        }
+    }
+}
