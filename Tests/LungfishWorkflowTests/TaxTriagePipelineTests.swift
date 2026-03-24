@@ -1,0 +1,723 @@
+// TaxTriagePipelineTests.swift - Tests for TaxTriage pipeline integration
+// Copyright (c) 2025 Lungfish Contributors
+// SPDX-License-Identifier: MIT
+
+import XCTest
+@testable import LungfishWorkflow
+
+final class TaxTriagePipelineTests: XCTestCase {
+
+    // MARK: - TaxTriageConfig Tests
+
+    func testDefaultConfig() {
+        let sample = TaxTriageSample(
+            sampleId: "TestSample",
+            fastq1: URL(fileURLWithPath: "/data/R1.fastq.gz"),
+            fastq2: nil,
+            platform: .illumina
+        )
+
+        let config = TaxTriageConfig(
+            samples: [sample],
+            outputDirectory: URL(fileURLWithPath: "/tmp/output")
+        )
+
+        XCTAssertEqual(config.samples.count, 1)
+        XCTAssertEqual(config.platform, .illumina)
+        XCTAssertEqual(config.classifiers, ["kraken2"])
+        XCTAssertEqual(config.topHitsCount, 10)
+        XCTAssertEqual(config.k2Confidence, 0.2)
+        XCTAssertEqual(config.rank, "S")
+        XCTAssertTrue(config.skipAssembly)
+        XCTAssertFalse(config.skipKrona)
+        XCTAssertEqual(config.maxMemory, "16.GB")
+        XCTAssertEqual(config.profile, "docker")
+        XCTAssertNil(config.kraken2DatabasePath)
+        XCTAssertEqual(config.revision, "main")
+    }
+
+    func testConfigWithAllParameters() {
+        let sample = TaxTriageSample(
+            sampleId: "Sample1",
+            fastq1: URL(fileURLWithPath: "/data/R1.fastq.gz"),
+            fastq2: URL(fileURLWithPath: "/data/R2.fastq.gz"),
+            platform: .oxford
+        )
+
+        let config = TaxTriageConfig(
+            samples: [sample],
+            platform: .oxford,
+            outputDirectory: URL(fileURLWithPath: "/results"),
+            kraken2DatabasePath: URL(fileURLWithPath: "/db/kraken2"),
+            classifiers: ["kraken2"],
+            topHitsCount: 20,
+            k2Confidence: 0.5,
+            rank: "G",
+            skipAssembly: false,
+            skipKrona: true,
+            maxMemory: "32.GB",
+            maxCpus: 16,
+            profile: "conda",
+            containerRuntime: "docker",
+            revision: "v1.0"
+        )
+
+        XCTAssertEqual(config.platform, .oxford)
+        XCTAssertEqual(config.topHitsCount, 20)
+        XCTAssertEqual(config.k2Confidence, 0.5)
+        XCTAssertEqual(config.rank, "G")
+        XCTAssertFalse(config.skipAssembly)
+        XCTAssertTrue(config.skipKrona)
+        XCTAssertEqual(config.maxMemory, "32.GB")
+        XCTAssertEqual(config.maxCpus, 16)
+        XCTAssertEqual(config.profile, "conda")
+        XCTAssertEqual(config.containerRuntime, "docker")
+        XCTAssertEqual(config.revision, "v1.0")
+        XCTAssertNotNil(config.kraken2DatabasePath)
+    }
+
+    func testConfigSamplesheetURL() {
+        let config = TaxTriageConfig(
+            samples: [],
+            outputDirectory: URL(fileURLWithPath: "/results/run1")
+        )
+
+        XCTAssertEqual(
+            config.samplesheetURL.path,
+            "/results/run1/samplesheet.csv"
+        )
+    }
+
+    func testPipelineRepository() {
+        XCTAssertEqual(TaxTriageConfig.pipelineRepository, "jhuapl-bio/taxtriage")
+    }
+
+    // MARK: - Platform Tests
+
+    func testPlatformRawValues() {
+        XCTAssertEqual(TaxTriageConfig.Platform.illumina.rawValue, "ILLUMINA")
+        XCTAssertEqual(TaxTriageConfig.Platform.oxford.rawValue, "OXFORD")
+        XCTAssertEqual(TaxTriageConfig.Platform.pacbio.rawValue, "PACBIO")
+    }
+
+    func testPlatformDisplayNames() {
+        XCTAssertEqual(TaxTriageConfig.Platform.illumina.displayName, "Illumina")
+        XCTAssertEqual(TaxTriageConfig.Platform.oxford.displayName, "Oxford Nanopore")
+        XCTAssertEqual(TaxTriageConfig.Platform.pacbio.displayName, "PacBio")
+    }
+
+    func testAllPlatformsHaveDisplayNames() {
+        for platform in TaxTriageConfig.Platform.allCases {
+            XCTAssertFalse(
+                platform.displayName.isEmpty,
+                "\(platform) should have a display name"
+            )
+        }
+    }
+
+    func testPlatformCodable() throws {
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+
+        for platform in TaxTriageConfig.Platform.allCases {
+            let data = try encoder.encode(platform)
+            let decoded = try decoder.decode(TaxTriageConfig.Platform.self, from: data)
+            XCTAssertEqual(decoded, platform)
+        }
+    }
+
+    // MARK: - TaxTriageSample Tests
+
+    func testSampleSingleEnd() {
+        let sample = TaxTriageSample(
+            sampleId: "S1",
+            fastq1: URL(fileURLWithPath: "/data/reads.fastq.gz"),
+            fastq2: nil,
+            platform: .illumina
+        )
+
+        XCTAssertEqual(sample.id, "S1")
+        XCTAssertEqual(sample.sampleId, "S1")
+        XCTAssertFalse(sample.isPairedEnd)
+        XCTAssertEqual(sample.allFiles.count, 1)
+    }
+
+    func testSamplePairedEnd() {
+        let sample = TaxTriageSample(
+            sampleId: "S2",
+            fastq1: URL(fileURLWithPath: "/data/R1.fq.gz"),
+            fastq2: URL(fileURLWithPath: "/data/R2.fq.gz"),
+            platform: .oxford
+        )
+
+        XCTAssertTrue(sample.isPairedEnd)
+        XCTAssertEqual(sample.allFiles.count, 2)
+        XCTAssertEqual(sample.platform, .oxford)
+    }
+
+    func testSampleEquatable() {
+        let sample1 = TaxTriageSample(
+            sampleId: "S1",
+            fastq1: URL(fileURLWithPath: "/data/R1.fq.gz"),
+            platform: .illumina
+        )
+        let sample2 = TaxTriageSample(
+            sampleId: "S1",
+            fastq1: URL(fileURLWithPath: "/data/R1.fq.gz"),
+            platform: .illumina
+        )
+        XCTAssertEqual(sample1, sample2)
+    }
+
+    func testSampleCodable() throws {
+        let sample = TaxTriageSample(
+            sampleId: "CodeTest",
+            fastq1: URL(fileURLWithPath: "/data/reads.fq.gz"),
+            fastq2: URL(fileURLWithPath: "/data/reads_R2.fq.gz"),
+            platform: .pacbio
+        )
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(sample)
+        let decoder = JSONDecoder()
+        let decoded = try decoder.decode(TaxTriageSample.self, from: data)
+
+        XCTAssertEqual(decoded.sampleId, "CodeTest")
+        XCTAssertEqual(decoded.platform, .pacbio)
+        XCTAssertTrue(decoded.isPairedEnd)
+    }
+
+    // MARK: - Validation Tests
+
+    func testValidationNoSamples() {
+        let config = TaxTriageConfig(
+            samples: [],
+            outputDirectory: URL(fileURLWithPath: "/tmp")
+        )
+
+        XCTAssertThrowsError(try config.validate()) { error in
+            guard let configError = error as? TaxTriageConfigError else {
+                XCTFail("Expected TaxTriageConfigError"); return
+            }
+            if case .noSamples = configError {
+                // Expected
+            } else {
+                XCTFail("Expected .noSamples, got \(configError)")
+            }
+        }
+    }
+
+    func testValidationEmptySampleId() {
+        let sample = TaxTriageSample(
+            sampleId: "",
+            fastq1: URL(fileURLWithPath: "/data/reads.fq"),
+            platform: .illumina
+        )
+        let config = TaxTriageConfig(
+            samples: [sample],
+            outputDirectory: URL(fileURLWithPath: "/tmp")
+        )
+
+        XCTAssertThrowsError(try config.validate()) { error in
+            guard let configError = error as? TaxTriageConfigError else {
+                XCTFail("Expected TaxTriageConfigError"); return
+            }
+            if case .emptySampleId = configError {
+                // Expected
+            } else {
+                XCTFail("Expected .emptySampleId, got \(configError)")
+            }
+        }
+    }
+
+    func testValidationInputFileNotFound() {
+        let sample = TaxTriageSample(
+            sampleId: "Test",
+            fastq1: URL(fileURLWithPath: "/nonexistent/file.fastq.gz"),
+            platform: .illumina
+        )
+        let config = TaxTriageConfig(
+            samples: [sample],
+            outputDirectory: URL(fileURLWithPath: "/tmp")
+        )
+
+        XCTAssertThrowsError(try config.validate()) { error in
+            guard let configError = error as? TaxTriageConfigError else {
+                XCTFail("Expected TaxTriageConfigError"); return
+            }
+            if case .inputFileNotFound(let sampleId, _) = configError {
+                XCTAssertEqual(sampleId, "Test")
+            } else {
+                XCTFail("Expected .inputFileNotFound, got \(configError)")
+            }
+        }
+    }
+
+    func testValidationDuplicateSampleIds() throws {
+        // Create temporary files so they pass the file existence check
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("taxtriage-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: tempDir, withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let file1 = tempDir.appendingPathComponent("R1.fq.gz")
+        let file2 = tempDir.appendingPathComponent("R2.fq.gz")
+        try Data().write(to: file1)
+        try Data().write(to: file2)
+
+        let sample1 = TaxTriageSample(
+            sampleId: "DupSample",
+            fastq1: file1,
+            platform: .illumina
+        )
+        let sample2 = TaxTriageSample(
+            sampleId: "DupSample",
+            fastq1: file2,
+            platform: .illumina
+        )
+        let config = TaxTriageConfig(
+            samples: [sample1, sample2],
+            outputDirectory: tempDir
+        )
+
+        XCTAssertThrowsError(try config.validate()) { error in
+            guard let configError = error as? TaxTriageConfigError else {
+                XCTFail("Expected TaxTriageConfigError"); return
+            }
+            if case .duplicateSampleIds(let ids) = configError {
+                XCTAssertEqual(ids, ["DupSample"])
+            } else {
+                XCTFail("Expected .duplicateSampleIds, got \(configError)")
+            }
+        }
+    }
+
+    func testValidationInvalidConfidence() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("taxtriage-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: tempDir, withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let file1 = tempDir.appendingPathComponent("reads.fq.gz")
+        try Data().write(to: file1)
+
+        let sample = TaxTriageSample(
+            sampleId: "S1",
+            fastq1: file1,
+            platform: .illumina
+        )
+        let config = TaxTriageConfig(
+            samples: [sample],
+            outputDirectory: tempDir,
+            k2Confidence: 1.5
+        )
+
+        XCTAssertThrowsError(try config.validate()) { error in
+            guard let configError = error as? TaxTriageConfigError else {
+                XCTFail("Expected TaxTriageConfigError"); return
+            }
+            if case .invalidK2Confidence(let value) = configError {
+                XCTAssertEqual(value, 1.5)
+            } else {
+                XCTFail("Expected .invalidK2Confidence, got \(configError)")
+            }
+        }
+    }
+
+    func testValidationInvalidTopHitsCount() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("taxtriage-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: tempDir, withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let file1 = tempDir.appendingPathComponent("reads.fq.gz")
+        try Data().write(to: file1)
+
+        let sample = TaxTriageSample(
+            sampleId: "S1",
+            fastq1: file1,
+            platform: .illumina
+        )
+        let config = TaxTriageConfig(
+            samples: [sample],
+            outputDirectory: tempDir,
+            topHitsCount: 0
+        )
+
+        XCTAssertThrowsError(try config.validate()) { error in
+            guard let configError = error as? TaxTriageConfigError else {
+                XCTFail("Expected TaxTriageConfigError"); return
+            }
+            if case .invalidTopHitsCount(let value) = configError {
+                XCTAssertEqual(value, 0)
+            } else {
+                XCTFail("Expected .invalidTopHitsCount, got \(configError)")
+            }
+        }
+    }
+
+    func testValidationDatabaseNotFound() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("taxtriage-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: tempDir, withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let file1 = tempDir.appendingPathComponent("reads.fq.gz")
+        try Data().write(to: file1)
+
+        let sample = TaxTriageSample(
+            sampleId: "S1",
+            fastq1: file1,
+            platform: .illumina
+        )
+        let config = TaxTriageConfig(
+            samples: [sample],
+            outputDirectory: tempDir,
+            kraken2DatabasePath: URL(fileURLWithPath: "/nonexistent/db")
+        )
+
+        XCTAssertThrowsError(try config.validate()) { error in
+            guard let configError = error as? TaxTriageConfigError else {
+                XCTFail("Expected TaxTriageConfigError"); return
+            }
+            if case .databaseNotFound = configError {
+                // Expected
+            } else {
+                XCTFail("Expected .databaseNotFound, got \(configError)")
+            }
+        }
+    }
+
+    // MARK: - Nextflow Argument Building Tests
+
+    func testNextflowArgumentsBasic() {
+        let sample = TaxTriageSample(
+            sampleId: "S1",
+            fastq1: URL(fileURLWithPath: "/data/R1.fq.gz"),
+            platform: .illumina
+        )
+        let config = TaxTriageConfig(
+            samples: [sample],
+            outputDirectory: URL(fileURLWithPath: "/output")
+        )
+
+        let args = config.nextflowArguments()
+
+        XCTAssertTrue(args.contains("jhuapl-bio/taxtriage"))
+        XCTAssertTrue(args.contains("-r"))
+        XCTAssertTrue(args.contains("main"))
+        XCTAssertTrue(args.contains("-profile"))
+        XCTAssertTrue(args.contains("docker"))
+        XCTAssertTrue(args.contains("--input"))
+        XCTAssertTrue(args.contains("--outdir"))
+        XCTAssertTrue(args.contains("--skip_assembly"))
+        XCTAssertFalse(args.contains("--skip_krona"))
+    }
+
+    func testNextflowArgumentsWithDatabase() {
+        let sample = TaxTriageSample(
+            sampleId: "S1",
+            fastq1: URL(fileURLWithPath: "/data/R1.fq.gz"),
+            platform: .illumina
+        )
+        let config = TaxTriageConfig(
+            samples: [sample],
+            outputDirectory: URL(fileURLWithPath: "/output"),
+            kraken2DatabasePath: URL(fileURLWithPath: "/db/kraken2")
+        )
+
+        let args = config.nextflowArguments()
+
+        XCTAssertTrue(args.contains("--db"))
+        XCTAssertTrue(args.contains("/db/kraken2"))
+    }
+
+    func testNextflowArgumentsNoSkipAssembly() {
+        let sample = TaxTriageSample(
+            sampleId: "S1",
+            fastq1: URL(fileURLWithPath: "/data/R1.fq.gz"),
+            platform: .illumina
+        )
+        let config = TaxTriageConfig(
+            samples: [sample],
+            outputDirectory: URL(fileURLWithPath: "/output"),
+            skipAssembly: false,
+            skipKrona: true
+        )
+
+        let args = config.nextflowArguments()
+
+        XCTAssertFalse(args.contains("--skip_assembly"))
+        XCTAssertTrue(args.contains("--skip_krona"))
+    }
+
+    // MARK: - TaxTriageResult Tests
+
+    func testResultSummarySuccess() {
+        let config = TaxTriageConfig(
+            samples: [TaxTriageSample(
+                sampleId: "S1",
+                fastq1: URL(fileURLWithPath: "/data/R1.fq.gz"),
+                platform: .illumina
+            )],
+            outputDirectory: URL(fileURLWithPath: "/output")
+        )
+
+        let result = TaxTriageResult(
+            config: config,
+            runtime: 120.5,
+            exitCode: 0,
+            outputDirectory: URL(fileURLWithPath: "/output"),
+            reportFiles: [URL(fileURLWithPath: "/output/report.txt")],
+            metricsFiles: [URL(fileURLWithPath: "/output/metrics.tsv")],
+            kronaFiles: [URL(fileURLWithPath: "/output/krona.html")],
+            allOutputFiles: [
+                URL(fileURLWithPath: "/output/report.txt"),
+                URL(fileURLWithPath: "/output/metrics.tsv"),
+                URL(fileURLWithPath: "/output/krona.html"),
+            ]
+        )
+
+        XCTAssertTrue(result.isSuccess)
+        XCTAssertTrue(result.summary.contains("successfully"))
+        XCTAssertTrue(result.summary.contains("120.5"))
+        XCTAssertTrue(result.summary.contains("Samples: 1"))
+    }
+
+    func testResultSummaryFailure() {
+        let config = TaxTriageConfig(
+            samples: [],
+            outputDirectory: URL(fileURLWithPath: "/output")
+        )
+
+        let result = TaxTriageResult(
+            config: config,
+            runtime: 5.0,
+            exitCode: 1,
+            outputDirectory: URL(fileURLWithPath: "/output")
+        )
+
+        XCTAssertFalse(result.isSuccess)
+        XCTAssertTrue(result.summary.contains("failed"))
+        XCTAssertTrue(result.summary.contains("exit code 1"))
+    }
+
+    func testResultSaveAndLoad() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("taxtriage-result-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: tempDir, withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let config = TaxTriageConfig(
+            samples: [TaxTriageSample(
+                sampleId: "SaveTest",
+                fastq1: URL(fileURLWithPath: "/data/test.fq.gz"),
+                platform: .illumina
+            )],
+            outputDirectory: tempDir
+        )
+
+        let result = TaxTriageResult(
+            config: config,
+            runtime: 42.0,
+            exitCode: 0,
+            outputDirectory: tempDir,
+            reportFiles: [tempDir.appendingPathComponent("report.txt")],
+            allOutputFiles: [tempDir.appendingPathComponent("report.txt")]
+        )
+
+        try result.save()
+
+        let loaded = try TaxTriageResult.load(from: tempDir)
+        XCTAssertEqual(loaded.exitCode, 0)
+        XCTAssertEqual(loaded.runtime, 42.0)
+        XCTAssertEqual(loaded.config.samples.count, 1)
+        XCTAssertEqual(loaded.config.samples.first?.sampleId, "SaveTest")
+        XCTAssertEqual(loaded.reportFiles.count, 1)
+    }
+
+    // MARK: - PrerequisiteStatus Tests
+
+    func testPrerequisiteStatusAllSatisfied() {
+        let status = PrerequisiteStatus(
+            nextflowInstalled: true,
+            nextflowVersion: "24.10.0",
+            containerRuntimeAvailable: true,
+            containerRuntimeName: "Docker"
+        )
+
+        XCTAssertTrue(status.allSatisfied)
+        XCTAssertTrue(status.summary.contains("installed"))
+        XCTAssertTrue(status.summary.contains("24.10.0"))
+        XCTAssertTrue(status.summary.contains("Docker"))
+        XCTAssertTrue(status.summary.contains("All prerequisites met"))
+    }
+
+    func testPrerequisiteStatusMissing() {
+        let status = PrerequisiteStatus(
+            nextflowInstalled: false,
+            nextflowVersion: nil,
+            containerRuntimeAvailable: false,
+            containerRuntimeName: nil
+        )
+
+        XCTAssertFalse(status.allSatisfied)
+        XCTAssertTrue(status.summary.contains("NOT INSTALLED"))
+        XCTAssertTrue(status.summary.contains("NOT AVAILABLE"))
+        XCTAssertTrue(status.summary.contains("MISSING PREREQUISITES"))
+    }
+
+    func testPrerequisiteStatusPartial() {
+        let status = PrerequisiteStatus(
+            nextflowInstalled: true,
+            nextflowVersion: "23.04.0",
+            containerRuntimeAvailable: false,
+            containerRuntimeName: nil
+        )
+
+        XCTAssertFalse(status.allSatisfied)
+    }
+
+    // MARK: - Config Codable Tests
+
+    func testConfigCodable() throws {
+        let sample = TaxTriageSample(
+            sampleId: "CodableTest",
+            fastq1: URL(fileURLWithPath: "/data/test.fq.gz"),
+            fastq2: URL(fileURLWithPath: "/data/test_R2.fq.gz"),
+            platform: .pacbio
+        )
+
+        let config = TaxTriageConfig(
+            samples: [sample],
+            platform: .pacbio,
+            outputDirectory: URL(fileURLWithPath: "/output"),
+            kraken2DatabasePath: URL(fileURLWithPath: "/db"),
+            topHitsCount: 15,
+            k2Confidence: 0.3,
+            rank: "G",
+            skipAssembly: false,
+            skipKrona: true,
+            maxMemory: "32.GB",
+            maxCpus: 8,
+            profile: "conda",
+            revision: "v2.0"
+        )
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(config)
+
+        let decoder = JSONDecoder()
+        let decoded = try decoder.decode(TaxTriageConfig.self, from: data)
+
+        XCTAssertEqual(decoded.samples.count, 1)
+        XCTAssertEqual(decoded.samples.first?.sampleId, "CodableTest")
+        XCTAssertEqual(decoded.platform, .pacbio)
+        XCTAssertEqual(decoded.topHitsCount, 15)
+        XCTAssertEqual(decoded.k2Confidence, 0.3)
+        XCTAssertEqual(decoded.rank, "G")
+        XCTAssertFalse(decoded.skipAssembly)
+        XCTAssertTrue(decoded.skipKrona)
+        XCTAssertEqual(decoded.maxMemory, "32.GB")
+        XCTAssertEqual(decoded.maxCpus, 8)
+        XCTAssertEqual(decoded.profile, "conda")
+        XCTAssertEqual(decoded.revision, "v2.0")
+    }
+
+    // MARK: - Error Description Tests
+
+    func testConfigErrorDescriptions() {
+        let errors: [TaxTriageConfigError] = [
+            .noSamples,
+            .emptySampleId,
+            .duplicateSampleIds(["S1", "S2"]),
+            .inputFileNotFound(
+                sampleId: "Test",
+                path: URL(fileURLWithPath: "/missing.fq")
+            ),
+            .databaseNotFound(URL(fileURLWithPath: "/missing/db")),
+            .invalidK2Confidence(2.0),
+            .invalidTopHitsCount(-1),
+        ]
+
+        for error in errors {
+            XCTAssertNotNil(error.errorDescription, "\(error) should have a description")
+        }
+    }
+
+    func testPipelineErrorDescriptions() {
+        let errors: [TaxTriagePipelineError] = [
+            .nextflowNotInstalled,
+            .containerRuntimeNotAvailable,
+            .cancelled,
+            .prerequisiteFailed(tool: "nextflow", reason: "not found"),
+            .pipelineFailed(exitCode: 1, stderr: "error", logFile: nil),
+        ]
+
+        for error in errors {
+            XCTAssertNotNil(error.errorDescription, "\(error) should have a description")
+        }
+    }
+
+    // MARK: - Pipeline Argument Building Tests
+
+    func testBuildNextflowArguments() async {
+        let pipeline = TaxTriagePipeline()
+
+        let sample = TaxTriageSample(
+            sampleId: "Test",
+            fastq1: URL(fileURLWithPath: "/data/reads.fq.gz"),
+            platform: .illumina
+        )
+        let config = TaxTriageConfig(
+            samples: [sample],
+            outputDirectory: URL(fileURLWithPath: "/output"),
+            kraken2DatabasePath: URL(fileURLWithPath: "/db/k2"),
+            topHitsCount: 5,
+            k2Confidence: 0.3,
+            rank: "G",
+            skipAssembly: true,
+            skipKrona: true,
+            maxMemory: "8.GB",
+            maxCpus: 4,
+            profile: "docker",
+            revision: "dev"
+        )
+
+        let args = await pipeline.buildNextflowArguments(config: config)
+
+        // Verify structure
+        XCTAssertEqual(args[0], "run")
+        XCTAssertEqual(args[1], "jhuapl-bio/taxtriage")
+        XCTAssertTrue(args.contains("-r"))
+        XCTAssertTrue(args.contains("dev"))
+        XCTAssertTrue(args.contains("-profile"))
+        XCTAssertTrue(args.contains("docker"))
+        XCTAssertTrue(args.contains("--input"))
+        XCTAssertTrue(args.contains("--outdir"))
+        XCTAssertTrue(args.contains("--db"))
+        XCTAssertTrue(args.contains("/db/k2"))
+        XCTAssertTrue(args.contains("--top_hits_count"))
+        XCTAssertTrue(args.contains("5"))
+        XCTAssertTrue(args.contains("--k2_confidence"))
+        XCTAssertTrue(args.contains("0.3"))
+        XCTAssertTrue(args.contains("--rank"))
+        XCTAssertTrue(args.contains("G"))
+        XCTAssertTrue(args.contains("--skip_assembly"))
+        XCTAssertTrue(args.contains("--skip_krona"))
+        XCTAssertTrue(args.contains("--max_memory"))
+        XCTAssertTrue(args.contains("--max_cpus"))
+        XCTAssertTrue(args.contains("4"))
+        XCTAssertTrue(args.contains("-with-trace"))
+    }
+}

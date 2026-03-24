@@ -76,6 +76,7 @@ extension ViewerViewController {
         hideVCFDatasetView()
         hideFASTACollectionView()
         hideTaxonomyView()
+        hideEsVirituView()
 
         let controller = TaxonomyViewController()
         addChild(controller)

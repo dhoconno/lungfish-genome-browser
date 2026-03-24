@@ -68,6 +68,9 @@ public class ViewerViewController: NSViewController {
     /// Taxonomy classification browser (shown in place of sequence viewer for kreport results)
     var taxonomyViewController: TaxonomyViewController?
 
+    /// EsViritu viral detection browser (shown in place of sequence viewer for EsViritu results)
+    var esVirituViewController: EsVirituResultViewController?
+
     // MARK: - State
 
     /// Current reference frame for coordinate mapping
@@ -916,6 +919,7 @@ public class ViewerViewController: NSViewController {
         hideQuickLookPreview()
         hideFASTQDatasetView()
         hideTaxonomyView()
+        hideEsVirituView()
 
         let controller = FASTQDatasetViewController()
         addChild(controller)
@@ -1026,6 +1030,7 @@ public class ViewerViewController: NSViewController {
         hideVCFDatasetView()
         hideFASTACollectionView()
         hideTaxonomyView()
+        hideEsVirituView()
 
         let controller = VCFDatasetViewController()
         controller.onDownloadReferenceRequested = onDownloadReference
@@ -1115,6 +1120,7 @@ public class ViewerViewController: NSViewController {
         hideVCFDatasetView()
         hideFASTACollectionView()
         hideTaxonomyView()
+        hideEsVirituView()
 
         let controller = FASTACollectionViewController()
         addChild(controller)
@@ -1418,6 +1424,7 @@ public class ViewerViewController: NSViewController {
         hideVCFDatasetView()
         hideFASTACollectionView()
         hideTaxonomyView()
+        hideEsVirituView()
 
         // Clear any stale reference bundle state so the viewer uses
         // the document's sequences instead of trying to fetch from a bundle
@@ -1528,6 +1535,7 @@ public class ViewerViewController: NSViewController {
         hideVCFDatasetView()
         hideFASTACollectionView()
         hideTaxonomyView()
+        hideEsVirituView()
 
         // Hide the progress overlay first - it may be covering the view area
         hideProgress()
