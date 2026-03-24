@@ -179,19 +179,24 @@ public final class MiniBAMViewController: NSViewController {
     // MARK: - Duplicate Detection
 
     /// Identifies potential PCR duplicates: reads with identical start and end positions.
+    ///
+    /// The FIRST read in each position group is kept as the "real" read.
+    /// Subsequent reads at the same position are marked as potential duplicates
+    /// and rendered at 50% opacity in orange.
     private func detectDuplicates() {
         duplicateIndices = []
 
-        // Group reads by (start, end) position
-        var positionCounts: [String: [Int]] = [:]
+        // Group reads by (start, end, strand) — same position AND strand = likely PCR dup
+        var positionGroups: [String: [Int]] = [:]
         for (i, read) in reads.enumerated() {
-            let key = "\(read.position)-\(read.alignmentEnd)"
-            positionCounts[key, default: []].append(i)
+            let strand = read.isReverse ? "R" : "F"
+            let key = "\(read.position)-\(read.alignmentEnd)-\(strand)"
+            positionGroups[key, default: []].append(i)
         }
 
-        // Mark reads in groups of >1 as potential duplicates
-        for (_, indices) in positionCounts where indices.count > 1 {
-            for idx in indices {
+        // Mark all reads EXCEPT the first in each group as duplicates
+        for (_, indices) in positionGroups where indices.count > 1 {
+            for idx in indices.dropFirst() {
                 duplicateIndices.insert(idx)
             }
         }

@@ -238,8 +238,9 @@ public final class EsVirituDetailPane: NSView {
 
     private func buildDetailContent() {
         guard let assembly = selectedAssembly else { return }
+        let isSegmented = assembly.contigs.count > 1 && assembly.contigs.contains(where: { $0.segment != nil })
 
-        // Confidence badge + Virus name
+        // 1. Confidence badge + Virus name + Family
         let headerStack = NSView()
         headerStack.translatesAutoresizingMaskIntoConstraints = false
 
@@ -250,7 +251,6 @@ public final class EsVirituDetailPane: NSView {
         virusNameLabel.stringValue = assembly.name
         headerStack.addSubview(virusNameLabel)
 
-        // Family badge
         let familyLabel = NSTextField(labelWithString: assembly.family ?? "")
         familyLabel.font = .systemFont(ofSize: 11)
         familyLabel.textColor = .secondaryLabelColor
@@ -262,114 +262,95 @@ public final class EsVirituDetailPane: NSView {
             badgeView.topAnchor.constraint(equalTo: headerStack.topAnchor, constant: 2),
             badgeView.widthAnchor.constraint(equalToConstant: 18),
             badgeView.heightAnchor.constraint(equalToConstant: 18),
-
             virusNameLabel.leadingAnchor.constraint(equalTo: badgeView.trailingAnchor, constant: 6),
             virusNameLabel.topAnchor.constraint(equalTo: headerStack.topAnchor),
             virusNameLabel.trailingAnchor.constraint(equalTo: headerStack.trailingAnchor),
-
             familyLabel.leadingAnchor.constraint(equalTo: virusNameLabel.leadingAnchor),
             familyLabel.topAnchor.constraint(equalTo: virusNameLabel.bottomAnchor, constant: 2),
             familyLabel.bottomAnchor.constraint(equalTo: headerStack.bottomAnchor),
         ])
         contentView.addSubview(headerStack)
 
-        // Metrics row
+        // 2. Metrics pills
         let metricsView = buildMetricsView(for: assembly)
         contentView.addSubview(metricsView)
 
-        // Segment completeness strip (only for segmented viruses with >1 contig)
-        var segmentStripView: SegmentCompletenessView?
-        if assembly.contigs.count > 1,
-           assembly.contigs.contains(where: { $0.segment != nil }) {
-            let strip = SegmentCompletenessView()
-            strip.configure(assembly: assembly)
-            strip.translatesAutoresizingMaskIntoConstraints = false
-            contentView.addSubview(strip)
-            segmentStripView = strip
-        }
+        // Track the last view in the vertical chain for constraint anchoring
+        var lastView: NSView = metricsView
+        var lastBottomConstant: CGFloat = 8
 
-        // Coverage plot for each contig/segment
-        coveragePlotView.configure(
-            assembly: assembly,
-            coverageWindows: selectedCoverageWindows
-        )
-        contentView.addSubview(coveragePlotView)
-
-        // BAM pileup section (shown when BAM is available)
-        var bamContainerView: NSView?
+        // 3. BAM pileup — PRIMARY view, placed immediately after metrics
+        //    This is the most important view for validation, especially for
+        //    low read-count detections. It includes its own depth track at the
+        //    top, so the separate coverage chart is redundant for non-segmented viruses.
         if bamAvailable, let miniBAM = miniBAMViewController {
-            // Section header
-            let bamHeader = NSTextField(labelWithString: "Read Alignments")
-            bamHeader.font = .systemFont(ofSize: 12, weight: .semibold)
-            bamHeader.textColor = .labelColor
-            bamHeader.translatesAutoresizingMaskIntoConstraints = false
-            contentView.addSubview(bamHeader)
-
-            // Embed the mini BAM view
             let bamView = miniBAM.view
             bamView.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(bamView)
 
-            let container = NSView()
-            container.translatesAutoresizingMaskIntoConstraints = false
-            bamContainerView = bamHeader  // Use header as the anchor for constraints
-
             NSLayoutConstraint.activate([
-                bamHeader.topAnchor.constraint(equalTo: coveragePlotView.bottomAnchor, constant: 16),
-                bamHeader.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-                bamHeader.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-
-                bamView.topAnchor.constraint(equalTo: bamHeader.bottomAnchor, constant: 4),
+                bamView.topAnchor.constraint(equalTo: metricsView.bottomAnchor, constant: 8),
                 bamView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 4),
                 bamView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -4),
-                bamView.heightAnchor.constraint(greaterThanOrEqualToConstant: 250),
+                bamView.heightAnchor.constraint(greaterThanOrEqualToConstant: 300),
             ])
+
+            lastView = bamView
+            lastBottomConstant = 8
         }
 
-        // The view chain anchors from: header → metrics → [segment strip] → coverage → [BAM label]
-        let coverageTopAnchor: NSLayoutYAxisAnchor
-        if let strip = segmentStripView {
-            coverageTopAnchor = strip.bottomAnchor
-        } else {
-            coverageTopAnchor = metricsView.bottomAnchor
+        // 4. Segment completeness strip (segmented viruses only)
+        if isSegmented {
+            let strip = SegmentCompletenessView()
+            strip.configure(assembly: assembly)
+            strip.translatesAutoresizingMaskIntoConstraints = false
+            contentView.addSubview(strip)
+
+            NSLayoutConstraint.activate([
+                strip.topAnchor.constraint(equalTo: lastView.bottomAnchor, constant: 12),
+                strip.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+                strip.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16),
+            ])
+
+            lastView = strip
+            lastBottomConstant = 8
         }
 
+        // 5. Per-segment coverage chart (ONLY for segmented viruses)
+        //    For non-segmented viruses, the BAM pileup's built-in depth track
+        //    already shows coverage, so the separate chart is redundant.
+        if isSegmented {
+            coveragePlotView.configure(
+                assembly: assembly,
+                coverageWindows: selectedCoverageWindows
+            )
+            contentView.addSubview(coveragePlotView)
+
+            NSLayoutConstraint.activate([
+                coveragePlotView.topAnchor.constraint(equalTo: lastView.bottomAnchor, constant: 12),
+                coveragePlotView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+                coveragePlotView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+                coveragePlotView.heightAnchor.constraint(equalToConstant: 120),
+            ])
+
+            lastView = coveragePlotView
+            lastBottomConstant = 16
+        }
+
+        // Main layout constraints
         var constraints = [
-            headerStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
+            headerStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
             headerStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             headerStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
 
-            metricsView.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 12),
+            metricsView.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 8),
             metricsView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             metricsView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
 
-            coveragePlotView.topAnchor.constraint(equalTo: coverageTopAnchor, constant: 16),
-            coveragePlotView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            coveragePlotView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            coveragePlotView.heightAnchor.constraint(equalToConstant: 160),
-
             contentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
+
+            lastView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -lastBottomConstant),
         ]
-
-        // Segment strip constraints (between metrics and coverage)
-        if let strip = segmentStripView {
-            constraints += [
-                strip.topAnchor.constraint(equalTo: metricsView.bottomAnchor, constant: 12),
-                strip.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-                strip.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16),
-            ]
-        }
-
-        if bamAvailable, let miniBAM = miniBAMViewController {
-            // The BAM view's bottom provides the content bottom
-            constraints.append(
-                miniBAM.view.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -8)
-            )
-        } else {
-            constraints.append(
-                coveragePlotView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -16)
-            )
-        }
 
         NSLayoutConstraint.activate(constraints)
     }
