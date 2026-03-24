@@ -707,6 +707,10 @@ public class SidebarViewController: NSViewController {
             let esvirituChildren = collectEsVirituResults(in: url)
             item.children.append(contentsOf: esvirituChildren)
 
+            // Scan for TaxTriage result directories (taxtriage-XXXXXXXX/).
+            let taxTriageChildren = collectTaxTriageResults(in: url)
+            item.children.append(contentsOf: taxTriageChildren)
+
             // Scan for extracted read bundles (.lungfishfastq) at the top level.
             // These are created by taxonomy extraction and don't live in derivatives/.
             if let topLevelContents = try? fileManager.contentsOfDirectory(
@@ -984,6 +988,44 @@ public class SidebarViewController: NSViewController {
             return "Viral Detection (\(virusCount) viruses)"
         }
         return "Viral Detection"
+    }
+
+    /// Collects TaxTriage result directories from inside a FASTQ bundle.
+    private func collectTaxTriageResults(in bundleURL: URL) -> [SidebarItem] {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: bundleURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        var results: [SidebarItem] = []
+
+        for childURL in contents {
+            guard childURL.lastPathComponent.hasPrefix("taxtriage-") else { continue }
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: childURL.path, isDirectory: &isDir), isDir.boolValue else { continue }
+
+            // Check for key output files (kreport or top_report)
+            let hasKreport = fm.fileExists(atPath: childURL.appendingPathComponent("kraken2").path)
+            let hasTopReport = (try? fm.contentsOfDirectory(at: childURL, includingPropertiesForKeys: nil))?
+                .contains(where: { $0.lastPathComponent == "top" }) ?? false
+
+            guard hasKreport || hasTopReport else { continue }
+
+            let item = SidebarItem(
+                title: "Comprehensive Triage",
+                type: .taxTriageResult,
+                icon: "stethoscope",
+                children: [],
+                url: childURL
+            )
+            results.append(item)
+        }
+
+        return results.sorted {
+            $0.url?.lastPathComponent ?? "" < $1.url?.lastPathComponent ?? ""
+        }
     }
 
     /// Counts the total number of items in a tree.
@@ -2143,6 +2185,7 @@ public enum SidebarItemType {
     case batchGroup   // Virtual node representing a batch operation across multiple bundles
     case classificationResult  // Kraken2 classification result folder
     case esvirituResult        // EsViritu viral detection result folder
+    case taxTriageResult       // TaxTriage comprehensive triage result folder
 
     var tintColor: NSColor {
         switch self {
@@ -2161,6 +2204,7 @@ public enum SidebarItemType {
         case .batchGroup: return .systemCyan
         case .classificationResult: return .systemTeal
         case .esvirituResult: return .systemMint
+        case .taxTriageResult: return .systemCyan
         }
     }
 

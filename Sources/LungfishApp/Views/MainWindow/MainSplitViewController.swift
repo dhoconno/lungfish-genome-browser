@@ -1611,6 +1611,12 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             return
         }
 
+        // TaxTriage results
+        if item.type == .taxTriageResult, let url = item.url {
+            displayTaxTriageResultFromSidebar(at: url)
+            return
+        }
+
         // Genomics files - check cache first
         if let url = item.url {
             displayGenomicsFile(url: url)
@@ -1753,6 +1759,35 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                 alert.beginSheetModal(for: window)
             }
         }
+    }
+
+    /// Display a saved TaxTriage result from a result directory.
+    private func displayTaxTriageResultFromSidebar(at url: URL) {
+        logger.info("displayTaxTriageResult: Opening '\(url.lastPathComponent, privacy: .public)'")
+
+        // Build a TaxTriageResult from the directory contents
+        let fm = FileManager.default
+        let allFiles: [URL]
+        if let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+            allFiles = enumerator.allObjects.compactMap { $0 as? URL }
+        } else {
+            allFiles = []
+        }
+
+        let result = TaxTriageResult(
+            config: TaxTriageConfig(samples: [], outputDirectory: url),
+            runtime: 0,
+            exitCode: 0,
+            outputDirectory: url,
+            reportFiles: allFiles.filter { $0.lastPathComponent.contains("report") && ($0.pathExtension == "txt" || $0.pathExtension == "tsv") },
+            metricsFiles: allFiles.filter { $0.pathExtension == "tsv" && !$0.lastPathComponent.contains("report") },
+            kronaFiles: [],
+            logFile: nil,
+            traceFile: nil,
+            allOutputFiles: allFiles
+        )
+
+        viewerController.displayTaxTriageResult(result, config: nil)
     }
 
     /// Display genomics file - cache-first, then load via DocumentManager.

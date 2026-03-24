@@ -157,10 +157,11 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         // and the kreport.txt (has full taxonomy tree for sunburst).
         let outputDir = result.outputDirectory
 
-        // 1. Parse organisms from top_report.tsv
+        // 1. Parse organisms from top_report.tsv (exclude work/ duplicates)
         var allOrganisms: [TaxTriageOrganism] = []
         let topReportFiles = result.allOutputFiles.filter {
             $0.lastPathComponent.contains("top_report.tsv")
+                && !$0.path.contains("/work/")
         }
         for topReportURL in topReportFiles {
             let parsed = parseTopReport(url: topReportURL)
@@ -180,8 +181,9 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         // 2. Parse taxonomy tree from kreport for sunburst
         let kreportFiles = result.allOutputFiles.filter {
             $0.lastPathComponent.hasSuffix(".kraken2.report.txt")
-                && !$0.path.contains("/work/")  // Skip intermediate work files
+                && !$0.path.contains("/work/")
         }
+        logger.info("Found \(kreportFiles.count) kreport file(s), \(topReportFiles.count) top_report file(s)")
         if let kreportURL = kreportFiles.first {
             do {
                 let tree = try KreportParser.parse(url: kreportURL)
@@ -219,13 +221,26 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         // Configure sunburst from kreport taxonomy tree
         configureSunburst()
 
-        // Find the BAM file from alignment output
+        // Find the BAM file from TaxTriage output (check minimap2/ and alignment/)
         let bamFiles = result.allOutputFiles.filter {
             $0.pathExtension == "bam" && !$0.path.contains("/work/")
         }
         if let bam = bamFiles.first {
             bamURL = bam
-            logger.info("Found TaxTriage BAM: \(bam.lastPathComponent)")
+            // Ensure a BAI index exists (TaxTriage produces CSI, we need BAI)
+            let baiPath = bam.path + ".bai"
+            if !FileManager.default.fileExists(atPath: baiPath) {
+                // Try to generate BAI from the BAM using samtools
+                logger.info("Generating BAI index for TaxTriage BAM")
+                let indexTask = Process()
+                indexTask.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                indexTask.arguments = ["samtools", "index", bam.path]
+                try? indexTask.run()
+                indexTask.waitUntilExit()
+            }
+            logger.info("Found TaxTriage BAM: \(bam.lastPathComponent, privacy: .public) (\(bam.path.contains("minimap2") ? "minimap2" : "alignment") dir)")
+        } else {
+            logger.info("No TaxTriage BAM found (alignment may have produced no reads)")
         }
 
         // Set up the mini BAM viewer in the left pane

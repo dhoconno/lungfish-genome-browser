@@ -1293,6 +1293,7 @@ extension SidebarItemType: CustomStringConvertible {
         case .batchGroup: return "Batch Operation"
         case .classificationResult: return "Classification Result"
         case .esvirituResult: return "Viral Detection Result"
+        case .taxTriageResult: return "Comprehensive Triage Result"
         }
     }
 }
