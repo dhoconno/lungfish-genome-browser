@@ -17,9 +17,9 @@ public enum OperationType: String, Sendable {
     case ingestion = "Ingestion"
     case fastqOperation = "FASTQ Op"
     case qualityReport = "Quality Report"
-    case taxonomyExtraction = "Taxonomy Extraction"
+    case taxonomyExtraction = "Extraction"
     case classification = "Classification"
-    case blastVerification = "BLAST Verification"
+    case blastVerification = "BLAST"
 
     /// Whether this operation type should appear in the Downloads popover.
     ///

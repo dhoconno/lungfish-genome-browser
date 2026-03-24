@@ -701,7 +701,7 @@ public actor MetagenomicsDatabaseRegistry {
             databases[name] = db
             try? saveManifest()
 
-            if (error as NSError).code == NSURLErrorCancelled {
+            if error is CancellationError || (error as NSError).code == NSURLErrorCancelled {
                 throw MetagenomicsDatabaseRegistryError.downloadCancelled(name: name)
             }
             throw MetagenomicsDatabaseRegistryError.downloadFailed(
@@ -819,30 +819,43 @@ public actor MetagenomicsDatabaseRegistry {
     }
 
     /// Downloads a file using URLSession with progress reporting.
+    ///
+    /// Bridges Swift Task cancellation to URLSession cancellation using
+    /// `withTaskCancellationHandler`, so cancelling the parent Task
+    /// (e.g., from the UI cancel button) also cancels the network download.
     private func downloadFile(
         from url: URL,
         progress: @Sendable @escaping (Double, Int64, Int64) -> Void
     ) async throws -> URL {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
-            let delegate = DownloadProgressDelegate(
-                progress: progress,
-                completion: { result in
-                    switch result {
-                    case .success(let url):
-                        continuation.resume(returning: url)
-                    case .failure(let error):
-                        continuation.resume(throwing: error)
-                    }
-                }
-            )
+        // Use nonisolated(unsafe) for the task reference that crosses
+        // the isolation boundary into the cancellation handler.
+        nonisolated(unsafe) var downloadTask: URLSessionDownloadTask?
 
-            let session = URLSession(
-                configuration: .default,
-                delegate: delegate,
-                delegateQueue: nil
-            )
-            let task = session.downloadTask(with: url)
-            task.resume()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
+                let delegate = DownloadProgressDelegate(
+                    progress: progress,
+                    completion: { result in
+                        switch result {
+                        case .success(let url):
+                            continuation.resume(returning: url)
+                        case .failure(let error):
+                            continuation.resume(throwing: error)
+                        }
+                    }
+                )
+
+                let session = URLSession(
+                    configuration: .default,
+                    delegate: delegate,
+                    delegateQueue: nil
+                )
+                let task = session.downloadTask(with: url)
+                downloadTask = task
+                task.resume()
+            }
+        } onCancel: {
+            downloadTask?.cancel()
         }
     }
 
