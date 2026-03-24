@@ -75,20 +75,16 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     /// Parsed organisms from the report files.
     private(set) var organisms: [TaxTriageOrganism] = []
 
+    /// Taxonomy tree parsed from the Kraken2 kreport (for sunburst).
+    private var taxonomyTree: TaxonTree?
+
     // MARK: - Child Views
 
     private let summaryBar = TaxTriageSummaryBar()
     let splitView = NSSplitView()
+    private let sunburstView = TaxonomySunburstView()
     private let organismTableView = TaxTriageOrganismTableView()
-    private let tabView = NSTabView()
     let actionBar = TaxTriageActionBar()
-
-    // MARK: - Tab Content
-
-    private var pdfView: PDFView?
-    private var kronaWebView: WKWebView?
-    private var pdfPlaceholderLabel: NSTextField?
-    private var kronaPlaceholderLabel: NSTextField?
 
     // MARK: - Split View State
 
@@ -133,8 +129,9 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
 
     /// Configures the view with a TaxTriage result and optional config.
     ///
-    /// Parses report and metrics files, populates the summary bar, organism table,
-    /// tab views, and action bar.
+    /// Parses the top_report.tsv for organism data and the kreport for the
+    /// taxonomy tree. Falls back to parsing metrics/report files if the
+    /// primary files aren't found.
     ///
     /// - Parameters:
     ///   - result: The TaxTriage pipeline result.
@@ -143,31 +140,55 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         taxTriageResult = result
         taxTriageConfig = config ?? result.config
 
-        // Parse metrics from all metrics files
-        var allMetrics: [TaxTriageMetric] = []
-        for metricsURL in result.metricsFiles {
-            do {
-                let parsed = try TaxTriageMetricsParser.parse(url: metricsURL)
-                allMetrics.append(contentsOf: parsed)
-            } catch {
-                logger.warning("Failed to parse metrics file \(metricsURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            }
-        }
-        metrics = allMetrics
+        // Strategy: find the top_report.tsv (has organism names + read counts)
+        // and the kreport.txt (has full taxonomy tree for sunburst).
+        let outputDir = result.outputDirectory
 
-        // Parse organisms from all report files
+        // 1. Parse organisms from top_report.tsv
         var allOrganisms: [TaxTriageOrganism] = []
-        for reportURL in result.reportFiles {
-            do {
-                let parsed = try TaxTriageReportParser.parse(url: reportURL)
-                allOrganisms.append(contentsOf: parsed)
-            } catch {
-                logger.warning("Failed to parse report file \(reportURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        let topReportFiles = result.allOutputFiles.filter {
+            $0.lastPathComponent.contains("top_report.tsv")
+        }
+        for topReportURL in topReportFiles {
+            let parsed = parseTopReport(url: topReportURL)
+            allOrganisms.append(contentsOf: parsed)
+        }
+
+        // Fallback: try the old report parsing if no top_report found
+        if allOrganisms.isEmpty {
+            for reportURL in result.reportFiles {
+                if let parsed = try? TaxTriageReportParser.parse(url: reportURL) {
+                    allOrganisms.append(contentsOf: parsed)
+                }
             }
         }
         organisms = allOrganisms
 
-        // Merge organism data with metrics for richer display
+        // 2. Parse taxonomy tree from kreport for sunburst
+        let kreportFiles = result.allOutputFiles.filter {
+            $0.lastPathComponent.hasSuffix(".kraken2.report.txt")
+                && !$0.path.contains("/work/")  // Skip intermediate work files
+        }
+        if let kreportURL = kreportFiles.first {
+            do {
+                let tree = try KreportParser.parse(url: kreportURL)
+                taxonomyTree = tree
+                logger.info("Parsed kreport with \(tree.totalReads) total reads, \(tree.speciesCount) species")
+            } catch {
+                logger.warning("Failed to parse kreport: \(error.localizedDescription)")
+            }
+        }
+
+        // 3. Parse TASS metrics if available
+        var allMetrics: [TaxTriageMetric] = []
+        for metricsURL in result.metricsFiles {
+            if let parsed = try? TaxTriageMetricsParser.parse(url: metricsURL) {
+                allMetrics.append(contentsOf: parsed)
+            }
+        }
+        metrics = allMetrics
+
+        // Build table rows from organisms (enriched with metrics if available)
         let mergedRows = buildTableRows(organisms: allOrganisms, metrics: allMetrics)
 
         // Update summary bar
@@ -182,8 +203,8 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         organismTableView.rows = mergedRows
 
         // Configure tabs
-        configurePDFTab(result: result)
-        configureKronaTab(result: result)
+        // Configure sunburst from kreport taxonomy tree
+        configureSunburst()
 
         // Update action bar
         actionBar.configure(
@@ -271,21 +292,20 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         splitView.dividerStyle = .thin
         splitView.delegate = self
 
-        // Left pane: organism table
+        // Left pane: sunburst chart (CoreGraphics, same as Kraken2 view)
+        let sunburstContainer = NSView()
+        sunburstView.autoresizingMask = [.width, .height]
+        sunburstContainer.addSubview(sunburstView)
+
+        // Right pane: organism table (same position as Kraken2/EsViritu)
         let tableContainer = NSView()
         organismTableView.autoresizingMask = [.width, .height]
         tableContainer.addSubview(organismTableView)
 
-        // Right pane: tab view
-        let tabContainer = NSView()
-        setupTabView()
-        tabView.autoresizingMask = [.width, .height]
-        tabContainer.addSubview(tabView)
-
+        splitView.addArrangedSubview(sunburstContainer)
         splitView.addArrangedSubview(tableContainer)
-        splitView.addArrangedSubview(tabContainer)
 
-        // Left pane holds width more firmly
+        // Sunburst holds width more firmly, table is flexible
         splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
         splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
 
@@ -293,94 +313,58 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     }
 
     /// Sets up the NSTabView with Report and Krona tabs.
-    private func setupTabView() {
-        // Report tab (PDF)
-        let reportTab = NSTabViewItem(identifier: "report")
-        reportTab.label = "Report"
+    // MARK: - Top Report Parser
 
-        let reportContainer = NSView()
-        let pdfViewInstance = PDFView()
-        pdfViewInstance.autoScales = true
-        pdfViewInstance.displayMode = .singlePageContinuous
-        pdfViewInstance.autoresizingMask = [.width, .height]
-        reportContainer.addSubview(pdfViewInstance)
-        self.pdfView = pdfViewInstance
+    /// Parses the TaxTriage top_report.tsv into TaxTriageOrganism objects.
+    ///
+    /// The top_report.tsv has columns:
+    /// `abundance, clade_fragments_covered, number_fragments_assigned, rank, taxid, name`
+    private func parseTopReport(url: URL) -> [TaxTriageOrganism] {
+        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return [] }
 
-        let pdfPlaceholder = NSTextField(labelWithString: "No PDF report generated")
-        pdfPlaceholder.font = .systemFont(ofSize: 14, weight: .regular)
-        pdfPlaceholder.textColor = .tertiaryLabelColor
-        pdfPlaceholder.alignment = .center
-        pdfPlaceholder.translatesAutoresizingMaskIntoConstraints = false
-        reportContainer.addSubview(pdfPlaceholder)
-        NSLayoutConstraint.activate([
-            pdfPlaceholder.centerXAnchor.constraint(equalTo: reportContainer.centerXAnchor),
-            pdfPlaceholder.centerYAnchor.constraint(equalTo: reportContainer.centerYAnchor),
-        ])
-        self.pdfPlaceholderLabel = pdfPlaceholder
+        let lines = content.components(separatedBy: .newlines)
+        guard lines.count > 1 else { return [] }
 
-        reportTab.view = reportContainer
+        var organisms: [TaxTriageOrganism] = []
 
-        // Krona tab (WebView)
-        let kronaTab = NSTabViewItem(identifier: "krona")
-        kronaTab.label = "Krona"
+        for line in lines.dropFirst() {  // Skip header
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
 
-        let kronaContainer = NSView()
-        let webConfig = WKWebViewConfiguration()
-        webConfig.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
-        let webView = WKWebView(frame: .zero, configuration: webConfig)
-        webView.autoresizingMask = [.width, .height]
-        kronaContainer.addSubview(webView)
-        self.kronaWebView = webView
+            let cols = trimmed.components(separatedBy: "\t")
+            guard cols.count >= 6 else { continue }
 
-        let kronaPlaceholder = NSTextField(labelWithString: "No Krona visualization available")
-        kronaPlaceholder.font = .systemFont(ofSize: 14, weight: .regular)
-        kronaPlaceholder.textColor = .tertiaryLabelColor
-        kronaPlaceholder.alignment = .center
-        kronaPlaceholder.translatesAutoresizingMaskIntoConstraints = false
-        kronaContainer.addSubview(kronaPlaceholder)
-        NSLayoutConstraint.activate([
-            kronaPlaceholder.centerXAnchor.constraint(equalTo: kronaContainer.centerXAnchor),
-            kronaPlaceholder.centerYAnchor.constraint(equalTo: kronaContainer.centerYAnchor),
-        ])
-        self.kronaPlaceholderLabel = kronaPlaceholder
+            let abundance = Double(cols[0]) ?? 0
+            let cladeReads = Int(Double(cols[1]) ?? 0)
+            let directReads = Int(Double(cols[2]) ?? 0)
+            let rank = cols[3]
+            let taxId = Int(cols[4])
+            let name = cols[5]
 
-        kronaTab.view = kronaContainer
-
-        tabView.addTabViewItem(reportTab)
-        tabView.addTabViewItem(kronaTab)
-        tabView.tabViewType = .topTabsBezelBorder
-    }
-
-    /// Loads the first available PDF report into the PDFView.
-    private func configurePDFTab(result: TaxTriageResult) {
-        // Look for PDF files in all output files
-        let pdfFiles = result.allOutputFiles.filter { $0.pathExtension.lowercased() == "pdf" }
-        // Also check report files in case they are PDFs
-        let reportPDFs = result.reportFiles.filter { $0.pathExtension.lowercased() == "pdf" }
-        let allPDFs = pdfFiles + reportPDFs
-
-        if let firstPDF = allPDFs.first, let doc = PDFDocument(url: firstPDF) {
-            pdfView?.document = doc
-            pdfView?.isHidden = false
-            pdfPlaceholderLabel?.isHidden = true
-            logger.info("Loaded PDF report: \(firstPDF.lastPathComponent, privacy: .public)")
-        } else {
-            pdfView?.isHidden = true
-            pdfPlaceholderLabel?.isHidden = false
+            let organism = TaxTriageOrganism(
+                name: name,
+                score: abundance,
+                reads: cladeReads,
+                coverage: nil,
+                taxId: taxId,
+                rank: rank
+            )
+            organisms.append(organism)
         }
+
+        // Sort by clade reads descending
+        organisms.sort { $0.reads > $1.reads }
+
+        logger.info("Parsed \(organisms.count) organisms from \(url.lastPathComponent)")
+        return organisms
     }
 
-    /// Loads the first available Krona HTML into the WKWebView.
-    private func configureKronaTab(result: TaxTriageResult) {
-        if let firstKrona = result.kronaFiles.first {
-            let directoryURL = firstKrona.deletingLastPathComponent()
-            kronaWebView?.loadFileURL(firstKrona, allowingReadAccessTo: directoryURL)
-            kronaWebView?.isHidden = false
-            kronaPlaceholderLabel?.isHidden = true
-            logger.info("Loaded Krona HTML: \(firstKrona.lastPathComponent, privacy: .public)")
-        } else {
-            kronaWebView?.isHidden = true
-            kronaPlaceholderLabel?.isHidden = false
+    /// Configures the sunburst with the taxonomy tree from the kreport.
+    private func configureSunburst() {
+        if let tree = taxonomyTree {
+            sunburstView.tree = tree
+            sunburstView.centerNode = nil
+            sunburstView.selectedNode = nil
         }
     }
 
@@ -668,8 +652,8 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     /// Returns the split view for testing.
     var testSplitView: NSSplitView { splitView }
 
-    /// Returns the tab view for testing.
-    var testTabView: NSTabView { tabView }
+    /// Returns the sunburst view for testing.
+    var testSunburstView: TaxonomySunburstView { sunburstView }
 
     /// Returns the current result for testing.
     var testResult: TaxTriageResult? { taxTriageResult }
