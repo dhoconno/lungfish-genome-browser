@@ -305,6 +305,15 @@ public actor TaxTriagePipeline {
         var environment = ProcessInfo.processInfo.environment
         environment["NXF_ANSI_LOG"] = "false"
 
+        // Ensure Docker is in PATH — micromamba's restricted PATH may not
+        // include /usr/local/bin where Docker Desktop installs its CLI.
+        let currentPath = environment["PATH"] ?? ""
+        let dockerPaths = ["/usr/local/bin", "/opt/homebrew/bin"]
+        let missingPaths = dockerPaths.filter { !currentPath.contains($0) }
+        if !missingPaths.isEmpty {
+            environment["PATH"] = (missingPaths + [currentPath]).joined(separator: ":")
+        }
+
         // Fix spaces-in-path issue: the conda-installed Nextflow wrapper script
         // has the conda prefix hardcoded into NXF_DIST without proper quoting.
         // Patch the script to quote the NXF_DIST assignment.
