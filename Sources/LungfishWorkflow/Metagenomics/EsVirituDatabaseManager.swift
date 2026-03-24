@@ -135,18 +135,66 @@ public actor EsVirituDatabaseManager {
 
     /// Whether the database is installed and contains the expected files.
     ///
-    /// Checks for the existence of the database directory and at least
-    /// one expected marker file.
+    /// Checks two locations:
+    /// 1. The legacy versioned path (`~/.lungfish/databases/esviritu/<version>/`)
+    /// 2. The registry-managed path (from ``MetagenomicsDatabaseRegistry``)
     ///
     /// - Returns: `true` if the database appears to be installed and valid.
     public func isInstalled() -> Bool {
+        // Check the registry first (preferred — this is where the Plugin Manager stores it)
+        if let registryPath = registryDatabasePath() {
+            return directoryContainsEsVirituDB(registryPath)
+        }
+
+        // Fall back to the legacy versioned path
+        return directoryContainsEsVirituDB(databaseURL)
+    }
+
+    /// Returns the database path from the registry-managed location.
+    ///
+    /// Checks the registry download path directly via filesystem
+    /// rather than querying the `MetagenomicsDatabaseRegistry` actor, avoiding
+    /// cross-actor isolation issues. Uses the same `databasesRoot` as this manager.
+    private func registryDatabasePath() -> URL? {
+        let registryDir = databasesRoot
+            .appendingPathComponent("esviritu/esviritu-viral-db")
+        if FileManager.default.fileExists(atPath: registryDir.path) {
+            return registryDir
+        }
+        return nil
+    }
+
+    /// Checks whether a directory contains EsViritu database files.
+    private func directoryContainsEsVirituDB(_ dbDir: URL) -> Bool {
         let fm = FileManager.default
-        let dbDir = databaseURL
 
         guard fm.fileExists(atPath: dbDir.path) else { return false }
 
-        // Check for key database files.
-        // EsViritu databases typically contain these marker files.
+        // Check for key database files — look for any FASTA or index files.
+        // EsViritu DB structure varies by version, so check broadly.
+        let contents = (try? fm.contentsOfDirectory(at: dbDir, includingPropertiesForKeys: nil)) ?? []
+
+        // Check top-level and one level of subdirectories
+        let allFiles = contents + contents.flatMap { subdir -> [URL] in
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: subdir.path, isDirectory: &isDir), isDir.boolValue else { return [] }
+            return (try? fm.contentsOfDirectory(at: subdir, includingPropertiesForKeys: nil)) ?? []
+        }
+
+        let hasFasta = allFiles.contains { url in
+            let ext = url.pathExtension.lowercased()
+            return ext == "fasta" || ext == "fa" || ext == "fna" || ext == "mmi"
+        }
+
+        return hasFasta
+    }
+
+    /// Returns the names of required Kraken2 files missing from a directory.
+    /// Kept for backward compatibility but no longer used for EsViritu validation.
+    private func _legacyCheck(_ dbDir: URL) -> Bool {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: dbDir.path) else { return false }
+
         let markerFiles = ["refseq_viral.fasta", "taxonomy", "metadata"]
         for marker in markerFiles {
             let markerPath = dbDir.appendingPathComponent(marker)
@@ -167,9 +215,17 @@ public actor EsVirituDatabaseManager {
     public func installedDatabaseInfo() -> (version: String, path: URL, sizeBytes: Int64)? {
         guard isInstalled() else { return nil }
 
+        // Prefer the registry-managed path
+        if let registryPath = registryDatabasePath() {
+            if directoryContainsEsVirituDB(registryPath) {
+                let size = directorySize(at: registryPath)
+                return (version: Self.currentVersion, path: registryPath, sizeBytes: size)
+            }
+        }
+
+        // Fall back to legacy path
         let dbDir = databaseURL
         let size = directorySize(at: dbDir)
-
         return (version: Self.currentVersion, path: dbDir, sizeBytes: size)
     }
 
