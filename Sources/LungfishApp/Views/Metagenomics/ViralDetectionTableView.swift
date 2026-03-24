@@ -699,7 +699,16 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         case ColumnID.rpkmf:
             return makeDecimalCell(value: assembly.rpkmf, format: "%.1f")
         case ColumnID.coverage:
-            return makeCoverageCell(meanCoverage: assembly.meanCoverage, accession: nil)
+            // For single-contig assemblies, show the contig's sparkline.
+            // For multi-segment assemblies, show the primary (largest) contig's sparkline.
+            let sparklineAccession: String?
+            if assembly.contigs.count == 1 {
+                sparklineAccession = assembly.contigs.first?.accession
+            } else {
+                // Pick the contig with the most reads for the assembly sparkline
+                sparklineAccession = assembly.contigs.max(by: { $0.readCount < $1.readCount })?.accession
+            }
+            return makeCoverageCell(meanCoverage: assembly.meanCoverage, accession: sparklineAccession)
         case ColumnID.identity:
             return makeDecimalCell(value: assembly.avgReadIdentity, format: "%.1f%%")
         case ColumnID.segment:

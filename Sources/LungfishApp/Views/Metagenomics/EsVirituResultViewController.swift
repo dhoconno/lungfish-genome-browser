@@ -108,6 +108,10 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     /// Called when the user wants to re-run EsViritu with the same or different settings.
     public var onReRun: (() -> Void)?
 
+    /// Called when the user clicks "View Alignments" to open the BAM viewer
+    /// for a specific viral reference. Parameters: BAM URL, reference accession.
+    public var onViewBAM: ((URL, String) -> Void)?
+
     // MARK: - Lifecycle
 
     public override func loadView() {
@@ -262,12 +266,17 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     // MARK: - Callback Wiring
 
     private func wireCallbacks() {
-        // Table selection -> detail pane update
+        // Table selection -> detail pane + action bar update
         detectionTableView.onAssemblySelected = { [weak self] assembly in
             guard let self else { return }
             if let assembly {
+                // Update action bar with selection info
+                self.actionBar.updateSelection(
+                    assemblyName: assembly.name,
+                    readCount: assembly.totalReads
+                )
+
                 // Show coverage detail for the selected virus
-                let accessions = assembly.contigs.map(\.accession)
                 var windows: [String: [ViralCoverageWindow]] = [:]
                 for contig in assembly.contigs {
                     if let w = self.detectionTableView.coverageWindowsByAccession[contig.accession] {
@@ -291,26 +300,13 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             }
         }
 
-        // Legacy sunburst selection sync (keeping pattern for future use)
-        _ = { [weak self] (node: TaxonNode) in
-            guard let self, !self.suppressSelectionSync else { return }
-            self.suppressSelectionSync = true
-            let nodeName = node.name
-            let matchingAssembly = self.esVirituResult?.assemblies.first { assembly in
-                let speciesOrName = assembly.species ?? assembly.name
-                return speciesOrName == nodeName || assembly.name == nodeName
-            }
-            if let assembly = matchingAssembly {
-                self.detectionTableView.selectAssembly(assembly)
-                self.actionBar.updateSelection(assemblyName: assembly.name, readCount: assembly.totalReads)
-            }
-            self.suppressSelectionSync = false
+        // Detail pane "View Alignments" button -> forward to host VC
+        detailPane.onViewBAM = { [weak self] accession in
+            guard let self, let bamURL = self.bamURL else { return }
+            self.onViewBAM?(bamURL, accession)
         }
 
-        // Table assembly selection -> action bar + detail pane update
-        // (This is the SECOND onAssemblySelected handler — it updates the
-        // action bar. The first handler in wireCallbacks updates the detail pane.)
-        // We combine them by removing this one and handling everything in the
+        // Previous action bar / detail pane wiring handled above.
         // first handler above.
 
         // Table detection selection -> action bar update

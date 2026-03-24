@@ -48,8 +48,12 @@ public final class EsVirituDetailPane: NSView {
     private var selectedCoverageWindows: [String: [ViralCoverageWindow]] = [:]
     private var bamAvailable: Bool = false
 
-    /// Called when the user clicks "View in BAM Viewer".
+    /// Called when the user clicks "View in BAM Viewer" for detailed inspection.
     public var onViewBAM: ((String) -> Void)?  // accession
+
+    /// Called when the user selects a virus and BAM is available — triggers
+    /// automatic alignment loading in the detail pane.
+    public var onLoadAlignments: ((URL, String) -> Void)?  // bamURL, accession
 
     // MARK: - Subviews
 
@@ -233,10 +237,24 @@ public final class EsVirituDetailPane: NSView {
         )
         contentView.addSubview(coveragePlotView)
 
-        // BAM button (only if BAM is available)
-        if bamAvailable {
+        // BAM alignment summary (shown automatically when BAM is available)
+        let alignmentLabel = NSTextField(labelWithString: "")
+        if bamAvailable, let primaryAccession = assembly.contigs.first?.accession {
+            alignmentLabel.stringValue = "Alignments to \(primaryAccession)"
+            alignmentLabel.font = .systemFont(ofSize: 11, weight: .medium)
+            alignmentLabel.textColor = .secondaryLabelColor
+            alignmentLabel.translatesAutoresizingMaskIntoConstraints = false
+            contentView.addSubview(alignmentLabel)
+
+            // "Open in Full Viewer" link for detailed inspection
+            bamButton.title = "Open in Full Viewer"
             bamButton.isHidden = false
+            bamButton.controlSize = .small
+            bamButton.font = .systemFont(ofSize: 11)
             contentView.addSubview(bamButton)
+
+            // Notify the host to load alignment data
+            onLoadAlignments?(URL(fileURLWithPath: ""), primaryAccession)
         }
 
         var constraints = [
@@ -258,8 +276,11 @@ public final class EsVirituDetailPane: NSView {
 
         if bamAvailable {
             constraints += [
-                bamButton.topAnchor.constraint(equalTo: coveragePlotView.bottomAnchor, constant: 12),
-                bamButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+                alignmentLabel.topAnchor.constraint(equalTo: coveragePlotView.bottomAnchor, constant: 12),
+                alignmentLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+
+                bamButton.centerYAnchor.constraint(equalTo: alignmentLabel.centerYAnchor),
+                bamButton.leadingAnchor.constraint(equalTo: alignmentLabel.trailingAnchor, constant: 8),
                 bamButton.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -16),
             ]
         } else {
