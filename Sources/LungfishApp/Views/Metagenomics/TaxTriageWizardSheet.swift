@@ -87,7 +87,7 @@ struct TaxTriageWizardSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             // Title
             HStack {
-                Text("Clinical Triage with TaxTriage")
+                Text("Comprehensive Triage with TaxTriage")
                     .font(.headline)
                 Spacer()
                 Text("Nextflow Pipeline")
@@ -101,13 +101,11 @@ struct TaxTriageWizardSheet: View {
             Divider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("Run the TaxTriage end-to-end metagenomic classification pipeline with TASS confidence scoring. Requires Nextflow and a container runtime (Docker or Apple Containerization).")
-                        .font(.system(size: 12))
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Classify and score organisms with alignment-based confidence. Requires Nextflow and Docker.")
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-
-                    Divider()
 
                     // Prerequisite checks
                     prerequisiteSection
@@ -119,13 +117,11 @@ struct TaxTriageWizardSheet: View {
 
                     Divider()
 
-                    // Database picker
-                    databaseSection
-
-                    Divider()
-
-                    // Platform picker
-                    platformSection
+                    // Database + Platform side by side
+                    HStack(alignment: .top, spacing: 20) {
+                        databaseSection
+                        platformSection
+                    }
 
                     Divider()
 
@@ -138,7 +134,7 @@ struct TaxTriageWizardSheet: View {
                     advancedSettings
                 }
                 .padding(.horizontal, 20)
-                .padding(.vertical, 12)
+                .padding(.vertical, 8)
             }
 
             Divider()
@@ -166,7 +162,7 @@ struct TaxTriageWizardSheet: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
         }
-        .frame(width: 560, height: 700)
+        .frame(width: 560, height: 580)
         .onAppear {
             populateFromInitialFiles()
             checkPrerequisites()
