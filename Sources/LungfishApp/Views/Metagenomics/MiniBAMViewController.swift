@@ -1,0 +1,544 @@
+// MiniBAMViewController.swift - Compact BAM alignment viewer for EsViritu detail pane
+// Copyright (c) 2025 Lungfish Contributors
+// SPDX-License-Identifier: MIT
+
+import AppKit
+import LungfishCore
+import LungfishIO
+import os.log
+
+private let logger = Logger(subsystem: LogSubsystem.app, category: "MiniBAM")
+
+// MARK: - MiniBAMViewController
+
+/// A compact BAM alignment viewer that shows base-level read pileup for a viral contig.
+///
+/// Designed to be embedded in the EsViritu detail pane. Unlike the full
+/// `SequenceViewerView`, this controller is lightweight:
+/// - Creates its own `AlignmentDataProvider` from a BAM path
+/// - Renders reads using CoreGraphics directly (no tile cache)
+/// - Shows the entire viral contig in a scrollable view
+/// - Highlights potential PCR duplicates (identical start/end positions)
+///
+/// ## Layout
+///
+/// ```
+/// +--------------------------------------------------+
+/// | Coverage depth track (40px)                      |
+/// | [area chart showing depth across contig]         |
+/// +--------------------------------------------------+
+/// | Read pileup (scrollable, variable height)        |
+/// | [packed reads with mismatch coloring, arrows]    |
+/// | [duplicate reads highlighted in orange]          |
+/// +--------------------------------------------------+
+/// | Status: "42 reads (3 potential duplicates)"      |
+/// +--------------------------------------------------+
+/// ```
+@MainActor
+public final class MiniBAMViewController: NSViewController {
+
+    // MARK: - Properties
+
+    private var bamURL: URL?
+    private var indexURL: URL?
+    private var contigName: String = ""
+    private var contigLength: Int = 0
+    private var reads: [AlignedRead] = []
+    private var duplicateIndices: Set<Int> = []
+    private var depthPoints: [DepthPoint] = []
+
+    // MARK: - Subviews
+
+    private let scrollView = NSScrollView()
+    private let pileupView = MiniPileupView()
+    private let statusLabel = NSTextField(labelWithString: "")
+
+    // MARK: - Lifecycle
+
+    public override func loadView() {
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        view = container
+
+        setupScrollView()
+        setupStatusLabel()
+    }
+
+    private func setupScrollView() {
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        scrollView.documentView = pileupView
+        view.addSubview(scrollView)
+
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.font = .systemFont(ofSize: 10)
+        statusLabel.textColor = .tertiaryLabelColor
+        statusLabel.alignment = .center
+        view.addSubview(statusLabel)
+
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -2),
+
+            statusLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 4),
+            statusLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -4),
+            statusLabel.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -2),
+            statusLabel.heightAnchor.constraint(equalToConstant: 14),
+        ])
+    }
+
+    private func setupStatusLabel() {
+        statusLabel.stringValue = "Select a virus to view alignments"
+    }
+
+    // MARK: - Public API
+
+    /// Loads and displays reads for a specific viral contig from the BAM file.
+    ///
+    /// - Parameters:
+    ///   - bamURL: Path to the sorted, indexed BAM file.
+    ///   - contig: The viral contig accession to display.
+    ///   - contigLength: Length of the reference contig in base pairs.
+    public func displayContig(bamURL: URL, contig: String, contigLength: Int) {
+        self.bamURL = bamURL
+        self.contigName = contig
+        self.contigLength = contigLength
+
+        let indexPath = bamURL.path + ".bai"
+        guard FileManager.default.fileExists(atPath: indexPath) else {
+            statusLabel.stringValue = "BAM index not found"
+            logger.warning("BAM index not found at \(indexPath)")
+            return
+        }
+
+        let provider = AlignmentDataProvider(
+            alignmentPath: bamURL.path,
+            indexPath: indexPath
+        )
+
+        // Fetch all reads for this contig (viral genomes are small, so fetch everything)
+        Task { @MainActor in
+            do {
+                let fetchedReads = try await provider.fetchReads(
+                    chromosome: contig,
+                    start: 0,
+                    end: contigLength,
+                    maxReads: 5000
+                )
+
+                self.reads = fetchedReads
+                self.detectDuplicates()
+                self.updatePileup()
+
+                let dupCount = self.duplicateIndices.count
+                let dupText = dupCount > 0 ? " (\(dupCount) potential PCR duplicates)" : ""
+                self.statusLabel.stringValue = "\(fetchedReads.count) reads aligned to \(contig)\(dupText)"
+
+                logger.info("Loaded \(fetchedReads.count) reads for \(contig, privacy: .public), \(dupCount) potential duplicates")
+            } catch {
+                self.statusLabel.stringValue = "Failed to load reads: \(error.localizedDescription)"
+                logger.error("Failed to fetch reads for \(contig, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    /// Clears the current display.
+    public func clear() {
+        reads = []
+        duplicateIndices = []
+        depthPoints = []
+        pileupView.clear()
+        statusLabel.stringValue = "Select a virus to view alignments"
+    }
+
+    // MARK: - Duplicate Detection
+
+    /// Identifies potential PCR duplicates: reads with identical start and end positions.
+    private func detectDuplicates() {
+        duplicateIndices = []
+
+        // Group reads by (start, end) position
+        var positionCounts: [String: [Int]] = [:]
+        for (i, read) in reads.enumerated() {
+            let key = "\(read.position)-\(read.alignmentEnd)"
+            positionCounts[key, default: []].append(i)
+        }
+
+        // Mark reads in groups of >1 as potential duplicates
+        for (_, indices) in positionCounts where indices.count > 1 {
+            for idx in indices {
+                duplicateIndices.insert(idx)
+            }
+        }
+    }
+
+    // MARK: - Pileup Update
+
+    private func updatePileup() {
+        pileupView.configure(
+            reads: reads,
+            duplicateIndices: duplicateIndices,
+            contigName: contigName,
+            contigLength: contigLength,
+            viewportWidth: scrollView.contentSize.width
+        )
+    }
+}
+
+// MARK: - MiniPileupView
+
+/// CoreGraphics-based view that renders a compact BAM pileup with base-level detail.
+///
+/// Renders:
+/// - **Coverage depth track** (top 40px): area chart showing per-position depth
+/// - **Read pileup** (below): packed reads with colored bases at mismatches,
+///   strand arrows, soft-clip indicators, and duplicate highlighting
+@MainActor
+final class MiniPileupView: NSView {
+
+    // MARK: - Data
+
+    private var reads: [AlignedRead] = []
+    private var duplicateIndices: Set<Int> = []
+    private var contigName: String = ""
+    private var contigLength: Int = 0
+    private var packedRows: [[Int]] = []  // indices into reads array per row
+    private var bpPerPixel: Double = 1.0
+
+    // MARK: - Constants
+
+    private let depthTrackHeight: CGFloat = 40
+    private let readHeight: CGFloat = 12
+    private let readGap: CGFloat = 2
+    private let leftMargin: CGFloat = 4
+    private let topMargin: CGFloat = 4
+
+    // MARK: - Configuration
+
+    func configure(
+        reads: [AlignedRead],
+        duplicateIndices: Set<Int>,
+        contigName: String,
+        contigLength: Int,
+        viewportWidth: CGFloat
+    ) {
+        self.reads = reads
+        self.duplicateIndices = duplicateIndices
+        self.contigName = contigName
+        self.contigLength = contigLength
+
+        // Compute bp/px to fit entire contig in the viewport width
+        let effectiveWidth = max(1, viewportWidth - leftMargin * 2)
+        bpPerPixel = max(1, Double(contigLength) / Double(effectiveWidth))
+
+        // Pack reads into rows (greedy left-to-right packing)
+        packReads()
+
+        // Set frame size
+        let pileupHeight = CGFloat(packedRows.count) * (readHeight + readGap) + depthTrackHeight + topMargin * 2
+        let contentWidth = max(viewportWidth, CGFloat(Double(contigLength) / bpPerPixel) + leftMargin * 2)
+        frame = NSRect(x: 0, y: 0, width: contentWidth, height: max(200, pileupHeight))
+
+        needsDisplay = true
+    }
+
+    func clear() {
+        reads = []
+        duplicateIndices = []
+        packedRows = []
+        frame = NSRect(x: 0, y: 0, width: 100, height: 100)
+        needsDisplay = true
+    }
+
+    // MARK: - Read Packing
+
+    private func packReads() {
+        packedRows = []
+        let sorted = reads.indices.sorted { reads[$0].position < reads[$1].position }
+
+        for idx in sorted {
+            let read = reads[idx]
+            let readEnd = read.alignmentEnd
+
+            // Find first row where this read fits
+            var placed = false
+            for row in 0..<packedRows.count {
+                if let lastIdx = packedRows[row].last {
+                    let lastEnd = reads[lastIdx].alignmentEnd
+                    if read.position > lastEnd + 2 {  // 2bp gap
+                        packedRows[row].append(idx)
+                        placed = true
+                        break
+                    }
+                }
+            }
+            if !placed {
+                packedRows.append([idx])
+            }
+        }
+    }
+
+    // MARK: - Drawing
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard !reads.isEmpty else {
+            drawEmptyState()
+            return
+        }
+
+        drawDepthTrack(in: dirtyRect)
+        drawPileup(in: dirtyRect)
+    }
+
+    // MARK: - Depth Track
+
+    private func drawDepthTrack(in dirtyRect: NSRect) {
+        let trackRect = NSRect(x: leftMargin, y: bounds.height - depthTrackHeight - topMargin,
+                               width: bounds.width - leftMargin * 2, height: depthTrackHeight)
+
+        // Compute per-pixel depth
+        let pixelCount = Int(trackRect.width)
+        guard pixelCount > 0 else { return }
+
+        var depths = [Int](repeating: 0, count: pixelCount)
+        for read in reads {
+            let startPx = max(0, Int(Double(read.position) / bpPerPixel))
+            let endPx = min(pixelCount - 1, Int(Double(read.alignmentEnd) / bpPerPixel))
+            for px in startPx...endPx {
+                depths[px] += 1
+            }
+        }
+
+        let maxDepth = max(1, depths.max() ?? 1)
+
+        // Draw area chart
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: trackRect.minX, y: trackRect.minY))
+
+        for (i, depth) in depths.enumerated() {
+            let x = trackRect.minX + CGFloat(i)
+            let normalizedDepth = CGFloat(depth) / CGFloat(maxDepth)
+            let y = trackRect.minY + trackRect.height * normalizedDepth
+            path.line(to: NSPoint(x: x, y: y))
+        }
+
+        path.line(to: NSPoint(x: trackRect.maxX, y: trackRect.minY))
+        path.close()
+
+        NSColor.controlAccentColor.withAlphaComponent(0.2).setFill()
+        path.fill()
+
+        // Stroke top edge
+        let strokePath = NSBezierPath()
+        for (i, depth) in depths.enumerated() {
+            let x = trackRect.minX + CGFloat(i)
+            let normalizedDepth = CGFloat(depth) / CGFloat(maxDepth)
+            let y = trackRect.minY + trackRect.height * normalizedDepth
+            if i == 0 { strokePath.move(to: NSPoint(x: x, y: y)) }
+            else { strokePath.line(to: NSPoint(x: x, y: y)) }
+        }
+        NSColor.controlAccentColor.withAlphaComponent(0.6).setStroke()
+        strokePath.lineWidth = 1
+        strokePath.stroke()
+
+        // Max depth label
+        let maxLabel = "\(maxDepth)x" as NSString
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        maxLabel.draw(at: NSPoint(x: trackRect.minX + 2, y: trackRect.maxY - 12), withAttributes: attrs)
+    }
+
+    // MARK: - Read Pileup
+
+    private func drawPileup(in dirtyRect: NSRect) {
+        let pileupTop = bounds.height - depthTrackHeight - topMargin * 2
+
+        for (rowIdx, row) in packedRows.enumerated() {
+            let rowY = pileupTop - CGFloat(rowIdx + 1) * (readHeight + readGap)
+            guard rowY + readHeight >= dirtyRect.minY && rowY <= dirtyRect.maxY else { continue }
+
+            for readIdx in row {
+                let read = reads[readIdx]
+                let isDuplicate = duplicateIndices.contains(readIdx)
+                drawRead(read, at: rowY, isDuplicate: isDuplicate, in: dirtyRect)
+            }
+        }
+    }
+
+    private func drawRead(_ read: AlignedRead, at y: CGFloat, isDuplicate: Bool, in dirtyRect: NSRect) {
+        let startX = leftMargin + CGFloat(Double(read.position) / bpPerPixel)
+        let endX = leftMargin + CGFloat(Double(read.alignmentEnd) / bpPerPixel)
+        let width = max(2, endX - startX)
+
+        let readRect = NSRect(x: startX, y: y, width: width, height: readHeight)
+
+        // Skip if outside dirty rect
+        guard readRect.intersects(dirtyRect) else { return }
+
+        // Read color: forward=blue, reverse=red, duplicate=orange
+        let baseColor: NSColor
+        if isDuplicate {
+            baseColor = .systemOrange
+        } else if read.isReverse {
+            baseColor = NSColor(red: 0.85, green: 0.45, blue: 0.45, alpha: 1.0)
+        } else {
+            baseColor = NSColor(red: 0.45, green: 0.55, blue: 0.85, alpha: 1.0)
+        }
+
+        // Draw read body
+        let readPath = NSBezierPath(roundedRect: readRect, xRadius: 2, yRadius: 2)
+        baseColor.withAlphaComponent(0.7).setFill()
+        readPath.fill()
+
+        // Draw strand arrow at the end
+        let arrowSize: CGFloat = 4
+        if read.isReverse {
+            // Left-pointing arrow
+            let arrowPath = NSBezierPath()
+            arrowPath.move(to: NSPoint(x: startX, y: y + readHeight / 2))
+            arrowPath.line(to: NSPoint(x: startX + arrowSize, y: y + readHeight))
+            arrowPath.line(to: NSPoint(x: startX + arrowSize, y: y))
+            arrowPath.close()
+            baseColor.setFill()
+            arrowPath.fill()
+        } else {
+            // Right-pointing arrow
+            let arrowPath = NSBezierPath()
+            arrowPath.move(to: NSPoint(x: endX, y: y + readHeight / 2))
+            arrowPath.line(to: NSPoint(x: endX - arrowSize, y: y + readHeight))
+            arrowPath.line(to: NSPoint(x: endX - arrowSize, y: y))
+            arrowPath.close()
+            baseColor.setFill()
+            arrowPath.fill()
+        }
+
+        // Draw mismatches from MD tag if zoom allows
+        if bpPerPixel < 5, let mdTag = read.mdTag {
+            drawMismatchesFromMD(read: read, mdTag: mdTag, readRect: readRect, y: y)
+        }
+
+        // Draw soft-clip indicators from CIGAR
+        let cigar = read.cigar
+        if let first = cigar.first, first.op == .softClip {
+            let clipWidth = max(2, CGFloat(Double(first.length) / bpPerPixel))
+            let clipRect = NSRect(x: startX, y: y, width: clipWidth, height: readHeight)
+            NSColor.systemYellow.withAlphaComponent(0.5).setFill()
+            NSBezierPath(rect: clipRect).fill()
+        }
+        if let last = cigar.last, last.op == .softClip {
+            let clipWidth = max(2, CGFloat(Double(last.length) / bpPerPixel))
+            let clipRect = NSRect(x: endX - clipWidth, y: y, width: clipWidth, height: readHeight)
+            NSColor.systemYellow.withAlphaComponent(0.5).setFill()
+            NSBezierPath(rect: clipRect).fill()
+        }
+
+        // Duplicate indicator: diagonal stripes
+        if isDuplicate {
+            drawDuplicatePattern(in: readRect)
+        }
+    }
+
+    /// Draws mismatches parsed from the MD tag as colored ticks on the read.
+    ///
+    /// The MD tag format: `[0-9]+(([A-Z]|\^[A-Z]+)[0-9]+)*`
+    /// Numbers indicate matching bases; letters indicate mismatches;
+    /// ^letters indicate deletions from reference.
+    private func drawMismatchesFromMD(read: AlignedRead, mdTag: String, readRect: NSRect, y: CGFloat) {
+        var refPos = read.position
+        var i = mdTag.startIndex
+
+        while i < mdTag.endIndex {
+            let ch = mdTag[i]
+
+            if ch.isNumber {
+                // Matching bases: skip forward
+                var numStr = ""
+                while i < mdTag.endIndex && mdTag[i].isNumber {
+                    numStr.append(mdTag[i])
+                    i = mdTag.index(after: i)
+                }
+                refPos += Int(numStr) ?? 0
+            } else if ch == "^" {
+                // Deletion from reference: skip bases
+                i = mdTag.index(after: i)
+                while i < mdTag.endIndex && mdTag[i].isLetter {
+                    refPos += 1
+                    i = mdTag.index(after: i)
+                }
+            } else if ch.isLetter {
+                // Mismatch: draw colored tick
+                let mismatchX = leftMargin + CGFloat(Double(refPos) / bpPerPixel)
+                if mismatchX >= readRect.minX && mismatchX <= readRect.maxX {
+                    // Get the read base at this position from the sequence
+                    let queryOffset = refPos - read.position
+                    let readBase: Character
+                    if queryOffset >= 0 && queryOffset < read.sequence.count {
+                        let idx = read.sequence.index(read.sequence.startIndex, offsetBy: queryOffset)
+                        readBase = read.sequence[idx]
+                    } else {
+                        readBase = "N"
+                    }
+
+                    let color: NSColor
+                    switch readBase.uppercased() {
+                    case "A": color = .systemGreen
+                    case "T": color = .systemRed
+                    case "G": color = .systemYellow
+                    case "C": color = .systemBlue
+                    default: color = .systemGray
+                    }
+
+                    let tickWidth = max(1, CGFloat(1 / bpPerPixel))
+                    let tickRect = NSRect(x: mismatchX, y: y, width: tickWidth, height: readHeight)
+                    color.setFill()
+                    NSBezierPath(rect: tickRect).fill()
+                }
+
+                refPos += 1
+                i = mdTag.index(after: i)
+            } else {
+                i = mdTag.index(after: i)
+            }
+        }
+    }
+
+    private func drawDuplicatePattern(in rect: NSRect) {
+        // Diagonal lines pattern to indicate potential PCR duplicate
+        NSGraphicsContext.current?.saveGraphicsState()
+
+        let clip = NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2)
+        clip.addClip()
+
+        NSColor.systemOrange.withAlphaComponent(0.3).setStroke()
+        let stripe = NSBezierPath()
+        stripe.lineWidth = 1
+        var x = rect.minX - rect.height
+        while x < rect.maxX + rect.height {
+            stripe.move(to: NSPoint(x: x, y: rect.minY))
+            stripe.line(to: NSPoint(x: x + rect.height, y: rect.maxY))
+            x += 6
+        }
+        stripe.stroke()
+
+        NSGraphicsContext.current?.restoreGraphicsState()
+    }
+
+    private func drawEmptyState() {
+        let text = "Select a virus to view read alignments" as NSString
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12),
+            .foregroundColor: NSColor.tertiaryLabelColor,
+        ]
+        let size = text.size(withAttributes: attrs)
+        text.draw(
+            at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2),
+            withAttributes: attrs
+        )
+    }
+}

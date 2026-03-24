@@ -120,9 +120,21 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
         setupSummaryBar()
         setupSplitView()
+        setupMiniBAMViewer()
         setupActionBar()
         layoutSubviews()
         wireCallbacks()
+    }
+
+    // MARK: - Mini BAM Viewer
+
+    private var miniBAMController: MiniBAMViewController?
+
+    private func setupMiniBAMViewer() {
+        let bamVC = MiniBAMViewController()
+        addChild(bamVC)
+        miniBAMController = bamVC
+        detailPane.miniBAMViewController = bamVC
     }
 
     public override func viewDidLayout() {

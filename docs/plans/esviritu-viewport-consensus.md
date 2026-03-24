@@ -45,10 +45,15 @@
 - Confidence badges in table + inspector
 - BLAST/Extract action buttons in inspector
 
-### Phase 2
-- Mini BAM pileup (MiniAlignmentView)
-- Keep BAM file handle open for fast contig switching
-- "Open in Full Viewer" wired to SequenceViewerView
+### Phase 2 (PRIORITY — required for validation)
+- Full base-level BAM pileup in left pane using embedded SequenceViewerView
+- Shows mismatches, soft clips, read lengths, mapping quality — critical for
+  validating detections with only 1-10 reads where every read matters
+- Duplicate detection: highlight reads with identical start/end positions
+  (likely PCR duplicates inflating the read count)
+- Keep BAM file handle open for fast contig switching (~10ms)
+- Reference sequence from EsViritu database FASTA for mismatch coloring
+- Entire viral contig fits in one viewport (5-200KB genomes)
 
 ### Phase 3
 - Multi-sample comparison heatmap

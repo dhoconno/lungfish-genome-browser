@@ -47,6 +47,11 @@ public final class EsVirituDetailPane: NSView {
     private var selectedAssembly: ViralAssembly?
     private var selectedCoverageWindows: [String: [ViralCoverageWindow]] = [:]
     private var bamAvailable: Bool = false
+    private var currentBAMURL: URL?
+
+    /// The mini BAM view controller (child VC managed by the parent result VC).
+    /// Set by the parent so we can embed the BAM pileup in the detail pane.
+    public var miniBAMViewController: MiniBAMViewController?
 
     /// Called when the user clicks "View in BAM Viewer" for detailed inspection.
     public var onViewBAM: ((String) -> Void)?  // accession
@@ -154,8 +159,20 @@ public final class EsVirituDetailPane: NSView {
         selectedAssembly = assembly
         selectedCoverageWindows = coverageWindows
         bamAvailable = bamURL != nil
+        currentBAMURL = bamURL
         displayMode = .virusDetail
         rebuildContent()
+
+        // Automatically load BAM pileup for the selected virus
+        if let bamURL, let primaryContig = assembly.contigs.first {
+            miniBAMViewController?.displayContig(
+                bamURL: bamURL,
+                contig: primaryContig.accession,
+                contigLength: primaryContig.length
+            )
+        } else {
+            miniBAMViewController?.clear()
+        }
     }
 
     // MARK: - Content Rebuild
@@ -278,20 +295,35 @@ public final class EsVirituDetailPane: NSView {
         )
         contentView.addSubview(coveragePlotView)
 
-        // BAM alignment label + "Open in Full Viewer" button
-        let alignmentLabel = NSTextField(labelWithString: "")
-        if bamAvailable, let primaryAccession = assembly.contigs.first?.accession {
-            alignmentLabel.stringValue = "\(assembly.totalReads) reads aligned to \(primaryAccession)"
-            alignmentLabel.font = .systemFont(ofSize: 11)
-            alignmentLabel.textColor = .secondaryLabelColor
-            alignmentLabel.translatesAutoresizingMaskIntoConstraints = false
-            contentView.addSubview(alignmentLabel)
+        // BAM pileup section (shown when BAM is available)
+        var bamContainerView: NSView?
+        if bamAvailable, let miniBAM = miniBAMViewController {
+            // Section header
+            let bamHeader = NSTextField(labelWithString: "Read Alignments")
+            bamHeader.font = .systemFont(ofSize: 12, weight: .semibold)
+            bamHeader.textColor = .labelColor
+            bamHeader.translatesAutoresizingMaskIntoConstraints = false
+            contentView.addSubview(bamHeader)
 
-            bamButton.title = "Open in Full Viewer"
-            bamButton.isHidden = false
-            bamButton.controlSize = .small
-            bamButton.font = .systemFont(ofSize: 11)
-            contentView.addSubview(bamButton)
+            // Embed the mini BAM view
+            let bamView = miniBAM.view
+            bamView.translatesAutoresizingMaskIntoConstraints = false
+            contentView.addSubview(bamView)
+
+            let container = NSView()
+            container.translatesAutoresizingMaskIntoConstraints = false
+            bamContainerView = bamHeader  // Use header as the anchor for constraints
+
+            NSLayoutConstraint.activate([
+                bamHeader.topAnchor.constraint(equalTo: coveragePlotView.bottomAnchor, constant: 16),
+                bamHeader.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+                bamHeader.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+
+                bamView.topAnchor.constraint(equalTo: bamHeader.bottomAnchor, constant: 4),
+                bamView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 4),
+                bamView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -4),
+                bamView.heightAnchor.constraint(greaterThanOrEqualToConstant: 250),
+            ])
         }
 
         // The view chain anchors from: header → metrics → [segment strip] → coverage → [BAM label]
@@ -328,15 +360,11 @@ public final class EsVirituDetailPane: NSView {
             ]
         }
 
-        if bamAvailable {
-            constraints += [
-                alignmentLabel.topAnchor.constraint(equalTo: coveragePlotView.bottomAnchor, constant: 12),
-                alignmentLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-
-                bamButton.centerYAnchor.constraint(equalTo: alignmentLabel.centerYAnchor),
-                bamButton.leadingAnchor.constraint(equalTo: alignmentLabel.trailingAnchor, constant: 8),
-                bamButton.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -16),
-            ]
+        if bamAvailable, let miniBAM = miniBAMViewController {
+            // The BAM view's bottom provides the content bottom
+            constraints.append(
+                miniBAM.view.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -8)
+            )
         } else {
             constraints.append(
                 coveragePlotView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -16)
