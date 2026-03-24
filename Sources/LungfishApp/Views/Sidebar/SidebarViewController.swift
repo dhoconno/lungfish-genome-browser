@@ -702,6 +702,11 @@ public class SidebarViewController: NSViewController {
             let classificationChildren = collectClassificationResults(in: url)
             item.children.append(contentsOf: classificationChildren)
 
+            // Scan for EsViritu result directories (esviritu-XXXXXXXX/).
+            // These contain viral detection output from EsViritu runs.
+            let esvirituChildren = collectEsVirituResults(in: url)
+            item.children.append(contentsOf: esvirituChildren)
+
             // Scan for extracted read bundles (.lungfishfastq) at the top level.
             // These are created by taxonomy extraction and don't live in derivatives/.
             if let topLevelContents = try? fileManager.contentsOfDirectory(
@@ -926,6 +931,61 @@ public class SidebarViewController: NSViewController {
         }
         return "Classification"
     }
+
+    /// Collects EsViritu viral detection result directories from inside a FASTQ bundle.
+    ///
+    /// Scans the bundle's top-level directory for subdirectories matching
+    /// `esviritu-*` that contain an `esviritu-result.json` sidecar.
+    ///
+    /// - Parameter bundleURL: The `.lungfishfastq` bundle URL to scan.
+    /// - Returns: Array of `SidebarItem` nodes for EsViritu results.
+    private func collectEsVirituResults(in bundleURL: URL) -> [SidebarItem] {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: bundleURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        var results: [SidebarItem] = []
+
+        for childURL in contents {
+            guard childURL.lastPathComponent.hasPrefix("esviritu-") else { continue }
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: childURL.path, isDirectory: &isDir), isDir.boolValue else { continue }
+
+            // Require an esviritu-result.json sidecar
+            let sidecarURL = childURL.appendingPathComponent("esviritu-result.json")
+            guard fm.fileExists(atPath: sidecarURL.path) else { continue }
+
+            let title = esvirituResultTitle(for: childURL)
+
+            let item = SidebarItem(
+                title: title,
+                type: .esvirituResult,
+                icon: "ant",
+                children: [],
+                url: childURL
+            )
+            results.append(item)
+        }
+
+        return results.sorted {
+            $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+        }
+    }
+
+    /// Derives a human-readable title for an EsViritu result directory.
+    private func esvirituResultTitle(for directory: URL) -> String {
+        let sidecarURL = directory.appendingPathComponent("esviritu-result.json")
+        if let data = try? Data(contentsOf: sidecarURL),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let virusCount = json["virusCount"] as? Int {
+            return "Viral Detection (\(virusCount) viruses)"
+        }
+        return "Viral Detection"
+    }
+
     /// Counts the total number of items in a tree.
     private func countItems(in item: SidebarItem) -> Int {
         return 1 + item.children.reduce(0) { $0 + self.countItems(in: $1) }
@@ -2082,6 +2142,7 @@ public enum SidebarItemType {
     case fastqBundle  // .lungfishfastq FASTQ package bundle
     case batchGroup   // Virtual node representing a batch operation across multiple bundles
     case classificationResult  // Kraken2 classification result folder
+    case esvirituResult        // EsViritu viral detection result folder
 
     var tintColor: NSColor {
         switch self {
@@ -2099,6 +2160,7 @@ public enum SidebarItemType {
         case .fastqBundle: return .systemGreen
         case .batchGroup: return .systemCyan
         case .classificationResult: return .systemTeal
+        case .esvirituResult: return .systemMint
         }
     }
 

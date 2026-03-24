@@ -1605,6 +1605,12 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             return
         }
 
+        // EsViritu viral detection results
+        if item.type == .esvirituResult, let url = item.url {
+            displayEsVirituResult(at: url)
+            return
+        }
+
         // Genomics files - check cache first
         if let url = item.url {
             displayGenomicsFile(url: url)
@@ -1684,6 +1690,62 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             logger.error("displayClassificationResult: Failed - \(error.localizedDescription, privacy: .public)")
             let alert = NSAlert()
             alert.messageText = "Failed to Load Classification Result"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            if let window = self.view.window ?? NSApp.keyWindow {
+                alert.beginSheetModal(for: window)
+            }
+        }
+    }
+
+    /// Display a saved EsViritu result from a result directory.
+    ///
+    /// Loads the `EsVirituResult` from the directory's sidecar JSON,
+    /// parses the detection TSV files, and shows the viral detection browser.
+    ///
+    /// - Parameter url: The EsViritu result directory URL.
+    private func displayEsVirituResult(at url: URL) {
+        logger.info("displayEsVirituResult: Opening '\(url.lastPathComponent, privacy: .public)'")
+
+        do {
+            let pipelineResult = try LungfishWorkflow.EsVirituResult.load(from: url)
+
+            // Parse the TSV output files into the display model
+            let detections = (try? EsVirituDetectionParser.parse(url: pipelineResult.detectionURL)) ?? []
+            let assemblies = EsVirituDetectionParser.groupByAssembly(detections)
+            let taxProfile: [ViralTaxProfile]
+            if let tpURL = pipelineResult.taxProfileURL {
+                taxProfile = (try? EsVirituTaxProfileParser.parse(url: tpURL)) ?? []
+            } else {
+                taxProfile = []
+            }
+            let coverageWindows: [ViralCoverageWindow]
+            if let cvURL = pipelineResult.coverageURL {
+                coverageWindows = (try? EsVirituCoverageParser.parse(url: cvURL)) ?? []
+            } else {
+                coverageWindows = []
+            }
+
+            let ioResult = LungfishIO.EsVirituResult(
+                sampleId: pipelineResult.config.sampleName,
+                detections: detections,
+                assemblies: assemblies,
+                taxProfile: taxProfile,
+                coverageWindows: coverageWindows,
+                totalFilteredReads: detections.first?.filteredReadsInSample ?? 0,
+                detectedFamilyCount: Set(detections.compactMap(\.family)).count,
+                detectedSpeciesCount: Set(detections.compactMap(\.species)).count,
+                runtime: pipelineResult.runtime,
+                toolVersion: pipelineResult.toolVersion
+            )
+
+            viewerController.displayEsVirituResult(ioResult, config: pipelineResult.config)
+            logger.info("displayEsVirituResult: Loaded \(detections.count) detections, \(assemblies.count) assemblies")
+        } catch {
+            logger.error("displayEsVirituResult: Failed - \(error.localizedDescription, privacy: .public)")
+            let alert = NSAlert()
+            alert.messageText = "Failed to Load EsViritu Result"
             alert.informativeText = error.localizedDescription
             alert.alertStyle = .warning
             alert.addButton(withTitle: "OK")

@@ -599,6 +599,8 @@ extension ProcessManager {
     /// - Parameter name: The executable name
     /// - Returns: The full path to the executable, or nil if not found
     public nonisolated func findExecutable(named name: String) -> URL? {
+        let fm = FileManager.default
+
         // Check common locations first
         let commonPaths = [
             "/usr/local/bin",
@@ -609,8 +611,25 @@ extension ProcessManager {
 
         for basePath in commonPaths {
             let fullPath = URL(fileURLWithPath: basePath).appendingPathComponent(name)
-            if FileManager.default.isExecutableFile(atPath: fullPath.path) {
+            if fm.isExecutableFile(atPath: fullPath.path) {
                 return fullPath
+            }
+        }
+
+        // Check Lungfish conda environments (~/.lungfish/conda/envs/*/bin/)
+        // Tools installed via the metagenomics pack (e.g., nextflow) live here.
+        let condaEnvsDir = fm.homeDirectoryForCurrentUser
+            .appendingPathComponent(".lungfish/conda/envs")
+        if let envDirs = try? fm.contentsOfDirectory(
+            at: condaEnvsDir,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) {
+            for envDir in envDirs {
+                let fullPath = envDir.appendingPathComponent("bin/\(name)")
+                if fm.isExecutableFile(atPath: fullPath.path) {
+                    return fullPath
+                }
             }
         }
 
@@ -619,7 +638,7 @@ extension ProcessManager {
             let paths = pathEnv.split(separator: ":").map(String.init)
             for pathDir in paths {
                 let fullPath = URL(fileURLWithPath: pathDir).appendingPathComponent(name)
-                if FileManager.default.isExecutableFile(atPath: fullPath.path) {
+                if fm.isExecutableFile(atPath: fullPath.path) {
                     return fullPath
                 }
             }

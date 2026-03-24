@@ -71,7 +71,7 @@ struct UnifiedMetagenomicsWizard: View {
     enum AnalysisType: String, CaseIterable, Identifiable {
         case classification = "Taxonomic Classification"
         case viralDetection = "Viral Detection"
-        case clinicalTriage = "Clinical Triage"
+        case clinicalTriage = "Comprehensive Triage"
 
         var id: String { rawValue }
 
@@ -97,11 +97,11 @@ struct UnifiedMetagenomicsWizard: View {
         var analysisDescription: String {
             switch self {
             case .classification:
-                return "Fast, broad taxonomic classification of sequencing reads. Assigns each read to a taxon and estimates community abundance."
+                return "Fast k-mer classification of sequencing reads. Assigns each read to a taxon and estimates community abundance using Kraken2 and Bracken."
             case .viralDetection:
-                return "Virus-specific detection pipeline with per-virus coverage metrics, assembly, and taxonomic profiling."
+                return "Virus-focused read mapping pipeline. Detects and quantifies viral pathogens with per-genome coverage metrics, consensus sequences, and iterative alignment."
             case .clinicalTriage:
-                return "End-to-end metagenomic classification with TASS confidence scoring. Produces clinical-grade reports with PDF output."
+                return "End-to-end metagenomic classification with alignment validation and TASS confidence scoring. Supports multiple classifiers, host removal, and PDF reporting."
             }
         }
 
