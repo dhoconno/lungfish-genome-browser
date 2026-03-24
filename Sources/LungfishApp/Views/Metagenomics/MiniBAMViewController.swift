@@ -67,8 +67,11 @@ public final class MiniBAMViewController: NSViewController {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
-        scrollView.autohidesScrollers = true
+        scrollView.autohidesScrollers = false  // Always show scrollers for zoom indication
         scrollView.drawsBackground = false
+        scrollView.allowsMagnification = true
+        scrollView.minMagnification = 1.0
+        scrollView.maxMagnification = 100.0  // Allow deep zoom to base-level
         scrollView.documentView = pileupView
         view.addSubview(scrollView)
 
@@ -96,6 +99,23 @@ public final class MiniBAMViewController: NSViewController {
     }
 
     // MARK: - Public API
+
+    /// Zoom in (increase magnification by 2x centered on current view).
+    public func zoomIn() {
+        let newMag = min(scrollView.maxMagnification, scrollView.magnification * 2)
+        scrollView.magnification = newMag
+    }
+
+    /// Zoom out (decrease magnification by 2x).
+    public func zoomOut() {
+        let newMag = max(scrollView.minMagnification, scrollView.magnification / 2)
+        scrollView.magnification = newMag
+    }
+
+    /// Zoom to fit the entire contig in the viewport.
+    public func zoomToFit() {
+        scrollView.magnification = 1.0
+    }
 
     /// Loads and displays reads for a specific viral contig from the BAM file.
     ///
@@ -135,8 +155,9 @@ public final class MiniBAMViewController: NSViewController {
                 self.updatePileup()
 
                 let dupCount = self.duplicateIndices.count
-                let dupText = dupCount > 0 ? " (\(dupCount) potential PCR duplicates)" : ""
-                self.statusLabel.stringValue = "\(fetchedReads.count) reads aligned to \(contig)\(dupText)"
+                let dupText = dupCount > 0 ? " · \(dupCount) potential PCR duplicates" : ""
+                let zoomHint = fetchedReads.count > 0 ? " · Pinch or ⌘+/⌘- to zoom" : ""
+                self.statusLabel.stringValue = "\(fetchedReads.count) reads aligned to \(contig)\(dupText)\(zoomHint)"
 
                 logger.info("Loaded \(fetchedReads.count) reads for \(contig, privacy: .public), \(dupCount) potential duplicates")
             } catch {
@@ -418,8 +439,13 @@ final class MiniPileupView: NSView {
             arrowPath.fill()
         }
 
-        // Draw mismatches from MD tag if zoom allows
-        if bpPerPixel < 5, let mdTag = read.mdTag {
+        // At high zoom: draw individual base letters on the read
+        let effectiveBpPerPx = bpPerPixel / max(1, Double(window?.backingScaleFactor ?? 1))
+        if effectiveBpPerPx < 0.5 {
+            // Ultra-zoom: draw full sequence bases
+            drawBaseLetters(read: read, startX: startX, y: y, baseColor: baseColor)
+        } else if bpPerPixel < 5, let mdTag = read.mdTag {
+            // Medium zoom: draw only mismatches as colored ticks
             drawMismatchesFromMD(read: read, mdTag: mdTag, readRect: readRect, y: y)
         }
 
@@ -441,6 +467,40 @@ final class MiniPileupView: NSView {
         // Duplicate indicator: diagonal stripes
         if isDuplicate {
             drawDuplicatePattern(in: readRect)
+        }
+    }
+
+    /// Draws individual base letters on the read at high zoom levels.
+    private func drawBaseLetters(read: AlignedRead, startX: CGFloat, y: CGFloat, baseColor: NSColor) {
+        let basePxWidth = CGFloat(1.0 / bpPerPixel)
+        guard basePxWidth >= 4 else { return }  // Too small to render letters
+
+        let fontSize = min(10, max(6, basePxWidth * 0.8))
+        let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .medium)
+
+        for (i, char) in read.sequence.enumerated() {
+            let refPos = read.position + i
+            let x = leftMargin + CGFloat(Double(refPos) / bpPerPixel)
+
+            let color: NSColor
+            switch char.uppercased() {
+            case "A": color = NSColor(red: 0, green: 0.6, blue: 0, alpha: 1)
+            case "T": color = NSColor(red: 0.8, green: 0, blue: 0, alpha: 1)
+            case "G": color = NSColor(red: 0.8, green: 0.7, blue: 0, alpha: 1)
+            case "C": color = NSColor(red: 0, green: 0, blue: 0.8, alpha: 1)
+            default: color = .systemGray
+            }
+
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: color,
+            ]
+            let str = String(char) as NSString
+            let size = str.size(withAttributes: attrs)
+            str.draw(
+                at: NSPoint(x: x + (basePxWidth - size.width) / 2, y: y + (readHeight - size.height) / 2),
+                withAttributes: attrs
+            )
         }
     }
 

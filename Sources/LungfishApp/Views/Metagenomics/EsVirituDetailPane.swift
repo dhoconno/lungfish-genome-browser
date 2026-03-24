@@ -447,27 +447,30 @@ public final class EsVirituDetailPane: NSView {
     /// Creates a confidence badge icon for the given assembly.
     ///
     /// Confidence tiers (from EsViritu research):
-    /// - **High** (green ✓): ≥500 reads, ≥95% identity, ≥50% breadth
-    /// - **Medium** (yellow △): ≥100 reads, OR 90-95% identity
-    /// - **Low** (red !): <100 reads, OR <90% identity, OR <10% breadth
+    /// - **High** (green ✓): ≥500 reads AND ≥95% identity AND ≥50% coverage
+    /// - **Medium** (yellow △): ≥50 reads AND ≥90% identity AND ≥10% coverage
+    /// - **Low** (red !): everything else (<50 reads, OR <90% identity, OR <10% coverage)
+    ///
+    /// All three conditions must be met for High/Medium. This prevents a 1-read
+    /// detection with 100% identity from being rated "medium".
     private func makeConfidenceBadge(for assembly: ViralAssembly) -> NSView {
         let imageView = NSImageView()
         imageView.imageScaling = .scaleProportionallyDown
 
         let reads = assembly.totalReads
         let identity = assembly.avgReadIdentity
-        let breadth = assembly.meanCoverage  // Using coverage as a proxy for breadth
+        let coverage = assembly.meanCoverage
 
-        if reads >= 500 && identity >= 0.95 && breadth >= 0.5 {
-            // High confidence
+        if reads >= 500 && identity >= 0.95 && coverage >= 0.5 {
+            // High confidence — strong detection
             imageView.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "High confidence")
             imageView.contentTintColor = .systemGreen
-        } else if reads >= 100 || identity >= 0.90 {
-            // Medium confidence
+        } else if reads >= 50 && identity >= 0.90 && coverage >= 0.1 {
+            // Medium confidence — needs review
             imageView.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Medium confidence")
             imageView.contentTintColor = .systemYellow
         } else {
-            // Low confidence
+            // Low confidence — likely noise, crosstalk, or very weak signal
             imageView.image = NSImage(systemSymbolName: "exclamationmark.circle.fill", accessibilityDescription: "Low confidence")
             imageView.contentTintColor = .systemRed
         }
