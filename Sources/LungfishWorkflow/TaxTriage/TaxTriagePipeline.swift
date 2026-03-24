@@ -201,8 +201,77 @@ public actor TaxTriagePipeline {
 
         progress?(0.05, "Generating samplesheet...")
 
-        // Phase 2: Generate samplesheet (0.05 -- 0.10)
-        let sampleEntries = config.samples.map { sample in
+        // Phase 2: Handle spaces in paths (0.05 -- 0.07)
+        //
+        // Nextflow and its Docker bind mounts break on paths with spaces.
+        // If the output directory or input files contain spaces, redirect
+        // everything through a space-free temp directory with symlinks.
+        let needsRedirect = config.outputDirectory.path.contains(" ")
+            || config.samples.contains(where: { $0.fastq1.path.contains(" ") })
+
+        var effectiveConfig = config
+        var tempRedirectDir: URL?
+
+        if needsRedirect {
+            let safeDir = fm.temporaryDirectory
+                .appendingPathComponent("taxtriage-\(UUID().uuidString.prefix(8))")
+            try fm.createDirectory(at: safeDir, withIntermediateDirectories: true)
+            tempRedirectDir = safeDir
+
+            // Create symlinks for input FASTQ files
+            let safeSamples = try config.samples.map { sample -> TaxTriageSample in
+                let safeFastq1: URL
+                if sample.fastq1.path.contains(" ") {
+                    let linkName = sample.fastq1.lastPathComponent.replacingOccurrences(of: " ", with: "_")
+                    let linkURL = safeDir.appendingPathComponent(linkName)
+                    try? fm.removeItem(at: linkURL)
+                    try fm.createSymbolicLink(at: linkURL, withDestinationURL: sample.fastq1)
+                    safeFastq1 = linkURL
+                } else {
+                    safeFastq1 = sample.fastq1
+                }
+
+                let safeFastq2: URL?
+                if let fq2 = sample.fastq2, fq2.path.contains(" ") {
+                    let linkName = fq2.lastPathComponent.replacingOccurrences(of: " ", with: "_")
+                    let linkURL = safeDir.appendingPathComponent(linkName)
+                    try? fm.removeItem(at: linkURL)
+                    try fm.createSymbolicLink(at: linkURL, withDestinationURL: fq2)
+                    safeFastq2 = linkURL
+                } else {
+                    safeFastq2 = sample.fastq2
+                }
+
+                return TaxTriageSample(
+                    sampleId: sample.sampleId,
+                    fastq1: safeFastq1,
+                    fastq2: safeFastq2,
+                    platform: sample.platform
+                )
+            }
+
+            effectiveConfig = TaxTriageConfig(
+                samples: safeSamples,
+                platform: config.platform,
+                outputDirectory: safeDir.appendingPathComponent("output"),
+                kraken2DatabasePath: config.kraken2DatabasePath,
+                topHitsCount: config.topHitsCount,
+                k2Confidence: config.k2Confidence,
+                rank: config.rank,
+                skipAssembly: config.skipAssembly,
+                skipKrona: config.skipKrona,
+                maxMemory: config.maxMemory,
+                maxCpus: config.maxCpus,
+                profile: config.profile,
+                revision: config.revision
+            )
+
+            try fm.createDirectory(at: effectiveConfig.outputDirectory, withIntermediateDirectories: true)
+            logger.info("Redirected TaxTriage to space-free path: \(safeDir.path)")
+        }
+
+        // Generate samplesheet
+        let sampleEntries = effectiveConfig.samples.map { sample in
             TaxTriageSampleEntry(
                 sampleId: sample.sampleId,
                 fastq1Path: sample.fastq1.path,
@@ -214,20 +283,20 @@ public actor TaxTriagePipeline {
         do {
             try TaxTriageSamplesheet.write(
                 samples: sampleEntries,
-                to: config.samplesheetURL
+                to: effectiveConfig.samplesheetURL
             )
         } catch {
             throw TaxTriagePipelineError.samplesheetGenerationFailed(error)
         }
 
-        let sampleCount = config.samples.count
-        let sheetName = config.samplesheetURL.lastPathComponent
+        let sampleCount = effectiveConfig.samples.count
+        let sheetName = effectiveConfig.samplesheetURL.lastPathComponent
         logger.info("Wrote samplesheet with \(sampleCount, privacy: .public) sample(s) to \(sheetName, privacy: .public)")
 
         progress?(0.10, "Starting TaxTriage pipeline...")
 
         // Phase 3: Build and execute Nextflow command (0.10 -- 0.90)
-        let arguments = buildNextflowArguments(config: config)
+        let arguments = buildNextflowArguments(config: effectiveConfig)
         let logFile = config.outputDirectory.appendingPathComponent("nextflow.log")
 
         logger.info("Executing: nextflow \(arguments.joined(separator: " "))")
@@ -265,7 +334,7 @@ public actor TaxTriagePipeline {
             handle = try await processManager.spawn(
                 executable: micromambaPath,
                 arguments: micromambaArgs,
-                workingDirectory: config.outputDirectory,
+                workingDirectory: effectiveConfig.outputDirectory,
                 environment: environment
             )
         } catch {
@@ -331,7 +400,24 @@ public actor TaxTriagePipeline {
 
         progress?(0.90, "Collecting output files...")
 
-        // Phase 4: Collect outputs (0.90 -- 1.00)
+        // Phase 4: Copy results back if we used a redirect (0.90 -- 0.95)
+        if needsRedirect, let tempDir = tempRedirectDir {
+            progress?(0.90, "Copying results to project directory...")
+            let tempOutput = effectiveConfig.outputDirectory
+            if fm.fileExists(atPath: tempOutput.path) {
+                let contents = (try? fm.contentsOfDirectory(at: tempOutput, includingPropertiesForKeys: nil)) ?? []
+                for item in contents {
+                    let dest = config.outputDirectory.appendingPathComponent(item.lastPathComponent)
+                    try? fm.removeItem(at: dest)
+                    try? fm.moveItem(at: item, to: dest)
+                }
+            }
+            // Clean up temp redirect directory
+            try? fm.removeItem(at: tempDir)
+            logger.info("Moved TaxTriage results from temp dir to \(config.outputDirectory.path)")
+        }
+
+        // Phase 5: Collect outputs from the ORIGINAL config path (0.95 -- 1.00)
         let result = collectOutputFiles(
             config: config,
             exitCode: exitCode,
