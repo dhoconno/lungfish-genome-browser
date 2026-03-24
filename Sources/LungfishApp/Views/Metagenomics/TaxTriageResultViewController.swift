@@ -78,11 +78,17 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     /// Taxonomy tree parsed from the Kraken2 kreport (for sunburst).
     private var taxonomyTree: TaxonTree?
 
+    /// Path to the merged BAM from TaxTriage alignment output.
+    private var bamURL: URL?
+
     // MARK: - Child Views
 
     private let summaryBar = TaxTriageSummaryBar()
     let splitView = NSSplitView()
+    private let leftTabView = NSSegmentedControl()
+    private let leftPaneContainer = NSView()
     private let sunburstView = TaxonomySunburstView()
+    private var miniBAMController: MiniBAMViewController?
     private let organismTableView = TaxTriageOrganismTableView()
     let actionBar = TaxTriageActionBar()
 
@@ -109,9 +115,16 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
 
         setupSummaryBar()
         setupSplitView()
+        setupMiniBAMViewer()
         setupActionBar()
         layoutSubviews()
         wireCallbacks()
+    }
+
+    private func setupMiniBAMViewer() {
+        let bamVC = MiniBAMViewController()
+        addChild(bamVC)
+        miniBAMController = bamVC
     }
 
     public override func viewDidLayout() {
@@ -206,6 +219,29 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         // Configure sunburst from kreport taxonomy tree
         configureSunburst()
 
+        // Find the BAM file from alignment output
+        let bamFiles = result.allOutputFiles.filter {
+            $0.pathExtension == "bam" && !$0.path.contains("/work/")
+        }
+        if let bam = bamFiles.first {
+            bamURL = bam
+            logger.info("Found TaxTriage BAM: \(bam.lastPathComponent)")
+        }
+
+        // Set up the mini BAM viewer in the left pane
+        if let bamVC = miniBAMController {
+            let bamView = bamVC.view
+            bamView.translatesAutoresizingMaskIntoConstraints = false
+            leftPaneContainer.addSubview(bamView)
+
+            NSLayoutConstraint.activate([
+                bamView.topAnchor.constraint(equalTo: leftTabView.bottomAnchor, constant: 4),
+                bamView.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor),
+                bamView.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor),
+                bamView.bottomAnchor.constraint(equalTo: leftPaneContainer.bottomAnchor),
+            ])
+        }
+
         // Update action bar
         actionBar.configure(
             organismCount: mergedRows.count,
@@ -292,24 +328,53 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         splitView.dividerStyle = .thin
         splitView.delegate = self
 
-        // Left pane: sunburst chart (CoreGraphics, same as Kraken2 view)
-        let sunburstContainer = NSView()
-        sunburstView.autoresizingMask = [.width, .height]
-        sunburstContainer.addSubview(sunburstView)
+        // Left pane: tabbed container with Alignments (default) + Sunburst
+        leftPaneContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        // Right pane: organism table (same position as Kraken2/EsViritu)
+        // Segmented control for switching between BAM and Sunburst
+        leftTabView.segmentCount = 2
+        leftTabView.setLabel("Alignments", forSegment: 0)
+        leftTabView.setLabel("Taxonomy", forSegment: 1)
+        leftTabView.segmentStyle = .texturedRounded
+        leftTabView.selectedSegment = 0  // BAM view is default
+        leftTabView.target = self
+        leftTabView.action = #selector(leftTabChanged(_:))
+        leftTabView.translatesAutoresizingMaskIntoConstraints = false
+        leftPaneContainer.addSubview(leftTabView)
+
+        // Sunburst (initially hidden)
+        sunburstView.translatesAutoresizingMaskIntoConstraints = false
+        sunburstView.isHidden = true
+        leftPaneContainer.addSubview(sunburstView)
+
+        NSLayoutConstraint.activate([
+            leftTabView.topAnchor.constraint(equalTo: leftPaneContainer.topAnchor, constant: 4),
+            leftTabView.centerXAnchor.constraint(equalTo: leftPaneContainer.centerXAnchor),
+
+            sunburstView.topAnchor.constraint(equalTo: leftTabView.bottomAnchor, constant: 4),
+            sunburstView.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor),
+            sunburstView.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor),
+            sunburstView.bottomAnchor.constraint(equalTo: leftPaneContainer.bottomAnchor),
+        ])
+
+        // Right pane: organism table
         let tableContainer = NSView()
         organismTableView.autoresizingMask = [.width, .height]
         tableContainer.addSubview(organismTableView)
 
-        splitView.addArrangedSubview(sunburstContainer)
+        splitView.addArrangedSubview(leftPaneContainer)
         splitView.addArrangedSubview(tableContainer)
 
-        // Sunburst holds width more firmly, table is flexible
         splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
         splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
 
         view.addSubview(splitView)
+    }
+
+    @objc private func leftTabChanged(_ sender: NSSegmentedControl) {
+        let showBAM = sender.selectedSegment == 0
+        miniBAMController?.view.isHidden = !showBAM
+        sunburstView.isHidden = showBAM
     }
 
     /// Sets up the NSTabView with Report and Krona tabs.
@@ -402,13 +467,27 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     // MARK: - Callback Wiring
 
     private func wireCallbacks() {
-        // Table selection -> action bar update
+        // Table selection -> action bar update + BAM viewer update
         organismTableView.onRowSelected = { [weak self] row in
             guard let self else { return }
             self.actionBar.updateSelection(
                 organismName: row?.organism,
                 readCount: row?.reads
             )
+
+            // Load BAM alignments for the selected organism
+            if let row, let bamURL = self.bamURL, let taxId = row.taxId {
+                // Use the organism name as the contig reference in the BAM
+                // TaxTriage BAMs have reference sequences named by accession
+                // For now, show what we can find
+                self.miniBAMController?.displayContig(
+                    bamURL: bamURL,
+                    contig: row.organism,
+                    contigLength: 10000  // Approximate, will be refined
+                )
+            } else {
+                self.miniBAMController?.clear()
+            }
         }
 
         // Table BLAST request -> forward to host
