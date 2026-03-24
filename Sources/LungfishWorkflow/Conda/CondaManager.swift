@@ -260,11 +260,11 @@ public struct PluginPack: Sendable, Codable, Identifiable {
         PluginPack(
             id: "metagenomics",
             name: "Metagenomics",
-            description: "Taxonomic classification and community profiling of metagenomic samples",
+            description: "Taxonomic classification, viral detection, and clinical triage of metagenomic samples",
             sfSymbol: "leaf.fill",
-            packages: ["kraken2", "bracken", "metaphlan", "esviritu"],
+            packages: ["kraken2", "bracken", "metaphlan", "esviritu", "nextflow"],
             category: "Metagenomics",
-            estimatedSizeMB: 800
+            estimatedSizeMB: 1200
         ),
 
         // MARK: Long Read

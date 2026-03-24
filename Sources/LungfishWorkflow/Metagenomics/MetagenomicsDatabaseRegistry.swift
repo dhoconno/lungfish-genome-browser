@@ -267,6 +267,20 @@ public actor MetagenomicsDatabaseRegistry {
                     operation: "load", underlying: error
                 )
             }
+
+            // Merge any new built-in catalog entries that weren't in the
+            // persisted manifest (e.g., EsViritu DB added in a newer version).
+            var addedCount = 0
+            for entry in MetagenomicsDatabaseInfo.builtInCatalog {
+                if databases[entry.name] == nil {
+                    databases[entry.name] = entry
+                    addedCount += 1
+                }
+            }
+            if addedCount > 0 {
+                try saveManifest()
+                logger.info("Merged \(addedCount, privacy: .public) new catalog entries into existing manifest")
+            }
         } else {
             // First launch: populate from built-in catalog.
             for entry in MetagenomicsDatabaseInfo.builtInCatalog {
