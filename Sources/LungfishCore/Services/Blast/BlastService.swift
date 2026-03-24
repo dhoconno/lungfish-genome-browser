@@ -212,73 +212,19 @@ public actor BlastService {
         let isGzip = sourceURL.pathExtension.lowercased() == "gz"
         logger.info("buildVerificationRequest: source FASTQ exists=\(sourceExists, privacy: .public) gzip=\(isGzip, privacy: .public)")
 
-        var allSequences: [(id: String, sequence: String)] = []
-        let handle: FileHandle?
-        var gzipProcess: Process?
+        // Extract sequences from FASTQ, with retry for gzip subprocess failures.
+        // The gzip subprocess can be killed by macOS XPC interruptions, so we
+        // retry once before giving up.
+        let allSequences = try extractMatchingSequences(
+            from: sourceURL,
+            matchingReadIds: matchingReadIds,
+            isGzip: isGzip
+        )
 
-        if isGzip {
-            // Pipe through gzip -dc for transparent decompression
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: "/usr/bin/gzip")
-            proc.arguments = ["-dc", sourceURL.path]
-            let pipe = Pipe()
-            proc.standardOutput = pipe
-            proc.standardError = FileHandle.nullDevice
-            do {
-                try proc.run()
-            } catch {
-                logger.error("buildVerificationRequest: failed to launch gzip: \(error.localizedDescription, privacy: .public)")
-                throw BlastServiceError.noSequences
-            }
-            handle = pipe.fileHandleForReading
-            gzipProcess = proc
-        } else {
-            handle = FileHandle(forReadingAtPath: sourceURL.path)
-            gzipProcess = nil
-        }
-
-        if let handle {
-            defer {
-                handle.closeFile()
-                gzipProcess?.waitUntilExit()
-            }
-            var lineBuffer: [String] = []
-            var residual = ""
-            let bufferSize = 4_194_304
-
-            while true {
-                let chunk = handle.readData(ofLength: bufferSize)
-                if chunk.isEmpty { break }
-                guard let text = String(data: chunk, encoding: .utf8) else { continue }
-                let combined = residual + text
-                residual = ""
-                var lines = combined.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-                if !combined.hasSuffix("\n") && !lines.isEmpty {
-                    residual = lines.removeLast()
-                }
-                for line in lines {
-                    lineBuffer.append(line)
-                    if lineBuffer.count == 4 {
-                        if lineBuffer[0].hasPrefix("@") {
-                            var readId = String(lineBuffer[0].dropFirst())
-                                .split(separator: " ", maxSplits: 1).first.map(String.init) ?? ""
-                            if readId.hasSuffix("/1") || readId.hasSuffix("/2") {
-                                readId = String(readId.dropLast(2))
-                            }
-                            if matchingReadIds.contains(readId) {
-                                allSequences.append((id: readId, sequence: lineBuffer[1]))
-                            }
-                        }
-                        lineBuffer.removeAll(keepingCapacity: true)
-                    }
-                }
-            }
-        }
-
-        logger.info("buildVerificationRequest: extracted \(allSequences.count, privacy: .public) sequences from FASTQ (matched \(matchingReadIds.count, privacy: .public) read IDs)")
+        logger.info("extractSequencesAndBuild: extracted \(allSequences.count, privacy: .public) sequences from FASTQ (matched \(matchingReadIds.count, privacy: .public) read IDs)")
 
         guard !allSequences.isEmpty else {
-            logger.error("buildVerificationRequest: found \(matchingReadIds.count, privacy: .public) matching read IDs in classification output but 0 sequences in FASTQ — source file may be missing or read IDs may not match")
+            logger.error("extractSequencesAndBuild: found \(matchingReadIds.count, privacy: .public) matching read IDs but 0 sequences in FASTQ — source file may be missing or read IDs may not match")
             throw BlastServiceError.noSequences
         }
 
@@ -380,6 +326,128 @@ public actor BlastService {
             blastProgram: request.program,
             database: request.database
         )
+    }
+
+    // MARK: - FASTQ Sequence Extraction
+
+    /// Extracts matching sequences from a FASTQ file (raw or gzip-compressed).
+    ///
+    /// For gzip files, pipes through `/usr/bin/gzip -dc`. If the subprocess
+    /// fails (e.g., killed by macOS XPC interruptions), retries once with a
+    /// brief delay. This addresses intermittent failures observed when the
+    /// system terminates background subprocesses during network activity.
+    ///
+    /// - Parameters:
+    ///   - sourceURL: Path to the FASTQ file (raw or .gz)
+    ///   - matchingReadIds: Set of read IDs to extract
+    ///   - isGzip: Whether the file is gzip-compressed
+    /// - Returns: Array of (id, sequence) pairs
+    private func extractMatchingSequences(
+        from sourceURL: URL,
+        matchingReadIds: Set<String>,
+        isGzip: Bool
+    ) throws -> [(id: String, sequence: String)] {
+        let maxAttempts = isGzip ? 2 : 1  // Retry only for gzip (subprocess can fail)
+
+        for attempt in 1...maxAttempts {
+            let sequences = try extractMatchingSequencesOnce(
+                from: sourceURL,
+                matchingReadIds: matchingReadIds,
+                isGzip: isGzip
+            )
+
+            if !sequences.isEmpty || !isGzip {
+                return sequences
+            }
+
+            // Gzip subprocess returned 0 sequences — likely killed by OS.
+            // Retry once after a brief delay.
+            if attempt < maxAttempts {
+                logger.warning("extractMatchingSequences: gzip returned 0 sequences on attempt \(attempt, privacy: .public), retrying...")
+                Thread.sleep(forTimeInterval: 0.5)
+            }
+        }
+
+        return []
+    }
+
+    /// Single-attempt sequence extraction from a FASTQ file.
+    private func extractMatchingSequencesOnce(
+        from sourceURL: URL,
+        matchingReadIds: Set<String>,
+        isGzip: Bool
+    ) throws -> [(id: String, sequence: String)] {
+        var allSequences: [(id: String, sequence: String)] = []
+        let handle: FileHandle?
+        var gzipProcess: Process?
+
+        if isGzip {
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/gzip")
+            proc.arguments = ["-dc", sourceURL.path]
+            let pipe = Pipe()
+            proc.standardOutput = pipe
+            proc.standardError = FileHandle.nullDevice
+            do {
+                try proc.run()
+            } catch {
+                logger.error("extractMatchingSequences: failed to launch gzip: \(error.localizedDescription, privacy: .public)")
+                throw BlastServiceError.noSequences
+            }
+            handle = pipe.fileHandleForReading
+            gzipProcess = proc
+        } else {
+            handle = FileHandle(forReadingAtPath: sourceURL.path)
+            gzipProcess = nil
+        }
+
+        if let handle {
+            defer {
+                handle.closeFile()
+                gzipProcess?.waitUntilExit()
+            }
+            var lineBuffer: [String] = []
+            var residual = ""
+            let bufferSize = 4_194_304
+
+            while true {
+                let chunk = handle.readData(ofLength: bufferSize)
+                if chunk.isEmpty { break }
+                guard let text = String(data: chunk, encoding: .utf8) else { continue }
+                let combined = residual + text
+                residual = ""
+                var lines = combined.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+                if !combined.hasSuffix("\n") && !lines.isEmpty {
+                    residual = lines.removeLast()
+                }
+                for line in lines {
+                    lineBuffer.append(line)
+                    if lineBuffer.count == 4 {
+                        if lineBuffer[0].hasPrefix("@") {
+                            var readId = String(lineBuffer[0].dropFirst())
+                                .split(separator: " ", maxSplits: 1).first.map(String.init) ?? ""
+                            if readId.hasSuffix("/1") || readId.hasSuffix("/2") {
+                                readId = String(readId.dropLast(2))
+                            }
+                            if matchingReadIds.contains(readId) {
+                                allSequences.append((id: readId, sequence: lineBuffer[1]))
+                            }
+                        }
+                        lineBuffer.removeAll(keepingCapacity: true)
+                    }
+                }
+            }
+
+            // Check gzip exit status
+            if let proc = gzipProcess {
+                proc.waitUntilExit()
+                if proc.terminationStatus != 0 {
+                    logger.warning("extractMatchingSequences: gzip exited with status \(proc.terminationStatus, privacy: .public)")
+                }
+            }
+        }
+
+        return allSequences
     }
 
     // MARK: - Submit (CMD=Put)

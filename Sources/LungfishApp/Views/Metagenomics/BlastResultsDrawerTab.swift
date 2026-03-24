@@ -688,6 +688,7 @@ public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
         resultsOutlineView.usesAlternatingRowBackgroundColors = true
         resultsOutlineView.allowsMultipleSelection = true
         resultsOutlineView.allowsColumnReordering = false
+        resultsOutlineView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         resultsOutlineView.indentationPerLevel = 16
         resultsOutlineView.headerView = NSTableHeaderView()
 
@@ -703,25 +704,27 @@ public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
         // Read/Accession column (flexible)
         let readIdColumn = NSTableColumn(identifier: .blastReadId)
         readIdColumn.title = "Read / Accession"
+        readIdColumn.width = 180
         readIdColumn.minWidth = 120
-        readIdColumn.resizingMask = .autoresizingMask
+        readIdColumn.resizingMask = .userResizingMask
         readIdColumn.sortDescriptorPrototype = NSSortDescriptor(key: "readId", ascending: true)
         resultsOutlineView.addTableColumn(readIdColumn)
 
-        // Organism column (flexible)
+        // Organism column (flexible, wider default)
         let organismColumn = NSTableColumn(identifier: .blastOrganism)
         organismColumn.title = "Organism"
+        organismColumn.width = 220
         organismColumn.minWidth = 100
-        organismColumn.resizingMask = .autoresizingMask
+        organismColumn.resizingMask = .userResizingMask
         organismColumn.sortDescriptorPrototype = NSSortDescriptor(key: "organism", ascending: true)
         resultsOutlineView.addTableColumn(organismColumn)
 
-        // Identity column (60pt, right-aligned monospaced)
+        // Identity column (60pt, right-aligned monospaced, user-resizable)
         let identityColumn = NSTableColumn(identifier: .blastIdentity)
         identityColumn.title = "Identity"
         identityColumn.width = 60
         identityColumn.minWidth = 50
-        identityColumn.maxWidth = 80
+        identityColumn.resizingMask = .userResizingMask
         identityColumn.sortDescriptorPrototype = NSSortDescriptor(key: "identity", ascending: false)
         resultsOutlineView.addTableColumn(identityColumn)
 
@@ -730,7 +733,7 @@ public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
         eValueColumn.title = "E-value"
         eValueColumn.width = 70
         eValueColumn.minWidth = 55
-        eValueColumn.maxWidth = 90
+        eValueColumn.resizingMask = .userResizingMask
         eValueColumn.sortDescriptorPrototype = NSSortDescriptor(key: "eValue", ascending: true)
         resultsOutlineView.addTableColumn(eValueColumn)
 
@@ -739,7 +742,7 @@ public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
         bitScoreColumn.title = "Bit Score"
         bitScoreColumn.width = 65
         bitScoreColumn.minWidth = 50
-        bitScoreColumn.maxWidth = 85
+        bitScoreColumn.resizingMask = .userResizingMask
         bitScoreColumn.sortDescriptorPrototype = NSSortDescriptor(key: "bitScore", ascending: false)
         resultsOutlineView.addTableColumn(bitScoreColumn)
 
