@@ -85,7 +85,8 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
     public var coverageWindowsByAccession: [String: [ViralCoverageWindow]] = [:]
 
     /// Called when the user selects an assembly row.
-    public var onAssemblySelected: ((ViralAssembly) -> Void)?
+    /// Pass `nil` when the selection is cleared.
+    public var onAssemblySelected: ((ViralAssembly?) -> Void)?
 
     /// Called when the user selects a detection (contig) row.
     public var onDetectionSelected: ((ViralDetection) -> Void)?

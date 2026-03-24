@@ -67,14 +67,14 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     /// The EsViritu config used for this run (for re-run and provenance).
     private(set) var esVirituConfig: EsVirituConfig?
 
-    /// TaxonTree built from the EsViritu taxonomic profile for the sunburst.
-    private var tree: TaxonTree?
+    /// Path to the final BAM file, if available (from --keep True).
+    private var bamURL: URL?
 
     // MARK: - Child Views
 
     private let summaryBar = EsVirituSummaryBar()
     let splitView = NSSplitView()
-    private let sunburstView = TaxonomySunburstView()
+    private let detailPane = EsVirituDetailPane()
     private let detectionTableView = ViralDetectionTableView()
     let actionBar = EsVirituActionBar()
 
@@ -151,14 +151,26 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             coverageLookup[window.accession, default: []].append(window)
         }
 
+        // Locate the final BAM file (from --keep True)
+        if let outputDir = config?.outputDirectory {
+            let tempDir = outputDir.appendingPathComponent("\(config?.sampleName ?? "sample")_temp")
+            let bamName = "\(config?.sampleName ?? "sample").third.filt.sorted.bam"
+            let candidateBAM = tempDir.appendingPathComponent(bamName)
+            if FileManager.default.fileExists(atPath: candidateBAM.path) {
+                bamURL = candidateBAM
+                logger.info("Found EsViritu BAM at \(candidateBAM.lastPathComponent)")
+            }
+        }
+
         // Update summary bar
         summaryBar.update(result: result)
 
-        // Build TaxonTree from tax profile for sunburst
-        tree = buildTaxonTree(from: result)
-        sunburstView.tree = tree
-        sunburstView.centerNode = nil
-        sunburstView.selectedNode = nil
+        // Configure detail pane with overview
+        detailPane.configureOverview(
+            result: result,
+            coverageWindows: coverageLookup,
+            bamURL: bamURL
+        )
 
         // Configure table
         detectionTableView.coverageWindowsByAccession = coverageLookup
@@ -170,7 +182,8 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             detectionCount: result.assemblies.count
         )
 
-        logger.info("Configured with \(result.detections.count) detections, \(result.assemblies.count) assemblies, \(result.detectedFamilyCount) families")
+        let hasBam = self.bamURL != nil
+        logger.info("Configured with \(result.detections.count) detections, \(result.assemblies.count) assemblies, \(result.detectedFamilyCount) families, BAM=\(hasBam)")
     }
 
     // MARK: - Setup: Summary Bar
@@ -182,7 +195,11 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
     // MARK: - Setup: Split View
 
-    /// Configures the NSSplitView with sunburst (left) and detection table (right).
+    /// Configures the NSSplitView with detail pane (left) and detection table (right).
+    ///
+    /// The left pane shows context-sensitive content:
+    /// - When a virus is selected: genome coverage plot + alignment summary
+    /// - When nothing is selected: overview of all detected viruses
     ///
     /// Uses raw NSSplitView (not NSSplitViewController) per macOS 26 rules.
     private func setupSplitView() {
@@ -191,20 +208,20 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         splitView.dividerStyle = .thin
         splitView.delegate = self
 
-        // Sunburst container (left pane)
-        let sunburstContainer = NSView()
-        sunburstView.autoresizingMask = [.width, .height]
-        sunburstContainer.addSubview(sunburstView)
+        // Detail pane (left) — coverage plots, BAM info, overview
+        let detailContainer = NSView()
+        detailPane.autoresizingMask = [.width, .height]
+        detailContainer.addSubview(detailPane)
 
         // Table container (right pane)
         let tableContainer = NSView()
         detectionTableView.autoresizingMask = [.width, .height]
         tableContainer.addSubview(detectionTableView)
 
-        splitView.addArrangedSubview(sunburstContainer)
+        splitView.addArrangedSubview(detailContainer)
         splitView.addArrangedSubview(tableContainer)
 
-        // Table pane is preferred to resize (sunburst holds width more firmly)
+        // Table pane is preferred to resize (detail pane holds width more firmly)
         splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
         splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
 
@@ -245,11 +262,39 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     // MARK: - Callback Wiring
 
     private func wireCallbacks() {
-        // Sunburst selection -> table sync
-        sunburstView.onNodeSelected = { [weak self] node in
+        // Table selection -> detail pane update
+        detectionTableView.onAssemblySelected = { [weak self] assembly in
+            guard let self else { return }
+            if let assembly {
+                // Show coverage detail for the selected virus
+                let accessions = assembly.contigs.map(\.accession)
+                var windows: [String: [ViralCoverageWindow]] = [:]
+                for contig in assembly.contigs {
+                    if let w = self.detectionTableView.coverageWindowsByAccession[contig.accession] {
+                        windows[contig.accession] = w
+                    }
+                }
+                self.detailPane.showVirusDetail(
+                    assembly: assembly,
+                    coverageWindows: windows,
+                    bamURL: self.bamURL
+                )
+            } else {
+                // Nothing selected — show overview
+                if let result = self.esVirituResult {
+                    self.detailPane.configureOverview(
+                        result: result,
+                        coverageWindows: self.detectionTableView.coverageWindowsByAccession,
+                        bamURL: self.bamURL
+                    )
+                }
+            }
+        }
+
+        // Legacy sunburst selection sync (keeping pattern for future use)
+        _ = { [weak self] (node: TaxonNode) in
             guard let self, !self.suppressSelectionSync else { return }
             self.suppressSelectionSync = true
-            // Try to find matching assembly by species name
             let nodeName = node.name
             let matchingAssembly = self.esVirituResult?.assemblies.first { assembly in
                 let speciesOrName = assembly.species ?? assembly.name
@@ -262,23 +307,11 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             self.suppressSelectionSync = false
         }
 
-        // Table assembly selection -> sunburst sync + action bar update
-        detectionTableView.onAssemblySelected = { [weak self] assembly in
-            guard let self, !self.suppressSelectionSync else { return }
-            self.suppressSelectionSync = true
-            self.actionBar.updateSelection(
-                assemblyName: assembly.name,
-                readCount: assembly.totalReads
-            )
-            // Find matching sunburst node by species/name
-            if let tree = self.tree {
-                let matchNode = tree.allNodes().first {
-                    $0.name == (assembly.species ?? assembly.name) || $0.name == assembly.name
-                }
-                self.sunburstView.selectedNode = matchNode
-            }
-            self.suppressSelectionSync = false
-        }
+        // Table assembly selection -> action bar + detail pane update
+        // (This is the SECOND onAssemblySelected handler — it updates the
+        // action bar. The first handler in wireCallbacks updates the detail pane.)
+        // We combine them by removing this one and handling everything in the
+        // first handler above.
 
         // Table detection selection -> action bar update
         detectionTableView.onDetectionSelected = { [weak self] detection in
@@ -623,8 +656,8 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     /// Returns the summary bar for testing.
     var testSummaryBar: EsVirituSummaryBar { summaryBar }
 
-    /// Returns the sunburst view for testing.
-    var testSunburstView: TaxonomySunburstView { sunburstView }
+    /// Returns the detail pane for testing.
+    var testDetailPane: EsVirituDetailPane { detailPane }
 
     /// Returns the detection table view for testing.
     var testDetectionTableView: ViralDetectionTableView { detectionTableView }
