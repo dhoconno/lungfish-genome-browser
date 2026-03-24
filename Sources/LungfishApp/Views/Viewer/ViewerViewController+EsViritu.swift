@@ -61,14 +61,104 @@ extension ViewerViewController {
 
         controller.configure(result: result, config: config)
 
-        // Wire BLAST verification callback
+        // Wire BLAST verification callback.
+        //
+        // EsViritu identifies viruses by iterative read mapping (not k-mer
+        // classification), so we use the consensus FASTA from the EsViritu
+        // output directory as the BLAST query. If the consensus is available,
+        // we submit it through our native BlastService pipeline; otherwise
+        // we open the NCBI BLAST web page with the accession.
+        let capturedConfig = config
         controller.onBlastVerification = { detection in
             esVirituLogger.info("BLAST verification requested for \(detection.name, privacy: .public) (\(detection.accession, privacy: .public))")
-            // Open NCBI BLAST web page with the accession as a query
-            let encodedAccession = detection.accession
-                .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? detection.accession
-            if let url = URL(string: "https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastSearch&QUERY=\(encodedAccession)") {
-                NSWorkspace.shared.open(url)
+
+            // Try to read the consensus FASTA for this detection
+            let consensusURL = capturedConfig?.outputDirectory
+                .appendingPathComponent("\(capturedConfig?.sampleName ?? "sample")_final_consensus.fasta")
+
+            var consensusSequence: String?
+            if let consensusURL,
+               let consensusData = try? String(contentsOf: consensusURL, encoding: .utf8) {
+                // Find the sequence for this accession in the multi-FASTA
+                let lines = consensusData.components(separatedBy: .newlines)
+                var capturing = false
+                var seqLines: [String] = []
+                for line in lines {
+                    if line.hasPrefix(">") {
+                        if capturing { break }
+                        if line.contains(detection.accession) {
+                            capturing = true
+                        }
+                    } else if capturing {
+                        seqLines.append(line)
+                    }
+                }
+                if !seqLines.isEmpty {
+                    consensusSequence = seqLines.joined()
+                }
+            }
+
+            if let seq = consensusSequence, seq.count >= 50 {
+                // Native BLAST: submit consensus sequence
+                let opID = OperationCenter.shared.start(
+                    title: "BLAST \(detection.name)",
+                    detail: "Submitting consensus to NCBI BLAST\u{2026}",
+                    operationType: .blastVerification
+                )
+
+                let accession = detection.accession
+                let virusName = detection.name
+                nonisolated(unsafe) let capturedSeq = seq
+
+                let task = Task.detached {
+                    do {
+                        let blastService = BlastService.shared
+                        let request = BlastVerificationRequest(
+                            taxonName: virusName,
+                            taxId: 0,
+                            sequences: [(id: accession, sequence: capturedSeq)],
+                            database: "core_nt",
+                            maxTargetSeqs: 5
+                        )
+
+                        let blastResult = try await blastService.verify(
+                            request: request,
+                            progress: { fraction, message in
+                                DispatchQueue.main.async {
+                                    MainActor.assumeIsolated {
+                                        OperationCenter.shared.update(
+                                            id: opID, progress: fraction, detail: message
+                                        )
+                                    }
+                                }
+                            }
+                        )
+
+                        DispatchQueue.main.async {
+                            MainActor.assumeIsolated {
+                                OperationCenter.shared.complete(
+                                    id: opID,
+                                    detail: "\(blastResult.verifiedCount)/\(blastResult.readResults.count) verified"
+                                )
+                            }
+                        }
+                    } catch {
+                        let errorDesc = error.localizedDescription
+                        DispatchQueue.main.async {
+                            MainActor.assumeIsolated {
+                                OperationCenter.shared.fail(id: opID, detail: errorDesc)
+                            }
+                        }
+                    }
+                }
+                OperationCenter.shared.setCancelCallback(for: opID) { task.cancel() }
+            } else {
+                // No consensus available — open NCBI BLAST web
+                let encodedAccession = detection.accession
+                    .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? detection.accession
+                if let url = URL(string: "https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastSearch&QUERY=\(encodedAccession)") {
+                    NSWorkspace.shared.open(url)
+                }
             }
         }
 

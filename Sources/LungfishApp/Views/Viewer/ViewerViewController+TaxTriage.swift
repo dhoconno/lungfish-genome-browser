@@ -62,14 +62,120 @@ extension ViewerViewController {
 
         controller.configure(result: result, config: config)
 
-        // Wire BLAST verification callback
+        // Wire BLAST verification callback — uses native BlastService when
+        // the organism has a taxId (from TaxTriage TASS metrics), falling back
+        // to NCBI BLAST web when taxId is unavailable.
+        let capturedConfig = config
         controller.onBlastVerification = { organism in
             let orgName = organism.name
-            taxTriageLogger.info("BLAST verification requested for \(orgName)")
-            let encodedName = organism.name
-                .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? organism.name
-            if let url = URL(string: "https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastSearch&QUERY=\(encodedName)") {
-                NSWorkspace.shared.open(url)
+            taxTriageLogger.info("BLAST verification requested for \(orgName, privacy: .public)")
+
+            // TaxTriage provides taxIds in its metrics output. If we have one,
+            // use the Kraken2-style BLAST pipeline (extract reads from FASTQ by
+            // taxId, subsample, submit to NCBI BLAST REST API).
+            if let taxId = organism.taxId, taxId > 0,
+               let sourceFile = capturedConfig?.samples.first?.fastq1 {
+
+                let opID = OperationCenter.shared.start(
+                    title: "BLAST \(orgName)",
+                    detail: "Preparing BLAST verification\u{2026}",
+                    operationType: .blastVerification
+                )
+
+                nonisolated(unsafe) let capturedSourceFile = sourceFile
+
+                let task = Task.detached {
+                    do {
+                        let blastService = BlastService.shared
+
+                        // TaxTriage uses Kraken2 internally — check for a
+                        // classification.kraken file in the output directory
+                        let outputDir = capturedConfig?.outputDirectory
+                        let krakenFile = outputDir?
+                            .appendingPathComponent("classification")
+                            .appendingPathComponent("classification.kraken")
+
+                        let request: BlastVerificationRequest
+
+                        if let krakenFile, FileManager.default.fileExists(atPath: krakenFile.path) {
+                            // Use the Kraken2 output for read ID extraction
+                            request = try await blastService.buildVerificationRequest(
+                                taxonName: orgName,
+                                taxId: taxId,
+                                targetTaxIds: Set([taxId]),
+                                classificationOutputURL: krakenFile,
+                                sourceURL: capturedSourceFile,
+                                readCount: 20
+                            )
+                        } else {
+                            // No Kraken2 output available — open web fallback
+                            let encodedName = orgName
+                                .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? orgName
+                            if let url = URL(string: "https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastSearch&QUERY=\(encodedName)") {
+                                DispatchQueue.main.async {
+                                    MainActor.assumeIsolated {
+                                        NSWorkspace.shared.open(url)
+                                        OperationCenter.shared.complete(
+                                            id: opID,
+                                            detail: "Opened NCBI BLAST in browser"
+                                        )
+                                    }
+                                }
+                            }
+                            return
+                        }
+
+                        DispatchQueue.main.async {
+                            MainActor.assumeIsolated {
+                                OperationCenter.shared.update(
+                                    id: opID,
+                                    progress: 0.1,
+                                    detail: "Submitting \(request.sequences.count) reads to NCBI BLAST\u{2026}"
+                                )
+                            }
+                        }
+
+                        let blastResult = try await blastService.verify(
+                            request: request,
+                            progress: { fraction, message in
+                                DispatchQueue.main.async {
+                                    MainActor.assumeIsolated {
+                                        OperationCenter.shared.update(
+                                            id: opID,
+                                            progress: fraction,
+                                            detail: message
+                                        )
+                                    }
+                                }
+                            }
+                        )
+
+                        DispatchQueue.main.async {
+                            MainActor.assumeIsolated {
+                                OperationCenter.shared.complete(
+                                    id: opID,
+                                    detail: "\(blastResult.verifiedCount)/\(blastResult.readResults.count) verified"
+                                )
+                            }
+                        }
+                    } catch {
+                        let errorDesc = error.localizedDescription
+                        DispatchQueue.main.async {
+                            MainActor.assumeIsolated {
+                                OperationCenter.shared.fail(id: opID, detail: errorDesc)
+                            }
+                        }
+                    }
+                }
+
+                OperationCenter.shared.setCancelCallback(for: opID) { task.cancel() }
+            } else {
+                // No taxId — fall back to NCBI BLAST web
+                let encodedName = orgName
+                    .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? orgName
+                if let url = URL(string: "https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastSearch&QUERY=\(encodedName)") {
+                    NSWorkspace.shared.open(url)
+                }
             }
         }
 
