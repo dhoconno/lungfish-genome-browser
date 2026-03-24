@@ -71,6 +71,9 @@ public class ViewerViewController: NSViewController {
     /// EsViritu viral detection browser (shown in place of sequence viewer for EsViritu results)
     var esVirituViewController: EsVirituResultViewController?
 
+    /// TaxTriage clinical triage browser (shown in place of sequence viewer for TaxTriage results)
+    var taxTriageViewController: TaxTriageResultViewController?
+
     // MARK: - State
 
     /// Current reference frame for coordinate mapping
