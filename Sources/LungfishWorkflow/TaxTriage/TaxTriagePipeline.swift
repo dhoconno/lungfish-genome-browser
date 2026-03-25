@@ -318,6 +318,7 @@ public actor TaxTriagePipeline {
         // has the conda prefix hardcoded into NXF_DIST without proper quoting.
         // Patch the script to quote the NXF_DIST assignment.
         patchNextflowScript(at: nextflowPath)
+        patchTaxTriageDownloadScript()
 
         // Use a space-free home directory for Nextflow's cache
         let nxfHome = FileManager.default.homeDirectoryForCurrentUser
@@ -510,6 +511,50 @@ public actor TaxTriagePipeline {
             }
         } catch {
             logger.warning("Failed to patch Nextflow script: \(error.localizedDescription)")
+        }
+    }
+
+    /// Patches the TaxTriage download_fastas.py script to fix a bug where
+    /// `os.path.basename()` returns empty string for paths with trailing slashes.
+    ///
+    /// The NCBI assembly_summary_refseq.txt has FTP paths with trailing slashes
+    /// (e.g., `https://...GCF_000845245.1_ViralProj14559/`). Python's `os.path.basename()`
+    /// returns `""` for such paths, causing the constructed download URL to be
+    /// `https://.../_genomic.fna.gz` (missing the assembly name) → HTTP 404.
+    ///
+    /// Fix: strip trailing slashes before calling basename.
+    /// Upstream issue: https://github.com/jhuapl-bio/taxtriage
+    private func patchTaxTriageDownloadScript() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let scriptPath = home.appendingPathComponent(".nextflow/assets/jhuapl-bio/taxtriage/bin/download_fastas.py")
+
+        guard FileManager.default.fileExists(atPath: scriptPath.path) else { return }
+
+        do {
+            var content = try String(contentsOf: scriptPath, encoding: .utf8)
+
+            // Check if already patched
+            if content.contains("rstrip") { return }
+
+            // Patch the get_url function
+            let oldLine = "bb = os.path.basename(utl)"
+            let newLine = "bb = os.path.basename(utl.rstrip('/'))"
+
+            guard content.contains(oldLine) else { return }
+
+            content = content.replacingOccurrences(of: oldLine, with: newLine)
+
+            // Also fix the URL construction to strip trailing slash
+            content = content.replacingOccurrences(
+                of: "return utl+\"/\"+bb+\"_genomic.fna.gz\"",
+                with: "return utl.rstrip('/')+\"/\"+bb+\"_genomic.fna.gz\""
+            )
+
+            try content.write(to: scriptPath, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptPath.path)
+            logger.info("Patched TaxTriage download_fastas.py to fix trailing-slash URL bug")
+        } catch {
+            logger.warning("Failed to patch TaxTriage download script: \(error.localizedDescription)")
         }
     }
 
