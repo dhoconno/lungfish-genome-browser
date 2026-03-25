@@ -81,6 +81,12 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     /// Path to the merged BAM from TaxTriage alignment output.
     private var bamURL: URL?
 
+    /// Maps organism names → BAM reference accessions (from gcfmapping.tsv).
+    private var organismToAccessions: [String: [String]] = [:]
+
+    /// Maps accessions → reference lengths (from BAM header via samtools).
+    private var accessionLengths: [String: Int] = [:]
+
     // MARK: - Child Views
 
     private let summaryBar = TaxTriageSummaryBar()
@@ -227,20 +233,34 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         }
         if let bam = bamFiles.first {
             bamURL = bam
-            // Ensure a BAI index exists (TaxTriage produces CSI, we need BAI)
+            // Ensure a BAI index exists (TaxTriage produces CSI, we need BAI for samtools view)
             let baiPath = bam.path + ".bai"
             if !FileManager.default.fileExists(atPath: baiPath) {
-                // Try to generate BAI from the BAM using samtools
                 logger.info("Generating BAI index for TaxTriage BAM")
-                let indexTask = Process()
-                indexTask.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                indexTask.arguments = ["samtools", "index", bam.path]
-                try? indexTask.run()
-                indexTask.waitUntilExit()
+                Task.detached {
+                    let proc = Process()
+                    proc.executableURL = URL(fileURLWithPath: "/usr/local/bin/samtools")
+                    proc.arguments = ["index", bam.path]
+                    proc.standardOutput = FileHandle.nullDevice
+                    proc.standardError = FileHandle.nullDevice
+                    try? proc.run()
+                    proc.waitUntilExit()
+                }
             }
-            logger.info("Found TaxTriage BAM: \(bam.lastPathComponent, privacy: .public) (\(bam.path.contains("minimap2") ? "minimap2" : "alignment") dir)")
-        } else {
-            logger.info("No TaxTriage BAM found (alignment may have produced no reads)")
+            logger.info("Found TaxTriage BAM: \(bam.lastPathComponent, privacy: .public)")
+        }
+
+        // Parse gcfmapping.tsv to build organism→accession lookup
+        let gcfFiles = result.allOutputFiles.filter {
+            $0.lastPathComponent.contains("gcfmapping.tsv") && !$0.path.contains("/work/")
+        }
+        if let gcfFile = gcfFiles.first {
+            parseGCFMapping(url: gcfFile)
+        }
+
+        // Parse BAM header for reference lengths (needed for MiniBAMViewController)
+        if let bam = bamURL {
+            parseBamReferenceLengths(bamURL: bam)
         }
 
         // Set up the mini BAM viewer in the left pane
@@ -439,6 +459,55 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         return organisms
     }
 
+    /// Parses the gcfmapping.tsv to build organism name → accession lookup.
+    ///
+    /// Format: accession\tGCF_ID\torganism_name\tdescription
+    private func parseGCFMapping(url: URL) {
+        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return }
+
+        var mapping: [String: [String]] = [:]
+        for line in content.components(separatedBy: .newlines) {
+            let cols = line.components(separatedBy: "\t")
+            guard cols.count >= 3 else { continue }
+            let accession = cols[0]
+            let organismName = cols[2]
+            mapping[organismName, default: []].append(accession)
+        }
+        organismToAccessions = mapping
+        logger.info("Parsed gcfmapping: \(mapping.count) organisms → \(mapping.values.flatMap { $0 }.count) accessions")
+    }
+
+    /// Parses BAM reference lengths from samtools idxstats output.
+    private func parseBamReferenceLengths(bamURL: URL) {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/local/bin/samtools")
+        proc.arguments = ["idxstats", bamURL.path]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+
+        do {
+            try proc.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            proc.waitUntilExit()
+
+            if let output = String(data: data, encoding: .utf8) {
+                for line in output.components(separatedBy: .newlines) {
+                    let cols = line.components(separatedBy: "\t")
+                    guard cols.count >= 3 else { continue }
+                    let ref = cols[0]
+                    if let length = Int(cols[1]), length > 0 {
+                        accessionLengths[ref] = length
+                    }
+                }
+            }
+            let refCount = self.accessionLengths.count
+            logger.info("Parsed BAM references: \(refCount) contigs")
+        } catch {
+            logger.warning("Failed to parse BAM references: \(error.localizedDescription)")
+        }
+    }
+
     /// Configures the sunburst with the taxonomy tree from the kreport.
     private func configureSunburst() {
         if let tree = taxonomyTree {
@@ -490,16 +559,26 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
                 readCount: row?.reads
             )
 
-            // Load BAM alignments for the selected organism
-            if let row, let bamURL = self.bamURL, let taxId = row.taxId {
-                // Use the organism name as the contig reference in the BAM
-                // TaxTriage BAMs have reference sequences named by accession
-                // For now, show what we can find
-                self.miniBAMController?.displayContig(
-                    bamURL: bamURL,
-                    contig: row.organism,
-                    contigLength: 10000  // Approximate, will be refined
-                )
+            // Load BAM alignments for the selected organism.
+            // The BAM uses accession numbers (NC_009539.1) as reference names,
+            // not organism names. Use the gcfmapping to translate.
+            if let row, let bamURL = self.bamURL {
+                let organismName = row.organism
+                if let accessions = self.organismToAccessions[organismName],
+                   let primaryAccession = accessions.first,
+                   let contigLength = self.accessionLengths[primaryAccession] {
+                    self.miniBAMController?.displayContig(
+                        bamURL: bamURL,
+                        contig: primaryAccession,
+                        contigLength: contigLength
+                    )
+                    // Switch to Alignments tab automatically
+                    self.leftTabView.selectedSegment = 0
+                    self.leftTabChanged(self.leftTabView)
+                } else {
+                    self.miniBAMController?.clear()
+                    logger.debug("No accession mapping for organism: \(organismName, privacy: .public)")
+                }
             } else {
                 self.miniBAMController?.clear()
             }
