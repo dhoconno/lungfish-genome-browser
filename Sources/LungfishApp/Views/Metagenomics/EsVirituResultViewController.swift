@@ -73,6 +73,9 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     /// Background task computing unique reads for all assemblies.
     private var uniqueReadComputationTask: Task<Void, Never>?
 
+    /// Sidecar filename for persisted unique read counts.
+    private static let uniqueReadsSidecar = "esviritu-unique-reads.json"
+
     // MARK: - Child Views
 
     private let summaryBar = EsVirituSummaryBar()
@@ -211,6 +214,14 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             bamURL: bamURL
         )
 
+        // Clear cached unique reads from previous sample and load persisted values
+        uniqueReadComputationTask?.cancel()
+        detectionTableView.uniqueReadCountsByAssembly = [:]
+        detectionTableView.uniqueReadCountsByContig = [:]
+        if let outputDir = config?.outputDirectory {
+            loadPersistedUniqueReads(from: outputDir)
+        }
+
         // Configure table
         detectionTableView.coverageWindowsByAccession = coverageLookup
         detectionTableView.result = result
@@ -309,6 +320,15 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
                     }
                 }
             }
+
+            // Persist computed unique reads so they load instantly on re-open
+            if !Task.isCancelled {
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        self?.persistUniqueReads()
+                    }
+                }
+            }
         }
     }
 
@@ -325,6 +345,45 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             if count > 1 { total += count - 1 }
         }
         return max(0, reads.count - dupes)
+    }
+
+    // MARK: - Unique Read Persistence
+
+    /// Sidecar data structure for persisted unique read counts.
+    private struct UniqueReadCache: Codable {
+        var byAssembly: [String: Int]
+        var byContig: [String: Int]
+    }
+
+    /// Loads persisted unique read counts from the output directory sidecar.
+    private func loadPersistedUniqueReads(from outputDir: URL) {
+        let sidecarURL = outputDir.appendingPathComponent(Self.uniqueReadsSidecar)
+        guard let data = try? Data(contentsOf: sidecarURL),
+              let cache = try? JSONDecoder().decode(UniqueReadCache.self, from: data) else {
+            return
+        }
+        detectionTableView.uniqueReadCountsByAssembly = cache.byAssembly
+        detectionTableView.uniqueReadCountsByContig = cache.byContig
+        logger.info("Loaded persisted unique reads: \(cache.byAssembly.count) assemblies, \(cache.byContig.count) contigs")
+    }
+
+    /// Persists current unique read counts to the output directory sidecar.
+    private func persistUniqueReads() {
+        guard let outputDir = esVirituConfig?.outputDirectory else { return }
+        let cache = UniqueReadCache(
+            byAssembly: detectionTableView.uniqueReadCountsByAssembly,
+            byContig: detectionTableView.uniqueReadCountsByContig
+        )
+        let sidecarURL = outputDir.appendingPathComponent(Self.uniqueReadsSidecar)
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(cache)
+            try data.write(to: sidecarURL)
+            logger.info("Persisted unique reads for \(cache.byAssembly.count) assemblies")
+        } catch {
+            logger.warning("Failed to persist unique reads: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     // MARK: - Setup: Summary Bar
