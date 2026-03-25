@@ -86,16 +86,38 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
     public var coverageWindowsByAccession: [String: [ViralCoverageWindow]] = [:]
 
     /// Unique (deduplicated) read counts per assembly, keyed by assembly accession.
-    /// Populated asynchronously from BAM analysis.
+    /// This is the sum of per-contig unique reads for multi-segment viruses.
     public var uniqueReadCountsByAssembly: [String: Int] = [:]
+
+    /// Unique (deduplicated) read counts per contig/segment, keyed by contig accession.
+    public var uniqueReadCountsByContig: [String: Int] = [:]
 
     /// Updates the unique read count for an assembly and refreshes its row.
     public func setUniqueReadCount(_ count: Int, forAssembly accession: String) {
         uniqueReadCountsByAssembly[accession] = count
-        // Find and reload just the affected row
+        // Find and reload the assembly row
         let items = sortedDisplayItems
         if let idx = items.firstIndex(where: { $0.assembly.assembly == accession }) {
             outlineView.reloadItem(items[idx])
+        }
+    }
+
+    /// Updates the unique read count for a single contig/segment and refreshes the display.
+    ///
+    /// Also recomputes the parent assembly total as the sum of its contig unique reads.
+    public func setUniqueReadCount(_ count: Int, forContig contigAccession: String, inAssembly assemblyAccession: String) {
+        uniqueReadCountsByContig[contigAccession] = count
+
+        // Recompute assembly total from per-contig values
+        let items = sortedDisplayItems
+        if let item = items.first(where: { $0.assembly.assembly == assemblyAccession }) {
+            let assemblyTotal = item.assembly.contigs.reduce(0) { sum, contig in
+                sum + (uniqueReadCountsByContig[contig.accession] ?? 0)
+            }
+            uniqueReadCountsByAssembly[assemblyAccession] = assemblyTotal
+
+            // Reload the assembly row and its children
+            outlineView.reloadItem(item, reloadChildren: true)
         }
     }
 
@@ -795,8 +817,10 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         case ColumnID.reads:
             return makeNumberCell(value: detection.readCount)
         case ColumnID.uniqueReads:
-            // Per-contig unique reads aren't separately tracked; show dash
-            return makeTextCell(text: "\u{2014}", alignment: .right)
+            if let unique = uniqueReadCountsByContig[detection.accession] {
+                return makeNumberCell(value: unique)
+            }
+            return makeTextCell(text: "\u{2026}", alignment: .right)
         case ColumnID.rpkmf:
             return makeDecimalCell(value: detection.rpkmf, format: "%.1f")
         case ColumnID.coverage:

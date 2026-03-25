@@ -140,12 +140,20 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
     /// The assembly accession currently displayed in the mini BAM viewer.
     private var currentBAMAssemblyAccession: String?
+    /// The contig accession currently displayed in the mini BAM viewer.
+    private var currentBAMContigAccession: String?
 
     private func setupMiniBAMViewer() {
         let bamVC = MiniBAMViewController()
-        bamVC.onReadStatsUpdated = { [weak self] totalReads, uniqueReads in
-            guard let self, let accession = self.currentBAMAssemblyAccession else { return }
-            self.detectionTableView.setUniqueReadCount(uniqueReads, forAssembly: accession)
+        bamVC.onReadStatsUpdated = { [weak self] _, uniqueReads in
+            guard let self,
+                  let assemblyAcc = self.currentBAMAssemblyAccession,
+                  let contigAcc = self.currentBAMContigAccession else { return }
+            self.detectionTableView.setUniqueReadCount(
+                uniqueReads,
+                forContig: contigAcc,
+                inAssembly: assemblyAcc
+            )
         }
         addChild(bamVC)
         miniBAMController = bamVC
@@ -261,7 +269,7 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
                     continue
                 }
 
-                var totalUnique = 0
+                let isMultiSegment = assembly.contigs.count > 1
                 var fetchedAny = false
 
                 for contig in assembly.contigs {
@@ -278,14 +286,25 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
                     if reads.isEmpty { continue }
                     fetchedAny = true
-                    totalUnique += Self.deduplicatedReadCount(from: reads)
-                }
+                    let contigUnique = min(contig.readCount, Self.deduplicatedReadCount(from: reads))
+                    let assemblyAccession = assembly.assembly
 
-                if fetchedAny {
-                    let bounded = min(assembly.totalReads, totalUnique)
                     DispatchQueue.main.async { [weak self] in
                         MainActor.assumeIsolated {
-                            self?.detectionTableView.setUniqueReadCount(bounded, forAssembly: assembly.assembly)
+                            self?.detectionTableView.setUniqueReadCount(
+                                contigUnique,
+                                forContig: contig.accession,
+                                inAssembly: assemblyAccession
+                            )
+                        }
+                    }
+                }
+
+                // For single-contig assemblies that had no reads, ensure assembly shows 0
+                if !fetchedAny && !isMultiSegment {
+                    DispatchQueue.main.async { [weak self] in
+                        MainActor.assumeIsolated {
+                            self?.detectionTableView.setUniqueReadCount(0, forAssembly: assembly.assembly)
                         }
                     }
                 }
@@ -388,8 +407,9 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         detectionTableView.onAssemblySelected = { [weak self] assembly in
             guard let self else { return }
             if let assembly {
-                // Track which assembly is in the BAM viewer for unique read updates
+                // Track which assembly/contig is in the BAM viewer for unique read updates
                 self.currentBAMAssemblyAccession = assembly.assembly
+                self.currentBAMContigAccession = assembly.contigs.first?.accession
 
                 // Update action bar with selection info
                 self.actionBar.updateSelection(
