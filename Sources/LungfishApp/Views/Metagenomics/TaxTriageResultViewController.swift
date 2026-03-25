@@ -117,9 +117,22 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     private var selectedOrganismName: String?
     private var selectedReadCount: Int?
 
+    /// All table rows before sample filtering (the full merged set).
+    private var allTableRows: [TaxTriageTableRow] = []
+
+    /// Distinct sample identifiers discovered from the metrics, in natural order.
+    private(set) var sampleIds: [String] = []
+
+    /// Currently selected sample filter index (0 = "All Samples", 1.. = per-sample).
+    private(set) var selectedSampleIndex: Int = 0
+
+    /// Optional pre-selected sample ID set by sidebar routing before `configure` runs.
+    var preselectedSampleId: String?
+
     // MARK: - Child Views
 
     private let summaryBar = TaxTriageSummaryBar()
+    private let sampleFilterControl = NSSegmentedControl()
     let splitView = NSSplitView()
     private let leftTabView = NSSegmentedControl()
     private let leftPaneContainer = FlippedPaneContainerView()
@@ -130,6 +143,13 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     private let blastDrawer = BlastResultsDrawerTab()
     private var blastDrawerHeightConstraint: NSLayoutConstraint?
     private var splitViewBottomConstraint: NSLayoutConstraint?
+
+    /// Height constraint for the sample filter bar (0 when hidden, 24 when visible).
+    private var sampleFilterHeightConstraint: NSLayoutConstraint?
+    /// Top spacing constraint between sample filter and split view.
+    private var sampleFilterTopSpacingConstraint: NSLayoutConstraint?
+    /// Bottom spacing constraint between sample filter and split view.
+    private var sampleFilterBottomSpacingConstraint: NSLayoutConstraint?
 
     /// Whether the BLAST results drawer is currently visible.
     public private(set) var isBlastDrawerOpen = false
@@ -159,6 +179,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         view = container
 
         setupSummaryBar()
+        setupSampleFilterControl()
         setupSplitView()
         setupMiniBAMViewer()
         setupBlastDrawer()
@@ -298,6 +319,12 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
 
         // Build table rows from organisms (enriched with metrics if available)
         let mergedRows = buildTableRows(organisms: allOrganisms, metrics: metrics)
+        allTableRows = mergedRows
+
+        // Extract distinct sample IDs from metrics for the sample filter control.
+        let discoveredSamples = extractSampleIds(from: metrics)
+        sampleIds = discoveredSamples
+        rebuildSampleFilterSegments()
 
         // Update summary bar
         summaryBar.update(
@@ -307,8 +334,12 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             sampleCount: result.config.samples.count
         )
 
-        // Configure table
-        organismTableView.rows = mergedRows
+        // Configure table (apply filter if a sample was pre-selected)
+        if selectedSampleIndex > 0 {
+            applyCurrentSampleFilter()
+        } else {
+            organismTableView.rows = mergedRows
+        }
 
         // Configure tabs
         // Configure sunburst from kreport taxonomy tree
@@ -364,6 +395,20 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         scheduleDeduplicatedReadCountComputation(for: mergedRows)
 
         logger.info("Configured with \(mergedRows.count) organisms, \(result.metricsFiles.count) metrics files, \(result.kronaFiles.count) Krona files")
+    }
+
+    // MARK: - Sample Extraction
+
+    /// Extracts distinct sample identifiers from metrics, preserving discovery order.
+    private func extractSampleIds(from metrics: [TaxTriageMetric]) -> [String] {
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for metric in metrics {
+            if let sample = metric.sample, !sample.isEmpty, seen.insert(sample).inserted {
+                ordered.append(sample)
+            }
+        }
+        return ordered
     }
 
     // MARK: - Row Building
@@ -454,6 +499,113 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     private func setupSummaryBar() {
         summaryBar.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(summaryBar)
+    }
+
+    // MARK: - Setup: Sample Filter Control
+
+    /// Configures the per-sample segmented control.
+    ///
+    /// Initially hidden; shown only when the result contains multiple samples.
+    /// Segment 0 is "All Samples"; subsequent segments are per-sample IDs.
+    private func setupSampleFilterControl() {
+        sampleFilterControl.segmentStyle = .texturedRounded
+        sampleFilterControl.segmentCount = 1
+        sampleFilterControl.setLabel("All Samples", forSegment: 0)
+        sampleFilterControl.selectedSegment = 0
+        sampleFilterControl.target = self
+        sampleFilterControl.action = #selector(sampleFilterChanged(_:))
+        sampleFilterControl.translatesAutoresizingMaskIntoConstraints = false
+        sampleFilterControl.isHidden = true
+        view.addSubview(sampleFilterControl)
+    }
+
+    @objc private func sampleFilterChanged(_ sender: NSSegmentedControl) {
+        selectedSampleIndex = sender.selectedSegment
+        applyCurrentSampleFilter()
+    }
+
+    /// Rebuilds the sample filter segments from the discovered sample IDs.
+    private func rebuildSampleFilterSegments() {
+        let ids = sampleIds
+        if ids.count <= 1 {
+            sampleFilterControl.isHidden = true
+            sampleFilterHeightConstraint?.constant = 0
+            sampleFilterTopSpacingConstraint?.constant = 0
+            sampleFilterBottomSpacingConstraint?.constant = 0
+            selectedSampleIndex = 0
+            return
+        }
+
+        sampleFilterControl.segmentCount = ids.count + 1
+        sampleFilterControl.setLabel("All Samples", forSegment: 0)
+        for (i, sampleId) in ids.enumerated() {
+            sampleFilterControl.setLabel(sampleId, forSegment: i + 1)
+        }
+
+        // Apply pre-selected sample if set by sidebar routing
+        if let preselected = preselectedSampleId,
+           let matchIndex = ids.firstIndex(of: preselected) {
+            selectedSampleIndex = matchIndex + 1
+            preselectedSampleId = nil
+        } else {
+            selectedSampleIndex = 0
+        }
+        sampleFilterControl.selectedSegment = selectedSampleIndex
+        sampleFilterControl.isHidden = false
+        sampleFilterHeightConstraint?.constant = 24
+        sampleFilterTopSpacingConstraint?.constant = 4
+        sampleFilterBottomSpacingConstraint?.constant = 4
+    }
+
+    /// Filters table rows to the currently selected sample and refreshes the table.
+    private func applyCurrentSampleFilter() {
+        let filteredRows: [TaxTriageTableRow]
+        if selectedSampleIndex == 0 || sampleIds.isEmpty {
+            // "All Samples" — show merged view
+            filteredRows = allTableRows
+        } else {
+            let targetSample = sampleIds[selectedSampleIndex - 1]
+            // Rebuild rows from metrics filtered to this sample
+            let filteredMetrics = metrics.filter { $0.sample == targetSample }
+            let filteredOrganisms = filteredMetrics.map {
+                TaxTriageOrganism(
+                    name: $0.organism,
+                    score: $0.tassScore,
+                    reads: $0.reads,
+                    coverage: $0.coverageBreadth,
+                    taxId: $0.taxId,
+                    rank: $0.rank
+                )
+            }
+            filteredRows = buildTableRows(organisms: filteredOrganisms, metrics: filteredMetrics)
+        }
+
+        organismTableView.rows = filteredRows
+        summaryBar.update(
+            organismCount: filteredRows.count,
+            runtime: taxTriageResult?.runtime ?? 0,
+            highConfidenceCount: filteredRows.filter { $0.tassScore >= 0.8 }.count,
+            sampleCount: selectedSampleIndex == 0
+                ? (taxTriageResult?.config.samples.count ?? 1)
+                : 1
+        )
+    }
+
+    /// Selects a sample by its identifier, scrolling the segmented control.
+    ///
+    /// - Parameter sampleId: The sample ID to select, or nil for "All Samples".
+    public func selectSample(_ sampleId: String?) {
+        guard let sampleId else {
+            selectedSampleIndex = 0
+            sampleFilterControl.selectedSegment = 0
+            applyCurrentSampleFilter()
+            return
+        }
+        if let idx = sampleIds.firstIndex(of: sampleId) {
+            selectedSampleIndex = idx + 1
+            sampleFilterControl.selectedSegment = idx + 1
+            applyCurrentSampleFilter()
+        }
     }
 
     // MARK: - Setup: Split View
@@ -1098,12 +1250,25 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         let splitBottom = splitView.bottomAnchor.constraint(equalTo: blastDrawer.topAnchor)
         splitViewBottomConstraint = splitBottom
 
+        // Sample filter bar collapses to zero height when hidden (single-sample runs).
+        let filterHeight = sampleFilterControl.heightAnchor.constraint(equalToConstant: 0)
+        sampleFilterHeightConstraint = filterHeight
+        let filterTop = sampleFilterControl.topAnchor.constraint(equalTo: summaryBar.bottomAnchor, constant: 0)
+        sampleFilterTopSpacingConstraint = filterTop
+        let filterBottom = splitView.topAnchor.constraint(equalTo: sampleFilterControl.bottomAnchor, constant: 0)
+        sampleFilterBottomSpacingConstraint = filterBottom
+
         NSLayoutConstraint.activate([
             // Summary bar (top, below safe area)
             summaryBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             summaryBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             summaryBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             summaryBar.heightAnchor.constraint(equalToConstant: 48),
+
+            // Sample filter control (between summary bar and split view)
+            filterTop,
+            sampleFilterControl.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            filterHeight,
 
             // Action bar (bottom, fixed height)
             actionBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -1117,8 +1282,8 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             blastDrawer.bottomAnchor.constraint(equalTo: actionBar.topAnchor),
             drawerHeight,
 
-            // Split view (fills remaining space above drawer)
-            splitView.topAnchor.constraint(equalTo: summaryBar.bottomAnchor),
+            // Split view (fills remaining space)
+            filterBottom,
             splitView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             splitView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             splitBottom,

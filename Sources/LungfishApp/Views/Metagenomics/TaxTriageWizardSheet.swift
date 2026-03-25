@@ -506,10 +506,23 @@ struct TaxTriageWizardSheet: View {
 
         guard !taxSamples.isEmpty else { return }
 
-        let outputDir = initialFiles.first?.deletingLastPathComponent()
-            .appendingPathComponent("taxtriage-\(UUID().uuidString.prefix(8))")
-            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        // Collect the distinct parent directories (bundle URLs) for all input files.
+        // For multi-bundle runs, use the common ancestor as the output directory
+        // so results are not buried inside a single bundle.
+        let parentDirs = Set(initialFiles.map { $0.deletingLastPathComponent().standardizedFileURL })
+        let sourceBundleURLs: [URL]? = parentDirs.count > 1 ? Array(parentDirs).sorted(by: { $0.path < $1.path }) : nil
+
+        let outputDir: URL
+        if parentDirs.count > 1 {
+            // Multi-bundle: place output in the common ancestor directory
+            outputDir = Self.commonAncestorDirectory(of: Array(parentDirs))
                 .appendingPathComponent("taxtriage-\(UUID().uuidString.prefix(8))")
+        } else {
+            outputDir = initialFiles.first?.deletingLastPathComponent()
+                .appendingPathComponent("taxtriage-\(UUID().uuidString.prefix(8))")
+                ?? URL(fileURLWithPath: NSTemporaryDirectory())
+                    .appendingPathComponent("taxtriage-\(UUID().uuidString.prefix(8))")
+        }
 
         // Find the selected database path
         let dbPath = installedDatabases.first(where: { $0.name == selectedDatabaseName })?.path
@@ -524,10 +537,44 @@ struct TaxTriageWizardSheet: View {
             skipAssembly: skipAssembly,
             skipKrona: skipKrona,
             maxMemory: "\(maxMemoryGB).GB",
-            maxCpus: maxCpus
+            maxCpus: maxCpus,
+            sourceBundleURLs: sourceBundleURLs
         )
 
         onRun?(config)
+    }
+
+    /// Computes the deepest common ancestor directory of the given URLs.
+    static func commonAncestorDirectory(of urls: [URL]) -> URL {
+        guard let first = urls.first else {
+            return URL(fileURLWithPath: NSTemporaryDirectory())
+        }
+        guard urls.count > 1 else {
+            return first
+        }
+
+        var commonComponents = first.standardizedFileURL.pathComponents
+        for url in urls.dropFirst() {
+            let components = url.standardizedFileURL.pathComponents
+            let minLength = min(commonComponents.count, components.count)
+            var matchEnd = 0
+            for i in 0..<minLength {
+                if commonComponents[i] == components[i] {
+                    matchEnd = i + 1
+                } else {
+                    break
+                }
+            }
+            commonComponents = Array(commonComponents.prefix(matchEnd))
+        }
+
+        // Rebuild URL from common path components
+        if commonComponents.isEmpty {
+            return URL(fileURLWithPath: "/")
+        }
+        let path = commonComponents.joined(separator: "/")
+            .replacingOccurrences(of: "//", with: "/")
+        return URL(fileURLWithPath: path)
     }
 }
 

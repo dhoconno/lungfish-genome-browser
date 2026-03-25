@@ -84,6 +84,13 @@ public struct TaxTriageResult: Sendable, Codable, Equatable {
     /// so subsequent loads skip the expensive BAM scan.
     public var deduplicatedReadCounts: [String: Int]?
 
+    /// URLs of the source FASTQ bundles that contributed samples to this run.
+    ///
+    /// Persisted for provenance tracking and sidebar cross-referencing.
+    /// `nil` for legacy single-bundle runs. Populated from the config's
+    /// ``TaxTriageConfig/sourceBundleURLs`` at result creation time.
+    public var sourceBundleURLs: [URL]?
+
     // MARK: - Initialization
 
     /// Creates a TaxTriage result.
@@ -110,7 +117,8 @@ public struct TaxTriageResult: Sendable, Codable, Equatable {
         logFile: URL? = nil,
         traceFile: URL? = nil,
         allOutputFiles: [URL] = [],
-        deduplicatedReadCounts: [String: Int]? = nil
+        deduplicatedReadCounts: [String: Int]? = nil,
+        sourceBundleURLs: [URL]? = nil
     ) {
         self.config = config
         self.runtime = runtime
@@ -123,6 +131,7 @@ public struct TaxTriageResult: Sendable, Codable, Equatable {
         self.traceFile = traceFile
         self.allOutputFiles = allOutputFiles
         self.deduplicatedReadCounts = deduplicatedReadCounts
+        self.sourceBundleURLs = sourceBundleURLs
     }
 
     // MARK: - Summary

@@ -720,4 +720,124 @@ final class TaxTriagePipelineTests: XCTestCase {
         XCTAssertTrue(args.contains("4"))
         XCTAssertTrue(args.contains("-with-trace"))
     }
+
+    // MARK: - Multi-Sample Batch Tests (Phase 1)
+
+    func testConfigSourceBundleURLsDefaultNil() {
+        let config = TaxTriageConfig(
+            samples: [],
+            outputDirectory: URL(fileURLWithPath: "/tmp/output")
+        )
+        XCTAssertNil(config.sourceBundleURLs)
+    }
+
+    func testConfigSourceBundleURLsRoundTrip() throws {
+        let bundles = [
+            URL(fileURLWithPath: "/data/bundle1.lungfishfastq"),
+            URL(fileURLWithPath: "/data/bundle2.lungfishfastq"),
+        ]
+        let config = TaxTriageConfig(
+            samples: [],
+            outputDirectory: URL(fileURLWithPath: "/tmp/output"),
+            sourceBundleURLs: bundles
+        )
+        XCTAssertEqual(config.sourceBundleURLs?.count, 2)
+
+        // Codable round-trip
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(config)
+        let decoded = try JSONDecoder().decode(TaxTriageConfig.self, from: data)
+        XCTAssertEqual(decoded.sourceBundleURLs, bundles)
+    }
+
+    func testResultSourceBundleURLsDefaultNil() {
+        let config = TaxTriageConfig(
+            samples: [],
+            outputDirectory: URL(fileURLWithPath: "/tmp/output")
+        )
+        let result = TaxTriageResult(
+            config: config,
+            runtime: 10,
+            exitCode: 0,
+            outputDirectory: URL(fileURLWithPath: "/tmp/output")
+        )
+        XCTAssertNil(result.sourceBundleURLs)
+    }
+
+    func testResultSourceBundleURLsRoundTrip() throws {
+        let bundles = [
+            URL(fileURLWithPath: "/data/bundle1.lungfishfastq"),
+            URL(fileURLWithPath: "/data/bundle2.lungfishfastq"),
+        ]
+        let config = TaxTriageConfig(
+            samples: [],
+            outputDirectory: URL(fileURLWithPath: "/tmp/output"),
+            sourceBundleURLs: bundles
+        )
+        let result = TaxTriageResult(
+            config: config,
+            runtime: 42.5,
+            exitCode: 0,
+            outputDirectory: URL(fileURLWithPath: "/tmp/output"),
+            sourceBundleURLs: bundles
+        )
+        XCTAssertEqual(result.sourceBundleURLs, bundles)
+
+        // Codable round-trip
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(result)
+        let decoded = try JSONDecoder().decode(TaxTriageResult.self, from: data)
+        XCTAssertEqual(decoded.sourceBundleURLs, bundles)
+    }
+
+    func testResultBackwardCompatibilityWithoutSourceBundleURLs() throws {
+        // Simulate a legacy JSON without the sourceBundleURLs field
+        let config = TaxTriageConfig(
+            samples: [],
+            outputDirectory: URL(fileURLWithPath: "/tmp/output")
+        )
+        let result = TaxTriageResult(
+            config: config,
+            runtime: 10,
+            exitCode: 0,
+            outputDirectory: URL(fileURLWithPath: "/tmp/output")
+        )
+        // Encode, then decode — nil fields should survive
+        let data = try JSONEncoder().encode(result)
+        let decoded = try JSONDecoder().decode(TaxTriageResult.self, from: data)
+        XCTAssertNil(decoded.sourceBundleURLs)
+    }
+
+    func testResultSaveLoadWithSourceBundleURLs() throws {
+        let tmpDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("taxtriage-test-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmpDir) }
+
+        let bundles = [
+            URL(fileURLWithPath: "/data/bundleA.lungfishfastq"),
+            URL(fileURLWithPath: "/data/bundleB.lungfishfastq"),
+        ]
+        let config = TaxTriageConfig(
+            samples: [
+                TaxTriageSample(sampleId: "S1", fastq1: URL(fileURLWithPath: "/data/s1.fq.gz")),
+                TaxTriageSample(sampleId: "S2", fastq1: URL(fileURLWithPath: "/data/s2.fq.gz")),
+            ],
+            outputDirectory: tmpDir,
+            sourceBundleURLs: bundles
+        )
+        var result = TaxTriageResult(
+            config: config,
+            runtime: 100,
+            exitCode: 0,
+            outputDirectory: tmpDir,
+            sourceBundleURLs: bundles
+        )
+        try result.save()
+
+        let loaded = try TaxTriageResult.load(from: tmpDir)
+        XCTAssertEqual(loaded.sourceBundleURLs, bundles)
+        XCTAssertEqual(loaded.config.sourceBundleURLs, bundles)
+        XCTAssertEqual(loaded.config.samples.count, 2)
+    }
 }

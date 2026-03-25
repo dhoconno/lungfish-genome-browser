@@ -1611,9 +1611,10 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             return
         }
 
-        // TaxTriage results
+        // TaxTriage results (including per-sample children of batch groups)
         if item.type == .taxTriageResult, let url = item.url {
-            displayTaxTriageResultFromSidebar(at: url)
+            let sampleId = item.userInfo["sampleId"]
+            displayTaxTriageResultFromSidebar(at: url, sampleId: sampleId)
             return
         }
 
@@ -1762,12 +1763,17 @@ extension MainSplitViewController: SidebarSelectionDelegate {
     }
 
     /// Display a saved TaxTriage result from a result directory.
-    private func displayTaxTriageResultFromSidebar(at url: URL) {
-        logger.info("displayTaxTriageResult: Opening '\(url.lastPathComponent, privacy: .public)'")
+    ///
+    /// - Parameters:
+    ///   - url: The result output directory.
+    ///   - sampleId: Optional sample ID to pre-select in the per-sample filter.
+    ///     `nil` shows the "All Samples" merged view.
+    private func displayTaxTriageResultFromSidebar(at url: URL, sampleId: String? = nil) {
+        logger.info("displayTaxTriageResult: Opening '\(url.lastPathComponent, privacy: .public)', sampleId=\(sampleId ?? "all", privacy: .public)")
 
         // Prefer the persisted sidecar so view parsing matches pipeline-time discovery.
         if let persisted = try? TaxTriageResult.load(from: url) {
-            viewerController.displayTaxTriageResult(persisted, config: persisted.config)
+            viewerController.displayTaxTriageResult(persisted, config: persisted.config, sampleId: sampleId)
             return
         }
 
@@ -1823,7 +1829,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             allOutputFiles: allFiles
         )
 
-        viewerController.displayTaxTriageResult(result, config: nil)
+        viewerController.displayTaxTriageResult(result, config: nil, sampleId: sampleId)
     }
 
     /// Display genomics file - cache-first, then load via DocumentManager.

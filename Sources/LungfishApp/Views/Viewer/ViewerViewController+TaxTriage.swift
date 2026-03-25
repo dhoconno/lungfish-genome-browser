@@ -33,7 +33,8 @@ extension ViewerViewController {
     /// - Parameters:
     ///   - result: The TaxTriage pipeline result to display.
     ///   - config: The config used for this run (optional, for provenance/re-run).
-    public func displayTaxTriageResult(_ result: TaxTriageResult, config: TaxTriageConfig? = nil) {
+    ///   - sampleId: Optional sample ID to pre-select in the per-sample filter.
+    public func displayTaxTriageResult(_ result: TaxTriageResult, config: TaxTriageConfig? = nil, sampleId: String? = nil) {
         hideQuickLookPreview()
         hideFASTQDatasetView()
         hideVCFDatasetView()
@@ -43,6 +44,7 @@ extension ViewerViewController {
         hideTaxTriageView()
 
         let controller = TaxTriageResultViewController()
+        controller.preselectedSampleId = sampleId
         addChild(controller)
 
         // Hide annotation drawer and FASTQ metadata drawer

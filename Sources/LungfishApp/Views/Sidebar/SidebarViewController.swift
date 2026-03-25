@@ -1190,18 +1190,61 @@ public class SidebarViewController: NSViewController {
 
             guard hasKreport || hasTopReport else { continue }
 
-            let item = SidebarItem(
-                title: "Comprehensive Triage",
-                type: .taxTriageResult,
-                icon: "stethoscope",
-                children: [],
-                url: childURL
-            )
-            results.append(item)
+            // Check if this is a multi-sample run by loading the persisted result.
+            let persistedResult = try? TaxTriageResult.load(from: childURL)
+            let sampleCount = persistedResult?.config.samples.count ?? 1
+
+            if sampleCount > 1 {
+                // Multi-sample: create a batch group node with per-sample children
+                let groupItem = SidebarItem(
+                    title: "Comprehensive Triage",
+                    type: .batchGroup,
+                    icon: "stethoscope",
+                    children: [],
+                    url: childURL,
+                    subtitle: "\(sampleCount) samples"
+                )
+                // Add "All Samples" overview child
+                let allChild = SidebarItem(
+                    title: "All Samples",
+                    type: .taxTriageResult,
+                    icon: "person.3",
+                    children: [],
+                    url: childURL
+                )
+                groupItem.children.append(allChild)
+
+                // Add one child per sample
+                for sample in persistedResult!.config.samples {
+                    let sampleChild = SidebarItem(
+                        title: sample.sampleId,
+                        type: .taxTriageResult,
+                        icon: "person",
+                        children: [],
+                        url: childURL,
+                        subtitle: nil
+                    )
+                    // Store the sample ID in the item for routing
+                    sampleChild.userInfo["sampleId"] = sample.sampleId
+                    groupItem.children.append(sampleChild)
+                }
+
+                results.append(groupItem)
+            } else {
+                // Single-sample: flat item as before
+                let item = SidebarItem(
+                    title: "Comprehensive Triage",
+                    type: .taxTriageResult,
+                    icon: "stethoscope",
+                    children: [],
+                    url: childURL
+                )
+                results.append(item)
+            }
         }
 
         return results.sorted {
-            $0.url?.lastPathComponent ?? "" < $1.url?.lastPathComponent ?? ""
+            ($0.url?.lastPathComponent ?? "") < ($1.url?.lastPathComponent ?? "")
         }
     }
 
@@ -2333,6 +2376,8 @@ public class SidebarItem: NSObject {
     public var url: URL?
     /// Optional subtitle for additional context (e.g. read composition label).
     public var subtitle: String?
+    /// Arbitrary key-value metadata for routing (e.g. sampleId for batch children).
+    public var userInfo: [String: String] = [:]
 
     public init(title: String, type: SidebarItemType, icon: String? = nil, children: [SidebarItem] = [], url: URL? = nil, subtitle: String? = nil) {
         self.title = title

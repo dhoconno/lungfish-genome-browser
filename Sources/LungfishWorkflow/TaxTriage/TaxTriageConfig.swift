@@ -157,6 +157,15 @@ public struct TaxTriageConfig: Sendable, Codable, Equatable {
     /// Passed as `-r` to Nextflow. Default: "main".
     public var revision: String
 
+    // MARK: - Provenance
+
+    /// URLs of the source FASTQ bundles that contributed samples to this run.
+    ///
+    /// For multi-sample batch runs, this captures the originating bundles so that
+    /// sidebar grouping and cross-referencing can locate results. `nil` for legacy
+    /// or single-bundle runs where the output is stored inside the bundle itself.
+    public var sourceBundleURLs: [URL]?
+
     // MARK: - Initialization
 
     /// Creates a TaxTriage configuration with the specified parameters.
@@ -177,6 +186,7 @@ public struct TaxTriageConfig: Sendable, Codable, Equatable {
     ///   - profile: Nextflow execution profile.
     ///   - containerRuntime: Optional container runtime override.
     ///   - revision: Nextflow pipeline revision.
+    ///   - sourceBundleURLs: Source FASTQ bundle URLs for provenance tracking.
     public init(
         samples: [TaxTriageSample],
         platform: Platform = .illumina,
@@ -192,7 +202,8 @@ public struct TaxTriageConfig: Sendable, Codable, Equatable {
         maxCpus: Int = ProcessInfo.processInfo.activeProcessorCount,
         profile: String = "docker",
         containerRuntime: String? = nil,
-        revision: String = "main"
+        revision: String = "main",
+        sourceBundleURLs: [URL]? = nil
     ) {
         self.samples = samples
         self.platform = platform
@@ -209,6 +220,7 @@ public struct TaxTriageConfig: Sendable, Codable, Equatable {
         self.profile = profile
         self.containerRuntime = containerRuntime
         self.revision = revision
+        self.sourceBundleURLs = sourceBundleURLs
     }
 
     // MARK: - Computed Properties

@@ -680,7 +680,8 @@ public actor TaxTriagePipeline {
             kronaFiles: kronaFiles.sorted { $0.path < $1.path },
             logFile: logFile,
             traceFile: traceFile,
-            allOutputFiles: allFiles
+            allOutputFiles: allFiles,
+            sourceBundleURLs: config.sourceBundleURLs
         )
     }
 
