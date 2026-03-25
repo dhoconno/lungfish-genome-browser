@@ -135,8 +135,15 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
     private var miniBAMController: MiniBAMViewController?
 
+    /// The assembly accession currently displayed in the mini BAM viewer.
+    private var currentBAMAssemblyAccession: String?
+
     private func setupMiniBAMViewer() {
         let bamVC = MiniBAMViewController()
+        bamVC.onReadStatsUpdated = { [weak self] totalReads, uniqueReads in
+            guard let self, let accession = self.currentBAMAssemblyAccession else { return }
+            self.detectionTableView.setUniqueReadCount(uniqueReads, forAssembly: accession)
+        }
         addChild(bamVC)
         miniBAMController = bamVC
         detailPane.miniBAMViewController = bamVC
@@ -287,6 +294,9 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         detectionTableView.onAssemblySelected = { [weak self] assembly in
             guard let self else { return }
             if let assembly {
+                // Track which assembly is in the BAM viewer for unique read updates
+                self.currentBAMAssemblyAccession = assembly.assembly
+
                 // Update action bar with selection info
                 self.actionBar.updateSelection(
                     assemblyName: assembly.name,

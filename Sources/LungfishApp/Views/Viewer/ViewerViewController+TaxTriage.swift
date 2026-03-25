@@ -118,12 +118,12 @@ extension ViewerViewController {
                         var readMap: [String: String] = [:]  // readName → sequence
                         for accession in accessions {
                             if Task.isCancelled { break }
-                            // Fetch mapped reads (exclude unmapped, secondary, supplementary, PCR dups)
+                            // Fetch unique mapped reads (exclude unmapped, secondary, supplementary, PCR dups)
                             let reads = (try? await provider.fetchReads(
                                 chromosome: accession,
                                 start: 0,
                                 end: Int.max,
-                                excludeFlags: 0x904,
+                                excludeFlags: 0xF04,
                                 maxReads: 10_000
                             )) ?? []
                             for read in reads where !read.sequence.isEmpty && read.sequence != "*" {

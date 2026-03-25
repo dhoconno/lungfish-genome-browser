@@ -85,6 +85,20 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
     /// Coverage windows indexed by accession for sparkline rendering.
     public var coverageWindowsByAccession: [String: [ViralCoverageWindow]] = [:]
 
+    /// Unique (deduplicated) read counts per assembly, keyed by assembly accession.
+    /// Populated asynchronously from BAM analysis.
+    public var uniqueReadCountsByAssembly: [String: Int] = [:]
+
+    /// Updates the unique read count for an assembly and refreshes its row.
+    public func setUniqueReadCount(_ count: Int, forAssembly accession: String) {
+        uniqueReadCountsByAssembly[accession] = count
+        // Find and reload just the affected row
+        let items = sortedDisplayItems
+        if let idx = items.firstIndex(where: { $0.assembly.assembly == accession }) {
+            outlineView.reloadItem(items[idx])
+        }
+    }
+
     /// Called when the user selects an assembly row.
     /// Pass `nil` when the selection is cleared.
     public var onAssemblySelected: ((ViralAssembly?) -> Void)?
@@ -149,6 +163,7 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         static let name = "name"
         static let family = "family"
         static let reads = "reads"
+        static let uniqueReads = "uniqueReads"
         static let rpkmf = "rpkmf"
         static let coverage = "coverage"
         static let identity = "identity"
@@ -216,6 +231,14 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         readsCol.minWidth = 50
         readsCol.sortDescriptorPrototype = NSSortDescriptor(key: ColumnID.reads, ascending: false)
         outlineView.addTableColumn(readsCol)
+
+        // Unique Reads column
+        let uniqueReadsCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(ColumnID.uniqueReads))
+        uniqueReadsCol.title = "Unique Reads"
+        uniqueReadsCol.width = 85
+        uniqueReadsCol.minWidth = 60
+        uniqueReadsCol.sortDescriptorPrototype = NSSortDescriptor(key: ColumnID.uniqueReads, ascending: false)
+        outlineView.addTableColumn(uniqueReadsCol)
 
         // RPKMF column
         let rpkmfCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(ColumnID.rpkmf))
@@ -418,6 +441,12 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
             items.sort { currentSortAscending
                 ? $0.assembly.totalReads < $1.assembly.totalReads
                 : $0.assembly.totalReads > $1.assembly.totalReads
+            }
+        case ColumnID.uniqueReads:
+            items.sort { a, b in
+                let aVal = uniqueReadCountsByAssembly[a.assembly.assembly] ?? 0
+                let bVal = uniqueReadCountsByAssembly[b.assembly.assembly] ?? 0
+                return currentSortAscending ? aVal < bVal : aVal > bVal
             }
         case ColumnID.rpkmf:
             items.sort { currentSortAscending
@@ -722,6 +751,11 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
             return makeTextCell(text: assembly.family ?? "\u{2014}", alignment: .left)
         case ColumnID.reads:
             return makeNumberCell(value: assembly.totalReads)
+        case ColumnID.uniqueReads:
+            if let unique = uniqueReadCountsByAssembly[assembly.assembly] {
+                return makeNumberCell(value: unique)
+            }
+            return makeTextCell(text: "\u{2026}", alignment: .right)  // ellipsis while computing
         case ColumnID.rpkmf:
             return makeDecimalCell(value: assembly.rpkmf, format: "%.1f")
         case ColumnID.coverage:
@@ -760,6 +794,9 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
             return makeTextCell(text: detection.family ?? "\u{2014}", alignment: .left)
         case ColumnID.reads:
             return makeNumberCell(value: detection.readCount)
+        case ColumnID.uniqueReads:
+            // Per-contig unique reads aren't separately tracked; show dash
+            return makeTextCell(text: "\u{2014}", alignment: .right)
         case ColumnID.rpkmf:
             return makeDecimalCell(value: detection.rpkmf, format: "%.1f")
         case ColumnID.coverage:
