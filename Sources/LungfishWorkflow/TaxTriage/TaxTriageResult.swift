@@ -78,6 +78,12 @@ public struct TaxTriageResult: Sendable, Codable, Equatable {
     /// All output files discovered after pipeline completion.
     public let allOutputFiles: [URL]
 
+    /// Cached deduplicated (unique) read counts per normalized organism name.
+    ///
+    /// Populated after the first background deduplication pass and persisted
+    /// so subsequent loads skip the expensive BAM scan.
+    public var deduplicatedReadCounts: [String: Int]?
+
     // MARK: - Initialization
 
     /// Creates a TaxTriage result.
@@ -103,7 +109,8 @@ public struct TaxTriageResult: Sendable, Codable, Equatable {
         kronaFiles: [URL] = [],
         logFile: URL? = nil,
         traceFile: URL? = nil,
-        allOutputFiles: [URL] = []
+        allOutputFiles: [URL] = [],
+        deduplicatedReadCounts: [String: Int]? = nil
     ) {
         self.config = config
         self.runtime = runtime
@@ -115,6 +122,7 @@ public struct TaxTriageResult: Sendable, Codable, Equatable {
         self.logFile = logFile
         self.traceFile = traceFile
         self.allOutputFiles = allOutputFiles
+        self.deduplicatedReadCounts = deduplicatedReadCounts
     }
 
     // MARK: - Summary

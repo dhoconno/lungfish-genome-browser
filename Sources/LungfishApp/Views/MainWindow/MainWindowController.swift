@@ -272,7 +272,9 @@ public class MainWindowController: NSWindowController {
 
         // Update toolbar button highlight based on drawer state
         let isOpen: Bool
-        if let taxVC = vc?.taxonomyViewController {
+        if let taxTriageVC = vc?.taxTriageViewController {
+            isOpen = taxTriageVC.isBlastDrawerOpen
+        } else if let taxVC = vc?.taxonomyViewController {
             isOpen = taxVC.isTaxaCollectionsDrawerOpen
         } else if vc?.isDisplayingFASTQDataset == true {
             isOpen = vc?.isFASTQMetadataDrawerOpen ?? false

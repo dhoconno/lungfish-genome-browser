@@ -1110,17 +1110,19 @@ final class MiniPileupView: NSView {
             }
         }
 
-        // Draw soft-clip indicators from CIGAR
+        // Draw soft-clip indicators from CIGAR.
+        // Leading clips extend left of alignment start; trailing clips extend
+        // right of alignment end.
         let cigar = read.cigar
         if let first = cigar.first, first.op == .softClip {
             let clipWidth = max(2, CGFloat(Double(first.length) / bpPerPixel))
-            let clipRect = NSRect(x: startX, y: y, width: clipWidth, height: readHeight)
+            let clipRect = NSRect(x: startX - clipWidth, y: y, width: clipWidth, height: readHeight)
             NSColor.systemYellow.withAlphaComponent(0.5).setFill()
             NSBezierPath(rect: clipRect).fill()
         }
-        if let last = cigar.last, last.op == .softClip {
+        if let last = cigar.last, last.op == .softClip, cigar.count > 1 {
             let clipWidth = max(2, CGFloat(Double(last.length) / bpPerPixel))
-            let clipRect = NSRect(x: endX - clipWidth, y: y, width: clipWidth, height: readHeight)
+            let clipRect = NSRect(x: endX, y: y, width: clipWidth, height: readHeight)
             NSColor.systemYellow.withAlphaComponent(0.5).setFill()
             NSBezierPath(rect: clipRect).fill()
         }
@@ -1132,30 +1134,50 @@ final class MiniPileupView: NSView {
     }
 
     /// Draws individual base letters on the read at high zoom levels.
+    ///
+    /// Walks the CIGAR string to correctly map query bases to reference
+    /// positions.  Soft-clipped bases are skipped (they don't align to
+    /// the reference).
     private func drawBaseLetters(read: AlignedRead, startX: CGFloat, y: CGFloat) {
         let basePxWidth = CGFloat(1.0 / bpPerPixel)
         guard basePxWidth >= 4 else { return }  // Too small to render letters
 
         let fontSize = min(10, max(6, basePxWidth * 0.8))
         let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .medium)
+        let readBases = Array(read.sequence)
 
-        for (i, char) in read.sequence.enumerated() {
-            let refPos = read.position + i
-            let x = leftMargin + CGFloat(Double(refPos) / bpPerPixel)
+        var refPos = read.position
+        var queryPos = 0
 
-            let color: NSColor
-            color = baseColor(for: char)
-
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: font,
-                .foregroundColor: color,
-            ]
-            let str = String(char) as NSString
-            let size = str.size(withAttributes: attrs)
-            str.draw(
-                at: NSPoint(x: x + (basePxWidth - size.width) / 2, y: y + (readHeight - size.height) / 2),
-                withAttributes: attrs
-            )
+        for op in read.cigar {
+            switch op.op {
+            case .match, .seqMatch, .seqMismatch:
+                for offset in 0..<op.length {
+                    let q = queryPos + offset
+                    guard q < readBases.count else { break }
+                    let char = readBases[q]
+                    let x = leftMargin + CGFloat(Double(refPos + offset) / bpPerPixel)
+                    let color = baseColor(for: char)
+                    let attrs: [NSAttributedString.Key: Any] = [
+                        .font: font,
+                        .foregroundColor: color,
+                    ]
+                    let str = String(char) as NSString
+                    let size = str.size(withAttributes: attrs)
+                    str.draw(
+                        at: NSPoint(x: x + (basePxWidth - size.width) / 2, y: y + (readHeight - size.height) / 2),
+                        withAttributes: attrs
+                    )
+                }
+                refPos += op.length
+                queryPos += op.length
+            case .insertion, .softClip:
+                queryPos += op.length
+            case .deletion, .skip:
+                refPos += op.length
+            case .hardClip, .padding:
+                break
+            }
         }
     }
 

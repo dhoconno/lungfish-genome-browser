@@ -127,6 +127,15 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     private var miniBAMController: MiniBAMViewController?
     private let organismTableView = TaxTriageOrganismTableView()
     let actionBar = TaxTriageActionBar()
+    private let blastDrawer = BlastResultsDrawerTab()
+    private var blastDrawerHeightConstraint: NSLayoutConstraint?
+    private var splitViewBottomConstraint: NSLayoutConstraint?
+
+    /// Whether the BLAST results drawer is currently visible.
+    public private(set) var isBlastDrawerOpen = false
+
+    /// The most recent BLAST verification result, if any.
+    public private(set) var lastBlastResult: BlastVerificationResult?
 
     // MARK: - Split View State
 
@@ -137,8 +146,8 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
 
     /// Called when the user requests BLAST verification for a selected organism.
     ///
-    /// - Parameter organism: The organism to verify.
-    public var onBlastVerification: ((TaxTriageOrganism) -> Void)?
+    /// Parameters: organism, readCount, accessions (from BAM mapping), bamURL, bamIndexURL.
+    public var onBlastVerification: ((TaxTriageOrganism, Int, [String]?, URL?, URL?) -> Void)?
 
     /// Called when the user wants to re-run TaxTriage with the same or different settings.
     public var onReRun: (() -> Void)?
@@ -152,6 +161,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         setupSummaryBar()
         setupSplitView()
         setupMiniBAMViewer()
+        setupBlastDrawer()
         setupActionBar()
         layoutSubviews()
         wireCallbacks()
@@ -219,7 +229,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         accessionMappedReadCounts = [:]
         referenceFastaURL = nil
         referenceSequenceCache = [:]
-        deduplicatedReadCounts = [:]
+        deduplicatedReadCounts = result.deduplicatedReadCounts ?? [:]
         deduplicatedReadCountTask?.cancel()
         deduplicatedReadCountTask = nil
         selectedOrganismName = nil
@@ -864,6 +874,23 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
                     self.applyUniqueReadCount(0, for: row.organism)
                 }
             }
+
+            // Persist computed counts to the sidecar so they load instantly next time.
+            if !Task.isCancelled, !self.deduplicatedReadCounts.isEmpty {
+                self.persistDeduplicatedReadCounts()
+            }
+        }
+    }
+
+    /// Saves current deduplicated read counts into the TaxTriage result sidecar.
+    private func persistDeduplicatedReadCounts() {
+        guard var result = taxTriageResult else { return }
+        result.deduplicatedReadCounts = deduplicatedReadCounts
+        do {
+            try result.save()
+            logger.info("Persisted \(self.deduplicatedReadCounts.count) deduplicated read counts to sidecar")
+        } catch {
+            logger.warning("Failed to persist deduplicated read counts: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -997,6 +1024,64 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         }
     }
 
+    // MARK: - Setup: BLAST Drawer
+
+    private func setupBlastDrawer() {
+        blastDrawer.translatesAutoresizingMaskIntoConstraints = false
+        blastDrawer.isHidden = true
+        view.addSubview(blastDrawer)
+
+        blastDrawer.onRerunBlast = { [weak self] in
+            guard let self, let result = self.lastBlastResult else { return }
+            let organism = TaxTriageOrganism(
+                name: result.taxonName, score: 0, reads: result.totalReads,
+                coverage: nil, taxId: result.taxId, rank: nil
+            )
+            let orgAccessions = self.accessions(for: result.taxonName)
+            self.onBlastVerification?(organism, result.totalReads, orgAccessions, self.bamURL, self.bamIndexURL)
+        }
+    }
+
+    // MARK: - BLAST Drawer Public API
+
+    /// Shows BLAST verification results in the bottom drawer, opening it if needed.
+    public func showBlastResults(_ result: BlastVerificationResult) {
+        lastBlastResult = result
+        blastDrawer.showResults(result)
+        if !isBlastDrawerOpen {
+            toggleBlastDrawer()
+        }
+    }
+
+    /// Shows BLAST loading state in the bottom drawer.
+    public func showBlastLoading(phase: BlastJobPhase, requestId: String?) {
+        blastDrawer.showLoading(phase: phase, requestId: requestId)
+        if !isBlastDrawerOpen {
+            toggleBlastDrawer()
+        }
+    }
+
+    /// Toggles the BLAST results drawer open or closed with animation.
+    public func toggleBlastDrawer() {
+        let drawerHeight: CGFloat = 250
+        let targetHeight: CGFloat = isBlastDrawerOpen ? 0 : drawerHeight
+
+        blastDrawer.isHidden = false
+        blastDrawerHeightConstraint?.constant = targetHeight
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.25
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.allowsImplicitAnimation = true
+            self.view.layoutSubtreeIfNeeded()
+        }
+
+        isBlastDrawerOpen = !isBlastDrawerOpen
+        if !isBlastDrawerOpen {
+            blastDrawer.isHidden = true
+        }
+    }
+
     // MARK: - Setup: Action Bar
 
     private func setupActionBar() {
@@ -1007,6 +1092,12 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     // MARK: - Layout
 
     private func layoutSubviews() {
+        let drawerHeight = blastDrawer.heightAnchor.constraint(equalToConstant: 0)
+        blastDrawerHeightConstraint = drawerHeight
+
+        let splitBottom = splitView.bottomAnchor.constraint(equalTo: blastDrawer.topAnchor)
+        splitViewBottomConstraint = splitBottom
+
         NSLayoutConstraint.activate([
             // Summary bar (top, below safe area)
             summaryBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -1020,11 +1111,17 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             actionBar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             actionBar.heightAnchor.constraint(equalToConstant: 36),
 
-            // Split view (fills remaining space)
+            // BLAST drawer (between split view and action bar)
+            blastDrawer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            blastDrawer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            blastDrawer.bottomAnchor.constraint(equalTo: actionBar.topAnchor),
+            drawerHeight,
+
+            // Split view (fills remaining space above drawer)
             splitView.topAnchor.constraint(equalTo: summaryBar.bottomAnchor),
             splitView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             splitView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            splitView.bottomAnchor.constraint(equalTo: actionBar.topAnchor),
+            splitBottom,
         ])
     }
 
@@ -1077,10 +1174,9 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             }
         }
 
-        // Table BLAST request -> forward to host
-        organismTableView.onBlastRequested = { [weak self] row in
+        // Table BLAST request -> forward to host with BAM context
+        organismTableView.onBlastRequested = { [weak self] row, readCount in
             guard let self else { return }
-            // Convert table row back to organism for the callback
             let organism = TaxTriageOrganism(
                 name: row.organism,
                 score: row.tassScore,
@@ -1089,7 +1185,8 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
                 taxId: row.taxId,
                 rank: row.rank
             )
-            self.onBlastVerification?(organism)
+            let rowAccessions = self.accessions(for: row)
+            self.onBlastVerification?(organism, readCount, rowAccessions, self.bamURL, self.bamIndexURL)
         }
 
         // Action bar export
@@ -1429,8 +1526,8 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
     /// Called when a row is selected. Passes nil for deselection.
     var onRowSelected: ((TaxTriageTableRow?) -> Void)?
 
-    /// Called when the user requests BLAST verification for a row.
-    var onBlastRequested: ((TaxTriageTableRow) -> Void)?
+    /// Called when the user requests BLAST verification for a row with a chosen read count.
+    var onBlastRequested: ((TaxTriageTableRow, Int) -> Void)?
 
     // MARK: - Subviews
 
@@ -1588,9 +1685,26 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
     }
 
     @objc private func contextBlastAction(_ sender: Any) {
-        let row = tableView.clickedRow
-        guard row >= 0, row < sortedRows.count else { return }
-        onBlastRequested?(sortedRows[row])
+        let clickedRow = tableView.clickedRow
+        guard clickedRow >= 0, clickedRow < sortedRows.count else { return }
+        let tableRow = sortedRows[clickedRow]
+
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentSize = NSSize(width: 280, height: 160)
+        popover.contentViewController = NSHostingController(
+            rootView: BlastConfigPopoverView(
+                taxonName: tableRow.organism,
+                readsClade: tableRow.uniqueReads ?? tableRow.reads,
+                onRun: { [weak self, weak popover] readCount in
+                    popover?.close()
+                    self?.onBlastRequested?(tableRow, readCount)
+                }
+            )
+        )
+
+        let rowRect = tableView.rect(ofRow: clickedRow)
+        popover.show(relativeTo: rowRect, of: tableView, preferredEdge: .maxY)
     }
 
     @objc private func contextCopyAction(_ sender: Any) {

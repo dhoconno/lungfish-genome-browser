@@ -59,8 +59,8 @@ public actor BlastService {
     /// Minimum interval between job submissions (NCBI guideline: 10 seconds).
     private let minSubmitInterval: TimeInterval = 10.0
 
-    /// Interval between status polls (NCBI guideline: at least 15 seconds).
-    private let pollInterval: TimeInterval = 15.0
+    /// Minimum interval between status polls (NCBI guideline: at least 10 seconds).
+    private let minPollInterval: TimeInterval = 10.0
 
     /// Default maximum time to wait for a BLAST job to complete.
     private let defaultTimeout: TimeInterval = 600.0 // 10 minutes
@@ -643,6 +643,19 @@ public actor BlastService {
     ///   - progress: Progress callback
     /// - Returns: Parsed search results
     /// - Throws: ``BlastServiceError`` on timeout or job failure
+    /// Returns the adaptive poll interval for the given attempt number.
+    ///
+    /// Jobs most often complete shortly after RTOE, so the first few polls
+    /// use the NCBI minimum (10 s). After 3 attempts we widen to 15 s, and
+    /// after 10 attempts to 30 s to reduce load on long-running searches.
+    private func adaptivePollInterval(attempt: Int) -> TimeInterval {
+        switch attempt {
+        case 1...3:  return 10.0   // aggressive — jobs often finish near RTOE
+        case 4...10: return 15.0   // standard
+        default:     return 30.0   // back off for long-running jobs
+        }
+    }
+
     private func pollForResults(
         rid: String,
         initialWait: Int,
@@ -651,8 +664,8 @@ public actor BlastService {
     ) async throws -> [BlastSearchResult] {
         let startTime = Date()
 
-        // Wait the initial RTOE before first poll
-        let initialDelay = max(Double(initialWait), pollInterval)
+        // Wait the initial RTOE before first poll (minimum 10s per NCBI policy)
+        let initialDelay = max(Double(initialWait), minPollInterval)
         logger.info("Waiting \(Int(initialDelay), privacy: .public)s before first poll (RTOE=\(initialWait, privacy: .public)s)")
         try await Task.sleep(for: .seconds(initialDelay))
 
@@ -679,7 +692,8 @@ public actor BlastService {
                 return try await getResults(rid: rid)
 
             case .waiting:
-                try await Task.sleep(for: .seconds(pollInterval))
+                let interval = adaptivePollInterval(attempt: pollCount)
+                try await Task.sleep(for: .seconds(interval))
 
             case .error(let message):
                 throw BlastServiceError.jobFailed(rid: rid, message: message)
@@ -687,7 +701,8 @@ public actor BlastService {
             case .unknown:
                 // RID may not be recognized yet; retry
                 logger.warning("BLAST status unknown for RID=\(rid, privacy: .public), retrying...")
-                try await Task.sleep(for: .seconds(pollInterval))
+                let interval = adaptivePollInterval(attempt: pollCount)
+                try await Task.sleep(for: .seconds(interval))
             }
         }
     }
