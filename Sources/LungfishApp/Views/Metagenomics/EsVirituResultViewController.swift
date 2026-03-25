@@ -70,6 +70,9 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     /// Path to the final BAM file, if available (from --keep True).
     private var bamURL: URL?
 
+    /// Background task computing unique reads for all assemblies.
+    private var uniqueReadComputationTask: Task<Void, Never>?
+
     // MARK: - Child Views
 
     private let summaryBar = EsVirituSummaryBar()
@@ -212,6 +215,97 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
         let hasBam = self.bamURL != nil
         logger.info("Configured with \(result.detections.count) detections, \(result.assemblies.count) assemblies, \(result.detectedFamilyCount) families, BAM=\(hasBam)")
+
+        // Compute unique reads for all assemblies in the background
+        if let bamURL {
+            scheduleUniqueReadComputation(assemblies: result.assemblies, bamURL: bamURL)
+        }
+    }
+
+    // MARK: - Background Unique Read Computation
+
+    /// Computes deduplicated read counts for all assemblies in the background.
+    ///
+    /// Iterates assemblies by descending read count (most important first),
+    /// fetches reads from the BAM for each primary contig, deduplicates by
+    /// position/strand, and updates the table incrementally.
+    private func scheduleUniqueReadComputation(assemblies: [ViralAssembly], bamURL: URL) {
+        uniqueReadComputationTask?.cancel()
+
+        // Find BAM index (CSI or BAI)
+        let fm = FileManager.default
+        let csiPath = bamURL.path + ".csi"
+        let baiPath = bamURL.path + ".bai"
+        let indexPath: String
+        if fm.fileExists(atPath: csiPath) {
+            indexPath = csiPath
+        } else if fm.fileExists(atPath: baiPath) {
+            indexPath = baiPath
+        } else {
+            logger.info("No BAM index found for unique read computation; skipping")
+            return
+        }
+
+        let sorted = assemblies.sorted { $0.totalReads > $1.totalReads }
+
+        uniqueReadComputationTask = Task { [weak self] in
+            let provider = AlignmentDataProvider(
+                alignmentPath: bamURL.path,
+                indexPath: indexPath
+            )
+
+            for assembly in sorted {
+                if Task.isCancelled { return }
+                // Skip if already computed (e.g., from a previous user click)
+                if self?.detectionTableView.uniqueReadCountsByAssembly[assembly.assembly] != nil {
+                    continue
+                }
+
+                var totalUnique = 0
+                var fetchedAny = false
+
+                for contig in assembly.contigs {
+                    if Task.isCancelled { return }
+                    guard contig.length > 0 else { continue }
+
+                    let reads = (try? await provider.fetchReads(
+                        chromosome: contig.accession,
+                        start: 0,
+                        end: contig.length,
+                        excludeFlags: 0x904,
+                        maxReads: 5000
+                    )) ?? []
+
+                    if reads.isEmpty { continue }
+                    fetchedAny = true
+                    totalUnique += Self.deduplicatedReadCount(from: reads)
+                }
+
+                if fetchedAny {
+                    let bounded = min(assembly.totalReads, totalUnique)
+                    DispatchQueue.main.async { [weak self] in
+                        MainActor.assumeIsolated {
+                            self?.detectionTableView.setUniqueReadCount(bounded, forAssembly: assembly.assembly)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Counts unique reads by deduplicating on position-strand fingerprint.
+    private static func deduplicatedReadCount(from reads: [AlignedRead]) -> Int {
+        guard !reads.isEmpty else { return 0 }
+        var groups: [String: Int] = [:]
+        for read in reads {
+            let strand = read.isReverse ? "R" : "F"
+            let key = "\(read.position)-\(read.alignmentEnd)-\(strand)"
+            groups[key, default: 0] += 1
+        }
+        let dupes = groups.values.reduce(into: 0) { total, count in
+            if count > 1 { total += count - 1 }
+        }
+        return max(0, reads.count - dupes)
     }
 
     // MARK: - Setup: Summary Bar
