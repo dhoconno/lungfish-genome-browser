@@ -341,7 +341,9 @@ public final class MiniBAMViewController: NSViewController {
     @discardableResult
     private func handleZoomShortcut(_ event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard modifiers == .command else { return false }
+        guard modifiers.contains(.command) else { return false }
+        let disallowed: NSEvent.ModifierFlags = [.control, .option, .function]
+        guard modifiers.intersection(disallowed).isEmpty else { return false }
 
         switch event.charactersIgnoringModifiers {
         case "+", "=":
@@ -1063,7 +1065,9 @@ final class MiniPileupView: NSView {
 
     private func handleZoomShortcut(_ event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard modifiers == .command else { return false }
+        guard modifiers.contains(.command) else { return false }
+        let disallowed: NSEvent.ModifierFlags = [.control, .option, .function]
+        guard modifiers.intersection(disallowed).isEmpty else { return false }
 
         switch event.charactersIgnoringModifiers {
         case "+", "=":
