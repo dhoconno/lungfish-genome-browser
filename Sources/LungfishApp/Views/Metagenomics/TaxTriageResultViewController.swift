@@ -13,6 +13,11 @@ import os.log
 
 private let logger = Logger(subsystem: "com.lungfish.app", category: "TaxTriageResultVC")
 
+/// Flipped container so Auto Layout `topAnchor` maps to visual top in AppKit.
+private final class FlippedPaneContainerView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 
 // MARK: - TaxTriageResultViewController
 
@@ -92,7 +97,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     private let summaryBar = TaxTriageSummaryBar()
     let splitView = NSSplitView()
     private let leftTabView = NSSegmentedControl()
-    private let leftPaneContainer = NSView()
+    private let leftPaneContainer = FlippedPaneContainerView()
     private let sunburstView = TaxonomySunburstView()
     private var miniBAMController: MiniBAMViewController?
     private let organismTableView = TaxTriageOrganismTableView()
@@ -129,8 +134,21 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
 
     private func setupMiniBAMViewer() {
         let bamVC = MiniBAMViewController()
+        bamVC.subjectNoun = "organism"
         addChild(bamVC)
         miniBAMController = bamVC
+
+        let bamView = bamVC.view
+        bamView.translatesAutoresizingMaskIntoConstraints = false
+        bamView.isHidden = true
+        leftPaneContainer.addSubview(bamView)
+
+        NSLayoutConstraint.activate([
+            bamView.topAnchor.constraint(equalTo: leftTabView.bottomAnchor, constant: 4),
+            bamView.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor),
+            bamView.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor),
+            bamView.bottomAnchor.constraint(equalTo: leftPaneContainer.bottomAnchor),
+        ])
     }
 
     public override func viewDidLayout() {
@@ -158,6 +176,10 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     public func configure(result: TaxTriageResult, config: TaxTriageConfig? = nil) {
         taxTriageResult = result
         taxTriageConfig = config ?? result.config
+        taxonomyTree = nil
+        bamURL = nil
+        organismToAccessions = [:]
+        accessionLengths = [:]
 
         // Strategy: find the top_report.tsv (has organism names + read counts)
         // and the kreport.txt (has full taxonomy tree for sunburst).
@@ -263,19 +285,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             parseBamReferenceLengths(bamURL: bam)
         }
 
-        // Set up the mini BAM viewer in the left pane
-        if let bamVC = miniBAMController {
-            let bamView = bamVC.view
-            bamView.translatesAutoresizingMaskIntoConstraints = false
-            leftPaneContainer.addSubview(bamView)
-
-            NSLayoutConstraint.activate([
-                bamView.topAnchor.constraint(equalTo: leftTabView.bottomAnchor, constant: 4),
-                bamView.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor),
-                bamView.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor),
-                bamView.bottomAnchor.constraint(equalTo: leftPaneContainer.bottomAnchor),
-            ])
-        }
+        refreshLeftPaneMode(preferTaxonomy: true)
 
         // Update action bar
         actionBar.configure(
@@ -313,7 +323,8 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
                 tassScore: matchingMetric?.tassScore ?? organism.score,
                 reads: matchingMetric?.reads ?? organism.reads,
                 coverage: matchingMetric?.coverageBreadth ?? organism.coverage,
-                confidence: matchingMetric?.confidence ?? confidenceLabel(for: matchingMetric?.tassScore ?? organism.score),
+                confidence: normalizedConfidenceLabel(matchingMetric?.confidence)
+                    ?? confidenceLabel(for: matchingMetric?.tassScore ?? organism.score),
                 taxId: matchingMetric?.taxId ?? organism.taxId,
                 rank: matchingMetric?.rank ?? organism.rank,
                 abundance: matchingMetric?.abundance
@@ -328,7 +339,8 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
                 tassScore: metric.tassScore,
                 reads: metric.reads,
                 coverage: metric.coverageBreadth,
-                confidence: metric.confidence ?? confidenceLabel(for: metric.tassScore),
+                confidence: normalizedConfidenceLabel(metric.confidence)
+                    ?? confidenceLabel(for: metric.tassScore),
                 taxId: metric.taxId,
                 rank: metric.rank,
                 abundance: metric.abundance
@@ -340,9 +352,27 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
 
     /// Converts a numeric score to a qualitative confidence label.
     private func confidenceLabel(for score: Double) -> String {
-        if score >= 0.8 { return "high" }
-        if score >= 0.4 { return "medium" }
-        return "low"
+        if score >= 0.8 { return "High" }
+        if score >= 0.4 { return "Medium" }
+        return "Low"
+    }
+
+    /// Normalizes confidence strings from parser output to a single vocabulary.
+    private func normalizedConfidenceLabel(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return nil }
+
+        switch normalized {
+        case "high", "high confidence":
+            return "High"
+        case "medium", "moderate", "medium confidence", "moderate confidence":
+            return "Medium"
+        case "low", "low confidence":
+            return "Low"
+        default:
+            return raw.capitalized
+        }
     }
 
     // MARK: - Setup: Summary Bar
@@ -363,23 +393,22 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         splitView.dividerStyle = .thin
         splitView.delegate = self
 
-        // Left pane: tabbed container with Alignments (default) + Sunburst
-        leftPaneContainer.translatesAutoresizingMaskIntoConstraints = false
+        // Left pane: tabbed container with Alignments + Taxonomy
 
         // Segmented control for switching between BAM and Sunburst
         leftTabView.segmentCount = 2
         leftTabView.setLabel("Alignments", forSegment: 0)
         leftTabView.setLabel("Taxonomy", forSegment: 1)
         leftTabView.segmentStyle = .texturedRounded
-        leftTabView.selectedSegment = 0  // BAM view is default
+        leftTabView.selectedSegment = 1  // Taxonomy is default until BAM-backed selection
         leftTabView.target = self
         leftTabView.action = #selector(leftTabChanged(_:))
         leftTabView.translatesAutoresizingMaskIntoConstraints = false
         leftPaneContainer.addSubview(leftTabView)
 
-        // Sunburst (initially hidden)
+        // Sunburst (visible by default)
         sunburstView.translatesAutoresizingMaskIntoConstraints = false
-        sunburstView.isHidden = true
+        sunburstView.isHidden = false
         leftPaneContainer.addSubview(sunburstView)
 
         NSLayoutConstraint.activate([
@@ -410,6 +439,33 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         let showBAM = sender.selectedSegment == 0
         miniBAMController?.view.isHidden = !showBAM
         sunburstView.isHidden = showBAM
+    }
+
+    /// Updates segment availability and default selection based on loaded data.
+    private func refreshLeftPaneMode(preferTaxonomy: Bool) {
+        let hasBAM = bamURL != nil
+        let hasTaxonomy = taxonomyTree != nil
+
+        leftTabView.setEnabled(hasBAM, forSegment: 0)
+        leftTabView.setEnabled(hasTaxonomy, forSegment: 1)
+
+        let targetSegment: Int
+        if preferTaxonomy, hasTaxonomy {
+            targetSegment = 1
+        } else if hasBAM {
+            targetSegment = 0
+        } else if hasTaxonomy {
+            targetSegment = 1
+        } else {
+            targetSegment = 0
+        }
+
+        leftTabView.selectedSegment = targetSegment
+        leftTabChanged(leftTabView)
+
+        if !hasBAM {
+            miniBAMController?.clear()
+        }
     }
 
     /// Sets up the NSTabView with Report and Krona tabs.
@@ -898,6 +954,14 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
     /// The currently sorted rows.
     private var sortedRows: [TaxTriageTableRow] = []
 
+    /// Shared formatter for integer read counts.
+    private static let countFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.groupingSeparator = ","
+        return formatter
+    }()
+
     // MARK: - Callbacks
 
     /// Called when a row is selected. Passes nil for deselection.
@@ -1084,10 +1148,7 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
             return makeLabelCell(text: String(format: "%.3f", item.tassScore), monospaced: true)
 
         case ColumnID.reads:
-            let formatter = NumberFormatter()
-            formatter.numberStyle = .decimal
-            formatter.groupingSeparator = ","
-            let text = formatter.string(from: NSNumber(value: item.reads)) ?? "\(item.reads)"
+            let text = Self.countFormatter.string(from: NSNumber(value: item.reads)) ?? "\(item.reads)"
             return makeLabelCell(text: text, monospaced: true)
 
         case ColumnID.coverage:
@@ -1144,7 +1205,7 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
 
     private func confidenceTip(for score: Double) -> String {
         if score >= 0.8 { return "High confidence" }
-        if score >= 0.4 { return "Moderate confidence" }
+        if score >= 0.4 { return "Medium confidence" }
         return "Low confidence"
     }
 }

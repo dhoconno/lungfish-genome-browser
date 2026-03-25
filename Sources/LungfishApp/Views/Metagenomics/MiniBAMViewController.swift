@@ -84,6 +84,21 @@ public final class MiniBAMViewController: NSViewController {
     /// Index of the currently selected read (for context menu operations).
     private var selectedReadIndex: Int?
 
+    /// Domain noun for empty-state/status text ("virus" or "organism").
+    public var subjectNoun: String = "virus" {
+        didSet {
+            pileupView.subjectNoun = subjectNoun
+            if reads.isEmpty {
+                statusLabel.stringValue = emptyStatusText
+                pileupView.needsDisplay = true
+            }
+        }
+    }
+
+    private var emptyStatusText: String {
+        "Select a \(subjectNoun) to view alignments"
+    }
+
     /// Current zoom level (1.0 = fit entire contig in viewport width).
     private var zoomLevel: Double = 1.0
 
@@ -119,7 +134,8 @@ public final class MiniBAMViewController: NSViewController {
     }
 
     private func setupStatusLabel() {
-        statusLabel.stringValue = "Select a virus to view alignments"
+        pileupView.subjectNoun = subjectNoun
+        statusLabel.stringValue = emptyStatusText
     }
 
     // MARK: - Public API
@@ -302,7 +318,7 @@ public final class MiniBAMViewController: NSViewController {
         duplicateIndices = []
         depthPoints = []
         pileupView.clear()
-        statusLabel.stringValue = "Select a virus to view alignments"
+        statusLabel.stringValue = emptyStatusText
     }
 
     // MARK: - Duplicate Detection
@@ -370,6 +386,9 @@ final class MiniPileupView: NSView {
 
     /// Index of the last read that was right-clicked (for context menu).
     var lastClickedReadIndex: Int?
+
+    /// Domain noun used in the empty-state label.
+    var subjectNoun: String = "virus"
 
     // MARK: - Constants
 
@@ -740,7 +759,7 @@ final class MiniPileupView: NSView {
     }
 
     private func drawEmptyState() {
-        let text = "Select a virus to view read alignments" as NSString
+        let text = "Select a \(subjectNoun) to view read alignments" as NSString
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 12),
             .foregroundColor: NSColor.tertiaryLabelColor,

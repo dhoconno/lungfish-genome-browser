@@ -77,6 +77,7 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
             rebuildItems()
             filterText = ""
             filteredItems = nil
+            refreshSortedItems()
             reloadData()
         }
     }
@@ -123,6 +124,17 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
 
     /// Suppresses selection callback during programmatic selection changes.
     private var suppressSelectionCallback = false
+
+    /// Cached root items in their current sorted order.
+    private var sortedDisplayItems: [ViralAssemblyItem] = []
+
+    /// Shared formatter for integer read counts.
+    private static let countFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.groupingSeparator = ","
+        return formatter
+    }()
 
     // MARK: - Subviews
 
@@ -305,11 +317,12 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
     // MARK: - Data Reload
 
     private func reloadData() {
+        refreshSortedItems()
         outlineView.reloadData()
         updateCountLabel()
 
         // Expand assemblies with more than one contig by default.
-        for item in displayItems where item.children.count > 1 {
+        for item in sortedDisplayItems where item.children.count > 1 {
             outlineView.expandItem(item)
         }
     }
@@ -350,12 +363,13 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
             }
         }
 
+        refreshSortedItems()
         outlineView.reloadData()
         updateCountLabel()
 
         // Expand all when filtering
         if filteredItems != nil {
-            for item in displayItems {
+            for item in sortedDisplayItems {
                 outlineView.expandItem(item)
             }
         }
@@ -365,7 +379,7 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
 
     /// Selects and scrolls to the row for the given assembly.
     public func selectAssembly(_ assembly: ViralAssembly) {
-        guard let item = displayItems.first(where: { $0.assembly.assembly == assembly.assembly }) else {
+        guard let item = sortedDisplayItems.first(where: { $0.assembly.assembly == assembly.assembly }) else {
             return
         }
 
@@ -380,9 +394,14 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
 
     // MARK: - Sorting
 
-    /// Returns assembly items sorted by the current criteria.
-    private func sortedItems() -> [ViralAssemblyItem] {
-        var items = displayItems
+    /// Recomputes and caches root-item ordering for the current display/sort state.
+    private func refreshSortedItems() {
+        sortedDisplayItems = sortItems(displayItems)
+    }
+
+    /// Returns a sorted copy of `items` using the current sort criteria.
+    private func sortItems(_ items: [ViralAssemblyItem]) -> [ViralAssemblyItem] {
+        var items = items
 
         switch currentSortKey {
         case ColumnID.name:
@@ -614,7 +633,7 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
 
     public func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
         if item == nil {
-            return sortedItems().count
+            return sortedDisplayItems.count
         }
         if let assemblyItem = item as? ViralAssemblyItem {
             return assemblyItem.children.count
@@ -624,7 +643,7 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
 
     public func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
         if item == nil {
-            return sortedItems()[index]
+            return sortedDisplayItems[index]
         }
         if let assemblyItem = item as? ViralAssemblyItem {
             return assemblyItem.children[index]
@@ -647,6 +666,7 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
               let key = descriptor.key else { return }
         currentSortKey = key
         currentSortAscending = descriptor.ascending
+        refreshSortedItems()
         outlineView.reloadData()
     }
 
@@ -673,12 +693,18 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         guard !suppressSelectionCallback else { return }
 
         let row = outlineView.selectedRow
-        guard row >= 0 else { return }
+        guard row >= 0 else {
+            onAssemblySelected?(nil)
+            return
+        }
 
         let item = outlineView.item(atRow: row)
         if let assemblyItem = item as? ViralAssemblyItem {
             onAssemblySelected?(assemblyItem.assembly)
         } else if let detectionItem = item as? ViralDetectionItem {
+            if let parent = outlineView.parent(forItem: detectionItem) as? ViralAssemblyItem {
+                onAssemblySelected?(parent.assembly)
+            }
             onDetectionSelected?(detectionItem.detection)
         }
     }
@@ -806,10 +832,7 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
 
     /// Creates a right-aligned numeric cell with thousands separators.
     private func makeNumberCell(value: Int) -> NSView {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.groupingSeparator = ","
-        let text = formatter.string(from: NSNumber(value: value)) ?? "\(value)"
+        let text = Self.countFormatter.string(from: NSNumber(value: value)) ?? "\(value)"
 
         let cellView = NSTableCellView()
         let textField = NSTextField(labelWithString: text)

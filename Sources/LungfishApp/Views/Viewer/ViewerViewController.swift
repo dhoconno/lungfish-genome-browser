@@ -923,6 +923,7 @@ public class ViewerViewController: NSViewController {
         hideFASTQDatasetView()
         hideTaxonomyView()
         hideEsVirituView()
+        hideTaxTriageView()
 
         let controller = FASTQDatasetViewController()
         addChild(controller)
@@ -1034,6 +1035,7 @@ public class ViewerViewController: NSViewController {
         hideFASTACollectionView()
         hideTaxonomyView()
         hideEsVirituView()
+        hideTaxTriageView()
 
         let controller = VCFDatasetViewController()
         controller.onDownloadReferenceRequested = onDownloadReference
@@ -1124,6 +1126,7 @@ public class ViewerViewController: NSViewController {
         hideFASTACollectionView()
         hideTaxonomyView()
         hideEsVirituView()
+        hideTaxTriageView()
 
         let controller = FASTACollectionViewController()
         addChild(controller)
@@ -1428,6 +1431,7 @@ public class ViewerViewController: NSViewController {
         hideFASTACollectionView()
         hideTaxonomyView()
         hideEsVirituView()
+        hideTaxTriageView()
 
         // Clear any stale reference bundle state so the viewer uses
         // the document's sequences instead of trying to fetch from a bundle
@@ -1539,6 +1543,7 @@ public class ViewerViewController: NSViewController {
         hideFASTACollectionView()
         hideTaxonomyView()
         hideEsVirituView()
+        hideTaxTriageView()
 
         // Hide the progress overlay first - it may be covering the view area
         hideProgress()

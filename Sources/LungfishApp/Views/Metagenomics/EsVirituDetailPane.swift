@@ -8,6 +8,11 @@ import os.log
 
 private let logger = Logger(subsystem: LogSubsystem.app, category: "EsVirituDetail")
 
+/// Flipped container so Auto Layout `topAnchor` maps to visual top in AppKit.
+private final class FlippedDetailContentView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 // MARK: - EsVirituDetailPane
 
 /// A context-sensitive detail pane for the EsViritu result viewer.
@@ -63,7 +68,7 @@ public final class EsVirituDetailPane: NSView {
     // MARK: - Subviews
 
     private let scrollView = NSScrollView()
-    private let contentView = NSView()
+    private let contentView = FlippedDetailContentView()
 
     // Overview subviews
     private let overviewTitleLabel = NSTextField(labelWithString: "")
@@ -103,6 +108,7 @@ public final class EsVirituDetailPane: NSView {
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            contentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
         ])
 
         setupOverviewSubviews()
@@ -189,6 +195,10 @@ public final class EsVirituDetailPane: NSView {
         case .virusDetail:
             buildDetailContent()
         }
+
+        // Keep the primary content (mini-BAM when present) visible at the top.
+        scrollView.contentView.scroll(to: .zero)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
     // MARK: - Overview Content
@@ -228,9 +238,6 @@ public final class EsVirituDetailPane: NSView {
             topVirusesView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             topVirusesView.heightAnchor.constraint(greaterThanOrEqualToConstant: 200),
             topVirusesView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -16),
-
-            // Content view width tracks scroll view
-            contentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
         ])
     }
 
@@ -240,7 +247,23 @@ public final class EsVirituDetailPane: NSView {
         guard let assembly = selectedAssembly else { return }
         let isSegmented = assembly.contigs.count > 1 && assembly.contigs.contains(where: { $0.segment != nil })
 
-        // 1. Confidence badge + Virus name + Family
+        // 1. BAM pileup at top of left pane (when available).
+        var topAlignedBAMView: NSView?
+        if bamAvailable, let miniBAM = miniBAMViewController {
+            let bamView = miniBAM.view
+            bamView.translatesAutoresizingMaskIntoConstraints = false
+            contentView.addSubview(bamView)
+
+            NSLayoutConstraint.activate([
+                bamView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
+                bamView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 4),
+                bamView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -4),
+                bamView.heightAnchor.constraint(greaterThanOrEqualToConstant: 300),
+            ])
+            topAlignedBAMView = bamView
+        }
+
+        // 2. Confidence badge + Virus name + Family
         let headerStack = NSView()
         headerStack.translatesAutoresizingMaskIntoConstraints = false
 
@@ -271,33 +294,13 @@ public final class EsVirituDetailPane: NSView {
         ])
         contentView.addSubview(headerStack)
 
-        // 2. Metrics pills
+        // 3. Metrics pills
         let metricsView = buildMetricsView(for: assembly)
         contentView.addSubview(metricsView)
 
         // Track the last view in the vertical chain for constraint anchoring
         var lastView: NSView = metricsView
         var lastBottomConstant: CGFloat = 8
-
-        // 3. BAM pileup — PRIMARY view, placed immediately after metrics
-        //    This is the most important view for validation, especially for
-        //    low read-count detections. It includes its own depth track at the
-        //    top, so the separate coverage chart is redundant for non-segmented viruses.
-        if bamAvailable, let miniBAM = miniBAMViewController {
-            let bamView = miniBAM.view
-            bamView.translatesAutoresizingMaskIntoConstraints = false
-            contentView.addSubview(bamView)
-
-            NSLayoutConstraint.activate([
-                bamView.topAnchor.constraint(equalTo: metricsView.bottomAnchor, constant: 8),
-                bamView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 4),
-                bamView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -4),
-                bamView.heightAnchor.constraint(greaterThanOrEqualToConstant: 300),
-            ])
-
-            lastView = bamView
-            lastBottomConstant = 8
-        }
 
         // 4. Segment completeness strip (segmented viruses only)
         if isSegmented {
@@ -338,16 +341,15 @@ public final class EsVirituDetailPane: NSView {
         }
 
         // Main layout constraints
-        var constraints = [
-            headerStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
+        let headerTopAnchor = topAlignedBAMView?.bottomAnchor ?? contentView.topAnchor
+        let constraints = [
+            headerStack.topAnchor.constraint(equalTo: headerTopAnchor, constant: 12),
             headerStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             headerStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
 
             metricsView.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 8),
             metricsView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             metricsView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-
-            contentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
 
             lastView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -lastBottomConstant),
         ]
@@ -356,7 +358,11 @@ public final class EsVirituDetailPane: NSView {
     }
 
     private func buildMetricsView(for assembly: ViralAssembly) -> NSView {
-        let container = NSView()
+        let container = NSStackView()
+        container.orientation = .horizontal
+        container.alignment = .top
+        container.distribution = .fillEqually
+        container.spacing = 8
         container.translatesAutoresizingMaskIntoConstraints = false
 
         let metrics: [(String, String)] = [
@@ -367,20 +373,9 @@ public final class EsVirituDetailPane: NSView {
             ("Family", assembly.family ?? "Unknown"),
         ]
 
-        var previousView: NSView?
         for (label, value) in metrics {
             let metricView = makeMetricPill(label: label, value: value)
-            container.addSubview(metricView)
-
-            metricView.topAnchor.constraint(equalTo: container.topAnchor).isActive = true
-            metricView.bottomAnchor.constraint(equalTo: container.bottomAnchor).isActive = true
-
-            if let prev = previousView {
-                metricView.leadingAnchor.constraint(equalTo: prev.trailingAnchor, constant: 8).isActive = true
-            } else {
-                metricView.leadingAnchor.constraint(equalTo: container.leadingAnchor).isActive = true
-            }
-            previousView = metricView
+            container.addArrangedSubview(metricView)
         }
 
         return container
@@ -393,11 +388,16 @@ public final class EsVirituDetailPane: NSView {
         let labelField = NSTextField(labelWithString: label)
         labelField.font = .systemFont(ofSize: 9, weight: .medium)
         labelField.textColor = .tertiaryLabelColor
+        labelField.alignment = .center
+        labelField.lineBreakMode = .byTruncatingTail
         labelField.translatesAutoresizingMaskIntoConstraints = false
 
         let valueField = NSTextField(labelWithString: value)
         valueField.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
         valueField.textColor = .labelColor
+        valueField.alignment = .center
+        valueField.lineBreakMode = .byTruncatingTail
+        valueField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         valueField.translatesAutoresizingMaskIntoConstraints = false
 
         pill.addSubview(labelField)

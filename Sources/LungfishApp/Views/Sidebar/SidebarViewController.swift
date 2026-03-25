@@ -1008,8 +1008,22 @@ public class SidebarViewController: NSViewController {
 
             // Check for key output files (kreport or top_report)
             let hasKreport = fm.fileExists(atPath: childURL.appendingPathComponent("kraken2").path)
-            let hasTopReport = (try? fm.contentsOfDirectory(at: childURL, includingPropertiesForKeys: nil))?
-                .contains(where: { $0.lastPathComponent == "top" }) ?? false
+            let hasTopReport: Bool = {
+                guard let enumerator = fm.enumerator(
+                    at: childURL,
+                    includingPropertiesForKeys: nil,
+                    options: [.skipsHiddenFiles]
+                ) else { return false }
+
+                for case let candidate as URL in enumerator {
+                    let name = candidate.lastPathComponent.lowercased()
+                    if name.contains("top_report"), candidate.pathExtension.lowercased() == "tsv",
+                       !candidate.path.contains("/work/") {
+                        return true
+                    }
+                }
+                return false
+            }()
 
             guard hasKreport || hasTopReport else { continue }
 

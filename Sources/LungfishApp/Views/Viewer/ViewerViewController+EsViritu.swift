@@ -40,6 +40,7 @@ extension ViewerViewController {
         hideFASTACollectionView()
         hideTaxonomyView()
         hideEsVirituView()
+        hideTaxTriageView()
 
         let controller = EsVirituResultViewController()
         addChild(controller)
@@ -69,7 +70,7 @@ extension ViewerViewController {
         // we submit it through our native BlastService pipeline; otherwise
         // we open the NCBI BLAST web page with the accession.
         let capturedConfig = config
-        controller.onBlastVerification = { detection in
+        controller.onBlastVerification = { [weak controller] detection in
             esVirituLogger.info("BLAST verification requested for \(detection.name, privacy: .public) (\(detection.accession, privacy: .public))")
 
             // Try to read the consensus FASTA for this detection
@@ -110,7 +111,7 @@ extension ViewerViewController {
                 let virusName = detection.name
                 nonisolated(unsafe) let capturedSeq = seq
 
-                let task = Task.detached {
+                let task = Task {
                     do {
                         let blastService = BlastService.shared
                         let request = BlastVerificationRequest(
@@ -137,6 +138,7 @@ extension ViewerViewController {
                         nonisolated(unsafe) let capturedBlastResult = blastResult
                         DispatchQueue.main.async {
                             MainActor.assumeIsolated {
+                                guard let controller else { return }
                                 OperationCenter.shared.complete(
                                     id: opID,
                                     detail: "\(capturedBlastResult.verifiedCount)/\(capturedBlastResult.readResults.count) verified"
@@ -239,7 +241,10 @@ extension ViewerViewController {
         // Restore normal viewer components
         enhancedRulerView.isHidden = false
         viewerView.isHidden = false
+        headerView.isHidden = false
         statusBar.isHidden = false
+        geneTabBarView.isHidden = (geneTabBarView.selectedGeneRegion == nil)
         annotationDrawerView?.isHidden = false
+        fastqMetadataDrawerView?.isHidden = false
     }
 }

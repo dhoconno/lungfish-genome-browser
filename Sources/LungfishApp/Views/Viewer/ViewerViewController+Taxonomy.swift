@@ -77,6 +77,7 @@ extension ViewerViewController {
         hideFASTACollectionView()
         hideTaxonomyView()
         hideEsVirituView()
+        hideTaxTriageView()
 
         let controller = TaxonomyViewController()
         addChild(controller)
@@ -393,8 +394,11 @@ extension ViewerViewController {
         // Restore normal viewer components
         enhancedRulerView.isHidden = false
         viewerView.isHidden = false
+        headerView.isHidden = false
         statusBar.isHidden = false
+        geneTabBarView.isHidden = (geneTabBarView.selectedGeneRegion == nil)
         annotationDrawerView?.isHidden = false
+        fastqMetadataDrawerView?.isHidden = false
     }
 }
 
