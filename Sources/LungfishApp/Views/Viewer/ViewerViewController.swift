@@ -1009,6 +1009,13 @@ public class ViewerViewController: NSViewController {
         if let ingestion = ingestionMetadata { userInfo["ingestionMetadata"] = ingestion }
         if let source = fastqSourceURL { userInfo["fastqSourceURL"] = source }
         if let derivative = fastqDerivativeManifest { userInfo["fastqDerivativeManifest"] = derivative }
+        // Include the bundle URL so the inspector can load sample metadata
+        if let fastqURL {
+            let parentDir = fastqURL.deletingLastPathComponent()
+            if parentDir.pathExtension == "lungfishfastq" {
+                userInfo["bundleURL"] = parentDir
+            }
+        }
         NotificationCenter.default.post(
             name: .fastqDatasetLoaded,
             object: self,
