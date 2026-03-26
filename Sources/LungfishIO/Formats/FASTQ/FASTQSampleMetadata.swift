@@ -24,11 +24,94 @@ public enum SampleRole: String, Sendable, Codable, CaseIterable {
     /// Human-readable display label.
     public var displayLabel: String {
         switch self {
-        case .testSample: return "Test Sample"
+        case .testSample: return "Clinical Sample"
         case .negativeControl: return "Negative Control"
         case .positiveControl: return "Positive Control"
         case .environmentalControl: return "Environmental Control"
         case .extractionBlank: return "Extraction Blank"
+        }
+    }
+}
+
+// MARK: - MetadataTemplate
+
+/// Template controlling which metadata fields are shown and their grouping.
+///
+/// Each template corresponds to a sample type with domain-specific fields
+/// drawn from PHA4GE contextual data specifications and expert recommendations.
+public enum MetadataTemplate: String, Sendable, Codable, CaseIterable {
+    /// Clinical pathogen sample (PHA4GE clinical/pathogen fields).
+    case clinical
+    /// Wastewater surveillance sample (PHA4GE wastewater fields).
+    case wastewater
+    /// Environmental air sampling.
+    case airSample = "air_sample"
+    /// General environmental sampling (soil, water, sediment).
+    case environmental
+    /// User-defined custom template (shows all fields).
+    case custom
+
+    /// Human-readable display label.
+    public var displayLabel: String {
+        switch self {
+        case .clinical: return "Clinical Sample"
+        case .wastewater: return "Wastewater"
+        case .airSample: return "Air Sample"
+        case .environmental: return "Environmental"
+        case .custom: return "Custom"
+        }
+    }
+
+    /// Template-specific field definitions beyond the common PHA4GE fields.
+    ///
+    /// Each entry is a (label, keyPath-name) pair. These fields are stored in
+    /// `customFields` on the metadata struct but surfaced as first-class UI
+    /// fields when the matching template is selected.
+    public var templateFields: [(label: String, key: String)] {
+        switch self {
+        case .clinical:
+            return [
+                ("Specimen Source", "specimen_source"),
+                ("Anatomical Site", "anatomical_site"),
+                ("Patient Age", "patient_age"),
+                ("Patient Sex", "patient_sex"),
+                ("Symptom Onset Date", "symptom_onset_date"),
+                ("Travel History", "travel_history"),
+                ("Antimicrobial Resistance", "antimicrobial_resistance"),
+                ("Hospitalization Status", "hospitalization_status"),
+            ]
+        case .wastewater:
+            return [
+                ("Collection Site Type", "collection_site_type"),
+                ("Population Served", "population_served"),
+                ("Flow Rate", "flow_rate"),
+                ("Composite vs Grab", "composite_vs_grab"),
+                ("Treatment Stage", "treatment_stage"),
+                ("Catchment Area ID", "catchment_area_id"),
+            ]
+        case .airSample:
+            return [
+                ("Sampling Method", "sampling_method"),
+                ("Flow Rate (L/min)", "flow_rate_lpm"),
+                ("Sampling Duration (min)", "sampling_duration_minutes"),
+                ("Indoor/Outdoor", "indoor_outdoor"),
+                ("Ventilation Type", "ventilation_type"),
+                ("Particle Size Fraction", "particle_size_fraction"),
+                ("Temperature (\u{00B0}C)", "temperature_celsius"),
+                ("Relative Humidity (%)", "relative_humidity_percent"),
+                ("CO\u{2082} (ppm)", "co2_ppm"),
+                ("Occupancy Count", "occupancy_count"),
+            ]
+        case .environmental:
+            return [
+                ("Biome", "biome"),
+                ("Environmental Medium", "environmental_medium"),
+                ("Depth (m)", "depth_meters"),
+                ("Elevation (m)", "elevation_meters"),
+                ("Environmental Feature", "environmental_feature"),
+            ]
+        case .custom:
+            return []
         }
     }
 }
@@ -93,6 +176,16 @@ public struct FASTQSampleMetadata: Sendable, Codable, Equatable {
     /// Well position on sequencing plate (e.g., "A1", "H12").
     public var platePosition: String?
 
+    // --- Template & notes ---
+    /// Active metadata template controlling which domain-specific fields are shown.
+    public var metadataTemplate: MetadataTemplate?
+
+    /// Free-text notes field for the sample.
+    public var notes: String?
+
+    /// Filenames of attachments stored in the bundle's `attachments/` directory.
+    public var attachments: [String]?
+
     // --- Extensibility ---
     /// Custom key-value fields not covered by the typed properties.
     /// Preserved during CSV round-trip for fields the user adds.
@@ -128,6 +221,8 @@ extension FASTQSampleMetadata {
         (["run_id"], "runId"),
         (["batch_id"], "batchId"),
         (["plate_position", "well"], "platePosition"),
+        (["metadata_template"], "metadataTemplate"),
+        (["notes"], "notes"),
     ]
 
     /// Canonical CSV headers for all typed fields, in order.
@@ -192,6 +287,11 @@ extension FASTQSampleMetadata {
         case "runId": runId = v
         case "batchId": batchId = v
         case "platePosition": platePosition = v
+        case "metadataTemplate":
+            if let tmpl = MetadataTemplate(rawValue: value) {
+                metadataTemplate = tmpl
+            }
+        case "notes": notes = v
         default: break
         }
     }
@@ -214,7 +314,49 @@ extension FASTQSampleMetadata {
         case "runId": return runId
         case "batchId": return batchId
         case "platePosition": return platePosition
+        case "metadataTemplate": return metadataTemplate?.rawValue
+        case "notes": return notes
         default: return nil
+        }
+    }
+}
+
+// MARK: - Clone Support
+
+extension FASTQSampleMetadata {
+
+    /// Creates a copy of this metadata with a new sample name, preserving all other fields.
+    ///
+    /// Used by the "Clone Metadata From..." action to copy metadata between samples.
+    /// The `sampleName` is replaced; everything else (including custom fields,
+    /// template, notes, and attachments list) is copied.
+    public func cloned(withName newName: String) -> FASTQSampleMetadata {
+        var copy = self
+        copy.sampleName = newName
+        // Do not clone attachments — those are bundle-specific files
+        copy.attachments = nil
+        return copy
+    }
+}
+
+// MARK: - Attachment Management
+
+extension FASTQSampleMetadata {
+
+    /// Adds an attachment filename to the metadata.
+    public mutating func addAttachment(_ filename: String) {
+        if attachments == nil {
+            attachments = [filename]
+        } else if !(attachments?.contains(filename) ?? false) {
+            attachments?.append(filename)
+        }
+    }
+
+    /// Removes an attachment filename from the metadata.
+    public mutating func removeAttachment(_ filename: String) {
+        attachments?.removeAll { $0 == filename }
+        if attachments?.isEmpty == true {
+            attachments = nil
         }
     }
 }

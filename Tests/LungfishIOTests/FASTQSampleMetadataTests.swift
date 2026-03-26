@@ -26,7 +26,7 @@ final class SampleRoleTests: XCTestCase {
     }
 
     func testDisplayLabel() {
-        XCTAssertEqual(SampleRole.testSample.displayLabel, "Test Sample")
+        XCTAssertEqual(SampleRole.testSample.displayLabel, "Clinical Sample")
         XCTAssertEqual(SampleRole.negativeControl.displayLabel, "Negative Control")
     }
 
@@ -129,6 +129,260 @@ final class FASTQSampleMetadataTests: XCTestCase {
 
         meta2.sampleType = "Blood"
         XCTAssertNotEqual(meta1, meta2)
+    }
+
+    func testMetadataTemplateRoundTrip() throws {
+        var meta = FASTQSampleMetadata(sampleName: "S1")
+        meta.metadataTemplate = .wastewater
+        meta.notes = "Collected after heavy rain"
+        meta.attachments = ["report.pdf", "photo.jpg"]
+
+        let data = try JSONEncoder().encode(meta)
+        let decoded = try JSONDecoder().decode(FASTQSampleMetadata.self, from: data)
+
+        XCTAssertEqual(decoded.metadataTemplate, .wastewater)
+        XCTAssertEqual(decoded.notes, "Collected after heavy rain")
+        XCTAssertEqual(decoded.attachments, ["report.pdf", "photo.jpg"])
+    }
+
+    func testMetadataTemplateCSVRoundTrip() {
+        var meta = FASTQSampleMetadata(sampleName: "S1")
+        meta.metadataTemplate = .clinical
+        meta.notes = "Follow-up sample"
+        meta.setValue("clinical", forCSVHeader: "metadata_template")
+        XCTAssertEqual(meta.metadataTemplate, .clinical)
+        XCTAssertEqual(meta.value(forCSVHeader: "notes"), "Follow-up sample")
+    }
+
+    func testCloneMetadata() {
+        var source = FASTQSampleMetadata(sampleName: "OriginalSample")
+        source.sampleType = "Blood"
+        source.collectionDate = "2026-01-15"
+        source.host = "Homo sapiens"
+        source.metadataTemplate = .clinical
+        source.notes = "Important sample"
+        source.attachments = ["report.pdf"]
+        source.customFields["lab"] = "CDC"
+
+        let cloned = source.cloned(withName: "ClonedSample")
+
+        XCTAssertEqual(cloned.sampleName, "ClonedSample")
+        XCTAssertEqual(cloned.sampleType, "Blood")
+        XCTAssertEqual(cloned.collectionDate, "2026-01-15")
+        XCTAssertEqual(cloned.host, "Homo sapiens")
+        XCTAssertEqual(cloned.metadataTemplate, .clinical)
+        XCTAssertEqual(cloned.notes, "Important sample")
+        XCTAssertNil(cloned.attachments, "Attachments should not be cloned")
+        XCTAssertEqual(cloned.customFields["lab"], "CDC")
+    }
+
+    func testAddRemoveAttachment() {
+        var meta = FASTQSampleMetadata(sampleName: "S1")
+        XCTAssertNil(meta.attachments)
+
+        meta.addAttachment("report.pdf")
+        XCTAssertEqual(meta.attachments, ["report.pdf"])
+
+        meta.addAttachment("photo.jpg")
+        XCTAssertEqual(meta.attachments, ["report.pdf", "photo.jpg"])
+
+        // No duplicates
+        meta.addAttachment("report.pdf")
+        XCTAssertEqual(meta.attachments?.count, 2)
+
+        meta.removeAttachment("report.pdf")
+        XCTAssertEqual(meta.attachments, ["photo.jpg"])
+
+        meta.removeAttachment("photo.jpg")
+        XCTAssertNil(meta.attachments, "Should be nil when empty")
+    }
+
+    func testBackwardCompatibleDecoding() throws {
+        // Simulate old JSON without new fields
+        let json = """
+        {"sampleName":"OldSample","sampleRole":"test_sample","customFields":{}}
+        """
+        let data = json.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(FASTQSampleMetadata.self, from: data)
+
+        XCTAssertEqual(decoded.sampleName, "OldSample")
+        XCTAssertNil(decoded.metadataTemplate)
+        XCTAssertNil(decoded.notes)
+        XCTAssertNil(decoded.attachments)
+    }
+}
+
+// MARK: - MetadataTemplate Tests
+
+final class MetadataTemplateTests: XCTestCase {
+
+    func testAllCases() {
+        XCTAssertEqual(MetadataTemplate.allCases.count, 5)
+    }
+
+    func testDisplayLabels() {
+        XCTAssertEqual(MetadataTemplate.clinical.displayLabel, "Clinical Sample")
+        XCTAssertEqual(MetadataTemplate.wastewater.displayLabel, "Wastewater")
+        XCTAssertEqual(MetadataTemplate.airSample.displayLabel, "Air Sample")
+        XCTAssertEqual(MetadataTemplate.environmental.displayLabel, "Environmental")
+        XCTAssertEqual(MetadataTemplate.custom.displayLabel, "Custom")
+    }
+
+    func testClinicalTemplateFields() {
+        let fields = MetadataTemplate.clinical.templateFields
+        XCTAssertFalse(fields.isEmpty)
+        let keys = fields.map(\.key)
+        XCTAssertTrue(keys.contains("specimen_source"))
+        XCTAssertTrue(keys.contains("anatomical_site"))
+        XCTAssertTrue(keys.contains("hospitalization_status"))
+    }
+
+    func testWastewaterTemplateFields() {
+        let fields = MetadataTemplate.wastewater.templateFields
+        let keys = fields.map(\.key)
+        XCTAssertTrue(keys.contains("collection_site_type"))
+        XCTAssertTrue(keys.contains("population_served"))
+        XCTAssertTrue(keys.contains("catchment_area_id"))
+    }
+
+    func testAirSampleTemplateFields() {
+        let fields = MetadataTemplate.airSample.templateFields
+        let keys = fields.map(\.key)
+        XCTAssertTrue(keys.contains("sampling_method"))
+        XCTAssertTrue(keys.contains("flow_rate_lpm"))
+        XCTAssertTrue(keys.contains("co2_ppm"))
+    }
+
+    func testEnvironmentalTemplateFields() {
+        let fields = MetadataTemplate.environmental.templateFields
+        let keys = fields.map(\.key)
+        XCTAssertTrue(keys.contains("biome"))
+        XCTAssertTrue(keys.contains("environmental_medium"))
+        XCTAssertTrue(keys.contains("depth_meters"))
+    }
+
+    func testCustomTemplateHasNoFields() {
+        XCTAssertTrue(MetadataTemplate.custom.templateFields.isEmpty)
+    }
+
+    func testCodableRoundTrip() throws {
+        for template in MetadataTemplate.allCases {
+            let data = try JSONEncoder().encode(template)
+            let decoded = try JSONDecoder().decode(MetadataTemplate.self, from: data)
+            XCTAssertEqual(template, decoded)
+        }
+    }
+}
+
+// MARK: - MetadataPresetStore Tests
+
+final class MetadataPresetStoreTests: XCTestCase {
+
+    func testBuiltInPresetsExist() {
+        let store = MetadataPresetStore()
+
+        let organisms = store.suggestions(for: "organism")
+        XCTAssertFalse(organisms.isEmpty)
+        XCTAssertTrue(organisms.contains("Homo sapiens"))
+        XCTAssertTrue(organisms.contains("SARS-CoV-2"))
+
+        let hosts = store.suggestions(for: "host")
+        XCTAssertFalse(hosts.isEmpty)
+        XCTAssertTrue(hosts.contains("Homo sapiens"))
+
+        let geoLocs = store.suggestions(for: "geo_loc_name")
+        XCTAssertFalse(geoLocs.isEmpty)
+    }
+
+    func testNoSuggestionsForUnknownField() {
+        let store = MetadataPresetStore()
+        XCTAssertTrue(store.suggestions(for: "nonexistent_field").isEmpty)
+    }
+
+    func testSuggestionsAreSorted() {
+        let store = MetadataPresetStore()
+        let organisms = store.suggestions(for: "organism")
+        let sorted = organisms.sorted()
+        XCTAssertEqual(organisms, sorted)
+    }
+}
+
+// MARK: - BundleAttachmentManager Tests
+
+final class BundleAttachmentManagerTests: XCTestCase {
+
+    private var tmpDir: URL!
+
+    override func setUp() {
+        tmpDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AttachmentTest_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(at: tmpDir)
+    }
+
+    func testListEmptyAttachments() {
+        let bundleDir = tmpDir.appendingPathComponent("S1.lungfishfastq")
+        try? FileManager.default.createDirectory(at: bundleDir, withIntermediateDirectories: true)
+
+        let mgr = BundleAttachmentManager(bundleURL: bundleDir)
+        XCTAssertEqual(mgr.listAttachments(), [])
+    }
+
+    func testAddAndListAttachment() throws {
+        let bundleDir = tmpDir.appendingPathComponent("S1.lungfishfastq")
+        try FileManager.default.createDirectory(at: bundleDir, withIntermediateDirectories: true)
+
+        // Create a source file
+        let sourceFile = tmpDir.appendingPathComponent("report.pdf")
+        try "test content".write(to: sourceFile, atomically: true, encoding: .utf8)
+
+        let mgr = BundleAttachmentManager(bundleURL: bundleDir)
+        let filename = try mgr.addAttachment(from: sourceFile)
+
+        XCTAssertEqual(filename, "report.pdf")
+        XCTAssertEqual(mgr.listAttachments(), ["report.pdf"])
+
+        // Verify file was copied
+        let destURL = mgr.urlForAttachment("report.pdf")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destURL.path))
+    }
+
+    func testAddDuplicateRenames() throws {
+        let bundleDir = tmpDir.appendingPathComponent("S1.lungfishfastq")
+        try FileManager.default.createDirectory(at: bundleDir, withIntermediateDirectories: true)
+
+        let sourceFile = tmpDir.appendingPathComponent("report.pdf")
+        try "content".write(to: sourceFile, atomically: true, encoding: .utf8)
+
+        let mgr = BundleAttachmentManager(bundleURL: bundleDir)
+        let name1 = try mgr.addAttachment(from: sourceFile)
+        XCTAssertEqual(name1, "report.pdf")
+
+        let name2 = try mgr.addAttachment(from: sourceFile)
+        XCTAssertEqual(name2, "report-2.pdf")
+
+        XCTAssertEqual(mgr.listAttachments().count, 2)
+    }
+
+    func testRemoveAttachment() throws {
+        let bundleDir = tmpDir.appendingPathComponent("S1.lungfishfastq")
+        try FileManager.default.createDirectory(at: bundleDir, withIntermediateDirectories: true)
+
+        let sourceFile = tmpDir.appendingPathComponent("data.txt")
+        try "data".write(to: sourceFile, atomically: true, encoding: .utf8)
+
+        let mgr = BundleAttachmentManager(bundleURL: bundleDir)
+        try mgr.addAttachment(from: sourceFile)
+        XCTAssertEqual(mgr.listAttachments().count, 1)
+
+        try mgr.removeAttachment("data.txt")
+        XCTAssertEqual(mgr.listAttachments().count, 0)
+
+        // Attachments directory should be removed when empty
+        XCTAssertFalse(FileManager.default.fileExists(atPath: mgr.attachmentsDirectory.path))
     }
 }
 

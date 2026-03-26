@@ -2717,6 +2717,11 @@ extension SidebarViewController: NSMenuDelegate {
                 menu.addItem(showContentsItem)
             }
 
+            // Clone Metadata From... — available for FASTQ bundles
+            let cloneItem = NSMenuItem(title: "Clone Metadata From\u{2026}", action: #selector(contextMenuCloneMetadata(_:)), keyEquivalent: "")
+            cloneItem.target = self
+            menu.addItem(cloneItem)
+
             menu.addItem(NSMenuItem.separator())
         }
 
@@ -3376,6 +3381,81 @@ extension SidebarViewController: NSMenuDelegate {
     @objc private func contextMenuExportFASTQ(_ sender: Any?) {
         // Delegate to the AppDelegate's exportFASTQ which handles single and multi-selection
         NSApp.sendAction(#selector(FileMenuActions.exportFASTQ(_:)), to: nil, from: sender)
+    }
+
+    // MARK: - Clone Metadata
+
+    @objc private func contextMenuCloneMetadata(_ sender: Any?) {
+        let targetItems = selectedItems().filter { $0.type == .fastqBundle }
+        guard !targetItems.isEmpty else { return }
+
+        // Find all FASTQ bundles in the same parent folder as potential sources
+        guard let parentURL = targetItems.first?.url?.deletingLastPathComponent() else { return }
+        let targetURLs = Set(targetItems.compactMap { $0.url })
+
+        let fm = FileManager.default
+        let allBundles: [URL]
+        do {
+            allBundles = try fm.contentsOfDirectory(at: parentURL, includingPropertiesForKeys: nil)
+                .filter { $0.pathExtension == "lungfishfastq" && !targetURLs.contains($0) }
+                .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        } catch {
+            return
+        }
+
+        guard !allBundles.isEmpty else { return }
+
+        // Build a picker menu as an alert with a popup button
+        let alert = NSAlert()
+        alert.messageText = "Clone Metadata From"
+        alert.informativeText = "Select a sample to copy metadata from. All fields except sample name will be copied."
+        alert.addButton(withTitle: "Clone")
+        alert.addButton(withTitle: "Cancel")
+
+        let popUp = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 300, height: 24), pullsDown: false)
+        for bundle in allBundles {
+            let name = bundle.deletingPathExtension().lastPathComponent
+            popUp.addItem(withTitle: name)
+            popUp.lastItem?.representedObject = bundle
+        }
+        alert.accessoryView = popUp
+
+        guard let window = view.window else { return }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard response == .alertFirstButtonReturn,
+                          let sourceURL = popUp.selectedItem?.representedObject as? URL else {
+                        return
+                    }
+
+                    // Load source metadata
+                    let sourceName = sourceURL.deletingPathExtension().lastPathComponent
+                    let sourceCSV = FASTQBundleCSVMetadata.load(from: sourceURL)
+                    let sourceMeta: FASTQSampleMetadata
+                    if let csv = sourceCSV {
+                        sourceMeta = FASTQSampleMetadata(from: csv, fallbackName: sourceName)
+                    } else {
+                        sourceMeta = FASTQSampleMetadata(sampleName: sourceName)
+                    }
+
+                    // Apply to each target bundle
+                    for targetURL in targetURLs {
+                        let targetName = targetURL.deletingPathExtension().lastPathComponent
+                        let cloned = sourceMeta.cloned(withName: targetName)
+                        let legacyCSV = cloned.toLegacyCSV()
+                        try? FASTQBundleCSVMetadata.save(legacyCSV, to: targetURL)
+                    }
+
+                    // Post notification to refresh the inspector if needed
+                    NotificationCenter.default.post(
+                        name: .sampleMetadataDidChange,
+                        object: self,
+                        userInfo: nil
+                    )
+                }
+            }
+        }
     }
 
     // MARK: - Move To Submenu
