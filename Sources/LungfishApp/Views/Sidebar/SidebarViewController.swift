@@ -1393,6 +1393,10 @@ public class SidebarViewController: NSViewController {
 
         for url in urls {
             if let item = findItem(byURL: url) {
+                // Reload rebuilds tree objects and collapses expandable containers by default.
+                // Re-open the parent chain first so nested selections (e.g. metagenomics
+                // result nodes under FASTQ bundles/batch groups) remain selectable.
+                expandParents(of: item)
                 let row = outlineView.row(forItem: item)
                 if row >= 0 {
                     rowsToSelect.insert(row)
