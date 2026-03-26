@@ -252,24 +252,19 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     private func setupMiniBAMViewer() {
         let bamVC = MiniBAMViewController()
         bamVC.subjectNoun = "organism"
-        bamVC.onReadStatsUpdated = { [weak self] _, uniqueReads in
+        bamVC.onReadStatsUpdated = { [weak self] totalReads, uniqueReads in
             guard let self, let selectedOrganismName = self.selectedOrganismName else { return }
-            let normalized = self.normalizedOrganismName(selectedOrganismName)
 
-            // Don't overwrite a non-zero cached value with a lower BAM-derived
-            // value. The BAM viewer may report 0 when no accession mapping
-            // exists, but the background computation already computed a correct
-            // value from the aggregate dedup pass.
-            let existing = self.deduplicatedReadCounts[normalized] ?? 0
-            if uniqueReads < existing {
-                return
-            }
+            // Ignore the clear() callback (0, 0) — this fires when switching
+            // organisms and should not zero out the cached value.
+            guard totalReads > 0 else { return }
 
-            // For segmented organisms, table unique reads are aggregated across
-            // accessions in background; don't overwrite with one segment's value.
+            // For segmented organisms, the BAM viewer shows only one segment.
+            // Don't overwrite the assembly total with a single segment's count.
             if (self.accessions(for: selectedOrganismName)?.count ?? 0) > 1 {
                 return
             }
+
             self.applyUniqueReadCount(uniqueReads, for: selectedOrganismName)
         }
         addChild(bamVC)
@@ -1341,9 +1336,11 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         var changed = false
         let updated = organismTableView.rows.map { row -> TaxTriageTableRow in
             guard normalizedOrganismName(row.organism) == key else { return row }
-            if row.uniqueReads == uniqueReads { return row }
+            // Enforce invariant: if the organism has reads, unique reads >= 1
+            let safeUnique = (uniqueReads == 0 && row.reads > 0) ? row.reads : uniqueReads
+            if row.uniqueReads == safeUnique { return row }
             changed = true
-            return row.with(uniqueReads: uniqueReads)
+            return row.with(uniqueReads: safeUnique)
         }
 
         if changed {

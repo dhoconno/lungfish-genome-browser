@@ -101,6 +101,16 @@ public class SidebarViewController: NSViewController {
     /// Scroll view containing the outline view
     private var scrollView: NSScrollView!
 
+    /// Returns true if the given responder is the outline view or a descendant of it.
+    public func outlineViewIsFirstResponder(_ responder: NSResponder?) -> Bool {
+        guard let responder else { return false }
+        if responder === outlineView { return true }
+        if let view = responder as? NSView {
+            return view.isDescendant(of: outlineView)
+        }
+        return false
+    }
+
     /// Search field for filtering
     private var searchField: NSSearchField!
 

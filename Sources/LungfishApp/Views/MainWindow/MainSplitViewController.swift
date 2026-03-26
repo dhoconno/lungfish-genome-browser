@@ -1555,10 +1555,26 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         // Increment generation counter to invalidate any in-flight background loads
         selectionGeneration &+= 1
 
+        // If a metagenomics/FASTQ child VC is actively displayed, only process
+        // selection changes when the sidebar outline view is the actual first
+        // responder (i.e., the user clicked in the sidebar). Ignore spurious
+        // selection changes from focus shifts, filesystem refreshes, etc.
+        let hasActiveChildVC = viewerController.taxTriageViewController != nil
+            || viewerController.esVirituViewController != nil
+            || viewerController.taxonomyViewController != nil
+            || viewerController.fastqDatasetController != nil
+        if hasActiveChildVC {
+            let firstResponder = view.window?.firstResponder
+            let sidebarHasFocus = sidebarController.outlineViewIsFirstResponder(firstResponder)
+            if !sidebarHasFocus {
+                logger.debug("sidebarDidSelectItem: Ignoring selection change — sidebar not focused, active child VC displayed")
+                return
+            }
+        }
+
         // Debounce ALL selection changes (including nil/clear) to avoid
         // flickering when NSOutlineView fires deselect + reselect in quick
-        // succession, or when clicking within a displayed child view causes
-        // a transient deselection.
+        // succession.
         let generation = selectionGeneration
         let workItem = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
@@ -1570,16 +1586,6 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                 if let item {
                     self.displayContent(for: item)
                 } else {
-                    // Don't clear the viewport if a child VC is actively displayed
-                    // and the sidebar lost selection due to a filesystem refresh.
-                    let hasActiveChildVC = self.viewerController.taxTriageViewController != nil
-                        || self.viewerController.esVirituViewController != nil
-                        || self.viewerController.taxonomyViewController != nil
-                        || self.viewerController.fastqDatasetController != nil
-                    if hasActiveChildVC {
-                        logger.debug("sidebarDidSelectItem: Ignoring nil selection — active child VC displayed")
-                        return
-                    }
                     logger.info("sidebarDidSelectItem: Selection cleared, clearing viewer and inspector")
                     self.cancelFASTQLoadIfNeeded(hideProgress: true, reason: "selection cleared")
                     self.viewerController.clearViewport(statusMessage: "No sequence selected")
