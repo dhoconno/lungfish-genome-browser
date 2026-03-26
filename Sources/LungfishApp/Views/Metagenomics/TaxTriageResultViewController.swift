@@ -83,11 +83,14 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     /// Taxonomy tree parsed from the Kraken2 kreport (for sunburst).
     private var taxonomyTree: TaxonTree?
 
-    /// Path to the merged BAM from TaxTriage alignment output.
+    /// Path to the active BAM for the currently selected sample.
     private var bamURL: URL?
 
     /// Path to the resolved BAM index (.bai or .csi).
     private var bamIndexURL: URL?
+
+    /// All discovered BAM files keyed by sample ID substring.
+    private var bamFilesBySample: [String: URL] = [:]
 
     /// Maps normalized organism names → BAM reference accessions (from gcfmapping.tsv).
     private var organismToAccessions: [String: [String]] = [:]
@@ -426,15 +429,34 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         // Configure sunburst from kreport taxonomy tree
         configureSunburst()
 
-        // Find the BAM file from TaxTriage output (check minimap2/ and alignment/)
+        // Find BAM files from TaxTriage output and build per-sample lookup.
+        // Multi-sample runs produce one BAM per sample in minimap2/.
         let bamFiles = result.allOutputFiles.filter {
             $0.pathExtension == "bam" && !$0.path.contains("/work/")
         }
-        if let bam = bamFiles.first {
+        bamFilesBySample = [:]
+        for bam in bamFiles {
+            let bamName = bam.deletingPathExtension().lastPathComponent.lowercased()
+            // Match BAM filename to sample IDs (BAM name contains the sample ID)
+            for sample in result.config.samples {
+                let sampleKey = sample.sampleId.lowercased()
+                if bamName.contains(sampleKey) {
+                    bamFilesBySample[sample.sampleId] = bam
+                    break
+                }
+            }
+        }
+        // Set initial BAM to the first sample's BAM (or first BAM found)
+        if let firstSampleId = result.config.samples.first?.sampleId,
+           let firstBam = bamFilesBySample[firstSampleId] {
+            bamURL = firstBam
+        } else if let bam = bamFiles.first {
             bamURL = bam
-            bamIndexURL = resolveBamIndex(for: bam, allOutputFiles: result.allOutputFiles)
+        }
+        if let bamURL {
+            bamIndexURL = resolveBamIndex(for: bamURL, allOutputFiles: result.allOutputFiles)
             let indexName = bamIndexURL?.lastPathComponent ?? "none"
-            logger.info("Found TaxTriage BAM: \(bam.lastPathComponent, privacy: .public), index: \(indexName, privacy: .public)")
+            logger.info("Found \(bamFiles.count) TaxTriage BAM(s), active: \(bamURL.lastPathComponent, privacy: .public), index: \(indexName, privacy: .public)")
         }
 
         // Parse gcfmapping.tsv to build organism→accession lookup
@@ -711,6 +733,39 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
                 leftPaneContainer.isHidden = false
                 let position = round(splitView.bounds.width * 0.4)
                 splitView.setPosition(position, ofDividerAt: 0)
+            }
+        }
+
+        // Switch to the correct per-sample BAM and mappings when viewing a specific sample.
+        // TaxTriage multi-sample runs produce per-sample BAMs, gcfmappings, and taxid mappings.
+        if selectedSampleIndex > 0, selectedSampleIndex <= sampleIds.count {
+            let targetSampleId = sampleIds[selectedSampleIndex - 1]
+            let sampleKey = targetSampleId.lowercased()
+
+            if let sampleBam = bamFilesBySample[targetSampleId] {
+                bamURL = sampleBam
+                bamIndexURL = resolveBamIndex(for: sampleBam, allOutputFiles: taxTriageResult?.allOutputFiles ?? [])
+                accessionLengths = [:]
+                accessionMappedReadCounts = [:]
+            }
+
+            // Reload per-sample organism→accession mappings
+            organismToAccessions = [:]
+            taxIDToAccessions = [:]
+            let allFiles = taxTriageResult?.allOutputFiles ?? []
+            if let gcfFile = allFiles.first(where: {
+                $0.lastPathComponent.contains("gcfmapping.tsv")
+                    && $0.lastPathComponent.lowercased().contains(sampleKey)
+                    && !$0.path.contains("/work/")
+            }) {
+                parseGCFMapping(url: gcfFile)
+            }
+            if let taxidFile = allFiles.first(where: {
+                $0.lastPathComponent.hasSuffix(".merged.taxid.tsv")
+                    && $0.lastPathComponent.lowercased().contains(sampleKey)
+                    && !$0.path.contains("/work/")
+            }) {
+                parseTaxIDMapping(url: taxidFile)
             }
         }
 
