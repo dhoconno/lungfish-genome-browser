@@ -321,33 +321,23 @@ extension ProcessingRecipe {
     /// contains a mix of merged reads and unmerged interleaved R1/R2 pairs.
     public static let illuminaVSP2TargetEnrichment = ProcessingRecipe(
         name: "Illumina VSP2 Target Enrichment",
-        description: "Human read removal, deduplicate, adapter trim, quality trim, merge pairs, remove short reads",
+        description: "Deduplicate, adapter trim, quality trim, human read removal, merge pairs, remove short reads",
         steps: [
-            // 1. Remove human reads before any other processing
-            //    Uses NCBI sra-human-scrubber with -s (interleaved paired-end mode):
-            //    if either read in a pair aligns to human, both are masked with N.
-            //    Masked reads are removed in the length filter at the end.
-            FASTQDerivativeOperation(
-                kind: .humanReadScrub,
-                createdAt: .distantPast,
-                humanScrubRemoveReads: false,   // mask with N; length filter removes them later
-                humanScrubDatabaseID: "human-scrubber"
-            ),
-            // 2. Remove PCR duplicates (exact match, paired-end aware)
+            // 1. Remove PCR duplicates (exact match, paired-end aware)
             FASTQDerivativeOperation(
                 kind: .deduplicate,
                 createdAt: .distantPast,
                 deduplicatePreset: .exactPCR,
                 deduplicateSubstitutions: 0
             ),
-            // 3. Remove Illumina adapters (auto-detect TruSeq/Nextera/transposase)
+            // 2. Remove Illumina adapters (auto-detect TruSeq/Nextera/transposase)
             //    Critical for short-insert libraries where reads extend into adapter
             FASTQDerivativeOperation(
                 kind: .adapterTrim,
                 createdAt: .distantPast,
                 adapterMode: .autoDetect
             ),
-            // 4. Quality trim 3' tails (Q15 — conservative, preserves more read length
+            // 3. Quality trim 3' tails (Q15 — conservative, preserves more read length
             //    while still removing poor-quality tail bases common in short-insert libraries)
             FASTQDerivativeOperation(
                 kind: .qualityTrim,
@@ -356,7 +346,16 @@ extension ProcessingRecipe {
                 windowSize: 5,
                 qualityTrimMode: .cutRight
             ),
-            // 5. Merge overlapping R1/R2 pairs on clean, trimmed reads —
+            // 4. Remove human reads after early reduction steps to cut scrubber cost.
+            //    Uses NCBI sra-human-scrubber with -s (interleaved paired-end mode):
+            //    if either read in a pair aligns to human, both reads in that pair are removed.
+            FASTQDerivativeOperation(
+                kind: .humanReadScrub,
+                createdAt: .distantPast,
+                humanScrubRemoveReads: true,
+                humanScrubDatabaseID: "human-scrubber"
+            ),
+            // 5. Merge overlapping R1/R2 pairs on clean, scrubbed reads —
             //    produces merged reads plus unmerged pairs kept interleaved
             FASTQDerivativeOperation(
                 kind: .pairedEndMerge,

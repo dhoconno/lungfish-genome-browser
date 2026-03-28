@@ -51,6 +51,7 @@ public final class EsVirituDetailPane: NSView {
     // Virus detail data
     private var selectedAssembly: ViralAssembly?
     private var selectedCoverageWindows: [String: [ViralCoverageWindow]] = [:]
+    private var selectedBAMAccession: String?
     private var bamAvailable: Bool = false
     private var currentBAMURL: URL?
     private var miniBAMPreferredHeight: CGFloat = 320
@@ -155,6 +156,8 @@ public final class EsVirituDetailPane: NSView {
         bamURL: URL?
     ) {
         overviewResult = result
+        selectedAssembly = nil
+        selectedBAMAccession = nil
         bamAvailable = bamURL != nil
         displayMode = .overview
         rebuildContent()
@@ -164,21 +167,26 @@ public final class EsVirituDetailPane: NSView {
     public func showVirusDetail(
         assembly: ViralAssembly,
         coverageWindows: [String: [ViralCoverageWindow]],
-        bamURL: URL?
+        bamURL: URL?,
+        focusedContigAccession: String? = nil
     ) {
         selectedAssembly = assembly
         selectedCoverageWindows = coverageWindows
         bamAvailable = bamURL != nil
         currentBAMURL = bamURL
+
+        let selectedContig = assembly.contigs.first { $0.accession == focusedContigAccession } ?? assembly.contigs.first
+        selectedBAMAccession = selectedContig?.accession
+
         displayMode = .virusDetail
         rebuildContent()
 
-        // Automatically load BAM pileup for the selected virus
-        if let bamURL, let primaryContig = assembly.contigs.first {
+        // Automatically load BAM pileup for the selected contig.
+        if let bamURL, let selectedContig {
             miniBAMViewController?.displayContig(
                 bamURL: bamURL,
-                contig: primaryContig.accession,
-                contigLength: primaryContig.length
+                contig: selectedContig.accession,
+                contigLength: selectedContig.length
             )
         } else {
             miniBAMViewController?.clear()
@@ -492,8 +500,19 @@ public final class EsVirituDetailPane: NSView {
 
     @objc private func viewBAMClicked() {
         guard let assembly = selectedAssembly else { return }
-        let primaryAccession = assembly.contigs.first?.accession ?? assembly.assembly
-        onViewBAM?(primaryAccession)
+        let accession = selectedBAMAccession ?? assembly.contigs.first?.accession ?? assembly.assembly
+        onViewBAM?(accession)
+    }
+
+    // MARK: - Testing Accessors
+
+    var testSelectedBAMAccession: String? { selectedBAMAccession }
+
+    var testIsShowingOverview: Bool {
+        if case .overview = displayMode {
+            return true
+        }
+        return false
     }
 }
 

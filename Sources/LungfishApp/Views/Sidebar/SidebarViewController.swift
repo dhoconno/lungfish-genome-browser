@@ -531,7 +531,14 @@ public class SidebarViewController: NSViewController {
         let restoredItems = selectedItems()
         let restoredURLSet = Set(restoredItems.compactMap { $0.url?.standardizedFileURL })
         if restoredURLSet != selectedURLSet {
-            handleSelectionChange(restoredItems, source: "reloadFromFilesystem")
+            // During filesystem churn, nested rows can briefly disappear/rebuild between
+            // scans. Avoid emitting a synthetic "selection cleared" event from refreshes;
+            // explicit user deselection still flows through outlineViewSelectionDidChange.
+            if !selectedURLSet.isEmpty && restoredItems.isEmpty {
+                logger.debug("reloadFromFilesystem: Selection temporarily unavailable after refresh, preserving active content")
+            } else {
+                handleSelectionChange(restoredItems, source: "reloadFromFilesystem")
+            }
         }
 
         let itemCount = rootItems.reduce(0) { $0 + countItems(in: $1) }
@@ -581,6 +588,10 @@ public class SidebarViewController: NSViewController {
                 fileManager.fileExists(atPath: childURL.path, isDirectory: &childIsDir)
 
                 if childIsDir.boolValue {
+                    if FASTQBundle.isBundleURL(childURL), FASTQBundle.isProcessing(childURL) {
+                        // Hide in-flight imports until ingestion + stats finalize.
+                        continue
+                    }
                     // Include directories
                     let childItem = buildSidebarTree(from: childURL, isRoot: false)
                     items.append(childItem)
@@ -740,6 +751,7 @@ public class SidebarViewController: NSViewController {
             ) {
                 for childURL in topLevelContents {
                     if childURL.pathExtension == FASTQBundle.directoryExtension {
+                        if FASTQBundle.isProcessing(childURL) { continue }
                         let childItem = buildSidebarTree(from: childURL, isRoot: false)
                         item.children.append(childItem)
                     }
@@ -778,6 +790,9 @@ public class SidebarViewController: NSViewController {
                     fileManager.fileExists(atPath: childURL.path, isDirectory: &childIsDir)
 
                     if childIsDir.boolValue {
+                        if FASTQBundle.isBundleURL(childURL), FASTQBundle.isProcessing(childURL) {
+                            continue
+                        }
                         // Skip metagenomics result directories that are already
                         // represented by batch group nodes (via collectTaxTriageResults,
                         // cross-reference sidecars, or similar collectors).
@@ -897,7 +912,7 @@ public class SidebarViewController: NSViewController {
 
                 if FASTQBundle.isBundleURL(childURL) {
                     // Skip bundles that are batch operation outputs (shown under batch group nodes)
-                    if !excluding.contains(childURL.standardizedFileURL) {
+                    if !excluding.contains(childURL.standardizedFileURL) && !FASTQBundle.isProcessing(childURL) {
                         results.append(childURL)
                     }
                 } else {

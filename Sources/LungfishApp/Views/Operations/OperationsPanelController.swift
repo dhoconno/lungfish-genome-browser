@@ -129,13 +129,19 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
         guard let elapsedColumnIndex = tableView.tableColumns.firstIndex(where: {
             $0.identifier.rawValue == "elapsed"
         }) else { return }
+        guard let etaColumnIndex = tableView.tableColumns.firstIndex(where: {
+            $0.identifier.rawValue == "eta"
+        }) else { return }
 
         var runningRows = IndexSet()
         for (index, item) in items.enumerated() where item.state == .running {
             runningRows.insert(index)
         }
         guard !runningRows.isEmpty else { return }
-        tableView.reloadData(forRowIndexes: runningRows, columnIndexes: IndexSet(integer: elapsedColumnIndex))
+        tableView.reloadData(
+            forRowIndexes: runningRows,
+            columnIndexes: IndexSet([elapsedColumnIndex, etaColumnIndex])
+        )
     }
 
     // MARK: - Table Setup
@@ -165,6 +171,13 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
         elapsedColumn.minWidth = 50
         elapsedColumn.maxWidth = 90
         tableView.addTableColumn(elapsedColumn)
+
+        let etaColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("eta"))
+        etaColumn.title = "ETA"
+        etaColumn.width = 70
+        etaColumn.minWidth = 50
+        etaColumn.maxWidth = 90
+        tableView.addTableColumn(etaColumn)
 
         let actionColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("action"))
         actionColumn.title = ""
@@ -273,7 +286,7 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
                 cell.addSubview(tf)
                 NSLayoutConstraint.activate([
                     tf.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
-                    tf.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -4),
+                    tf.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -22),
                     tf.topAnchor.constraint(equalTo: cell.topAnchor, constant: 2),
                 ])
                 return tf
@@ -289,19 +302,19 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
                 cell.addSubview(tf)
                 NSLayoutConstraint.activate([
                     tf.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
-                    tf.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -4),
+                    tf.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -22),
                     tf.bottomAnchor.constraint(equalTo: cell.bottomAnchor, constant: -2),
                 ])
                 return tf
             }()
 
-            // Find or create the "More" toggle button (tag 102)
+            // Find or create the disclosure toggle button (tag 102)
             let moreButton = cell.viewWithTag(102) as? NSButton ?? {
-                let btn = NSButton(title: "More", target: self, action: #selector(toggleDetailExpansion(_:)))
+                let btn = NSButton(title: "", target: self, action: #selector(toggleDetailExpansion(_:)))
                 btn.tag = 102
-                btn.bezelStyle = .inline
+                btn.setButtonType(.onOff)
+                btn.bezelStyle = .disclosure
                 btn.controlSize = .mini
-                btn.font = .systemFont(ofSize: 9)
                 btn.translatesAutoresizingMaskIntoConstraints = false
                 cell.addSubview(btn)
                 NSLayoutConstraint.activate([
@@ -319,7 +332,7 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
                 detailField.stringValue = item.detail
                 detailField.lineBreakMode = .byWordWrapping
                 detailField.maximumNumberOfLines = 0
-                moreButton.title = "Less"
+                moreButton.state = .on
                 moreButton.isHidden = false
             } else {
                 // Collapse to single line: join newlines with ", "
@@ -327,7 +340,7 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
                 detailField.stringValue = collapsed
                 detailField.lineBreakMode = .byTruncatingTail
                 detailField.maximumNumberOfLines = 1
-                moreButton.title = "More"
+                moreButton.state = .off
                 moreButton.isHidden = !isMultiLine
             }
             detailField.toolTip = isMultiLine ? item.detail : nil
@@ -403,6 +416,39 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
             case .completed, .failed:
                 let elapsed = (item.finishedAt ?? Date()).timeIntervalSince(item.startedAt)
                 textField.stringValue = formatElapsedTime(elapsed)
+                textField.textColor = .tertiaryLabelColor
+            }
+            return cell
+
+        case "eta":
+            let cell = reuseOrCreate(identifier: identifier, in: tableView)
+            let textField = cell.viewWithTag(410) as? NSTextField ?? {
+                let tf = NSTextField(labelWithString: "")
+                tf.tag = 410
+                tf.translatesAutoresizingMaskIntoConstraints = false
+                tf.alignment = .right
+                cell.addSubview(tf)
+                NSLayoutConstraint.activate([
+                    tf.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+                    tf.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                    tf.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                ])
+                return tf
+            }()
+            textField.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+
+            switch item.state {
+            case .running:
+                if item.progress > 0, item.progress < 1 {
+                    let elapsed = Date().timeIntervalSince(item.startedAt)
+                    let remaining = max(0, elapsed * (1 - item.progress) / item.progress)
+                    textField.stringValue = formatElapsedTime(remaining)
+                } else {
+                    textField.stringValue = "—"
+                }
+                textField.textColor = .secondaryLabelColor
+            case .completed, .failed:
+                textField.stringValue = "—"
                 textField.textColor = .tertiaryLabelColor
             }
             return cell

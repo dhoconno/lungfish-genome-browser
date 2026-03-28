@@ -4,6 +4,7 @@
 
 import AppKit
 import LungfishIO
+import SwiftUI
 
 // MARK: - ViralDetectionTableView
 
@@ -129,7 +130,12 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
     public var onDetectionSelected: ((ViralDetection) -> Void)?
 
     /// Called when the user requests BLAST verification via context menu.
-    public var onBlastRequested: ((ViralDetection) -> Void)?
+    ///
+    /// Parameters:
+    /// - detection: Representative detection row for the selected virus.
+    /// - readCount: Number of unique reads requested for BLAST.
+    /// - accessions: One or more target accessions to extract reads from.
+    public var onBlastRequested: ((ViralDetection, Int, [String]) -> Void)?
 
     /// Called when the user requests read extraction via context menu.
     public var onExtractReadsRequested: ((ViralDetection) -> Void)?
@@ -567,12 +573,38 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         let row = outlineView.clickedRow
         guard row >= 0 else { return }
         let item = outlineView.item(atRow: row)
+        let detection: ViralDetection
+        let accessions: [String]
+        let availableUniqueReads: Int
+
         if let detectionItem = item as? ViralDetectionItem {
-            onBlastRequested?(detectionItem.detection)
+            detection = detectionItem.detection
+            accessions = [detection.accession]
+            availableUniqueReads = uniqueReadCountsByContig[detection.accession] ?? detection.readCount
         } else if let assemblyItem = item as? ViralAssemblyItem,
                   let firstContig = assemblyItem.assembly.contigs.first {
-            onBlastRequested?(firstContig)
+            detection = firstContig
+            accessions = assemblyItem.assembly.contigs.map(\.accession)
+            availableUniqueReads = uniqueReadCountsByAssembly[assemblyItem.assembly.assembly] ?? assemblyItem.assembly.totalReads
+        } else {
+            return
         }
+
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentSize = NSSize(width: 280, height: 160)
+        popover.contentViewController = NSHostingController(
+            rootView: BlastConfigPopoverView(
+                taxonName: detection.name,
+                readsClade: availableUniqueReads
+            ) { [weak self, weak popover] readCount in
+                popover?.close()
+                self?.onBlastRequested?(detection, readCount, accessions)
+            }
+        )
+
+        let rowRect = outlineView.rect(ofRow: row)
+        popover.show(relativeTo: rowRect, of: outlineView, preferredEdge: .maxY)
     }
 
     @objc private func contextCopyName(_ sender: Any?) {
@@ -745,7 +777,13 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
 
         let row = outlineView.selectedRow
         guard row >= 0 else {
-            onAssemblySelected?(nil)
+            // NSOutlineView may briefly report no selection during row reloads.
+            // Defer nil callbacks to avoid transient "overview bounce" on segment selection.
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard !self.suppressSelectionCallback, self.outlineView.selectedRow < 0 else { return }
+                self.onAssemblySelected?(nil)
+            }
             return
         }
 
@@ -755,6 +793,11 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         } else if let detectionItem = item as? ViralDetectionItem {
             if let parent = outlineView.parent(forItem: detectionItem) as? ViralAssemblyItem {
                 onAssemblySelected?(parent.assembly)
+            } else if let assemblyItem = sortedDisplayItems.first(where: { candidate in
+                candidate.assembly.assembly == detectionItem.detection.assembly
+            }) {
+                // Fallback by assembly accession if outline parent lookup is transiently unavailable.
+                onAssemblySelected?(assemblyItem.assembly)
             }
             onDetectionSelected?(detectionItem.detection)
         }

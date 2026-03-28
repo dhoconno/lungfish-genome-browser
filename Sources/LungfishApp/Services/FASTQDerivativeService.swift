@@ -2531,12 +2531,15 @@ public actor FASTQDerivativeService {
     ///   - steps: Ordered recipe steps to apply.
     ///   - isInterleaved: Whether the input is interleaved paired-end.
     ///   - tempDir: Scratch directory for intermediate files.
+    ///   - measureReadCounts: When true, gathers per-step input/output read counts via seqkit stats.
+    ///     Disable for ingestion hot paths to avoid extra full-file scans per step.
     ///   - progress: Optional callback (fraction 0–1, message).
     func runMaterializedRecipe(
         fastqURL: URL,
         steps: [FASTQDerivativeOperation],
         isInterleaved: Bool,
         tempDir: URL,
+        measureReadCounts: Bool = true,
         progress: ((Double, String) -> Void)?
     ) async throws -> (url: URL, stepResults: [RecipeStepResult]) {
         var currentURL = fastqURL
@@ -2547,13 +2550,17 @@ public actor FASTQDerivativeService {
         for (index, step) in steps.enumerated() {
             let fraction = Double(index) / Double(steps.count)
             let outputURL = tempDir.appendingPathComponent("step_\(index + 1)_\(step.kind.rawValue).fastq")
-            let inputCount = await countFASTQReads(at: currentURL, isInterleaved: currentIsInterleaved)
+            let inputCount = measureReadCounts
+                ? await countFASTQReads(at: currentURL, isInterleaved: currentIsInterleaved)
+                : nil
             let stepStart = Date()
+            var commandLine: String?
 
             switch step.kind {
             case .qualityTrim:
                 progress?(fraction, "Quality trimming (\(index + 1)/\(steps.count))…")
-                try await runFastpQualityTrim(
+                commandLine = "fastp (quality-trim) threshold=\(step.qualityThreshold ?? 20) window=\(step.windowSize ?? 4) mode=\((step.qualityTrimMode ?? .cutRight).rawValue) interleaved=\(currentIsInterleaved)"
+                _ = try await runFastpQualityTrim(
                     sourceFASTQ: currentURL,
                     outputFASTQ: outputURL,
                     threshold: step.qualityThreshold ?? 20,
@@ -2565,7 +2572,8 @@ public actor FASTQDerivativeService {
 
             case .adapterTrim:
                 progress?(fraction, "Adapter trimming (\(index + 1)/\(steps.count))…")
-                try await runFastpAdapterTrim(
+                commandLine = "fastp (adapter-trim) mode=\((step.adapterMode ?? .autoDetect).rawValue) interleaved=\(currentIsInterleaved)"
+                _ = try await runFastpAdapterTrim(
                     sourceFASTQ: currentURL,
                     outputFASTQ: outputURL,
                     mode: step.adapterMode ?? .autoDetect,
@@ -2579,7 +2587,8 @@ public actor FASTQDerivativeService {
 
             case .fixedTrim:
                 progress?(fraction, "Fixed trimming (\(index + 1)/\(steps.count))…")
-                try await runFastpFixedTrim(
+                commandLine = "fastp (fixed-trim) trim5=\(step.trimFrom5Prime ?? 0) trim3=\(step.trimFrom3Prime ?? 0) interleaved=\(currentIsInterleaved)"
+                _ = try await runFastpFixedTrim(
                     sourceFASTQ: currentURL,
                     outputFASTQ: outputURL,
                     from5Prime: step.trimFrom5Prime ?? 0,
@@ -2593,6 +2602,7 @@ public actor FASTQDerivativeService {
                 let subs = step.deduplicateSubstitutions ?? 0
                 let optical = step.deduplicateOptical ?? false
                 let opticalDist = step.deduplicateOpticalDistance ?? 2500
+                commandLine = "clumpify.sh dedupe=t subs=\(subs)\(optical ? " optical=t dupedist=\(opticalDist)" : "") interleaved=\(currentIsInterleaved)"
                 let env = await bbToolsEnvironment()
                 let physicalMemoryGB = Int(ProcessInfo.processInfo.physicalMemory / (1024 * 1024 * 1024))
                 let heapGB = max(1, min(31, physicalMemoryGB * 80 / 100))
@@ -2619,6 +2629,7 @@ public actor FASTQDerivativeService {
                 progress?(fraction, "Merging paired-end reads (\(index + 1)/\(steps.count))…")
                 let strictness = step.mergeStrictness ?? .normal
                 let minOverlap = step.mergeMinOverlap ?? 12
+                commandLine = "bbmerge.sh strictness=\(strictness.rawValue) minoverlap=\(minOverlap); reformat.sh (unmerged interleave)"
                 let mergeDir = tempDir.appendingPathComponent("step_\(index + 1)_merge")
                 try fm.createDirectory(at: mergeDir, withIntermediateDirectories: true)
 
@@ -2645,13 +2656,13 @@ public actor FASTQDerivativeService {
                 }
 
                 // Concatenate parts: merged (singles) + unmerged (interleaved pairs)
-                var outputData = Data()
-                if hasMerged { outputData.append(try Data(contentsOf: mergedFile)) }
-                if hasUnmerged { outputData.append(try Data(contentsOf: unmergedInterleaved)) }
-                guard !outputData.isEmpty else {
+                var parts: [URL] = []
+                if hasMerged { parts.append(mergedFile) }
+                if hasUnmerged { parts.append(unmergedInterleaved) }
+                guard !parts.isEmpty else {
                     throw FASTQDerivativeError.emptyResult
                 }
-                try outputData.write(to: outputURL)
+                try concatenateFASTQParts(parts, to: outputURL)
 
                 currentURL = outputURL
                 // Post-merge: data is mixed (merged singles + interleaved unmerged pairs).
@@ -2662,6 +2673,7 @@ public actor FASTQDerivativeService {
             case .lengthFilter:
                 progress?(fraction, "Length filtering (\(index + 1)/\(steps.count))…")
                 if currentIsInterleaved {
+                    commandLine = "bbduk.sh interleaved=t minlen=\(step.minLength.map(String.init) ?? "none") maxlen=\(step.maxLength.map(String.init) ?? "none")"
                     try await runPairedAwareFilter(
                         sourceFASTQ: currentURL,
                         outputFASTQ: outputURL,
@@ -2669,6 +2681,7 @@ public actor FASTQDerivativeService {
                         maxLength: step.maxLength
                     )
                 } else {
+                    commandLine = "seqkit seq -m \(step.minLength.map(String.init) ?? "none") -M \(step.maxLength.map(String.init) ?? "none")"
                     var seqkitArgs = ["seq", "-j", String(toolThreadCount), currentURL.path, "-o", outputURL.path]
                     if let min = step.minLength { seqkitArgs += ["-m", String(min)] }
                     if let max = step.maxLength { seqkitArgs += ["-M", String(max)] }
@@ -2683,6 +2696,7 @@ public actor FASTQDerivativeService {
                 progress?(fraction, "Removing human reads (\(index + 1)/\(steps.count))…")
                 let dbID = step.humanScrubDatabaseID ?? "human-scrubber"
                 let removeReads = step.humanScrubRemoveReads ?? false
+                commandLine = "scrub.sh -d \(dbID) -s\(removeReads ? " -x" : "")"
                 let maskedSpots = try await runHumanReadScrub(
                     sourceFASTQ: currentURL,
                     outputFASTQ: outputURL,
@@ -2695,14 +2709,20 @@ public actor FASTQDerivativeService {
                 // For mask mode: reads are still present but as N-strings.
                 // Report outputReadCount = input - masked so the Inspector shows
                 // how many non-human pairs remain. The length filter later removes the N reads.
-                let outputCount = (inputCount != nil && maskedSpots != nil)
-                    ? (inputCount! - maskedSpots!)
-                    : await countFASTQReads(at: currentURL, isInterleaved: currentIsInterleaved)
+                let outputCount: Int?
+                if let inputCount, let maskedSpots {
+                    outputCount = inputCount - maskedSpots
+                } else if measureReadCounts {
+                    outputCount = await countFASTQReads(at: currentURL, isInterleaved: currentIsInterleaved)
+                } else {
+                    outputCount = nil
+                }
                 let duration = Date().timeIntervalSince(stepStart)
                 stepResults.append(RecipeStepResult(
                     stepName: step.displaySummary,
                     tool: step.toolUsed ?? "sra-human-scrubber",
                     toolVersion: step.toolVersion,
+                    commandLine: commandLine,
                     inputReadCount: inputCount,
                     outputReadCount: outputCount,
                     durationSeconds: duration
@@ -2714,12 +2734,15 @@ public actor FASTQDerivativeService {
             }
 
             // Record per-step stats
-            let outputCount = await countFASTQReads(at: currentURL, isInterleaved: currentIsInterleaved)
+            let outputCount = measureReadCounts
+                ? await countFASTQReads(at: currentURL, isInterleaved: currentIsInterleaved)
+                : nil
             let duration = Date().timeIntervalSince(stepStart)
             stepResults.append(RecipeStepResult(
                 stepName: step.displaySummary,
                 tool: step.toolUsed ?? step.kind.rawValue,
                 toolVersion: step.toolVersion,
+                commandLine: commandLine,
                 inputReadCount: inputCount,
                 outputReadCount: outputCount,
                 durationSeconds: duration
@@ -2727,6 +2750,30 @@ public actor FASTQDerivativeService {
         }
 
         return (currentURL, stepResults)
+    }
+
+    /// Concatenates FASTQ parts into one output file without loading full files into memory.
+    private func concatenateFASTQParts(_ inputs: [URL], to output: URL) throws {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: output.path) {
+            try fm.removeItem(at: output)
+        }
+        guard fm.createFile(atPath: output.path, contents: nil) else {
+            throw FASTQDerivativeError.invalidOperation("Failed to create merged FASTQ output at \(output.path)")
+        }
+
+        let outputHandle = try FileHandle(forWritingTo: output)
+        defer { try? outputHandle.close() }
+
+        for input in inputs {
+            let inputHandle = try FileHandle(forReadingFrom: input)
+            defer { try? inputHandle.close() }
+            while true {
+                let chunk = try inputHandle.read(upToCount: 1 << 20) ?? Data()
+                if chunk.isEmpty { break }
+                try outputHandle.write(contentsOf: chunk)
+            }
+        }
     }
 
     /// Counts reads in a FASTQ file using seqkit stats.

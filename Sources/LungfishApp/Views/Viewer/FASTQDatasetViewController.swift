@@ -107,6 +107,7 @@ public final class FASTQDatasetViewController: NSViewController {
         case adapterTrim
         case fixedTrim
         case contaminantFilter
+        case humanReadScrub
         case pairedEndMerge
         case pairedEndRepair
         case primerRemoval
@@ -128,6 +129,7 @@ public final class FASTQDatasetViewController: NSViewController {
             case .adapterTrim: return "Adapter Removal"
             case .fixedTrim: return "Fixed Trim (5'/3')"
             case .contaminantFilter: return "Contaminant Filter"
+            case .humanReadScrub: return "Human Read Scrub"
             case .pairedEndMerge: return "Merge Overlapping Pairs"
             case .pairedEndRepair: return "Repair Paired Reads"
             case .primerRemoval: return "PCR Primer Trimming"
@@ -151,6 +153,7 @@ public final class FASTQDatasetViewController: NSViewController {
             case .adapterTrim: return "minus.circle"
             case .fixedTrim: return "ruler"
             case .contaminantFilter: return "shield.slash"
+            case .humanReadScrub: return "person.crop.circle.badge.xmark"
             case .pairedEndMerge: return "arrow.triangle.merge"
             case .pairedEndRepair: return "wrench.and.screwdriver"
             case .primerRemoval: return "xmark.seal"
@@ -166,7 +169,7 @@ public final class FASTQDatasetViewController: NSViewController {
             case .qualityReport: return "REPORTS"
             case .subsampleProportion, .subsampleCount: return "SAMPLING"
             case .qualityTrim, .adapterTrim, .fixedTrim, .primerRemoval: return "TRIMMING"
-            case .lengthFilter, .contaminantFilter, .deduplicate, .sequencePresenceFilter: return "FILTERING"
+            case .lengthFilter, .contaminantFilter, .humanReadScrub, .deduplicate, .sequencePresenceFilter: return "FILTERING"
             case .errorCorrection: return "CORRECTION"
             case .pairedEndMerge, .pairedEndRepair: return "REFORMATTING"
             case .searchText, .searchMotif: return "SEARCH"
@@ -188,6 +191,7 @@ public final class FASTQDatasetViewController: NSViewController {
             case .adapterTrim: return .adapterTrim
             case .fixedTrim: return .fixedTrim
             case .contaminantFilter: return .contaminantFilter
+            case .humanReadScrub: return .contaminantFilter
             case .pairedEndMerge: return .pairedEndMerge
             case .pairedEndRepair: return .pairedEndRepair
             case .primerRemoval: return .primerRemoval
@@ -206,7 +210,7 @@ public final class FASTQDatasetViewController: NSViewController {
         ("REPORTS", [.qualityReport]),
         ("SAMPLING", [.subsampleProportion, .subsampleCount]),
         ("TRIMMING", [.qualityTrim, .adapterTrim, .fixedTrim, .primerRemoval]),
-        ("FILTERING", [.lengthFilter, .contaminantFilter, .deduplicate, .sequencePresenceFilter]),
+        ("FILTERING", [.lengthFilter, .contaminantFilter, .humanReadScrub, .deduplicate, .sequencePresenceFilter]),
         ("CORRECTION", [.errorCorrection]),
         ("PREPROCESSING", [.orient]),
         ("DEMULTIPLEXING", [.demultiplex]),
@@ -312,6 +316,8 @@ public final class FASTQDatasetViewController: NSViewController {
     private let qualityTrimModePopup = NSPopUpButton()
     private let adapterModePopup = NSPopUpButton()
     private let contaminantModePopup = NSPopUpButton()
+    private let scrubDatabasePopup = NSPopUpButton()
+    private let scrubRemoveReadsCheckbox = NSButton(checkboxWithTitle: "Remove matched reads", target: nil, action: nil)
     private let mergeStrictnessPopup = NSPopUpButton()
     private let primerSourcePopup = NSPopUpButton()
     private let interleaveDirectionPopup = NSPopUpButton()
@@ -711,6 +717,8 @@ public final class FASTQDatasetViewController: NSViewController {
         qualityTrimModePopup.addItems(withTitles: ["Cut Right (3')", "Cut Front (5')", "Cut Tail", "Cut Both"])
         adapterModePopup.addItems(withTitles: ["Auto-Detect", "Specify Sequence"])
         contaminantModePopup.addItems(withTitles: ["PhiX Spike-in", "Custom Reference"])
+        scrubDatabasePopup.addItems(withTitles: ["human-scrubber"])
+        scrubDatabasePopup.selectItem(at: 0)
         mergeStrictnessPopup.addItems(withTitles: ["Normal", "Strict"])
         primerSourcePopup.addItems(withTitles: ["Literal Sequence", "Reference FASTA"])
         interleaveDirectionPopup.addItems(withTitles: ["Interleave (R1+R2 → one)", "Deinterleave (one → R1+R2)"])
@@ -729,7 +737,7 @@ public final class FASTQDatasetViewController: NSViewController {
         }
 
         for popup in [searchFieldPopup, qualityTrimModePopup, adapterModePopup,
-                       contaminantModePopup, mergeStrictnessPopup, primerSourcePopup,
+                       contaminantModePopup, scrubDatabasePopup, mergeStrictnessPopup, primerSourcePopup,
                        interleaveDirectionPopup] {
             popup.font = .systemFont(ofSize: 12)
             popup.translatesAutoresizingMaskIntoConstraints = false
@@ -744,6 +752,10 @@ public final class FASTQDatasetViewController: NSViewController {
         revCompCheckbox.translatesAutoresizingMaskIntoConstraints = false
         revCompCheckbox.target = self
         revCompCheckbox.action = #selector(parameterCheckboxChanged(_:))
+        scrubRemoveReadsCheckbox.translatesAutoresizingMaskIntoConstraints = false
+        scrubRemoveReadsCheckbox.target = self
+        scrubRemoveReadsCheckbox.action = #selector(parameterCheckboxChanged(_:))
+        scrubRemoveReadsCheckbox.state = .on
         primerTrimDrawerButton.translatesAutoresizingMaskIntoConstraints = false
         primerTrimDrawerButton.bezelStyle = .rounded
         primerTrimDrawerButton.controlSize = .small
@@ -987,6 +999,15 @@ public final class FASTQDatasetViewController: NSViewController {
             parameterBar.addArrangedSubview(fieldOneInput)
             parameterBar.addArrangedSubview(fieldTwoLabel)
             parameterBar.addArrangedSubview(fieldTwoInput)
+
+        case .humanReadScrub:
+            let dbLabel = NSTextField(labelWithString: "Database:")
+            dbLabel.font = .systemFont(ofSize: 11, weight: .medium)
+            dbLabel.textColor = .secondaryLabelColor
+            dbLabel.translatesAutoresizingMaskIntoConstraints = false
+            parameterBar.addArrangedSubview(dbLabel)
+            parameterBar.addArrangedSubview(scrubDatabasePopup)
+            parameterBar.addArrangedSubview(scrubRemoveReadsCheckbox)
 
         case .pairedEndMerge:
             fieldOneLabel.stringValue = "Min Overlap:"
@@ -1970,6 +1991,11 @@ public final class FASTQDatasetViewController: NSViewController {
                 return nil
             }
             return .contaminantFilter(mode: .phix, referenceFasta: nil, kmerSize: kmerSize, hammingDistance: hammingDist)
+
+        case .humanReadScrub:
+            let dbID = scrubDatabasePopup.titleOfSelectedItem ?? "human-scrubber"
+            let removeReads = scrubRemoveReadsCheckbox.state == .on
+            return .humanReadScrub(databaseID: dbID, removeReads: removeReads)
 
         case .pairedEndMerge:
             let minOverlap = Int(fieldOneInput.stringValue) ?? 12

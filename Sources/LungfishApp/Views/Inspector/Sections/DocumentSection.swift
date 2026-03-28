@@ -609,7 +609,7 @@ public struct DocumentSection: View {
                 let pct = info.stepResults.first?.inputReadCount.map { i in
                     i > 0 ? String(format: " (%.1f%%)", Double(totalRemoved) / Double(i) * 100) : ""
                 } ?? ""
-                metadataRow(label: "Net reads removed", value: "\(formatCount(totalRemoved))\(pct ?? "")")
+                metadataRow(label: "Net reads removed", value: "\(formatCount(totalRemoved))\(pct)")
             }
 
             if !info.stepResults.isEmpty {
@@ -652,6 +652,14 @@ public struct DocumentSection: View {
                                     Text(step.tool)
                                         .font(.caption2)
                                         .foregroundStyle(.tertiary)
+                                }
+                                if let commandLine = step.commandLine,
+                                   !commandLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                    Text(commandLine)
+                                        .font(.system(.caption2, design: .monospaced))
+                                        .foregroundStyle(.tertiary)
+                                        .lineLimit(2)
+                                        .truncationMode(.middle)
                                 }
                             }
                             Spacer()

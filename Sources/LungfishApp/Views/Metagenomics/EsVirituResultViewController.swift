@@ -69,6 +69,8 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
     /// Path to the final BAM file, if available (from --keep True).
     private var bamURL: URL?
+    /// Path to the BAM index (.csi/.bai), if available.
+    private var bamIndexURL: URL?
 
     /// Background task computing unique reads for all assemblies.
     private var uniqueReadComputationTask: Task<Void, Never>?
@@ -83,6 +85,7 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     private let detailPane = EsVirituDetailPane()
     private let detectionTableView = ViralDetectionTableView()
     let actionBar = EsVirituActionBar()
+    private var splitViewBottomConstraint: NSLayoutConstraint?
 
     // MARK: - Split View State
 
@@ -98,8 +101,13 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
     /// Called when the user requests BLAST verification for a detection.
     ///
-    /// - Parameter detection: The viral detection to verify.
-    public var onBlastVerification: ((ViralDetection) -> Void)?
+    /// Parameters:
+    /// - detection: Representative detection row for the selected virus.
+    /// - readCount: Number of unique reads to submit.
+    /// - accessions: One or more accessions to extract reads from.
+    /// - bamURL: BAM with mapped reads for extraction.
+    /// - bamIndexURL: BAM index for random-access extraction.
+    public var onBlastVerification: ((ViralDetection, Int, [String], URL?, URL?) -> Void)?
 
     /// Called when the user requests read extraction for a detection.
     ///
@@ -199,6 +207,10 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             coverageLookup[window.accession, default: []].append(window)
         }
 
+        // Reset BAM-derived state for reconfiguration.
+        bamURL = nil
+        bamIndexURL = nil
+
         // Locate the final BAM file (from --keep True)
         if let outputDir = config?.outputDirectory {
             let tempDir = outputDir.appendingPathComponent("\(config?.sampleName ?? "sample")_temp")
@@ -206,6 +218,7 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             let candidateBAM = tempDir.appendingPathComponent(bamName)
             if FileManager.default.fileExists(atPath: candidateBAM.path) {
                 bamURL = candidateBAM
+                bamIndexURL = resolveBamIndex(for: candidateBAM)
                 logger.info("Found EsViritu BAM at \(candidateBAM.lastPathComponent)")
             }
         }
@@ -239,11 +252,12 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         )
 
         let hasBam = self.bamURL != nil
-        logger.info("Configured with \(result.detections.count) detections, \(result.assemblies.count) assemblies, \(result.detectedFamilyCount) families, BAM=\(hasBam)")
+        let hasBamIndex = self.bamIndexURL != nil
+        logger.info("Configured with \(result.detections.count) detections, \(result.assemblies.count) assemblies, \(result.detectedFamilyCount) families, BAM=\(hasBam), index=\(hasBamIndex)")
 
         // Compute unique reads for all assemblies in the background
-        if let bamURL {
-            scheduleUniqueReadComputation(assemblies: result.assemblies, bamURL: bamURL)
+        if let bamURL, let bamIndexURL {
+            scheduleUniqueReadComputation(assemblies: result.assemblies, bamURL: bamURL, bamIndexURL: bamIndexURL)
         }
     }
 
@@ -254,29 +268,15 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     /// Iterates assemblies by descending read count (most important first),
     /// fetches reads from the BAM for each primary contig, deduplicates by
     /// position/strand, and updates the table incrementally.
-    private func scheduleUniqueReadComputation(assemblies: [ViralAssembly], bamURL: URL) {
+    private func scheduleUniqueReadComputation(assemblies: [ViralAssembly], bamURL: URL, bamIndexURL: URL) {
         uniqueReadComputationTask?.cancel()
-
-        // Find BAM index (CSI or BAI)
-        let fm = FileManager.default
-        let csiPath = bamURL.path + ".csi"
-        let baiPath = bamURL.path + ".bai"
-        let indexPath: String
-        if fm.fileExists(atPath: csiPath) {
-            indexPath = csiPath
-        } else if fm.fileExists(atPath: baiPath) {
-            indexPath = baiPath
-        } else {
-            logger.info("No BAM index found for unique read computation; skipping")
-            return
-        }
 
         let sorted = assemblies.sorted { $0.totalReads > $1.totalReads }
 
         uniqueReadComputationTask = Task { [weak self] in
             let provider = AlignmentDataProvider(
                 alignmentPath: bamURL.path,
-                indexPath: indexPath
+                indexPath: bamIndexURL.path
             )
 
             for assembly in sorted {
@@ -341,6 +341,19 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     /// Counts unique reads by deduplicating on position-strand fingerprint.
     private static func deduplicatedReadCount(from reads: [AlignedRead]) -> Int {
         AlignedRead.deduplicatedReadCount(from: reads)
+    }
+
+    /// Resolves the BAM index adjacent to the BAM file.
+    private func resolveBamIndex(for bamURL: URL) -> URL? {
+        let fm = FileManager.default
+        let csiURL = URL(fileURLWithPath: bamURL.path + ".csi")
+        if fm.fileExists(atPath: csiURL.path) { return csiURL }
+
+        let baiURL = URL(fileURLWithPath: bamURL.path + ".bai")
+        if fm.fileExists(atPath: baiURL.path) { return baiURL }
+
+        logger.warning("No BAM index found for \(bamURL.lastPathComponent, privacy: .public)")
+        return nil
     }
 
     // MARK: - Unique Read Persistence
@@ -451,8 +464,11 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             splitView.topAnchor.constraint(equalTo: summaryBar.bottomAnchor),
             splitView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             splitView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            splitView.bottomAnchor.constraint(equalTo: actionBar.topAnchor),
         ])
+
+        let bottomConstraint = splitView.bottomAnchor.constraint(equalTo: actionBar.topAnchor)
+        bottomConstraint.isActive = true
+        splitViewBottomConstraint = bottomConstraint
     }
 
     // MARK: - Callback Wiring
@@ -462,37 +478,15 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         detectionTableView.onAssemblySelected = { [weak self] assembly in
             guard let self else { return }
             if let assembly {
-                // Track which assembly/contig is in the BAM viewer for unique read updates
-                self.currentBAMAssemblyAccession = assembly.assembly
-                self.currentBAMContigAccession = assembly.contigs.first?.accession
-
                 // Update action bar with selection info
                 self.actionBar.updateSelection(
                     assemblyName: assembly.name,
                     readCount: assembly.totalReads
                 )
 
-                // Show coverage detail for the selected virus
-                var windows: [String: [ViralCoverageWindow]] = [:]
-                for contig in assembly.contigs {
-                    if let w = self.detectionTableView.coverageWindowsByAccession[contig.accession] {
-                        windows[contig.accession] = w
-                    }
-                }
-                self.detailPane.showVirusDetail(
-                    assembly: assembly,
-                    coverageWindows: windows,
-                    bamURL: self.bamURL
-                )
+                self.showAssemblyDetail(assembly)
             } else {
-                // Nothing selected — show overview
-                if let result = self.esVirituResult {
-                    self.detailPane.configureOverview(
-                        result: result,
-                        coverageWindows: self.detectionTableView.coverageWindowsByAccession,
-                        bamURL: self.bamURL
-                    )
-                }
+                self.showOverview()
             }
         }
 
@@ -512,11 +506,18 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
                 assemblyName: detection.name,
                 readCount: detection.readCount
             )
+
+            guard let assembly = self.resolveAssembly(for: detection) else {
+                logger.warning("Unable to resolve parent assembly for detection \(detection.accession, privacy: .public)")
+                return
+            }
+            self.showAssemblyDetail(assembly, focusedContigAccession: detection.accession)
         }
 
-        // Table BLAST request -> forward to host
-        detectionTableView.onBlastRequested = { [weak self] detection in
-            self?.onBlastVerification?(detection)
+        // Table BLAST request -> forward to host with BAM context
+        detectionTableView.onBlastRequested = { [weak self] detection, readCount, accessions in
+            guard let self else { return }
+            self.onBlastVerification?(detection, readCount, accessions, self.bamURL, self.bamIndexURL)
         }
 
         // Table extract request -> forward to host
@@ -544,6 +545,51 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         }
     }
 
+    private func resolveAssembly(for detection: ViralDetection) -> ViralAssembly? {
+        guard let result = esVirituResult else { return nil }
+        if let byAssemblyID = result.assemblies.first(where: { $0.assembly == detection.assembly }) {
+            return byAssemblyID
+        }
+        return result.assemblies.first(where: { assembly in
+            assembly.contigs.contains(where: { $0.accession == detection.accession })
+        })
+    }
+
+    private func coverageWindows(for assembly: ViralAssembly) -> [String: [ViralCoverageWindow]] {
+        var windows: [String: [ViralCoverageWindow]] = [:]
+        for contig in assembly.contigs {
+            if let contigWindows = detectionTableView.coverageWindowsByAccession[contig.accession] {
+                windows[contig.accession] = contigWindows
+            }
+        }
+        return windows
+    }
+
+    private func showAssemblyDetail(_ assembly: ViralAssembly, focusedContigAccession: String? = nil) {
+        currentBAMAssemblyAccession = assembly.assembly
+
+        let selectedContig = assembly.contigs.first { $0.accession == focusedContigAccession } ?? assembly.contigs.first
+        currentBAMContigAccession = selectedContig?.accession
+
+        detailPane.showVirusDetail(
+            assembly: assembly,
+            coverageWindows: coverageWindows(for: assembly),
+            bamURL: bamURL,
+            focusedContigAccession: selectedContig?.accession
+        )
+    }
+
+    private func showOverview() {
+        currentBAMAssemblyAccession = nil
+        currentBAMContigAccession = nil
+        guard let result = esVirituResult else { return }
+        detailPane.configureOverview(
+            result: result,
+            coverageWindows: detectionTableView.coverageWindowsByAccession,
+            bamURL: bamURL
+        )
+    }
+
     // MARK: - BLAST Results
 
     /// Shows BLAST verification results in a bottom drawer.
@@ -565,6 +611,13 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
                 heightConstraint,
                 bottomConstraint,
             ])
+
+            // Re-pin main content above the drawer so opening it resizes the
+            // top panels instead of drawing over them.
+            splitViewBottomConstraint?.isActive = false
+            let newSplitBottom = splitView.bottomAnchor.constraint(equalTo: drawer.topAnchor)
+            newSplitBottom.isActive = true
+            splitViewBottomConstraint = newSplitBottom
 
             blastDrawerView = drawer
             blastDrawerBottomConstraint = bottomConstraint
@@ -906,6 +959,12 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
     /// Returns the current EsViritu result for testing.
     var testResult: LungfishIO.EsVirituResult? { esVirituResult }
+
+    /// Returns the assembly currently targeted by mini-BAM updates.
+    var testCurrentBAMAssemblyAccession: String? { currentBAMAssemblyAccession }
+
+    /// Returns the contig currently targeted by mini-BAM updates.
+    var testCurrentBAMContigAccession: String? { currentBAMContigAccession }
 }
 
 // MARK: - EsVirituSummaryBar
