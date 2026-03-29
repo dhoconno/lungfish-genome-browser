@@ -2280,7 +2280,7 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
         let confidenceCol = NSTableColumn(identifier: ColumnID.confidence)
         confidenceCol.title = "Confidence"
         confidenceCol.width = 80
-        confidenceCol.minWidth = 60
+        confidenceCol.minWidth = 80
         confidenceCol.maxWidth = 140
         confidenceCol.sortDescriptorPrototype = NSSortDescriptor(key: "confidence", ascending: false)
         tableView.addTableColumn(confidenceCol)
@@ -2529,8 +2529,10 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
             let displayText = item.isContaminationRisk ? "\u{26A0} \(item.organism)" : item.organism
             let cell = makeLabelCell(text: displayText, bold: true)
             if item.isContaminationRisk {
-                cell.toolTip = "Contamination risk: detected in negative control sample"
+                cell.toolTip = "Contamination risk: detected in negative control sample\n\(item.organism)"
                 cell.textColor = .systemOrange
+            } else {
+                cell.toolTip = item.organism
             }
             return cell
 

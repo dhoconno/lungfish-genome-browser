@@ -1126,7 +1126,10 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         lines.append("Reads: \(detection.readCount)")
         lines.append("Coverage: \(String(format: "%.1fx", detection.meanCoverage))")
         lines.append("Identity: \(String(format: "%.1f%%", detection.avgReadIdentity))")
-        if let species = detection.species, !species.isEmpty { lines.append("Species: \(species)") }
+        if let species = detection.species, !species.isEmpty {
+            let displaySpecies = species.hasPrefix("s__") ? String(species.dropFirst(3)) : species
+            lines.append("Species: \(displaySpecies)")
+        }
         return lines.joined(separator: "\n")
     }
 
@@ -1135,7 +1138,10 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         var lines: [String] = [assembly.name, "Assembly: \(assembly.assembly)"]
         if let family = assembly.family { lines.append("Family: \(family)") }
         if let genus = assembly.genus { lines.append("Genus: \(genus)") }
-        if let species = assembly.species { lines.append("Species: \(species)") }
+        if let species = assembly.species {
+            let displaySpecies = species.hasPrefix("s__") ? String(species.dropFirst(3)) : species
+            lines.append("Species: \(displaySpecies)")
+        }
         let segments = assembly.contigs.compactMap(\.segment).filter { !$0.isEmpty }
         if !segments.isEmpty { lines.append("Segments: \(segments.joined(separator: ", "))") }
         lines.append("Total Reads: \(assembly.totalReads)")

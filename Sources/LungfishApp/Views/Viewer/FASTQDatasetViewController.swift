@@ -79,8 +79,8 @@ public final class FASTQDatasetViewController: NSViewController {
         /// Fixed height for the top pane (summary + sparklines). Not user-resizable.
         static let topPaneHeight: CGFloat = summaryBarHeight + summaryToSparklineSpacing + sparklineHeight + topPaneBottomPadding
 
-        static let minSidebarWidth: CGFloat = 140
-        static let maxSidebarWidth: CGFloat = 260
+        static let minSidebarWidth: CGFloat = 200
+        static let maxSidebarWidth: CGFloat = 320
         static let preferredSidebarFraction: CGFloat = 0.22
         static let minGeometryForInitialLayout: CGFloat = 300
         static let operationHeaderBandHeight: CGFloat = 36
@@ -114,6 +114,7 @@ public final class FASTQDatasetViewController: NSViewController {
         case errorCorrection
         case orient
         case demultiplex
+        case classifyReads
 
         var title: String {
             switch self {
@@ -135,6 +136,7 @@ public final class FASTQDatasetViewController: NSViewController {
             case .errorCorrection: return "Error Correction"
             case .orient: return "Orient Reads"
             case .demultiplex: return "Demultiplex (Barcodes)"
+            case .classifyReads: return "Classify & Profile Reads"
             }
         }
 
@@ -158,6 +160,7 @@ public final class FASTQDatasetViewController: NSViewController {
             case .errorCorrection: return "wand.and.stars"
             case .orient: return "arrow.left.arrow.right"
             case .demultiplex: return "barcode"
+            case .classifyReads: return "magnifyingglass.circle"
             }
         }
 
@@ -172,6 +175,7 @@ public final class FASTQDatasetViewController: NSViewController {
             case .searchText, .searchMotif: return "SEARCH"
             case .orient: return "PREPROCESSING"
             case .demultiplex: return "DEMULTIPLEXING"
+            case .classifyReads: return "CLASSIFICATION"
             }
         }
 
@@ -195,6 +199,7 @@ public final class FASTQDatasetViewController: NSViewController {
             case .errorCorrection: return .errorCorrection
             case .orient: return .orient
             case .demultiplex: return .demultiplex
+            case .classifyReads: return .classifyReads
             }
         }
     }
@@ -203,6 +208,7 @@ public final class FASTQDatasetViewController: NSViewController {
 
     /// Category headers + operation items for the source list sidebar.
     private static let categories: [(header: String, items: [OperationKind])] = [
+        ("CLASSIFICATION", [.classifyReads]),
         ("REPORTS", [.qualityReport]),
         ("SAMPLING", [.subsampleProportion, .subsampleCount]),
         ("TRIMMING", [.qualityTrim, .adapterTrim, .fixedTrim, .primerRemoval]),
@@ -1130,6 +1136,12 @@ public final class FASTQDatasetViewController: NSViewController {
                 label.textColor = .secondaryLabelColor
                 parameterBar.addArrangedSubview(label)
             }
+
+        case .classifyReads:
+            let label = NSTextField(labelWithString: "Run Kraken2/Bracken taxonomic classification and abundance profiling on this dataset.")
+            label.font = .systemFont(ofSize: 11)
+            label.textColor = .secondaryLabelColor
+            parameterBar.addArrangedSubview(label)
         }
 
         // Add spacer to push controls left
@@ -1645,6 +1657,11 @@ public final class FASTQDatasetViewController: NSViewController {
             computeQualityReport()
             return
         }
+        // Classify & Profile Reads dispatches to the metagenomics wizard
+        if selectedOperation == .classifyReads {
+            NSApp.sendAction(#selector(ToolsMenuActions.classifyReads(_:)), to: nil, from: nil)
+            return
+        }
         // Demux requires a configuration from the drawer
         if selectedOperation == .demultiplex
             && currentDemuxConfig == nil {
@@ -1858,6 +1875,10 @@ public final class FASTQDatasetViewController: NSViewController {
         switch kind {
         case .qualityReport:
             // Quality report is not a derivative operation; handled via computeQualityReport()
+            return nil
+
+        case .classifyReads:
+            // Classify & Profile Reads is dispatched via ToolsMenuActions; not a derivative operation
             return nil
 
         case .subsampleProportion:
@@ -2152,6 +2173,9 @@ public final class FASTQDatasetViewController: NSViewController {
             // Disabled when data already exists or report is running
             runButton.isEnabled = !hasQualityData && qualityReportTask == nil
             runButton.title = "Compute"
+        case .classifyReads:
+            runButton.isEnabled = true
+            runButton.title = "Classify\u{2026}"
         case .orient:
             runButton.isEnabled = orientReferenceURL != nil
             runButton.title = "Run"

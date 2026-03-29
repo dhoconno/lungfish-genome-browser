@@ -889,7 +889,8 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         for detection in result.detections {
             let family = detection.family ?? "Unknown"
             let genus = detection.genus ?? "Unknown"
-            let species = detection.species ?? detection.name
+            let rawSpecies = detection.species ?? detection.name
+            let species = rawSpecies.hasPrefix("s__") ? String(rawSpecies.dropFirst(3)) : rawSpecies
 
             familyMap[family, default: (reads: 0, genera: [:])].reads += detection.readCount
             familyMap[family, default: (reads: 0, genera: [:])].genera[genus, default: (reads: 0, species: [:])].reads += detection.readCount

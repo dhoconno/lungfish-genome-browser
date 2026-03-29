@@ -102,6 +102,7 @@ final class OperationPreviewView: NSView {
         case orient
         case sequencePresenceFilter
         case demultiplex
+        case classifyReads
         case qualityReport
         case none
     }
@@ -315,6 +316,8 @@ final class OperationPreviewView: NSView {
             drawContaminantFilterPreview(ctx: ctx, rect: rect)
         case .qualityReport:
             drawQualityReportPreview(ctx: ctx, rect: rect)
+        case .classifyReads:
+            drawIdleState(ctx: ctx, rect: rect)
         case .none:
             drawIdleState(ctx: ctx, rect: rect)
         }
