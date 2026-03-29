@@ -12,6 +12,12 @@ import LungfishWorkflow
 /// The wizard guides the user through selecting a goal, database, and sensitivity
 /// preset. Advanced settings are available in a collapsed disclosure group.
 ///
+/// ## Database Loading
+///
+/// Installed Kraken2 databases are loaded asynchronously via a `.task` modifier
+/// from ``MetagenomicsDatabaseRegistry``. The first ready database is
+/// auto-selected.
+///
 /// ## RAM Warning
 ///
 /// When a database is selected that requires more RAM than the system has available,
@@ -56,8 +62,8 @@ struct ClassificationWizardSheet: View {
     /// The input FASTQ files to classify.
     let inputFiles: [URL]
 
-    /// Installed databases available for selection.
-    let installedDatabases: [MetagenomicsDatabaseInfo]
+    /// Installed Kraken2 databases, loaded asynchronously from the registry.
+    @State private var installedDatabases: [MetagenomicsDatabaseInfo] = []
 
     // MARK: - State
 
@@ -128,18 +134,25 @@ struct ClassificationWizardSheet: View {
 
     init(
         inputFiles: [URL],
-        installedDatabases: [MetagenomicsDatabaseInfo] = [],
         onRun: (([ClassificationConfig]) -> Void)? = nil,
         onCancel: (() -> Void)? = nil
     ) {
         self.inputFiles = inputFiles
-        self.installedDatabases = installedDatabases
         self.onRun = onRun
         self.onCancel = onCancel
+    }
 
-        // Default to first installed database
-        let defaultDB = installedDatabases.first(where: { $0.status == .ready })?.name ?? ""
-        _selectedDatabaseName = State(initialValue: defaultDB)
+    // MARK: - Database Loading
+
+    /// Asynchronously loads installed Kraken2 databases from the registry.
+    private func loadDatabases() async {
+        let registry = MetagenomicsDatabaseRegistry.shared
+        let allDbs = (try? await registry.availableDatabases()) ?? []
+        let kraken2Dbs = allDbs.filter { $0.tool == "kraken2" && $0.isDownloaded }
+        installedDatabases = kraken2Dbs
+        if selectedDatabaseName.isEmpty, let first = kraken2Dbs.first(where: { $0.status == .ready }) {
+            selectedDatabaseName = first.name
+        }
     }
 
     // MARK: - Computed Properties
@@ -300,6 +313,7 @@ struct ClassificationWizardSheet: View {
             .padding(.vertical, 12)
         }
         .frame(width: 520, height: 520)
+        .task { await loadDatabases() }
         .onChange(of: preset) { _, newPreset in
             applyPreset(newPreset)
         }
@@ -325,13 +339,13 @@ struct ClassificationWizardSheet: View {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(groupedSamples.prefix(8)) { sample in
                     let mode = sample.isPairedEnd ? "PE" : "SE"
-                    Text("• \(sample.sampleId) (\(mode))")
+                    Text("\u{2022} \(sample.sampleId) (\(mode))")
                         .font(.system(size: 11))
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
                 if groupedSamples.count > 8 {
-                    Text("…and \(groupedSamples.count - 8) more")
+                    Text("\u{2026}and \(groupedSamples.count - 8) more")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

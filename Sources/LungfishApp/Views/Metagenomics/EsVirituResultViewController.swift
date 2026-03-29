@@ -768,23 +768,36 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         var lines: [String] = []
 
         let headers = [
-            "Virus Name", "Accession", "Assembly", "Family", "Genus", "Species",
-            "Read Count", "RPKMF", "Coverage", "Identity", "Segment", "Length",
+            "Sample ID", "Virus Name", "Accession", "Assembly", "Kingdom", "Phylum",
+            "Class", "Order", "Family", "Genus", "Species", "Subspecies",
+            "Read Count", "RPKMF", "Coverage", "Identity", "Covered Bases",
+            "Nucleotide Diversity", "Assembly Length", "Filtered Reads",
+            "Segment", "Length",
         ]
         lines.append(headers.joined(separator: separator))
 
         for detection in result.detections {
             let row = [
+                escapeField(detection.sampleId, separator: separator),
                 escapeField(detection.name, separator: separator),
                 detection.accession,
                 detection.assembly,
+                escapeField(detection.kingdom ?? "", separator: separator),
+                escapeField(detection.phylum ?? "", separator: separator),
+                escapeField(detection.tclass ?? "", separator: separator),
+                escapeField(detection.order ?? "", separator: separator),
                 escapeField(detection.family ?? "", separator: separator),
                 escapeField(detection.genus ?? "", separator: separator),
                 escapeField(detection.species ?? "", separator: separator),
+                escapeField(detection.subspecies ?? "", separator: separator),
                 "\(detection.readCount)",
                 String(format: "%.2f", detection.rpkmf),
                 String(format: "%.2f", detection.meanCoverage),
                 String(format: "%.2f", detection.avgReadIdentity),
+                "\(detection.coveredBases)",
+                String(format: "%.6f", detection.pi),
+                "\(detection.assemblyLength)",
+                "\(detection.filteredReadsInSample)",
                 detection.segment ?? "",
                 "\(detection.length)",
             ]

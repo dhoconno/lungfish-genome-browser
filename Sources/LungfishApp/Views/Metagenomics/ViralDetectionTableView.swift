@@ -549,6 +549,9 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         ncbiSubmenu.addItem(withTitle: "PubMed Literature",
                             action: #selector(contextOpenPubMed(_:)),
                             keyEquivalent: "")
+        ncbiSubmenu.addItem(withTitle: "Taxonomy Browser",
+                            action: #selector(contextOpenTaxonomy(_:)),
+                            keyEquivalent: "")
         let ncbiItem = NSMenuItem(title: "Look Up on NCBI", action: nil, keyEquivalent: "")
         ncbiItem.submenu = ncbiSubmenu
         ncbiItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: "NCBI")
@@ -561,6 +564,9 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
                      keyEquivalent: "")
         menu.addItem(withTitle: "Copy Accession",
                      action: #selector(contextCopyAccession(_:)),
+                     keyEquivalent: "")
+        menu.addItem(withTitle: "Copy Row as TSV",
+                     action: #selector(contextCopyRowTSV(_:)),
                      keyEquivalent: "")
 
         menu.addItem(.separator())
@@ -711,6 +717,52 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         }
     }
 
+    @objc private func contextOpenTaxonomy(_ sender: Any?) {
+        let row = outlineView.clickedRow
+        guard row >= 0 else { return }
+        let item = outlineView.item(atRow: row)
+        let name: String
+        if let assemblyItem = item as? ViralAssemblyItem {
+            name = assemblyItem.assembly.name
+        } else if let detectionItem = item as? ViralDetectionItem {
+            name = detectionItem.detection.species ?? detectionItem.detection.name
+        } else {
+            return
+        }
+        let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? name
+        if let url = URL(string: "https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?name=\(encoded)") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc private func contextCopyRowTSV(_ sender: Any?) {
+        let row = outlineView.clickedRow
+        guard row >= 0 else { return }
+        let item = outlineView.item(atRow: row)
+        let fields: [String]
+        if let assemblyItem = item as? ViralAssemblyItem {
+            let a = assemblyItem.assembly
+            fields = [
+                a.name, a.assembly, a.family ?? "", a.genus ?? "", a.species ?? "",
+                "\(a.totalReads)", String(format: "%.2f", a.rpkmf),
+                String(format: "%.2f", a.meanCoverage), String(format: "%.2f", a.avgReadIdentity),
+                "\(a.contigs.count) segments", "\(a.assemblyLength)",
+            ]
+        } else if let detectionItem = item as? ViralDetectionItem {
+            let d = detectionItem.detection
+            fields = [
+                d.name, d.accession, d.family ?? "", d.genus ?? "", d.species ?? "",
+                "\(d.readCount)", String(format: "%.2f", d.rpkmf),
+                String(format: "%.2f", d.meanCoverage), String(format: "%.2f", d.avgReadIdentity),
+                d.segment ?? "", "\(d.length)",
+            ]
+        } else {
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(fields.joined(separator: "\t"), forType: .string)
+    }
+
     @objc private func contextExpandAll(_ sender: Any?) {
         outlineView.expandItem(nil, expandChildren: true)
     }
@@ -829,7 +881,8 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         case ColumnID.name:
             return makeNameCell(
                 name: assembly.name,
-                familyName: assembly.family
+                familyName: assembly.family,
+                tooltip: assemblyTooltip(assembly)
             )
         case ColumnID.family:
             return makeTextCell(text: assembly.family ?? "\u{2014}", alignment: .left)
@@ -871,8 +924,9 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         switch columnID {
         case ColumnID.name:
             return makeNameCell(
-                name: detection.name,
-                familyName: detection.family
+                name: disambiguatedDetectionName(detection),
+                familyName: detection.family,
+                tooltip: detectionTooltip(detection)
             )
         case ColumnID.family:
             return makeTextCell(text: detection.family ?? "\u{2014}", alignment: .left)
@@ -902,7 +956,7 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
     // MARK: - Cell Factories (Shared)
 
     /// Creates a name cell with a family-colored indicator dot.
-    private func makeNameCell(name: String, familyName: String?) -> NSView {
+    private func makeNameCell(name: String, familyName: String?, tooltip: String? = nil) -> NSView {
         let cellView = NSTableCellView()
         cellView.identifier = NSUserInterfaceItemIdentifier(ColumnID.name)
 
@@ -919,6 +973,10 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         cellView.addSubview(dot)
         cellView.addSubview(textField)
         cellView.textField = textField
+
+        if let tooltip {
+            cellView.toolTip = tooltip
+        }
 
         NSLayoutConstraint.activate([
             dot.leadingAnchor.constraint(equalTo: cellView.leadingAnchor, constant: 2),
@@ -1037,6 +1095,53 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         }
 
         return cellView
+    }
+
+    // MARK: - Display Name Disambiguation
+
+    /// Builds a disambiguated display name for a child detection row.
+    ///
+    /// When multiple contigs share the same virus name under a parent assembly,
+    /// this appends the genome segment label and/or the GenBank accession
+    /// so that each row is visually distinguishable.
+    private func disambiguatedDetectionName(_ detection: ViralDetection) -> String {
+        var parts: [String] = [detection.name]
+        if let segment = detection.segment, !segment.isEmpty {
+            parts.append("- Segment \(segment)")
+        }
+        parts.append("[\(detection.accession)]")
+        return parts.joined(separator: " ")
+    }
+
+    /// Builds a multi-line tooltip for a detection (child) row.
+    private func detectionTooltip(_ detection: ViralDetection) -> String {
+        var lines: [String] = [detection.name, "Accession: \(detection.accession)"]
+        if let segment = detection.segment, !segment.isEmpty {
+            lines.append("Segment: \(segment)")
+        }
+        if !detection.description.isEmpty {
+            lines.append("Description: \(detection.description)")
+        }
+        lines.append("Length: \(detection.length) bp")
+        lines.append("Reads: \(detection.readCount)")
+        lines.append("Coverage: \(String(format: "%.1fx", detection.meanCoverage))")
+        lines.append("Identity: \(String(format: "%.1f%%", detection.avgReadIdentity))")
+        if let species = detection.species, !species.isEmpty { lines.append("Species: \(species)") }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Builds a multi-line tooltip for an assembly (parent) row.
+    private func assemblyTooltip(_ assembly: ViralAssembly) -> String {
+        var lines: [String] = [assembly.name, "Assembly: \(assembly.assembly)"]
+        if let family = assembly.family { lines.append("Family: \(family)") }
+        if let genus = assembly.genus { lines.append("Genus: \(genus)") }
+        if let species = assembly.species { lines.append("Species: \(species)") }
+        let segments = assembly.contigs.compactMap(\.segment).filter { !$0.isEmpty }
+        if !segments.isEmpty { lines.append("Segments: \(segments.joined(separator: ", "))") }
+        lines.append("Total Reads: \(assembly.totalReads)")
+        lines.append("Coverage: \(String(format: "%.1fx", assembly.meanCoverage))")
+        lines.append("Contigs: \(assembly.contigs.count)")
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Family Color

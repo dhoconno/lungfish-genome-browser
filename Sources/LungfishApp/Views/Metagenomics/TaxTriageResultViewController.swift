@@ -2246,6 +2246,7 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
         scoreCol.minWidth = 60
         scoreCol.maxWidth = 120
         scoreCol.sortDescriptorPrototype = NSSortDescriptor(key: "tassScore", ascending: false)
+        scoreCol.headerToolTip = "Taxonomic Assignment Specificity Score: >=0.95 high confidence, 0.80-0.95 moderate, <0.80 low confidence"
         tableView.addTableColumn(scoreCol)
 
         // Reads column
@@ -2316,6 +2317,8 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
         blastItem.target = self
         menu.addItem(blastItem)
 
+        menu.addItem(NSMenuItem.separator())
+
         let copyItem = NSMenuItem(
             title: "Copy Organism Name",
             action: #selector(contextCopyAction(_:)),
@@ -2323,6 +2326,40 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
         )
         copyItem.target = self
         menu.addItem(copyItem)
+
+        let copyAccessionItem = NSMenuItem(
+            title: "Copy Accession Number",
+            action: #selector(contextCopyAccessionAction(_:)),
+            keyEquivalent: ""
+        )
+        copyAccessionItem.target = self
+        menu.addItem(copyAccessionItem)
+
+        let copyTaxIdItem = NSMenuItem(
+            title: "Copy TaxID",
+            action: #selector(contextCopyTaxIdAction(_:)),
+            keyEquivalent: ""
+        )
+        copyTaxIdItem.target = self
+        menu.addItem(copyTaxIdItem)
+
+        let copyTSVItem = NSMenuItem(
+            title: "Copy Row as TSV",
+            action: #selector(contextCopyRowTSVAction(_:)),
+            keyEquivalent: ""
+        )
+        copyTSVItem.target = self
+        menu.addItem(copyTSVItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let lookupItem = NSMenuItem(
+            title: "Look Up in NCBI Taxonomy",
+            action: #selector(contextLookUpNCBIAction(_:)),
+            keyEquivalent: ""
+        )
+        lookupItem.target = self
+        menu.addItem(lookupItem)
 
         tableView.menu = menu
     }
@@ -2379,6 +2416,58 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
         guard row >= 0, row < sortedRows.count else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(sortedRows[row].organism, forType: .string)
+    }
+
+    @objc private func contextCopyAccessionAction(_ sender: Any) {
+        let row = tableView.clickedRow
+        guard row >= 0, row < sortedRows.count else { return }
+        let item = sortedRows[row]
+        let accession = item.taxId.map { "taxid:\($0)" } ?? item.organism
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(accession, forType: .string)
+    }
+
+    @objc private func contextCopyTaxIdAction(_ sender: Any) {
+        let row = tableView.clickedRow
+        guard row >= 0, row < sortedRows.count else { return }
+        let item = sortedRows[row]
+        let taxIdString = item.taxId.map(String.init) ?? ""
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(taxIdString, forType: .string)
+    }
+
+    @objc private func contextCopyRowTSVAction(_ sender: Any) {
+        let row = tableView.clickedRow
+        guard row >= 0, row < sortedRows.count else { return }
+        let item = sortedRows[row]
+        let fields: [String] = [
+            item.organism,
+            String(format: "%.4f", item.tassScore),
+            "\(item.reads)",
+            item.uniqueReads.map(String.init) ?? "",
+            item.coverage.map { String(format: "%.2f", $0) } ?? "",
+            item.confidence ?? "",
+            item.taxId.map(String.init) ?? "",
+            item.rank ?? "",
+        ]
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(fields.joined(separator: "\t"), forType: .string)
+    }
+
+    @objc private func contextLookUpNCBIAction(_ sender: Any) {
+        let row = tableView.clickedRow
+        guard row >= 0, row < sortedRows.count else { return }
+        let item = sortedRows[row]
+        let urlString: String
+        if let taxId = item.taxId {
+            urlString = "https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?id=\(taxId)"
+        } else {
+            let encoded = item.organism.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? item.organism
+            urlString = "https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?name=\(encoded)"
+        }
+        if let url = URL(string: urlString) {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     /// Selects the first row matching the given organism name (case-insensitive).
@@ -2446,7 +2535,15 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
             return cell
 
         case ColumnID.tassScore:
-            return makeLabelCell(text: String(format: "%.3f", item.tassScore), monospaced: true)
+            let tassCell = makeLabelCell(text: String(format: "%.3f", item.tassScore), monospaced: true)
+            if item.tassScore >= 0.95 {
+                tassCell.toolTip = "High confidence (>=0.95): strong taxonomic signal"
+            } else if item.tassScore >= 0.80 {
+                tassCell.toolTip = "Moderate confidence (0.80-0.95): likely true positive, verify with BLAST"
+            } else {
+                tassCell.toolTip = "Low confidence (<0.80): weak signal, may be noise or contamination"
+            }
+            return tassCell
 
         case ColumnID.reads:
             let text = Self.countFormatter.string(from: NSNumber(value: item.reads)) ?? "\(item.reads)"

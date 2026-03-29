@@ -568,7 +568,7 @@ final class TopVirusBarChartView: NSView {
             }
 
             // Label
-            let name = (assembly.species ?? assembly.name) as NSString
+            let name = (assembly.species ?? assembly.name).replacingOccurrences(of: "s__", with: "") as NSString
             let nameAttrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 11),
                 .foregroundColor: NSColor.labelColor,
