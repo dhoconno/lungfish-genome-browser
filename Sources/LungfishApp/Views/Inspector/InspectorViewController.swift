@@ -1446,9 +1446,6 @@ private struct MetagenomicsResultSummarySection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Result Summary", systemImage: "chart.bar")
-                .font(.headline)
-
             if let manifest = viewModel.manifest {
                 metadataRow("Organism", value: manifest.source.organism)
                 metadataRow("Assembly", value: manifest.source.assembly)

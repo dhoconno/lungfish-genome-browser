@@ -1553,6 +1553,8 @@ public final class FASTQDatasetViewController: NSViewController {
             operationType: .qualityReport
         )
 
+        let startTime = Date()
+
         qualityReportTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 let reader = FASTQReader(validateSequence: false)
@@ -1565,6 +1567,7 @@ public final class FASTQDatasetViewController: NSViewController {
                 metadata.computedStatistics = fullStats
                 FASTQMetadataStore.save(metadata, for: url)
 
+                let elapsed = Int(Date().timeIntervalSince(startTime))
                 DispatchQueue.main.async { [weak self] in
                     MainActor.assumeIsolated {
                         guard let self else { return }
@@ -1578,12 +1581,13 @@ public final class FASTQDatasetViewController: NSViewController {
                         self.cancelButton.isHidden = true
                         self.progressIndicator.stopAnimation(nil)
                         self.updateQualityReportButton()
-                        self.setStatus("Quality report complete")
+                        self.setStatus("Quality report complete (\(elapsed)s)")
                         self.onStatisticsUpdated?(fullStats)
                     }
                 }
             } catch is CancellationError {
                 // User cancelled — return silently, don't show error
+                let elapsed = Int(Date().timeIntervalSince(startTime))
                 DispatchQueue.main.async { [weak self] in
                     MainActor.assumeIsolated {
                         guard let self else { return }
@@ -1592,11 +1596,12 @@ public final class FASTQDatasetViewController: NSViewController {
                         self.updateRunButtonState()
                         self.cancelButton.isHidden = true
                         self.progressIndicator.stopAnimation(nil)
-                        self.setStatus("Quality report cancelled")
+                        self.setStatus("Quality report cancelled (\(elapsed)s)")
                     }
                 }
             } catch {
                 let errorMessage = "\(error)"
+                let elapsed = Int(Date().timeIntervalSince(startTime))
                 DispatchQueue.main.async { [weak self] in
                     MainActor.assumeIsolated {
                         guard let self else { return }
@@ -1605,7 +1610,7 @@ public final class FASTQDatasetViewController: NSViewController {
                         self.updateRunButtonState()
                         self.cancelButton.isHidden = true
                         self.progressIndicator.stopAnimation(nil)
-                        self.setStatus("Quality report failed", isError: true)
+                        self.setStatus("Quality report failed (\(elapsed)s)", isError: true)
                         self.showErrorBanner("Quality report failed: \(errorMessage)")
                     }
                 }
@@ -1684,29 +1689,34 @@ public final class FASTQDatasetViewController: NSViewController {
         progressIndicator.startAnimation(nil)
         setStatus("Running: \(description(for: request))")
 
+        let startTime = Date()
+
         operationTask = Task { [weak self, onRunOperation] in
             do {
                 try await onRunOperation(request)
                 guard let self else { return }
+                let elapsed = Int(Date().timeIntervalSince(startTime))
                 self.operationTask = nil
                 self.updateRunButtonState()
                 self.cancelButton.isHidden = true
                 self.progressIndicator.stopAnimation(nil)
-                self.setStatus("Done: \(self.description(for: request))")
+                self.setStatus("Done: \(self.description(for: request)) (\(elapsed)s)")
             } catch is CancellationError {
                 guard let self else { return }
+                let elapsed = Int(Date().timeIntervalSince(startTime))
                 self.operationTask = nil
                 self.updateRunButtonState()
                 self.cancelButton.isHidden = true
                 self.progressIndicator.stopAnimation(nil)
-                self.setStatus("Cancelled")
+                self.setStatus("Cancelled (\(elapsed)s)")
             } catch {
                 guard let self else { return }
+                let elapsed = Int(Date().timeIntervalSince(startTime))
                 self.operationTask = nil
                 self.updateRunButtonState()
                 self.cancelButton.isHidden = true
                 self.progressIndicator.stopAnimation(nil)
-                self.setStatus("Failed: \(error.localizedDescription)", isError: true)
+                self.setStatus("Failed: \(error.localizedDescription) (\(elapsed)s)", isError: true)
                 self.showErrorBanner("Operation failed: \(error.localizedDescription)")
             }
         }

@@ -521,6 +521,10 @@ public class MainSplitViewController: NSSplitViewController {
 
         logger.info("handleProjectOpened: Project '\(project.name, privacy: .public)' was opened")
 
+        // Update window title to reflect the project name
+        let projectName = project.url.deletingPathExtension().lastPathComponent
+        view.window?.title = "\(projectName) \u{2014} Lungfish Genome Explorer"
+
         // Use the new filesystem-backed sidebar model
         // This will scan the project directory and set up file watching
         sidebarController.openProject(at: project.url)

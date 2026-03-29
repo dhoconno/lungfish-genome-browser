@@ -458,6 +458,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         workingDirectoryURL = projectURL
         mainWindowController = controller
 
+        // Update window title to reflect the project name
+        let projectName = projectURL.deletingPathExtension().lastPathComponent
+        controller.window?.title = "\(projectName) \u{2014} Lungfish Genome Explorer"
+
         // Use DocumentManager to preserve project semantics and persisted metadata.
         do {
             let _ = try DocumentManager.shared.openProject(at: projectURL)
