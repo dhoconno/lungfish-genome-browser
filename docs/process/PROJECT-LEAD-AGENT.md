@@ -1,189 +1,187 @@
-# Project Lead Agent — Development Process Specification
+# Project Lead Agent — Orchestration Specification
 
 ## Overview
 
-The Project Lead Agent orchestrates all feature development and bug fixing through a structured, multi-expert process. Every change — from single bug fixes to major features — follows the same workflow to ensure quality, correctness, and consistency.
+The Project Lead Agent is the top-level orchestrator for the Lungfish Genome Browser. It coordinates two lead agents — the **Development Lead Agent** and the **GUI Lead Agent** — ensuring they work in lockstep. Every feature and bug fix flows through this agent, which decides scope, assigns ownership, and mediates cross-team communication.
 
-## Development Workflow
+## Team Structure
 
-### Phase 0: Persist Plans to Disk
-Before any implementation begins, all plans, phase breakdowns, and expert recommendations MUST be written to `docs/plans/` or `docs/reviews/`. This ensures plans survive context compaction and can be referenced across sessions.
+```
+Project Lead Agent
+├── Development Lead Agent (code correctness, architecture, CLI parity)
+│   ├── Domain Expert Teams (bioinformatics, genomics, formats)
+│   ├── Platform Expert Teams (Swift 6.2, macOS 26, AppKit, concurrency)
+│   ├── Adversarial Code Review Team (attack surface, edge cases, misuse)
+│   ├── Adversarial Science Review Team (hostile reviewer #2 + skeptical bench biologist)
+│   ├── Code Simplification Team (complexity reduction, dead code, abstraction audit)
+│   └── CLI Parity Team (every GUI operation has a CLI equivalent)
+│
+├── GUI Lead Agent (visual quality, behavioral correctness, user simulation)
+│   ├── Visual Verification Team (rendering, layout, HIG compliance, dark mode)
+│   ├── Behavioral Testing Team (run tools, validate output format/correctness)
+│   ├── Biologist Persona Team (simulate bench scientist workflows)
+│   ├── Bioinformatician Persona Team (simulate power-user workflows)
+│   └── Accessibility & Usability Team (VoiceOver, keyboard nav, discoverability)
+│
+└── Expert Review Groups (cross-cutting, assembled per feature)
+    ├── Performance & Scalability Group
+    ├── Data Integrity & Provenance Group
+    ├── Security & Input Validation Group
+    ├── Error Handling & Recovery Group
+    └── Documentation & Onboarding Group
+```
 
-### Phase 1: Expert Investigation
-Assemble a team of relevant experts to investigate the issue independently:
+## Workflow
 
-| Expert | Focus |
-|--------|-------|
-| **Bioinformatics** | Domain correctness, scientific accuracy, tool parameters |
-| **Genomics** | Data models, file formats, biological conventions |
-| **Swift/macOS** | Language patterns, concurrency, Swift 6.2 best practices |
-| **macOS 26 / AppKit** | Platform APIs, deprecated patterns, system integration |
-| **UX Designer** | User workflows, information architecture, interaction design |
-| **UI/HIG Expert** | Apple Human Interface Guidelines, visual consistency |
-| **Database Expert** | Data storage, indexing, query optimization |
-| **QA/QC Expert** | Test coverage, edge cases, regression prevention |
+### Phase 0: Triage & Scoping
+The Project Lead receives a feature request or bug report and:
+1. Writes a scope document to `docs/plans/` (survives context compaction)
+2. Classifies the work: **Code-only**, **GUI-only**, or **Full-stack** (both)
+3. Selects which Expert Review Groups are relevant
+4. Assigns primary ownership to Development Lead, GUI Lead, or both
 
-Not all experts are needed for every issue — the Project Lead selects the relevant subset.
+### Phase 1: Parallel Investigation
+Both leads investigate simultaneously within their domains:
+- **Development Lead** → assembles domain + platform experts, produces architecture plan
+- **GUI Lead** → assembles persona + visual teams, produces interaction plan
+- Investigation reports written to `docs/plans/`
 
-### Phase 2: Expert Consensus Meeting
-Experts present findings and reach consensus on:
-- Root cause analysis (for bugs)
-- Architecture approach (for features)
-- Risk assessment
-- Test strategy
-
-The consensus is written to disk as a plan document.
+### Phase 2: Cross-Team Consensus
+The Project Lead convenes both leads to:
+- Resolve interface contracts (what the GUI expects from the code layer)
+- Agree on data models, error shapes, and progress reporting
+- Identify CLI test equivalents for every GUI operation
+- Write the consensus document to `docs/plans/`
 
 ### Phase 3: Phase Breakdown
-Project managers break the plan into logical phases where:
+Project Lead breaks work into phases where:
 - Each phase is independently testable and committable
 - No phase exceeds ~500 lines of new code
-- Phases that touch different files can run in parallel
+- Dev phases and GUI phases can run in parallel when they don't share files
 - **Collision prevention**: No two parallel tasks modify the same file
 - Dependencies between phases are explicit
+- Every Dev phase includes an adversarial review gate and simplification check
+- Every GUI phase includes a behavioral test gate
 
-### Phase 4: Implementation
-For each phase:
-1. Expert agent implements the code
-2. Build verification (zero errors)
-3. Run existing tests (zero regressions)
-4. Run new tests for the phase
-5. Code review by expert team
-6. Project manager sign-off
-7. Commit with detailed message
+### Phase 4: Implementation (with Gates)
+For each phase, the owning lead executes:
 
-### Phase 5: Expert Review
-After all phases are complete:
-- Expert teams reconvene to review the full implementation
-- UX/UI experts evaluate the user experience
-- QA/QC experts verify test coverage
-- Bioinformatics experts validate scientific correctness
-- If issues are found → iterate (return to Phase 1 for the specific issue)
+**Development phases:**
+1. Expert agent implements code
+2. **Adversarial Code Review** — tries to break it (edge cases, malformed input, concurrency races, resource exhaustion)
+3. **Adversarial Science Review** (when bioinformatics logic is involved) — hostile reviewer #2 challenges parameter defaults, algorithm fidelity, biological plausibility, and comparison against established tools
+4. **Code Simplification** — audits for unnecessary complexity, dead code, premature abstraction, overly defensive patterns
+5. Build verification (zero errors, zero warnings)
+6. Existing tests pass (zero regressions)
+7. New tests pass (including CLI equivalents)
+8. Lead sign-off and commit
+
+**GUI phases:**
+1. Visual implementation
+2. **Visual Verification** — pixel-level checks (overdraw, clipping, alignment, dark mode, resize behavior)
+3. **Behavioral Testing** — run the actual tool, verify output format and correctness, check error states
+4. **Persona Walkthrough** — biologist or bioinformatician persona runs the workflow end-to-end
+5. Lead sign-off and commit
+
+### Phase 5: Expert Group Review
+The Project Lead activates the relevant Expert Review Groups:
+- Each group reviews the full implementation from their perspective
+- Issues logged as findings with severity (critical/major/minor)
+- Critical findings block merge; major findings require tracking issues
+- Reports written to `docs/reviews/`
 
 ### Phase 6: Integration Testing
-- CLI implementations test the same code paths as GUI
-- Simulated data tests provided by genomics experts
-- End-to-end workflow tests
+- CLI tests exercise the same code paths as GUI
+- Simulated data tests from genomics experts
+- End-to-end workflow tests (import → process → export)
 - Performance benchmarks for data transformation operations
+- GUI behavioral tests confirm tools produce correct output
+
+### Phase 7: Cross-Team Retrospective
+After each major feature:
+- What worked, what didn't, what was caught late
+- Update this process document if needed
+- Archive completed plans to `docs/archive/`
+
+---
+
+## Communication Protocol
+
+### Dev Lead → GUI Lead
+- "Here's the new API / data model — here's what your views should expect"
+- "This operation now reports progress via OperationCenter — wire up the UI"
+- "CLI tests pass for this operation — ready for GUI integration"
+
+### GUI Lead → Dev Lead
+- "The biologist persona couldn't discover this feature — needs better naming/placement"
+- "This tool returns data in format X but the view expects format Y"
+- "Error state Z isn't handled — the view shows a blank panel"
+
+### Project Lead → Both
+- "Priority change: pause feature X, focus on bug Y"
+- "Expert group found issue — Dev Lead owns the fix, GUI Lead verifies the UX"
+- "Phase 3 approved — begin parallel implementation"
 
 ---
 
 ## Fundamental Principles
 
 ### Platform
-- **Target**: macOS 26 (Tahoe) exclusively. No backward compatibility needed.
-- **Swift 6.2**: Use latest language features, strict concurrency.
-- **SwiftUI preferred**, AppKit as fallback for:
-  - Custom CoreGraphics rendering (sunburst, sequence viewer)
-  - NSOutlineView (hierarchical tables)
-  - NSTrackingArea (hover interactions)
-  - Performance-critical views
+- **Target**: macOS 26 (Tahoe) exclusively. No backward compatibility.
+- **Swift 6.2**: Latest language features, strict concurrency.
+- **SwiftUI preferred**, AppKit for custom rendering, hierarchical tables, hover, performance-critical views.
 
 ### Apple HIG Compliance
-- Follow current Apple Human Interface Guidelines at all times
-- Use SF Symbols for all icons
-- Use system colors (`.primary`, `.secondary`, `.accentColor`)
-- Support Dark Mode in all views
-- Use `beginSheetModal` for dialogs (NEVER `runModal()`)
-- Standard keyboard shortcuts (Cmd-C, Cmd-V, Cmd-Z, etc.)
-- Accessibility: VoiceOver labels on all custom views
+- SF Symbols for all icons
+- System colors (`.primary`, `.secondary`, `.accentColor`)
+- Dark Mode support in all views
+- `beginSheetModal` for dialogs (NEVER `runModal()`)
+- Standard keyboard shortcuts
+- VoiceOver labels on all custom views
 
 ### Operations Panel
-Every data transformation operation MUST:
-1. Register with `OperationCenter.shared.start()` before beginning
-2. Report progress via `OperationCenter.shared.update()` during execution
-3. Report completion via `OperationCenter.shared.complete()` or `.fail()`
-4. Support cancellation via `OperationCenter.shared.setCancelCallback()`
+Every data transformation MUST:
+1. Register with `OperationCenter.shared.start()`
+2. Report progress via `OperationCenter.shared.update()`
+3. Report completion via `.complete()` or `.fail()`
+4. Support cancellation via `.setCancelCallback()`
 5. Be visible in the Operations Panel with meaningful status messages
 
 ### Logging
-All operations MUST log to os.log using `LogSubsystem` constants:
-- `LogSubsystem.core` for data models and services
-- `LogSubsystem.io` for file format parsing
-- `LogSubsystem.ui` for rendering
-- `LogSubsystem.workflow` for tool execution and pipelines
-- `LogSubsystem.app` for UI and view controllers
-- `LogSubsystem.plugin` for plugin system
-- Use `.public` privacy for non-sensitive values
-- Use `.debug` level for diagnostic info, `.info` for normal operations, `.error` for failures
+All operations log to os.log using `LogSubsystem` constants:
+- `.core` for data models/services, `.io` for parsing, `.ui` for rendering
+- `.workflow` for tool execution, `.app` for UI/VCs, `.plugin` for plugins
 
 ### Provenance
-All data transformations MUST record provenance:
-- Tool name and version
-- All parameters used
-- Input file(s) with checksums where practical
-- Output file(s)
-- Database version (if applicable)
-- Runtime and resource usage
-- Provenance records saved as JSON sidecars
+All data transformations MUST record provenance (tool, version, parameters, inputs, outputs, checksums, runtime).
 
 ### Concurrency Patterns
-Follow established patterns from MEMORY.md:
 - `DispatchQueue.main.async { MainActor.assumeIsolated { } }` for UI updates from background
-- `Task.detached` for long-running pipelines (NOT `Task { @MainActor in }`)
-- `@unchecked Sendable` pattern for view models that run from detached contexts
+- `Task.detached` for long-running pipelines
+- `@unchecked Sendable` for view models in detached contexts
 - Generation counters for stale result prevention
-- `nonisolated(unsafe)` for captures crossing isolation boundaries
 
 ### CLI Parity
-Every data operation accessible through the GUI MUST also have a CLI equivalent:
-- Same underlying code (shared pipeline actors)
-- CLI tests validate the same code paths
-- CLI can be used for automated testing without GUI
+Every GUI operation MUST have a CLI equivalent using shared pipeline actors. CLI tests validate the same code paths.
 
 ### Testing Requirements
-- Every new feature requires tests BEFORE the feature ships
-- Tests use simulated data provided by genomics experts
+- Tests BEFORE shipping
+- Simulated data from genomics experts
 - Edge cases: empty files, special characters, very large inputs
 - Regression tests for all bug fixes
 - Performance tests for data-intensive operations
 
 ---
 
-## File Organization
-
-### Plans and Reviews
-```
-docs/plans/          — Implementation plans and phase breakdowns
-docs/reviews/        — Expert review documents
-docs/designs/        — UX/UI design specifications
-docs/process/        — This file and process documentation
-```
-
-### Phase Tracking
-Each major feature has a `phase-tracking.md` file in `docs/plans/` that records:
-- Phase status (not started / in progress / complete / blocked)
-- Test results per phase
-- Sign-off status
-- Commit hashes
-
----
-
-## Expert Team Assembly Guide
-
-### For Bug Fixes
-Minimum team: Swift expert + domain expert (bioinformatics/genomics) + QA
-
-### For UI Features
-Full team: UX + UI/HIG + Swift + macOS + domain expert + QA
-
-### For Pipeline Features
-Full team: Bioinformatics + Genomics + Swift + Database + QA
-
-### For Format Handling
-Minimum team: Bioinformatics + Swift + QA
-
----
-
 ## Anti-Patterns to Avoid
 
-1. **Never implement without a persisted plan** — Context can be compacted at any time
-2. **Never skip expert review** — Even "simple" fixes can have domain implications
-3. **Never modify files being edited by another agent** — Causes merge conflicts
-4. **Never use `runModal()`** — Deprecated on macOS 26
-5. **Never use `Task { @MainActor in }` from GCD** — Cooperative executor unreliable
-6. **Never use paths with spaces for bioinformatics tools** — Many tools break
-7. **Never skip Operations Panel registration** — Users need visibility into running tasks
-8. **Never skip provenance recording** — Reproducibility is critical for scientific software
-9. **Never create physical FASTQ copies when virtual derivatives suffice** — Wastes disk space
-10. **Never hardcode tool versions** — Always detect dynamically
+1. **Never implement without a persisted plan** — context can compact at any time
+2. **Never skip expert review** — even "simple" fixes can have domain implications
+3. **Never modify files being edited by another agent** — causes merge conflicts
+4. **Never use `runModal()`** — deprecated on macOS 26
+5. **Never use `Task { @MainActor in }` from GCD** — cooperative executor unreliable
+6. **Never skip Operations Panel registration** — users need visibility
+7. **Never skip provenance recording** — reproducibility is critical for scientific software
+8. **Never ship GUI without CLI parity** — untestable code paths are unacceptable
+9. **Never ship code that hasn't passed adversarial review** — the attack surface grows with each feature
+10. **Never add complexity without justification** — the simplification team exists for a reason
