@@ -61,3 +61,6 @@ coverage/
 # DatabaseRegistry will discover them automatically.
 Sources/LungfishWorkflow/Resources/Databases/**/*.db
 Sources/LungfishWorkflow/Resources/Databases/**/*.db.*
+.nextflow/
+.nextflow.log
+.nextflow.log.*

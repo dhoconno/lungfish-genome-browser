@@ -101,8 +101,20 @@ public class SidebarViewController: NSViewController {
     /// Scroll view containing the outline view
     private var scrollView: NSScrollView!
 
+    /// Returns true if the given responder is the outline view or a descendant of it.
+    public func outlineViewIsFirstResponder(_ responder: NSResponder?) -> Bool {
+        guard let responder else { return false }
+        if responder === outlineView { return true }
+        if let view = responder as? NSView {
+            return view.isDescendant(of: outlineView)
+        }
+        return false
+    }
+
     /// Search field for filtering
     private var searchField: NSSearchField!
+    /// Button that opens the advanced universal-search builder.
+    private var advancedSearchButton: NSButton!
 
     // MARK: - Data
 
@@ -120,8 +132,22 @@ public class SidebarViewController: NSViewController {
     /// The currently open project URL (filesystem-backed model)
     private var projectURL: URL?
 
+    /// Public read-only accessor for the current project folder URL.
+    public var projectFolderURL: URL? { projectURL }
+
     /// File system watcher for auto-refreshing when files change
     private var fileSystemWatcher: FileSystemWatcher?
+
+    /// Universal search coordinator for project-scoped metadata/entity queries.
+    private let universalSearchService = UniversalProjectSearchService.shared
+
+    /// In-flight async universal-search query task.
+    private var universalSearchTask: Task<Void, Never>?
+
+    /// Monotonic token used to discard stale async query responses.
+    private var universalSearchGeneration: Int = 0
+    /// Current advanced-search popover (if shown).
+    private var universalSearchPopover: NSPopover?
 
     /// Suppresses delegate and notification callbacks during programmatic selection changes.
     private var suppressSelectionCallbacks = false
@@ -157,11 +183,24 @@ public class SidebarViewController: NSViewController {
         // Create search field
         searchField = NSSearchField()
         searchField.translatesAutoresizingMaskIntoConstraints = false
-        searchField.placeholderString = "Filter"
+        searchField.placeholderString = "Search project data and analyses"
         searchField.sendsSearchStringImmediately = true
         searchField.target = self
         searchField.action = #selector(searchFieldChanged(_:))
         containerView.addSubview(searchField)
+
+        // Advanced query builder for HIG-friendly structured search
+        advancedSearchButton = NSButton(title: "", target: self, action: #selector(showAdvancedSearchPopover(_:)))
+        advancedSearchButton.translatesAutoresizingMaskIntoConstraints = false
+        advancedSearchButton.bezelStyle = .rounded
+        advancedSearchButton.controlSize = .small
+        advancedSearchButton.image = NSImage(
+            systemSymbolName: "line.3.horizontal.decrease.circle",
+            accessibilityDescription: "Advanced Search"
+        )
+        advancedSearchButton.imagePosition = .imageOnly
+        advancedSearchButton.toolTip = "Advanced Search"
+        containerView.addSubview(advancedSearchButton)
 
         // Create outline view
         outlineView = NSOutlineView()
@@ -211,7 +250,11 @@ public class SidebarViewController: NSViewController {
         NSLayoutConstraint.activate([
             searchField.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 52),
             searchField.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 8),
-            searchField.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -8),
+            searchField.trailingAnchor.constraint(equalTo: advancedSearchButton.leadingAnchor, constant: -6),
+
+            advancedSearchButton.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -8),
+            advancedSearchButton.centerYAnchor.constraint(equalTo: searchField.centerYAnchor),
+            advancedSearchButton.widthAnchor.constraint(equalToConstant: 24),
 
             scrollView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 8),
             scrollView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
@@ -274,35 +317,132 @@ public class SidebarViewController: NSViewController {
 
     @objc private func searchFieldChanged(_ sender: NSSearchField) {
         let searchText = sender.stringValue.trimmingCharacters(in: .whitespaces)
+        universalSearchTask?.cancel()
+        universalSearchGeneration &+= 1
+        let searchGeneration = universalSearchGeneration
+
         if searchText.isEmpty {
             filteredRootItems = nil
-        } else {
-            filteredRootItems = filterItems(rootItems, matching: searchText.lowercased())
+            outlineView.reloadData()
+            return
         }
+
+        let normalizedQuery = searchText.lowercased()
+        filteredRootItems = filterItems(rootItems, matching: normalizedQuery)
         outlineView.reloadData()
-        // Expand all groups when filtering so matches are visible
         if filteredRootItems != nil {
             outlineView.expandItem(nil, expandChildren: true)
         }
+
+        guard let projectURL = projectURL else { return }
+
+        universalSearchTask = Task { [weak self] in
+            guard let self else { return }
+
+            do {
+                let results = try await universalSearchService.search(
+                    projectURL: projectURL,
+                    query: searchText,
+                    limit: 500,
+                    ensureIndexed: true
+                )
+
+                guard !Task.isCancelled else { return }
+                guard self.universalSearchGeneration == searchGeneration else { return }
+                guard self.projectURL?.standardizedFileURL == projectURL.standardizedFileURL else { return }
+
+                let matchedURLs = Set(results.map { $0.url.standardizedFileURL })
+                self.filteredRootItems = self.filterItems(
+                    self.rootItems,
+                    matching: normalizedQuery,
+                    matchingURLs: matchedURLs
+                )
+                self.outlineView.reloadData()
+                if self.filteredRootItems != nil {
+                    self.outlineView.expandItem(nil, expandChildren: true)
+                }
+            } catch {
+                logger.debug("searchFieldChanged: universal search unavailable: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
-    /// Recursively filters the sidebar tree, keeping items whose title or
-    /// subtitle match the query, and any group/folder that has matching descendants.
-    private func filterItems(_ items: [SidebarItem], matching query: String) -> [SidebarItem] {
+    @objc private func showAdvancedSearchPopover(_ sender: NSButton) {
+        if let existing = universalSearchPopover, existing.isShown {
+            existing.performClose(sender)
+            universalSearchPopover = nil
+            return
+        }
+
+        let builder = UniversalSearchAdvancedPopoverController()
+        builder.configure(from: searchField.stringValue)
+        builder.onApply = { [weak self] query in
+            guard let self else { return }
+            self.searchField.stringValue = query
+            self.searchFieldChanged(self.searchField)
+            self.universalSearchPopover?.performClose(nil)
+            self.universalSearchPopover = nil
+        }
+        builder.onClear = { [weak self] in
+            guard let self else { return }
+            self.searchField.stringValue = ""
+            self.searchFieldChanged(self.searchField)
+            self.universalSearchPopover?.performClose(nil)
+            self.universalSearchPopover = nil
+        }
+
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentSize = NSSize(width: 470, height: 430)
+        popover.contentViewController = builder
+        popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
+        universalSearchPopover = popover
+    }
+
+    /// Schedules a project universal-search index rebuild.
+    private func scheduleUniversalSearchRebuild(immediate: Bool = false) {
+        guard let projectURL else { return }
+        let delay = immediate ? 0.05 : 0.75
+        Task {
+            await universalSearchService.scheduleRebuild(projectURL: projectURL, delaySeconds: delay)
+        }
+    }
+
+    /// Clears universal-search state for a project.
+    private func clearUniversalSearchState(for projectURL: URL?) {
+        universalSearchTask?.cancel()
+        universalSearchTask = nil
+        universalSearchGeneration = 0
+
+        guard let projectURL else { return }
+        Task {
+            await universalSearchService.clearProject(projectURL)
+        }
+    }
+
+    /// Recursively filters the sidebar tree, keeping items whose title, subtitle,
+    /// path, or indexed URL matches the query, and any parent with matching descendants.
+    private func filterItems(
+        _ items: [SidebarItem],
+        matching query: String,
+        matchingURLs: Set<URL> = []
+    ) -> [SidebarItem] {
         var result: [SidebarItem] = []
         for item in items {
             let titleMatch = item.title.lowercased().contains(query)
             let subtitleMatch = item.subtitle?.lowercased().contains(query) == true
             let urlMatch = item.url?.lastPathComponent.lowercased().contains(query) == true
+            let universalURLMatch = item.url.map { matchingURLs.contains($0.standardizedFileURL) } ?? false
 
-            let filteredChildren = filterItems(item.children, matching: query)
+            let directMatch = titleMatch || subtitleMatch || urlMatch || universalURLMatch
+            let filteredChildren = filterItems(item.children, matching: query, matchingURLs: matchingURLs)
 
-            if titleMatch || subtitleMatch || urlMatch || !filteredChildren.isEmpty {
+            if directMatch || !filteredChildren.isEmpty {
                 let copy = SidebarItem(
                     title: item.title,
                     type: item.type,
                     icon: item.icon,
-                    children: filteredChildren.isEmpty && (titleMatch || subtitleMatch || urlMatch) ? item.children : filteredChildren,
+                    children: filteredChildren.isEmpty && directMatch ? item.children : filteredChildren,
                     url: item.url,
                     subtitle: item.subtitle
                 )
@@ -448,12 +588,14 @@ public class SidebarViewController: NSViewController {
 
         // Stop watching previous project
         fileSystemWatcher?.stopWatching()
+        clearUniversalSearchState(for: projectURL)
 
         // Store the new project URL
         projectURL = url
 
         // Scan filesystem and build sidebar
         reloadFromFilesystem()
+        scheduleUniversalSearchRebuild(immediate: true)
 
         // Start watching for changes
         fileSystemWatcher = FileSystemWatcher { [weak self] in
@@ -468,9 +610,11 @@ public class SidebarViewController: NSViewController {
     public func closeProject() {
         logger.info("closeProject: Closing current project")
 
+        let priorProjectURL = projectURL
         fileSystemWatcher?.stopWatching()
         fileSystemWatcher = nil
         projectURL = nil
+        clearUniversalSearchState(for: priorProjectURL)
         rootItems = []
         reloadOutlineView()
     }
@@ -518,11 +662,19 @@ public class SidebarViewController: NSViewController {
         let restoredItems = selectedItems()
         let restoredURLSet = Set(restoredItems.compactMap { $0.url?.standardizedFileURL })
         if restoredURLSet != selectedURLSet {
-            handleSelectionChange(restoredItems, source: "reloadFromFilesystem")
+            // During filesystem churn, nested rows can briefly disappear/rebuild between
+            // scans. Avoid emitting a synthetic "selection cleared" event from refreshes;
+            // explicit user deselection still flows through outlineViewSelectionDidChange.
+            if !selectedURLSet.isEmpty && restoredItems.isEmpty {
+                logger.debug("reloadFromFilesystem: Selection temporarily unavailable after refresh, preserving active content")
+            } else {
+                handleSelectionChange(restoredItems, source: "reloadFromFilesystem")
+            }
         }
 
         let itemCount = rootItems.reduce(0) { $0 + countItems(in: $1) }
         logger.info("reloadFromFilesystem: Sidebar updated with \(itemCount) items")
+        scheduleUniversalSearchRebuild()
     }
 
     /// Builds a SidebarItem tree from a filesystem directory.
@@ -568,6 +720,10 @@ public class SidebarViewController: NSViewController {
                 fileManager.fileExists(atPath: childURL.path, isDirectory: &childIsDir)
 
                 if childIsDir.boolValue {
+                    if FASTQBundle.isBundleURL(childURL), FASTQBundle.isProcessing(childURL) {
+                        // Hide in-flight imports until ingestion + stats finalize.
+                        continue
+                    }
                     // Include directories
                     let childItem = buildSidebarTree(from: childURL, isRoot: false)
                     items.append(childItem)
@@ -631,10 +787,13 @@ public class SidebarViewController: NSViewController {
             : filename
 
         // Load composition subtitle for FASTQ bundles with mixed read types,
-        // and materialization state badge for virtual derivatives.
+        // materialization state badge for virtual derivatives, and processing state.
         var subtitle: String?
         if itemType == .fastqBundle {
-            if let manifest = FASTQBundle.loadDerivedManifest(in: url) {
+            // Check processing state first — overrides other badges
+            if case .processing(let detail) = FASTQBundle.processingState(of: url) {
+                subtitle = detail
+            } else if let manifest = FASTQBundle.loadDerivedManifest(in: url) {
                 if let classification = manifest.readClassification {
                     subtitle = classification.compositionLabel
                 }
@@ -701,6 +860,19 @@ public class SidebarViewController: NSViewController {
             // These contain Kraken2 kreport/kraken output from metagenomics classification.
             let classificationChildren = collectClassificationResults(in: url)
             item.children.append(contentsOf: classificationChildren)
+            let classificationBatchGroups = collectClassificationBatchResults(in: url)
+            item.children.append(contentsOf: classificationBatchGroups)
+
+            // Scan for EsViritu result directories (esviritu-XXXXXXXX/).
+            // These contain viral detection output from EsViritu runs.
+            let esvirituChildren = collectEsVirituResults(in: url)
+            item.children.append(contentsOf: esvirituChildren)
+            let esvirituBatchGroups = collectEsVirituBatchResults(in: url)
+            item.children.append(contentsOf: esvirituBatchGroups)
+
+            // Scan for TaxTriage result directories (taxtriage-XXXXXXXX/).
+            let taxTriageChildren = collectTaxTriageResults(in: url)
+            item.children.append(contentsOf: taxTriageChildren)
 
             // Scan for extracted read bundles (.lungfishfastq) at the top level.
             // These are created by taxonomy extraction and don't live in derivatives/.
@@ -711,6 +883,7 @@ public class SidebarViewController: NSViewController {
             ) {
                 for childURL in topLevelContents {
                     if childURL.pathExtension == FASTQBundle.directoryExtension {
+                        if FASTQBundle.isProcessing(childURL) { continue }
                         let childItem = buildSidebarTree(from: childURL, isRoot: false)
                         item.children.append(childItem)
                     }
@@ -749,7 +922,16 @@ public class SidebarViewController: NSViewController {
                     fileManager.fileExists(atPath: childURL.path, isDirectory: &childIsDir)
 
                     if childIsDir.boolValue {
-                        // Always include directories
+                        if FASTQBundle.isBundleURL(childURL), FASTQBundle.isProcessing(childURL) {
+                            continue
+                        }
+                        // Skip metagenomics result directories that are already
+                        // represented by batch group nodes (via collectTaxTriageResults,
+                        // cross-reference sidecars, or similar collectors).
+                        if isMetagenomicsResultDirectory(childURL) {
+                            continue
+                        }
+                        // Always include other directories
                         let childItem = buildSidebarTree(from: childURL, isRoot: false)
                         item.children.append(childItem)
                     } else if !isInternalSidecarFile(childURL) {
@@ -790,7 +972,44 @@ public class SidebarViewController: NSViewController {
 
     /// Returns true for internal sidecar/metadata files that should be hidden from the sidebar.
     private func isInternalSidecarFile(_ url: URL) -> Bool {
-        url.lastPathComponent.hasSuffix(".lungfish-meta.json")
+        let name = url.lastPathComponent
+        return name.hasSuffix(".lungfish-meta.json")
+            || name == FASTQBundleCSVMetadata.filename
+    }
+
+    /// Returns true for metagenomics result directories that should be hidden
+    /// from the generic directory scanner because they are already represented
+    /// by dedicated batch group or result nodes via collectors.
+    ///
+    /// Detects TaxTriage (`taxtriage-*`), classification (`classification-*`,
+    /// `classification-batch-*`), and EsViritu (`esviritu-*`) result directories
+    /// by checking for their characteristic sidecar files.
+    private func isMetagenomicsResultDirectory(_ url: URL) -> Bool {
+        let name = url.lastPathComponent
+        let fm = FileManager.default
+
+        // TaxTriage result directories (taxtriage-XXXXXXXX)
+        if name.hasPrefix("taxtriage-") {
+            let sidecar = url.appendingPathComponent("taxtriage-result.json")
+            if fm.fileExists(atPath: sidecar.path) { return true }
+            // Also check for kreport or top_report (incomplete runs without sidecar)
+            let hasKraken = fm.fileExists(atPath: url.appendingPathComponent("kraken2").path)
+            if hasKraken { return true }
+        }
+
+        // Classification result directories
+        if name.hasPrefix("classification-") {
+            let sidecar = url.appendingPathComponent("classification-result.json")
+            if fm.fileExists(atPath: sidecar.path) { return true }
+        }
+
+        // EsViritu result directories
+        if name.hasPrefix("esviritu-") {
+            let sidecar = url.appendingPathComponent("esviritu-result.json")
+            if fm.fileExists(atPath: sidecar.path) { return true }
+        }
+
+        return false
     }
 
     /// Collects child `.lungfishfastq` bundles from a parent bundle's `demux/` directory.
@@ -825,7 +1044,7 @@ public class SidebarViewController: NSViewController {
 
                 if FASTQBundle.isBundleURL(childURL) {
                     // Skip bundles that are batch operation outputs (shown under batch group nodes)
-                    if !excluding.contains(childURL.standardizedFileURL) {
+                    if !excluding.contains(childURL.standardizedFileURL) && !FASTQBundle.isProcessing(childURL) {
                         results.append(childURL)
                     }
                 } else {
@@ -908,6 +1127,86 @@ public class SidebarViewController: NSViewController {
         }
     }
 
+    /// Collects classification batch result groups from inside a FASTQ bundle.
+    ///
+    /// Scans for `classification-batch-*` directories and builds one virtual
+    /// batch group node per run, with one child per sample result directory.
+    private func collectClassificationBatchResults(in bundleURL: URL) -> [SidebarItem] {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: bundleURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        var groups: [SidebarItem] = []
+
+        for batchDir in contents.sorted(by: {
+            $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending
+        }) {
+            guard batchDir.lastPathComponent.hasPrefix("classification-batch-") else { continue }
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: batchDir.path, isDirectory: &isDir), isDir.boolValue else { continue }
+
+            let batchToken = String(batchDir.lastPathComponent.dropFirst("classification-batch-".count))
+            let groupItem = SidebarItem(
+                title: "Classification Batch \(batchToken)",
+                type: .batchGroup,
+                icon: "tray.2",
+                children: [],
+                url: nil
+            )
+
+            if let manifest = MetagenomicsBatchResultStore.loadClassification(from: batchDir) {
+                let dbLabel = manifest.databaseName.isEmpty ? "" : " · \(manifest.databaseName)"
+                groupItem.subtitle = "\(manifest.header.sampleCount) samples\(dbLabel)"
+
+                for record in manifest.samples.sorted(by: {
+                    $0.sampleId.localizedCaseInsensitiveCompare($1.sampleId) == .orderedAscending
+                }) {
+                    let resultURL = batchDir.appendingPathComponent(record.resultDirectory)
+                    guard ClassificationResult.exists(in: resultURL) else { continue }
+                    let childItem = SidebarItem(
+                        title: record.sampleId,
+                        type: .classificationResult,
+                        icon: "chart.pie",
+                        children: [],
+                        url: resultURL,
+                        subtitle: classificationResultTitle(for: resultURL)
+                    )
+                    groupItem.children.append(childItem)
+                }
+            } else if let batchContents = try? fm.contentsOfDirectory(
+                at: batchDir,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            ) {
+                for child in batchContents.sorted(by: {
+                    $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending
+                }) {
+                    var childIsDir: ObjCBool = false
+                    guard fm.fileExists(atPath: child.path, isDirectory: &childIsDir), childIsDir.boolValue else { continue }
+                    guard ClassificationResult.exists(in: child) else { continue }
+                    let childItem = SidebarItem(
+                        title: child.lastPathComponent,
+                        type: .classificationResult,
+                        icon: "chart.pie",
+                        children: [],
+                        url: child,
+                        subtitle: classificationResultTitle(for: child)
+                    )
+                    groupItem.children.append(childItem)
+                }
+                groupItem.subtitle = "\(groupItem.children.count) samples"
+            }
+
+            guard !groupItem.children.isEmpty else { continue }
+            groups.append(groupItem)
+        }
+
+        return groups
+    }
+
     /// Derives a human-readable title for a classification result directory.
     ///
     /// Attempts to read the sidecar JSON to extract the database name.
@@ -926,6 +1225,308 @@ public class SidebarViewController: NSViewController {
         }
         return "Classification"
     }
+
+    /// Collects EsViritu viral detection result directories from inside a FASTQ bundle.
+    ///
+    /// Scans the bundle's top-level directory for subdirectories matching
+    /// `esviritu-*` that contain an `esviritu-result.json` sidecar.
+    ///
+    /// - Parameter bundleURL: The `.lungfishfastq` bundle URL to scan.
+    /// - Returns: Array of `SidebarItem` nodes for EsViritu results.
+    private func collectEsVirituResults(in bundleURL: URL) -> [SidebarItem] {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: bundleURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        var results: [SidebarItem] = []
+
+        for childURL in contents {
+            guard childURL.lastPathComponent.hasPrefix("esviritu-") else { continue }
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: childURL.path, isDirectory: &isDir), isDir.boolValue else { continue }
+
+            // Require an esviritu-result.json sidecar
+            let sidecarURL = childURL.appendingPathComponent("esviritu-result.json")
+            guard fm.fileExists(atPath: sidecarURL.path) else { continue }
+
+            let title = esvirituResultTitle(for: childURL)
+
+            let item = SidebarItem(
+                title: title,
+                type: .esvirituResult,
+                icon: "ant",
+                children: [],
+                url: childURL
+            )
+            results.append(item)
+        }
+
+        return results.sorted {
+            $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+        }
+    }
+
+    /// Collects EsViritu batch result groups from inside a FASTQ bundle.
+    ///
+    /// Scans for `esviritu-batch-*` directories and builds one virtual batch
+    /// group node per run, with one child per sample result directory.
+    private func collectEsVirituBatchResults(in bundleURL: URL) -> [SidebarItem] {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: bundleURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        var groups: [SidebarItem] = []
+
+        for batchDir in contents.sorted(by: {
+            $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending
+        }) {
+            guard batchDir.lastPathComponent.hasPrefix("esviritu-batch-") else { continue }
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: batchDir.path, isDirectory: &isDir), isDir.boolValue else { continue }
+
+            let batchToken = String(batchDir.lastPathComponent.dropFirst("esviritu-batch-".count))
+            let groupItem = SidebarItem(
+                title: "EsViritu Batch \(batchToken)",
+                type: .batchGroup,
+                icon: "tray.2",
+                children: [],
+                url: nil
+            )
+
+            if let manifest = MetagenomicsBatchResultStore.loadEsViritu(from: batchDir) {
+                groupItem.subtitle = "\(manifest.header.sampleCount) samples"
+
+                for record in manifest.samples.sorted(by: {
+                    $0.sampleId.localizedCaseInsensitiveCompare($1.sampleId) == .orderedAscending
+                }) {
+                    let resultURL = batchDir.appendingPathComponent(record.resultDirectory)
+                    guard EsVirituResult.exists(in: resultURL) else { continue }
+                    let childItem = SidebarItem(
+                        title: record.sampleId,
+                        type: .esvirituResult,
+                        icon: "ant",
+                        children: [],
+                        url: resultURL,
+                        subtitle: esvirituResultTitle(for: resultURL)
+                    )
+                    groupItem.children.append(childItem)
+                }
+            } else if let batchContents = try? fm.contentsOfDirectory(
+                at: batchDir,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            ) {
+                for child in batchContents.sorted(by: {
+                    $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending
+                }) {
+                    var childIsDir: ObjCBool = false
+                    guard fm.fileExists(atPath: child.path, isDirectory: &childIsDir), childIsDir.boolValue else { continue }
+                    guard EsVirituResult.exists(in: child) else { continue }
+                    let childItem = SidebarItem(
+                        title: child.lastPathComponent,
+                        type: .esvirituResult,
+                        icon: "ant",
+                        children: [],
+                        url: child,
+                        subtitle: esvirituResultTitle(for: child)
+                    )
+                    groupItem.children.append(childItem)
+                }
+                groupItem.subtitle = "\(groupItem.children.count) samples"
+            }
+
+            guard !groupItem.children.isEmpty else { continue }
+            groups.append(groupItem)
+        }
+
+        return groups
+    }
+
+    /// Derives a human-readable title for an EsViritu result directory.
+    private func esvirituResultTitle(for directory: URL) -> String {
+        let sidecarURL = directory.appendingPathComponent("esviritu-result.json")
+        if let data = try? Data(contentsOf: sidecarURL),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let virusCount = json["virusCount"] as? Int {
+            return "Viral Detection (\(virusCount) viruses)"
+        }
+        return "Viral Detection"
+    }
+
+    /// Collects TaxTriage result directories from inside a FASTQ bundle.
+    private func collectTaxTriageResults(in bundleURL: URL) -> [SidebarItem] {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: bundleURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        var results: [SidebarItem] = []
+
+        for childURL in contents {
+            guard childURL.lastPathComponent.hasPrefix("taxtriage-") else { continue }
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: childURL.path, isDirectory: &isDir), isDir.boolValue else { continue }
+
+            // Check for key output files (kreport or top_report)
+            let hasKreport = fm.fileExists(atPath: childURL.appendingPathComponent("kraken2").path)
+            let hasTopReport: Bool = {
+                guard let enumerator = fm.enumerator(
+                    at: childURL,
+                    includingPropertiesForKeys: nil,
+                    options: [.skipsHiddenFiles]
+                ) else { return false }
+
+                for case let candidate as URL in enumerator {
+                    let name = candidate.lastPathComponent.lowercased()
+                    if name.contains("top_report"), candidate.pathExtension.lowercased() == "tsv",
+                       !candidate.path.contains("/work/") {
+                        return true
+                    }
+                }
+                return false
+            }()
+
+            guard hasKreport || hasTopReport else { continue }
+
+            // Check if this is a multi-sample run by loading the persisted result.
+            let persistedResult = try? TaxTriageResult.load(from: childURL)
+            let sampleCount = persistedResult?.config.samples.count ?? 1
+
+            if sampleCount > 1 {
+                // Multi-sample: create a batch group node with per-sample children
+                let groupItem = SidebarItem(
+                    title: "Comprehensive Triage",
+                    type: .batchGroup,
+                    icon: "stethoscope",
+                    children: [],
+                    url: childURL,
+                    subtitle: "\(sampleCount) samples"
+                )
+                // Add "All Samples" overview child
+                let allChild = SidebarItem(
+                    title: "All Samples",
+                    type: .taxTriageResult,
+                    icon: "person.3",
+                    children: [],
+                    url: childURL
+                )
+                groupItem.children.append(allChild)
+
+                // Add one child per sample
+                for sample in persistedResult!.config.samples {
+                    let sampleChild = SidebarItem(
+                        title: sample.sampleId,
+                        type: .taxTriageResult,
+                        icon: "person",
+                        children: [],
+                        url: childURL,
+                        subtitle: nil
+                    )
+                    // Store the sample ID in the item for routing
+                    sampleChild.userInfo["sampleId"] = sample.sampleId
+                    groupItem.children.append(sampleChild)
+                }
+
+                results.append(groupItem)
+            } else {
+                // Single-sample: flat item as before
+                let item = SidebarItem(
+                    title: "Comprehensive Triage",
+                    type: .taxTriageResult,
+                    icon: "stethoscope",
+                    children: [],
+                    url: childURL
+                )
+                results.append(item)
+            }
+        }
+
+        // Also scan for cross-reference sidecars (taxtriage-ref-*.json)
+        // that point to TaxTriage results stored outside this bundle.
+        let crossRefs = MetagenomicsBatchResultStore.loadTaxTriageRefs(from: bundleURL)
+        for ref in crossRefs {
+            let resultDir = URL(fileURLWithPath: ref.resultDirectory)
+            // Skip if we already have this result from the direct scan above.
+            let alreadyPresent = results.contains { item in
+                item.url?.standardizedFileURL == resultDir.standardizedFileURL
+                    || item.children.contains { $0.url?.standardizedFileURL == resultDir.standardizedFileURL }
+            }
+            guard !alreadyPresent else { continue }
+            // Only add if the result directory actually exists on disk.
+            guard fm.fileExists(atPath: resultDir.path) else { continue }
+
+            let persistedResult = try? TaxTriageResult.load(from: resultDir)
+            let sampleCount = persistedResult?.config.samples.count ?? ref.batchSampleCount
+
+            if sampleCount > 1 {
+                let groupItem = SidebarItem(
+                    title: "Comprehensive Triage",
+                    type: .batchGroup,
+                    icon: "stethoscope",
+                    children: [],
+                    url: resultDir,
+                    subtitle: "\(sampleCount) samples"
+                )
+                let allChild = SidebarItem(
+                    title: "All Samples",
+                    type: .taxTriageResult,
+                    icon: "person.3",
+                    children: [],
+                    url: resultDir
+                )
+                groupItem.children.append(allChild)
+
+                if let samples = persistedResult?.config.samples {
+                    for sample in samples {
+                        let child = SidebarItem(
+                            title: sample.sampleId,
+                            type: .taxTriageResult,
+                            icon: "person",
+                            children: [],
+                            url: resultDir
+                        )
+                        child.userInfo["sampleId"] = sample.sampleId
+                        groupItem.children.append(child)
+                    }
+                } else {
+                    // Minimal: just show the sample from this cross-ref
+                    let child = SidebarItem(
+                        title: ref.sampleId,
+                        type: .taxTriageResult,
+                        icon: "person",
+                        children: [],
+                        url: resultDir
+                    )
+                    child.userInfo["sampleId"] = ref.sampleId
+                    groupItem.children.append(child)
+                }
+
+                results.append(groupItem)
+            } else {
+                let item = SidebarItem(
+                    title: "Comprehensive Triage",
+                    type: .taxTriageResult,
+                    icon: "stethoscope",
+                    children: [],
+                    url: resultDir
+                )
+                results.append(item)
+            }
+        }
+
+        return results.sorted {
+            ($0.url?.lastPathComponent ?? "") < ($1.url?.lastPathComponent ?? "")
+        }
+    }
+
     /// Counts the total number of items in a tree.
     private func countItems(in item: SidebarItem) -> Int {
         return 1 + item.children.reduce(0) { $0 + self.countItems(in: $1) }
@@ -939,6 +1540,10 @@ public class SidebarViewController: NSViewController {
 
         for url in urls {
             if let item = findItem(byURL: url) {
+                // Reload rebuilds tree objects and collapses expandable containers by default.
+                // Re-open the parent chain first so nested selections (e.g. metagenomics
+                // result nodes under FASTQ bundles/batch groups) remain selectable.
+                expandParents(of: item)
                 let row = outlineView.row(forItem: item)
                 if row >= 0 {
                     rowsToSelect.insert(row)
@@ -2054,6 +2659,8 @@ public class SidebarItem: NSObject {
     public var url: URL?
     /// Optional subtitle for additional context (e.g. read composition label).
     public var subtitle: String?
+    /// Arbitrary key-value metadata for routing (e.g. sampleId for batch children).
+    public var userInfo: [String: String] = [:]
 
     public init(title: String, type: SidebarItemType, icon: String? = nil, children: [SidebarItem] = [], url: URL? = nil, subtitle: String? = nil) {
         self.title = title
@@ -2082,6 +2689,8 @@ public enum SidebarItemType {
     case fastqBundle  // .lungfishfastq FASTQ package bundle
     case batchGroup   // Virtual node representing a batch operation across multiple bundles
     case classificationResult  // Kraken2 classification result folder
+    case esvirituResult        // EsViritu viral detection result folder
+    case taxTriageResult       // TaxTriage comprehensive triage result folder
 
     var tintColor: NSColor {
         switch self {
@@ -2099,6 +2708,8 @@ public enum SidebarItemType {
         case .fastqBundle: return .systemGreen
         case .batchGroup: return .systemCyan
         case .classificationResult: return .systemTeal
+        case .esvirituResult: return .systemMint
+        case .taxTriageResult: return .systemCyan
         }
     }
 
@@ -2270,6 +2881,11 @@ extension SidebarViewController: NSMenuDelegate {
                 menu.addItem(showContentsItem)
             }
 
+            // Clone Metadata From... — available for FASTQ bundles
+            let cloneItem = NSMenuItem(title: "Clone Metadata From\u{2026}", action: #selector(contextMenuCloneMetadata(_:)), keyEquivalent: "")
+            cloneItem.target = self
+            menu.addItem(cloneItem)
+
             menu.addItem(NSMenuItem.separator())
         }
 
@@ -2300,6 +2916,38 @@ extension SidebarViewController: NSMenuDelegate {
             newFolderItem.target = self
             menu.addItem(newFolderItem)
             menu.addItem(NSMenuItem.separator())
+        }
+
+        // Edit / Export / Import Sample Metadata (for folders containing FASTQ bundles)
+        if items.count == 1 && hasFolders, let folderItem = items.first, let folderURL = folderItem.url {
+            let hasFASTQChildren = folderItem.children.contains { $0.type == .fastqBundle }
+            if hasFASTQChildren {
+                let editMetaItem = NSMenuItem(
+                    title: "Edit Sample Metadata\u{2026}",
+                    action: #selector(contextMenuEditFolderMetadata(_:)),
+                    keyEquivalent: ""
+                )
+                editMetaItem.target = self
+                menu.addItem(editMetaItem)
+
+                let exportMetaItem = NSMenuItem(
+                    title: "Export Sample Metadata (CSV)\u{2026}",
+                    action: #selector(contextMenuExportProjectMetadata(_:)),
+                    keyEquivalent: ""
+                )
+                exportMetaItem.target = self
+                menu.addItem(exportMetaItem)
+
+                let importMetaItem = NSMenuItem(
+                    title: "Import Sample Metadata (CSV)\u{2026}",
+                    action: #selector(contextMenuImportProjectMetadata(_:)),
+                    keyEquivalent: ""
+                )
+                importMetaItem.target = self
+                menu.addItem(importMetaItem)
+
+                menu.addItem(NSMenuItem.separator())
+            }
         }
 
         // Show in Finder
@@ -2474,11 +3122,53 @@ extension SidebarViewController: NSMenuDelegate {
 
     @objc private func contextMenuImportSampleMetadata(_ sender: Any?) {
         let items = selectedItems()
-        guard let item = items.first, item.type == .referenceBundle, let bundleURL = item.url else { return }
+        guard let item = items.first,
+              (item.type == .referenceBundle || item.type == .fastqBundle),
+              let bundleURL = item.url else { return }
 
         logger.info("contextMenuImportSampleMetadata: Importing metadata into '\(item.title, privacy: .public)'")
         guard let appDelegate = NSApp.delegate as? AppDelegate else { return }
         appDelegate.presentMetadataImportPanel(for: bundleURL, presentingWindow: view.window)
+    }
+
+    @objc private func contextMenuEditFolderMetadata(_ sender: Any?) {
+        let items = selectedItems()
+        guard let item = items.first,
+              (item.type == .folder || item.type == .project),
+              let folderURL = item.url else { return }
+
+        logger.info("contextMenuEditFolderMetadata: Opening metadata editor for '\(item.title, privacy: .public)'")
+
+        let editorSheet = FolderMetadataEditorSheet(folderURL: folderURL)
+        guard let window = view.window else { return }
+
+        window.contentViewController?.presentAsSheet(editorSheet)
+    }
+
+    @objc private func contextMenuExportProjectMetadata(_ sender: Any?) {
+        let items = selectedItems()
+        guard let item = items.first,
+              (item.type == .folder || item.type == .project),
+              let folderURL = item.url else { return }
+
+        logger.info("contextMenuExportProjectMetadata: Exporting metadata from '\(item.title, privacy: .public)'")
+
+        let sheet = MetadataExportSheet(folderURL: folderURL)
+        guard let window = view.window else { return }
+        window.contentViewController?.presentAsSheet(sheet)
+    }
+
+    @objc private func contextMenuImportProjectMetadata(_ sender: Any?) {
+        let items = selectedItems()
+        guard let item = items.first,
+              (item.type == .folder || item.type == .project),
+              let folderURL = item.url else { return }
+
+        logger.info("contextMenuImportProjectMetadata: Importing metadata into '\(item.title, privacy: .public)'")
+
+        let sheet = MetadataImportSheet(folderURL: folderURL)
+        guard let window = view.window else { return }
+        window.contentViewController?.presentAsSheet(sheet)
     }
 
     /// Checks if a bundle URL has variant tracks by reading its manifest.
@@ -2898,6 +3588,81 @@ extension SidebarViewController: NSMenuDelegate {
     @objc private func contextMenuExportFASTQ(_ sender: Any?) {
         // Delegate to the AppDelegate's exportFASTQ which handles single and multi-selection
         NSApp.sendAction(#selector(FileMenuActions.exportFASTQ(_:)), to: nil, from: sender)
+    }
+
+    // MARK: - Clone Metadata
+
+    @objc private func contextMenuCloneMetadata(_ sender: Any?) {
+        let targetItems = selectedItems().filter { $0.type == .fastqBundle }
+        guard !targetItems.isEmpty else { return }
+
+        // Find all FASTQ bundles in the same parent folder as potential sources
+        guard let parentURL = targetItems.first?.url?.deletingLastPathComponent() else { return }
+        let targetURLs = Set(targetItems.compactMap { $0.url })
+
+        let fm = FileManager.default
+        let allBundles: [URL]
+        do {
+            allBundles = try fm.contentsOfDirectory(at: parentURL, includingPropertiesForKeys: nil)
+                .filter { $0.pathExtension == "lungfishfastq" && !targetURLs.contains($0) }
+                .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        } catch {
+            return
+        }
+
+        guard !allBundles.isEmpty else { return }
+
+        // Build a picker menu as an alert with a popup button
+        let alert = NSAlert()
+        alert.messageText = "Clone Metadata From"
+        alert.informativeText = "Select a sample to copy metadata from. All fields except sample name will be copied."
+        alert.addButton(withTitle: "Clone")
+        alert.addButton(withTitle: "Cancel")
+
+        let popUp = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 300, height: 24), pullsDown: false)
+        for bundle in allBundles {
+            let name = bundle.deletingPathExtension().lastPathComponent
+            popUp.addItem(withTitle: name)
+            popUp.lastItem?.representedObject = bundle
+        }
+        alert.accessoryView = popUp
+
+        guard let window = view.window else { return }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard response == .alertFirstButtonReturn,
+                          let sourceURL = popUp.selectedItem?.representedObject as? URL else {
+                        return
+                    }
+
+                    // Load source metadata
+                    let sourceName = sourceURL.deletingPathExtension().lastPathComponent
+                    let sourceCSV = FASTQBundleCSVMetadata.load(from: sourceURL)
+                    let sourceMeta: FASTQSampleMetadata
+                    if let csv = sourceCSV {
+                        sourceMeta = FASTQSampleMetadata(from: csv, fallbackName: sourceName)
+                    } else {
+                        sourceMeta = FASTQSampleMetadata(sampleName: sourceName)
+                    }
+
+                    // Apply to each target bundle
+                    for targetURL in targetURLs {
+                        let targetName = targetURL.deletingPathExtension().lastPathComponent
+                        let cloned = sourceMeta.cloned(withName: targetName)
+                        let legacyCSV = cloned.toLegacyCSV()
+                        try? FASTQBundleCSVMetadata.save(legacyCSV, to: targetURL)
+                    }
+
+                    // Post notification to refresh the inspector if needed
+                    NotificationCenter.default.post(
+                        name: .sampleMetadataDidChange,
+                        object: self,
+                        userInfo: nil
+                    )
+                }
+            }
+        }
     }
 
     // MARK: - Move To Submenu

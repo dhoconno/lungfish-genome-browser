@@ -33,6 +33,12 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
             return
         }
 
+        // When TaxTriage is active, toggle its BLAST results drawer.
+        if let taxTriageVC = taxTriageViewController {
+            taxTriageVC.toggleBlastDrawer()
+            return
+        }
+
         if annotationDrawerView == nil {
             configureAnnotationDrawer()
         }

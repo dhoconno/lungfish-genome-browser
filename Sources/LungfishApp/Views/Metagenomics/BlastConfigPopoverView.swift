@@ -22,7 +22,7 @@ import SwiftUI
 /// +---------------------------------------+
 /// ```
 ///
-/// The slider range is 5...50, clamped to the number of available clade reads.
+/// The slider range is 1...50, clamped to the number of available clade reads.
 /// When the user clicks "Run BLAST", the ``onRun`` callback fires with the
 /// selected read count.
 struct BlastConfigPopoverView: View {
@@ -40,8 +40,13 @@ struct BlastConfigPopoverView: View {
     @State private var readCount: Double = 20
 
     /// Maximum slider value, capped to available reads.
-    private var maxReads: Double {
-        Double(min(50, max(5, readsClade)))
+    private var maxReads: Int {
+        min(50, max(1, readsClade))
+    }
+
+    /// Whether the slider should be shown (needs at least 2 distinct values).
+    private var showsSlider: Bool {
+        maxReads >= 2
     }
 
     /// Whether the "Run BLAST" button should be enabled.
@@ -55,19 +60,24 @@ struct BlastConfigPopoverView: View {
                 .font(.headline)
                 .lineLimit(2)
 
-            HStack {
-                Text("Reads to submit:")
+            if showsSlider {
+                HStack {
+                    Text("Reads to submit:")
+                        .font(.subheadline)
+                    Slider(
+                        value: $readCount,
+                        in: 1...Double(maxReads),
+                        step: 1
+                    )
+                    .frame(minWidth: 80)
+                    Text("\(Int(readCount))")
+                        .font(.subheadline)
+                        .monospacedDigit()
+                        .frame(minWidth: 24, alignment: .trailing)
+                }
+            } else {
+                Text("Reads to submit: \(maxReads)")
                     .font(.subheadline)
-                Slider(
-                    value: $readCount,
-                    in: 5...maxReads,
-                    step: 1
-                )
-                .frame(minWidth: 80)
-                Text("\(Int(readCount))")
-                    .font(.subheadline)
-                    .monospacedDigit()
-                    .frame(minWidth: 24, alignment: .trailing)
             }
 
             Text("Submits a sample of classified reads to NCBI BLAST for independent verification.")
@@ -87,8 +97,7 @@ struct BlastConfigPopoverView: View {
         .padding(14)
         .frame(width: 280)
         .onAppear {
-            // Clamp initial value to available reads
-            readCount = min(readCount, maxReads)
+            readCount = min(Double(min(20, maxReads)), Double(maxReads))
         }
     }
 }

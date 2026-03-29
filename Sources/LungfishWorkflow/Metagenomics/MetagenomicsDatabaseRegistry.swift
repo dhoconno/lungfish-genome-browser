@@ -267,6 +267,20 @@ public actor MetagenomicsDatabaseRegistry {
                     operation: "load", underlying: error
                 )
             }
+
+            // Merge any new built-in catalog entries that weren't in the
+            // persisted manifest (e.g., EsViritu DB added in a newer version).
+            var addedCount = 0
+            for entry in MetagenomicsDatabaseInfo.builtInCatalog {
+                if databases[entry.name] == nil {
+                    databases[entry.name] = entry
+                    addedCount += 1
+                }
+            }
+            if addedCount > 0 {
+                try saveManifest()
+                logger.info("Merged \(addedCount, privacy: .public) new catalog entries into existing manifest")
+            }
         } else {
             // First launch: populate from built-in catalog.
             for entry in MetagenomicsDatabaseInfo.builtInCatalog {
@@ -439,7 +453,7 @@ public actor MetagenomicsDatabaseRegistry {
             return .missing
         }
 
-        let missing = Self.missingRequiredFiles(in: path)
+        let missing = Self.missingRequiredFiles(in: path, tool: db.tool)
         if missing.isEmpty {
             db.status = .ready
             db.lastUpdated = Date()
@@ -473,7 +487,7 @@ public actor MetagenomicsDatabaseRegistry {
         }
 
         // Validate the destination contains the required files.
-        let missing = Self.missingRequiredFiles(in: destination)
+        let missing = Self.missingRequiredFiles(in: destination, tool: db.tool)
         if !missing.isEmpty {
             throw MetagenomicsDatabaseRegistryError.invalidDatabaseDirectory(
                 path: destination.path, missingFiles: missing
@@ -667,9 +681,10 @@ public actor MetagenomicsDatabaseRegistry {
             )
         }
 
-        // Determine destination directory.
+        // Determine destination directory, organized by tool.
+        let toolSubdir = db.tool.isEmpty ? "other" : db.tool
         let destDir = databasesBaseURL
-            .appendingPathComponent("kraken2")
+            .appendingPathComponent(toolSubdir)
             .appendingPathComponent(name.lowercased().replacingOccurrences(of: " ", with: "-"))
 
         let fm = FileManager.default
@@ -725,8 +740,8 @@ public actor MetagenomicsDatabaseRegistry {
         // Clean up tarball.
         try? fm.removeItem(at: tarballURL)
 
-        // Verify the extracted database.
-        let missing = Self.missingRequiredFiles(in: destDir)
+        // Verify the extracted database using tool-specific validation.
+        let missing = Self.missingRequiredFiles(in: destDir, tool: db.tool)
         if !missing.isEmpty {
             db.status = .corrupt
             databases[name] = db
@@ -773,11 +788,48 @@ public actor MetagenomicsDatabaseRegistry {
         }
     }
 
-    /// Returns the names of required Kraken2 files missing from a directory.
-    static func missingRequiredFiles(in directory: URL) -> [String] {
+    /// Returns the names of required files missing from a database directory.
+    ///
+    /// Validation is tool-aware: Kraken2 databases need `hash.k2d`, `opts.k2d`,
+    /// `taxo.k2d`. EsViritu databases need at least one `.fasta` or `.fa` file.
+    /// Unknown tools skip validation (return empty).
+    static func missingRequiredFiles(in directory: URL, tool: String = "kraken2") -> [String] {
         let fm = FileManager.default
-        return requiredKraken2Files.filter { filename in
-            !fm.fileExists(atPath: directory.appendingPathComponent(filename).path)
+
+        switch tool {
+        case MetagenomicsTool.kraken2.rawValue:
+            return requiredKraken2Files.filter { filename in
+                !fm.fileExists(atPath: directory.appendingPathComponent(filename).path)
+            }
+
+        case MetagenomicsTool.esviritu.rawValue:
+            // EsViritu DB contains FASTA references + taxonomy metadata.
+            // Check for any .fasta, .fa, or .fna file as a basic validation.
+            let contents = (try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+            let hasFasta = contents.contains { url in
+                let ext = url.pathExtension.lowercased()
+                return ext == "fasta" || ext == "fa" || ext == "fna" || ext == "mmi"
+            }
+            // Also check subdirectories (EsViritu DB may have nested structure)
+            if !hasFasta {
+                let subdirs = contents.filter { url in
+                    var isDir: ObjCBool = false
+                    fm.fileExists(atPath: url.path, isDirectory: &isDir)
+                    return isDir.boolValue
+                }
+                for subdir in subdirs {
+                    let subContents = (try? fm.contentsOfDirectory(at: subdir, includingPropertiesForKeys: nil)) ?? []
+                    if subContents.contains(where: { ["fasta", "fa", "fna", "mmi"].contains($0.pathExtension.lowercased()) }) {
+                        return []  // Valid
+                    }
+                }
+                return ["*.fasta or *.fa reference files"]
+            }
+            return []
+
+        default:
+            // Unknown tool — skip validation
+            return []
         }
     }
 

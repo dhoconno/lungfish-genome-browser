@@ -68,7 +68,28 @@ public class ViewerViewController: NSViewController {
     /// Taxonomy classification browser (shown in place of sequence viewer for kreport results)
     var taxonomyViewController: TaxonomyViewController?
 
+    /// EsViritu viral detection browser (shown in place of sequence viewer for EsViritu results)
+    var esVirituViewController: EsVirituResultViewController?
+
+    /// TaxTriage clinical triage browser (shown in place of sequence viewer for TaxTriage results)
+    var taxTriageViewController: TaxTriageResultViewController?
+
     // MARK: - State
+
+    /// The current viewport content mode (genomics, FASTQ, metagenomics, or empty).
+    ///
+    /// Updated automatically when display methods are called. Posts
+    /// `.viewportContentModeDidChange` so the inspector and toolbar can adapt.
+    public var contentMode: ViewportContentMode = .empty {
+        didSet {
+            guard contentMode != oldValue else { return }
+            NotificationCenter.default.post(
+                name: .viewportContentModeDidChange,
+                object: self,
+                userInfo: [NotificationUserInfoKey.contentMode: contentMode.rawValue]
+            )
+        }
+    }
 
     /// Current reference frame for coordinate mapping
     public var referenceFrame: ReferenceFrame?
@@ -916,6 +937,9 @@ public class ViewerViewController: NSViewController {
         hideQuickLookPreview()
         hideFASTQDatasetView()
         hideTaxonomyView()
+        hideEsVirituView()
+        hideTaxTriageView()
+        contentMode = .fastq
 
         let controller = FASTQDatasetViewController()
         addChild(controller)
@@ -985,6 +1009,13 @@ public class ViewerViewController: NSViewController {
         if let ingestion = ingestionMetadata { userInfo["ingestionMetadata"] = ingestion }
         if let source = fastqSourceURL { userInfo["fastqSourceURL"] = source }
         if let derivative = fastqDerivativeManifest { userInfo["fastqDerivativeManifest"] = derivative }
+        // Include the bundle URL so the inspector can load sample metadata
+        if let fastqURL {
+            let parentDir = fastqURL.deletingLastPathComponent()
+            if parentDir.pathExtension == "lungfishfastq" {
+                userInfo["bundleURL"] = parentDir
+            }
+        }
         NotificationCenter.default.post(
             name: .fastqDatasetLoaded,
             object: self,
@@ -1026,6 +1057,8 @@ public class ViewerViewController: NSViewController {
         hideVCFDatasetView()
         hideFASTACollectionView()
         hideTaxonomyView()
+        hideEsVirituView()
+        hideTaxTriageView()
 
         let controller = VCFDatasetViewController()
         controller.onDownloadReferenceRequested = onDownloadReference
@@ -1115,6 +1148,8 @@ public class ViewerViewController: NSViewController {
         hideVCFDatasetView()
         hideFASTACollectionView()
         hideTaxonomyView()
+        hideEsVirituView()
+        hideTaxTriageView()
 
         let controller = FASTACollectionViewController()
         addChild(controller)
@@ -1336,32 +1371,7 @@ public class ViewerViewController: NSViewController {
     /// Call this when the sidebar selection is cleared to show an empty viewer.
     public func clearViewer() {
         logger.info("clearViewer: Clearing viewer")
-        currentDocument = nil
-        referenceFrame = nil
-
-        // Clear the viewer view
-        viewerView.hideTranslation()
-        viewerView.clearSequences()
-        viewerView.setAnnotations([])
-
-        // Clear header
-        headerView.setTrackNames([])
-        if let emptyState = viewerView.multiSequenceState {
-            emptyState.clear()
-        }
-        headerView.setStackedSequences([])
-
-        // Clear ruler
-        enhancedRulerView.referenceFrame = nil
-
-        // Update status bar
-        statusBar.update(position: "No sequence loaded", selection: nil, scale: 1.0)
-
-        // Trigger redraw
-        viewerView.needsDisplay = true
-        enhancedRulerView.needsDisplay = true
-        headerView.needsDisplay = true
-
+        clearViewport(statusMessage: "No sequence loaded")
         logger.info("clearViewer: Viewer cleared")
     }
 
@@ -1372,15 +1382,48 @@ public class ViewerViewController: NSViewController {
     /// context where the user hasn't selected a sequence yet.
     public func showNoSequenceSelected() {
         logger.info("showNoSequenceSelected: Setting empty state with 'No sequence selected'")
+        clearViewport(statusMessage: "No sequence selected")
+        logger.info("showNoSequenceSelected: Empty state set")
+    }
 
-        // First ensure any progress overlay is hidden
+    /// Unified viewport clearing that removes ALL overlay views and resets to empty state.
+    ///
+    /// This method is the single point of cleanup when the viewport needs to show nothing.
+    /// It hides every overlay (QuickLook, FASTQ, VCF, FASTA collection, taxonomy, EsViritu,
+    /// TaxTriage), clears bundle display state, cancels deferred redraws, and resets the
+    /// genomics viewer to a blank state.
+    ///
+    /// - Parameter statusMessage: The message to show in the status bar (e.g. "No sequence loaded")
+    public func clearViewport(statusMessage: String = "No sequence loaded") {
+        logger.info("clearViewport: Clearing all viewport state")
+        contentMode = .empty
+
+        // Hide progress overlay
         hideProgress()
 
-        // Clear current state
+        // Hide all overlay views that may be showing non-genomics content
+        hideQuickLookPreview()
+        hideFASTQDatasetView()
+        hideVCFDatasetView()
+        hideFASTACollectionView()
+        hideTaxonomyView()
+        hideEsVirituView()
+        hideTaxTriageView()
+
+        // Clear bundle display state (chromosome navigator, data provider)
+        clearBundleDisplay()
+
+        // Clear back button from collection drill-down
+        hideCollectionBackButton()
+
+        // Cancel deferred redraws to prevent stale renders
+        layoutSettleWorkItem?.cancel()
+        deferredRedrawWorkItem?.cancel()
+
+        // Clear genomics viewer state
         currentDocument = nil
         referenceFrame = nil
 
-        // Clear the viewer view
         viewerView.hideTranslation()
         viewerView.clearSequences()
         viewerView.setAnnotations([])
@@ -1395,15 +1438,21 @@ public class ViewerViewController: NSViewController {
         // Clear ruler
         enhancedRulerView.referenceFrame = nil
 
-        // Update status bar with the specific message
-        statusBar.update(position: "No sequence selected", selection: nil, scale: 1.0)
+        // Clear search index
+        annotationSearchIndex = nil
+
+        // Update status bar
+        statusBar.update(position: statusMessage, selection: nil, scale: 1.0)
+
+        // Ensure genomics viewer components are visible (in case QuickLook hid them)
+        showGenomicsViewer()
 
         // Trigger redraw
         viewerView.needsDisplay = true
         enhancedRulerView.needsDisplay = true
         headerView.needsDisplay = true
 
-        logger.info("showNoSequenceSelected: Empty state set")
+        logger.info("clearViewport: All viewport state cleared")
     }
 
     // MARK: - Document Display
@@ -1411,6 +1460,7 @@ public class ViewerViewController: NSViewController {
     /// Displays a loaded document in the viewer.
     public func displayDocument(_ document: LoadedDocument) {
         logger.info("displayDocument: Starting to display '\(document.name, privacy: .public)'")
+        contentMode = .genomics
 
         // Hide any non-document views when showing a genomics document
         hideQuickLookPreview()
@@ -1418,6 +1468,8 @@ public class ViewerViewController: NSViewController {
         hideVCFDatasetView()
         hideFASTACollectionView()
         hideTaxonomyView()
+        hideEsVirituView()
+        hideTaxTriageView()
 
         // Clear any stale reference bundle state so the viewer uses
         // the document's sequences instead of trying to fetch from a bundle
@@ -1528,6 +1580,8 @@ public class ViewerViewController: NSViewController {
         hideVCFDatasetView()
         hideFASTACollectionView()
         hideTaxonomyView()
+        hideEsVirituView()
+        hideTaxTriageView()
 
         // Hide the progress overlay first - it may be covering the view area
         hideProgress()

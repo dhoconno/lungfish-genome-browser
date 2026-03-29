@@ -260,11 +260,11 @@ public struct PluginPack: Sendable, Codable, Identifiable {
         PluginPack(
             id: "metagenomics",
             name: "Metagenomics",
-            description: "Taxonomic classification and community profiling of metagenomic samples",
+            description: "Taxonomic classification, viral detection, and clinical triage of metagenomic samples",
             sfSymbol: "leaf.fill",
-            packages: ["kraken2", "bracken", "metaphlan"],
+            packages: ["kraken2", "bracken", "metaphlan", "esviritu", "nextflow"],
             category: "Metagenomics",
-            estimatedSizeMB: 500
+            estimatedSizeMB: 1200
         ),
 
         // MARK: Long Read
@@ -441,6 +441,49 @@ public actor CondaManager {
         self.rootPrefix = home.appendingPathComponent(".lungfish/conda")
     }
 
+    /// Migrates ~/.lungfish/conda from a symlink to a real directory.
+    ///
+    /// If the conda root is a symlink (typically pointing to
+    /// ~/Library/Application Support/Lungfish/conda), moves the actual
+    /// directory contents to the symlink location so tools don't see
+    /// spaces in their prefix paths.
+    ///
+    /// **Why**: conda hardcodes the prefix path into installed scripts
+    /// (e.g., Nextflow's NXF_DIST). If the prefix resolves to a path
+    /// with spaces, bash scripts and Java classpaths break.
+    private func migrateSymlinkToRealDirectory() {
+        let fm = FileManager.default
+        let path = rootPrefix.path
+
+        // Check if it's a symlink
+        guard let attrs = try? fm.attributesOfItem(atPath: path),
+              attrs[.type] as? FileAttributeType == .typeSymbolicLink else {
+            return  // Already a real directory (or doesn't exist yet)
+        }
+
+        // Resolve the symlink target
+        guard let realPath = try? fm.destinationOfSymbolicLink(atPath: path) else {
+            return
+        }
+
+        let realURL = URL(fileURLWithPath: realPath)
+        guard fm.fileExists(atPath: realURL.path) else { return }
+
+        logger.info("Migrating conda from symlink to real directory: \(realPath) → \(path)")
+
+        do {
+            // Remove the symlink
+            try fm.removeItem(atPath: path)
+            // Move the real directory to the symlink location
+            try fm.moveItem(at: realURL, to: rootPrefix)
+            logger.info("Successfully migrated conda to space-free path")
+        } catch {
+            logger.error("Failed to migrate conda symlink: \(error.localizedDescription)")
+            // Try to restore the symlink if move failed
+            try? fm.createSymbolicLink(atPath: path, withDestinationPath: realPath)
+        }
+    }
+
     // MARK: - Micromamba Bootstrap
 
     /// Ensures micromamba is available, downloading it if necessary.
@@ -451,6 +494,11 @@ public actor CondaManager {
     public func ensureMicromamba(
         progress: (@Sendable (Double, String) -> Void)? = nil
     ) async throws -> URL {
+        // Migration: if ~/.lungfish/conda is a symlink (pointing to a path with
+        // spaces like ~/Library/Application Support/...), replace it with a real
+        // directory. Spaces in conda prefix paths break bioinformatics tools.
+        migrateSymlinkToRealDirectory()
+
         let binDir = rootPrefix.appendingPathComponent("bin")
 
         if FileManager.default.fileExists(atPath: micromambaPath.path) {
@@ -737,6 +785,59 @@ public actor CondaManager {
         return binPath
     }
 
+    /// Checks whether a tool is installed in any conda environment.
+    ///
+    /// Searches all environments under the conda root prefix for an executable
+    /// matching the given tool name. This is a lightweight filesystem check —
+    /// no subprocess is spawned.
+    ///
+    /// - Parameter name: The tool executable name (e.g., "kraken2", "EsViritu").
+    /// - Returns: `true` if the tool is found in any environment's `bin/` directory.
+    public func isToolInstalled(_ name: String) async -> Bool {
+        let envsDir = rootPrefix.appendingPathComponent("envs")
+        guard let envDirs = try? FileManager.default.contentsOfDirectory(
+            at: envsDir,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return false
+        }
+
+        for envDir in envDirs {
+            let binPath = envDir.appendingPathComponent("bin/\(name)")
+            if FileManager.default.isExecutableFile(atPath: binPath.path) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Returns the name of the conda environment containing a specific tool.
+    ///
+    /// Searches all environments under the conda root prefix for an executable
+    /// matching the given tool name. Returns the environment name (directory name).
+    ///
+    /// - Parameter tool: The tool executable name (e.g., "nextflow").
+    /// - Returns: The environment name, or `nil` if not found.
+    public func environmentContaining(tool name: String) async -> String? {
+        let envsDir = rootPrefix.appendingPathComponent("envs")
+        guard let envDirs = try? FileManager.default.contentsOfDirectory(
+            at: envsDir,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
+        }
+
+        for envDir in envDirs {
+            let binPath = envDir.appendingPathComponent("bin/\(name)")
+            if FileManager.default.isExecutableFile(atPath: binPath.path) {
+                return envDir.lastPathComponent
+            }
+        }
+        return nil
+    }
+
     /// Runs a tool from a conda environment.
     ///
     /// Uses `micromamba run -n <env> <tool> [args...]` to ensure the correct
@@ -766,6 +867,7 @@ public actor CondaManager {
         arguments: [String] = [],
         environment: String,
         workingDirectory: URL? = nil,
+        environmentVariables: [String: String]? = nil,
         timeout: TimeInterval = 3600,
         stderrHandler: (@Sendable (String) -> Void)? = nil
     ) async throws -> (stdout: String, stderr: String, exitCode: Int32) {
@@ -781,10 +883,14 @@ public actor CondaManager {
             let process = Process()
             process.executableURL = executablePath
             process.arguments = args
-            process.environment = [
+            var env: [String: String] = [
                 "MAMBA_ROOT_PREFIX": rootPath,
                 "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
             ]
+            if let extraVars = environmentVariables {
+                env.merge(extraVars) { _, new in new }
+            }
+            process.environment = env
             if let wd = workingDirectory {
                 process.currentDirectoryURL = wd
             }

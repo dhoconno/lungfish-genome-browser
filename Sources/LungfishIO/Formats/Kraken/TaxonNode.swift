@@ -124,6 +124,20 @@ public final class TaxonNode: @unchecked Sendable {
         self.children = []
     }
 
+    // MARK: - Tree Building
+
+    /// Appends a child node to this node and sets its parent reference.
+    ///
+    /// This is a convenience method for building taxon trees outside the
+    /// ``KreportParser``, such as when constructing a tree from EsViritu
+    /// taxonomic profiles or other external sources.
+    ///
+    /// - Parameter child: The node to add as a child.
+    public func addChild(_ child: TaxonNode) {
+        children.append(child)
+        child.parent = self
+    }
+
     // MARK: - Tree Traversal
 
     /// Returns all nodes in this subtree in pre-order (self, then children recursively).

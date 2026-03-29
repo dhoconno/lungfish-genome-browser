@@ -4,13 +4,11 @@
 
 import AppKit
 import LungfishIO
-import LungfishCore
 
 // MARK: - FASTQ Operations Color Palette
 //
-// DNA base colors, status colors, and quality thresholds are delegated to
-// SemanticColors (LungfishCore) -- the single source of truth.
-// Other colors are semantic tokens specific to FASTQ operation previews.
+// Centralized palette used by OperationPreviewView and FASTQSparklineStrip.
+// All colors are semantic tokens, no hardcoded RGB outside this block.
 //
 //   Primary   — LungfishTeal (brand color, reads, highlights)
 //   Paired    — Indigo       (R2 reads in PE visualizations)
@@ -31,36 +29,45 @@ enum FASTQPalette {
     static let readFillFaded = lungfishTeal.withAlphaComponent(0.15) // dimmed / duplicate
     static let pairedRead    = NSColor.systemIndigo                // R2 in PE views
 
-    // -- Semantic action colors (delegated to SemanticColors.Status) --
-    static let kept          = SemanticColors.Status.success       // pass / kept
-    static let trimmed       = SemanticColors.Status.failure       // removed / fail
-    static let adapter       = SemanticColors.Status.warning       // adapter, primer, warn
+    // -- Semantic action colors --
+    static let kept          = NSColor.systemGreen                 // pass / kept
+    static let trimmed       = NSColor.systemRed                   // removed / fail
+    static let adapter       = NSColor.systemOrange                // adapter, primer, warn
     static let corrected     = NSColor.systemPurple                // error correction
 
-    // -- Quality score thresholds (delegated to SemanticColors.Quality) --
-    static let qualityHigh    = SemanticColors.Quality.high        // Q >= 30
-    static let qualityMedium  = SemanticColors.Quality.medium      // Q 20-29
-    static let qualityLow     = SemanticColors.Quality.low         // Q 10-19
-    static let qualityVeryLow = SemanticColors.Quality.veryLow     // Q < 10
+    // -- Quality score thresholds --
+    static let qualityHigh   = NSColor.systemGreen                 // Q >= 30
+    static let qualityMedium = NSColor.systemYellow                // Q 20-29
+    static let qualityLow    = NSColor.systemOrange                // Q 10-19
+    static let qualityVeryLow = NSColor.systemRed                  // Q < 10
 
     // -- Text / labels --
     static let summaryText   = NSColor.labelColor
     static let secondaryText = NSColor.secondaryLabelColor
     static let dimText       = NSColor.tertiaryLabelColor
 
-    // -- DNA base colors (delegated to SemanticColors.DNA) --
-    static let baseA = SemanticColors.DNA.baseA
-    static let baseT = SemanticColors.DNA.baseT
-    static let baseG = SemanticColors.DNA.baseG
-    static let baseC = SemanticColors.DNA.baseC
-    static let baseN = SemanticColors.DNA.baseN
+    // -- DNA base colors (matching SequenceAppearance defaults) --
+    static let baseA = NSColor(red: 0, green: 0.627, blue: 0, alpha: 1)   // green
+    static let baseT = NSColor(red: 1, green: 0, blue: 0, alpha: 1)       // red
+    static let baseG = NSColor(red: 1, green: 0.843, blue: 0, alpha: 1)   // gold
+    static let baseC = NSColor(red: 0, green: 0, blue: 1, alpha: 1)       // blue
+    static let baseN = NSColor.tertiaryLabelColor                          // ambiguous
 
     static func dnaBaseColor(_ char: Character) -> NSColor {
-        SemanticColors.DNA.color(for: char)
+        switch char {
+        case "A", "a": return baseA
+        case "T", "t": return baseT
+        case "G", "g": return baseG
+        case "C", "c": return baseC
+        default:       return baseN
+        }
     }
 
     static func qualityColor(for q: Int) -> NSColor {
-        SemanticColors.Quality.color(for: q)
+        if q >= 30 { return qualityHigh }
+        if q >= 20 { return qualityMedium }
+        if q >= 10 { return qualityLow }
+        return qualityVeryLow
     }
 }
 
@@ -95,6 +102,7 @@ final class OperationPreviewView: NSView {
         case orient
         case sequencePresenceFilter
         case demultiplex
+        case classifyReads
         case qualityReport
         case none
     }
@@ -308,6 +316,8 @@ final class OperationPreviewView: NSView {
             drawContaminantFilterPreview(ctx: ctx, rect: rect)
         case .qualityReport:
             drawQualityReportPreview(ctx: ctx, rect: rect)
+        case .classifyReads:
+            drawIdleState(ctx: ctx, rect: rect)
         case .none:
             drawIdleState(ctx: ctx, rect: rect)
         }

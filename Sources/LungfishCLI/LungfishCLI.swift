@@ -34,6 +34,7 @@ struct LungfishCLI: AsyncParsableCommand {
             AnalyzeCommand.self,
             TranslateCommand.self,
             SearchCommand.self,
+            UniversalSearchCommand.self,
             ExtractCommand.self,
             FastqCommand.self,
             WorkflowCommand.self,
@@ -42,6 +43,9 @@ struct LungfishCLI: AsyncParsableCommand {
             ProvisionToolsCommand.self,
             CondaCommand.self,
             BlastCommand.self,
+            EsVirituCommand.self,
+            TaxTriageCommand.self,
+            MetadataCommand.self,
             DebugCommand.self,
         ],
         defaultSubcommand: nil

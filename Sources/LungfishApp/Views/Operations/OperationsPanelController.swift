@@ -51,6 +51,9 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
 
     private var items: [OperationCenter.Item] = []
 
+    /// Set of item IDs whose detail text is currently expanded.
+    private var expandedItemIDs: Set<UUID> = []
+
     deinit {
         elapsedRefreshTimer?.invalidate()
         elapsedRefreshTimer = nil
@@ -126,13 +129,19 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
         guard let elapsedColumnIndex = tableView.tableColumns.firstIndex(where: {
             $0.identifier.rawValue == "elapsed"
         }) else { return }
+        guard let etaColumnIndex = tableView.tableColumns.firstIndex(where: {
+            $0.identifier.rawValue == "eta"
+        }) else { return }
 
         var runningRows = IndexSet()
         for (index, item) in items.enumerated() where item.state == .running {
             runningRows.insert(index)
         }
         guard !runningRows.isEmpty else { return }
-        tableView.reloadData(forRowIndexes: runningRows, columnIndexes: IndexSet(integer: elapsedColumnIndex))
+        tableView.reloadData(
+            forRowIndexes: runningRows,
+            columnIndexes: IndexSet([elapsedColumnIndex, etaColumnIndex])
+        )
     }
 
     // MARK: - Table Setup
@@ -162,6 +171,13 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
         elapsedColumn.minWidth = 50
         elapsedColumn.maxWidth = 90
         tableView.addTableColumn(elapsedColumn)
+
+        let etaColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("eta"))
+        etaColumn.title = "ETA"
+        etaColumn.width = 70
+        etaColumn.minWidth = 50
+        etaColumn.maxWidth = 90
+        tableView.addTableColumn(etaColumn)
 
         let actionColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("action"))
         actionColumn.title = ""
@@ -199,6 +215,20 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
         OperationCenter.shared.clearCompleted()
     }
 
+    @objc private func toggleDetailExpansion(_ sender: NSButton) {
+        let row = tableView.row(for: sender)
+        guard row >= 0, row < items.count else { return }
+        let itemID = items[row].id
+        if expandedItemIDs.contains(itemID) {
+            expandedItemIDs.remove(itemID)
+        } else {
+            expandedItemIDs.insert(itemID)
+        }
+        // Animate the row height change by telling the table to re-query heights.
+        tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integer: row))
+        tableView.reloadData(forRowIndexes: IndexSet(integer: row), columnIndexes: IndexSet(integersIn: 0..<tableView.numberOfColumns))
+    }
+
     @objc private func cancelItem(_ sender: NSButton) {
         let row = tableView.row(for: sender)
         guard row >= 0, row < items.count else { return }
@@ -212,6 +242,24 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
     }
 
     // MARK: - NSTableViewDelegate
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        guard row < items.count else { return 36 }
+        let item = items[row]
+        guard expandedItemIDs.contains(item.id) else { return 36 }
+
+        let titleColumnWidth = tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("title"))?.width ?? 220
+        let textWidth = max(120, titleColumnWidth - 28) // account for disclosure button + paddings
+        let detailBounds = (item.detail as NSString).boundingRect(
+            with: NSSize(width: textWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: NSFont.systemFont(ofSize: 10)],
+            context: nil
+        )
+        let detailHeight = ceil(detailBounds.height)
+        let total = 8 + 16 + 2 + detailHeight + 4
+        return max(44, total)
+    }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard row < items.count, let identifier = tableColumn?.identifier else { return nil }
@@ -243,10 +291,11 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
                 tf.tag = 100
                 tf.translatesAutoresizingMaskIntoConstraints = false
                 tf.lineBreakMode = .byTruncatingTail
+                tf.maximumNumberOfLines = 1
                 cell.addSubview(tf)
                 NSLayoutConstraint.activate([
                     tf.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
-                    tf.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -4),
+                    tf.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -22),
                     tf.topAnchor.constraint(equalTo: cell.topAnchor, constant: 2),
                 ])
                 return tf
@@ -262,12 +311,49 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
                 cell.addSubview(tf)
                 NSLayoutConstraint.activate([
                     tf.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
-                    tf.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -4),
-                    tf.bottomAnchor.constraint(equalTo: cell.bottomAnchor, constant: -2),
+                    tf.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -22),
+                    tf.topAnchor.constraint(equalTo: titleField.bottomAnchor, constant: 1),
+                    tf.bottomAnchor.constraint(lessThanOrEqualTo: cell.bottomAnchor, constant: -2),
                 ])
                 return tf
             }()
-            detailField.stringValue = item.detail
+
+            // Find or create the disclosure toggle button (tag 102)
+            let moreButton = cell.viewWithTag(102) as? NSButton ?? {
+                let btn = NSButton(title: "", target: self, action: #selector(toggleDetailExpansion(_:)))
+                btn.tag = 102
+                btn.setButtonType(.onOff)
+                btn.bezelStyle = .disclosure
+                btn.controlSize = .mini
+                btn.translatesAutoresizingMaskIntoConstraints = false
+                cell.addSubview(btn)
+                NSLayoutConstraint.activate([
+                    btn.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                    btn.topAnchor.constraint(equalTo: cell.topAnchor, constant: 2),
+                ])
+                return btn
+            }()
+
+            let isExpanded = expandedItemIDs.contains(item.id)
+            let isMultiLine = item.detail.contains("\n") || item.detail.count > 60
+
+            if isExpanded {
+                // Show full text, wrapping
+                detailField.stringValue = item.detail
+                detailField.lineBreakMode = .byWordWrapping
+                detailField.maximumNumberOfLines = 0
+                moreButton.state = .on
+                moreButton.isHidden = false
+            } else {
+                // Collapse to single line: join newlines with ", "
+                let collapsed = item.detail.replacingOccurrences(of: "\n", with: ", ")
+                detailField.stringValue = collapsed
+                detailField.lineBreakMode = .byTruncatingTail
+                detailField.maximumNumberOfLines = 1
+                moreButton.state = .off
+                moreButton.isHidden = !isMultiLine
+            }
+            detailField.toolTip = isMultiLine ? item.detail : nil
             detailField.font = .systemFont(ofSize: 10)
             detailField.textColor = .secondaryLabelColor
             return cell
@@ -340,6 +426,39 @@ private final class OperationsPanelViewController: NSViewController, NSTableView
             case .completed, .failed:
                 let elapsed = (item.finishedAt ?? Date()).timeIntervalSince(item.startedAt)
                 textField.stringValue = formatElapsedTime(elapsed)
+                textField.textColor = .tertiaryLabelColor
+            }
+            return cell
+
+        case "eta":
+            let cell = reuseOrCreate(identifier: identifier, in: tableView)
+            let textField = cell.viewWithTag(410) as? NSTextField ?? {
+                let tf = NSTextField(labelWithString: "")
+                tf.tag = 410
+                tf.translatesAutoresizingMaskIntoConstraints = false
+                tf.alignment = .right
+                cell.addSubview(tf)
+                NSLayoutConstraint.activate([
+                    tf.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+                    tf.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                    tf.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                ])
+                return tf
+            }()
+            textField.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+
+            switch item.state {
+            case .running:
+                if item.progress > 0, item.progress < 1 {
+                    let elapsed = Date().timeIntervalSince(item.startedAt)
+                    let remaining = max(0, elapsed * (1 - item.progress) / item.progress)
+                    textField.stringValue = formatElapsedTime(remaining)
+                } else {
+                    textField.stringValue = "—"
+                }
+                textField.textColor = .secondaryLabelColor
+            case .completed, .failed:
+                textField.stringValue = "—"
                 textField.textColor = .tertiaryLabelColor
             }
             return cell

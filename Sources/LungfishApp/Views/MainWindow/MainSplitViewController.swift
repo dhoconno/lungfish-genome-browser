@@ -79,6 +79,22 @@ public class MainSplitViewController: NSSplitViewController {
     /// Collapsed target for the active inspector transition.
     private var inspectorTransitionTargetCollapsedState: Bool?
 
+    // MARK: - Selection State
+
+    /// Monotonic generation counter for sidebar selection changes.
+    ///
+    /// Incremented every time a new sidebar item is selected. Background tasks
+    /// capture this value and check it before updating the UI, discarding stale
+    /// results when the user has moved on to a different selection.
+    private var selectionGeneration: Int = 0
+
+    /// Debounce work item for rapid sidebar selection changes.
+    ///
+    /// When the user clicks quickly through sidebar items (< 150ms between clicks),
+    /// only the final selection is processed. This prevents unnecessary background
+    /// loads and reduces main thread contention during rapid browsing.
+    private var selectionDebounceWorkItem: DispatchWorkItem?
+
     // MARK: - FASTQ Loading State
 
     /// Background task for FASTQ statistics/sample loading.
@@ -505,6 +521,10 @@ public class MainSplitViewController: NSSplitViewController {
 
         logger.info("handleProjectOpened: Project '\(project.name, privacy: .public)' was opened")
 
+        // Update window title to reflect the project name
+        let projectName = project.url.deletingPathExtension().lastPathComponent
+        view.window?.title = "\(projectName) \u{2014} Lungfish Genome Explorer"
+
         // Use the new filesystem-backed sidebar model
         // This will scan the project directory and set up file watching
         sidebarController.openProject(at: project.url)
@@ -749,204 +769,32 @@ public class MainSplitViewController: NSSplitViewController {
             : "Importing \(pair.r1.lastPathComponent)\u{2026}"
         viewerController.showProgress(progressMessage)
 
-        let sampleName = pair.sampleName
-
-        FASTQIngestionService.ingestAndBundle(
-            pair: pair,
-            projectDirectory: projectDirectory,
-            bundleName: effectiveBundleName,
-            importConfig: config
-        ) { [weak self, weak viewerController] result in
-            switch result {
-            case .success(let bundleURL):
-                if let recipe = config.postImportRecipe, !recipe.steps.isEmpty {
-                    // Run post-import recipe on the bundle
-                    viewerController?.showProgress("Processing \(sampleName): \(recipe.name)\u{2026}")
-                    self?.runPostImportRecipe(
-                        recipe: recipe,
-                        bundleURL: bundleURL,
-                        sampleName: sampleName,
-                        qualityBinning: config.qualityBinning,
-                        requestID: requestID,
-                        sourceURL: pair.r1
-                    )
-                } else {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            FASTQIngestionService.ingestAndBundle(
+                pair: pair,
+                projectDirectory: projectDirectory,
+                bundleName: effectiveBundleName,
+                importConfig: config
+            ) { [weak self, weak viewerController] result in
+                defer { continuation.resume() }
+                switch result {
+                case .success(let bundleURL):
                     viewerController?.hideProgress()
                     self?.sidebarController.reloadFromFilesystem()
                     self?.displayGenomicsFile(url: bundleURL)
                     self?.postSidebarFileDropCompleted(requestID: requestID, sourceURL: pair.r1, success: true, error: nil)
-                }
-            case .failure(let error):
-                viewerController?.hideProgress()
-                logger.error("importFASTQBatch: \(error)")
-                self?.postSidebarFileDropCompleted(requestID: requestID, sourceURL: pair.r1, success: false, error: error.localizedDescription)
-                let alert = NSAlert()
-                alert.messageText = "Failed to Import FASTQ"
-                alert.informativeText = "\(error)"
-                alert.alertStyle = .warning
-                alert.addButton(withTitle: "OK")
-                alert.applyLungfishBranding()
-                if let window = self?.view.window ?? NSApp.keyWindow {
-                    alert.beginSheetModal(for: window)
-                }
-            }
-        }
-    }
-
-    /// Runs a processing recipe on an ingested FASTQ bundle using a materialized pipeline.
-    ///
-    /// Each recipe step runs directly on a real FASTQ file in a temp directory, chaining
-    /// outputs. This handles merging correctly (output reads can be longer than inputs),
-    /// and passes properly de-interleaved R1/R2 to fastp for adapter/quality trimming.
-    /// After all steps, the result is clumpified and replaces the bundle's primary FASTQ.
-    private func runPostImportRecipe(
-        recipe: ProcessingRecipe,
-        bundleURL: URL,
-        sampleName: String,
-        qualityBinning: QualityBinningScheme,
-        requestID: String?,
-        sourceURL: URL
-    ) {
-        let opID = OperationCenter.shared.start(
-            title: "Post-Import: \(sampleName)",
-            detail: recipe.name,
-            operationType: .ingestion
-        )
-
-        Task.detached {
-            let result: Result<URL, Error>
-            do {
-                guard let originalFASTQ = FASTQBundle.resolvePrimaryFASTQURL(for: bundleURL) else {
-                    throw FASTQIngestionError.clumpifyFailed("Could not resolve primary FASTQ in bundle")
-                }
-
-                let fm = FileManager.default
-                let tempDir = fm.temporaryDirectory.appendingPathComponent(
-                    "fastq-postimport-\(UUID().uuidString)"
-                )
-                try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
-                defer { try? fm.removeItem(at: tempDir) }
-
-                // Determine if bundle is interleaved from sidecar metadata
-                let metadata = FASTQMetadataStore.load(for: originalFASTQ)
-                let isInterleaved = metadata?.ingestion?.pairingMode == .interleaved
-
-                // Run recipe steps on materialized files.
-                // fastp, bbmerge, clumpify, and bbduk all handle .fastq.gz natively,
-                // so we pass the compressed bundle FASTQ directly as the starting point.
-                let service = FASTQDerivativeService()
-                let (processedURL, recipeStepResults) = try await service.runMaterializedRecipe(
-                    fastqURL: originalFASTQ,
-                    steps: recipe.steps,
-                    isInterleaved: isInterleaved,
-                    tempDir: tempDir,
-                    progress: { fraction, message in
-                        DispatchQueue.main.async {
-                            MainActor.assumeIsolated {
-                                // Recipe steps get 5%–85% of the progress bar
-                                let scaled = 0.05 + fraction * 0.80
-                                OperationCenter.shared.update(id: opID, progress: scaled, detail: "\(sampleName): \(message)")
-                            }
-                        }
-                    }
-                )
-
-                // Clumpify the final output: k-mer sort, quality bin, compress
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated {
-                        OperationCenter.shared.update(id: opID, progress: 0.87, detail: "\(sampleName): Clumpifying for compression…")
-                    }
-                }
-
-                let clumpifyConfig = FASTQIngestionConfig(
-                    inputFiles: [processedURL],
-                    pairingMode: .interleaved,
-                    outputDirectory: tempDir,
-                    threads: min(ProcessInfo.processInfo.processorCount, 8),
-                    deleteOriginals: true,
-                    qualityBinning: qualityBinning,
-                    skipClumpify: false
-                )
-
-                let pipeline = FASTQIngestionPipeline()
-                let clumpifyResult = try await pipeline.run(config: clumpifyConfig) { fraction, message in
-                    DispatchQueue.main.async {
-                        MainActor.assumeIsolated {
-                            let scaled = 0.87 + fraction * 0.10
-                            OperationCenter.shared.update(id: opID, progress: scaled, detail: "\(sampleName): \(message)")
-                        }
-                    }
-                }
-
-                // Replace the bundle's FASTQ with the processed + clumpified output
-                try fm.removeItem(at: originalFASTQ)
-                try fm.moveItem(at: clumpifyResult.outputFile, to: originalFASTQ)
-
-                // Clear stale cached stats and record recipe provenance
-                var updatedMetadata = FASTQMetadataStore.load(for: originalFASTQ) ?? PersistedFASTQMetadata()
-                updatedMetadata.computedStatistics = nil
-                updatedMetadata.seqkitStats = nil
-                if updatedMetadata.ingestion == nil {
-                    updatedMetadata.ingestion = IngestionMetadata()
-                }
-                updatedMetadata.ingestion?.recipeApplied = RecipeAppliedInfo(
-                    recipeID: recipe.id.uuidString,
-                    recipeName: recipe.name,
-                    appliedDate: Date(),
-                    stepResults: recipeStepResults
-                )
-                FASTQMetadataStore.save(updatedMetadata, for: originalFASTQ)
-
-                // Record provenance for all recipe steps
-                let runID = await ProvenanceRecorder.shared.beginRun(
-                    name: "Post-Import Processing: \(sampleName)",
-                    parameters: [
-                        "recipe": .string(recipe.name),
-                        "steps": .string(recipe.pipelineSummary),
-                    ]
-                )
-                for step in recipe.steps {
-                    await ProvenanceRecorder.shared.recordStep(
-                        runID: runID,
-                        toolName: step.shortLabel,
-                        toolVersion: "Lungfish",
-                        command: [step.kind.rawValue],
-                        inputs: [FileRecord(path: bundleURL.lastPathComponent, format: .fastq, role: .input)],
-                        outputs: [FileRecord(path: bundleURL.lastPathComponent, format: .fastq, role: .output)],
-                        exitCode: 0,
-                        wallTime: 0
-                    )
-                }
-                await ProvenanceRecorder.shared.completeRun(runID, status: .completed)
-                try? await ProvenanceRecorder.shared.save(runID: runID, to: bundleURL)
-
-                result = .success(bundleURL)
-            } catch {
-                logger.error("runPostImportRecipe: \(error)")
-                result = .failure(error)
-            }
-
-            DispatchQueue.main.async { [weak self] in
-                MainActor.assumeIsolated {
-                    self?.viewerController?.hideProgress()
-                    switch result {
-                    case .success(let url):
-                        OperationCenter.shared.complete(id: opID, detail: "Done", bundleURLs: [url])
-                        self?.sidebarController.reloadFromFilesystem()
-                        self?.displayGenomicsFile(url: url)
-                        self?.postSidebarFileDropCompleted(requestID: requestID, sourceURL: sourceURL, success: true, error: nil)
-                    case .failure(let error):
-                        OperationCenter.shared.fail(id: opID, detail: "\(error)")
-                        self?.postSidebarFileDropCompleted(requestID: requestID, sourceURL: sourceURL, success: false, error: error.localizedDescription)
-                        let alert = NSAlert()
-                        alert.messageText = "Post-Import Processing Failed"
-                        alert.informativeText = "\(error)"
-                        alert.alertStyle = .warning
-                        alert.addButton(withTitle: "OK")
-                        alert.applyLungfishBranding()
-                        if let window = self?.view.window ?? NSApp.keyWindow {
-                            alert.beginSheetModal(for: window)
-                        }
+                case .failure(let error):
+                    viewerController?.hideProgress()
+                    logger.error("importFASTQBatch: \(error)")
+                    self?.postSidebarFileDropCompleted(requestID: requestID, sourceURL: pair.r1, success: false, error: error.localizedDescription)
+                    let alert = NSAlert()
+                    alert.messageText = "Failed to Import FASTQ"
+                    alert.informativeText = "\(error)"
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "OK")
+                    alert.applyLungfishBranding()
+                    if let window = self?.view.window ?? NSApp.keyWindow {
+                        alert.beginSheetModal(for: window)
                     }
                 }
             }
@@ -1525,32 +1373,120 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         }
     }
 
-    public func sidebarDidSelectItem(_ item: SidebarItem?) {
-        guard let item = item else {
-            logger.info("sidebarDidSelectItem: Selection cleared, clearing viewer")
-            cancelFASTQLoadIfNeeded(hideProgress: true, reason: "selection cleared")
-            viewerController.clearBundleDisplay()
-            viewerController.clearViewer()
-            return
-        }
+    /// Returns true when a non-genomics child controller currently owns the viewport.
+    private var hasActiveSidebarChildViewport: Bool {
+        viewerController.taxTriageViewController != nil
+            || viewerController.esVirituViewController != nil
+            || viewerController.taxonomyViewController != nil
+            || viewerController.fastqDatasetController != nil
+    }
 
-        displayContent(for: item)
+    /// Heuristic for whether the current sidebar selection callback was user-initiated.
+    ///
+    /// Filesystem refreshes and other programmatic updates can also trigger selection
+    /// churn. We only want "selection cleared" to blank the viewport when the user
+    /// actually interacted with the sidebar.
+    private func isLikelyUserDrivenSidebarSelectionChange() -> Bool {
+        let firstResponder = view.window?.firstResponder
+        guard sidebarController.outlineViewIsFirstResponder(firstResponder) else { return false }
+        guard let event = NSApp.currentEvent, event.window === view.window else { return false }
+        switch event.type {
+        case .leftMouseDown, .leftMouseUp,
+             .rightMouseDown, .rightMouseUp,
+             .otherMouseDown, .otherMouseUp,
+             .keyDown:
+            return true
+        default:
+            return false
+        }
+    }
+
+    public func sidebarDidSelectItem(_ item: SidebarItem?) {
+        // Cancel any pending debounced selection
+        selectionDebounceWorkItem?.cancel()
+        selectionDebounceWorkItem = nil
+
+        // Increment generation counter to invalidate any in-flight background loads
+        selectionGeneration &+= 1
+
+        // If a metagenomics/FASTQ child VC is actively displayed, only process
+        // selection changes when the sidebar outline view is the actual first
+        // responder (i.e., the user clicked in the sidebar). Ignore spurious
+        // selection changes from focus shifts, filesystem refreshes, etc.
+        if hasActiveSidebarChildViewport {
+            let firstResponder = view.window?.firstResponder
+            let sidebarHasFocus = sidebarController.outlineViewIsFirstResponder(firstResponder)
+            if !sidebarHasFocus {
+                logger.debug("sidebarDidSelectItem: Ignoring selection change — sidebar not focused, active child VC displayed")
+                return
+            }
+        }
+        let userInitiatedInSidebar = isLikelyUserDrivenSidebarSelectionChange()
+
+        // Debounce ALL selection changes (including nil/clear) to avoid
+        // flickering when NSOutlineView fires deselect + reselect in quick
+        // succession.
+        let generation = selectionGeneration
+        let workItem = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self = self else { return }
+                guard self.selectionGeneration == generation else {
+                    return
+                }
+
+                if let item {
+                    self.displayContent(for: item)
+                } else {
+                    if self.hasActiveSidebarChildViewport && !userInitiatedInSidebar {
+                        logger.debug("sidebarDidSelectItem: Ignoring non-user selection clear while active child VC is displayed")
+                        return
+                    }
+                    logger.info("sidebarDidSelectItem: Selection cleared, clearing viewer and inspector")
+                    self.cancelFASTQLoadIfNeeded(hideProgress: true, reason: "selection cleared")
+                    self.viewerController.clearViewport(statusMessage: "No sequence selected")
+                    self.inspectorController.clearSelection()
+                }
+            }
+        }
+        selectionDebounceWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: workItem)
     }
 
     public func sidebarDidSelectItems(_ items: [SidebarItem]) {
+        // Cancel any pending debounced selection
+        selectionDebounceWorkItem?.cancel()
+        selectionDebounceWorkItem = nil
+
+        // Increment generation counter
+        selectionGeneration &+= 1
+
         // Filter to displayable items
         let displayableItems = items.filter { item in
-            item.type != .folder && item.type != .project && item.type != .group
+            item.type != .folder && item.type != .project && item.type != .group && item.type != .batchGroup
         }
 
-        guard !displayableItems.isEmpty else { return }
+        // Debounce all paths (including empty) to match sidebarDidSelectItem behavior
+        let generation = selectionGeneration
+        let workItem = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self = self, self.selectionGeneration == generation else { return }
 
-        if displayableItems.count == 1 {
-            displayContent(for: displayableItems[0])
-        } else {
-            // Multi-selection - delegate to existing handler
-            handleMultipleItemsSelected(displayableItems)
+                guard !displayableItems.isEmpty else {
+                    self.cancelFASTQLoadIfNeeded(hideProgress: true, reason: "multi-select containers only")
+                    self.viewerController.clearViewport(statusMessage: "No sequence selected")
+                    self.inspectorController.clearSelection()
+                    return
+                }
+
+                if displayableItems.count == 1 {
+                    self.displayContent(for: displayableItems[0])
+                } else {
+                    self.handleMultipleItemsSelected(displayableItems)
+                }
+            }
         }
+        selectionDebounceWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: workItem)
     }
 
     /// Unified content dispatch - synchronous for reliability.
@@ -1572,7 +1508,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         }
 
         // Skip non-displayable container types
-        guard item.type != .folder && item.type != .project && item.type != .group else {
+        guard item.type != .folder && item.type != .project && item.type != .group && item.type != .batchGroup else {
             logger.debug("displayContent: Skipping container item type")
             return
         }
@@ -1602,6 +1538,19 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         // Classification results (Kraken2 kreport/kraken output)
         if item.type == .classificationResult, let url = item.url {
             displayClassificationResult(at: url)
+            return
+        }
+
+        // EsViritu viral detection results
+        if item.type == .esvirituResult, let url = item.url {
+            displayEsVirituResult(at: url)
+            return
+        }
+
+        // TaxTriage results (including per-sample children of batch groups)
+        if item.type == .taxTriageResult, let url = item.url {
+            let sampleId = item.userInfo["sampleId"]
+            displayTaxTriageResultFromSidebar(at: url, sampleId: sampleId)
             return
         }
 
@@ -1690,6 +1639,152 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             if let window = self.view.window ?? NSApp.keyWindow {
                 alert.beginSheetModal(for: window)
             }
+        }
+    }
+
+    /// Display a saved EsViritu result from a result directory.
+    ///
+    /// Loads the `EsVirituResult` from the directory's sidecar JSON,
+    /// parses the detection TSV files, and shows the viral detection browser.
+    ///
+    /// - Parameter url: The EsViritu result directory URL.
+    private func displayEsVirituResult(at url: URL) {
+        logger.info("displayEsVirituResult: Opening '\(url.lastPathComponent, privacy: .public)'")
+
+        do {
+            let pipelineResult = try LungfishWorkflow.EsVirituResult.load(from: url)
+
+            // Parse the TSV output files into the display model
+            let detections = (try? EsVirituDetectionParser.parse(url: pipelineResult.detectionURL)) ?? []
+            let assemblies = EsVirituDetectionParser.groupByAssembly(detections)
+            let taxProfile: [ViralTaxProfile]
+            if let tpURL = pipelineResult.taxProfileURL {
+                taxProfile = (try? EsVirituTaxProfileParser.parse(url: tpURL)) ?? []
+            } else {
+                taxProfile = []
+            }
+            let coverageWindows: [ViralCoverageWindow]
+            if let cvURL = pipelineResult.coverageURL {
+                coverageWindows = (try? EsVirituCoverageParser.parse(url: cvURL)) ?? []
+            } else {
+                coverageWindows = []
+            }
+
+            let ioResult = LungfishIO.EsVirituResult(
+                sampleId: pipelineResult.config.sampleName,
+                detections: detections,
+                assemblies: assemblies,
+                taxProfile: taxProfile,
+                coverageWindows: coverageWindows,
+                totalFilteredReads: detections.first?.filteredReadsInSample ?? 0,
+                detectedFamilyCount: Set(detections.compactMap(\.family)).count,
+                detectedSpeciesCount: Set(detections.compactMap(\.species)).count,
+                runtime: pipelineResult.runtime,
+                toolVersion: pipelineResult.toolVersion
+            )
+
+            viewerController.displayEsVirituResult(ioResult, config: pipelineResult.config)
+            logger.info("displayEsVirituResult: Loaded \(detections.count) detections, \(assemblies.count) assemblies")
+        } catch {
+            logger.error("displayEsVirituResult: Failed - \(error.localizedDescription, privacy: .public)")
+            let alert = NSAlert()
+            alert.messageText = "Failed to Load EsViritu Result"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            if let window = self.view.window ?? NSApp.keyWindow {
+                alert.beginSheetModal(for: window)
+            }
+        }
+    }
+
+    /// Display a saved TaxTriage result from a result directory.
+    ///
+    /// - Parameters:
+    ///   - url: The result output directory.
+    ///   - sampleId: Optional sample ID to pre-select in the per-sample filter.
+    ///     `nil` shows the "All Samples" merged view.
+    private func displayTaxTriageResultFromSidebar(at url: URL, sampleId: String? = nil) {
+        logger.info("displayTaxTriageResult: Opening '\(url.lastPathComponent, privacy: .public)', sampleId=\(sampleId ?? "all", privacy: .public)")
+
+        // Prefer the persisted sidecar so view parsing matches pipeline-time discovery.
+        if let persisted = try? TaxTriageResult.load(from: url) {
+            viewerController.displayTaxTriageResult(persisted, config: persisted.config, sampleId: sampleId)
+            return
+        }
+
+        // Fallback: rebuild from on-disk contents when sidecar is missing/corrupt.
+        let fm = FileManager.default
+        let allFiles: [URL]
+        if let enumerator = fm.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) {
+            allFiles = enumerator.compactMap { element -> URL? in
+                guard let fileURL = element as? URL else { return nil }
+                let isRegularFile = (try? fileURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) ?? false
+                return isRegularFile ? fileURL : nil
+            }
+        } else {
+            allFiles = []
+        }
+
+        let reportFiles = allFiles.filter {
+            let name = $0.lastPathComponent.lowercased()
+            let ext = $0.pathExtension.lowercased()
+            return name.contains("report") && (ext == "txt" || ext == "tsv")
+        }
+
+        let metricsFiles = allFiles.filter {
+            let name = $0.lastPathComponent.lowercased()
+            let ext = $0.pathExtension.lowercased()
+            return name.contains("tass")
+                || name.contains("metrics")
+                || name.contains("confidence")
+                || (ext == "tsv" && !name.contains("trace") && !name.contains("samplesheet"))
+        }
+
+        let kronaFiles = allFiles.filter {
+            let name = $0.lastPathComponent.lowercased()
+            let ext = $0.pathExtension.lowercased()
+            let path = $0.path.lowercased()
+            return ext == "html" && (name.contains("krona") || path.contains("/krona/"))
+        }
+
+        let result = TaxTriageResult(
+            config: TaxTriageConfig(samples: [], outputDirectory: url),
+            runtime: 0,
+            exitCode: 0,
+            outputDirectory: url,
+            reportFiles: reportFiles,
+            metricsFiles: metricsFiles,
+            kronaFiles: kronaFiles,
+            logFile: nil,
+            traceFile: nil,
+            allOutputFiles: allFiles
+        )
+
+        viewerController.displayTaxTriageResult(result, config: nil, sampleId: sampleId)
+    }
+
+    /// Navigates to a related metagenomics analysis from TaxTriage cross-links.
+    ///
+    /// Called when the user clicks a "View Kraken2" or "View EsViritu" button
+    /// in the TaxTriage action bar. Routes to the appropriate display method.
+    ///
+    /// - Parameters:
+    ///   - type: The analysis type ("kraken2" or "esviritu").
+    ///   - url: The result directory URL.
+    func navigateToRelatedAnalysis(type: String, url: URL) {
+        logger.info("navigateToRelatedAnalysis: type=\(type, privacy: .public), url=\(url.lastPathComponent, privacy: .public)")
+        switch type {
+        case "kraken2":
+            displayClassificationResult(at: url)
+        case "esviritu":
+            displayEsVirituResult(at: url)
+        default:
+            logger.warning("Unknown related analysis type: \(type, privacy: .public)")
         }
     }
 
@@ -2301,9 +2396,8 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
         fastqLoadTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                let summary = try await Self.fetchSeqkitSummary(for: fastqURL)
-                let (histogram, processedReads) = try await Self.collectFASTQHistogram(
-                    from: fastqURL,
+                let statsResult = try await FASTQStatisticsService.compute(
+                    for: fastqURL,
                     progress: { count in
                         guard !Task.isCancelled else { return }
                         DispatchQueue.main.async {
@@ -2316,11 +2410,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                         }
                     }
                 )
-                let statistics = Self.buildFASTQStatistics(
-                    summary: summary,
-                    histogram: histogram,
-                    fallbackReadCount: processedReads
-                )
+                let statistics = statsResult.statistics
                 try Task.checkCancellation()
 
                 // Cache the computed statistics for next time.
@@ -2328,7 +2418,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                 if FileManager.default.fileExists(atPath: fastqURL.path) {
                     var metadata = cachedMeta ?? PersistedFASTQMetadata()
                     metadata.computedStatistics = statistics
-                    metadata.seqkitStats = summary.asMetadata()
+                    metadata.seqkitStats = statsResult.seqkitMetadata
                     FASTQMetadataStore.save(metadata, for: fastqURL)
                 } else {
                     logger.debug("loadFASTQDatasetInBackground: FASTQ deleted before cache write, skipping sidecar save")
@@ -2561,158 +2651,6 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         )
     }
 
-    private struct SeqkitSummary {
-        let numSeqs: Int
-        let sumLen: Int64
-        let minLen: Int
-        let avgLen: Double
-        let maxLen: Int
-        let q20Percentage: Double
-        let q30Percentage: Double
-        let averageQuality: Double
-        let gcPercentage: Double
-
-        func asMetadata() -> SeqkitStatsMetadata {
-            SeqkitStatsMetadata(
-                numSeqs: numSeqs,
-                sumLen: sumLen,
-                minLen: minLen,
-                avgLen: avgLen,
-                maxLen: maxLen,
-                q20Percentage: q20Percentage,
-                q30Percentage: q30Percentage,
-                averageQuality: averageQuality,
-                gcPercentage: gcPercentage
-            )
-        }
-    }
-
-    nonisolated private static func fetchSeqkitSummary(for fastqURL: URL) async throws -> SeqkitSummary {
-        let runner = NativeToolRunner.shared
-        let result = try await runner.run(
-            .seqkit,
-            arguments: ["stats", "-a", "-T", fastqURL.path],
-            timeout: 900
-        )
-        guard result.isSuccess else {
-            throw DatabaseServiceError.parseError(
-                message: "seqkit stats failed: \(result.stderr)"
-            )
-        }
-
-        let lines = result.stdout
-            .split(whereSeparator: \.isNewline)
-            .map(String.init)
-            .filter { !$0.isEmpty }
-        guard lines.count >= 2 else {
-            throw DatabaseServiceError.parseError(
-                message: "seqkit stats returned unexpected output"
-            )
-        }
-
-        let headers = lines[0].split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-        let values = lines[1].split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-        guard headers.count == values.count else {
-            throw DatabaseServiceError.parseError(
-                message: "seqkit stats header/value mismatch (headers=\(headers.count), values=\(values.count))"
-            )
-        }
-
-        var map: [String: String] = [:]
-        for (header, value) in zip(headers, values) {
-            map[header] = value
-        }
-
-        func int(_ key: String) -> Int { Int(map[key] ?? "") ?? 0 }
-        func int64(_ key: String) -> Int64 { Int64(map[key] ?? "") ?? 0 }
-        func dbl(_ key: String) -> Double { Double(map[key] ?? "") ?? 0 }
-
-        return SeqkitSummary(
-            numSeqs: int("num_seqs"),
-            sumLen: int64("sum_len"),
-            minLen: int("min_len"),
-            avgLen: dbl("avg_len"),
-            maxLen: int("max_len"),
-            q20Percentage: dbl("Q20(%)"),
-            q30Percentage: dbl("Q30(%)"),
-            averageQuality: dbl("AvgQual"),
-            gcPercentage: dbl("GC(%)")
-        )
-    }
-
-    nonisolated private static func collectFASTQHistogram(
-        from fastqURL: URL,
-        progress: (@Sendable (Int) -> Void)? = nil
-    ) async throws -> (histogram: [Int: Int], readCount: Int) {
-        let reader = FASTQReader(validateSequence: false)
-        var histogram: [Int: Int] = [:]
-        var readCount = 0
-
-        for try await record in reader.records(from: fastqURL) {
-            histogram[record.length, default: 0] += 1
-            readCount += 1
-            if readCount % 10_000 == 0 {
-                progress?(readCount)
-                try Task.checkCancellation()
-            }
-        }
-        progress?(readCount)
-        return (histogram, readCount)
-    }
-
-    nonisolated private static func buildFASTQStatistics(
-        summary: SeqkitSummary,
-        histogram: [Int: Int],
-        fallbackReadCount: Int
-    ) -> FASTQDatasetStatistics {
-        let readCount = summary.numSeqs > 0 ? summary.numSeqs : fallbackReadCount
-        let baseCount = summary.sumLen > 0 ? summary.sumLen : histogram.reduce(Int64(0)) { total, item in
-            total + Int64(item.key * item.value)
-        }
-        let minLength = summary.minLen > 0 ? summary.minLen : histogram.keys.min() ?? 0
-        let maxLength = summary.maxLen > 0 ? summary.maxLen : histogram.keys.max() ?? 0
-        let meanLength = summary.avgLen > 0 ? summary.avgLen : (readCount > 0 ? Double(baseCount) / Double(readCount) : 0)
-
-        func medianLength() -> Int {
-            guard readCount > 0 else { return 0 }
-            let target = (readCount + 1) / 2
-            var cumulative = 0
-            for (length, count) in histogram.sorted(by: { $0.key < $1.key }) {
-                cumulative += count
-                if cumulative >= target { return length }
-            }
-            return histogram.keys.max() ?? 0
-        }
-
-        func n50Length() -> Int {
-            guard baseCount > 0 else { return 0 }
-            let target = Double(baseCount) / 2.0
-            var cumulative = 0.0
-            for (length, count) in histogram.sorted(by: { $0.key > $1.key }) {
-                cumulative += Double(length * count)
-                if cumulative >= target { return length }
-            }
-            return histogram.keys.max() ?? 0
-        }
-
-        return FASTQDatasetStatistics(
-            readCount: readCount,
-            baseCount: baseCount,
-            meanReadLength: meanLength,
-            minReadLength: minLength,
-            maxReadLength: maxLength,
-            medianReadLength: medianLength(),
-            n50ReadLength: n50Length(),
-            meanQuality: summary.averageQuality,
-            q20Percentage: summary.q20Percentage,
-            q30Percentage: summary.q30Percentage,
-            gcContent: summary.gcPercentage / 100.0,
-            readLengthHistogram: histogram,
-            qualityScoreHistogram: [:],
-            perPositionQuality: []
-        )
-    }
-
     /// Loads a genomics file in the background using structured concurrency.
     private func loadGenomicsFileInBackground(url: URL) {
         logger.info("loadGenomicsFileInBackground: Loading '\(url.lastPathComponent, privacy: .public)'")
@@ -2724,18 +2662,28 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             return
         }
 
+        // Capture the current selection generation so we can discard stale results
+        let generation = self.selectionGeneration
+
         viewerController.showProgress("Loading \(url.lastPathComponent)...")
 
         // Use detached task for background loading without inheriting actor context.
         // UI callbacks use GCD main queue + MainActor.assumeIsolated (not await MainActor.run)
         // because the cooperative executor doesn't reliably schedule from Task.detached.
-        Task.detached(priority: .userInitiated) {
+        Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 let document = try await DocumentManager.shared.loadDocument(at: url)
 
                 // Update UI via GCD main queue (guaranteed to drain)
-                DispatchQueue.main.async {
+                DispatchQueue.main.async { [weak self] in
                     MainActor.assumeIsolated {
+                        // Check generation counter — if the user has selected something else
+                        // while we were loading, discard this result
+                        guard let self = self, self.selectionGeneration == generation else {
+                            logger.info("loadGenomicsFileInBackground: Discarding stale result for '\(url.lastPathComponent, privacy: .public)' (generation moved on)")
+                            viewerController.hideProgress()
+                            return
+                        }
                         viewerController.hideProgress()
                         viewerController.displayDocument(document)
                         sidebarController.refreshItem(for: url)
@@ -2744,8 +2692,12 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                 }
             } catch {
                 let errorMessage = error.localizedDescription
-                DispatchQueue.main.async {
+                DispatchQueue.main.async { [weak self] in
                     MainActor.assumeIsolated {
+                        guard let self = self, self.selectionGeneration == generation else {
+                            viewerController.hideProgress()
+                            return
+                        }
                         viewerController.hideProgress()
                         logger.error("loadGenomicsFileInBackground: Failed - \(errorMessage)")
 
