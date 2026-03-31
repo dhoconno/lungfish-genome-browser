@@ -42,9 +42,12 @@ public enum AssemblyRunner {
     public static func run(config: SPAdesAssemblyConfig) {
         let projectName = config.projectName
 
-        // Request notification permission (idempotent)
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, error in
-            if let error { logger.warning("Notification authorization error: \(error)") }
+        // Request notification permission (idempotent).
+        // Guard against crash when running without a bundle identifier (CLI / swift build).
+        if Bundle.main.bundleIdentifier != nil {
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, error in
+                if let error { logger.warning("Notification authorization error: \(error)") }
+            }
         }
 
         // Check disk space
@@ -265,6 +268,8 @@ public enum AssemblyRunner {
             trigger: nil
         )
 
+        // Guard against crash when running without a bundle identifier (CLI / swift build)
+        guard Bundle.main.bundleIdentifier != nil else { return }
         UNUserNotificationCenter.current().add(request) { error in
             if let error { logger.warning("Failed to post notification: \(error)") }
         }

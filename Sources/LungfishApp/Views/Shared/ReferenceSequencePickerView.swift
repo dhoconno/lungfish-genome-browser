@@ -122,25 +122,56 @@ struct ReferenceSequencePickerView: View {
         ) {
             for case let url as URL in enumerator {
                 if url.pathExtension == "lungfishref" && !knownPaths.contains(url.path) {
-                    // Try to read manifest
+                    // Try ReferenceSequenceManifest first (simple ref bundles)
                     let manifestURL = url.appendingPathComponent("manifest.json")
-                    if let data = try? Data(contentsOf: manifestURL),
-                       let manifest = try? {
-                           let decoder = JSONDecoder()
-                           decoder.dateDecodingStrategy = .iso8601
-                           return try decoder.decode(ReferenceSequenceManifest.self, from: data)
-                       }() {
-                        allRefs.append((url, manifest))
+                    if let data = try? Data(contentsOf: manifestURL) {
+                        let decoder = JSONDecoder()
+                        decoder.dateDecodingStrategy = .iso8601
+
+                        if let manifest = try? decoder.decode(ReferenceSequenceManifest.self, from: data) {
+                            allRefs.append((url, manifest))
+                        } else {
+                            // Try full BundleManifest (genome bundles from NCBI downloads)
+                            // These have FASTA at genome/sequence.fa.gz
+                            let genomeDir = url.appendingPathComponent("genome")
+                            let fastaExtensions = ["fasta", "fa", "fna", "fa.gz", "fasta.gz", "fna.gz"]
+                            let fastaInGenome = try? fm.contentsOfDirectory(at: genomeDir, includingPropertiesForKeys: nil)
+                            let genomeFasta = fastaInGenome?.first(where: { file in
+                                fastaExtensions.contains(where: { file.lastPathComponent.hasSuffix(".\($0)") })
+                            })
+
+                            if let genomeFasta {
+                                // Extract name from manifest JSON if possible
+                                let bundleName: String
+                                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                                   let desc = json["description"] as? String {
+                                    // Use short name from description
+                                    bundleName = url.deletingPathExtension().lastPathComponent
+                                } else {
+                                    bundleName = url.deletingPathExtension().lastPathComponent
+                                }
+
+                                let syntheticManifest = ReferenceSequenceManifest(
+                                    name: bundleName,
+                                    createdAt: Date(),
+                                    sourceFilename: genomeFasta.lastPathComponent,
+                                    fastaFilename: "genome/\(genomeFasta.lastPathComponent)"
+                                )
+                                allRefs.append((url, syntheticManifest))
+                            }
+                        }
                     } else {
-                        // No manifest — check if there's a FASTA inside and create a synthetic manifest
+                        // No manifest at all — check for FASTA files directly or in genome/
                         let fastaExtensions = ["fasta", "fa", "fna"]
-                        if let contents = try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil),
-                           let fastaFile = contents.first(where: { fastaExtensions.contains($0.pathExtension.lowercased()) }) {
+                        let contents = try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)
+                        let directFasta = contents?.first(where: { fastaExtensions.contains($0.pathExtension.lowercased()) })
+
+                        if let directFasta {
                             let syntheticManifest = ReferenceSequenceManifest(
                                 name: url.deletingPathExtension().lastPathComponent,
                                 createdAt: Date(),
-                                sourceFilename: fastaFile.lastPathComponent,
-                                fastaFilename: fastaFile.lastPathComponent
+                                sourceFilename: directFasta.lastPathComponent,
+                                fastaFilename: directFasta.lastPathComponent
                             )
                             allRefs.append((url, syntheticManifest))
                         }
