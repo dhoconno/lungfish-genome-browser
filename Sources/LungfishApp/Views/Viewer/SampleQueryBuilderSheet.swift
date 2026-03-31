@@ -196,7 +196,7 @@ struct SampleQueryBuilderView: View {
                                 Image(systemName: "minus.circle")
                             }
                             .buttonStyle(.plain)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(Color.lungfishOrangeFallback)
                         }
                     }
                 }

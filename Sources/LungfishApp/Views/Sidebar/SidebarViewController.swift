@@ -873,6 +873,10 @@ public class SidebarViewController: NSViewController {
                 // Scan for TaxTriage result directories (taxtriage-XXXXXXXX/).
                 let taxTriageChildren = collectTaxTriageResults(in: scanDir)
                 item.children.append(contentsOf: taxTriageChildren)
+
+                // Scan for NAO-MGS result bundles (naomgs-XXXXXXXX/).
+                let naoMgsChildren = collectNaoMgsResults(in: scanDir)
+                item.children.append(contentsOf: naoMgsChildren)
             }
 
             // Scan for extracted read bundles (.lungfishfastq) at the top level.
@@ -947,6 +951,12 @@ public class SidebarViewController: NSViewController {
             } catch {
                 logger.error("buildSidebarTree: Failed to scan directory: \(error.localizedDescription, privacy: .public)")
             }
+
+            // Scan for NAO-MGS result bundles at this directory level.
+            // Unlike classification/esviritu/taxtriage results which live inside
+            // FASTQ bundles, NAO-MGS bundles are standalone in Imports/.
+            let naoMgsItems = collectNaoMgsResults(in: url)
+            item.children.append(contentsOf: naoMgsItems)
         }
 
         return item
@@ -1013,6 +1023,12 @@ public class SidebarViewController: NSViewController {
         // EsViritu result directories
         if name.hasPrefix("esviritu-") {
             let sidecar = url.appendingPathComponent("esviritu-result.json")
+            if fm.fileExists(atPath: sidecar.path) { return true }
+        }
+
+        // NAO-MGS result bundles
+        if name.hasPrefix("naomgs-") {
+            let sidecar = url.appendingPathComponent("manifest.json")
             if fm.fileExists(atPath: sidecar.path) { return true }
         }
 
@@ -1122,7 +1138,7 @@ public class SidebarViewController: NSViewController {
             let item = SidebarItem(
                 title: title,
                 type: .classificationResult,
-                icon: "chart.pie",
+                icon: "k.circle",
                 children: [],
                 url: childURL
             )
@@ -1176,7 +1192,7 @@ public class SidebarViewController: NSViewController {
                     let childItem = SidebarItem(
                         title: record.sampleId,
                         type: .classificationResult,
-                        icon: "chart.pie",
+                        icon: "k.circle",
                         children: [],
                         url: resultURL,
                         subtitle: classificationResultTitle(for: resultURL)
@@ -1197,7 +1213,7 @@ public class SidebarViewController: NSViewController {
                     let childItem = SidebarItem(
                         title: child.lastPathComponent,
                         type: .classificationResult,
-                        icon: "chart.pie",
+                        icon: "k.circle",
                         children: [],
                         url: child,
                         subtitle: classificationResultTitle(for: child)
@@ -1532,6 +1548,66 @@ public class SidebarViewController: NSViewController {
         return results.sorted {
             ($0.url?.lastPathComponent ?? "") < ($1.url?.lastPathComponent ?? "")
         }
+    }
+
+    /// Collects NAO-MGS result bundles from inside a directory.
+    ///
+    /// Scans for `naomgs-*` directories that contain a `manifest.json` sidecar,
+    /// builds a sidebar item for each one using the sample name from the manifest.
+    ///
+    /// - Parameter bundleURL: Directory to scan (typically a FASTQ bundle or Imports/).
+    /// - Returns: Array of `SidebarItem` nodes for NAO-MGS result bundles.
+    private func collectNaoMgsResults(in bundleURL: URL) -> [SidebarItem] {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: bundleURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        var results: [SidebarItem] = []
+
+        for childURL in contents {
+            guard childURL.lastPathComponent.hasPrefix("naomgs-") else { continue }
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: childURL.path, isDirectory: &isDir), isDir.boolValue else { continue }
+
+            // Require a manifest.json sidecar
+            let manifestURL = childURL.appendingPathComponent("manifest.json")
+            guard fm.fileExists(atPath: manifestURL.path) else { continue }
+
+            // Read the manifest for display title
+            let title = naoMgsResultTitle(for: childURL)
+
+            let item = SidebarItem(
+                title: title,
+                type: .naoMgsResult,
+                icon: "n.circle",
+                children: [],
+                url: childURL
+            )
+            results.append(item)
+        }
+
+        return results.sorted {
+            $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+        }
+    }
+
+    /// Derives a display title for a NAO-MGS result bundle from its manifest.
+    ///
+    /// Falls back to "NAO-MGS" if the manifest cannot be read.
+    private func naoMgsResultTitle(for directory: URL) -> String {
+        let manifestURL = directory.appendingPathComponent("manifest.json")
+        guard let data = try? Data(contentsOf: manifestURL) else {
+            return "NAO-MGS"
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let manifest = try? decoder.decode(NaoMgsManifest.self, from: data) else {
+            return "NAO-MGS"
+        }
+        return "NAO-MGS: \(manifest.sampleName)"
     }
 
     /// Counts the total number of items in a tree.
@@ -2698,6 +2774,7 @@ public enum SidebarItemType {
     case classificationResult  // Kraken2 classification result folder
     case esvirituResult        // EsViritu viral detection result folder
     case taxTriageResult       // TaxTriage comprehensive triage result folder
+    case naoMgsResult          // NAO-MGS surveillance result bundle
 
     var tintColor: NSColor {
         switch self {
@@ -2714,9 +2791,10 @@ public enum SidebarItemType {
         case .referenceBundle: return .systemIndigo
         case .fastqBundle: return .systemGreen
         case .batchGroup: return .systemCyan
-        case .classificationResult: return .systemTeal
-        case .esvirituResult: return .systemMint
-        case .taxTriageResult: return .systemCyan
+        case .classificationResult: return .lungfishOrange
+        case .esvirituResult: return .lungfishOrange
+        case .taxTriageResult: return .lungfishOrange
+        case .naoMgsResult: return .lungfishOrange
         }
     }
 

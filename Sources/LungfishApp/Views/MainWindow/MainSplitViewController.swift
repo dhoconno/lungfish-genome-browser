@@ -1556,6 +1556,12 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             return
         }
 
+        // NAO-MGS surveillance result bundles
+        if item.type == .naoMgsResult, let url = item.url {
+            displayNaoMgsResultFromSidebar(at: url)
+            return
+        }
+
         // Genomics files - check cache first
         if let url = item.url {
             displayGenomicsFile(url: url)
@@ -1768,6 +1774,77 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         )
 
         viewerController.displayTaxTriageResult(result, config: nil, sampleId: sampleId)
+    }
+
+    /// Displays a NAO-MGS surveillance result from its bundle directory.
+    ///
+    /// Reads the manifest and virus hits JSON from the bundle, then
+    /// displays the NAO-MGS result viewer. Falls back to re-parsing the
+    /// original TSV if the cached JSON is missing.
+    ///
+    /// - Parameter url: The `naomgs-*` bundle directory.
+    private func displayNaoMgsResultFromSidebar(at url: URL) {
+        logger.info("displayNaoMgsResult: Opening '\(url.lastPathComponent, privacy: .public)'")
+
+        Task.detached {
+            do {
+                let fm = FileManager.default
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+
+                // Read manifest
+                let manifestURL = url.appendingPathComponent("manifest.json")
+                guard fm.fileExists(atPath: manifestURL.path) else {
+                    throw NSError(domain: "NaoMgsDisplay", code: 1,
+                                  userInfo: [NSLocalizedDescriptionKey: "manifest.json not found in NAO-MGS bundle"])
+                }
+                let manifestData = try Data(contentsOf: manifestURL)
+                let manifest = try decoder.decode(NaoMgsManifest.self, from: manifestData)
+
+                // Try loading cached virus hits JSON first
+                let hitsURL = url.appendingPathComponent("virus_hits.json")
+                let naoResult: NaoMgsResult
+                if fm.fileExists(atPath: hitsURL.path) {
+                    let hitsData = try Data(contentsOf: hitsURL)
+                    let hitsFile = try decoder.decode(NaoMgsVirusHitsFile.self, from: hitsData)
+                    naoResult = NaoMgsResult(
+                        virusHits: hitsFile.virusHits,
+                        taxonSummaries: hitsFile.taxonSummaries,
+                        totalHitReads: hitsFile.virusHits.count,
+                        sampleName: manifest.sampleName,
+                        sourceDirectory: url,
+                        virusHitsFile: URL(fileURLWithPath: manifest.sourceFilePath)
+                    )
+                } else {
+                    // Fallback: re-parse from original source
+                    let parser = NaoMgsResultParser()
+                    naoResult = try await parser.loadResults(
+                        from: URL(fileURLWithPath: manifest.sourceFilePath),
+                        sampleName: manifest.sampleName
+                    )
+                }
+
+                DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated {
+                    guard let self else { return }
+                    let resultVC = NaoMgsResultViewController()
+                    resultVC.configure(result: naoResult)
+                    self.viewerController.displayNaoMgsResult(resultVC)
+                }}
+            } catch {
+                DispatchQueue.main.async { MainActor.assumeIsolated { [weak self] in
+                    guard let self else { return }
+                    logger.error("displayNaoMgsResult: Failed - \(error.localizedDescription, privacy: .public)")
+                    let alert = NSAlert()
+                    alert.messageText = "Failed to Load NAO-MGS Result"
+                    alert.informativeText = error.localizedDescription
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "OK")
+                    if let window = self.view.window ?? NSApp.keyWindow {
+                        alert.beginSheetModal(for: window)
+                    }
+                }}
+            }
+        }
     }
 
     /// Navigates to a related metagenomics analysis from TaxTriage cross-links.

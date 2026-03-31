@@ -847,7 +847,7 @@ public struct ReadStyleSection: View {
                     if stat.qcFail > 0 {
                         Text("(\(formatCount(stat.qcFail)) fail)")
                             .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.red)
+                            .foregroundStyle(Color.lungfishOrangeFallback)
                     }
                 }
             }

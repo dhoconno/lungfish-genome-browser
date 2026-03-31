@@ -229,6 +229,11 @@ public final class SPAdesAssemblyPipeline: @unchecked Sendable {
 
         let cleanupContainer: @Sendable () async -> Void = {
             try? await runtime.stopContainer(container)
+            // Allow NIO event loop to drain file descriptors after the VM
+            // process terminates. Without this delay, removeContainer can
+            // tear down resources while NIO still holds stale fds, causing:
+            // NIOPosix/System.swift:264: Precondition failed: unacceptable errno 9
+            try? await Task.sleep(for: .milliseconds(500))
             try? await runtime.removeContainer(container)
         }
 

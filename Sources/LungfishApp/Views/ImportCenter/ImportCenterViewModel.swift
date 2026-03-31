@@ -283,19 +283,34 @@ final class ImportCenterViewModel {
             return
         }
 
+        // Close Import Center so it doesn't obscure the main window
+        ImportCenterWindowController.close()
+
         switch action {
         case .bam:
-            appDelegate.importBAMToBundle(nil)
+            for url in urls {
+                appDelegate.importBAMFromURL(url)
+            }
         case .vcf:
-            appDelegate.importVCFToBundle(nil)
+            for url in urls {
+                appDelegate.importVCFFromURL(url)
+            }
         case .fasta:
-            appDelegate.importFiles(nil)
+            for url in urls {
+                appDelegate.importFASTAFromURL(url)
+            }
         case .kraken2:
-            appDelegate.importFiles(nil)
+            for url in urls {
+                appDelegate.importKraken2ResultFromURL(url)
+            }
         case .esViritu:
-            appDelegate.importFiles(nil)
+            for url in urls {
+                appDelegate.importEsVirituResultFromURL(url)
+            }
         case .taxTriage:
-            appDelegate.importFiles(nil)
+            for url in urls {
+                appDelegate.importTaxTriageResultFromURL(url)
+            }
         case .naoMgs:
             break // Handled by wizard sheet path
         }

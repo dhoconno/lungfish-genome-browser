@@ -1510,6 +1510,7 @@ extension SidebarItemType: CustomStringConvertible {
         case .classificationResult: return "Classification Result"
         case .esvirituResult: return "Viral Detection Result"
         case .taxTriageResult: return "Comprehensive Triage Result"
+        case .naoMgsResult: return "NAO-MGS Surveillance Result"
         }
     }
 }

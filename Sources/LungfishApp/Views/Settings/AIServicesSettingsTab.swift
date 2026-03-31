@@ -103,7 +103,7 @@ struct AIServicesSettingsTab: View {
                 Button("Clear All Keys") {
                     showClearConfirmation = true
                 }
-                .foregroundStyle(.red)
+                .foregroundStyle(Color.lungfishOrangeFallback)
                 Spacer()
                 Button("Restore Defaults") {
                     settings.resetSection(.aiServices)

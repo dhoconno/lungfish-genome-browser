@@ -323,7 +323,7 @@ private struct RuleRowView: View {
                     onRemove()
                 } label: {
                     Image(systemName: "minus.circle")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.lungfishOrangeFallback)
                 }
                 .buttonStyle(.plain)
             }
