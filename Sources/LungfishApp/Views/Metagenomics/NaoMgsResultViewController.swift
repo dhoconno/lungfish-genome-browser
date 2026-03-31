@@ -96,6 +96,9 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
 
     // MARK: - Split View State
 
+    /// The left (detail) pane container in the split view.
+    private var detailContainer: NaoMgsDetailContainer?
+
     /// Whether the initial divider position has been applied.
     private var didSetInitialSplitPosition = false
 
@@ -126,8 +129,6 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         setupActionBar()
         layoutSubviews()
         wireCallbacks()
-
-        showOverview()
     }
 
     public override func viewDidLayout() {
@@ -135,8 +136,8 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
 
         if !didSetInitialSplitPosition, splitView.bounds.width > 0 {
             didSetInitialSplitPosition = true
-            // Detail pane on left gets 55%, taxonomy table on right gets 45%
-            let position = round(splitView.bounds.width * 0.55)
+            // Detail pane on left gets 40%, taxonomy table on right gets 60% (matches EsViritu)
+            let position = round(splitView.bounds.width * 0.4)
             splitView.setPosition(position, ofDividerAt: 0)
 
             // Now that the split view has real bounds, size the detail content.
@@ -174,6 +175,14 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
 
         // Show overview in detail pane
         showOverview()
+
+        // Force the split view to re-apply its 40/60 position now that we have content.
+        // The placeholder display may have collapsed the detail pane before data was loaded.
+        if splitView.bounds.width > 0 {
+            let position = round(splitView.bounds.width * 0.4)
+            splitView.setPosition(position, ofDividerAt: 0)
+        }
+        didSetInitialSplitPosition = true
 
         logger.info("Configured NAO-MGS viewer with \(result.totalHitReads) hits, \(result.taxonSummaries.count) taxa, sample=\(result.sampleName, privacy: .public), bam=\(self.bamURL != nil)")
     }
@@ -645,22 +654,24 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
 
         // Left pane: detail (miniBAM + metrics + accessions).
         // The detail pane is a self-contained NSView that uses an internal scroll view.
-        // NSSplitView arranged subviews use frame-based layout (default).
-        let detailContainer = NaoMgsDetailContainer(scrollView: detailScrollView, contentView: detailContentView)
-        detailContainer.wantsLayer = false // macOS 26: layer-backed by default
+        let detail = NaoMgsDetailContainer(scrollView: detailScrollView, contentView: detailContentView)
+        detailContainer = detail
 
         // Right pane: taxonomy table
-        let tableContainer = NSView()
+        let tableContainer = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 600))
         setupTaxonomyTable()
         taxonomyTableScrollView.autoresizingMask = [.width, .height]
         tableContainer.addSubview(taxonomyTableScrollView)
 
-        splitView.addArrangedSubview(detailContainer)
+        splitView.addArrangedSubview(detail)
         splitView.addArrangedSubview(tableContainer)
 
-        // Detail pane holds width more firmly (table is preferred for resize)
+        // Table pane resizes first; detail pane holds width firmly.
         splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
         splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
+
+        // Force initial layout so both panes are visible.
+        splitView.adjustSubviews()
 
         view.addSubview(splitView)
     }
@@ -980,7 +991,12 @@ private final class FlippedNaoMgsContentView: NSView {
 /// with the scroll view using autoresizing masks.
 private final class NaoMgsDetailContainer: NSView {
 
+    let scrollView: NSScrollView
+    let contentView: FlippedNaoMgsContentView
+
     init(scrollView: NSScrollView, contentView: FlippedNaoMgsContentView) {
+        self.scrollView = scrollView
+        self.contentView = contentView
         super.init(frame: .zero)
 
         scrollView.hasVerticalScroller = true
@@ -997,6 +1013,11 @@ private final class NaoMgsDetailContainer: NSView {
     }
 
     override var isFlipped: Bool { true }
+
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        super.resizeSubviews(withOldSize: oldSize)
+        scrollView.frame = bounds
+    }
 }
 
 // MARK: - NSTableViewDataSource
