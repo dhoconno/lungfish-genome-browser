@@ -14,7 +14,7 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "EsVirituResu
 
 // MARK: - EsVirituResultViewController
 
-/// A full-screen viral detection browser combining a sunburst chart and detection table.
+/// A full-screen viral detection browser combining a detail pane and detection table.
 ///
 /// `EsVirituResultViewController` is the primary UI for displaying EsViritu viral
 /// metagenomics results. It replaces the normal sequence viewer content area
@@ -26,19 +26,18 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "EsVirituResu
 /// +------------------------------------------+
 /// | Summary Bar (48pt)                       |
 /// +------------------------------------------+
-/// |  Sunburst Chart  |  Detection Table      |
-/// |                  |                       |
+/// |  Detail Pane  |  Detection Table      |
+/// |  (coverage,      |                       |
+/// |   BAM viewer)    |                       |
 /// |    (resizable NSSplitView)               |
-/// +------------------------------------------+
 /// | Action Bar (36pt)                        |
 /// +------------------------------------------+
 /// ```
+/// ## Detail Pane
 ///
-/// ## Sunburst
-///
-/// Reuses ``TaxonomySunburstView`` by constructing a ``TaxonTree`` from the
-/// EsViritu taxonomic profile. The hierarchy is:
-/// Family -> Genus -> Species, with arc size proportional to RPKMF or read count.
+/// The left pane shows context-sensitive content:
+/// - When a virus is selected: genome coverage plot + alignment summary + mini BAM viewer
+/// - When nothing is selected: overview of all detected viruses
 ///
 /// ## Detection Table
 ///
@@ -192,7 +191,7 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
     /// Configures the view with an EsViritu result and optional config.
     ///
-    /// Populates the summary bar, sunburst chart, detection table, and action bar.
+    /// Populates the summary bar, detail pane, detection table, and action bar.
     ///
     /// - Parameters:
     ///   - result: The parsed EsViritu result.
@@ -643,7 +642,7 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
     // MARK: - NSSplitViewDelegate
 
-    /// Enforces minimum widths for sunburst (250px) and table (300px).
+    /// Enforces minimum widths for detail pane (250px) and table (300px).
     public func splitView(
         _ splitView: NSSplitView,
         constrainMinCoordinate proposedMinimumPosition: CGFloat,
@@ -862,96 +861,6 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         }
 
         popover.show(relativeTo: anchorRect, of: anchorView, preferredEdge: .maxY)
-    }
-
-    // MARK: - TaxonTree Construction
-
-    /// Builds a ``TaxonTree`` from the EsViritu taxonomic profile for sunburst display.
-    ///
-    /// Creates a hierarchy: Root -> Family -> Genus -> Species.
-    /// Arc sizes are proportional to read count.
-    private func buildTaxonTree(from result: LungfishIO.EsVirituResult) -> TaxonTree {
-        let root = TaxonNode(
-            taxId: 1,
-            name: "Viruses",
-            rank: .root,
-            depth: 0,
-            readsDirect: 0,
-            readsClade: result.totalFilteredReads,
-            fractionClade: 1.0,
-            fractionDirect: 0.0,
-            parentTaxId: nil
-        )
-
-        // Group detections by family -> genus -> species
-        var familyMap: [String: (reads: Int, genera: [String: (reads: Int, species: [String: Int])])] = [:]
-
-        for detection in result.detections {
-            let family = detection.family ?? "Unknown"
-            let genus = detection.genus ?? "Unknown"
-            let rawSpecies = detection.species ?? detection.name
-            let species = rawSpecies.hasPrefix("s__") ? String(rawSpecies.dropFirst(3)) : rawSpecies
-
-            familyMap[family, default: (reads: 0, genera: [:])].reads += detection.readCount
-            familyMap[family, default: (reads: 0, genera: [:])].genera[genus, default: (reads: 0, species: [:])].reads += detection.readCount
-            familyMap[family, default: (reads: 0, genera: [:])].genera[genus, default: (reads: 0, species: [:])].species[species, default: 0] += detection.readCount
-        }
-
-        let totalReads = max(result.totalFilteredReads, 1)
-        var taxIdCounter = 100
-
-        for (familyName, familyData) in familyMap.sorted(by: { $0.value.reads > $1.value.reads }) {
-            taxIdCounter += 1
-            let familyNode = TaxonNode(
-                taxId: taxIdCounter,
-                name: familyName,
-                rank: .family,
-                depth: 1,
-                readsDirect: 0,
-                readsClade: familyData.reads,
-                fractionClade: Double(familyData.reads) / Double(totalReads),
-                fractionDirect: 0.0,
-                parentTaxId: 1
-            )
-
-            root.addChild(familyNode)
-
-            for (genusName, genusData) in familyData.genera.sorted(by: { $0.value.reads > $1.value.reads }) {
-                taxIdCounter += 1
-                let genusNode = TaxonNode(
-                    taxId: taxIdCounter,
-                    name: genusName,
-                    rank: .genus,
-                    depth: 2,
-                    readsDirect: 0,
-                    readsClade: genusData.reads,
-                    fractionClade: Double(genusData.reads) / Double(totalReads),
-                    fractionDirect: 0.0,
-                    parentTaxId: familyNode.taxId
-                )
-
-                familyNode.addChild(genusNode)
-
-                for (speciesName, speciesReads) in genusData.species.sorted(by: { $0.value > $1.value }) {
-                    taxIdCounter += 1
-                    let speciesNode = TaxonNode(
-                        taxId: taxIdCounter,
-                        name: speciesName,
-                        rank: .species,
-                        depth: 3,
-                        readsDirect: speciesReads,
-                        readsClade: speciesReads,
-                        fractionClade: Double(speciesReads) / Double(totalReads),
-                        fractionDirect: Double(speciesReads) / Double(totalReads),
-                        parentTaxId: genusNode.taxId
-                    )
-
-                    genusNode.addChild(speciesNode)
-                }
-            }
-        }
-
-        return TaxonTree(root: root, unclassifiedNode: nil, totalReads: totalReads)
     }
 
     // MARK: - Testing Accessors

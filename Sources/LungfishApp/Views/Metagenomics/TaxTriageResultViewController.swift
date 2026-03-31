@@ -32,26 +32,28 @@ private final class FlippedPaneContainerView: NSView {
 /// +------------------------------------------+
 /// | Summary Bar (48pt)                       |
 /// +------------------------------------------+
-/// |  Organism Table   |  Report/Krona Tabs   |
-/// |  (sortable,       |  (PDFView or         |
-/// |   flat list)      |   WKWebView)         |
-/// |    (resizable NSSplitView)               |
-/// +------------------------------------------+
-/// | Action Bar (36pt)                        |
-/// +------------------------------------------+
+/// |  BAM Alignments  |  Organism Table       |
+/// |  (mini BAM       |  (sortable flat list)  |
+/// |   viewer)        |                        |
+/// |    (resizable NSSplitView)                |
+/// +-------------------------------------------+
+/// | Action Bar (36pt)                         |
+/// +-------------------------------------------+
 /// ```
 ///
-/// ## Left Pane: Organism Table
+/// ## Left Pane: BAM Alignment Viewer
+///
+/// Shows the ``MiniBAMViewController`` when an organism is selected, displaying
+/// read alignments for the organism's primary reference accession. When no BAM
+/// data is available, the pane is empty.
+///
+/// ## Right Pane: Organism Table
 ///
 /// A flat-list `NSTableView` (not outline) showing organism identifications with
-/// columns for Organism name, TASS Score, Reads, Coverage, and Confidence
-/// (with a color bar indicator). All columns are sortable and user-resizable.
-///
-/// ## Right Pane: Tab View
-///
-/// An `NSTabView` with two tabs:
-/// - **Report**: `PDFView` (from PDFKit) showing the PDF report if available
-/// - **Krona**: `WKWebView` embedding the Krona interactive HTML if available
+/// columns for Organism name, TASS Score, Reads, Unique Reads, Coverage, and
+/// Confidence (with a color bar indicator). All columns are sortable and user-resizable.
+/// In multi-sample mode, the "All Samples" view replaces this with a batch
+/// comparison table (``TaxTriageBatchOverviewView``).
 ///
 /// ## Actions
 ///
@@ -78,8 +80,6 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     /// Parsed organisms from the report files.
     private(set) var organisms: [TaxTriageOrganism] = []
 
-    /// Taxonomy tree parsed from the Kraken2 kreport (for sunburst).
-    private var taxonomyTree: TaxonTree?
 
     /// Path to the active BAM for the currently selected sample.
     private var bamURL: URL?
@@ -138,9 +138,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     private let summaryBar = TaxTriageSummaryBar()
     private let sampleFilterControl = NSSegmentedControl()
     let splitView = NSSplitView()
-    private let leftTabView = NSSegmentedControl()
     private let leftPaneContainer = FlippedPaneContainerView()
-    private let sunburstView = TaxonomySunburstView()
     private var miniBAMController: MiniBAMViewController?
     private let organismTableView = TaxTriageOrganismTableView()
     private let batchOverviewView = TaxTriageBatchOverviewView()
@@ -272,11 +270,11 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
 
         let bamView = bamVC.view
         bamView.translatesAutoresizingMaskIntoConstraints = false
-        bamView.isHidden = true
+        bamView.isHidden = false
         leftPaneContainer.addSubview(bamView)
 
         NSLayoutConstraint.activate([
-            bamView.topAnchor.constraint(equalTo: leftTabView.bottomAnchor, constant: 4),
+            bamView.topAnchor.constraint(equalTo: leftPaneContainer.topAnchor),
             bamView.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor),
             bamView.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor),
             bamView.bottomAnchor.constraint(equalTo: leftPaneContainer.bottomAnchor),
@@ -308,7 +306,6 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     public func configure(result: TaxTriageResult, config: TaxTriageConfig? = nil) {
         taxTriageResult = result
         taxTriageConfig = config ?? result.config
-        taxonomyTree = nil
         bamURL = nil
         bamIndexURL = nil
         organismToAccessions = [:]
@@ -378,21 +375,6 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         }
         organisms = allOrganisms
 
-        // 2. Parse taxonomy tree from kreport for sunburst
-        let kreportFiles = result.allOutputFiles.filter {
-            $0.lastPathComponent.hasSuffix(".kraken2.report.txt")
-                && !$0.path.contains("/work/")
-        }
-        logger.info("Found \(kreportFiles.count) kreport file(s)")
-        if let kreportURL = kreportFiles.first {
-            do {
-                let tree = try KreportParser.parse(url: kreportURL)
-                taxonomyTree = tree
-                logger.info("Parsed kreport with \(tree.totalReads) total reads, \(tree.speciesCount) species")
-            } catch {
-                logger.warning("Failed to parse kreport: \(error.localizedDescription)")
-            }
-        }
 
         // Build table rows from organisms (enriched with merged metrics)
         let mergedRows = buildTableRows(organisms: allOrganisms, metrics: mergedMetrics)
@@ -418,9 +400,6 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             organismTableView.rows = mergedRows
         }
 
-        // Configure tabs
-        // Configure sunburst from kreport taxonomy tree
-        configureSunburst()
 
         // Find BAM files from TaxTriage output and build per-sample lookup.
         // Multi-sample runs produce one BAM per sample in minimap2/.
@@ -480,7 +459,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             parseBamReferenceLengths(bamURL: bam)
         }
 
-        refreshLeftPaneMode(preferTaxonomy: true)
+        miniBAMController?.view.isHidden = (bamURL == nil || bamIndexURL == nil)
 
         // Update action bar
         actionBar.configure(
@@ -823,7 +802,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
 
     // MARK: - Setup: Split View
 
-    /// Configures the NSSplitView with organism table (left) and tab view (right).
+    /// Configures the NSSplitView with BAM alignment viewer (left) and organism table (right).
     ///
     /// Uses raw NSSplitView (not NSSplitViewController) per macOS 26 rules.
     private func setupSplitView() {
@@ -832,33 +811,9 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         splitView.dividerStyle = .thin
         splitView.delegate = self
 
-        // Left pane: tabbed container with Alignments + Taxonomy
+        // Left pane: mini BAM alignment viewer (populated on organism selection)
+        // The BAM viewer is added in setupMiniBAMViewer() with constraints.
 
-        // Segmented control for switching between BAM and Sunburst
-        leftTabView.segmentCount = 2
-        leftTabView.setLabel("Alignments", forSegment: 0)
-        leftTabView.setLabel("Taxonomy", forSegment: 1)
-        leftTabView.segmentStyle = .texturedRounded
-        leftTabView.selectedSegment = 1  // Taxonomy is default until BAM-backed selection
-        leftTabView.target = self
-        leftTabView.action = #selector(leftTabChanged(_:))
-        leftTabView.translatesAutoresizingMaskIntoConstraints = false
-        leftPaneContainer.addSubview(leftTabView)
-
-        // Sunburst (visible by default)
-        sunburstView.translatesAutoresizingMaskIntoConstraints = false
-        sunburstView.isHidden = false
-        leftPaneContainer.addSubview(sunburstView)
-
-        NSLayoutConstraint.activate([
-            leftTabView.topAnchor.constraint(equalTo: leftPaneContainer.topAnchor, constant: 4),
-            leftTabView.centerXAnchor.constraint(equalTo: leftPaneContainer.centerXAnchor),
-
-            sunburstView.topAnchor.constraint(equalTo: leftTabView.bottomAnchor, constant: 4),
-            sunburstView.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor),
-            sunburstView.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor),
-            sunburstView.bottomAnchor.constraint(equalTo: leftPaneContainer.bottomAnchor),
-        ])
 
         // Right pane: organism table + batch overview (mutually exclusive)
         let tableContainer = NSView()
@@ -886,38 +841,6 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         view.addSubview(splitView)
     }
 
-    @objc private func leftTabChanged(_ sender: NSSegmentedControl) {
-        let showBAM = sender.selectedSegment == 0
-        miniBAMController?.view.isHidden = !showBAM
-        sunburstView.isHidden = showBAM
-    }
-
-    /// Updates segment availability and default selection based on loaded data.
-    private func refreshLeftPaneMode(preferTaxonomy: Bool) {
-        let hasBAM = (bamURL != nil && bamIndexURL != nil)
-        let hasTaxonomy = taxonomyTree != nil
-
-        leftTabView.setEnabled(hasBAM, forSegment: 0)
-        leftTabView.setEnabled(hasTaxonomy, forSegment: 1)
-
-        let targetSegment: Int
-        if preferTaxonomy, hasTaxonomy {
-            targetSegment = 1
-        } else if hasBAM {
-            targetSegment = 0
-        } else if hasTaxonomy {
-            targetSegment = 1
-        } else {
-            targetSegment = 0
-        }
-
-        leftTabView.selectedSegment = targetSegment
-        leftTabChanged(leftTabView)
-
-        if !hasBAM {
-            miniBAMController?.clear()
-        }
-    }
 
     /// Sets up the NSTabView with Report and Krona tabs.
     // MARK: - Top Report Parser
@@ -1459,15 +1382,6 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         }
     }
 
-    /// Configures the sunburst with the taxonomy tree from the kreport.
-    private func configureSunburst() {
-        if let tree = taxonomyTree {
-            sunburstView.tree = tree
-            sunburstView.centerNode = nil
-            sunburstView.selectedNode = nil
-        }
-    }
-
     // MARK: - Setup: BLAST Drawer
 
     private func setupBlastDrawer() {
@@ -1644,9 +1558,8 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
                             indexURL: self.bamIndexURL,
                             referenceSequence: referenceSequence
                         )
-                        // Switch to Alignments tab automatically
-                        self.leftTabView.selectedSegment = 0
-                        self.leftTabChanged(self.leftTabView)
+                        // Show the BAM viewer in the left pane
+                        self.miniBAMController?.view.isHidden = false
                     } else {
                         self.miniBAMController?.clear()
                         logger.debug("No reference length for accession: \(primaryAccession, privacy: .public)")
@@ -1782,7 +1695,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
 
     // MARK: - NSSplitViewDelegate
 
-    /// Enforces minimum widths for organism table (300px) and tab view (300px).
+    /// Enforces minimum widths for BAM viewer (300px) and organism table (300px).
     /// When batch overview is active (All Samples), allows the left pane to collapse
     /// fully so the batch table gets the full viewport width.
     public func splitView(
@@ -2054,9 +1967,6 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
 
     /// Returns the split view for testing.
     var testSplitView: NSSplitView { splitView }
-
-    /// Returns the sunburst view for testing.
-    var testSunburstView: TaxonomySunburstView { sunburstView }
 
     /// Returns the current result for testing.
     var testResult: TaxTriageResult? { taxTriageResult }

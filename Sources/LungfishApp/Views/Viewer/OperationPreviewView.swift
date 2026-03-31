@@ -102,9 +102,12 @@ final class OperationPreviewView: NSView {
         case orient
         case sequencePresenceFilter
         case demultiplex
+        case assembleReads
+        case mapReads
         case classifyReads
         case detectViruses
         case comprehensiveTriage
+        case naoMgsImport
         case humanReadScrub
         case qualityReport
         case none
@@ -319,11 +322,17 @@ final class OperationPreviewView: NSView {
             drawContaminantFilterPreview(ctx: ctx, rect: rect)
         case .qualityReport:
             drawQualityReportPreview(ctx: ctx, rect: rect)
+        case .assembleReads:
+            drawIdleState(ctx: ctx, rect: rect)
+        case .mapReads:
+            drawIdleState(ctx: ctx, rect: rect)
         case .classifyReads:
             drawIdleState(ctx: ctx, rect: rect)
         case .detectViruses:
             drawIdleState(ctx: ctx, rect: rect)
         case .comprehensiveTriage:
+            drawIdleState(ctx: ctx, rect: rect)
+        case .naoMgsImport:
             drawIdleState(ctx: ctx, rect: rect)
         case .humanReadScrub:
             drawContaminantFilterPreview(ctx: ctx, rect: rect)

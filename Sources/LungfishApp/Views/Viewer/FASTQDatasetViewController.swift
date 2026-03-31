@@ -114,9 +114,12 @@ public final class FASTQDatasetViewController: NSViewController {
         case errorCorrection
         case orient
         case demultiplex
+        case assembleReads
+        case mapReads
         case classifyReads
         case detectViruses
         case comprehensiveTriage
+        case naoMgsImport
         case humanReadScrub
 
         var title: String {
@@ -139,9 +142,12 @@ public final class FASTQDatasetViewController: NSViewController {
             case .errorCorrection: return "Correct Sequencing Errors"
             case .orient: return "Orient to Reference Strand"
             case .demultiplex: return "Demultiplex by Barcodes\u{2026}"
+            case .assembleReads: return "Assemble Reads (SPAdes)"
+            case .mapReads: return "Map Reads (minimap2)"
             case .classifyReads: return "Classify & Profile (Kraken2)"
             case .detectViruses: return "Detect Viruses (EsViritu)"
             case .comprehensiveTriage: return "Clinical Triage (TaxTriage)"
+            case .naoMgsImport: return "NAO-MGS Surveillance"
             case .humanReadScrub: return "Remove Human Reads"
             }
         }
@@ -166,9 +172,12 @@ public final class FASTQDatasetViewController: NSViewController {
             case .errorCorrection: return "wand.and.stars"
             case .orient: return "arrow.uturn.right"
             case .demultiplex: return "barcode"
+            case .assembleReads: return "puzzlepiece.extension"
+            case .mapReads: return "arrow.left.and.right.text.vertical"
             case .classifyReads: return "k.circle"
             case .detectViruses: return "e.circle"
             case .comprehensiveTriage: return "t.circle"
+            case .naoMgsImport: return "globe.americas"
             case .humanReadScrub: return "person.slash"
             }
         }
@@ -181,7 +190,9 @@ public final class FASTQDatasetViewController: NSViewController {
             case .humanReadScrub, .contaminantFilter, .deduplicate: return "DECONTAMINATION"
             case .pairedEndMerge, .pairedEndRepair, .orient, .errorCorrection: return "READ PROCESSING"
             case .subsampleProportion, .subsampleCount, .searchText, .searchMotif, .sequencePresenceFilter: return "SAMPLING & SEARCH"
-            case .classifyReads, .detectViruses, .comprehensiveTriage: return "CLASSIFICATION"
+            case .assembleReads: return "ASSEMBLY"
+            case .mapReads: return "ALIGNMENT"
+            case .classifyReads, .detectViruses, .comprehensiveTriage, .naoMgsImport: return "CLASSIFICATION"
             }
         }
 
@@ -224,12 +235,18 @@ public final class FASTQDatasetViewController: NSViewController {
                 return "Ensure all reads face 5\u{2032}\u{2192}3\u{2032} relative to a reference. Reverse-complements reads on the minus strand. Essential for amplicon data with known primer orientation."
             case .demultiplex:
                 return "Split a pooled FASTQ into individual samples by barcode. Supports Illumina, ONT, and PacBio kits. Not needed if your core already demultiplexed."
+            case .assembleReads:
+                return "Assemble reads de novo into contigs and scaffolds using SPAdes. Supports bacterial isolate, metagenome, and viral assembly modes."
+            case .mapReads:
+                return "Map reads to a reference genome using minimap2. Produces a sorted, indexed BAM file. Supports Illumina, ONT, and PacBio platforms."
             case .classifyReads:
                 return "Assign each read to a taxonomic group using Kraken2. Produces abundance profiles at species level and optional Bracken-refined estimates."
             case .detectViruses:
                 return "Run EsViritu viral metagenomics detection with de novo assembly and genome coverage analysis."
             case .comprehensiveTriage:
                 return "Run TaxTriage (Nextflow) for end-to-end clinical metagenomics with TASS confidence scoring and organism reporting."
+            case .naoMgsImport:
+                return "Import results from the NAO metagenomic surveillance pipeline (securebio/nao-mgs-workflow). Parses virus hit tables and displays alignment data."
             case .humanReadScrub:
                 return "Remove human-derived reads using NCBI's sra-human-scrubber. Required before SRA submission and recommended for clinical/surveillance samples."
             }
@@ -255,9 +272,12 @@ public final class FASTQDatasetViewController: NSViewController {
             case .errorCorrection: return .errorCorrection
             case .orient: return .orient
             case .demultiplex: return .demultiplex
+            case .assembleReads: return .assembleReads
+            case .mapReads: return .mapReads
             case .classifyReads: return .classifyReads
             case .detectViruses: return .detectViruses
             case .comprehensiveTriage: return .comprehensiveTriage
+            case .naoMgsImport: return .naoMgsImport
             case .humanReadScrub: return .humanReadScrub
             }
         }
@@ -274,7 +294,9 @@ public final class FASTQDatasetViewController: NSViewController {
         ("DECONTAMINATION", [.humanReadScrub, .contaminantFilter, .deduplicate]),
         ("READ PROCESSING", [.pairedEndMerge, .pairedEndRepair, .orient, .errorCorrection]),
         ("SAMPLING & SEARCH", [.subsampleProportion, .subsampleCount, .searchText, .searchMotif, .sequencePresenceFilter]),
-        ("CLASSIFICATION", [.classifyReads, .detectViruses, .comprehensiveTriage]),
+        ("ALIGNMENT", [.mapReads]),
+        ("ASSEMBLY", [.assembleReads]),
+        ("CLASSIFICATION", [.classifyReads, .detectViruses, .comprehensiveTriage, .naoMgsImport]),
     ]
 
 
@@ -1822,6 +1844,18 @@ public final class FASTQDatasetViewController: NSViewController {
         }
         if selectedOperation == .comprehensiveTriage {
             NSApp.sendAction(#selector(AppDelegate.launchTaxTriage(_:)), to: nil, from: nil)
+            return
+        }
+        if selectedOperation == .assembleReads {
+            NSApp.sendAction(#selector(AppDelegate.runSPAdes(_:)), to: nil, from: nil)
+            return
+        }
+        if selectedOperation == .mapReads {
+            NSApp.sendAction(#selector(AppDelegate.launchMinimap2Mapping(_:)), to: nil, from: nil)
+            return
+        }
+        if selectedOperation == .naoMgsImport {
+            NSApp.sendAction(#selector(AppDelegate.launchNaoMgsImport(_:)), to: nil, from: nil)
             return
         }
         // Demux requires a configuration from the drawer

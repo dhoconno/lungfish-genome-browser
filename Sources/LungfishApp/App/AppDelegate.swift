@@ -3520,6 +3520,211 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         )
     }
 
+    @objc func launchMinimap2Mapping(_ sender: Any?) {
+        guard let window = mainWindowController?.window else {
+            debugLog("launchMinimap2Mapping: No main window available")
+            return
+        }
+
+        let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController
+        let selectedItems = sidebarController?.selectedItems() ?? []
+        let inputFiles = selectedItems.compactMap { item -> URL? in
+            guard let url = item.url else { return nil }
+            return FASTQBundle.resolvePrimaryFASTQURL(for: url)
+        }
+
+        if inputFiles.isEmpty {
+            let alert = NSAlert()
+            alert.alertStyle = .informational
+            alert.messageText = "No FASTQ Files Selected"
+            alert.informativeText = "Select one or more FASTQ files in the sidebar, then choose Map Reads."
+            alert.addButton(withTitle: "OK")
+            alert.beginSheetModal(for: window)
+            return
+        }
+
+        let projectURL = sidebarController?.currentProjectURL
+
+        let sheet = MapReadsWizardSheet(
+            inputFiles: inputFiles,
+            projectURL: projectURL,
+            onRun: { [weak self] config in
+                window.endSheet(sheetWindow)
+                self?.runMinimap2Mapping(config: config)
+            },
+            onCancel: {
+                window.endSheet(sheetWindow)
+            }
+        )
+
+        let hostingController = NSHostingController(rootView: sheet)
+        let sheetWindow = NSPanel(contentViewController: hostingController)
+        sheetWindow.styleMask = [.titled, .closable]
+        sheetWindow.isReleasedWhenClosed = false
+        sheetWindow.setContentSize(NSSize(width: 520, height: 520))
+        window.beginSheet(sheetWindow)
+    }
+
+    @objc func launchNaoMgsImport(_ sender: Any?) {
+        guard let window = mainWindowController?.window else {
+            debugLog("launchNaoMgsImport: No main window available")
+            return
+        }
+
+        let sheet = NaoMgsImportSheet(
+            onImport: { [weak self] resultsDir, sampleName in
+                window.endSheet(sheetWindow)
+                self?.importNaoMgsResults(directory: resultsDir, sampleName: sampleName)
+            },
+            onCancel: {
+                window.endSheet(sheetWindow)
+            }
+        )
+
+        let hostingController = NSHostingController(rootView: sheet)
+        let sheetWindow = NSPanel(contentViewController: hostingController)
+        sheetWindow.styleMask = [.titled, .closable]
+        sheetWindow.isReleasedWhenClosed = false
+        sheetWindow.setContentSize(NSSize(width: 520, height: 400))
+        window.beginSheet(sheetWindow)
+    }
+
+    @objc func launchOrientReads(_ sender: Any?) {
+        guard let window = mainWindowController?.window else {
+            debugLog("launchOrientReads: No main window available")
+            return
+        }
+
+        let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController
+        let selectedItems = sidebarController?.selectedItems() ?? []
+        let inputFiles = selectedItems.compactMap { item -> URL? in
+            guard let url = item.url else { return nil }
+            return FASTQBundle.resolvePrimaryFASTQURL(for: url)
+        }
+
+        if inputFiles.isEmpty {
+            let alert = NSAlert()
+            alert.alertStyle = .informational
+            alert.messageText = "No FASTQ Files Selected"
+            alert.informativeText = "Select a FASTQ file in the sidebar, then choose Orient Reads."
+            alert.addButton(withTitle: "OK")
+            alert.beginSheetModal(for: window)
+            return
+        }
+
+        let projectURL = sidebarController?.currentProjectURL
+
+        let sheet = OrientWizardSheet(
+            inputFiles: inputFiles,
+            projectURL: projectURL,
+            onRun: { [weak self] config in
+                window.endSheet(sheetWindow)
+                self?.runOrientReads(config: config)
+            },
+            onCancel: {
+                window.endSheet(sheetWindow)
+            }
+        )
+
+        let hostingController = NSHostingController(rootView: sheet)
+        let sheetWindow = NSPanel(contentViewController: hostingController)
+        sheetWindow.styleMask = [.titled, .closable]
+        sheetWindow.isReleasedWhenClosed = false
+        sheetWindow.setContentSize(NSSize(width: 520, height: 480))
+        window.beginSheet(sheetWindow)
+    }
+
+    private func runMinimap2Mapping(config: Minimap2Config) {
+        let opID = OperationCenter.shared.start(
+            title: "Map Reads (minimap2)",
+            detail: "Mapping \(config.inputFiles.count) file(s) to \(config.referenceURL.lastPathComponent)"
+        )
+
+        Task.detached {
+            do {
+                let pipeline = Minimap2Pipeline()
+                let result = try await pipeline.run(config: config) { fraction, message in
+                    DispatchQueue.main.async { MainActor.assumeIsolated {
+                        OperationCenter.shared.update(id: opID, progress: fraction, detail: message)
+                        OperationCenter.shared.log(id: opID, message: message)
+                    }}
+                }
+                DispatchQueue.main.async { MainActor.assumeIsolated {
+                    OperationCenter.shared.complete(
+                        id: opID,
+                        detail: "Mapping complete: \(result.mappedReads)/\(result.totalReads) reads mapped",
+                        bundleURLs: [result.bamURL]
+                    )
+                }}
+            } catch {
+                DispatchQueue.main.async { MainActor.assumeIsolated {
+                    OperationCenter.shared.fail(id: opID, detail: "\(error)")
+                }}
+            }
+        }
+    }
+
+    private func importNaoMgsResults(directory: URL, sampleName: String) {
+        let opID = OperationCenter.shared.start(
+            title: "NAO-MGS Import",
+            detail: "Importing surveillance results for \(sampleName)"
+        )
+
+        Task.detached {
+            do {
+                let parser = NaoMgsResultParser()
+                let naoResult = try parser.loadResults(from: directory, sampleName: sampleName)
+
+                // Convert to SAM for viewport display
+                let outputDir = directory.appendingPathComponent("lungfish-import")
+                try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+                let samURL = outputDir.appendingPathComponent("\(sampleName).sam")
+                try parser.convertToSAM(hits: naoResult.virusHits, outputURL: samURL)
+
+                DispatchQueue.main.async { MainActor.assumeIsolated {
+                    OperationCenter.shared.complete(
+                        id: opID,
+                        detail: "Imported \(naoResult.totalHitReads) virus hits from \(sampleName)",
+                        bundleURLs: [samURL]
+                    )
+                }}
+            } catch {
+                DispatchQueue.main.async { MainActor.assumeIsolated {
+                    OperationCenter.shared.fail(id: opID, detail: "\(error)")
+                }}
+            }
+        }
+    }
+
+    private func runOrientReads(config: OrientConfig) {
+        let opID = OperationCenter.shared.start(
+            title: "Orient Reads",
+            detail: "Orienting reads against \(config.referenceURL.lastPathComponent)"
+        )
+
+        Task.detached {
+            do {
+                let pipeline = OrientPipeline()
+                let result = try await pipeline.run(config: config) { fraction, message in
+                    DispatchQueue.main.async { MainActor.assumeIsolated {
+                        OperationCenter.shared.update(id: opID, progress: fraction, detail: message)
+                        OperationCenter.shared.log(id: opID, message: message)
+                    }}
+                }
+                DispatchQueue.main.async { MainActor.assumeIsolated {
+                    OperationCenter.shared.complete(
+                        id: opID,
+                        detail: "Orient complete: \(result.forwardCount) fwd, \(result.reverseComplementedCount) RC, \(result.unmatchedCount) unmatched"
+                    )
+                }}
+            } catch {
+                DispatchQueue.main.async { MainActor.assumeIsolated {
+                    OperationCenter.shared.fail(id: opID, detail: "\(error)")
+                }}
+            }
+        }
+    }
+
     @objc func designPrimers(_ sender: Any?) {
         showNotImplementedAlert("Primer Design")
     }
