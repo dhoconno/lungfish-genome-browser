@@ -32,7 +32,12 @@ extension ViewerViewController {
 
         addChild(controller)
 
-        // Hide annotation drawer so it doesn't overlap.
+        // Hide normal genomic viewer components (same pattern as Taxonomy/EsViritu/TaxTriage).
+        enhancedRulerView.isHidden = true
+        viewerView.isHidden = true
+        headerView.isHidden = true
+        statusBar.isHidden = true
+        geneTabBarView.isHidden = true
         annotationDrawerView?.isHidden = true
         fastqMetadataDrawerView?.isHidden = true
 
@@ -48,11 +53,26 @@ extension ViewerViewController {
         ])
     }
 
-    /// Hides the NAO-MGS result viewer if one is displayed.
+    /// Hides the NAO-MGS result viewer if one is displayed and restores normal viewer components.
     public func hideNaoMgsView() {
         for child in children where child is NaoMgsResultViewController {
             child.view.removeFromSuperview()
             child.removeFromParent()
         }
+
+        // Restore normal viewer components (only if no other metagenomics viewer is active).
+        // hideTaxonomyView / hideEsVirituView / hideTaxTriageView each restore these too,
+        // so this guard prevents double-restore when switching between metagenomics results.
+        guard taxonomyViewController == nil,
+              esVirituViewController == nil,
+              taxTriageViewController == nil else { return }
+
+        enhancedRulerView.isHidden = false
+        viewerView.isHidden = false
+        headerView.isHidden = false
+        statusBar.isHidden = false
+        geneTabBarView.isHidden = (geneTabBarView.selectedGeneRegion == nil)
+        annotationDrawerView?.isHidden = false
+        fastqMetadataDrawerView?.isHidden = false
     }
 }
