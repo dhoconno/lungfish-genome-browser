@@ -3669,13 +3669,26 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             detail: "Importing surveillance results for \(sampleName)"
         )
 
+        // Determine output directory: use the current project's derivatives folder
+        let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController
+        let projectURL = sidebarController?.currentProjectURL
+        let runToken = String(UUID().uuidString.prefix(8))
+
         Task.detached {
             do {
                 let parser = NaoMgsResultParser()
                 let naoResult = try await parser.loadResults(from: directory, sampleName: sampleName)
 
-                // Convert to SAM for viewport display
-                let outputDir = directory.appendingPathComponent("lungfish-import")
+                // Output goes to project derivatives, or next to the source file if no project
+                let outputDir: URL
+                if let projectURL {
+                    outputDir = projectURL.appendingPathComponent("derivatives")
+                        .appendingPathComponent("naomgs-\(runToken)")
+                } else {
+                    // Fallback: next to the input file's parent directory
+                    let parentDir = directory.deletingLastPathComponent()
+                    outputDir = parentDir.appendingPathComponent("naomgs-\(runToken)")
+                }
                 try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
                 let samURL = outputDir.appendingPathComponent("\(sampleName).sam")
                 try parser.convertToSAM(hits: naoResult.virusHits, outputURL: samURL)

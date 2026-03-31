@@ -61,6 +61,11 @@ public final class ImportCenterWindowController: NSWindowController, NSToolbarDe
         showWindow(tab: tab)
     }
 
+    /// Closes the Import Center window if it is visible.
+    static func close() {
+        shared?.window?.close()
+    }
+
     /// Internal implementation shared by both `show()` overloads.
     private static func showWindow(tab: ImportCenterViewModel.Tab?) {
         if shared == nil {

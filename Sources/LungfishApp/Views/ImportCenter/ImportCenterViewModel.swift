@@ -139,7 +139,7 @@ final class ImportCenterViewModel {
             id: "nao-mgs",
             title: "NAO-MGS Results",
             description: "Import NAO metagenomic surveillance results. Parses virus_hits_final.tsv.gz or _virus_hits.tsv.gz files for taxonomic visualization.",
-            sfSymbol: "globe.americas",
+            sfSymbol: "n.circle",
             fileHint: "virus_hits_final.tsv.gz or _virus_hits.tsv.gz",
             tab: .classificationResults,
             importKind: .wizardSheet(action: .naoMgs)
@@ -148,7 +148,7 @@ final class ImportCenterViewModel {
             id: "kraken2",
             title: "Kraken2 Results",
             description: "Import Kraken2 classification reports and Bracken abundance profiles for taxonomic composition analysis.",
-            sfSymbol: "chart.bar.doc.horizontal",
+            sfSymbol: "k.circle",
             fileHint: ".kreport, .kreport2, .bracken",
             tab: .classificationResults,
             importKind: .filePanel(
@@ -165,7 +165,7 @@ final class ImportCenterViewModel {
             id: "esviritu",
             title: "EsViritu Results",
             description: "Import EsViritu viral detection results for rapid virome characterization and visualization.",
-            sfSymbol: "waveform.path.ecg",
+            sfSymbol: "e.circle",
             fileHint: "EsViritu output directory",
             tab: .classificationResults,
             importKind: .filePanel(
@@ -180,7 +180,7 @@ final class ImportCenterViewModel {
             id: "taxtriage",
             title: "TaxTriage Results",
             description: "Import TaxTriage clinical triage reports for pathogen identification and abundance profiling.",
-            sfSymbol: "list.clipboard",
+            sfSymbol: "t.circle",
             fileHint: "TaxTriage output directory",
             tab: .classificationResults,
             importKind: .filePanel(
@@ -310,6 +310,9 @@ final class ImportCenterViewModel {
             logger.error("Cannot access AppDelegate for wizard sheet")
             return
         }
+
+        // Close the Import Center window so the wizard sheet isn't hidden behind it
+        ImportCenterWindowController.close()
 
         switch action {
         case .naoMgs:
