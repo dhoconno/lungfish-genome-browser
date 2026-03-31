@@ -6,44 +6,37 @@ import SwiftUI
 import UniformTypeIdentifiers
 import LungfishIO
 
+// MARK: - DiscoveredReference
+
+/// A reference discovered during project scanning, with its resolved FASTA URL.
+private struct DiscoveredReference: Identifiable {
+    let id: String  // display name
+    let name: String
+    let bundleURL: URL
+    let fastaURL: URL
+}
+
 // MARK: - ReferenceSequencePickerView
 
 /// A reusable SwiftUI component for selecting a reference FASTA sequence.
 ///
-/// Lists all `.lungfishref` bundles in the project's Reference Sequences folder
-/// via ``ReferenceSequenceFolder/listReferences(in:)``. Includes a "Browse..."
-/// button that opens an `NSOpenPanel` (presented as a sheet, never modal) for
-/// selecting a FASTA from the filesystem. When a filesystem FASTA is selected,
-/// it is auto-imported into the project's Reference Sequences folder.
-///
-/// ## Usage
-///
-/// ```swift
-/// @State private var referenceURL: URL?
-///
-/// ReferenceSequencePickerView(
-///     projectURL: myProjectURL,
-///     selectedReferenceURL: $referenceURL
-/// )
-/// ```
-///
-/// ## Threading
-///
-/// All UI updates use `DispatchQueue.main.async { MainActor.assumeIsolated { } }`
-/// per the project convention for background-to-main dispatch in Swift 6.2.
+/// Scans the entire project for `.lungfishref` bundles — both simple reference
+/// bundles (with `ReferenceSequenceManifest`) and full genome bundles (with
+/// `BundleManifest` and FASTA in `genome/` subdirectory). Also supports
+/// browsing the filesystem for standalone FASTA files (including `.fa.gz`).
 struct ReferenceSequencePickerView: View {
 
     /// The project directory URL. When `nil`, only filesystem browsing is available.
     let projectURL: URL?
 
-    /// Binding to the selected reference FASTA URL within a `.lungfishref` bundle.
+    /// Binding to the selected reference FASTA URL.
     @Binding var selectedReferenceURL: URL?
 
     /// All reference bundles discovered in the project.
-    @State private var projectReferences: [(url: URL, manifest: ReferenceSequenceManifest)] = []
+    @State private var discoveredRefs: [DiscoveredReference] = []
 
-    /// The display name of the currently selected reference (used as picker tag).
-    @State private var selectedReferenceName: String = ""
+    /// The display name of the currently selected reference.
+    @State private var selectedRefName: String = ""
 
     /// Whether a FASTA import is in progress.
     @State private var isImporting: Bool = false
@@ -52,41 +45,32 @@ struct ReferenceSequencePickerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Reference Sequence")
+            Text("Reference")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
 
-            HStack(spacing: 8) {
-                if projectReferences.isEmpty && selectedReferenceURL == nil {
-                    Text("No references in project")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    Picker("", selection: $selectedReferenceName) {
-                        ForEach(projectReferences, id: \.manifest.name) { ref in
-                            Text(ref.manifest.name).tag(ref.manifest.name)
-                        }
-                        // Show externally selected file if not yet in project
-                        if let url = selectedReferenceURL,
-                           !projectReferences.contains(where: { $0.manifest.name == selectedReferenceName }) {
-                            Text(url.lastPathComponent).tag(url.lastPathComponent)
-                        }
+            if discoveredRefs.isEmpty && selectedReferenceURL == nil {
+                Text("No references found in project.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            } else {
+                Picker("", selection: $selectedRefName) {
+                    ForEach(discoveredRefs) { ref in
+                        Text(ref.name).tag(ref.name)
                     }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
                 }
-
-                Button("Browse\u{2026}") {
-                    browseForReference()
-                }
-                .controlSize(.small)
+                .labelsHidden()
+                .pickerStyle(.menu)
             }
+
+            Button("Browse\u{2026}") {
+                browseForReference()
+            }
+            .controlSize(.small)
 
             if isImporting {
                 HStack(spacing: 4) {
-                    ProgressView()
-                        .controlSize(.mini)
+                    ProgressView().controlSize(.mini)
                     Text("Importing reference\u{2026}")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -94,174 +78,122 @@ struct ReferenceSequencePickerView: View {
             }
         }
         .task { loadReferences() }
-        .onChange(of: selectedReferenceName) { _, newName in
-            syncSelectionFromName(newName)
+        .onChange(of: selectedRefName) { _, newName in
+            if let ref = discoveredRefs.first(where: { $0.name == newName }) {
+                selectedReferenceURL = ref.fastaURL
+            }
         }
     }
 
     // MARK: - Reference Loading
 
-    /// Scans the entire project for `.lungfishref` bundles and populates the picker.
-    ///
-    /// Searches both the dedicated "Reference Sequences" folder AND the entire
-    /// project tree (Downloads, project root, etc.) so that genome bundles
-    /// downloaded from NCBI or imported via other paths are discoverable.
     private func loadReferences() {
         guard let projectURL else { return }
 
-        // Start with the dedicated Reference Sequences folder
-        var allRefs = ReferenceSequenceFolder.listReferences(in: projectURL)
-        let knownPaths = Set(allRefs.map(\.url.path))
-
-        // Also scan the entire project recursively for .lungfishref bundles
+        var refs: [DiscoveredReference] = []
         let fm = FileManager.default
+
+        // Scan entire project for .lungfishref bundles
         if let enumerator = fm.enumerator(
             at: projectURL,
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
         ) {
             for case let url as URL in enumerator {
-                if url.pathExtension == "lungfishref" && !knownPaths.contains(url.path) {
-                    // Try ReferenceSequenceManifest first (simple ref bundles)
-                    let manifestURL = url.appendingPathComponent("manifest.json")
-                    if let data = try? Data(contentsOf: manifestURL) {
-                        let decoder = JSONDecoder()
-                        decoder.dateDecodingStrategy = .iso8601
+                guard url.pathExtension == "lungfishref" else { continue }
+                enumerator.skipDescendants()
 
-                        if let manifest = try? decoder.decode(ReferenceSequenceManifest.self, from: data) {
-                            allRefs.append((url, manifest))
-                        } else {
-                            // Try full BundleManifest (genome bundles from NCBI downloads)
-                            // These have FASTA at genome/sequence.fa.gz
-                            let genomeDir = url.appendingPathComponent("genome")
-                            let fastaExtensions = ["fasta", "fa", "fna", "fa.gz", "fasta.gz", "fna.gz"]
-                            let fastaInGenome = try? fm.contentsOfDirectory(at: genomeDir, includingPropertiesForKeys: nil)
-                            let genomeFasta = fastaInGenome?.first(where: { file in
-                                fastaExtensions.contains(where: { file.lastPathComponent.hasSuffix(".\($0)") })
-                            })
+                let bundleName = url.deletingPathExtension().lastPathComponent
 
-                            if let genomeFasta {
-                                // Extract name from manifest JSON if possible
-                                let bundleName: String
-                                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                                   let desc = json["description"] as? String {
-                                    // Use short name from description
-                                    bundleName = url.deletingPathExtension().lastPathComponent
-                                } else {
-                                    bundleName = url.deletingPathExtension().lastPathComponent
-                                }
+                // Strategy 1: Simple reference bundle — sequence.fasta at root
+                if let fastaURL = ReferenceSequenceFolder.fastaURL(in: url) {
+                    refs.append(DiscoveredReference(
+                        id: url.path, name: bundleName,
+                        bundleURL: url, fastaURL: fastaURL
+                    ))
+                    continue
+                }
 
-                                let syntheticManifest = ReferenceSequenceManifest(
-                                    name: bundleName,
-                                    createdAt: Date(),
-                                    sourceFilename: genomeFasta.lastPathComponent,
-                                    fastaFilename: "genome/\(genomeFasta.lastPathComponent)"
-                                )
-                                allRefs.append((url, syntheticManifest))
-                            }
-                        }
-                    } else {
-                        // No manifest at all — check for FASTA files directly or in genome/
-                        let fastaExtensions = ["fasta", "fa", "fna"]
-                        let contents = try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)
-                        let directFasta = contents?.first(where: { fastaExtensions.contains($0.pathExtension.lowercased()) })
-
-                        if let directFasta {
-                            let syntheticManifest = ReferenceSequenceManifest(
-                                name: url.deletingPathExtension().lastPathComponent,
-                                createdAt: Date(),
-                                sourceFilename: directFasta.lastPathComponent,
-                                fastaFilename: directFasta.lastPathComponent
-                            )
-                            allRefs.append((url, syntheticManifest))
-                        }
+                // Strategy 2: Genome bundle — FASTA in genome/ subdirectory
+                let genomeDir = url.appendingPathComponent("genome")
+                if let genomeContents = try? fm.contentsOfDirectory(at: genomeDir, includingPropertiesForKeys: nil) {
+                    let fastaFile = genomeContents.first { file in
+                        let name = file.lastPathComponent.lowercased()
+                        return name.hasSuffix(".fa") || name.hasSuffix(".fasta") || name.hasSuffix(".fna")
+                            || name.hasSuffix(".fa.gz") || name.hasSuffix(".fasta.gz") || name.hasSuffix(".fna.gz")
                     }
-                    enumerator.skipDescendants() // Don't recurse into .lungfishref bundles
+                    if let fastaFile {
+                        refs.append(DiscoveredReference(
+                            id: url.path, name: bundleName,
+                            bundleURL: url, fastaURL: fastaFile
+                        ))
+                        continue
+                    }
+                }
+
+                // Strategy 3: FASTA at bundle root (non-standard but handle it)
+                if let rootContents = try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) {
+                    let fastaFile = rootContents.first { file in
+                        let ext = file.pathExtension.lowercased()
+                        return ["fasta", "fa", "fna"].contains(ext)
+                    }
+                    if let fastaFile {
+                        refs.append(DiscoveredReference(
+                            id: url.path, name: bundleName,
+                            bundleURL: url, fastaURL: fastaFile
+                        ))
+                    }
                 }
             }
         }
 
-        projectReferences = allRefs.sorted { $0.manifest.name < $1.manifest.name }
+        discoveredRefs = refs.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
-        // Auto-select the first reference if nothing is selected yet
-        if selectedReferenceURL == nil, let first = projectReferences.first {
-            selectedReferenceName = first.manifest.name
-            selectedReferenceURL = ReferenceSequenceFolder.fastaURL(in: first.url)
-        } else if let current = selectedReferenceURL {
-            // Restore picker selection to match the current URL
-            if let match = projectReferences.first(where: {
-                ReferenceSequenceFolder.fastaURL(in: $0.url)?.path == current.path
-            }) {
-                selectedReferenceName = match.manifest.name
-            }
-        }
-    }
-
-    /// Updates the bound URL when the picker selection changes.
-    private func syncSelectionFromName(_ name: String) {
-        if let ref = projectReferences.first(where: { $0.manifest.name == name }) {
-            selectedReferenceURL = ReferenceSequenceFolder.fastaURL(in: ref.url)
+        // Auto-select first if nothing selected
+        if selectedReferenceURL == nil, let first = discoveredRefs.first {
+            selectedRefName = first.name
+            selectedReferenceURL = first.fastaURL
+        } else if let current = selectedReferenceURL,
+                  let match = discoveredRefs.first(where: { $0.fastaURL.path == current.path }) {
+            selectedRefName = match.name
         }
     }
 
     // MARK: - Browse
 
-    /// Opens an NSOpenPanel as a sheet to browse for a FASTA file.
-    ///
-    /// Uses `beginSheetModal` per macOS 26 rules (never `runModal()`).
-    /// When a file is selected it is auto-imported into the project via
-    /// ``ReferenceSequenceFolder/importReference(from:into:displayName:)``.
     private func browseForReference() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.message = "Select a reference FASTA file"
 
-        // Build allowed content types for FASTA files
+        // Accept ALL FASTA variants including gzipped
         var types: [UTType] = []
-        if let fasta = UTType(filenameExtension: "fasta") { types.append(fasta) }
-        if let fa = UTType(filenameExtension: "fa") { types.append(fa) }
-        if let fna = UTType(filenameExtension: "fna") { types.append(fna) }
-        if let gz = UTType(filenameExtension: "gz") { types.append(gz) }
+        for ext in ["fasta", "fa", "fna", "gz", "fasta.gz"] {
+            if let t = UTType(filenameExtension: ext) { types.append(t) }
+        }
+        // Also add .gzip type explicitly
+        types.append(.gzip)
         if !types.isEmpty {
             panel.allowedContentTypes = types
         }
 
-        guard let window = NSApp.keyWindow else { return }
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
         panel.beginSheetModal(for: window) { response in
             guard response == .OK, let url = panel.url else { return }
-            handleSelectedFASTA(url)
-        }
-    }
-
-    /// Imports a user-selected FASTA into the project and updates the picker.
-    private func handleSelectedFASTA(_ url: URL) {
-        guard let projectURL else {
-            // No project -- use the file directly without importing
+            // Use the file directly — no import needed for Browse
             selectedReferenceURL = url
-            selectedReferenceName = url.lastPathComponent
-            return
-        }
-
-        isImporting = true
-        Task.detached {
-            let importedBundleURL = try? ReferenceSequenceFolder.importReference(
-                from: url,
-                into: projectURL
+            // Add to picker as an ad-hoc entry
+            let adHoc = DiscoveredReference(
+                id: url.path,
+                name: url.deletingPathExtension().lastPathComponent,
+                bundleURL: url.deletingLastPathComponent(),
+                fastaURL: url
             )
-            DispatchQueue.main.async { MainActor.assumeIsolated {
-                isImporting = false
-                loadReferences()
-                if let bundleURL = importedBundleURL,
-                   let fastaURL = ReferenceSequenceFolder.fastaURL(in: bundleURL) {
-                    selectedReferenceURL = fastaURL
-                    if let ref = projectReferences.first(where: {
-                        ReferenceSequenceFolder.fastaURL(in: $0.url)?.path == fastaURL.path
-                    }) {
-                        selectedReferenceName = ref.manifest.name
-                    }
-                }
-            }}
+            if !discoveredRefs.contains(where: { $0.id == adHoc.id }) {
+                discoveredRefs.append(adHoc)
+            }
+            selectedRefName = adHoc.name
         }
     }
 }

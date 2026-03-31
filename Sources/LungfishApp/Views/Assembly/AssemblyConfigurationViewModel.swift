@@ -106,16 +106,92 @@ public enum AssemblyRunner {
         }
 
         do {
+            // Materialize virtual FASTQ bundles (subset/trim/demux produce only preview.fastq)
+            await MainActor.run {
+                OperationCenter.shared.update(id: opID, progress: 0.01, detail: "Resolving input files...")
+                OperationCenter.shared.log(id: opID, level: .info, message: "Checking for virtual FASTQ materialization")
+            }
+
+            var mutableConfig = config
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("lungfish-assembly-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: tempDir) }
+
+            let allInputs = config.forwardReads + config.reverseReads + config.unpairedReads
+            var resolvedForward: [URL] = []
+            var resolvedReverse: [URL] = []
+            var resolvedUnpaired: [URL] = []
+
+            for fileURL in allInputs {
+                let bundleURL: URL?
+                if FASTQBundle.isBundleURL(fileURL) {
+                    bundleURL = fileURL
+                } else if FASTQBundle.isBundleURL(fileURL.deletingLastPathComponent()) {
+                    bundleURL = fileURL.deletingLastPathComponent()
+                } else {
+                    bundleURL = nil
+                }
+
+                var resolvedURL = fileURL
+                if let bundle = bundleURL,
+                   let manifest = FASTQBundle.loadDerivedManifest(in: bundle) {
+                    switch manifest.payload {
+                    case .subset, .trim, .demuxedVirtual:
+                        let materializedURL = try await FASTQDerivativeService.shared.materializeDatasetFASTQ(
+                            fromBundle: bundle,
+                            tempDirectory: tempDir,
+                            progress: { msg in
+                                DispatchQueue.main.async { MainActor.assumeIsolated {
+                                    OperationCenter.shared.log(id: opID, level: .info, message: msg)
+                                }}
+                            }
+                        )
+                        resolvedURL = materializedURL
+                    default:
+                        if let primaryURL = FASTQBundle.resolvePrimaryFASTQURL(for: bundle) {
+                            resolvedURL = primaryURL
+                        }
+                    }
+                }
+
+                // Maintain the forward/reverse/unpaired split
+                if config.forwardReads.contains(fileURL) {
+                    resolvedForward.append(resolvedURL)
+                } else if config.reverseReads.contains(fileURL) {
+                    resolvedReverse.append(resolvedURL)
+                } else {
+                    resolvedUnpaired.append(resolvedURL)
+                }
+            }
+
+            mutableConfig = SPAdesAssemblyConfig(
+                mode: config.mode,
+                forwardReads: resolvedForward,
+                reverseReads: resolvedReverse,
+                unpairedReads: resolvedUnpaired,
+                kmerSizes: config.kmerSizes,
+                memoryGB: config.memoryGB,
+                threads: config.threads,
+                minContigLength: config.minContigLength,
+                skipErrorCorrection: config.skipErrorCorrection,
+                careful: config.careful,
+                covCutoff: config.covCutoff,
+                phredOffset: config.phredOffset,
+                customArgs: config.customArgs,
+                outputDirectory: config.outputDirectory,
+                projectName: config.projectName
+            )
+
             let runtime = try await AppleContainerRuntime()
 
             await MainActor.run {
-                OperationCenter.shared.update(id: opID, progress: 0.02, detail: "Container runtime initialized")
+                OperationCenter.shared.update(id: opID, progress: 0.05, detail: "Container runtime initialized")
                 OperationCenter.shared.log(id: opID, level: .info, message: "Container runtime initialized")
             }
 
             let pipeline = SPAdesAssemblyPipeline()
             let result = try await pipeline.run(
-                config: config,
+                config: mutableConfig,
                 runtime: runtime
             ) { fraction, message in
                 let scaledProgress = 0.02 + fraction * 0.93
