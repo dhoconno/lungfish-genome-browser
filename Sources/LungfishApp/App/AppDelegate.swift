@@ -3757,6 +3757,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         PluginManagerWindowController.show()
     }
 
+    @objc func showImportCenter(_ sender: Any?) {
+        ImportCenterWindowController.show()
+    }
+
+    @objc func showImportCenterClassification(_ sender: Any?) {
+        ImportCenterWindowController.show(tab: .classificationResults)
+    }
+
     @objc func classifyReads(_ sender: Any?) {
         guard let viewerController = mainWindowController?.mainSplitViewController?.viewerController else {
             return

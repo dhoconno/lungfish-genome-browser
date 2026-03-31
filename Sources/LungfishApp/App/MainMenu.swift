@@ -230,6 +230,21 @@ public final class MainMenu {
             keyEquivalent: ""
         )
 
+        importMenu.addItem(.separator())
+
+        importMenu.addItem(
+            withTitle: "Classification Results\u{2026}",
+            action: #selector(AppDelegate.showImportCenterClassification(_:)),
+            keyEquivalent: ""
+        )
+
+        let importCenterItem = importMenu.addItem(
+            withTitle: "Import Center\u{2026}",
+            action: #selector(AppDelegate.showImportCenter(_:)),
+            keyEquivalent: "j"
+        )
+        importCenterItem.keyEquivalentModifierMask = [.command, .shift]
+
         importItem.submenu = importMenu
         fileMenu.addItem(importItem)
 

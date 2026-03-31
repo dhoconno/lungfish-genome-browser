@@ -101,6 +101,31 @@ public struct NaoMgsVirusHit: Sendable, Codable, Equatable {
     /// Percent identity of the alignment.
     public let percentIdentity: Double
 
+    /// Edit distance (number of mismatches) from the aligner (v2 format).
+    ///
+    /// Populated from `prim_align_edit_distance` in v2 TSV. Zero when not available.
+    public let editDistance: Int
+
+    /// Insert size / fragment length from paired-end alignment (v2 format).
+    ///
+    /// Populated from `prim_align_fragment_length` in v2 TSV. Zero when not available.
+    public let fragmentLength: Int
+
+    /// Whether the read was reverse-complemented for alignment (v2 format).
+    ///
+    /// Populated from `prim_align_query_rc` in v2 TSV (True/False string).
+    public let isReverseComplement: Bool
+
+    /// Pair status from the aligner: CP (concordant), DP (discordant), UU (unmapped), UP (unpaired).
+    ///
+    /// Populated from `prim_align_pair_status` in v2 TSV. Empty when not available.
+    public let pairStatus: String
+
+    /// Query (read) length in bases.
+    ///
+    /// Populated from `query_len` in v2 TSV, or derived from ``readSequence`` length.
+    public let queryLength: Int
+
     /// Creates a new virus hit record.
     public init(
         sample: String,
@@ -118,7 +143,12 @@ public struct NaoMgsVirusHit: Sendable, Codable, Equatable {
         subjectTitle: String,
         bitScore: Double,
         eValue: Double,
-        percentIdentity: Double
+        percentIdentity: Double,
+        editDistance: Int = 0,
+        fragmentLength: Int = 0,
+        isReverseComplement: Bool = false,
+        pairStatus: String = "",
+        queryLength: Int = 0
     ) {
         self.sample = sample
         self.seqId = seqId
@@ -136,6 +166,11 @@ public struct NaoMgsVirusHit: Sendable, Codable, Equatable {
         self.bitScore = bitScore
         self.eValue = eValue
         self.percentIdentity = percentIdentity
+        self.editDistance = editDistance
+        self.fragmentLength = fragmentLength
+        self.isReverseComplement = isReverseComplement
+        self.pairStatus = pairStatus
+        self.queryLength = queryLength
     }
 }
 
@@ -158,6 +193,9 @@ public struct NaoMgsTaxonSummary: Sendable, Codable, Equatable {
     /// Average bit score across all hits for this taxon.
     public let avgBitScore: Double
 
+    /// Average edit distance across all hits for this taxon (v2 format).
+    public let avgEditDistance: Double
+
     /// Distinct GenBank accessions hit for this taxon.
     public let accessions: [String]
 
@@ -168,6 +206,7 @@ public struct NaoMgsTaxonSummary: Sendable, Codable, Equatable {
         hitCount: Int,
         avgIdentity: Double,
         avgBitScore: Double,
+        avgEditDistance: Double = 0,
         accessions: [String]
     ) {
         self.taxId = taxId
@@ -175,6 +214,7 @@ public struct NaoMgsTaxonSummary: Sendable, Codable, Equatable {
         self.hitCount = hitCount
         self.avgIdentity = avgIdentity
         self.avgBitScore = avgBitScore
+        self.avgEditDistance = avgEditDistance
         self.accessions = accessions
     }
 }
@@ -252,7 +292,7 @@ public struct NaoMgsResult: Sendable {
 /// strings or zero values rather than parse errors.
 public final class NaoMgsResultParser: @unchecked Sendable {
 
-    /// Required columns — at least `seq_id` and `sample` must be present.
+    /// Required columns -- at least `seq_id` and `sample` must be present.
     /// Taxonomy ID can come from `taxid` OR `aligner_taxid_lca`.
     private static let requiredColumns: Set<String> = [
         "sample", "seq_id"
@@ -406,7 +446,7 @@ public final class NaoMgsResultParser: @unchecked Sendable {
 
             let taxIdStr = fields[map.taxId]
             guard let taxId = Int(taxIdStr) else {
-                // Some rows may have "NA" for taxonomy — skip them
+                // Some rows may have "NA" for taxonomy -- skip them
                 if taxIdStr != "NA" {
                     logger.warning("Skipping line \(lineNumber): invalid taxid '\(taxIdStr)'")
                 }
@@ -428,6 +468,16 @@ public final class NaoMgsResultParser: @unchecked Sendable {
             let bitScore = doubleField(fields, map.bitScore)
             let effectiveBitScore = bitScore > 0 ? bitScore : alignScore
 
+            // Parse v2 fields
+            let editDist = intField(fields, map.editDistance)
+            let fragLen = intField(fields, map.fragmentLength)
+            let rcStr = stringField(fields, map.queryRC).lowercased()
+            let isRC = rcStr == "true" || rcStr == "1"
+            let pairStat = stringField(fields, map.pairStatus)
+            let qLen = intField(fields, map.queryLen)
+
+            let readSeq = stringField(fields, map.readSequence)
+
             let hit = NaoMgsVirusHit(
                 sample: fields[map.sample],
                 seqId: fields[map.seqId],
@@ -438,13 +488,18 @@ public final class NaoMgsResultParser: @unchecked Sendable {
                 queryEnd: intField(fields, map.queryEnd),
                 refStart: intField(fields, map.refStart),
                 refEnd: intField(fields, map.refEnd),
-                readSequence: stringField(fields, map.readSequence),
+                readSequence: readSeq,
                 readQuality: stringField(fields, map.readQuality),
                 subjectSeqId: stringField(fields, map.subjectSeqId),
                 subjectTitle: stringField(fields, map.subjectTitle),
                 bitScore: effectiveBitScore,
                 eValue: doubleField(fields, map.eValue),
-                percentIdentity: doubleField(fields, map.percentIdentity)
+                percentIdentity: doubleField(fields, map.percentIdentity),
+                editDistance: editDist,
+                fragmentLength: fragLen,
+                isReverseComplement: isRC,
+                pairStatus: pairStat,
+                queryLength: qLen > 0 ? qLen : readSeq.count
             )
             hits.append(hit)
         }
@@ -575,9 +630,8 @@ public final class NaoMgsResultParser: @unchecked Sendable {
             let sequence = hit.readSequence.isEmpty ? "*" : hit.readSequence
             let quality = hit.readQuality.isEmpty ? "*" : hit.readQuality
 
-            // FLAG: 0 = mapped forward strand.
-            // We don't have strand info from NAO-MGS, so default to forward.
-            let flag = 0
+            // FLAG: 16 = reverse strand, 0 = forward strand.
+            let flag = hit.isReverseComplement ? 16 : 0
 
             // POS is 1-based in SAM (NAO-MGS refStart is 0-based)
             let pos = hit.refStart + 1
@@ -603,6 +657,7 @@ public final class NaoMgsResultParser: @unchecked Sendable {
                 "XS:f:\(String(format: "%.1f", hit.bitScore))",         // Bit score
                 "XE:f:\(hit.eValue)",   // E-value
                 "XT:i:\(hit.taxId)",    // Taxonomy ID
+                "NM:i:\(hit.editDistance)",  // Edit distance
             ].joined(separator: "\t")
 
             samLines.append(record)
@@ -639,6 +694,7 @@ public final class NaoMgsResultParser: @unchecked Sendable {
         let summaries: [NaoMgsTaxonSummary] = groups.map { taxId, taxHits in
             let totalIdentity = taxHits.reduce(0.0) { $0 + $1.percentIdentity }
             let totalBitScore = taxHits.reduce(0.0) { $0 + $1.bitScore }
+            let totalEditDistance = taxHits.reduce(0) { $0 + $1.editDistance }
             let accessions = Array(Set(taxHits.map(\.subjectSeqId).filter { !$0.isEmpty })).sorted()
 
             // Derive the organism name from the first subject title.
@@ -651,6 +707,7 @@ public final class NaoMgsResultParser: @unchecked Sendable {
                 hitCount: taxHits.count,
                 avgIdentity: taxHits.isEmpty ? 0 : totalIdentity / Double(taxHits.count),
                 avgBitScore: taxHits.isEmpty ? 0 : totalBitScore / Double(taxHits.count),
+                avgEditDistance: taxHits.isEmpty ? 0 : Double(totalEditDistance) / Double(taxHits.count),
                 accessions: accessions
             )
         }
