@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Main SwiftUI view for the Import Center window.
 ///
@@ -39,7 +40,14 @@ struct ImportCenterView: View {
                 ForEach(viewModel.filteredCards) { card in
                     ImportCardView(card: card) {
                         viewModel.performImport(for: card)
+                    } onDrop: { urls in
+                        viewModel.performDropImport(urls: urls, for: card)
                     }
+                }
+
+                // Recent Imports section (only when history exists for this tab)
+                if !viewModel.recentHistory.isEmpty {
+                    recentImportsSection
                 }
             }
             .padding(.horizontal, 20)
@@ -80,6 +88,55 @@ struct ImportCenterView: View {
         }
     }
 
+    // MARK: - Recent Imports Section
+
+    private var recentImportsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Section header
+            HStack {
+                Text("Recent Imports")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 4)
+            .padding(.top, 8)
+
+            // Entry rows (last 5 from recentHistory)
+            VStack(spacing: 0) {
+                ForEach(Array(viewModel.recentHistory.prefix(5).enumerated()), id: \.element.id) { index, entry in
+                    if index > 0 {
+                        Divider()
+                            .padding(.leading, 36)
+                    }
+                    ImportHistoryRow(entry: entry)
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.background)
+                    .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(.separator, lineWidth: 0.5)
+            )
+
+            // Clear History link
+            HStack {
+                Spacer()
+                Button("Clear History") {
+                    viewModel.clearHistory()
+                }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.trailing, 4)
+            }
+        }
+    }
+
     // MARK: - Empty State
 
     private var emptyState: some View {
@@ -103,13 +160,17 @@ struct ImportCenterView: View {
 
 /// A single import type card with icon, title, description, and Import button.
 ///
-/// Follows the visual design of Pack cards in the Plugin Manager:
-/// a rounded-rect card with an icon on the left, text in the center,
-/// and an action button on the right.
+/// Supports drag-and-drop: files dragged onto the card trigger the same
+/// import path as clicking "Import...". The card highlights with an orange
+/// border while a compatible drag is in progress over it.
 private struct ImportCardView: View {
 
     let card: ImportCardInfo
     let onImport: () -> Void
+    let onDrop: ([URL]) -> Void
+
+    /// Whether a drag is currently hovering over this card.
+    @State private var isDropTargeted = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
@@ -160,7 +221,111 @@ private struct ImportCardView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(.separator, lineWidth: 0.5)
+                .strokeBorder(
+                    isDropTargeted
+                        ? Color.lungfishOrangeFallback
+                        : Color(.separatorColor),
+                    lineWidth: isDropTargeted ? 2 : 0.5
+                )
+                .animation(.easeInOut(duration: 0.15), value: isDropTargeted)
         )
+        .onDrop(of: [UTType.fileURL], isTargeted: $isDropTargeted) { providers in
+            resolveDroppedURLs(from: providers)
+            return true
+        }
+    }
+
+    /// Resolves file URLs from the given item providers and forwards them to ``onDrop``.
+    private func resolveDroppedURLs(from providers: [NSItemProvider]) {
+        var resolved: [URL] = []
+        let group = DispatchGroup()
+
+        for provider in providers {
+            guard provider.canLoadObject(ofClass: URL.self) else { continue }
+            group.enter()
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                if let url {
+                    resolved.append(url)
+                }
+                group.leave()
+            }
+        }
+
+        group.notify(queue: .main) {
+            MainActor.assumeIsolated {
+                guard !resolved.isEmpty else { return }
+                onDrop(resolved)
+            }
+        }
+    }
+}
+
+// MARK: - Import History Row
+
+/// A compact row displaying a single ``ImportHistoryEntry``.
+private struct ImportHistoryRow: View {
+
+    let entry: ImportHistoryEntry
+
+    var body: some View {
+        HStack(spacing: 10) {
+            // Success / failure indicator
+            Image(systemName: entry.succeeded ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .font(.system(size: 14))
+                .foregroundStyle(entry.succeeded ? Color.green : Color.red)
+                .frame(width: 18)
+
+            // File name
+            Text(entry.fileName)
+                .font(.subheadline)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            // Import type badge
+            Text(entry.importAction)
+                .font(.caption)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(
+                    Capsule().fill(Color.lungfishOrangeFallback.opacity(0.12))
+                )
+                .foregroundStyle(Color.lungfishOrangeFallback)
+
+            Spacer()
+
+            // Relative date
+            Text(entry.date.relativeFormatted)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+    }
+}
+
+// MARK: - Date Relative Formatting
+
+private extension Date {
+    /// Returns a short relative description such as "2 hours ago" or "just now".
+    var relativeFormatted: String {
+        let seconds = Date.now.timeIntervalSince(self)
+        switch seconds {
+        case ..<60:
+            return "just now"
+        case 60..<3600:
+            let mins = Int(seconds / 60)
+            return "\(mins) min\(mins == 1 ? "" : "s") ago"
+        case 3600..<86400:
+            let hrs = Int(seconds / 3600)
+            return "\(hrs) hour\(hrs == 1 ? "" : "s") ago"
+        case 86400..<604800:
+            let days = Int(seconds / 86400)
+            return "\(days) day\(days == 1 ? "" : "s") ago"
+        default:
+            let formatter = DateFormatter()
+            formatter.dateStyle = .short
+            formatter.timeStyle = .none
+            return formatter.string(from: self)
+        }
     }
 }

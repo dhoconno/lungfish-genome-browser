@@ -11,6 +11,24 @@ import os.log
 /// Logger for the Import Center view model.
 private let logger = Logger(subsystem: LogSubsystem.app, category: "ImportCenterVM")
 
+// MARK: - Import History Entry
+
+/// A persisted record of a single completed (or failed) import operation.
+struct ImportHistoryEntry: Identifiable, Sendable, Codable {
+    let id: UUID
+    /// Human-readable label matching the import action, e.g. "BAM", "VCF", "NAO-MGS".
+    let importAction: String
+    /// The last path component of the imported file (or the first file, if multiple).
+    let fileName: String
+    /// When the import was dispatched.
+    let date: Date
+    /// Whether the import was dispatched without error. False entries are recorded
+    /// when dispatch failed before reaching the app delegate.
+    let succeeded: Bool
+}
+
+// MARK: - Import Card Info
+
 /// Describes a single importable data type shown as a card in the Import Center.
 struct ImportCardInfo: Identifiable, Sendable {
     let id: String
@@ -39,11 +57,22 @@ struct ImportCardInfo: Identifiable, Sendable {
         case esViritu
         case taxTriage
     }
+
+    /// The underlying ``ImportAction`` regardless of whether the card uses a
+    /// file panel or a wizard sheet.
+    var importAction: ImportAction {
+        switch importKind {
+        case .filePanel(_, let action):  return action
+        case .wizardSheet(let action):   return action
+        }
+    }
 }
+
+// MARK: - View Model
 
 /// View model for the Import Center window.
 ///
-/// Manages tab state, search filtering, and the static catalog of
+/// Manages tab state, search filtering, import history, and the static catalog of
 /// importable data types. All state is ``@MainActor``-isolated and
 /// uses ``@Observable`` for automatic SwiftUI invalidation.
 @MainActor
@@ -95,6 +124,35 @@ final class ImportCenterViewModel {
 
     /// Search text from the toolbar search field.
     var searchText: String = ""
+
+    // MARK: - Import History
+
+    /// Persisted log of recent import operations (newest first, capped at 50).
+    var importHistory: [ImportHistoryEntry] = []
+
+    /// UserDefaults key used to persist import history.
+    private static let historyDefaultsKey = "importHistory"
+    /// Maximum number of history entries retained in UserDefaults.
+    private static let maxHistoryEntries = 50
+
+    /// The last 10 history entries whose ``importAction`` matches any action
+    /// associated with the currently selected tab.
+    var recentHistory: [ImportHistoryEntry] {
+        let tabActions = tabImportActions(for: selectedTab)
+        return importHistory
+            .filter { tabActions.contains($0.importAction) }
+            .prefix(10)
+            .map { $0 }
+    }
+
+    /// Returns the string labels used in ``ImportHistoryEntry/importAction``
+    /// for all cards belonging to the given tab.
+    private func tabImportActions(for tab: Tab) -> Set<String> {
+        let actions = allCards
+            .filter { $0.tab == tab }
+            .map { historyLabel(for: $0.importAction) }
+        return Set(actions)
+    }
 
     // MARK: - Card Catalog
 
@@ -227,6 +285,12 @@ final class ImportCenterViewModel {
         }
     }
 
+    // MARK: - Initialisation
+
+    init() {
+        loadHistory()
+    }
+
     // MARK: - Import Actions
 
     /// Performs the import action for a given card.
@@ -241,6 +305,17 @@ final class ImportCenterViewModel {
         case .wizardSheet(let action):
             openWizardSheet(action: action)
         }
+    }
+
+    // MARK: - Drag-and-Drop Import
+
+    /// Handles files dropped onto an import card.
+    ///
+    /// Extracts URLs from the provided item providers and dispatches them
+    /// through the same path as a file-panel selection.
+    func performDropImport(urls: [URL], for card: ImportCardInfo) {
+        guard !urls.isEmpty else { return }
+        dispatchFileImport(urls: urls, action: card.importAction)
     }
 
     // MARK: - File Panel
@@ -276,10 +351,12 @@ final class ImportCenterViewModel {
         }
     }
 
-    /// Dispatches imported file URLs to the appropriate app delegate method.
-    private func dispatchFileImport(urls: [URL], action: ImportCardInfo.ImportAction) {
+    /// Dispatches imported file URLs to the appropriate app delegate method
+    /// and records the operation in import history.
+    func dispatchFileImport(urls: [URL], action: ImportCardInfo.ImportAction) {
         guard let appDelegate = NSApp.delegate as? AppDelegate else {
             logger.error("Cannot access AppDelegate for import dispatch")
+            recordHistory(urls: urls, action: action, succeeded: false)
             return
         }
 
@@ -315,6 +392,7 @@ final class ImportCenterViewModel {
             break // Handled by wizard sheet path
         }
 
+        recordHistory(urls: urls, action: action, succeeded: true)
         logger.info("Dispatched \(urls.count) file(s) for \(String(describing: action)) import")
     }
 
@@ -340,6 +418,69 @@ final class ImportCenterViewModel {
             appDelegate.launchTaxTriage(nil)
         default:
             logger.warning("No wizard sheet defined for action: \(String(describing: action))")
+        }
+    }
+
+    // MARK: - History Management
+
+    /// Returns the human-readable label stored in ``ImportHistoryEntry/importAction``
+    /// for a given ``ImportCardInfo/ImportAction``.
+    private func historyLabel(for action: ImportCardInfo.ImportAction) -> String {
+        switch action {
+        case .bam:      return "BAM"
+        case .vcf:      return "VCF"
+        case .fasta:    return "FASTA"
+        case .naoMgs:   return "NAO-MGS"
+        case .kraken2:  return "Kraken2"
+        case .esViritu: return "EsViritu"
+        case .taxTriage: return "TaxTriage"
+        }
+    }
+
+    /// Appends one history entry per URL, then persists the updated list.
+    private func recordHistory(urls: [URL], action: ImportCardInfo.ImportAction, succeeded: Bool) {
+        let label = historyLabel(for: action)
+        let now = Date()
+        let newEntries = urls.map { url in
+            ImportHistoryEntry(
+                id: UUID(),
+                importAction: label,
+                fileName: url.lastPathComponent,
+                date: now,
+                succeeded: succeeded
+            )
+        }
+        importHistory.insert(contentsOf: newEntries, at: 0)
+        if importHistory.count > Self.maxHistoryEntries {
+            importHistory = Array(importHistory.prefix(Self.maxHistoryEntries))
+        }
+        saveHistory()
+    }
+
+    /// Removes all history entries and persists the empty list.
+    func clearHistory() {
+        importHistory = []
+        saveHistory()
+    }
+
+    // MARK: - UserDefaults Persistence
+
+    private func loadHistory() {
+        guard let data = UserDefaults.standard.data(forKey: Self.historyDefaultsKey) else { return }
+        do {
+            importHistory = try JSONDecoder().decode([ImportHistoryEntry].self, from: data)
+        } catch {
+            logger.warning("Failed to decode import history: \(error.localizedDescription)")
+            importHistory = []
+        }
+    }
+
+    private func saveHistory() {
+        do {
+            let data = try JSONEncoder().encode(importHistory)
+            UserDefaults.standard.set(data, forKey: Self.historyDefaultsKey)
+        } catch {
+            logger.warning("Failed to encode import history: \(error.localizedDescription)")
         }
     }
 }
