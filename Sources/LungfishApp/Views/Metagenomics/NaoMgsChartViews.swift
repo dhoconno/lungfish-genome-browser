@@ -7,8 +7,8 @@ import LungfishIO
 
 // MARK: - Lungfish Orange
 
-/// Lungfish brand accent color (#D47B3A).
-private let lungfishOrange = Color(red: 212 / 255, green: 123 / 255, blue: 58 / 255)
+/// Lungfish brand accent color — uses the shared adaptive definition.
+private let lungfishOrange = Color.lungfishOrangeFallback
 
 // MARK: - CoveragePlotView
 

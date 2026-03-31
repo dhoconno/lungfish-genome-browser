@@ -51,7 +51,7 @@ struct ImportCenterView: View {
         HStack(spacing: 10) {
             Image(systemName: viewModel.selectedTab.sfSymbol)
                 .font(.title2)
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(Color.lungfishOrangeFallback)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(viewModel.selectedTab.title)
@@ -116,11 +116,11 @@ private struct ImportCardView: View {
             // Icon
             Image(systemName: card.sfSymbol)
                 .font(.system(size: 28))
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(Color.lungfishOrangeFallback)
                 .frame(width: 44, height: 44)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.accentColor.opacity(0.1))
+                        .fill(Color.lungfishOrangeFallback.opacity(0.1))
                 )
 
             // Text content
