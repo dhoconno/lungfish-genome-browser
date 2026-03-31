@@ -1786,51 +1786,164 @@ extension MainSplitViewController: SidebarSelectionDelegate {
     private func displayNaoMgsResultFromSidebar(at url: URL) {
         logger.info("displayNaoMgsResult: Opening '\(url.lastPathComponent, privacy: .public)'")
 
-        do {
-            let fm = FileManager.default
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
+        // Show a placeholder immediately so the user gets feedback while we load.
+        let placeholderVC = NaoMgsResultViewController()
+        viewerController.displayNaoMgsResult(placeholderVC)
 
-            // Read manifest
-            let manifestURL = url.appendingPathComponent("manifest.json")
-            guard fm.fileExists(atPath: manifestURL.path) else {
-                throw NSError(domain: "NaoMgsDisplay", code: 1,
-                              userInfo: [NSLocalizedDescriptionKey: "manifest.json not found in NAO-MGS bundle"])
-            }
-            let manifestData = try Data(contentsOf: manifestURL)
-            let manifest = try decoder.decode(NaoMgsManifest.self, from: manifestData)
+        // Decode and enrich on a background thread (virus_hits.json can be >50 MB).
+        let bundleURL = url
+        Task {
+            do {
+                let fm = FileManager.default
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
 
-            // Load cached virus hits JSON (always present after import)
-            let hitsURL = url.appendingPathComponent("virus_hits.json")
-            guard fm.fileExists(atPath: hitsURL.path) else {
-                throw NSError(domain: "NaoMgsDisplay", code: 2,
-                              userInfo: [NSLocalizedDescriptionKey: "virus_hits.json not found — bundle may be incomplete"])
-            }
-            let hitsData = try Data(contentsOf: hitsURL)
-            let hitsFile = try decoder.decode(NaoMgsVirusHitsFile.self, from: hitsData)
-            let naoResult = NaoMgsResult(
-                virusHits: hitsFile.virusHits,
-                taxonSummaries: hitsFile.taxonSummaries,
-                totalHitReads: hitsFile.virusHits.count,
-                sampleName: manifest.sampleName,
-                sourceDirectory: url,
-                virusHitsFile: URL(fileURLWithPath: manifest.sourceFilePath)
-            )
+                // Read manifest
+                let manifestURL = bundleURL.appendingPathComponent("manifest.json")
+                guard fm.fileExists(atPath: manifestURL.path) else {
+                    throw NSError(domain: "NaoMgsDisplay", code: 1,
+                                  userInfo: [NSLocalizedDescriptionKey: "manifest.json not found in NAO-MGS bundle"])
+                }
+                let manifestData = try Data(contentsOf: manifestURL)
+                let manifest = try decoder.decode(NaoMgsManifest.self, from: manifestData)
 
-            let resultVC = NaoMgsResultViewController()
-            resultVC.configure(result: naoResult)
-            viewerController.displayNaoMgsResult(resultVC)
-        } catch {
-            logger.error("displayNaoMgsResult: Failed - \(error.localizedDescription, privacy: .public)")
-            let alert = NSAlert()
-            alert.messageText = "Failed to Load NAO-MGS Result"
-            alert.informativeText = error.localizedDescription
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "OK")
-            if let window = view.window ?? NSApp.keyWindow {
-                alert.beginSheetModal(for: window)
+                // Load cached virus hits JSON (always present after import)
+                let hitsURL = bundleURL.appendingPathComponent("virus_hits.json")
+                guard fm.fileExists(atPath: hitsURL.path) else {
+                    throw NSError(domain: "NaoMgsDisplay", code: 2,
+                                  userInfo: [NSLocalizedDescriptionKey: "virus_hits.json not found — bundle may be incomplete"])
+                }
+                let hitsData = try Data(contentsOf: hitsURL)
+                let hitsFile = try decoder.decode(NaoMgsVirusHitsFile.self, from: hitsData)
+
+                // Build accession → organism name from downloaded reference FASTAs.
+                // The TSV often lacks subjectTitle, so we derive names from FASTA headers.
+                let refsDir = bundleURL.appendingPathComponent("references")
+                let accessionToName = Self.buildAccessionNameMap(referencesDirectory: refsDir)
+
+                // Derive taxId → best organism name from the hits' accessions.
+                let taxIdToName = Self.deriveTaxonNames(
+                    hits: hitsFile.virusHits,
+                    accessionToName: accessionToName
+                )
+
+                // Rebuild taxon summaries with enriched names.
+                let enrichedSummaries = hitsFile.taxonSummaries.map { summary in
+                    let resolvedName = summary.name.isEmpty
+                        ? (taxIdToName[summary.taxId] ?? "Taxid \(summary.taxId)")
+                        : summary.name
+                    return NaoMgsTaxonSummary(
+                        taxId: summary.taxId,
+                        name: resolvedName,
+                        hitCount: summary.hitCount,
+                        avgIdentity: summary.avgIdentity,
+                        avgBitScore: summary.avgBitScore,
+                        avgEditDistance: summary.avgEditDistance,
+                        accessions: summary.accessions
+                    )
+                }
+
+                let naoResult = NaoMgsResult(
+                    virusHits: hitsFile.virusHits,
+                    taxonSummaries: enrichedSummaries,
+                    totalHitReads: manifest.hitCount > 0 ? manifest.hitCount : hitsFile.virusHits.count,
+                    sampleName: manifest.sampleName,
+                    sourceDirectory: bundleURL,
+                    virusHitsFile: URL(fileURLWithPath: manifest.sourceFilePath)
+                )
+
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        // Configure the already-displayed placeholder VC with real data.
+                        placeholderVC.configure(result: naoResult)
+                        logger.info("displayNaoMgsResult: Configured with \(naoResult.totalHitReads) hits, \(enrichedSummaries.count) taxa")
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        logger.error("displayNaoMgsResult: Failed - \(error.localizedDescription, privacy: .public)")
+                        let alert = NSAlert()
+                        alert.messageText = "Failed to Load NAO-MGS Result"
+                        alert.informativeText = error.localizedDescription
+                        alert.alertStyle = .warning
+                        alert.addButton(withTitle: "OK")
+                        if let window = self.view.window ?? NSApp.keyWindow {
+                            alert.beginSheetModal(for: window)
+                        }
+                    }
+                }
             }
         }
+    }
+
+    /// Reads the first line of each FASTA file in `referencesDirectory` to build
+    /// an accession → organism name dictionary.
+    ///
+    /// FASTA headers have the form: `>{accession} {organism description}`.
+    /// Only the first line of each file is read (fast — no full parse needed).
+    private static func buildAccessionNameMap(referencesDirectory: URL) -> [String: String] {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: referencesDirectory.path),
+              let enumerator = fm.enumerator(
+                at: referencesDirectory,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
+              ) else { return [:] }
+
+        var map: [String: String] = [:]
+        for case let fileURL as URL in enumerator {
+            guard fileURL.pathExtension.lowercased() == "fasta",
+                  let handle = try? FileHandle(forReadingFrom: fileURL) else { continue }
+            // Read just the first 512 bytes — enough for any FASTA header line.
+            let headerData = handle.readData(ofLength: 512)
+            try? handle.close()
+            guard let headerStr = String(data: headerData, encoding: .utf8) else { continue }
+            let firstLine = headerStr.components(separatedBy: "\n").first ?? ""
+            guard firstLine.hasPrefix(">") else { continue }
+            let withoutCaret = firstLine.dropFirst() // remove ">"
+            let parts = withoutCaret.split(separator: " ", maxSplits: 1)
+            guard parts.count == 2 else { continue }
+            let accession = String(parts[0])
+            var organism = String(parts[1])
+            // Trim trailing whitespace / carriage return
+            organism = organism.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !organism.isEmpty {
+                map[accession] = organism
+            }
+        }
+        return map
+    }
+
+    /// Derives a best-fit organism name for each taxon by finding the most common
+    /// accession for that taxon and looking it up in `accessionToName`.
+    private static func deriveTaxonNames(
+        hits: [NaoMgsVirusHit],
+        accessionToName: [String: String]
+    ) -> [Int: String] {
+        // Count how many times each accession appears per taxId.
+        var taxIdAccCounts: [Int: [String: Int]] = [:]
+        for hit in hits where !hit.subjectSeqId.isEmpty {
+            taxIdAccCounts[hit.taxId, default: [:]][hit.subjectSeqId, default: 0] += 1
+        }
+
+        var result: [Int: String] = [:]
+        for (taxId, accCounts) in taxIdAccCounts {
+            // Pick the accession with the most hits.
+            guard let topAcc = accCounts.max(by: { $0.value < $1.value })?.key else { continue }
+            // Try exact accession first, then version-stripped (e.g. "KU162869" from "KU162869.1").
+            if let name = accessionToName[topAcc] {
+                result[taxId] = name
+            } else {
+                let versionless = String(topAcc.prefix(while: { $0 != "." }))
+                if let name = accessionToName.first(where: { $0.key.hasPrefix(versionless) })?.value {
+                    result[taxId] = name
+                }
+            }
+        }
+        return result
     }
 
     /// Navigates to a related metagenomics analysis from TaxTriage cross-links.

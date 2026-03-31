@@ -797,7 +797,10 @@ final class NaoMgsSummaryBar: GenomicSummaryCardBar {
     func update(result: NaoMgsResult) {
         totalHits = result.totalHitReads
         taxonCount = result.taxonSummaries.count
-        topTaxonName = result.taxonSummaries.first?.name ?? "\u{2014}"
+        let firstName = result.taxonSummaries.first?.name ?? ""
+        topTaxonName = firstName.isEmpty
+            ? (result.taxonSummaries.first.map { "Taxid \($0.taxId)" } ?? "\u{2014}")
+            : firstName
         sampleName = result.sampleName
         needsDisplay = true
     }
