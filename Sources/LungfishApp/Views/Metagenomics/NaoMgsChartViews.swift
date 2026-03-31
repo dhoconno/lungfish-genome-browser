@@ -513,7 +513,7 @@ struct NaoMgsDetailPaneView: View {
             VStack(alignment: .leading, spacing: 12) {
                 // Taxon header
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(taxonSummary.name)
+                    Text(taxonSummary.name.isEmpty ? "Taxid \(taxonSummary.taxId)" : taxonSummary.name)
                         .font(.system(size: 14, weight: .bold))
                         .lineLimit(2)
                         .foregroundStyle(.primary)
@@ -679,7 +679,7 @@ private struct TaxonBarRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             HStack {
-                Text(summary.name)
+                Text(summary.name.isEmpty ? "Taxid \(summary.taxId)" : summary.name)
                     .font(.system(size: 10))
                     .lineLimit(1)
                     .foregroundStyle(.primary)
