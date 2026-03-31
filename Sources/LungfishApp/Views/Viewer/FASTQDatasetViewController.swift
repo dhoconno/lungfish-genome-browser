@@ -296,7 +296,7 @@ public final class FASTQDatasetViewController: NSViewController {
         ("SAMPLING & SEARCH", [.subsampleProportion, .subsampleCount, .searchText, .searchMotif, .sequencePresenceFilter]),
         ("ALIGNMENT", [.mapReads]),
         ("ASSEMBLY", [.assembleReads]),
-        ("CLASSIFICATION", [.classifyReads, .detectViruses, .comprehensiveTriage, .naoMgsImport]),
+        ("CLASSIFICATION", [.classifyReads, .detectViruses, .comprehensiveTriage]),
     ]
 
 

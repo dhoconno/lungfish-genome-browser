@@ -318,8 +318,8 @@ public final class NaoMgsResultParser: @unchecked Sendable {
                 ?? map["prim_align_best_alignment_score"]
                 ?? map["aligner_length_normalized_score_mean"]
 
-            // CIGAR: v1 only (v2 doesn't have explicit CIGAR)
-            self.cigar = map["cigar"]
+            // CIGAR: v1 `cigar` or newer v2 `prim_align_cigar`
+            self.cigar = map["cigar"] ?? map["prim_align_cigar"]
 
             // Query coordinates: v1 only
             self.queryStart = map["query_start"]
@@ -537,7 +537,11 @@ public final class NaoMgsResultParser: @unchecked Sendable {
         for hit in hits {
             guard !hit.subjectSeqId.isEmpty else { continue }
             let currentMax = refLengths[hit.subjectSeqId] ?? 0
-            refLengths[hit.subjectSeqId] = max(currentMax, hit.refEnd + 1)
+            // Estimate reference length from refStart + read length (refEnd may be 0 in v2)
+            let estimatedEnd = hit.refEnd > 0
+                ? hit.refEnd + 1
+                : hit.refStart + max(hit.readSequence.count, hit.queryStart) + 1
+            refLengths[hit.subjectSeqId] = max(currentMax, estimatedEnd)
             if refTitles[hit.subjectSeqId] == nil {
                 refTitles[hit.subjectSeqId] = hit.subjectTitle
             }
