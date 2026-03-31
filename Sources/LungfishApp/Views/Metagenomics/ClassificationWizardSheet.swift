@@ -296,15 +296,15 @@ struct ClassificationWizardSheet: View {
                 if !canRun && inputFiles.isEmpty {
                     Text("No input files selected")
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.lungfishOrangeFallback)
                 } else if !canRun && groupedSamples.isEmpty {
                     Text("Could not detect valid sample inputs")
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.lungfishOrangeFallback)
                 } else if !canRun && readyDatabases.isEmpty {
                     Text("No databases installed")
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.lungfishOrangeFallback)
                 }
 
                 Spacer()

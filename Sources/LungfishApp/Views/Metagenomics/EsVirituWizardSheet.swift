@@ -170,15 +170,15 @@ struct EsVirituWizardSheet: View {
                 if !canRun && inputFiles.isEmpty {
                     Text("No input files selected")
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.lungfishOrangeFallback)
                 } else if !canRun && groupedSamples.isEmpty {
                     Text("Could not detect valid sample inputs")
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.lungfishOrangeFallback)
                 } else if !canRun && !isDatabaseInstalled {
                     Text("EsViritu database not installed")
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.lungfishOrangeFallback)
                 }
 
                 Spacer()
@@ -275,7 +275,7 @@ struct EsVirituWizardSheet: View {
             } else {
                 HStack {
                     Image(systemName: "xmark.circle")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.lungfishOrangeFallback)
                         .font(.system(size: 12))
                     Text("Database not installed")
                         .font(.system(size: 12))

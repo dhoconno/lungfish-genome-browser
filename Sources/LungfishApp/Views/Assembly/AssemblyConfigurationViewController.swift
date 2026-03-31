@@ -84,9 +84,7 @@ public struct AssemblySheetPresenter {
         wizardPanel.contentViewController = hostingController
         wizardPanel.setContentSize(NSSize(width: 520, height: 520))
 
-        Task { @MainActor in
-            await window.beginSheet(wizardPanel)
-        }
+        window.beginSheet(wizardPanel)
 
         logger.info("Assembly wizard presented with \(inputFiles.count) input files")
     }

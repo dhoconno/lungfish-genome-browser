@@ -370,7 +370,7 @@ struct AssemblyWizardSheet: View {
             if careful && selectedMode == .isolate {
                 Text("--careful is incompatible with --isolate mode")
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.lungfishOrangeFallback)
             }
         }
     }
@@ -549,7 +549,7 @@ struct AssemblyWizardSheet: View {
                     .frame(width: 8, height: 8)
                 Text("No Runtime")
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.lungfishOrangeFallback)
             }
         }
     }

@@ -394,7 +394,7 @@ struct MapReadsWizardSheet: View {
             if !canRun && resolvedReferenceURL == nil {
                 Text("Select a reference genome")
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.lungfishOrangeFallback)
             }
 
             Spacer()

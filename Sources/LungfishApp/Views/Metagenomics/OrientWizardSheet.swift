@@ -265,11 +265,11 @@ struct OrientWizardSheet: View {
             if !canRun && inputFiles.isEmpty {
                 Text("No input files selected")
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.lungfishOrangeFallback)
             } else if !canRun && selectedReferenceURL == nil {
                 Text("Select a reference sequence")
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.lungfishOrangeFallback)
             }
 
             Spacer()

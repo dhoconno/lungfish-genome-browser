@@ -101,10 +101,56 @@ struct ReferenceSequencePickerView: View {
 
     // MARK: - Reference Loading
 
-    /// Scans the project's Reference Sequences folder and populates the picker.
+    /// Scans the entire project for `.lungfishref` bundles and populates the picker.
+    ///
+    /// Searches both the dedicated "Reference Sequences" folder AND the entire
+    /// project tree (Downloads, project root, etc.) so that genome bundles
+    /// downloaded from NCBI or imported via other paths are discoverable.
     private func loadReferences() {
         guard let projectURL else { return }
-        projectReferences = ReferenceSequenceFolder.listReferences(in: projectURL)
+
+        // Start with the dedicated Reference Sequences folder
+        var allRefs = ReferenceSequenceFolder.listReferences(in: projectURL)
+        let knownPaths = Set(allRefs.map(\.url.path))
+
+        // Also scan the entire project recursively for .lungfishref bundles
+        let fm = FileManager.default
+        if let enumerator = fm.enumerator(
+            at: projectURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) {
+            for case let url as URL in enumerator {
+                if url.pathExtension == "lungfishref" && !knownPaths.contains(url.path) {
+                    // Try to read manifest
+                    let manifestURL = url.appendingPathComponent("manifest.json")
+                    if let data = try? Data(contentsOf: manifestURL),
+                       let manifest = try? {
+                           let decoder = JSONDecoder()
+                           decoder.dateDecodingStrategy = .iso8601
+                           return try decoder.decode(ReferenceSequenceManifest.self, from: data)
+                       }() {
+                        allRefs.append((url, manifest))
+                    } else {
+                        // No manifest — check if there's a FASTA inside and create a synthetic manifest
+                        let fastaExtensions = ["fasta", "fa", "fna"]
+                        if let contents = try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil),
+                           let fastaFile = contents.first(where: { fastaExtensions.contains($0.pathExtension.lowercased()) }) {
+                            let syntheticManifest = ReferenceSequenceManifest(
+                                name: url.deletingPathExtension().lastPathComponent,
+                                createdAt: Date(),
+                                sourceFilename: fastaFile.lastPathComponent,
+                                fastaFilename: fastaFile.lastPathComponent
+                            )
+                            allRefs.append((url, syntheticManifest))
+                        }
+                    }
+                    enumerator.skipDescendants() // Don't recurse into .lungfishref bundles
+                }
+            }
+        }
+
+        projectReferences = allRefs.sorted { $0.manifest.name < $1.manifest.name }
 
         // Auto-select the first reference if nothing is selected yet
         if selectedReferenceURL == nil, let first = projectReferences.first {

@@ -177,15 +177,15 @@ struct TaxTriageWizardSheet: View {
         if samples.isEmpty {
             Text("Add at least one sample")
                 .font(.caption)
-                .foregroundStyle(.red)
+                .foregroundStyle(Color.lungfishOrangeFallback)
         } else if nextflowAvailable == false {
             Text("Nextflow is not installed")
                 .font(.caption)
-                .foregroundStyle(.red)
+                .foregroundStyle(Color.lungfishOrangeFallback)
         } else if containerAvailable == false {
             Text("No container runtime available")
                 .font(.caption)
-                .foregroundStyle(.red)
+                .foregroundStyle(Color.lungfishOrangeFallback)
         } else if nextflowAvailable == nil || containerAvailable == nil {
             Text("Checking prerequisites...")
                 .font(.caption)
@@ -223,7 +223,7 @@ struct TaxTriageWizardSheet: View {
                         .font(.system(size: 12))
                 } else {
                     Image(systemName: "xmark.circle")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.lungfishOrangeFallback)
                         .font(.system(size: 12))
                 }
             } else {
