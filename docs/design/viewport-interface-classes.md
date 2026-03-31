@@ -125,7 +125,45 @@ Tool results in Lungfish share viewport layouts based on the *type of output*, n
 - Provides: contig table, stats panel, Nx plot, sequence viewer
 - Subclasses add: tool-specific views (assembly graph, haplotype toggle)
 
-## Interface Class 4: Variant Browser (Variant Calling Results)
+## Interface Class 4: Sequence Viewer (Read/Sequence Data)
+
+**Used by:** FASTQ datasets, FASTA collections, imported reads
+
+**Layout:**
+```
++--------------------------------------------------+
+| Summary Bar (read count, base count, quality)    |
++--------------------------------------------------+
+| Sparklines (length, Q/position, Q score dist)    |
++--------------------------------------------------+
+| Operations Sidebar |  Read/Sequence View          |
+|                    |  - Raw sequence browser       |
+| FASTQ operations   |  - Quality visualization     |
+| (trim, filter,     |  - Read statistics            |
+|  classify, etc.)   |                               |
++--------------------+------------------------------+
+| Inspector (metadata, stats, ENA metadata)        |
++--------------------------------------------------+
+```
+
+**Common features:**
+- Read/sequence browser with raw text or formatted view
+- Quality score visualization (per-position, distribution)
+- Length distribution sparklines
+- Read count and base count statistics
+- Operations sidebar for FASTQ preprocessing
+
+**Data type variations:**
+| Type | Specialty |
+|------|-----------|
+| FASTQ | Quality scores, paired-end, operations panel |
+| FASTA | Sequence only (no quality), annotation overlay |
+| FASTA collection | Multi-sequence browsing, selection |
+
+**Existing implementation:** `FASTQDatasetViewController` (FASTQ), `ViewerViewController` (FASTA)
+- FASTA also serves as the **reference backbone** for Alignment and Variant viewers
+
+## Interface Class 5: Variant Browser (Variant Calling Results)
 
 **Used by:** VCF import, FreeBayes, LoFreq, GATK, iVar, future callers
 
@@ -140,11 +178,18 @@ Tool results in Lungfish share viewport layouts based on the *type of output*, n
 | ALT, QUAL, FILTER |  - Annotation (if available)  |
 +--------------------+-----------------------------+
 | Genome Context (ruler + variant track)           |
+| [FASTA reference provides coordinate axis and    |
+|  base-level context for variant interpretation]  |
 +--------------------------------------------------+
 ```
 
 **Already implemented** as the existing VCF viewport. Future variant callers
 produce VCF files that are displayed using this same interface.
+
+**FASTA as shared infrastructure:** The reference FASTA serves as the coordinate
+backbone for both the Alignment Viewer (Class 2) and the Variant Browser (Class 5).
+When a reference bundle is loaded, its sequence and annotations are available to
+both alignment pileup rendering and variant context display.
 
 ## Implementation Strategy
 
@@ -186,6 +231,8 @@ protocol TaxonomyDisplayable: ResultViewportController, BlastVerifiable {
 enum ViewportRegistry {
     static func controller(for resultType: ResultType) -> any ResultViewportController {
         switch resultType {
+        case .sequenceData(let format):
+            return sequenceController(for: format)
         case .classification(let tool):
             return taxonomyController(for: tool)
         case .alignment:
@@ -221,6 +268,10 @@ Sources/LungfishApp/Views/
     Base/
       ResultViewportController.swift      # Protocol + base class
       GenomicSummaryCardBar.swift         # Reusable summary bar (already exists)
+    Sequences/
+      SequenceViewerController.swift      # Base FASTA/FASTQ viewer
+      FASTQDatasetViewController.swift    # FASTQ-specific (operations, quality) [existing]
+      FASTACollectionViewController.swift # Multi-FASTA browser [existing]
     Taxonomy/
       TaxonomyResultViewController.swift  # Base taxonomy browser
       Kraken2DetailPane.swift            # Kraken2 sunburst + tree
@@ -234,3 +285,24 @@ Sources/LungfishApp/Views/
     Variants/
       VariantResultViewController.swift   # VCF browser (existing)
 ```
+
+## Cross-Class Relationships
+
+FASTA reference sequences serve as shared infrastructure across multiple classes:
+
+```
+                    FASTA Reference
+                    (sequence + annotations)
+                         |
+              +----------+----------+
+              |          |          |
+        Alignment    Variant    Assembly
+        Viewer       Browser    Viewer
+        (BAM         (VCF       (contigs aligned
+         pileup)      context)   back to ref)
+```
+
+The `ViewerViewController` manages this by loading the reference bundle first,
+then overlaying the appropriate result viewport as a child view controller.
+This is why FASTA is both a standalone viewer (Class 4) and the backbone for
+Classes 2, 3, and 5.
