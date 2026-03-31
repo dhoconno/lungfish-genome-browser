@@ -20,6 +20,10 @@ Evaluates rendering quality, layout correctness, and Apple HIG compliance.
 - **SF Symbols**: Correct weight, size, and color for all icons
 - **Typography**: System fonts, correct text styles, proper truncation
 - **Empty states**: What does the view look like with no data?
+- **Dialog compliance**: Every tool dialog must match the template in DEVELOPMENT-LEAD-AGENT.md "Dialog Design Standards". Check: tool icon + name in header, dataset name (not "preview.fastq"), compact sizing (480-520px wide, never 680+), "Run" button title, no redundant headers, instant display (no blocking on I/O).
+- **Button consistency**: ALL operation buttons must say "Run". Never "Compute", "Go", "Start", "Classify…", etc.
+- **Parameter bar**: Controls must not clip or overdraw. Multi-control operations (like Orient) must use multi-row layout.
+- **Sidebar filtering**: Internal files (.json, .lungfish-meta.json, metadata.csv) must not appear in the file browser.
 
 **Output**: A visual findings document with screenshots/descriptions of each issue, severity, and the specific view/constraint to fix.
 
