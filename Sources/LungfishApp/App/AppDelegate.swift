@@ -3966,7 +3966,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     OperationCenter.shared.log(id: opID, level: .info, message: "BAM created at \(bamURL.lastPathComponent)")
                 }}
 
-                // Fetch top 20 viral reference FASTAs from GenBank
+                // Fetch all viral reference FASTAs from GenBank
                 let uniqueAccessions = Array(Set(naoResult.virusHits.map(\.subjectSeqId).filter { !$0.isEmpty }))
                     .sorted()
                 await self?.fetchViralReferences(
@@ -4024,7 +4024,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         manifest: inout NaoMgsManifest,
         opID: UUID
     ) async {
-        let toFetch = Array(accessions.prefix(20))
+        let toFetch = accessions
         guard !toFetch.isEmpty else { return }
 
         let ncbi = NCBIService()
