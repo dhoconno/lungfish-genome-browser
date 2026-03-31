@@ -1786,63 +1786,49 @@ extension MainSplitViewController: SidebarSelectionDelegate {
     private func displayNaoMgsResultFromSidebar(at url: URL) {
         logger.info("displayNaoMgsResult: Opening '\(url.lastPathComponent, privacy: .public)'")
 
-        Task.detached {
-            do {
-                let fm = FileManager.default
-                let decoder = JSONDecoder()
-                decoder.dateDecodingStrategy = .iso8601
+        do {
+            let fm = FileManager.default
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
 
-                // Read manifest
-                let manifestURL = url.appendingPathComponent("manifest.json")
-                guard fm.fileExists(atPath: manifestURL.path) else {
-                    throw NSError(domain: "NaoMgsDisplay", code: 1,
-                                  userInfo: [NSLocalizedDescriptionKey: "manifest.json not found in NAO-MGS bundle"])
-                }
-                let manifestData = try Data(contentsOf: manifestURL)
-                let manifest = try decoder.decode(NaoMgsManifest.self, from: manifestData)
+            // Read manifest
+            let manifestURL = url.appendingPathComponent("manifest.json")
+            guard fm.fileExists(atPath: manifestURL.path) else {
+                throw NSError(domain: "NaoMgsDisplay", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: "manifest.json not found in NAO-MGS bundle"])
+            }
+            let manifestData = try Data(contentsOf: manifestURL)
+            let manifest = try decoder.decode(NaoMgsManifest.self, from: manifestData)
 
-                // Try loading cached virus hits JSON first
-                let hitsURL = url.appendingPathComponent("virus_hits.json")
-                let naoResult: NaoMgsResult
-                if fm.fileExists(atPath: hitsURL.path) {
-                    let hitsData = try Data(contentsOf: hitsURL)
-                    let hitsFile = try decoder.decode(NaoMgsVirusHitsFile.self, from: hitsData)
-                    naoResult = NaoMgsResult(
-                        virusHits: hitsFile.virusHits,
-                        taxonSummaries: hitsFile.taxonSummaries,
-                        totalHitReads: hitsFile.virusHits.count,
-                        sampleName: manifest.sampleName,
-                        sourceDirectory: url,
-                        virusHitsFile: URL(fileURLWithPath: manifest.sourceFilePath)
-                    )
-                } else {
-                    // Fallback: re-parse from original source
-                    let parser = NaoMgsResultParser()
-                    naoResult = try await parser.loadResults(
-                        from: URL(fileURLWithPath: manifest.sourceFilePath),
-                        sampleName: manifest.sampleName
-                    )
-                }
+            // Load cached virus hits JSON (always present after import)
+            let hitsURL = url.appendingPathComponent("virus_hits.json")
+            guard fm.fileExists(atPath: hitsURL.path) else {
+                throw NSError(domain: "NaoMgsDisplay", code: 2,
+                              userInfo: [NSLocalizedDescriptionKey: "virus_hits.json not found — bundle may be incomplete"])
+            }
+            let hitsData = try Data(contentsOf: hitsURL)
+            let hitsFile = try decoder.decode(NaoMgsVirusHitsFile.self, from: hitsData)
+            let naoResult = NaoMgsResult(
+                virusHits: hitsFile.virusHits,
+                taxonSummaries: hitsFile.taxonSummaries,
+                totalHitReads: hitsFile.virusHits.count,
+                sampleName: manifest.sampleName,
+                sourceDirectory: url,
+                virusHitsFile: URL(fileURLWithPath: manifest.sourceFilePath)
+            )
 
-                DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated {
-                    guard let self else { return }
-                    let resultVC = NaoMgsResultViewController()
-                    resultVC.configure(result: naoResult)
-                    self.viewerController.displayNaoMgsResult(resultVC)
-                }}
-            } catch {
-                DispatchQueue.main.async { MainActor.assumeIsolated { [weak self] in
-                    guard let self else { return }
-                    logger.error("displayNaoMgsResult: Failed - \(error.localizedDescription, privacy: .public)")
-                    let alert = NSAlert()
-                    alert.messageText = "Failed to Load NAO-MGS Result"
-                    alert.informativeText = error.localizedDescription
-                    alert.alertStyle = .warning
-                    alert.addButton(withTitle: "OK")
-                    if let window = self.view.window ?? NSApp.keyWindow {
-                        alert.beginSheetModal(for: window)
-                    }
-                }}
+            let resultVC = NaoMgsResultViewController()
+            resultVC.configure(result: naoResult)
+            viewerController.displayNaoMgsResult(resultVC)
+        } catch {
+            logger.error("displayNaoMgsResult: Failed - \(error.localizedDescription, privacy: .public)")
+            let alert = NSAlert()
+            alert.messageText = "Failed to Load NAO-MGS Result"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            if let window = view.window ?? NSApp.keyWindow {
+                alert.beginSheetModal(for: window)
             }
         }
     }
