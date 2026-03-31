@@ -3669,9 +3669,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             detail: "Importing surveillance results for \(sampleName)"
         )
 
-        // Determine output directory: use the current project's derivatives folder
+        // Determine output directory: use the current project's Imports folder
         let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController
         let projectURL = sidebarController?.currentProjectURL
+        let viewerController = mainWindowController?.mainSplitViewController?.viewerController
         let runToken = String(UUID().uuidString.prefix(8))
 
         Task.detached {
@@ -3679,25 +3680,75 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 let parser = NaoMgsResultParser()
                 let naoResult = try await parser.loadResults(from: directory, sampleName: sampleName)
 
-                // Output goes to project derivatives, or next to the source file if no project
+                DispatchQueue.main.async { MainActor.assumeIsolated {
+                    OperationCenter.shared.update(id: opID, progress: 0.3, detail: "Parsed \(naoResult.totalHitReads) virus hits")
+                    OperationCenter.shared.log(id: opID, level: .info, message: "Parsed \(naoResult.totalHitReads) virus hits")
+                }}
+
+                // Output goes to project Imports, or next to the source file if no project
                 let outputDir: URL
                 if let projectURL {
-                    outputDir = projectURL.appendingPathComponent("derivatives")
+                    outputDir = projectURL.appendingPathComponent("Imports")
                         .appendingPathComponent("naomgs-\(runToken)")
                 } else {
-                    // Fallback: next to the input file's parent directory
                     let parentDir = directory.deletingLastPathComponent()
                     outputDir = parentDir.appendingPathComponent("naomgs-\(runToken)")
                 }
                 try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+
+                // Convert to SAM first, then sort and index to BAM
                 let samURL = outputDir.appendingPathComponent("\(sampleName).sam")
                 try parser.convertToSAM(hits: naoResult.virusHits, outputURL: samURL)
 
                 DispatchQueue.main.async { MainActor.assumeIsolated {
+                    OperationCenter.shared.update(id: opID, progress: 0.5, detail: "Sorting and indexing BAM...")
+                    OperationCenter.shared.log(id: opID, level: .info, message: "Converting SAM to sorted BAM")
+                }}
+
+                // Sort SAM → BAM using samtools
+                let bamURL = outputDir.appendingPathComponent("\(sampleName).sorted.bam")
+                let runner = NativeToolRunner()
+                let sortResult = try await runner.run(
+                    .samtools,
+                    arguments: ["sort", "-o", bamURL.path, samURL.path],
+                    workingDirectory: outputDir,
+                    timeout: 600
+                )
+                guard sortResult.isSuccess else {
+                    throw NSError(domain: "NaoMgsImport", code: 1,
+                                  userInfo: [NSLocalizedDescriptionKey: "samtools sort failed: \(sortResult.stderr)"])
+                }
+
+                // Index BAM
+                let indexResult = try await runner.run(
+                    .samtools,
+                    arguments: ["index", bamURL.path],
+                    workingDirectory: outputDir,
+                    timeout: 300
+                )
+                guard indexResult.isSuccess else {
+                    throw NSError(domain: "NaoMgsImport", code: 2,
+                                  userInfo: [NSLocalizedDescriptionKey: "samtools index failed: \(indexResult.stderr)"])
+                }
+
+                // Clean up the intermediate SAM file
+                try? FileManager.default.removeItem(at: samURL)
+
+                DispatchQueue.main.async { MainActor.assumeIsolated {
+                    OperationCenter.shared.update(id: opID, progress: 0.9, detail: "Displaying results...")
+                    OperationCenter.shared.log(id: opID, level: .info, message: "BAM created at \(bamURL.lastPathComponent)")
+
+                    // Display the NAO-MGS result viewer
+                    if let viewerController {
+                        let resultVC = NaoMgsResultViewController()
+                        resultVC.configure(result: naoResult)
+                        viewerController.displayNaoMgsResult(resultVC)
+                    }
+
                     OperationCenter.shared.complete(
                         id: opID,
                         detail: "Imported \(naoResult.totalHitReads) virus hits from \(sampleName)",
-                        bundleURLs: [samURL]
+                        bundleURLs: [bamURL]
                     )
                 }}
             } catch {
