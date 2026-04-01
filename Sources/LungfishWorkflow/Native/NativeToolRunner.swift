@@ -63,6 +63,16 @@ public enum NativeToolError: Error, LocalizedError, Sendable {
     }
 }
 
+
+// MARK: - DataBox
+
+/// Thread-safe box for collecting Data from a single GCD block.
+/// Each box is written by exactly one block, eliminating data races
+/// that would occur when multiple GCD blocks mutate a shared Array<Data>.
+private final class DataBox: @unchecked Sendable {
+    var value = Data()
+}
+
 // MARK: - NativeTool
 
 /// Represents a native bioinformatics tool bundled with the app.
@@ -944,21 +954,22 @@ extension NativeToolRunner {
 
                 // Drain all stderr pipes and final stdout concurrently to avoid
                 // deadlock when output exceeds the ~64 KB kernel pipe buffer.
-                var stderrDataByStage = Array(repeating: Data(), count: stages.count)
-                var stdoutData = Data()
+                let stderrBoxes = (0..<stages.count).map { _ in DataBox() }
+                let stdoutBox = DataBox()
                 let drainGroup = DispatchGroup()
 
                 for i in 0..<stages.count {
                     let pipe = stderrPipes[i]
+                    let box = stderrBoxes[i]
                     drainGroup.enter()
                     DispatchQueue.global().async {
-                        stderrDataByStage[i] = pipe.fileHandleForReading.readDataToEndOfFile()
+                        box.value = pipe.fileHandleForReading.readDataToEndOfFile()
                         drainGroup.leave()
                     }
                 }
                 drainGroup.enter()
                 DispatchQueue.global().async {
-                    stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                    stdoutBox.value = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
                     drainGroup.leave()
                 }
 
@@ -970,8 +981,8 @@ extension NativeToolRunner {
                 timeoutWorkItem.cancel()
 
                 let exitCodes = processes.map(\.terminationStatus)
-                let stderrStrings = stderrDataByStage.map { String(data: $0, encoding: .utf8) ?? "" }
-                let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
+                let stderrStrings = stderrBoxes.map { String(data: $0.value, encoding: .utf8) ?? "" }
+                let stdout = String(data: stdoutBox.value, encoding: .utf8) ?? ""
 
                 let result = NativePipelineResult(
                     exitCodes: exitCodes,
@@ -1091,13 +1102,14 @@ extension NativeToolRunner {
                 }
 
                 // Drain all stderr pipes concurrently to avoid deadlock.
-                var stderrDataByStage = Array(repeating: Data(), count: stages.count)
+                let stderrBoxes = (0..<stages.count).map { _ in DataBox() }
                 let drainGroup = DispatchGroup()
                 for i in 0..<stages.count {
                     let pipe = stderrPipes[i]
+                    let box = stderrBoxes[i]
                     drainGroup.enter()
                     DispatchQueue.global().async {
-                        stderrDataByStage[i] = pipe.fileHandleForReading.readDataToEndOfFile()
+                        box.value = pipe.fileHandleForReading.readDataToEndOfFile()
                         drainGroup.leave()
                     }
                 }
@@ -1111,7 +1123,7 @@ extension NativeToolRunner {
                 try? outputHandle?.close()
 
                 let exitCodes = processes.map(\.terminationStatus)
-                let stderrStrings = stderrDataByStage.map { String(data: $0, encoding: .utf8) ?? "" }
+                let stderrStrings = stderrBoxes.map { String(data: $0.value, encoding: .utf8) ?? "" }
 
                 let result = NativePipelineResult(
                     exitCodes: exitCodes,

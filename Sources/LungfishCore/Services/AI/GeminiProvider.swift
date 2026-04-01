@@ -25,8 +25,15 @@ public actor GeminiProvider: AIProvider {
         self.httpClient = httpClient
     }
 
-    private var endpointURL: URL {
-        URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(modelId):generateContent?key=\(apiKey)")!
+    /// Builds the Gemini endpoint URL without embedding the API key.
+    ///
+    /// The API key is sent via the `x-goog-api-key` HTTP header instead of a
+    /// query parameter to avoid leaking credentials in logs and proxies.
+    private func endpointURL() throws -> URL {
+        guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(modelId):generateContent") else {
+            throw AIProviderError.networkError("Invalid Gemini endpoint URL for model '\(modelId)'")
+        }
+        return url
     }
 
     public func sendMessage(
@@ -37,9 +44,10 @@ public actor GeminiProvider: AIProvider {
         let requestBody = buildRequestBody(messages: messages, systemPrompt: systemPrompt, tools: tools)
         let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
 
-        var request = URLRequest(url: endpointURL)
+        var request = URLRequest(url: try endpointURL())
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
         request.setValue("Lungfish Genome Explorer", forHTTPHeaderField: "User-Agent")
         request.httpBody = jsonData
         request.timeoutInterval = 120

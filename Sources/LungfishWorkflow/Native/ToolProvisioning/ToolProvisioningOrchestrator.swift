@@ -114,7 +114,7 @@ public actor ToolProvisioningOrchestrator {
         var toProvision: [BundledToolSpec] = []
 
         for tool in orderedTools {
-            let provisioner = createProvisioner(for: tool)
+            let provisioner = try createProvisioner(for: tool)
             if !forceRebuild && provisioner.isInstalled(in: defaultOutputDirectory) {
                 logger.info("\(tool.name) already installed, skipping")
                 skipped.append(tool.name)
@@ -171,7 +171,7 @@ public actor ToolProvisioningOrchestrator {
             ))
 
             do {
-                let provisioner = createProvisioner(for: tool)
+                let provisioner = try createProvisioner(for: tool)
 
                 // Capture current state for progress callback
                 let currentCompleted = Array(successful.keys) + skipped
@@ -248,7 +248,7 @@ public actor ToolProvisioningOrchestrator {
         forceRebuild: Bool = false,
         progress: @escaping @Sendable (ProvisioningProgress) -> Void
     ) async throws -> [URL] {
-        let provisioner = createProvisioner(for: tool)
+        let provisioner = try createProvisioner(for: tool)
 
         if !forceRebuild && provisioner.isInstalled(in: defaultOutputDirectory) {
             progress(ProvisioningProgress(
@@ -274,7 +274,10 @@ public actor ToolProvisioningOrchestrator {
         var status: [String: Bool] = [:]
 
         for tool in BundledToolSpec.defaultTools {
-            let provisioner = createProvisioner(for: tool)
+            guard let provisioner = try? createProvisioner(for: tool) else {
+                status[tool.name] = false
+                continue
+            }
             status[tool.name] = provisioner.isInstalled(in: defaultOutputDirectory)
         }
 
@@ -329,7 +332,7 @@ public actor ToolProvisioningOrchestrator {
     }
 
     /// Creates a provisioner for the given tool definition.
-    private func createProvisioner(for tool: BundledToolSpec) -> any ToolProvisioner {
+    private func createProvisioner(for tool: BundledToolSpec) throws -> any ToolProvisioner {
         if let cached = provisioners[tool.name] {
             return cached
         }
@@ -350,9 +353,12 @@ public actor ToolProvisioningOrchestrator {
             )
 
         case .custom:
-            // For custom provisioners, we'd need a registry
-            // For now, fall back to a no-op provisioner
-            fatalError("Custom provisioners not yet implemented")
+            // Custom provisioners require a registry which is not yet implemented.
+            // Throw a descriptive error instead of crashing.
+            throw ToolProvisioningError.installationFailed(
+                tool: tool.name,
+                reason: "Custom provisioners are not yet implemented"
+            )
         }
 
         provisioners[tool.name] = provisioner

@@ -72,7 +72,7 @@ public actor OpenAIProvider: AIProvider {
         systemPrompt: String,
         tools: [AIToolDefinition]
     ) -> [String: Any] {
-        var openAIMessages = buildMessages(messages, systemPrompt: systemPrompt)
+        var openAIMessages = buildMessages(messages)
         // Insert system prompt at the beginning
         openAIMessages.insert(["role": "system", "content": systemPrompt], at: 0)
 
@@ -111,7 +111,7 @@ public actor OpenAIProvider: AIProvider {
         modelId.lowercased().hasPrefix("gpt-5")
     }
 
-    private func buildMessages(_ messages: [AIMessage], systemPrompt: String) -> [[String: Any]] {
+    private func buildMessages(_ messages: [AIMessage]) -> [[String: Any]] {
         var result: [[String: Any]] = []
 
         for message in messages {

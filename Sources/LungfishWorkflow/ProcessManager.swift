@@ -290,13 +290,10 @@ public actor ProcessManager: ProcessManaging {
         }
 
         // Set up termination stream
-        var terminationContinuation: AsyncStream<Int32>.Continuation!
-        let terminationStream = AsyncStream<Int32> { continuation in
-            terminationContinuation = continuation
-        }
+        let (terminationStream, terminationContinuation) = AsyncStream.makeStream(of: Int32.self)
 
         // Capture the continuation for use in the termination handler
-        let capturedTerminationContinuation = terminationContinuation!
+        let capturedTerminationContinuation = terminationContinuation
 
         // Start reading stdout asynchronously
         self.setupPipeReader(

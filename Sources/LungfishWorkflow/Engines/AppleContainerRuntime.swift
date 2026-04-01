@@ -887,9 +887,13 @@ public struct NATNetwork: ContainerManager.Network, Sendable {
         // Use a private subnet for NAT - the actual networking is handled by macOS
         // These addresses are used for configuring the network inside the VM
         // The gateway (192.168.64.1) is the host from the VM's perspective
-        let baseAddress = try! IPv4Address("192.168.64.0")
-        let prefix = Prefix.ipv4(24)!
-        self.subnet = try! CIDRv4(baseAddress, prefix: prefix)
+        // These literals are guaranteed valid, so a guard/precondition is appropriate.
+        guard let baseAddress = try? IPv4Address("192.168.64.0"),
+              let prefix = Prefix.ipv4(24),
+              let cidr = try? CIDRv4(baseAddress, prefix: prefix) else {
+            preconditionFailure("Failed to initialize NAT network with hardcoded 192.168.64.0/24 subnet")
+        }
+        self.subnet = cidr
         self.nextAddress = 2  // Start at .2 (.1 is gateway)
         self.allocations = [:]
     }
