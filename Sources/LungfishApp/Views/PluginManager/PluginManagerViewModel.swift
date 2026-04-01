@@ -203,9 +203,17 @@ final class PluginManagerViewModel {
         panel.prompt = "Choose"
         panel.message = "Select a directory for database storage"
 
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        AppSettings.shared.databaseStorageURL = url
-        refreshDatabases()
+        panel.begin { [weak self] response in
+            // panel.begin calls back on the main thread; use
+            // MainActor.assumeIsolated to satisfy Swift 6 isolation.
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard response == .OK, let url = panel.url else { return }
+                    AppSettings.shared.databaseStorageURL = url
+                    self?.refreshDatabases()
+                }
+            }
+        }
     }
 
     // MARK: - Lifecycle

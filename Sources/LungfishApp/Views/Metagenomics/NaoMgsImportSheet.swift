@@ -331,10 +331,11 @@ struct NaoMgsImportSheet: View {
         panel.allowedContentTypes = [.data, .folder]
         panel.message = "Select a virus_hits_final.tsv.gz file or results directory"
 
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-
-        selectedPath = url
-        scanResults(at: url)
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            selectedPath = url
+            scanResults(at: url)
+        }
     }
 
     /// Scans the selected path for NAO-MGS results and populates preview data.

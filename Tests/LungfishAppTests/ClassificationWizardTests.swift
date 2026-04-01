@@ -12,7 +12,7 @@ import XCTest
 /// Tests for the ``ClassificationWizardSheet`` configuration logic.
 ///
 /// These tests verify the data-layer behavior of the wizard without rendering
-/// SwiftUI views. They test goal options, preset mappings, database selection,
+/// SwiftUI views. They test preset mappings, database selection,
 /// configuration generation, and FASTQ bundle URL resolution.
 final class ClassificationWizardTests: XCTestCase {
 
@@ -51,68 +51,6 @@ final class ClassificationWizardTests: XCTestCase {
             status: status,
             recommendedRAM: sizeBytes
         )
-    }
-
-    // MARK: - testGoalOptions
-
-    /// Verifies that all three classification goals are available.
-    func testGoalOptions() {
-        let goals = ClassificationWizardSheet.ClassificationGoal.allCases
-
-        XCTAssertEqual(goals.count, 3)
-        XCTAssertTrue(goals.contains(.classify))
-        XCTAssertTrue(goals.contains(.profile))
-        XCTAssertTrue(goals.contains(.extract))
-    }
-
-    /// Verifies that each goal has a unique SF Symbol name.
-    func testGoalSymbolNames() {
-        let goals = ClassificationWizardSheet.ClassificationGoal.allCases
-        let symbols = goals.map(\.symbolName)
-
-        XCTAssertEqual(Set(symbols).count, 3, "Each goal should have a unique symbol")
-        XCTAssertTrue(symbols.contains("k.circle"))
-        XCTAssertTrue(symbols.contains("chart.pie"))
-        XCTAssertTrue(symbols.contains("scissors"))
-    }
-
-    /// Verifies that each goal has a non-empty description.
-    func testGoalDescriptions() {
-        for goal in ClassificationWizardSheet.ClassificationGoal.allCases {
-            XCTAssertFalse(goal.goalDescription.isEmpty, "\(goal) should have a description")
-            XCTAssertFalse(goal.rawValue.isEmpty, "\(goal) should have a display name")
-        }
-    }
-
-    // MARK: - testGoalMappingToConfig
-
-    /// Verifies that wizard goals map correctly to ClassificationConfig.Goal values.
-    func testGoalMappingToConfigGoal() {
-        XCTAssertEqual(
-            ClassificationWizardSheet.ClassificationGoal.classify.configGoal,
-            .classify
-        )
-        XCTAssertEqual(
-            ClassificationWizardSheet.ClassificationGoal.profile.configGoal,
-            .profile
-        )
-        XCTAssertEqual(
-            ClassificationWizardSheet.ClassificationGoal.extract.configGoal,
-            .extract
-        )
-    }
-
-    /// Verifies that all ClassificationConfig.Goal cases are reachable from wizard goals.
-    func testAllConfigGoalsCoveredByWizard() {
-        let wizardGoals = ClassificationWizardSheet.ClassificationGoal.allCases
-        let configGoals = Set(wizardGoals.map(\.configGoal))
-
-        for goal in ClassificationConfig.Goal.allCases {
-            XCTAssertTrue(
-                configGoals.contains(goal),
-                "Config goal .\(goal) should be reachable from wizard"
-            )
-        }
     }
 
     // MARK: - testConfigGoal

@@ -78,13 +78,10 @@ struct AssembleCommand: AsyncParsableCommand {
     func run() async throws {
         let formatter = TerminalFormatter(useColors: globalOptions.useColors)
 
-        // Resolve input files
+        // Resolve input files -- keep original paths (including .gz) for
+        // existence checks and SPAdes, which handles gzip natively.
         let inputURLs = fastqFiles.map { path -> URL in
-            var url = URL(fileURLWithPath: path)
-            if url.pathExtension.lowercased() == "gz" {
-                url = url.deletingPathExtension()
-            }
-            return URL(fileURLWithPath: path)
+            URL(fileURLWithPath: path)
         }
         for url in inputURLs {
             guard FileManager.default.fileExists(atPath: url.path) else {
@@ -106,8 +103,19 @@ struct AssembleCommand: AsyncParsableCommand {
             spadesMode = preset.toSPAdesMode()
         }
 
-        // Resolve project name
-        let name = projectName ?? inputURLs.first?.deletingPathExtension().lastPathComponent ?? "assembly"
+        // Resolve project name -- strip .gz then .fastq for a clean name
+        let name: String
+        if let explicit = projectName {
+            name = explicit
+        } else if let firstURL = inputURLs.first {
+            var detectURL = firstURL
+            if detectURL.pathExtension.lowercased() == "gz" {
+                detectURL = detectURL.deletingPathExtension()
+            }
+            name = detectURL.deletingPathExtension().lastPathComponent
+        } else {
+            name = "assembly"
+        }
 
         // Resolve output directory
         let outputDirectory: URL
@@ -183,11 +191,20 @@ struct AssembleCommand: AsyncParsableCommand {
             throw ExitCode.failure
         }
 
+        // SPAdesAssemblyPipeline requires AppleContainerRuntime specifically
+        guard let appleRuntime = runtime as? AppleContainerRuntime else {
+            print(formatter.error(
+                "SPAdes requires Apple Containers runtime, but got \(type(of: runtime)). "
+                + "Ensure you are running macOS 26+ with Apple Containers enabled."
+            ))
+            throw ExitCode.failure
+        }
+
         // Run pipeline
         let pipeline = SPAdesAssemblyPipeline()
         let result = try await pipeline.run(
             config: config,
-            runtime: runtime as! AppleContainerRuntime
+            runtime: appleRuntime
         ) { fraction, message in
             if !globalOptions.quiet {
                 print("\r\(formatter.info(message))", terminator: "")

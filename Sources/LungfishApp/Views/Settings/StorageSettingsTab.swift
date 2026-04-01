@@ -127,16 +127,18 @@ struct StorageSettingsTab: View {
         panel.prompt = "Choose"
         panel.message = "Select a directory for database storage"
 
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
 
-        // Check if there are existing databases at the current location.
-        let currentPath = settings.databaseStorageURL
-        let kraken2Dir = currentPath.appendingPathComponent("kraken2")
-        if FileManager.default.fileExists(atPath: kraken2Dir.path) {
-            pendingNewURL = url
-            showingMigrateAlert = true
-        } else {
-            applyNewLocation(url, migrate: false)
+            // Check if there are existing databases at the current location.
+            let currentPath = settings.databaseStorageURL
+            let kraken2Dir = currentPath.appendingPathComponent("kraken2")
+            if FileManager.default.fileExists(atPath: kraken2Dir.path) {
+                pendingNewURL = url
+                showingMigrateAlert = true
+            } else {
+                applyNewLocation(url, migrate: false)
+            }
         }
     }
 

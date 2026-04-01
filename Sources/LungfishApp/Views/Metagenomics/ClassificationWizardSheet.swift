@@ -9,7 +9,7 @@ import LungfishWorkflow
 
 /// A SwiftUI sheet for configuring and launching a Kraken2 classification run.
 ///
-/// The wizard guides the user through selecting a goal, database, and sensitivity
+/// The wizard guides the user through selecting a database and sensitivity
 /// preset. Advanced settings are available in a collapsed disclosure group.
 ///
 /// ## Database Loading
@@ -37,10 +37,6 @@ import LungfishWorkflow
 /// +----------------------------------------------------+
 /// | Classify Reads                                     |
 /// +----------------------------------------------------+
-/// | Goal:                                              |
-/// |   [k.circle]  [chart.pie]  [scissors]       |
-/// |   Classify Reads     Profile      Extract          |
-/// +----------------------------------------------------+
 /// | Database: [ Standard-8 (8 GB, ~8 GB RAM)     v ]   |
 /// |           Download more databases...               |
 /// |  [!] This database requires X GB RAM...            |
@@ -67,7 +63,6 @@ struct ClassificationWizardSheet: View {
 
     // MARK: - State
 
-    @State private var selectedGoal: ClassificationGoal = .classify
     @State private var selectedDatabaseName: String = ""
     @State private var preset: ClassificationConfig.Preset = .balanced
     @State private var showAdvanced: Bool = false
@@ -88,47 +83,6 @@ struct ClassificationWizardSheet: View {
 
     /// Called when the user clicks Cancel.
     var onCancel: (() -> Void)?
-
-    // MARK: - Classification Goal
-
-    /// The user's high-level intent for the classification.
-    ///
-    /// This is the UI-layer representation. The ``performRun()`` method maps it
-    /// to ``ClassificationConfig.Goal`` when building the config.
-    enum ClassificationGoal: String, CaseIterable, Identifiable {
-        case classify = "Classify Reads"
-        case profile = "Profile Community"
-        case extract = "Extract by Organism"
-
-        var id: String { rawValue }
-
-        /// SF Symbol name for this goal.
-        var symbolName: String {
-            switch self {
-            case .classify: return "k.circle"
-            case .profile:  return "chart.pie"
-            case .extract:  return "scissors"
-            }
-        }
-
-        /// Description text shown below the goal button.
-        var goalDescription: String {
-            switch self {
-            case .classify: return "Assign each read to a taxon"
-            case .profile:  return "Estimate abundance of each organism"
-            case .extract:  return "Pull out reads matching specific taxa"
-            }
-        }
-
-        /// Maps to the workflow-level ``ClassificationConfig.Goal``.
-        var configGoal: ClassificationConfig.Goal {
-            switch self {
-            case .classify: return .classify
-            case .profile:  return .profile
-            case .extract:  return .extract
-            }
-        }
-    }
 
     // MARK: - Initialization
 
@@ -337,7 +291,7 @@ struct ClassificationWizardSheet: View {
         }
     }
 
-    // MARK: - Goal Selector
+    // MARK: - Sample Overview
 
     private var sampleOverviewSection: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -363,60 +317,6 @@ struct ClassificationWizardSheet: View {
                 }
             }
         }
-    }
-
-    private var goalSelector: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Goal")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 12) {
-                ForEach(ClassificationGoal.allCases) { goal in
-                    goalButton(goal)
-                }
-            }
-        }
-    }
-
-    /// A single goal selection button with icon and description.
-    private func goalButton(_ goal: ClassificationGoal) -> some View {
-        Button {
-            selectedGoal = goal
-        } label: {
-            VStack(spacing: 6) {
-                Image(systemName: goal.symbolName)
-                    .font(.system(size: 20))
-                    .frame(height: 24)
-                Text(goal.rawValue)
-                    .font(.system(size: 11, weight: .medium))
-                    .multilineTextAlignment(.center)
-                Text(goal.goalDescription)
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, minHeight: 80)
-            .padding(.vertical, 10)
-            .padding(.horizontal, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(selectedGoal == goal
-                          ? Color.accentColor.opacity(0.15)
-                          : Color(nsColor: .controlBackgroundColor))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(
-                        selectedGoal == goal ? Color.accentColor : Color(nsColor: .separatorColor),
-                        lineWidth: selectedGoal == goal ? 2 : 0.5
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(goal.rawValue)
-        .accessibilityHint(goal.goalDescription)
     }
 
     // MARK: - Database Picker
