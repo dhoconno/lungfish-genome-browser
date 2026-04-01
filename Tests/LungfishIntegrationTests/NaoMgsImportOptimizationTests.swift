@@ -120,6 +120,76 @@ struct NaoMgsImportOptimizationTests {
         #expect(records.isEmpty)
     }
 
+    // MARK: - Full Pipeline
+
+    @Test
+    func importNaoMgsWithFixtureCreatesValidBundle() async throws {
+        let workspace = makeTemporaryDirectory(prefix: "naomgs-pipeline-test-")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let url = TestFixtures.naomgs.virusHitsTsvGz
+        let outputDirectory = workspace.appendingPathComponent("imports", isDirectory: true)
+
+        let result = try await MetagenomicsImportService.importNaoMgs(
+            inputURL: url,
+            outputDirectory: outputDirectory,
+            sampleName: "CASPER_TEST",
+            includeAlignment: false,
+            fetchReferences: false
+        )
+
+        // Verify bundle structure
+        let bundle = result.resultDirectory
+        #expect(FileManager.default.fileExists(atPath: bundle.appendingPathComponent("manifest.json").path))
+        #expect(FileManager.default.fileExists(atPath: bundle.appendingPathComponent("virus_hits.json").path))
+
+        // Verify result metadata
+        #expect(result.sampleName == "CASPER_TEST")
+        #expect(result.totalHitReads == 35)
+        #expect(result.taxonCount == 4)
+        #expect(result.createdBAM == false)
+        #expect(result.fetchedReferenceCount == 0)
+
+        // Verify manifest content
+        let manifestData = try Data(contentsOf: bundle.appendingPathComponent("manifest.json"))
+        let manifestDecoder = JSONDecoder()
+        manifestDecoder.dateDecodingStrategy = .iso8601
+        let manifest = try manifestDecoder.decode(NaoMgsManifest.self, from: manifestData)
+        #expect(manifest.sampleName == "CASPER_TEST")
+        #expect(manifest.hitCount == 35)
+        #expect(manifest.taxonCount == 4)
+
+        // Verify virus_hits.json content
+        let hitsData = try Data(contentsOf: bundle.appendingPathComponent("virus_hits.json"))
+        let hitsFile = try JSONDecoder().decode(NaoMgsVirusHitsFile.self, from: hitsData)
+        #expect(hitsFile.virusHits.count == 35)
+        #expect(hitsFile.taxonSummaries.count == 4)
+        // Sorted by hit count descending
+        #expect(hitsFile.taxonSummaries[0].taxId == 28875, "Top taxon should be 28875 (20 hits)")
+    }
+
+    @Test
+    func importNaoMgsWithIdentityFilterReducesHits() async throws {
+        let workspace = makeTemporaryDirectory(prefix: "naomgs-filter-test-")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let url = TestFixtures.naomgs.virusHitsTsvGz
+        let outputDirectory = workspace.appendingPathComponent("imports", isDirectory: true)
+
+        let result = try await MetagenomicsImportService.importNaoMgs(
+            inputURL: url,
+            outputDirectory: outputDirectory,
+            sampleName: "FILTER_TEST",
+            minIdentity: 99.5,
+            includeAlignment: false,
+            fetchReferences: false
+        )
+
+        // With a high identity threshold, some hits should be filtered out
+        #expect(result.totalHitReads < 35, "Identity filter should reduce hit count")
+        #expect(result.totalHitReads >= 0)
+    }
+
     // MARK: - Error Handling
 
     @Test
