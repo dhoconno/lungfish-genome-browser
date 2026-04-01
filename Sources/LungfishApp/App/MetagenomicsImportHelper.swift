@@ -272,11 +272,17 @@ public enum MetagenomicsImportHelper {
                 }
             } catch {
                 exitState.value = 1
+                let partialPath: String?
+                if case .importAborted(let dir, _) = error as? MetagenomicsImportError {
+                    partialPath = dir.path
+                } else {
+                    partialPath = nil
+                }
                 emit(Event(
                     event: "error",
                     progress: nil,
                     message: nil,
-                    resultPath: nil,
+                    resultPath: partialPath,
                     sampleName: nil,
                     totalReads: nil,
                     speciesCount: nil,
