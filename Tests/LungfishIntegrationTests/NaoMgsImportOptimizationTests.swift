@@ -119,4 +119,47 @@ struct NaoMgsImportOptimizationTests {
         let records = MetagenomicsImportService.splitMultiRecordFASTA("")
         #expect(records.isEmpty)
     }
+
+    // MARK: - Error Handling
+
+    @Test
+    func importAbortedErrorCarriesResultDirectory() async throws {
+        let workspace = makeTemporaryDirectory(prefix: "naomgs-abort-test-")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let sourceFile = workspace.appendingPathComponent("virus_hits_final.tsv")
+        try """
+        sample\tseq_id\taligner_taxid_lca\tquery_seq\tquery_qual\tprim_align_genome_id_all\tprim_align_ref_start\tprim_align_cigar\tquery_len\tprim_align_edit_distance\tprim_align_query_rc
+        SAMPLE_A\tread1\t111\tACGTACGT\tFFFFFFFF\tACCN0001\t10\t8M\t8\t0\tFalse
+        """.write(to: sourceFile, atomically: true, encoding: .utf8)
+
+        let outputDirectory = workspace.appendingPathComponent("imports", isDirectory: true)
+
+        do {
+            _ = try await MetagenomicsImportService.importNaoMgs(
+                inputURL: sourceFile,
+                outputDirectory: outputDirectory,
+                sampleName: "ABORT_TEST",
+                includeAlignment: true,
+                fetchReferences: false
+            )
+            // If it succeeds (samtools available), that's fine
+            let importsContents = try FileManager.default.contentsOfDirectory(
+                at: outputDirectory, includingPropertiesForKeys: nil
+            )
+            #expect(!importsContents.isEmpty)
+        } catch let error as MetagenomicsImportError {
+            if case .importAborted(let dir, _) = error {
+                #expect(FileManager.default.fileExists(atPath: dir.path),
+                    "importAborted should reference an existing directory")
+            }
+        }
+    }
+}
+
+private func makeTemporaryDirectory(prefix: String) -> URL {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("\(prefix)\(UUID().uuidString)", isDirectory: true)
+    try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
 }

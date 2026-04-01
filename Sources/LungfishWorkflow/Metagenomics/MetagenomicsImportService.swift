@@ -100,6 +100,7 @@ public enum MetagenomicsImportError: Error, LocalizedError, Sendable {
     case copyFailed(source: URL, destination: URL, reason: String)
     case parseFailed(URL, String)
     case toolUnavailable(String)
+    case importAborted(resultDirectory: URL, underlying: Error)
 
     public var errorDescription: String? {
         switch self {
@@ -113,6 +114,8 @@ public enum MetagenomicsImportError: Error, LocalizedError, Sendable {
             return "Failed to parse \(url.lastPathComponent): \(reason)"
         case .toolUnavailable(let tool):
             return "Required tool is unavailable: \(tool)"
+        case .importAborted(_, let underlying):
+            return "Import aborted: \(underlying.localizedDescription)"
         }
     }
 }
@@ -455,6 +458,7 @@ public enum MetagenomicsImportService {
         let referencesDirectory = resultDirectory.appendingPathComponent("references", isDirectory: true)
         try ensureDirectoryExists(referencesDirectory)
 
+        do {
         progress?(0.20, "Writing NAO-MGS sidecars...")
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -555,6 +559,12 @@ public enum MetagenomicsImportService {
             fetchedReferenceCount: fetchedAccessions.count,
             createdBAM: createdBAM
         )
+        } catch {
+            throw MetagenomicsImportError.importAborted(
+                resultDirectory: resultDirectory,
+                underlying: error
+            )
+        }
     }
 
     /// Selects the top N accessions per taxon by hit count, deduplicated across taxa.
