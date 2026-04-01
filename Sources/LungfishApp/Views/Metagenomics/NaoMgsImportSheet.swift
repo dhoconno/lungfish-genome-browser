@@ -66,6 +66,7 @@ struct NaoMgsImportSheet: View {
     @State private var convertToSAM: Bool = true
     @State private var minIdentity: Double = 0
     @State private var isScanning: Bool = false
+    @State private var linesScanned: Int = 0
     @State private var scanError: String? = nil
 
     // Preview data from scanning
@@ -219,9 +220,15 @@ struct NaoMgsImportSheet: View {
                 HStack(spacing: 8) {
                     ProgressView()
                         .controlSize(.small)
-                    Text("Scanning results\u{2026}")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                    if linesScanned > 0 {
+                        Text("Scanning\u{2026} \(formatNumber(linesScanned)) lines")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Scanning results\u{2026}")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
                 }
             } else if let error = scanError {
                 HStack(alignment: .top, spacing: 6) {
@@ -345,6 +352,7 @@ struct NaoMgsImportSheet: View {
         hitCount = nil
         taxonCount = nil
         sourceFileName = nil
+        linesScanned = 0
 
         Task {
             do {
@@ -355,9 +363,17 @@ struct NaoMgsImportSheet: View {
 
                 let result: NaoMgsResult
                 if isDir.boolValue {
-                    result = try await parser.loadResults(from: url)
+                    result = try await parser.loadResults(from: url) { count in
+                        Task { @MainActor in
+                            self.linesScanned = count
+                        }
+                    }
                 } else {
-                    let hits = try await parser.parseVirusHits(at: url)
+                    let hits = try await parser.parseVirusHits(at: url) { count in
+                        Task { @MainActor in
+                            self.linesScanned = count
+                        }
+                    }
                     let summaries = parser.aggregateByTaxon(hits)
                     result = NaoMgsResult(
                         virusHits: hits,
