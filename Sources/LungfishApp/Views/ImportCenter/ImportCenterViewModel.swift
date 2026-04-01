@@ -254,17 +254,33 @@ final class ImportCenterViewModel {
         // References
         ImportCardInfo(
             id: "fasta",
-            title: "Reference FASTA",
-            description: "Import a reference genome FASTA file. Supports plain text and gzipped FASTA with .fai indices.",
+            title: "Reference Sequences",
+            description: "Import standalone reference sequence files as .lungfishref bundles. Supports FASTA/GenBank/EMBL with .gz/.bgz/.bz2/.xz/.zst wrappers.",
             sfSymbol: "doc.text",
-            fileHint: ".fasta, .fa, .fna, .fasta.gz",
+            fileHint: ".fa, .fasta, .fna, .faa, .ffn, .frn, .gb, .gbk, .gbff, .genbank, .embl (+ .gz/.bgz/.bz2/.xz/.zst)",
             tab: .references,
             importKind: .filePanel(
                 allowedTypes: [
-                    UTType(filenameExtension: "fasta") ?? .data,
                     UTType(filenameExtension: "fa") ?? .data,
+                    UTType(filenameExtension: "fasta") ?? .data,
                     UTType(filenameExtension: "fna") ?? .data,
+                    UTType(filenameExtension: "faa") ?? .data,
+                    UTType(filenameExtension: "ffn") ?? .data,
+                    UTType(filenameExtension: "frn") ?? .data,
+                    UTType(filenameExtension: "fas") ?? .data,
+                    UTType(filenameExtension: "fsa") ?? .data,
+                    UTType(filenameExtension: "gb") ?? .data,
+                    UTType(filenameExtension: "gbk") ?? .data,
+                    UTType(filenameExtension: "gbff") ?? .data,
+                    UTType(filenameExtension: "genbank") ?? .data,
+                    UTType(filenameExtension: "embl") ?? .data,
                     UTType(filenameExtension: "gz") ?? .data,
+                    UTType(filenameExtension: "gzip") ?? .data,
+                    UTType(filenameExtension: "bgz") ?? .data,
+                    UTType(filenameExtension: "bz2") ?? .data,
+                    UTType(filenameExtension: "xz") ?? .data,
+                    UTType(filenameExtension: "zst") ?? .data,
+                    UTType(filenameExtension: "zstd") ?? .data,
                 ],
                 action: .fasta
             )
@@ -343,7 +359,7 @@ final class ImportCenterViewModel {
         switch action {
         case .bam:      return "Select BAM or CRAM alignment files to import"
         case .vcf:      return "Select VCF variant files to import"
-        case .fasta:    return "Select reference FASTA files to import"
+        case .fasta:    return "Select standalone reference sequence files (.fa/.fasta/.gb/.embl, optionally .gz) to import"
         case .kraken2:  return "Select Kraken2 report files to import"
         case .esViritu: return "Select EsViritu result files or directory"
         case .taxTriage: return "Select TaxTriage result files or directory"

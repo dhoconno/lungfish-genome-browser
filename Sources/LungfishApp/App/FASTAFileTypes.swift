@@ -1,18 +1,20 @@
 import UniformTypeIdentifiers
 
 enum FASTAFileTypes {
-    static let readableExtensions = ["fa", "fasta", "fna", "fsa"]
+    static let readableExtensions = ["fa", "fasta", "fna", "fsa", "fas", "faa", "ffn", "frn", "gb", "gbk", "gbff", "genbank", "embl"]
+    static let compressionWrapperExtensions = ["gz", "gzip", "bgz", "bz2", "xz", "zst", "zstd"]
 
-    /// Content types for FASTA files, including gzip-compressed variants.
+    /// Content types for reference sequence files, including common compressed wrappers.
     ///
-    /// Includes both plain FASTA extensions and `.gz` / `.gzip` so that
-    /// NSOpenPanel accepts `sequence.fa.gz` files used by genome bundles.
+    /// Includes plain FASTA/GenBank/EMBL extensions and compressed wrappers
+    /// so NSOpenPanel accepts files like `sequence.fa.gz` and `reference.gbk.xz`.
     static let readableContentTypes: [UTType] = {
         var types = readableExtensions.compactMap { UTType(filenameExtension: $0) }
-        // Add gzip so .fa.gz, .fasta.gz are selectable
         types.append(.gzip)
-        if let gz = UTType(filenameExtension: "gz") {
-            types.append(gz)
+        for wrapper in compressionWrapperExtensions {
+            if let wrapperType = UTType(filenameExtension: wrapper) {
+                types.append(wrapperType)
+            }
         }
         return types
     }()

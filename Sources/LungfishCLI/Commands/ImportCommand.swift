@@ -414,17 +414,17 @@ extension ImportCommand {
 
 extension ImportCommand {
 
-    /// Import a reference FASTA file into a Lungfish project.
+    /// Import a standalone reference sequence file into a Lungfish project.
     ///
-    /// Creates a `.lungfishref` bundle in the project's "Reference Sequences"
-    /// folder containing the FASTA file and a manifest.
+    /// Accepts FASTA/GenBank/EMBL (plain or compressed), then builds a canonical
+    /// `.lungfishref` bundle in the project's "Reference Sequences" folder.
     struct FASTASubcommand: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "fasta",
-            abstract: "Import a reference FASTA file"
+            abstract: "Import a standalone reference sequence file as a .lungfishref bundle"
         )
 
-        @Argument(help: "Path to the FASTA file (.fasta, .fa, .fna)")
+        @Argument(help: "Path to the input reference (.fa/.fasta/.gb/.embl, optionally .gz/.bgz/.bz2/.xz/.zst)")
         var inputFile: String
 
         @Option(
@@ -441,6 +441,19 @@ extension ImportCommand {
 
         @OptionGroup var globalOptions: GlobalOptions
 
+        private static let compressionExtensions: Set<String> = ["gz", "gzip", "bgz", "bz2", "xz", "zst", "zstd"]
+        private static let fastaExtensions: Set<String> = ["fa", "fasta", "fna", "fsa", "fas", "faa", "ffn", "frn"]
+        private static let genbankExtensions: Set<String> = ["gb", "gbk", "genbank", "gbff", "embl"]
+
+        private struct BuildInputs {
+            let fastaURL: URL
+            let annotationInputs: [AnnotationInput]
+            let organism: String
+            let sequenceNames: [String]
+            let sequenceCount: Int
+            let totalLength: Int64
+        }
+
         func run() async throws {
             let formatter = TerminalFormatter(useColors: globalOptions.useColors)
             let inputURL = URL(fileURLWithPath: inputFile)
@@ -450,83 +463,263 @@ extension ImportCommand {
                 throw ExitCode.failure
             }
 
-            // Validate format from extension.
-            var formatURL = inputURL
-            if formatURL.pathExtension.lowercased() == "gz" {
-                formatURL = formatURL.deletingPathExtension()
-            }
-            let ext = formatURL.pathExtension.lowercased()
-            guard ["fasta", "fa", "fna", "faa", "ffn", "frn", "fas"].contains(ext) else {
-                print(formatter.error(
-                    "Unsupported FASTA format: .\(ext). Expected .fasta, .fa, .fna, or similar"
-                ))
+            let ext = normalizedExtension(for: inputURL)
+            guard Self.fastaExtensions.contains(ext) || Self.genbankExtensions.contains(ext) else {
+                print(formatter.error("Unsupported reference format: .\(ext)"))
                 throw ExitCode.failure
             }
 
             let outputDirectory = resolveOutputDirectory(outputDir)
+            let refsDirectory = try ReferenceSequenceFolder.ensureFolder(in: outputDirectory)
+            try FileManager.default.createDirectory(at: refsDirectory, withIntermediateDirectories: true)
 
-            print(formatter.header("FASTA Reference Import"))
+            print(formatter.header("Reference Import"))
             print("")
 
-            // Count sequences and total length by scanning the file.
             if !globalOptions.quiet {
-                print(formatter.info("Scanning FASTA file..."))
+                print(formatter.info("Preparing reference input..."))
             }
 
-            var sequenceCount = 0
-            var totalLength: Int64 = 0
-            var sequenceNames: [String] = []
+            let tempDirectory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("lungfish-cli-ref-import-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: tempDirectory) }
 
-            let fileHandle = try FileHandle(forReadingFrom: inputURL)
-            defer { fileHandle.closeFile() }
-
-            // Stream the file to count sequences.
-            let data = fileHandle.readDataToEndOfFile()
-            if let content = String(data: data, encoding: .utf8) {
-                for line in content.split(separator: "\n", omittingEmptySubsequences: false) {
-                    if line.hasPrefix(">") {
-                        sequenceCount += 1
-                        let headerLine = String(line.dropFirst())
-                        let seqName = headerLine.split(separator: " ").first
-                            .map(String.init) ?? headerLine
-                        sequenceNames.append(seqName)
-                    } else {
-                        totalLength += Int64(line.count)
-                    }
-                }
-            }
-
-            // Import into project's Reference Sequences folder.
-            let displayName = name ?? inputURL.deletingPathExtension().lastPathComponent
-            let bundleURL = try ReferenceSequenceFolder.importReference(
-                from: inputURL,
-                into: outputDirectory,
-                displayName: displayName
+            let buildInputs = try await prepareBuildInputs(
+                sourceURL: inputURL,
+                extensionHint: ext,
+                tempDirectory: tempDirectory
             )
+
+            let displayName = resolvedBundleName(explicitName: name, sourceURL: inputURL)
+            let bundleName = makeUniqueBundleName(base: displayName, in: refsDirectory)
+
+            if !globalOptions.quiet {
+                print(formatter.info("Building .lungfishref bundle..."))
+            }
+
+            let sourceInfo = SourceInfo(
+                organism: buildInputs.organism.isEmpty ? bundleName : buildInputs.organism,
+                assembly: bundleName,
+                database: "Imported File",
+                sourceURL: inputURL,
+                downloadDate: Date(),
+                notes: "Imported from \(inputURL.lastPathComponent)"
+            )
+
+            let configuration = BuildConfiguration(
+                name: bundleName,
+                identifier: "org.lungfish.cli.import.\(UUID().uuidString.lowercased())",
+                fastaURL: buildInputs.fastaURL,
+                annotationFiles: buildInputs.annotationInputs,
+                outputDirectory: refsDirectory,
+                source: sourceInfo,
+                compressFASTA: true
+            )
+
+            let bundleURL = try await NativeBundleBuilder().build(configuration: configuration)
 
             print("")
             print(formatter.header("Summary"))
             print("")
             print(formatter.keyValueTable([
-                ("Name", displayName),
-                ("Sequences", String(sequenceCount)),
-                ("Total length", formatBases(totalLength)),
+                ("Name", bundleName),
+                ("Sequences", String(buildInputs.sequenceCount)),
+                ("Total length", formatBases(buildInputs.totalLength)),
                 ("Bundle", bundleURL.lastPathComponent),
             ]))
 
-            if !sequenceNames.isEmpty {
-                let displayNames = sequenceNames.prefix(10)
+            if !buildInputs.sequenceNames.isEmpty {
+                let displayNames = buildInputs.sequenceNames.prefix(10)
                     .joined(separator: ", ")
-                let suffix = sequenceNames.count > 10
-                    ? " (+\(sequenceNames.count - 10) more)" : ""
+                let suffix = buildInputs.sequenceNames.count > 10
+                    ? " (+\(buildInputs.sequenceNames.count - 10) more)" : ""
                 print("")
                 print("  Sequences: \(displayNames)\(suffix)")
             }
 
             print("")
             print(formatter.success(
-                "FASTA import complete: \(displayName) (\(sequenceCount) sequences, \(formatBases(totalLength)))"
+                "Reference import complete: \(bundleName) (\(buildInputs.sequenceCount) sequences, \(formatBases(buildInputs.totalLength)))"
             ))
+        }
+
+        private func normalizedExtension(for url: URL) -> String {
+            var ext = url.pathExtension.lowercased()
+            if Self.compressionExtensions.contains(ext) {
+                ext = url.deletingPathExtension().pathExtension.lowercased()
+            }
+            return ext
+        }
+
+        private func resolvedBundleName(explicitName: String?, sourceURL: URL) -> String {
+            let rawName: String
+            if let explicitName {
+                rawName = explicitName
+            } else {
+                var stripped = sourceURL
+                while !stripped.pathExtension.isEmpty {
+                    stripped = stripped.deletingPathExtension()
+                }
+                rawName = stripped.lastPathComponent
+            }
+
+            let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let fallback = trimmed.isEmpty ? "Imported Reference" : trimmed
+            return fallback
+                .replacingOccurrences(of: "/", with: "-")
+                .replacingOccurrences(of: ":", with: "-")
+        }
+
+        private func makeUniqueBundleName(base: String, in directory: URL) -> String {
+            let fm = FileManager.default
+            var candidate = base
+            var counter = 2
+
+            while fm.fileExists(atPath: bundleURL(for: candidate, in: directory).path) {
+                candidate = "\(base) \(counter)"
+                counter += 1
+            }
+
+            return candidate
+        }
+
+        private func bundleURL(for bundleName: String, in directory: URL) -> URL {
+            let safe = bundleName
+                .replacingOccurrences(of: " ", with: "_")
+                .replacingOccurrences(of: "/", with: "-")
+            return directory.appendingPathComponent("\(safe).lungfishref", isDirectory: true)
+        }
+
+        private func prepareBuildInputs(
+            sourceURL: URL,
+            extensionHint: String,
+            tempDirectory: URL
+        ) async throws -> BuildInputs {
+            let inputURL: URL
+            if Self.compressionExtensions.contains(sourceURL.pathExtension.lowercased()) {
+                let decompressed = tempDirectory.appendingPathComponent("decompressed-input")
+                try decompressInput(sourceURL: sourceURL, outputURL: decompressed)
+                inputURL = decompressed
+            } else {
+                inputURL = sourceURL
+            }
+
+            if Self.genbankExtensions.contains(extensionHint) {
+                let reader = try GenBankReader(url: inputURL)
+                let records = try await reader.readAll()
+                guard !records.isEmpty else {
+                    throw CLIError.validationFailed(errors: ["No sequences found in \(sourceURL.lastPathComponent)"])
+                }
+
+                let sequences = records.map(\.sequence)
+                guard !sequences.isEmpty else {
+                    throw CLIError.validationFailed(errors: ["No sequences found in \(sourceURL.lastPathComponent)"])
+                }
+
+                let fastaOutput = tempDirectory.appendingPathComponent("input.fa")
+                try FASTAWriter(url: fastaOutput).write(sequences)
+
+                let sequenceNames = sequences.map(\.name)
+                let totalLength = sequences.reduce(Int64(0)) { partial, sequence in
+                    partial + Int64(sequence.length)
+                }
+
+                let hasAnnotations = records.contains { !$0.annotations.isEmpty }
+                let annotationInputs: [AnnotationInput] = hasAnnotations ? [
+                    AnnotationInput(
+                        url: inputURL,
+                        name: "Imported Annotations",
+                        description: "Converted from \(sourceURL.lastPathComponent)",
+                        id: "imported_annotations",
+                        annotationType: .gene
+                    ),
+                ] : []
+
+                let organism = records.first?.definition
+                    ?? records.first?.sequence.description
+                    ?? sourceURL.deletingPathExtension().lastPathComponent
+
+                return BuildInputs(
+                    fastaURL: fastaOutput,
+                    annotationInputs: annotationInputs,
+                    organism: organism,
+                    sequenceNames: sequenceNames,
+                    sequenceCount: sequences.count,
+                    totalLength: totalLength
+                )
+            }
+
+            let sequences = try await FASTAReader(url: inputURL).readAll()
+            guard !sequences.isEmpty else {
+                throw CLIError.validationFailed(errors: ["No sequences found in \(sourceURL.lastPathComponent)"])
+            }
+
+            let sequenceNames = sequences.map(\.name)
+            let totalLength = sequences.reduce(Int64(0)) { partial, sequence in
+                partial + Int64(sequence.length)
+            }
+
+            return BuildInputs(
+                fastaURL: inputURL,
+                annotationInputs: [],
+                organism: sourceURL.deletingPathExtension().lastPathComponent,
+                sequenceNames: sequenceNames,
+                sequenceCount: sequences.count,
+                totalLength: totalLength
+            )
+        }
+
+        private func decompressInput(sourceURL: URL, outputURL: URL) throws {
+            let fm = FileManager.default
+            if fm.fileExists(atPath: outputURL.path) {
+                try? fm.removeItem(at: outputURL)
+            }
+            fm.createFile(atPath: outputURL.path, contents: nil)
+
+            let outputHandle = try FileHandle(forWritingTo: outputURL)
+            defer { try? outputHandle.close() }
+
+            let wrapper = sourceURL.pathExtension.lowercased()
+            let executable: String
+            let arguments: [String]
+            switch wrapper {
+            case "gz", "gzip", "bgz":
+                executable = "/usr/bin/gzip"
+                arguments = ["-dc", sourceURL.path]
+            case "bz2":
+                executable = "/usr/bin/bzip2"
+                arguments = ["-dc", sourceURL.path]
+            case "xz":
+                executable = "/usr/bin/xz"
+                arguments = ["-dc", sourceURL.path]
+            case "zst", "zstd":
+                executable = "/usr/bin/env"
+                arguments = ["zstd", "-dc", sourceURL.path]
+            default:
+                throw CLIError.validationFailed(errors: ["Unsupported compression wrapper: .\(wrapper)"])
+            }
+
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = arguments
+            process.standardOutput = outputHandle
+            let stderrPipe = Pipe()
+            process.standardError = stderrPipe
+
+            do {
+                try process.run()
+            } catch {
+                throw CLIError.conversionFailed(reason: "Failed to launch decompressor: \(error.localizedDescription)")
+            }
+            process.waitUntilExit()
+
+            guard process.terminationStatus == 0 else {
+                let stderr = String(data: stderrPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let message = stderr?.isEmpty == false ? stderr! : "decompressor exited with code \(process.terminationStatus)"
+                throw CLIError.conversionFailed(reason: message)
+            }
         }
     }
 }
@@ -555,6 +748,12 @@ extension ImportCommand {
         var outputFile: String?
 
         @Option(
+            name: .customLong("name"),
+            help: "Optional imported result name (used in output directory)"
+        )
+        var name: String?
+
+        @Option(
             name: [.customLong("output-dir"), .customShort("o")],
             help: "Output project directory (default: current directory)"
         )
@@ -579,46 +778,46 @@ extension ImportCommand {
             }
 
             let outputDirectory = resolveOutputDirectory(outputDir)
-            let destDir = outputDirectory.appendingPathComponent("classification-kraken2")
 
             print(formatter.header("Kraken2 Import"))
             print("")
 
-            // Parse kreport for summary.
-            let kreportData = try Data(contentsOf: kreportURL)
-            guard let kreportContent = String(data: kreportData, encoding: .utf8) else {
-                print(formatter.error("Cannot read kreport file as text"))
+            let parsed: KreportSummary
+            do {
+                let kreportData = try Data(contentsOf: kreportURL)
+                guard let kreportContent = String(data: kreportData, encoding: .utf8) else {
+                    print(formatter.error("Cannot read kreport file as text"))
+                    throw ExitCode.failure
+                }
+                parsed = parseKreport(kreportContent)
+            } catch {
+                print(formatter.error("Failed to parse kreport: \(error.localizedDescription)"))
                 throw ExitCode.failure
             }
 
-            let parsed = parseKreport(kreportContent)
-
-            // Create output directory and copy files.
-            try FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)
-
-            let destKreport = destDir.appendingPathComponent(kreportURL.lastPathComponent)
-            if !FileManager.default.fileExists(atPath: destKreport.path) {
-                try FileManager.default.copyItem(at: kreportURL, to: destKreport)
-            }
-
-            if let outputPath = outputFile {
-                let outputURL = URL(fileURLWithPath: outputPath)
-                let destOutput = destDir.appendingPathComponent(outputURL.lastPathComponent)
-                if !FileManager.default.fileExists(atPath: destOutput.path) {
-                    try FileManager.default.copyItem(at: outputURL, to: destOutput)
-                }
+            let imported: Kraken2ImportResult
+            do {
+                imported = try MetagenomicsImportService.importKraken2(
+                    kreportURL: kreportURL,
+                    outputDirectory: outputDirectory,
+                    outputFileURL: outputFile.map { URL(fileURLWithPath: $0) },
+                    preferredName: name
+                )
+            } catch {
+                print(formatter.error(error.localizedDescription))
+                throw ExitCode.failure
             }
 
             print(formatter.keyValueTable([
                 ("Kreport", kreportURL.lastPathComponent),
-                ("Total reads", formatNumber(Int64(parsed.totalReads))),
+                ("Output", imported.resultDirectory.lastPathComponent),
+                ("Total reads", formatNumber(Int64(imported.totalReads))),
                 ("Classified", formatNumber(Int64(parsed.classifiedReads))),
                 ("Unclassified", formatNumber(Int64(parsed.unclassifiedReads))),
-                ("Species", String(parsed.speciesEntries.count)),
+                ("Species", String(imported.speciesCount)),
             ]))
             print("")
 
-            // Print top species.
             if !parsed.speciesEntries.isEmpty {
                 print(formatter.header("Top Species"))
                 print("")
@@ -642,7 +841,7 @@ extension ImportCommand {
                 print("")
             }
 
-            print(formatter.success("Kraken2 import complete: \(destDir.lastPathComponent)"))
+            print(formatter.success("Kraken2 import complete: \(imported.resultDirectory.lastPathComponent)"))
         }
     }
 }
@@ -669,6 +868,12 @@ extension ImportCommand {
         )
         var outputDir: String?
 
+        @Option(
+            name: .customLong("name"),
+            help: "Optional imported result name (used in output directory)"
+        )
+        var name: String?
+
         @OptionGroup var globalOptions: GlobalOptions
 
         func run() async throws {
@@ -681,56 +886,31 @@ extension ImportCommand {
             }
 
             let outputDirectory = resolveOutputDirectory(outputDir)
-            let destDir = outputDirectory.appendingPathComponent("esviritu-results")
 
             print(formatter.header("EsViritu Import"))
             print("")
 
-            // Scan for detection output files.
-            var isDir: ObjCBool = false
-            FileManager.default.fileExists(atPath: inputURL.path, isDirectory: &isDir)
-
-            let resultsFiles: [URL]
-            if isDir.boolValue {
-                resultsFiles = scanForFiles(in: inputURL, extensions: ["tsv", "csv", "txt", "json"])
-            } else {
-                resultsFiles = [inputURL]
-            }
-
-            // Create output directory and copy files.
-            try FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)
-
-            for file in resultsFiles {
-                let destFile = destDir.appendingPathComponent(file.lastPathComponent)
-                if !FileManager.default.fileExists(atPath: destFile.path) {
-                    try FileManager.default.copyItem(at: file, to: destFile)
-                }
-            }
-
-            // Look for the primary detection output to parse.
-            let detectionFile = resultsFiles.first { url in
-                let name = url.lastPathComponent.lowercased()
-                return name.contains("detection") || name.contains("result")
-                    || name.contains("virus") || name.hasSuffix(".tsv")
-            }
-
-            var detectionCount = 0
-            if let detFile = detectionFile,
-               let content = try? String(contentsOf: detFile, encoding: .utf8) {
-                // Count non-header lines as detections.
-                let lines = content.split(separator: "\n")
-                detectionCount = max(0, lines.count - 1)
+            let imported: EsVirituImportResult
+            do {
+                imported = try MetagenomicsImportService.importEsViritu(
+                    inputURL: inputURL,
+                    outputDirectory: outputDirectory,
+                    preferredName: name
+                )
+            } catch {
+                print(formatter.error(error.localizedDescription))
+                throw ExitCode.failure
             }
 
             print(formatter.keyValueTable([
                 ("Source", inputURL.lastPathComponent),
-                ("Files imported", String(resultsFiles.count)),
-                ("Detections", detectionCount > 0 ? String(detectionCount) : "N/A"),
-                ("Output", destDir.lastPathComponent),
+                ("Files imported", String(imported.importedFileCount)),
+                ("Detections", String(imported.virusCount)),
+                ("Output", imported.resultDirectory.lastPathComponent),
             ]))
             print("")
 
-            print(formatter.success("EsViritu import complete: \(resultsFiles.count) file(s)"))
+            print(formatter.success("EsViritu import complete: \(imported.importedFileCount) file(s)"))
         }
     }
 }
@@ -757,6 +937,12 @@ extension ImportCommand {
         )
         var outputDir: String?
 
+        @Option(
+            name: .customLong("name"),
+            help: "Optional imported result name (used in output directory)"
+        )
+        var name: String?
+
         @OptionGroup var globalOptions: GlobalOptions
 
         func run() async throws {
@@ -769,69 +955,44 @@ extension ImportCommand {
             }
 
             let outputDirectory = resolveOutputDirectory(outputDir)
-            let destDir = outputDirectory.appendingPathComponent("taxtriage-results")
 
             print(formatter.header("TaxTriage Import"))
             print("")
 
-            // Scan for report files.
-            var isDir: ObjCBool = false
-            FileManager.default.fileExists(atPath: inputURL.path, isDirectory: &isDir)
-
-            let resultsFiles: [URL]
-            if isDir.boolValue {
-                resultsFiles = scanForFiles(in: inputURL, extensions: [
-                    "tsv", "csv", "txt", "json", "html", "kreport",
-                ])
-            } else {
-                resultsFiles = [inputURL]
-            }
-
-            // Create output directory and copy files.
-            try FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)
-
-            for file in resultsFiles {
-                let destFile = destDir.appendingPathComponent(file.lastPathComponent)
-                if !FileManager.default.fileExists(atPath: destFile.path) {
-                    try FileManager.default.copyItem(at: file, to: destFile)
-                }
-            }
-
-            // Look for report files to parse.
-            let reportFile = resultsFiles.first { url in
-                let name = url.lastPathComponent.lowercased()
-                return name.contains("report") || name.contains("triage")
-                    || name.contains("summary") || name.hasSuffix(".kreport")
-            }
-
-            var lineCount = 0
-            if let repFile = reportFile,
-               let content = try? String(contentsOf: repFile, encoding: .utf8) {
-                let lines = content.split(separator: "\n")
-                lineCount = max(0, lines.count - 1)
+            let imported: TaxTriageImportResult
+            do {
+                imported = try MetagenomicsImportService.importTaxTriage(
+                    inputURL: inputURL,
+                    outputDirectory: outputDirectory,
+                    preferredName: name
+                )
+            } catch {
+                print(formatter.error(error.localizedDescription))
+                throw ExitCode.failure
             }
 
             print(formatter.keyValueTable([
                 ("Source", inputURL.lastPathComponent),
-                ("Files imported", String(resultsFiles.count)),
-                ("Report entries", lineCount > 0 ? String(lineCount) : "N/A"),
-                ("Output", destDir.lastPathComponent),
+                ("Files imported", String(imported.importedFileCount)),
+                ("Report entries", imported.reportEntryCount > 0 ? String(imported.reportEntryCount) : "N/A"),
+                ("Output", imported.resultDirectory.lastPathComponent),
             ]))
             print("")
 
             // List imported files.
-            if !globalOptions.quiet && !resultsFiles.isEmpty {
+            let importedFiles = scanRegularFilesRecursively(in: imported.resultDirectory)
+            if !globalOptions.quiet && !importedFiles.isEmpty {
                 print(formatter.header("Imported Files"))
-                for file in resultsFiles.prefix(20) {
+                for file in importedFiles.prefix(20) {
                     print("  \(formatter.path(file.lastPathComponent))")
                 }
-                if resultsFiles.count > 20 {
-                    print("  (+\(resultsFiles.count - 20) more)")
+                if importedFiles.count > 20 {
+                    print("  (+\(importedFiles.count - 20) more)")
                 }
                 print("")
             }
 
-            print(formatter.success("TaxTriage import complete: \(resultsFiles.count) file(s)"))
+            print(formatter.success("TaxTriage import complete: \(imported.importedFileCount) file(s)"))
         }
     }
 }
@@ -842,8 +1003,8 @@ extension ImportCommand {
 
     /// Import NAO-MGS metagenomic surveillance results into a Lungfish project.
     ///
-    /// Wraps the existing `NaoMgsCommand.ImportSubcommand` functionality to also
-    /// be accessible via `lungfish import nao-mgs`.
+    /// Creates a canonical `naomgs-*` bundle containing manifest, cached hits,
+    /// optional BAM alignment files, and downloaded references.
     struct NaoMgsSubcommand: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "nao-mgs",
@@ -858,18 +1019,34 @@ extension ImportCommand {
 
         @Option(
             name: [.customLong("output-dir"), .customShort("o")],
-            help: "Output directory for converted files (default: current directory)"
+            help: "Output project/import directory (default: current directory)"
         )
         var outputDir: String?
 
-        @Flag(name: .customLong("sam"), help: "Convert virus hits to SAM format")
-        var convertToSAM: Bool = false
+        @Option(
+            name: .customLong("min-identity"),
+            help: "Minimum percent identity filter (0-100, default: 0)"
+        )
+        var minIdentity: Double = 0
+
+        @Flag(
+            name: [.customLong("sam"), .customLong("include-alignment")],
+            inversion: .prefixedNo,
+            help: "Create sorted BAM + BAI for miniBAM visualization (default: enabled)"
+        )
+        var includeAlignment: Bool = true
+
+        @Flag(
+            name: .customLong("fetch-references"),
+            inversion: .prefixedNo,
+            help: "Fetch NCBI reference FASTA files into references/ (default: enabled)"
+        )
+        var fetchReferences: Bool = true
 
         @OptionGroup var globalOptions: GlobalOptions
 
         func run() async throws {
             let formatter = TerminalFormatter(useColors: globalOptions.useColors)
-            let parser = NaoMgsResultParser()
 
             let inputURL = URL(fileURLWithPath: inputPath)
             guard FileManager.default.fileExists(atPath: inputURL.path) else {
@@ -877,46 +1054,6 @@ extension ImportCommand {
                 throw ExitCode.failure
             }
 
-            var isDir: ObjCBool = false
-            FileManager.default.fileExists(atPath: inputURL.path, isDirectory: &isDir)
-
-            let result: NaoMgsResult
-            if isDir.boolValue {
-                result = try await parser.loadResults(from: inputURL, sampleName: sampleName)
-            } else {
-                let hits = try await parser.parseVirusHits(at: inputURL)
-                let resolvedName = sampleName ?? hits.first?.sample ?? inputURL
-                    .deletingPathExtension().deletingPathExtension().lastPathComponent
-                let summaries = parser.aggregateByTaxon(hits)
-                result = NaoMgsResult(
-                    virusHits: hits,
-                    taxonSummaries: summaries,
-                    totalHitReads: hits.count,
-                    sampleName: resolvedName,
-                    sourceDirectory: inputURL.deletingLastPathComponent(),
-                    virusHitsFile: inputURL
-                )
-            }
-
-            print(formatter.header("NAO-MGS Import"))
-            print("")
-            print(formatter.keyValueTable([
-                ("Sample", result.sampleName),
-                ("Source", result.virusHitsFile.lastPathComponent),
-                ("Total hits", String(result.totalHitReads)),
-                ("Distinct taxa", String(result.taxonSummaries.count)),
-            ]))
-            print("")
-
-            // Print top taxa.
-            if !result.taxonSummaries.isEmpty {
-                printNaoMgsTaxonSummary(
-                    result.taxonSummaries.prefix(15),
-                    formatter: formatter
-                )
-            }
-
-            // Resolve output directory.
             let outputDirectory: URL
             if let dir = outputDir {
                 outputDirectory = URL(fileURLWithPath: dir)
@@ -924,34 +1061,37 @@ extension ImportCommand {
                 outputDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             }
 
-            try FileManager.default.createDirectory(
-                at: outputDirectory,
-                withIntermediateDirectories: true
-            )
-
-            // Convert to SAM if requested.
-            if convertToSAM {
-                let samURL = outputDirectory.appendingPathComponent(
-                    "\(result.sampleName)_nao-mgs.sam"
-                )
-                try parser.convertToSAM(hits: result.virusHits, outputURL: samURL)
-                print(formatter.success("SAM file written to \(samURL.path)"))
+            let imported: NaoMgsImportResult
+            do {
+                imported = try await MetagenomicsImportService.importNaoMgs(
+                    inputURL: inputURL,
+                    outputDirectory: outputDirectory,
+                    sampleName: sampleName,
+                    minIdentity: minIdentity,
+                    includeAlignment: includeAlignment,
+                    fetchReferences: fetchReferences,
+                    preferredName: sampleName
+                ) { progress, message in
+                    guard !globalOptions.quiet else { return }
+                    print(String(format: "[%3.0f%%] %@", progress * 100, message))
+                }
+            } catch {
+                print(formatter.error(error.localizedDescription))
+                throw ExitCode.failure
             }
 
-            // Write summary JSON.
-            let jsonURL = outputDirectory.appendingPathComponent(
-                "\(result.sampleName)_nao-mgs_summary.json"
-            )
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let jsonData = try encoder.encode(result.taxonSummaries)
-            try jsonData.write(to: jsonURL, options: .atomic)
-
-            print(formatter.success("Summary written to \(jsonURL.path)"))
+            print(formatter.header("NAO-MGS Import"))
             print("")
-            print(formatter.success(
-                "Imported \(result.totalHitReads) virus hits from \(result.sampleName)"
-            ))
+            print(formatter.keyValueTable([
+                ("Sample", imported.sampleName),
+                ("Total hits", formatNumber(Int64(imported.totalHitReads))),
+                ("Distinct taxa", String(imported.taxonCount)),
+                ("References fetched", String(imported.fetchedReferenceCount)),
+                ("BAM created", imported.createdBAM ? "yes" : "no"),
+                ("Output", imported.resultDirectory.lastPathComponent),
+            ]))
+            print("")
+            print(formatter.success("NAO-MGS import complete: \(imported.resultDirectory.lastPathComponent)"))
         }
     }
 }
@@ -1116,4 +1256,19 @@ private func scanForFiles(in directory: URL, extensions: [String]) -> [URL] {
         }
         return lowercasedExts.contains(ext) || lowercasedExts.contains(url.pathExtension.lowercased())
     }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+}
+
+/// Recursively scans a directory and returns regular files sorted by path.
+private func scanRegularFilesRecursively(in directory: URL) -> [URL] {
+    let fm = FileManager.default
+    guard let enumerator = fm.enumerator(
+        at: directory,
+        includingPropertiesForKeys: [.isRegularFileKey],
+        options: [.skipsHiddenFiles]
+    ) else { return [] }
+
+    return enumerator
+        .compactMap { $0 as? URL }
+        .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+        .sorted { $0.path < $1.path }
 }

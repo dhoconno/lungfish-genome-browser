@@ -67,7 +67,7 @@ public enum FileTypeUtility {
         }
 
         // Compressed formats
-        for ext in ["gz", "gzip", "zip", "tar", "bz2", "xz", "zst"] {
+        for ext in ["gz", "gzip", "bgz", "zip", "tar", "bz2", "xz", "zst", "zstd"] {
             map[ext] = .compressed
         }
 
@@ -124,8 +124,8 @@ public enum FileTypeUtility {
     public static func detect(url: URL) -> FileTypeInfo {
         var ext = url.pathExtension.lowercased()
 
-        // Handle gzip-compressed files by looking at inner extension
-        if ext == "gz" || ext == "gzip" {
+        // Handle wrapped compressed files by looking at the inner extension
+        if ["gz", "gzip", "bgz", "bz2", "xz", "zst", "zstd"].contains(ext) {
             let innerExt = url.deletingPathExtension().pathExtension.lowercased()
             if !innerExt.isEmpty, let category = extensionToCategory[innerExt] {
                 let iconName = extensionToIcon[innerExt] ?? category.iconName

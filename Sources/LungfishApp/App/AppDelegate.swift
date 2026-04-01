@@ -1080,165 +1080,236 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             showAlert(title: "No Project Open", message: "Please open a project before importing reference sequences.")
             return
         }
-        let refsDir = projectURL.appendingPathComponent("Reference Sequences")
-        try? FileManager.default.createDirectory(at: refsDir, withIntermediateDirectories: true)
 
-        let opID = OperationCenter.shared.start(
-            title: "FASTA Import",
-            detail: "Importing \(url.lastPathComponent)"
+        guard ReferenceBundleImportService.isStandaloneReferenceSource(url) else {
+            let classification = ReferenceBundleImportService.classify(url)
+            let message: String
+            switch classification {
+            case .annotationTrack:
+                message = "Annotation files should be imported into an existing reference bundle."
+            case .variantTrack:
+                message = "VCF/BCF files should be imported with the variant import workflow."
+            case .alignmentTrack:
+                message = "Alignment files should be imported into an existing reference bundle."
+            case .unsupported:
+                message = "This file type is not supported for standalone reference import."
+            case .standaloneReferenceSequence:
+                message = "Unexpected reference import classification."
+            }
+            showAlert(title: "Unsupported Reference Import", message: message)
+            return
+        }
+
+        let refsDir: URL
+        do {
+            refsDir = try ReferenceSequenceFolder.ensureFolder(in: projectURL)
+        } catch {
+            showAlert(title: "Import Failed", message: "Could not prepare Reference Sequences folder: \(error.localizedDescription)")
+            return
+        }
+
+        let cliCmd = OperationCenter.buildCLICommand(
+            subcommand: "import",
+            args: ["fasta", url.path, "--output-dir", refsDir.path]
         )
 
-        Task.detached {
+        let opID = OperationCenter.shared.start(
+            title: "Reference Import",
+            detail: "Importing \(url.lastPathComponent)...",
+            operationType: .bundleBuild,
+            cliCommand: cliCmd
+        )
+
+        Task.detached { [weak self] in
             do {
-                let destURL = refsDir.appendingPathComponent(url.lastPathComponent)
-                try FileManager.default.copyItem(at: url, to: destURL)
-                DispatchQueue.main.async { MainActor.assumeIsolated {
-                    OperationCenter.shared.complete(id: opID, detail: "Imported \(url.lastPathComponent)")
-                }}
+                let result = try await ReferenceBundleImportService.importAsReferenceBundleViaCLI(
+                    sourceURL: url,
+                    outputDirectory: refsDir
+                ) { progress, message in
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated {
+                            OperationCenter.shared.update(
+                                id: opID,
+                                progress: progress,
+                                detail: message
+                            )
+                        }
+                    }
+                }
+
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        OperationCenter.shared.complete(
+                            id: opID,
+                            detail: "Imported \(result.bundleURL.lastPathComponent)"
+                        )
+                        self?.refreshSidebarAndSelectImportedURL(result.bundleURL)
+                    }
+                }
             } catch {
-                DispatchQueue.main.async { MainActor.assumeIsolated {
-                    OperationCenter.shared.fail(id: opID, detail: "\(error)")
-                }}
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        OperationCenter.shared.fail(id: opID, detail: error.localizedDescription)
+                        self?.showAlert(
+                            title: "Reference Import Failed",
+                            message: error.localizedDescription
+                        )
+                    }
+                }
             }
         }
     }
 
     /// Import a Kraken2 result file (.kreport) from a known URL (called from Import Center).
     func importKraken2ResultFromURL(_ url: URL) {
-        guard let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController,
-              let projectURL = sidebarController.currentProjectURL else {
-            showAlert(title: "No Project Open", message: "Please open a project before importing classification results.")
-            return
-        }
-
-        let opID = OperationCenter.shared.start(
-            title: "Kraken2 Import",
-            detail: "Importing \(url.lastPathComponent)"
+        importClassifierResultFromURL(
+            url,
+            kind: .kraken2,
+            operationTitle: "Kraken2 Import",
+            missingProjectMessage: "Please open a project before importing classification results."
         )
-
-        let baseName = url.deletingPathExtension().lastPathComponent
-        let importsDir = projectURL.appendingPathComponent("Imports")
-        let resultDir = importsDir.appendingPathComponent("classification-\(baseName)")
-
-        Task.detached {
-            do {
-                try FileManager.default.createDirectory(at: resultDir, withIntermediateDirectories: true)
-
-                // Copy the kreport into the result directory
-                let reportDest = resultDir.appendingPathComponent("classification.kreport")
-                try FileManager.default.copyItem(at: url, to: reportDest)
-
-                // Create a dummy kraken output file (required by the sidecar format)
-                let krakenOutputDest = resultDir.appendingPathComponent("classification.kraken")
-                FileManager.default.createFile(atPath: krakenOutputDest.path, contents: nil)
-
-                DispatchQueue.main.async { MainActor.assumeIsolated {
-                    OperationCenter.shared.update(id: opID, progress: 0.5, detail: "Parsing kreport...")
-                    OperationCenter.shared.log(id: opID, level: .info, message: "Copied \(url.lastPathComponent) to project")
-                }}
-
-                // Parse the kreport to verify it's valid
-                let tree = try KreportParser.parse(url: reportDest)
-
-                // Build a minimal config for the imported result
-                let importedConfig = ClassificationConfig(
-                    goal: .classify,
-                    inputFiles: [],
-                    isPairedEnd: false,
-                    databaseName: "imported",
-                    databasePath: URL(fileURLWithPath: "/imported"),
-                    outputDirectory: resultDir
-                )
-
-                let result = ClassificationResult(
-                    config: importedConfig,
-                    tree: tree,
-                    reportURL: reportDest,
-                    outputURL: krakenOutputDest,
-                    brackenURL: nil,
-                    runtime: 0,
-                    toolVersion: "imported",
-                    provenanceId: nil
-                )
-                try result.save(to: resultDir)
-
-                DispatchQueue.main.async { MainActor.assumeIsolated {
-                    OperationCenter.shared.complete(id: opID, detail: "Imported Kraken2 result: \(tree.totalReads) reads, \(tree.speciesCount) species")
-                    OperationCenter.shared.log(id: opID, level: .info, message: "Kraken2 result imported successfully")
-                }}
-            } catch {
-                DispatchQueue.main.async { MainActor.assumeIsolated {
-                    OperationCenter.shared.fail(id: opID, detail: "\(error)")
-                }}
-            }
-        }
     }
 
     /// Import an EsViritu result from a known URL (called from Import Center).
     func importEsVirituResultFromURL(_ url: URL) {
-        guard let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController,
-              let projectURL = sidebarController.currentProjectURL else {
-            showAlert(title: "No Project Open", message: "Please open a project before importing EsViritu results.")
-            return
-        }
-
-        let opID = OperationCenter.shared.start(
-            title: "EsViritu Import",
-            detail: "Importing \(url.lastPathComponent)"
+        importClassifierResultFromURL(
+            url,
+            kind: .esviritu,
+            operationTitle: "EsViritu Import",
+            missingProjectMessage: "Please open a project before importing EsViritu results."
         )
-
-        let importsDir = projectURL.appendingPathComponent("Imports")
-        let resultDir = importsDir.appendingPathComponent("esviritu-\(url.deletingPathExtension().lastPathComponent)")
-
-        Task.detached {
-            do {
-                // Copy the entire directory or file
-                try FileManager.default.createDirectory(at: resultDir, withIntermediateDirectories: true)
-                let destURL = resultDir.appendingPathComponent(url.lastPathComponent)
-                try FileManager.default.copyItem(at: url, to: destURL)
-
-                DispatchQueue.main.async { MainActor.assumeIsolated {
-                    OperationCenter.shared.complete(id: opID, detail: "Imported EsViritu result from \(url.lastPathComponent)")
-                    OperationCenter.shared.log(id: opID, level: .info, message: "EsViritu result imported")
-                }}
-            } catch {
-                DispatchQueue.main.async { MainActor.assumeIsolated {
-                    OperationCenter.shared.fail(id: opID, detail: "\(error)")
-                }}
-            }
-        }
     }
 
     /// Import a TaxTriage result from a known URL (called from Import Center).
     func importTaxTriageResultFromURL(_ url: URL) {
+        importClassifierResultFromURL(
+            url,
+            kind: .taxtriage,
+            operationTitle: "TaxTriage Import",
+            missingProjectMessage: "Please open a project before importing TaxTriage results."
+        )
+    }
+
+    private func importNaoMgsResultFromURL(
+        _ url: URL,
+        sampleName: String,
+        minIdentity: Double,
+        includeAlignment: Bool
+    ) {
+        let trimmedSampleName = sampleName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedSampleName = trimmedSampleName.isEmpty ? nil : trimmedSampleName
+        importClassifierResultFromURL(
+            url,
+            kind: .naomgs,
+            operationTitle: "NAO-MGS Import",
+            missingProjectMessage: "Please open a project before importing NAO-MGS results.",
+            preferredName: resolvedSampleName,
+            naoMgsOptions: .init(
+                sampleName: resolvedSampleName,
+                minIdentity: minIdentity,
+                includeAlignment: includeAlignment,
+                fetchReferences: true
+            )
+        )
+    }
+
+    private func importClassifierResultFromURL(
+        _ url: URL,
+        kind: MetagenomicsImportKind,
+        operationTitle: String,
+        missingProjectMessage: String,
+        preferredName: String? = nil,
+        naoMgsOptions: MetagenomicsImportHelperClient.NaoMgsOptions? = nil
+    ) {
         guard let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController,
               let projectURL = sidebarController.currentProjectURL else {
-            showAlert(title: "No Project Open", message: "Please open a project before importing TaxTriage results.")
+            showAlert(title: "No Project Open", message: missingProjectMessage)
             return
         }
 
+        let importsDir = projectURL.appendingPathComponent("Imports", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: importsDir, withIntermediateDirectories: true)
+        } catch {
+            showAlert(title: "Import Failed", message: "Could not prepare Imports folder: \(error.localizedDescription)")
+            return
+        }
+
+        let importSubcommand = (kind == .naomgs) ? "nao-mgs" : kind.rawValue
+        var cliArgs = [importSubcommand, url.path, "--output-dir", importsDir.path]
+        if let preferredName,
+           !preferredName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            cliArgs.append(contentsOf: ["--name", preferredName])
+        }
+        if kind == .naomgs {
+            let options = naoMgsOptions ?? .init()
+            if let sampleName = options.sampleName?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               !sampleName.isEmpty {
+                cliArgs.append(contentsOf: ["--sample-name", sampleName])
+            }
+            let identityFloor = max(0, min(100, options.minIdentity))
+            cliArgs.append(contentsOf: ["--min-identity", String(identityFloor)])
+            cliArgs.append(contentsOf: ["--include-alignment", options.includeAlignment ? "true" : "false"])
+            cliArgs.append(contentsOf: ["--fetch-references", options.fetchReferences ? "true" : "false"])
+        }
+
+        let cliCmd = OperationCenter.buildCLICommand(
+            subcommand: "import",
+            args: cliArgs
+        )
         let opID = OperationCenter.shared.start(
-            title: "TaxTriage Import",
-            detail: "Importing \(url.lastPathComponent)"
+            title: operationTitle,
+            detail: "Importing \(url.lastPathComponent)...",
+            cliCommand: cliCmd
         )
 
-        let importsDir = projectURL.appendingPathComponent("Imports")
-        let resultDir = importsDir.appendingPathComponent("taxtriage-\(url.deletingPathExtension().lastPathComponent)")
-
-        Task.detached {
+        Task.detached { [weak self] in
             do {
-                try FileManager.default.createDirectory(at: resultDir, withIntermediateDirectories: true)
-                let destURL = resultDir.appendingPathComponent(url.lastPathComponent)
-                try FileManager.default.copyItem(at: url, to: destURL)
+                let result = try await MetagenomicsImportHelperClient.importViaCLI(
+                    kind: kind,
+                    inputURL: url,
+                    outputDirectory: importsDir,
+                    preferredName: preferredName,
+                    naoMgsOptions: naoMgsOptions
+                ) { progress, message in
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated {
+                            OperationCenter.shared.update(
+                                id: opID,
+                                progress: progress,
+                                detail: message
+                            )
+                        }
+                    }
+                }
 
-                DispatchQueue.main.async { MainActor.assumeIsolated {
-                    OperationCenter.shared.complete(id: opID, detail: "Imported TaxTriage result from \(url.lastPathComponent)")
-                    OperationCenter.shared.log(id: opID, level: .info, message: "TaxTriage result imported")
-                }}
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        OperationCenter.shared.complete(
+                            id: opID,
+                            detail: result.detail,
+                            bundleURLs: [result.resultDirectory]
+                        )
+                        OperationCenter.shared.log(
+                            id: opID,
+                            level: .info,
+                            message: "Imported result at \(result.resultDirectory.lastPathComponent)"
+                        )
+                        self?.refreshSidebarAndSelectImportedURL(result.resultDirectory)
+                    }
+                }
             } catch {
-                DispatchQueue.main.async { MainActor.assumeIsolated {
-                    OperationCenter.shared.fail(id: opID, detail: "\(error)")
-                }}
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        let detail = error.localizedDescription
+                        OperationCenter.shared.fail(id: opID, detail: detail)
+                        self?.showAlert(
+                            title: "\(operationTitle) Failed",
+                            message: detail
+                        )
+                    }
+                }
             }
         }
     }
@@ -1349,8 +1420,27 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         let cancelFlag = OSAllocatedUnfairLock(initialState: false)
         let selectedImportProfile = selectedVCFImportProfile()
         let profileLabel = Self.importProfileLabel(selectedImportProfile)
-
-        let cliCmd = "# lungfish import vcf \(vcfURL.path) (CLI command not yet available \u{2014} use GUI)"
+        var helperBaseURL = vcfURL
+        if helperBaseURL.pathExtension.lowercased() == "gz" {
+            helperBaseURL = helperBaseURL.deletingPathExtension()
+        }
+        if helperBaseURL.pathExtension.lowercased() == "vcf" {
+            helperBaseURL = helperBaseURL.deletingPathExtension()
+        }
+        let helperTrackID = helperBaseURL.lastPathComponent
+        let helperDBPath = bundleURL
+            .appendingPathComponent("variants")
+            .appendingPathComponent("\(helperTrackID).db")
+            .path
+        let cliCmd = OperationCenter.buildCLICommand(
+            subcommand: "--vcf-import-helper",
+            args: [
+                "--vcf-path", vcfURL.path,
+                "--output-db-path", helperDBPath,
+                "--source-file", vcfURL.lastPathComponent,
+                "--import-profile", selectedImportProfile.rawValue,
+            ]
+        )
         let opID = OperationCenter.shared.start(
             title: "Importing \(vcfURL.lastPathComponent)",
             detail: "Importing VCF variants (\(profileLabel))...",
@@ -2168,7 +2258,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         }
 
         let cancelFlag = OSAllocatedUnfairLock(initialState: false)
-        let cliCmd = "# lungfish import bam \(bamURL.path) (CLI command not yet available \u{2014} use GUI)"
+        let cliCmd = OperationCenter.buildCLICommand(
+            subcommand: "--bam-import-helper",
+            args: [
+                "--bam-path", bamURL.path,
+                "--bundle-path", bundleURL.path,
+                "--name", bamURL.lastPathComponent,
+            ]
+        )
         let opID = OperationCenter.shared.start(
             title: "Importing \(bamURL.lastPathComponent)",
             detail: "Importing alignments...",
@@ -2180,11 +2277,13 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         let importStartedAt = Date()
 
         Task.detached {
-            let result: Result<BAMImportService.ImportResult, Error>
+            let result: Result<BAMImportHelperClient.Result, Error>
             do {
-                let importResult = try await BAMImportService.importBAM(
+                let importResult = try await BAMImportHelperClient.importViaCLI(
                     bamURL: bamURL,
                     bundleURL: bundleURL,
+                    name: bamURL.lastPathComponent,
+                    shouldCancel: { cancelFlag.withLock { $0 } },
                     progressHandler: { progress, message in
                         let clampedProgress = max(0.0, min(1.0, progress))
                         let etaText = Self.estimatedRemainingText(progress: clampedProgress, startedAt: importStartedAt)
@@ -2218,7 +2317,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     }
 
                 case .failure(let error):
-                    if cancelFlag.withLock({ $0 }) {
+                    if cancelFlag.withLock({ $0 }) || error is CancellationError {
                         debugLog("performBAMImport: Cancelled by user")
                         // cancel() already called fail() via onCancel callback
                     } else {
@@ -3770,7 +3869,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         var sheet = NaoMgsImportSheet(datasetURL: nil)
         sheet.onImport = { [weak self] (resultsDir: URL, sampleName: String, convertToSAM: Bool, minIdentity: Double) in
             window.endSheet(wizardPanel)
-            self?.importNaoMgsResults(directory: resultsDir, sampleName: sampleName)
+            self?.importNaoMgsResultFromURL(
+                resultsDir,
+                sampleName: sampleName,
+                minIdentity: minIdentity,
+                includeAlignment: convertToSAM
+            )
         }
         sheet.onCancel = {
             window.endSheet(wizardPanel)
@@ -3851,215 +3955,6 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             } catch {
                 DispatchQueue.main.async { MainActor.assumeIsolated {
                     OperationCenter.shared.fail(id: opID, detail: "\(error)")
-                }}
-            }
-        }
-    }
-
-    private func importNaoMgsResults(directory: URL, sampleName: String) {
-        let opID = OperationCenter.shared.start(
-            title: "NAO-MGS Import",
-            detail: "Importing surveillance results for \(sampleName)"
-        )
-
-        // Determine output directory: use the current project's Imports folder
-        let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController
-        let projectURL = sidebarController?.currentProjectURL
-        let viewerController = mainWindowController?.mainSplitViewController?.viewerController
-        let runToken = String(UUID().uuidString.prefix(8))
-
-        Task.detached { [weak self] in
-            do {
-                let parser = NaoMgsResultParser()
-                let naoResult = try await parser.loadResults(from: directory, sampleName: sampleName)
-
-                DispatchQueue.main.async { MainActor.assumeIsolated {
-                    OperationCenter.shared.update(id: opID, progress: 0.2, detail: "Parsed \(naoResult.totalHitReads) virus hits")
-                    OperationCenter.shared.log(id: opID, level: .info, message: "Parsed \(naoResult.totalHitReads) virus hits across \(naoResult.taxonSummaries.count) taxa")
-                }}
-
-                // Output goes to project Imports, or next to the source file if no project
-                let outputDir: URL
-                if let projectURL {
-                    outputDir = projectURL.appendingPathComponent("Imports")
-                        .appendingPathComponent("naomgs-\(runToken)")
-                } else {
-                    let parentDir = directory.deletingLastPathComponent()
-                    outputDir = parentDir.appendingPathComponent("naomgs-\(runToken)")
-                }
-                let fm = FileManager.default
-                try fm.createDirectory(at: outputDir, withIntermediateDirectories: true)
-
-                // Create references/ subdirectory for GenBank FASTA files
-                let referencesDir = outputDir.appendingPathComponent("references", isDirectory: true)
-                try fm.createDirectory(at: referencesDir, withIntermediateDirectories: true)
-
-                // Serialize virus hits and taxon summaries for fast reload
-                let virusHitsFile = NaoMgsVirusHitsFile(
-                    virusHits: naoResult.virusHits,
-                    taxonSummaries: naoResult.taxonSummaries
-                )
-                let encoder = JSONEncoder()
-                encoder.dateEncodingStrategy = .iso8601
-                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-                let hitsData = try encoder.encode(virusHitsFile)
-                try hitsData.write(to: outputDir.appendingPathComponent("virus_hits.json"), options: .atomic)
-
-                DispatchQueue.main.async { MainActor.assumeIsolated {
-                    OperationCenter.shared.update(id: opID, progress: 0.3, detail: "Saved virus hits JSON")
-                    OperationCenter.shared.log(id: opID, level: .info, message: "Wrote virus_hits.json")
-                }}
-
-                // Write manifest.json
-                let topSummary = naoResult.taxonSummaries.first
-                var manifest = NaoMgsManifest(
-                    sampleName: sampleName,
-                    sourceFilePath: naoResult.virusHitsFile.path,
-                    hitCount: naoResult.totalHitReads,
-                    taxonCount: naoResult.taxonSummaries.count,
-                    topTaxon: topSummary?.name,
-                    topTaxonId: topSummary?.taxId
-                )
-                let manifestData = try encoder.encode(manifest)
-                try manifestData.write(to: outputDir.appendingPathComponent("manifest.json"), options: .atomic)
-
-                // Convert to SAM first, then sort and index to BAM
-                let samURL = outputDir.appendingPathComponent("\(sampleName).sam")
-                try parser.convertToSAM(hits: naoResult.virusHits, outputURL: samURL)
-
-                DispatchQueue.main.async { MainActor.assumeIsolated {
-                    OperationCenter.shared.update(id: opID, progress: 0.5, detail: "Sorting and indexing BAM...")
-                    OperationCenter.shared.log(id: opID, level: .info, message: "Converting SAM to sorted BAM")
-                }}
-
-                // Sort SAM -> BAM using samtools
-                let bamURL = outputDir.appendingPathComponent("\(sampleName).sorted.bam")
-                let runner = NativeToolRunner()
-                let sortResult = try await runner.run(
-                    .samtools,
-                    arguments: ["sort", "-o", bamURL.path, samURL.path],
-                    workingDirectory: outputDir,
-                    timeout: 600
-                )
-                guard sortResult.isSuccess else {
-                    throw NSError(domain: "NaoMgsImport", code: 1,
-                                  userInfo: [NSLocalizedDescriptionKey: "samtools sort failed: \(sortResult.stderr)"])
-                }
-
-                // Index BAM
-                let indexResult = try await runner.run(
-                    .samtools,
-                    arguments: ["index", bamURL.path],
-                    workingDirectory: outputDir,
-                    timeout: 300
-                )
-                guard indexResult.isSuccess else {
-                    throw NSError(domain: "NaoMgsImport", code: 2,
-                                  userInfo: [NSLocalizedDescriptionKey: "samtools index failed: \(indexResult.stderr)"])
-                }
-
-                // Clean up the intermediate SAM file
-                try? fm.removeItem(at: samURL)
-
-                DispatchQueue.main.async { MainActor.assumeIsolated {
-                    OperationCenter.shared.update(id: opID, progress: 0.7, detail: "Fetching viral reference sequences...")
-                    OperationCenter.shared.log(id: opID, level: .info, message: "BAM created at \(bamURL.lastPathComponent)")
-                }}
-
-                // Fetch all viral reference FASTAs from GenBank
-                let uniqueAccessions = Array(Set(naoResult.virusHits.map(\.subjectSeqId).filter { !$0.isEmpty }))
-                    .sorted()
-                await self?.fetchViralReferences(
-                    accessions: uniqueAccessions,
-                    into: referencesDir,
-                    manifest: &manifest,
-                    opID: opID
-                )
-
-                // Re-write manifest with fetched accessions
-                let updatedManifestData = try encoder.encode(manifest)
-                try updatedManifestData.write(to: outputDir.appendingPathComponent("manifest.json"), options: .atomic)
-
-                DispatchQueue.main.async { MainActor.assumeIsolated {
-                    OperationCenter.shared.update(id: opID, progress: 0.95, detail: "Displaying results...")
-
-                    // Display the NAO-MGS result viewer
-                    if let viewerController {
-                        let resultVC = NaoMgsResultViewController()
-                        resultVC.configure(result: naoResult, bundleURL: outputDir)
-                        viewerController.displayNaoMgsResult(resultVC)
-                    }
-
-                    // Refresh sidebar to show new bundle
-                    self?.refreshSidebarAndSelectImportedURL(outputDir)
-
-                    OperationCenter.shared.complete(
-                        id: opID,
-                        detail: "Imported \(naoResult.totalHitReads) virus hits from \(sampleName)",
-                        bundleURLs: [outputDir]
-                    )
-                }}
-            } catch {
-                DispatchQueue.main.async { MainActor.assumeIsolated {
-                    OperationCenter.shared.fail(id: opID, detail: "\(error)")
-                }}
-            }
-        }
-    }
-
-    /// Fetches viral reference FASTA files from GenBank for NAO-MGS bundles.
-    ///
-    /// Downloads up to 20 reference sequences corresponding to the accessions
-    /// found in the virus hit records. Failures for individual accessions are
-    /// logged but do not abort the import.
-    ///
-    /// - Parameters:
-    ///   - accessions: GenBank accession strings to fetch.
-    ///   - referencesDir: Target directory for downloaded FASTA files.
-    ///   - manifest: Bundle manifest to update with fetched accession list.
-    ///   - opID: Operation center ID for progress reporting.
-    private nonisolated func fetchViralReferences(
-        accessions: [String],
-        into referencesDir: URL,
-        manifest: inout NaoMgsManifest,
-        opID: UUID
-    ) async {
-        let toFetch = accessions
-        guard !toFetch.isEmpty else { return }
-
-        let ncbi = NCBIService()
-        for (index, accession) in toFetch.enumerated() {
-            do {
-                let data = try await ncbi.efetch(
-                    database: .nucleotide,
-                    ids: [accession],
-                    format: .fasta
-                )
-                let fastaURL = referencesDir.appendingPathComponent("\(accession).fasta")
-                try data.write(to: fastaURL, options: .atomic)
-                manifest.fetchedAccessions.append(accession)
-
-                let progress = 0.7 + 0.2 * Double(index + 1) / Double(toFetch.count)
-                DispatchQueue.main.async { MainActor.assumeIsolated {
-                    OperationCenter.shared.update(
-                        id: opID,
-                        progress: progress,
-                        detail: "Fetched reference \(index + 1)/\(toFetch.count): \(accession)"
-                    )
-                    OperationCenter.shared.log(
-                        id: opID,
-                        level: .info,
-                        message: "Fetched \(accession).fasta"
-                    )
-                }}
-            } catch {
-                // Log but don't abort -- missing references are non-fatal
-                DispatchQueue.main.async { MainActor.assumeIsolated {
-                    OperationCenter.shared.log(
-                        id: opID,
-                        level: .warning,
-                        message: "Failed to fetch \(accession): \(error.localizedDescription)"
-                    )
                 }}
             }
         }

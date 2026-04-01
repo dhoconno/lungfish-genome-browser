@@ -988,31 +988,84 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         return menu
     }
 
-    private func populateContextMenu(_ menu: NSMenu, for summary: NaoMgsTaxonSummary) {
-        menu.removeAllItems()
+    private struct BlastMenuSelection {
+        let summary: NaoMgsTaxonSummary
+        let count: Int
+        let uniqueHits: [NaoMgsVirusHit]
+    }
 
-        let hitCount = summary.hitCount
+    /// Deduplicates hits using the same accession/start/end/strand heuristic used
+    /// for NAO duplicate estimation, keeping one representative hit per group.
+    private func uniqueHitsForBLAST(taxId: Int) -> [NaoMgsVirusHit] {
+        let hits = hitsByTaxon[taxId] ?? []
+        guard !hits.isEmpty else { return [] }
 
-        // BLAST verification options
-        let defaultCount = min(20, hitCount)
-        let blast20 = NSMenuItem(
-            title: "BLAST Verify (\(defaultCount) reads)",
+        var unique: [NaoMgsVirusHit] = []
+        unique.reserveCapacity(hits.count)
+        var seenKeys: Set<String> = []
+
+        // Prefer higher-confidence representatives when duplicate groups exist.
+        let orderedHits = hits.sorted {
+            if $0.editDistance != $1.editDistance {
+                return $0.editDistance < $1.editDistance
+            }
+            return $0.bitScore > $1.bitScore
+        }
+
+        for hit in orderedHits {
+            let strand = hit.isReverseComplement ? "R" : "F"
+            let readLength = hit.queryLength > 0 ? hit.queryLength : max(0, hit.readSequence.count)
+            let inferredRefEnd = max(hit.refEnd, hit.refStart + max(1, readLength))
+            let key = "\(hit.subjectSeqId)|\(hit.refStart)|\(inferredRefEnd)|\(strand)"
+            if seenKeys.insert(key).inserted {
+                unique.append(hit)
+            }
+        }
+
+        return unique
+    }
+
+    private func addBlastItem(
+        to menu: NSMenu,
+        summary: NaoMgsTaxonSummary,
+        count: Int,
+        uniqueHits: [NaoMgsVirusHit]
+    ) {
+        let item = NSMenuItem(
+            title: "BLAST \(count) reads",
             action: #selector(contextBlastVerify(_:)),
             keyEquivalent: ""
         )
-        blast20.target = self
-        blast20.representedObject = (summary, defaultCount)
-        menu.addItem(blast20)
+        item.target = self
+        item.representedObject = BlastMenuSelection(summary: summary, count: count, uniqueHits: uniqueHits)
+        menu.addItem(item)
+    }
 
-        if hitCount > 20 {
-            let blast50 = NSMenuItem(
-                title: "BLAST Verify (\(min(50, hitCount)) reads)",
-                action: #selector(contextBlastVerify(_:)),
-                keyEquivalent: ""
-            )
-            blast50.target = self
-            blast50.representedObject = (summary, min(50, hitCount))
-            menu.addItem(blast50)
+    private func populateContextMenu(_ menu: NSMenu, for summary: NaoMgsTaxonSummary) {
+        menu.removeAllItems()
+
+        let uniqueHits = uniqueHitsForBLAST(taxId: summary.taxId)
+        let blastCandidates: [NaoMgsVirusHit]
+        if uniqueHits.isEmpty {
+            logger.error("Expected >=1 unique hit for taxon \(summary.taxId), falling back to raw hits")
+            blastCandidates = hitsByTaxon[summary.taxId] ?? []
+        } else {
+            blastCandidates = uniqueHits
+        }
+        let uniqueCount = blastCandidates.count
+
+        // BLAST options based on unique-read count:
+        // >50: offer 20 and 50
+        // 21...50: offer 20 and X
+        // <=20: offer X
+        if uniqueCount > 50 {
+            addBlastItem(to: menu, summary: summary, count: 20, uniqueHits: blastCandidates)
+            addBlastItem(to: menu, summary: summary, count: 50, uniqueHits: blastCandidates)
+        } else if uniqueCount > 20 {
+            addBlastItem(to: menu, summary: summary, count: 20, uniqueHits: blastCandidates)
+            addBlastItem(to: menu, summary: summary, count: uniqueCount, uniqueHits: blastCandidates)
+        } else if uniqueCount > 0 {
+            addBlastItem(to: menu, summary: summary, count: uniqueCount, uniqueHits: blastCandidates)
         }
 
         menu.addItem(NSMenuItem.separator())
@@ -1053,11 +1106,15 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     // MARK: - Context Menu Actions
 
     @objc private func contextBlastVerify(_ sender: NSMenuItem) {
-        guard let (summary, count) = sender.representedObject as? (NaoMgsTaxonSummary, Int) else { return }
-        let hits = hitsByTaxon[summary.taxId] ?? []
-        let selectedReads = NaoMgsDataConverter.selectBlastReads(hits: hits, count: count)
-        logger.info("BLAST verify taxon \(summary.taxId): \(selectedReads.count) reads selected from \(hits.count) total")
-        onBlastVerification?(summary, selectedReads.count, selectedReads)
+        guard let selection = sender.representedObject as? BlastMenuSelection else { return }
+        let selectedReads = NaoMgsDataConverter.selectBlastReads(
+            hits: selection.uniqueHits,
+            count: selection.count
+        )
+        logger.info(
+            "BLAST verify taxon \(selection.summary.taxId): \(selectedReads.count) reads selected from \(selection.uniqueHits.count) unique reads"
+        )
+        onBlastVerification?(selection.summary, selectedReads.count, selectedReads)
     }
 
     @objc private func contextCopyTaxonId(_ sender: NSMenuItem) {

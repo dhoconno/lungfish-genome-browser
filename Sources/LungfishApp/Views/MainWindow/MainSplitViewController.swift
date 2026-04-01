@@ -611,6 +611,73 @@ public class MainSplitViewController: NSSplitViewController {
 
     /// Imports a single non-FASTQ file, handling duplicate resolution via sheet.
     private func importNonFASTQFile(url: URL, projectURL: URL?, targetDir: URL, requestID: String?) async {
+        if ReferenceBundleImportService.isStandaloneReferenceSource(url) {
+            guard let projectURL else {
+                let errorMessage = "Open a project before importing standalone reference files."
+                postSidebarFileDropCompleted(
+                    requestID: requestID,
+                    sourceURL: url,
+                    success: false,
+                    error: errorMessage
+                )
+                return
+            }
+
+            do {
+                let refsDir = try ReferenceSequenceFolder.ensureFolder(in: projectURL)
+                let cliCmd = OperationCenter.buildCLICommand(
+                    subcommand: "import",
+                    args: ["fasta", url.path, "--output-dir", refsDir.path]
+                )
+                let opID = OperationCenter.shared.start(
+                    title: "Reference Import",
+                    detail: "Importing \(url.lastPathComponent)...",
+                    operationType: .bundleBuild,
+                    cliCommand: cliCmd
+                )
+
+                let result = try await ReferenceBundleImportService.importAsReferenceBundleViaCLI(
+                    sourceURL: url,
+                    outputDirectory: refsDir
+                ) { progress, message in
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated {
+                            OperationCenter.shared.update(
+                                id: opID,
+                                progress: progress,
+                                detail: message
+                            )
+                        }
+                    }
+                }
+
+                OperationCenter.shared.complete(
+                    id: opID,
+                    detail: "Imported \(result.bundleURL.lastPathComponent)"
+                )
+                sidebarController.reloadFromFilesystem()
+                loadGenomicsFileInBackground(url: result.bundleURL)
+                postSidebarFileDropCompleted(
+                    requestID: requestID,
+                    sourceURL: url,
+                    success: true,
+                    error: nil
+                )
+            } catch {
+                let errorMessage = error.localizedDescription
+                logger.error(
+                    "handleSidebarFileDropped: Reference helper import failed for \(url.lastPathComponent, privacy: .public): \(errorMessage, privacy: .public)"
+                )
+                postSidebarFileDropCompleted(
+                    requestID: requestID,
+                    sourceURL: url,
+                    success: false,
+                    error: errorMessage
+                )
+            }
+            return
+        }
+
         var urlToLoad = url
         var importSucceeded = true
         var importError: String?

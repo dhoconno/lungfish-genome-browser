@@ -78,7 +78,9 @@ public final class ImportService {
         "png": "PNG", "jpg": "JPEG", "jpeg": "JPEG",
         "tiff": "TIFF", "tif": "TIFF", "svg": "SVG",
         // Compressed
-        "gz": "Gzip", "zip": "ZIP Archive"
+        "gz": "Gzip", "gzip": "Gzip", "bgz": "BGZF",
+        "bz2": "Bzip2", "xz": "XZ", "zst": "Zstandard", "zstd": "Zstandard",
+        "zip": "ZIP Archive"
     ]
 
     // MARK: - Initialization
@@ -100,15 +102,15 @@ public final class ImportService {
         let formatId: String
         let finalExtension: String
 
-        if ext == "gz" || ext == "gzip" {
+        if ["gz", "gzip", "bgz", "bz2", "xz", "zst", "zstd"].contains(ext) {
             let innerExt = url.deletingPathExtension().pathExtension.lowercased()
             if !innerExt.isEmpty {
                 formatName = (Self.formatNames[innerExt] ?? innerExt.uppercased()) + " (compressed)"
                 formatId = innerExt
-                finalExtension = "\(innerExt).gz"
+                finalExtension = "\(innerExt).\(ext)"
             } else {
-                formatName = "Gzip Compressed"
-                formatId = "gz"
+                formatName = Self.formatNames[ext] ?? "Compressed"
+                formatId = ext
                 finalExtension = ext
             }
         } else {

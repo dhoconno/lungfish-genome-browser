@@ -9,6 +9,15 @@ import LungfishApp
 if let helperExitCode = VCFImportHelper.runIfRequested(arguments: CommandLine.arguments) {
     exit(helperExitCode)
 }
+if let helperExitCode = BAMImportHelper.runIfRequested(arguments: CommandLine.arguments) {
+    exit(helperExitCode)
+}
+if let helperExitCode = ReferenceImportHelper.runIfRequested(arguments: CommandLine.arguments) {
+    exit(helperExitCode)
+}
+if let helperExitCode = MetagenomicsImportHelper.runIfRequested(arguments: CommandLine.arguments) {
+    exit(helperExitCode)
+}
 
 // Launch AppKit on the main thread using a single event loop.
 // Avoid nested/dual run-loop patterns (e.g. app.run + dispatchMain) which can
