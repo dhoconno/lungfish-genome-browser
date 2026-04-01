@@ -493,17 +493,17 @@ public actor NativeToolRunner {
 
                 // Drain pipes concurrently to avoid deadlock when output exceeds
                 // the ~64 KB kernel pipe buffer.
-                var stdoutData = Data()
-                var stderrData = Data()
+                let stdoutBox = DataBox()
+                let stderrBox = DataBox()
                 let drainGroup = DispatchGroup()
                 drainGroup.enter()
                 DispatchQueue.global().async {
-                    stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                    stdoutBox.value = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
                     drainGroup.leave()
                 }
                 drainGroup.enter()
                 DispatchQueue.global().async {
-                    stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                    stderrBox.value = stderrPipe.fileHandleForReading.readDataToEndOfFile()
                     drainGroup.leave()
                 }
 
@@ -511,8 +511,8 @@ public actor NativeToolRunner {
                 drainGroup.wait()
                 timeoutWorkItem.cancel()
 
-                let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
-                let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+                let stdout = String(data: stdoutBox.value, encoding: .utf8) ?? ""
+                let stderr = String(data: stderrBox.value, encoding: .utf8) ?? ""
 
                 let result = NativeToolResult(
                     exitCode: process.terminationStatus,
@@ -601,11 +601,11 @@ public actor NativeToolRunner {
                 try process.run()
 
                 // Drain stderr concurrently to avoid deadlock on large output.
-                var stderrData = Data()
+                let stderrBox = DataBox()
                 let drainGroup = DispatchGroup()
                 drainGroup.enter()
                 DispatchQueue.global().async {
-                    stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                    stderrBox.value = stderrPipe.fileHandleForReading.readDataToEndOfFile()
                     drainGroup.leave()
                 }
 
@@ -614,7 +614,7 @@ public actor NativeToolRunner {
                 timeoutWorkItem.cancel()
 
                 try? outputHandle.close()
-                let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+                let stderr = String(data: stderrBox.value, encoding: .utf8) ?? ""
 
                 let result = NativeToolResult(
                     exitCode: process.terminationStatus,

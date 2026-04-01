@@ -229,16 +229,17 @@ public actor ClassificationPipeline {
         progress?(0.10, "Detecting tool versions...")
 
         // Phase 2: Version detection (0.10 -- 0.30)
-        let toolVersion = await detectToolVersion(toolName: "kraken2", environment: Self.kraken2Environment, condaManager: condaManager, flags: ["--version"])
-        logger.info("Detected kraken2 version: \(toolVersion, privacy: .public)")
+        // Run detections concurrently when bracken is needed.
+        async let kraken2VersionTask = detectToolVersion(toolName: "kraken2", environment: Self.kraken2Environment, condaManager: condaManager, flags: ["--version"])
+        async let brackenVersionTask: String = runBracken
+            ? detectToolVersion(toolName: "bracken", environment: Self.brackenEnvironment, condaManager: condaManager)
+            : "unknown"
 
-        // Detect bracken version separately when profiling (Gap 22 fix).
-        let brackenVersion: String
+        let toolVersion = await kraken2VersionTask
+        let brackenVersion = await brackenVersionTask
+        logger.info("Detected kraken2 version: \(toolVersion, privacy: .public)")
         if runBracken {
-            brackenVersion = await detectToolVersion(toolName: "bracken", environment: Self.brackenEnvironment, condaManager: condaManager)
             logger.info("Detected bracken version: \(brackenVersion, privacy: .public)")
-        } else {
-            brackenVersion = "unknown"
         }
 
         progress?(0.30, "Running kraken2...")

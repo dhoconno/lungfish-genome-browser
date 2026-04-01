@@ -17,7 +17,7 @@ import Foundation
 ///
 /// - Parameter value: The raw string to escape.
 /// - Returns: A shell-safe representation of the string.
-func shellEscape(_ value: String) -> String {
+public func shellEscape(_ value: String) -> String {
     if value.isEmpty { return "''" }
     // Characters that are safe unquoted in POSIX shells
     let safeCharacters = CharacterSet.alphanumerics

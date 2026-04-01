@@ -4,6 +4,7 @@
 
 import Foundation
 import LungfishCore
+import LungfishWorkflow
 import SwiftUI
 
 /// The type of long-running operation being tracked.
@@ -191,21 +192,8 @@ public final class OperationCenter: ObservableObject {
     /// - Returns: A copy-pasteable shell command string.
     public static func buildCLICommand(subcommand: String, args: [String]) -> String {
         let allParts = ["lungfish", subcommand] + args
-        let quoted = allParts.map { shellQuote($0) }
+        let quoted = allParts.map { shellEscape($0) }
         return quoted.joined(separator: " ")
-    }
-
-    /// Shell-quotes a single argument if it contains characters that need escaping.
-    private static func shellQuote(_ argument: String) -> String {
-        // Safe characters that don't need quoting
-        let safeCharacters = CharacterSet.alphanumerics
-            .union(CharacterSet(charactersIn: "-_./=:@%+,"))
-        if !argument.isEmpty && argument.unicodeScalars.allSatisfy({ safeCharacters.contains($0) }) {
-            return argument
-        }
-        // Wrap in single quotes; escape any embedded single quotes
-        let escaped = argument.replacingOccurrences(of: "'", with: "'\\''")
-        return "'\(escaped)'"
     }
 
     // MARK: - Lifecycle

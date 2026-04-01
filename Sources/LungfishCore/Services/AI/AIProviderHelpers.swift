@@ -51,11 +51,7 @@ func anyToJSONValue(_ value: Any) -> JSONValue {
 /// - Parameter arguments: The tool-call arguments to encode.
 /// - Returns: An untyped dictionary ready for JSON serialization.
 func encodeArguments(_ arguments: [String: JSONValue]) -> [String: Any] {
-    var result: [String: Any] = [:]
-    for (key, value) in arguments {
-        result[key] = jsonValueToAny(value)
-    }
-    return result
+    arguments.mapValues { jsonValueToAny($0) }
 }
 
 // MARK: - Error Parsing

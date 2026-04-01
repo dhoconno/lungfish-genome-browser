@@ -117,14 +117,9 @@ struct MapReadsWizardSheet: View {
 
     // MARK: - Computed Properties
 
-    /// Display name for the dataset, stripping `.lungfishfastq` extensions.
+    /// Display name for the input dataset, stripping bundle extensions.
     private var inputDisplayName: String {
-        guard let first = inputFiles.first else { return "" }
-        var name = first.deletingPathExtension().lastPathComponent
-        if name.hasSuffix(".lungfishfastq") {
-            name = URL(fileURLWithPath: name).deletingPathExtension().lastPathComponent
-        }
-        return name
+        inputFiles.first?.lungfishDisplayName ?? ""
     }
 
     /// Whether the input appears to be paired-end (2 files or a FASTQ bundle).

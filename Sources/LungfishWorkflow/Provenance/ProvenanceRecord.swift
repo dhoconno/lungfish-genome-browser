@@ -201,13 +201,7 @@ public struct StepExecution: Codable, Sendable, Identifiable {
 
     /// The command as a single shell-escaped string.
     public var commandString: String {
-        command.map { arg in
-            if arg.contains(" ") || arg.contains("\"") || arg.contains("'") ||
-               arg.contains("$") || arg.contains("`") || arg.contains("\\") {
-                return "'\(arg.replacingOccurrences(of: "'", with: "'\\''"))'"
-            }
-            return arg
-        }.joined(separator: " ")
+        command.map { shellEscape($0) }.joined(separator: " ")
     }
 }
 

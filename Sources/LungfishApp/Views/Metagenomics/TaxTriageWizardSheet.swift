@@ -73,15 +73,9 @@ struct TaxTriageWizardSheet: View {
 
     // MARK: - Computed Properties
 
-    /// Display name for a single input file/bundle.
-    /// Strips `.lungfishfastq` extensions so "SRR35520572.lungfishfastq" shows as "SRR35520572".
+    /// Display name for the input dataset, stripping bundle extensions.
     private var inputDisplayName: String {
-        guard let first = initialFiles.first else { return "" }
-        let name = first.deletingPathExtension().lastPathComponent
-        if name.hasSuffix(".lungfishfastq") {
-            return URL(fileURLWithPath: name).deletingPathExtension().lastPathComponent
-        }
-        return name
+        initialFiles.first?.lungfishDisplayName ?? ""
     }
 
     /// Whether all prerequisites are met and the Run button should be enabled.
@@ -471,13 +465,10 @@ struct TaxTriageWizardSheet: View {
             let nfAvailable = await runner.isAvailable()
             nextflowAvailable = nfAvailable
 
-            let containerRT = await NewContainerRuntimeFactory.createRuntime()
-            if containerRT != nil {
+            if let containerRT = await NewContainerRuntimeFactory.createRuntime() {
                 containerAvailable = true
-                if let rt = containerRT {
-                    let name = await rt.displayName
-                    containerName = "\(name): Available"
-                }
+                let name = await containerRT.displayName
+                containerName = "\(name): Available"
             } else {
                 containerAvailable = false
                 containerName = "Container: Not found"

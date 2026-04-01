@@ -126,16 +126,9 @@ struct ClassificationWizardSheet: View {
         MetagenomicsSampleGrouper.group(inputFiles)
     }
 
-    /// Display name for a single input file/bundle.
-    /// Strips `.lungfishfastq` extensions so "SRR35520572.lungfishfastq" shows as "SRR35520572".
+    /// Display name for the input dataset, stripping bundle extensions.
     private var inputDisplayName: String {
-        guard let first = inputFiles.first else { return "" }
-        let name = first.deletingPathExtension().lastPathComponent
-        // If stripping .lungfishfastq left a double extension, strip again
-        if name.hasSuffix(".lungfishfastq") {
-            return URL(fileURLWithPath: name).deletingPathExtension().lastPathComponent
-        }
-        return name
+        inputFiles.first?.lungfishDisplayName ?? ""
     }
 
     /// Whether this run is a multi-sample batch.

@@ -93,15 +93,9 @@ struct OrientWizardSheet: View {
 
     /// Display name for the input dataset.
     ///
-    /// Strips `.lungfishfastq` extension so "SRR35520572.lungfishfastq"
-    /// displays as "SRR35520572".
+    /// Display name for the input dataset, stripping bundle extensions.
     private var inputDisplayName: String {
-        guard let first = inputFiles.first else { return "" }
-        let name = first.deletingPathExtension().lastPathComponent
-        if name.hasSuffix(".lungfishfastq") {
-            return URL(fileURLWithPath: name).deletingPathExtension().lastPathComponent
-        }
-        return name
+        inputFiles.first?.lungfishDisplayName ?? ""
     }
 
     /// Whether the Run button should be enabled.

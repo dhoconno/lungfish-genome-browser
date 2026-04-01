@@ -78,15 +78,9 @@ struct EsVirituWizardSheet: View {
 
     // MARK: - Computed Properties
 
-    /// Display name for a single input file/bundle.
-    /// Strips `.lungfishfastq` extensions so "SRR35520572.lungfishfastq" shows as "SRR35520572".
+    /// Display name for the input dataset, stripping bundle extensions.
     private var inputDisplayName: String {
-        guard let first = inputFiles.first else { return "" }
-        let name = first.deletingPathExtension().lastPathComponent
-        if name.hasSuffix(".lungfishfastq") {
-            return URL(fileURLWithPath: name).deletingPathExtension().lastPathComponent
-        }
-        return name
+        inputFiles.first?.lungfishDisplayName ?? ""
     }
 
     /// Grouped sample inputs inferred from selected FASTQ files.

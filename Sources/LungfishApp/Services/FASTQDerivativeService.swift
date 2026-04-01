@@ -258,24 +258,9 @@ public enum FASTQDerivativeRequest: Sendable {
 
 // MARK: - CLI Command Construction
 
-/// Shell-quotes a single argument for display in the CLI command string.
-///
-/// Uses the same quoting rules as ``OperationCenter/shellQuote(_:)`` but
-/// is a module-level free function to avoid requiring visibility changes
-/// to the private OperationCenter helper.
-private func shellQuoteForCLI(_ argument: String) -> String {
-    let safeCharacters = CharacterSet.alphanumerics
-        .union(CharacterSet(charactersIn: "-_./=:@%+,"))
-    if !argument.isEmpty && argument.unicodeScalars.allSatisfy({ safeCharacters.contains($0) }) {
-        return argument
-    }
-    let escaped = argument.replacingOccurrences(of: "'", with: "'\\''")
-    return "'\(escaped)'"
-}
-
 /// Builds a shell-quoted command string from an array of parts.
 private func buildToolCommand(parts: [String]) -> String {
-    parts.map { shellQuoteForCLI($0) }.joined(separator: " ")
+    parts.map { shellEscape($0) }.joined(separator: " ")
 }
 
 /// Builds a shell-quoted `lungfish <subcommand> <args>` command string.
