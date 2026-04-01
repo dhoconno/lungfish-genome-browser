@@ -267,9 +267,13 @@ public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
 
     // MARK: - Subviews: Empty State
 
+    private let defaultEmptyStateTitle = "No BLAST Verifications"
+    private let defaultEmptyStateDetail =
+        "Right-click a taxon and choose \"BLAST Matching Reads...\" to verify its classification against the NCBI database."
+
     private let emptyStateContainer = NSView()
     private let emptyStateIcon = NSImageView()
-    private let emptyStateTitleLabel = NSTextField(labelWithString: "No BLAST Verifications")
+    private let emptyStateTitleLabel = NSTextField(labelWithString: "")
     private let emptyStateDetailLabel = NSTextField(wrappingLabelWithString: "")
 
     // MARK: - Subviews: Loading State
@@ -335,6 +339,19 @@ public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
 
     /// Shows the empty state with instructional text.
     func showEmpty() {
+        configureEmptyStateAsDefault()
+        displayState = .empty
+        showState(.empty)
+    }
+
+    /// Shows an explicit failure message in the empty-state container.
+    ///
+    /// This is used when a BLAST job fails before results are available so the
+    /// user does not remain in an indefinite loading state.
+    ///
+    /// - Parameter message: User-facing error description.
+    func showFailure(message: String) {
+        configureEmptyStateAsFailure(message: message)
         displayState = .empty
         showState(.empty)
     }
@@ -470,11 +487,10 @@ public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
         emptyStateContainer.translatesAutoresizingMaskIntoConstraints = false
         addSubview(emptyStateContainer)
 
-        let icon = NSImage(
+        emptyStateIcon.image = NSImage(
             systemSymbolName: "bolt.badge.checkmark",
             accessibilityDescription: "BLAST verification"
         )
-        emptyStateIcon.image = icon
         emptyStateIcon.translatesAutoresizingMaskIntoConstraints = false
         emptyStateIcon.contentTintColor = .tertiaryLabelColor
         emptyStateIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 32, weight: .light)
@@ -496,6 +512,8 @@ public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
         emptyStateDetailLabel.preferredMaxLayoutWidth = 400
         emptyStateContainer.addSubview(emptyStateDetailLabel)
 
+        configureEmptyStateAsDefault()
+
         NSLayoutConstraint.activate([
             emptyStateContainer.topAnchor.constraint(equalTo: topAnchor),
             emptyStateContainer.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -514,6 +532,29 @@ public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
             emptyStateDetailLabel.centerXAnchor.constraint(equalTo: emptyStateContainer.centerXAnchor),
             emptyStateDetailLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 400),
         ])
+    }
+
+    private func configureEmptyStateAsDefault() {
+        emptyStateIcon.image = NSImage(
+            systemSymbolName: "bolt.badge.checkmark",
+            accessibilityDescription: "BLAST verification"
+        )
+        emptyStateIcon.contentTintColor = .tertiaryLabelColor
+        emptyStateTitleLabel.stringValue = defaultEmptyStateTitle
+        emptyStateDetailLabel.stringValue = defaultEmptyStateDetail
+        emptyStateDetailLabel.textColor = .tertiaryLabelColor
+    }
+
+    private func configureEmptyStateAsFailure(message: String) {
+        let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        emptyStateIcon.image = NSImage(
+            systemSymbolName: "exclamationmark.triangle.fill",
+            accessibilityDescription: "BLAST verification failed"
+        )
+        emptyStateIcon.contentTintColor = .systemOrange
+        emptyStateTitleLabel.stringValue = "BLAST Verification Failed"
+        emptyStateDetailLabel.stringValue = trimmedMessage.isEmpty ? "Request failed. Please retry." : trimmedMessage
+        emptyStateDetailLabel.textColor = .secondaryLabelColor
     }
 
     // MARK: - Setup: Loading State

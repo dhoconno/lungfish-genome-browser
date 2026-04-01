@@ -18,6 +18,14 @@ public struct NaoMgsAccessionSummary: Sendable {
     /// Number of reads aligned to this accession.
     public let readCount: Int
 
+    /// Estimated PCR duplicate reads for this accession.
+    public let pcrDuplicateCount: Int
+
+    /// Estimated unique reads (`readCount - pcrDuplicateCount`).
+    public var uniqueReadCount: Int {
+        max(0, readCount - pcrDuplicateCount)
+    }
+
     /// Estimated reference genome length (max refEnd across all hits, or max refStart + readLength).
     public let estimatedRefLength: Int
 
@@ -88,7 +96,7 @@ public enum NaoMgsDataConverter {
     /// - Parameters:
     ///   - hits: All hits for a single taxon.
     ///   - windowCount: Number of coverage windows for sparkline (default 100).
-    /// - Returns: Accession summaries sorted by read count descending.
+    /// - Returns: Accession summaries sorted by unique read count descending.
     public static func buildAccessionSummaries(
         hits: [NaoMgsVirusHit],
         windowCount: Int = 100
@@ -114,14 +122,33 @@ public enum NaoMgsDataConverter {
                 total + (pair.element > 0 ? windowSize : 0)
             }
 
+            // PCR duplicate estimate: same start/end/strand on the same accession.
+            var duplicateGroups: [String: Int] = [:]
+            for hit in accHits {
+                let strand = hit.isReverseComplement ? "R" : "F"
+                let readLength = hit.queryLength > 0 ? hit.queryLength : max(0, hit.readSequence.count)
+                let inferredRefEnd = max(hit.refEnd, hit.refStart + max(1, readLength))
+                let key = "\(hit.refStart)|\(inferredRefEnd)|\(strand)"
+                duplicateGroups[key, default: 0] += 1
+            }
+            let duplicateCount = duplicateGroups.values.reduce(0) { sum, count in
+                sum + max(0, count - 1)
+            }
+
             return NaoMgsAccessionSummary(
                 accession: accession,
                 readCount: accHits.count,
+                pcrDuplicateCount: duplicateCount,
                 estimatedRefLength: refLength,
                 coverageWindows: windows,
                 coveredBases: min(coveredBases, refLength)
             )
-        }.sorted { $0.readCount > $1.readCount }
+        }.sorted {
+            if $0.uniqueReadCount == $1.uniqueReadCount {
+                return $0.readCount > $1.readCount
+            }
+            return $0.uniqueReadCount > $1.uniqueReadCount
+        }
     }
 
     // MARK: - Coverage Computation

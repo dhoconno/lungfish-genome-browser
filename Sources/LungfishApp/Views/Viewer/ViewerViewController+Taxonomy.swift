@@ -342,6 +342,7 @@ extension ViewerViewController {
                                 progress: 0.1,
                                 detail: "Submitting \(request.sequences.count) reads to NCBI BLAST\u{2026}"
                             )
+                            weakController?.showBlastLoading(phase: .submitting, requestId: nil)
                         }
                     }
 
@@ -356,6 +357,14 @@ extension ViewerViewController {
                                         progress: fraction,
                                         detail: message
                                     )
+                                    let lower = message.lowercased()
+                                    if lower.contains("waiting") {
+                                        weakController?.showBlastLoading(phase: .waiting, requestId: nil)
+                                    } else if lower.contains("parsing") {
+                                        weakController?.showBlastLoading(phase: .parsing, requestId: nil)
+                                    } else {
+                                        weakController?.showBlastLoading(phase: .submitting, requestId: nil)
+                                    }
                                 }
                             }
                         }
@@ -379,7 +388,8 @@ extension ViewerViewController {
                                 id: opID,
                                 detail: errorDesc
                             )
-                            showTaxonomyExtractionErrorAlert(errorDesc)
+                            weakController?.showBlastFailure(message: errorDesc)
+                            showBlastVerificationErrorAlert(errorDesc)
                         }
                     }
                 }
@@ -500,6 +510,20 @@ private func showTaxonomyExtractionErrorAlert(_ errorDescription: String) {
     MainActor.assumeIsolated {
         let alert = NSAlert()
         alert.messageText = "Taxonomy Extraction Failed"
+        alert.informativeText = errorDescription
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            alert.beginSheetModal(for: window)
+        }
+    }
+}
+
+/// Presents an error alert for a failed BLAST verification request.
+private func showBlastVerificationErrorAlert(_ errorDescription: String) {
+    MainActor.assumeIsolated {
+        let alert = NSAlert()
+        alert.messageText = "BLAST Verification Failed"
         alert.informativeText = errorDescription
         alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")

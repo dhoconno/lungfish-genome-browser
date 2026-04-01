@@ -199,6 +199,17 @@ public struct NaoMgsTaxonSummary: Sendable, Codable, Equatable {
     /// Distinct GenBank accessions hit for this taxon.
     public let accessions: [String]
 
+    /// Estimated PCR duplicate reads for this taxon.
+    ///
+    /// Computed by grouping alignments with identical accession/start/end/strand
+    /// and counting all but the first hit in each group.
+    public let pcrDuplicateCount: Int
+
+    /// Estimated unique reads (`hitCount - pcrDuplicateCount`).
+    public var uniqueReadCount: Int {
+        max(0, hitCount - pcrDuplicateCount)
+    }
+
     /// Creates a new taxon summary.
     public init(
         taxId: Int,
@@ -207,7 +218,8 @@ public struct NaoMgsTaxonSummary: Sendable, Codable, Equatable {
         avgIdentity: Double,
         avgBitScore: Double,
         avgEditDistance: Double = 0,
-        accessions: [String]
+        accessions: [String],
+        pcrDuplicateCount: Int = 0
     ) {
         self.taxId = taxId
         self.name = name
@@ -216,6 +228,43 @@ public struct NaoMgsTaxonSummary: Sendable, Codable, Equatable {
         self.avgBitScore = avgBitScore
         self.avgEditDistance = avgEditDistance
         self.accessions = accessions
+        self.pcrDuplicateCount = max(0, min(pcrDuplicateCount, hitCount))
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case taxId
+        case name
+        case hitCount
+        case avgIdentity
+        case avgBitScore
+        case avgEditDistance
+        case accessions
+        case pcrDuplicateCount
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        taxId = try container.decode(Int.self, forKey: .taxId)
+        name = try container.decode(String.self, forKey: .name)
+        hitCount = try container.decode(Int.self, forKey: .hitCount)
+        avgIdentity = try container.decode(Double.self, forKey: .avgIdentity)
+        avgBitScore = try container.decode(Double.self, forKey: .avgBitScore)
+        avgEditDistance = try container.decode(Double.self, forKey: .avgEditDistance)
+        accessions = try container.decode([String].self, forKey: .accessions)
+        let decodedDupCount = try container.decodeIfPresent(Int.self, forKey: .pcrDuplicateCount) ?? 0
+        pcrDuplicateCount = max(0, min(decodedDupCount, hitCount))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(taxId, forKey: .taxId)
+        try container.encode(name, forKey: .name)
+        try container.encode(hitCount, forKey: .hitCount)
+        try container.encode(avgIdentity, forKey: .avgIdentity)
+        try container.encode(avgBitScore, forKey: .avgBitScore)
+        try container.encode(avgEditDistance, forKey: .avgEditDistance)
+        try container.encode(accessions, forKey: .accessions)
+        try container.encode(pcrDuplicateCount, forKey: .pcrDuplicateCount)
     }
 }
 
@@ -711,6 +760,7 @@ public final class NaoMgsResultParser: @unchecked Sendable {
             let totalBitScore = taxHits.reduce(0.0) { $0 + $1.bitScore }
             let totalEditDistance = taxHits.reduce(0) { $0 + $1.editDistance }
             let accessions = Array(Set(taxHits.map(\.subjectSeqId).filter { !$0.isEmpty })).sorted()
+            let duplicateCount = estimatePCRDuplicateCount(for: taxHits)
 
             // Derive the organism name from the first subject title.
             // NAO-MGS stitle often has the format "Accession Description Species"
@@ -723,11 +773,34 @@ public final class NaoMgsResultParser: @unchecked Sendable {
                 avgIdentity: taxHits.isEmpty ? 0 : totalIdentity / Double(taxHits.count),
                 avgBitScore: taxHits.isEmpty ? 0 : totalBitScore / Double(taxHits.count),
                 avgEditDistance: taxHits.isEmpty ? 0 : Double(totalEditDistance) / Double(taxHits.count),
-                accessions: accessions
+                accessions: accessions,
+                pcrDuplicateCount: duplicateCount
             )
         }
 
         return summaries.sorted { $0.hitCount > $1.hitCount }
+    }
+
+    /// Estimates PCR duplicates from NAO-MGS hits by grouping identical alignments.
+    ///
+    /// Uses the same basic heuristic as miniBAM duplicate visualization:
+    /// alignments with identical accession/start/end/strand are considered
+    /// duplicates, and all but one in each group are counted as PCR dups.
+    private func estimatePCRDuplicateCount(for hits: [NaoMgsVirusHit]) -> Int {
+        guard !hits.isEmpty else { return 0 }
+
+        var groups: [String: Int] = [:]
+        for hit in hits {
+            let strand = hit.isReverseComplement ? "R" : "F"
+            let readLength = hit.queryLength > 0 ? hit.queryLength : max(0, hit.readSequence.count)
+            let inferredRefEnd = max(hit.refEnd, hit.refStart + max(1, readLength))
+            let key = "\(hit.subjectSeqId)|\(hit.refStart)|\(inferredRefEnd)|\(strand)"
+            groups[key, default: 0] += 1
+        }
+
+        return groups.values.reduce(0) { sum, count in
+            sum + max(0, count - 1)
+        }
     }
 
     // MARK: - Field Helpers

@@ -73,22 +73,12 @@ extension ViewerViewController {
         // resolved by TaxTriageResultViewController).
         //
         // Fallback 1: Kraken2 classification + source FASTQ extraction.
-        // Fallback 2: Open NCBI BLAST web search.
+        // If no reads can be extracted, fail in-app (no browser fallback).
         let capturedConfig = config
         controller.onBlastVerification = { [weak controller] organism, readCount, accessions, bamURL, bamIndexURL in
             let orgName = organism.name
             let taxId = organism.taxId ?? 0
             taxTriageLogger.info("BLAST verification requested for \(orgName, privacy: .public), readCount=\(readCount, privacy: .public), accessions=\(accessions?.count ?? 0, privacy: .public)")
-
-            guard taxId > 0 else {
-                // No taxId — fall back to NCBI BLAST web
-                let encodedName = orgName
-                    .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? orgName
-                if let url = URL(string: "https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastSearch&QUERY=\(encodedName)") {
-                    NSWorkspace.shared.open(url)
-                }
-                return
-            }
 
             let blastCliCmd = OperationCenter.buildCLICommand(subcommand: "blast verify", args: [
                 "--taxid", "\(taxId)",
@@ -156,13 +146,14 @@ extension ViewerViewController {
                                 taxonName: orgName,
                                 taxId: taxId,
                                 sequences: subsampled,
-                                entrezQuery: "txid\(taxId)[Organism:exp]"
+                                entrezQuery: taxId > 0 ? "txid\(taxId)[Organism:exp]" : nil
                             )
                         }
                     }
 
                     // --- Path 2: Kraken2 + FASTQ fallback ---
                     if request == nil,
+                       taxId > 0,
                        let sourceFile = capturedConfig?.samples.first?.fastq1 {
                         let outputDir = capturedConfig?.outputDirectory
                         let krakenFile = outputDir?
@@ -191,22 +182,9 @@ extension ViewerViewController {
                         }
                     }
 
-                    // --- Path 3: Web fallback ---
+                    // Fail in-app if no reads are available for verification.
                     guard let request, !request.sequences.isEmpty else {
-                        let encodedName = orgName
-                            .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? orgName
-                        if let url = URL(string: "https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastSearch&QUERY=\(encodedName)") {
-                            DispatchQueue.main.async {
-                                MainActor.assumeIsolated {
-                                    NSWorkspace.shared.open(url)
-                                    OperationCenter.shared.complete(
-                                        id: opID,
-                                        detail: "Opened NCBI BLAST in browser"
-                                    )
-                                }
-                            }
-                        }
-                        return
+                        throw BlastServiceError.noSequences
                     }
 
                     // Submit to NCBI BLAST API
@@ -231,6 +209,14 @@ extension ViewerViewController {
                                         progress: fraction,
                                         detail: message
                                     )
+                                    let lower = message.lowercased()
+                                    if lower.contains("waiting") {
+                                        blastController?.showBlastLoading(phase: .waiting, requestId: nil)
+                                    } else if lower.contains("parsing") {
+                                        blastController?.showBlastLoading(phase: .parsing, requestId: nil)
+                                    } else {
+                                        blastController?.showBlastLoading(phase: .submitting, requestId: nil)
+                                    }
                                 }
                             }
                         }
@@ -250,6 +236,7 @@ extension ViewerViewController {
                     DispatchQueue.main.async {
                         MainActor.assumeIsolated {
                             OperationCenter.shared.fail(id: opID, detail: errorDesc)
+                            blastController?.showBlastFailure(errorDesc)
                         }
                     }
                 }

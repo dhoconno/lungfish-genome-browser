@@ -40,8 +40,7 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "NaoMgsResult
 /// ## MiniBAM Alignment Viewer
 ///
 /// When a taxon is selected and BAM data is available, the detail pane shows
-/// a MiniBAMViewController rendering the read pileup for the top accession.
-/// Selecting accessions in the accession list switches the BAM display.
+/// a scrollable list of miniBAM panels for the top accessions by unique read count.
 ///
 /// ## Thread Safety
 ///
@@ -79,20 +78,32 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     let splitView = NSSplitView()
     private let taxonomyTableScrollView = NSScrollView()
     private let taxonomyTableView = NSTableView()
+    private let taxonomyFilterBar = NSStackView()
+    private let sampleFilterField = NSSearchField()
+    private let taxonFilterField = NSSearchField()
+    private let hitsFilterField = NSTextField()
+    private let uniqueReadsFilterField = NSTextField()
+    private let refsFilterField = NSTextField()
     private let detailScrollView = NSScrollView()
     private let detailContentView = FlippedNaoMgsContentView()
     let actionBar = NaoMgsActionBar()
 
     // MARK: - MiniBAM
 
-    /// The mini BAM view controller for alignment pileup display.
-    private var miniBAMController: MiniBAMViewController?
+    /// Embedded miniBAM controllers currently shown in the detail pane.
+    private var miniBAMControllers: [MiniBAMViewController] = []
 
-    /// Preferred height for the mini BAM view (resizable).
-    private var miniBAMPreferredHeight: CGFloat = 320
-    private var miniBAMHeightConstraint: NSLayoutConstraint?
-    private let miniBAMMinHeight: CGFloat = 220
+    /// Per-accession preferred miniBAM heights.
+    private var miniBAMPreferredHeights: [String: CGFloat] = [:]
+
+    private let miniBAMDefaultHeight: CGFloat = 220
+    private let miniBAMMinHeight: CGFloat = 140
     private let miniBAMMaxHeight: CGFloat = 900
+    /// Number of accession miniBAM panels to show per selected taxon.
+    private let miniBAMDisplayLimit: Int = 10
+
+    /// Taxonomy row sample labels derived from raw hits (supports multi-sample bundles).
+    private var sampleNamesByTaxId: [Int: String] = [:]
 
     // MARK: - Split View State
 
@@ -101,6 +112,14 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
 
     /// Whether the initial divider position has been applied.
     private var didSetInitialSplitPosition = false
+
+    /// Active bottom constraint for the split view. Re-pinned when BLAST drawer opens.
+    private var splitViewBottomConstraint: NSLayoutConstraint?
+
+    /// Bottom BLAST results drawer shown after in-app verification.
+    private var blastDrawerView: BlastResultsDrawerTab?
+    private var blastDrawerBottomConstraint: NSLayoutConstraint?
+    private var isBlastDrawerOpen = false
 
     // MARK: - Selection Sync
 
@@ -133,16 +152,7 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
 
     public override func viewDidLayout() {
         super.viewDidLayout()
-
-        if !didSetInitialSplitPosition, splitView.bounds.width > 0 {
-            didSetInitialSplitPosition = true
-            // Detail pane on left gets 40%, taxonomy table on right gets 60% (matches EsViritu)
-            let position = round(splitView.bounds.width * 0.4)
-            splitView.setPosition(position, ofDividerAt: 0)
-
-            // Now that the split view has real bounds, size the detail content.
-            resizeDetailContentToFit()
-        }
+        applySplitPositionIfNeeded(force: false)
     }
 
     // MARK: - Public API
@@ -151,6 +161,10 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     public func configure(result: NaoMgsResult, bundleURL: URL? = nil) {
         naoMgsResult = result
         hitsByTaxon = NaoMgsDataConverter.groupByTaxon(result.virusHits)
+        sampleNamesByTaxId = Self.buildSampleNamesByTaxId(
+            hitsByTaxon: hitsByTaxon,
+            fallbackSampleName: result.sampleName
+        )
         self.bundleURL = bundleURL
 
         // Discover BAM file in bundle
@@ -158,14 +172,11 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
             discoverBAMFile(in: bundleURL, sampleName: result.sampleName)
         }
 
-        // Set up mini BAM controller if BAM available
-        setupMiniBAMViewer()
-
         // Update summary bar
         summaryBar.update(result: result)
 
-        // Reload taxonomy table
-        taxonomyTableView.reloadData()
+        // Reload taxonomy table with current filter state.
+        applyTaxonomyFilters()
 
         // Update action bar
         actionBar.configure(
@@ -173,16 +184,16 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
             taxonCount: result.taxonSummaries.count
         )
 
-        // Show overview in detail pane
-        showOverview()
+        // Auto-select top taxon so miniBAM panels are visible immediately.
+        if result.taxonSummaries.isEmpty {
+            showOverview()
+        } else {
+            selectTaxonById(displayedSummaries.first?.taxId ?? result.taxonSummaries[0].taxId)
+        }
 
         // Force the split view to re-apply its 40/60 position now that we have content.
-        // The placeholder display may have collapsed the detail pane before data was loaded.
-        if splitView.bounds.width > 0 {
-            let position = round(splitView.bounds.width * 0.4)
-            splitView.setPosition(position, ofDividerAt: 0)
-        }
-        didSetInitialSplitPosition = true
+        // If bounds are not available yet, this remains deferred to viewDidLayout.
+        applySplitPositionIfNeeded(force: true)
 
         logger.info("Configured NAO-MGS viewer with \(result.totalHitReads) hits, \(result.taxonSummaries.count) taxa, sample=\(result.sampleName, privacy: .public), bam=\(self.bamURL != nil)")
     }
@@ -224,30 +235,12 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         }
     }
 
-    // MARK: - MiniBAM Setup
-
-    private func setupMiniBAMViewer() {
-        guard bamURL != nil else { return }
-        guard miniBAMController == nil else { return }
-
-        let miniBAM = MiniBAMViewController()
-        addChild(miniBAM)
-        miniBAMController = miniBAM
-
-        // Wire read stats callback for unique read display
-        miniBAM.onReadStatsUpdated = { [weak self] totalReads, uniqueReads in
-            guard let self, let summary = self.selectedTaxonSummary else { return }
-            self.updateDetailMetrics(summary: summary, uniqueReads: uniqueReads, totalReads: totalReads)
-        }
-    }
-
     // MARK: - Detail Pane Content
 
     /// Shows the overview when no taxon is selected.
     private func showOverview() {
         selectedTaxonSummary = nil
         selectedAccession = nil
-        miniBAMController?.clear()
 
         rebuildDetailContent()
         actionBar.updateSelection(nil)
@@ -256,72 +249,25 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     /// Shows the detail pane for the selected taxon.
     private func showTaxonDetail(_ summary: NaoMgsTaxonSummary) {
         selectedTaxonSummary = summary
-        let hits = hitsByTaxon[summary.taxId] ?? []
-
-        let accessionSummaries = NaoMgsDataConverter.buildAccessionSummaries(hits: hits)
-        let topAccession = accessionSummaries.first?.accession
-        selectedAccession = topAccession
-
+        selectedAccession = nil
         rebuildDetailContent()
         actionBar.updateSelection(summary)
-
-        // Load BAM for top accession
-        if let bamURL, let topAccession {
-            let refLength = accessionSummaries.first?.estimatedRefLength ?? 0
-            miniBAMController?.displayContig(
-                bamURL: bamURL,
-                contig: topAccession,
-                contigLength: refLength,
-                indexURL: bamIndexURL
-            )
-        } else {
-            miniBAMController?.clear()
-        }
     }
 
-    /// Switches the miniBAM display to a different accession.
+    /// Stores accession selection from legacy list/table widgets.
     private func switchToAccession(_ accession: String) {
         selectedAccession = accession
-
-        guard let bamURL, let summary = selectedTaxonSummary else { return }
-        let hits = hitsByTaxon[summary.taxId] ?? []
-        let accessionSummaries = NaoMgsDataConverter.buildAccessionSummaries(hits: hits)
-        let refLength = accessionSummaries.first(where: { $0.accession == accession })?.estimatedRefLength ?? 0
-
-        miniBAMController?.displayContig(
-            bamURL: bamURL,
-            contig: accession,
-            contigLength: refLength,
-            indexURL: bamIndexURL
-        )
-    }
-
-    /// Updates the metrics labels in the detail pane after BAM stats change.
-    private func updateDetailMetrics(summary: NaoMgsTaxonSummary, uniqueReads: Int, totalReads: Int) {
-        // Update the action bar with unique read info
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.groupingSeparator = ","
-        let uniqueStr = formatter.string(from: NSNumber(value: uniqueReads)) ?? "\(uniqueReads)"
-        let totalStr = formatter.string(from: NSNumber(value: totalReads)) ?? "\(totalReads)"
-
-        let totalHits = naoMgsResult?.totalHitReads ?? 0
-        let pct = totalHits > 0 ? Double(summary.hitCount) / Double(totalHits) * 100 : 0
-        let pctStr = String(format: "%.1f%%", pct)
-
-        actionBar.infoLabel.stringValue = "\(summary.name) \u{2014} \(uniqueStr) unique / \(totalStr) total reads (\(pctStr))"
-        actionBar.infoLabel.textColor = .labelColor
     }
 
     // MARK: - Detail Content Rebuild
 
     private func rebuildDetailContent() {
+        teardownEmbeddedMiniBAMControllers()
         for subview in detailContentView.subviews {
             subview.removeFromSuperview()
         }
         // Reset any active constraints on the content view
         detailContentView.removeConstraints(detailContentView.constraints)
-        miniBAMHeightConstraint = nil
 
         if let summary = selectedTaxonSummary {
             buildTaxonDetailContent(summary)
@@ -407,32 +353,6 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         let hits = hitsByTaxon[summary.taxId] ?? []
         let accessionSummaries = NaoMgsDataConverter.buildAccessionSummaries(hits: hits)
 
-        var lastView: NSView = detailContentView
-        var lastBottomConstant: CGFloat = 16
-
-        // 1. MiniBAM pileup at top (when BAM is available)
-        if bamURL != nil, let miniBAM = miniBAMController {
-            let bamView = miniBAM.view
-            bamView.translatesAutoresizingMaskIntoConstraints = false
-            detailContentView.addSubview(bamView)
-
-            miniBAM.onResizeBy = { [weak self] deltaY in
-                self?.adjustMiniBAMHeight(by: deltaY)
-            }
-
-            let bamHeight = bamView.heightAnchor.constraint(equalToConstant: miniBAMPreferredHeight)
-            miniBAMHeightConstraint = bamHeight
-
-            NSLayoutConstraint.activate([
-                bamView.topAnchor.constraint(equalTo: detailContentView.topAnchor, constant: 8),
-                bamView.leadingAnchor.constraint(equalTo: detailContentView.leadingAnchor, constant: 4),
-                bamView.trailingAnchor.constraint(equalTo: detailContentView.trailingAnchor, constant: -4),
-                bamHeight,
-            ])
-            lastView = bamView
-            lastBottomConstant = 12
-        }
-
         // 2. Taxon name header
         let nameLabel = NSTextField(labelWithString: summary.name.isEmpty ? "Taxid \(summary.taxId)" : summary.name)
         nameLabel.font = .systemFont(ofSize: 14, weight: .bold)
@@ -440,7 +360,9 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         detailContentView.addSubview(nameLabel)
 
-        let subtitleLabel = NSTextField(labelWithString: "Taxid: \(summary.taxId)  \u{2022}  \(summary.hitCount) reads  \u{2022}  \(summary.accessions.count) accessions")
+        let subtitleLabel = NSTextField(
+            labelWithString: "Taxid: \(summary.taxId)  \u{2022}  \(summary.uniqueReadCount) unique / \(summary.hitCount) total reads  \u{2022}  \(summary.accessions.count) accessions"
+        )
         subtitleLabel.font = .systemFont(ofSize: 10)
         subtitleLabel.textColor = .secondaryLabelColor
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -450,17 +372,12 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         let metricsView = buildMetricsView(for: summary)
         detailContentView.addSubview(metricsView)
 
-        // 4. Accession list (scrollable)
-        let accessionListView = buildAccessionList(accessionSummaries: accessionSummaries)
-        detailContentView.addSubview(accessionListView)
-
-        // Constraints
-        let topAnchor = (lastView === detailContentView)
-            ? detailContentView.topAnchor
-            : lastView.bottomAnchor
+        // 4. Scrollable list of miniBAM panels for top accessions
+        let miniBAMListView = buildMiniBAMList(accessionSummaries: accessionSummaries)
+        detailContentView.addSubview(miniBAMListView)
 
         NSLayoutConstraint.activate([
-            nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: lastBottomConstant),
+            nameLabel.topAnchor.constraint(equalTo: detailContentView.topAnchor, constant: 12),
             nameLabel.leadingAnchor.constraint(equalTo: detailContentView.leadingAnchor, constant: 16),
             nameLabel.trailingAnchor.constraint(equalTo: detailContentView.trailingAnchor, constant: -16),
 
@@ -472,20 +389,160 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
             metricsView.leadingAnchor.constraint(equalTo: detailContentView.leadingAnchor, constant: 16),
             metricsView.trailingAnchor.constraint(equalTo: detailContentView.trailingAnchor, constant: -16),
 
-            accessionListView.topAnchor.constraint(equalTo: metricsView.bottomAnchor, constant: 12),
-            accessionListView.leadingAnchor.constraint(equalTo: detailContentView.leadingAnchor, constant: 16),
-            accessionListView.trailingAnchor.constraint(equalTo: detailContentView.trailingAnchor, constant: -16),
-            accessionListView.bottomAnchor.constraint(lessThanOrEqualTo: detailContentView.bottomAnchor, constant: -8),
+            miniBAMListView.topAnchor.constraint(equalTo: metricsView.bottomAnchor, constant: 12),
+            miniBAMListView.leadingAnchor.constraint(equalTo: detailContentView.leadingAnchor, constant: 8),
+            miniBAMListView.trailingAnchor.constraint(equalTo: detailContentView.trailingAnchor, constant: -8),
+            miniBAMListView.bottomAnchor.constraint(lessThanOrEqualTo: detailContentView.bottomAnchor, constant: -8),
         ])
     }
 
-    private func adjustMiniBAMHeight(by deltaY: CGFloat) {
-        guard let constraint = miniBAMHeightConstraint else { return }
-        let availableHeight = max(detailContentView.bounds.height, view.bounds.height) - 120
-        let maxHeight = max(miniBAMMinHeight, min(miniBAMMaxHeight, availableHeight))
-        miniBAMPreferredHeight = min(max(miniBAMMinHeight, miniBAMPreferredHeight + deltaY), maxHeight)
-        constraint.constant = miniBAMPreferredHeight
+    private func buildMiniBAMList(accessionSummaries: [NaoMgsAccessionSummary]) -> NSView {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let totalCount = accessionSummaries.count
+        let displayedAccessions = Array(accessionSummaries.prefix(miniBAMDisplayLimit))
+        let shownCount = displayedAccessions.count
+        let scopeLabel = totalCount <= miniBAMDisplayLimit ? "All" : "Top \(miniBAMDisplayLimit)"
+
+        let headerLabel = NSTextField(
+            labelWithString: "miniBAM Panels (\(scopeLabel): \(shownCount) of \(totalCount) accessions)"
+        )
+        headerLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        headerLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(headerLabel)
+
+        let noteLabel = NSTextField(
+            labelWithString: "Top references by unique read count. Drag a panel handle downward to make it taller."
+        )
+        noteLabel.font = .systemFont(ofSize: 10)
+        noteLabel.textColor = .secondaryLabelColor
+        noteLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(noteLabel)
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.distribution = .gravityAreas
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            headerLabel.topAnchor.constraint(equalTo: container.topAnchor),
+            headerLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+            headerLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+
+            noteLabel.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 2),
+            noteLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+            noteLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+
+            stack.topAnchor.constraint(equalTo: noteLabel.bottomAnchor, constant: 8),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+
+        guard let bamURL else {
+            let emptyLabel = NSTextField(labelWithString: "No BAM file found in this bundle.")
+            emptyLabel.font = .systemFont(ofSize: 11)
+            emptyLabel.textColor = .secondaryLabelColor
+            stack.addArrangedSubview(emptyLabel)
+            return container
+        }
+
+        for accessionSummary in displayedAccessions {
+            let card = NSView()
+            card.wantsLayer = true
+            card.layer?.cornerRadius = 6
+            card.layer?.borderWidth = 1
+            card.layer?.borderColor = NSColor.separatorColor.cgColor
+            card.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.45).cgColor
+            card.translatesAutoresizingMaskIntoConstraints = false
+
+            let uniqueReadCount = NumberFormatter.localizedString(
+                from: NSNumber(value: accessionSummary.uniqueReadCount),
+                number: .decimal
+            )
+            let readCount = NumberFormatter.localizedString(
+                from: NSNumber(value: accessionSummary.readCount),
+                number: .decimal
+            )
+            let coveragePct = String(format: "%.0f%%", accessionSummary.coverageFraction * 100)
+            let titleLabel = NSTextField(
+                labelWithString: "\(accessionSummary.accession)  •  \(uniqueReadCount) unique / \(readCount) total reads  •  \(coveragePct) covered"
+            )
+            titleLabel.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
+            titleLabel.lineBreakMode = .byTruncatingTail
+            titleLabel.translatesAutoresizingMaskIntoConstraints = false
+            card.addSubview(titleLabel)
+
+            let miniBAM = MiniBAMViewController()
+            miniBAM.subjectNoun = "reference"
+            miniBAM.showsPCRDuplicates = false
+            miniBAM.keyboardShortcutsEnabled = true
+            addChild(miniBAM)
+            miniBAMControllers.append(miniBAM)
+
+            let bamView = miniBAM.view
+            bamView.translatesAutoresizingMaskIntoConstraints = false
+            card.addSubview(bamView)
+
+            let preferredHeight = miniBAMPreferredHeights[accessionSummary.accession] ?? miniBAMDefaultHeight
+            let heightConstraint = bamView.heightAnchor.constraint(equalToConstant: preferredHeight)
+            miniBAM.onResizeBy = { [weak self] deltaY in
+                self?.adjustMiniBAMHeight(
+                    accession: accessionSummary.accession,
+                    constraint: heightConstraint,
+                    by: deltaY
+                )
+            }
+
+            NSLayoutConstraint.activate([
+                titleLabel.topAnchor.constraint(equalTo: card.topAnchor, constant: 6),
+                titleLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 8),
+                titleLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
+
+                bamView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
+                bamView.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 4),
+                bamView.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -4),
+                bamView.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -4),
+                heightConstraint,
+            ])
+
+            miniBAM.displayContig(
+                bamURL: bamURL,
+                contig: accessionSummary.accession,
+                contigLength: max(accessionSummary.estimatedRefLength, 1),
+                indexURL: bamIndexURL,
+                maxReads: max(1, accessionSummary.readCount)
+            )
+
+            stack.addArrangedSubview(card)
+            card.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+
+        return container
+    }
+
+    private func adjustMiniBAMHeight(
+        accession: String,
+        constraint: NSLayoutConstraint,
+        by deltaY: CGFloat
+    ) {
+        let current = miniBAMPreferredHeights[accession] ?? miniBAMDefaultHeight
+        let next = min(max(miniBAMMinHeight, current + deltaY), miniBAMMaxHeight)
+        miniBAMPreferredHeights[accession] = next
+        constraint.constant = next
         detailContentView.layoutSubtreeIfNeeded()
+    }
+
+    private func teardownEmbeddedMiniBAMControllers() {
+        for controller in miniBAMControllers {
+            controller.view.removeFromSuperview()
+            controller.removeFromParent()
+        }
+        miniBAMControllers.removeAll()
     }
 
     private func buildMetricsView(for summary: NaoMgsTaxonSummary) -> NSView {
@@ -500,6 +557,7 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
             ("Avg Identity", String(format: "%.1f%%", summary.avgIdentity)),
             ("Avg Bit Score", String(format: "%.0f", summary.avgBitScore)),
             ("Avg Edit Dist", String(format: "%.1f", summary.avgEditDistance)),
+            ("Unique Reads", naoMgsFormatCount(summary.uniqueReadCount)),
             ("Accessions", "\(summary.accessions.count)"),
         ]
 
@@ -622,8 +680,8 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
 
     /// Selects a taxon by its taxonomy ID, updating both the table and detail pane.
     private func selectTaxonById(_ taxId: Int) {
-        guard let result = naoMgsResult else { return }
-        let summaries = sortedSummaries
+        guard naoMgsResult != nil else { return }
+        let summaries = displayedSummaries
         guard let index = summaries.firstIndex(where: { $0.taxId == taxId }) else { return }
 
         suppressSelectionSync = true
@@ -658,10 +716,9 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         detailContainer = detail
 
         // Right pane: taxonomy table
-        let tableContainer = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 600))
+        let tableContainer = NSView()
         setupTaxonomyTable()
-        taxonomyTableScrollView.autoresizingMask = [.width, .height]
-        tableContainer.addSubview(taxonomyTableScrollView)
+        setupTaxonomyFilterBar(in: tableContainer)
 
         splitView.addArrangedSubview(detail)
         splitView.addArrangedSubview(tableContainer)
@@ -688,10 +745,17 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         taxonomyTableView.rowHeight = 22
 
         // Columns
+        let sampleColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("sample"))
+        sampleColumn.title = "Sample"
+        sampleColumn.width = 130
+        sampleColumn.minWidth = 90
+        sampleColumn.sortDescriptorPrototype = NSSortDescriptor(key: "sample", ascending: true, selector: #selector(NSString.localizedCaseInsensitiveCompare(_:)))
+        taxonomyTableView.addTableColumn(sampleColumn)
+
         let nameColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
         nameColumn.title = "Taxon"
-        nameColumn.width = 160
-        nameColumn.minWidth = 80
+        nameColumn.width = 210
+        nameColumn.minWidth = 120
         nameColumn.sortDescriptorPrototype = NSSortDescriptor(key: "name", ascending: true, selector: #selector(NSString.localizedCaseInsensitiveCompare(_:)))
         taxonomyTableView.addTableColumn(nameColumn)
 
@@ -702,19 +766,19 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         hitsColumn.sortDescriptorPrototype = NSSortDescriptor(key: "hits", ascending: false)
         taxonomyTableView.addTableColumn(hitsColumn)
 
-        let identityColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("identity"))
-        identityColumn.title = "Avg Identity"
-        identityColumn.width = 72
-        identityColumn.minWidth = 56
-        identityColumn.sortDescriptorPrototype = NSSortDescriptor(key: "identity", ascending: false)
-        taxonomyTableView.addTableColumn(identityColumn)
+        let uniqueColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("unique"))
+        uniqueColumn.title = "Unique Reads"
+        uniqueColumn.width = 96
+        uniqueColumn.minWidth = 72
+        uniqueColumn.sortDescriptorPrototype = NSSortDescriptor(key: "unique", ascending: false)
+        taxonomyTableView.addTableColumn(uniqueColumn)
 
-        let accessionsColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("accessions"))
-        accessionsColumn.title = "Refs"
-        accessionsColumn.width = 40
-        accessionsColumn.minWidth = 32
-        accessionsColumn.sortDescriptorPrototype = NSSortDescriptor(key: "accessions", ascending: false)
-        taxonomyTableView.addTableColumn(accessionsColumn)
+        let refsColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("refs"))
+        refsColumn.title = "Refs"
+        refsColumn.width = 52
+        refsColumn.minWidth = 40
+        refsColumn.sortDescriptorPrototype = NSSortDescriptor(key: "refs", ascending: false)
+        taxonomyTableView.addTableColumn(refsColumn)
 
         taxonomyTableView.dataSource = self
         taxonomyTableView.delegate = self
@@ -733,6 +797,65 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         taxonomyTableScrollView.drawsBackground = true
 
         taxonomyTableView.setAccessibilityLabel("NAO-MGS Taxonomy Table")
+    }
+
+    private func setupTaxonomyFilterBar(in container: NSView) {
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        taxonomyFilterBar.translatesAutoresizingMaskIntoConstraints = false
+        taxonomyFilterBar.orientation = .horizontal
+        taxonomyFilterBar.alignment = .centerY
+        taxonomyFilterBar.spacing = 6
+        container.addSubview(taxonomyFilterBar)
+
+        configureFilterField(sampleFilterField, placeholder: "Sample", width: 130, numeric: false)
+        configureFilterField(taxonFilterField, placeholder: "Taxon", width: 180, numeric: false)
+        configureFilterField(hitsFilterField, placeholder: "Min Hits", width: 70, numeric: true)
+        configureFilterField(uniqueReadsFilterField, placeholder: "Min Unique", width: 82, numeric: true)
+        configureFilterField(refsFilterField, placeholder: "Min Refs", width: 70, numeric: true)
+
+        taxonomyFilterBar.addArrangedSubview(sampleFilterField)
+        taxonomyFilterBar.addArrangedSubview(taxonFilterField)
+        taxonomyFilterBar.addArrangedSubview(hitsFilterField)
+        taxonomyFilterBar.addArrangedSubview(uniqueReadsFilterField)
+        taxonomyFilterBar.addArrangedSubview(refsFilterField)
+
+        taxonomyTableScrollView.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(taxonomyTableScrollView)
+
+        NSLayoutConstraint.activate([
+            taxonomyFilterBar.topAnchor.constraint(equalTo: container.topAnchor, constant: 6),
+            taxonomyFilterBar.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 6),
+            taxonomyFilterBar.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -6),
+
+            taxonomyTableScrollView.topAnchor.constraint(equalTo: taxonomyFilterBar.bottomAnchor, constant: 6),
+            taxonomyTableScrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            taxonomyTableScrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            taxonomyTableScrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+    }
+
+    private func configureFilterField(
+        _ field: NSTextField,
+        placeholder: String,
+        width: CGFloat,
+        numeric: Bool
+    ) {
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.placeholderString = placeholder
+        field.font = .systemFont(ofSize: 11)
+        field.controlSize = .small
+        field.delegate = self
+        field.target = self
+        field.action = #selector(taxonomyFilterChanged(_:))
+        if numeric {
+            field.alignment = .right
+        }
+        field.widthAnchor.constraint(equalToConstant: width).isActive = true
+    }
+
+    @objc private func taxonomyFilterChanged(_ sender: Any?) {
+        applyTaxonomyFilters()
     }
 
     // MARK: - Setup: Action Bar
@@ -762,8 +885,29 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
             splitView.topAnchor.constraint(equalTo: summaryBar.bottomAnchor),
             splitView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             splitView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            splitView.bottomAnchor.constraint(equalTo: actionBar.topAnchor),
         ])
+
+        let bottomConstraint = splitView.bottomAnchor.constraint(equalTo: actionBar.topAnchor)
+        bottomConstraint.isActive = true
+        splitViewBottomConstraint = bottomConstraint
+    }
+
+    private func applySplitPositionIfNeeded(force: Bool) {
+        guard splitView.arrangedSubviews.count >= 2 else { return }
+        guard splitView.bounds.width > 0 else {
+            if force {
+                didSetInitialSplitPosition = false
+            }
+            return
+        }
+
+        guard force || !didSetInitialSplitPosition else { return }
+
+        // Detail pane on left gets 40%, taxonomy table on right gets 60%.
+        let position = round(splitView.bounds.width * 0.4)
+        splitView.setPosition(position, ofDividerAt: 0)
+        didSetInitialSplitPosition = true
+        resizeDetailContentToFit()
     }
 
     // MARK: - Callback Wiring
@@ -772,6 +916,68 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         actionBar.onExport = { [weak self] in
             self?.exportResults()
         }
+    }
+
+    // MARK: - BLAST Drawer
+
+    public func showBlastLoading(phase: BlastJobPhase, requestId: String?) {
+        let drawer = ensureBlastDrawer()
+        drawer.showLoading(phase: phase, requestId: requestId)
+        openBlastDrawerIfNeeded()
+    }
+
+    public func showBlastResults(_ result: BlastVerificationResult) {
+        let drawer = ensureBlastDrawer()
+        drawer.showResults(result)
+        openBlastDrawerIfNeeded()
+    }
+
+    public func showBlastFailure(_ message: String) {
+        let drawer = ensureBlastDrawer()
+        drawer.showFailure(message: message)
+        openBlastDrawerIfNeeded()
+    }
+
+    private func ensureBlastDrawer() -> BlastResultsDrawerTab {
+        if let blastDrawerView {
+            return blastDrawerView
+        }
+
+        let drawer = BlastResultsDrawerTab()
+        drawer.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(drawer)
+
+        let bottomConstraint = drawer.bottomAnchor.constraint(equalTo: actionBar.topAnchor, constant: 220)
+
+        NSLayoutConstraint.activate([
+            drawer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            drawer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            drawer.heightAnchor.constraint(equalToConstant: 220),
+            bottomConstraint,
+        ])
+
+        splitViewBottomConstraint?.isActive = false
+        let newSplitBottom = splitView.bottomAnchor.constraint(equalTo: drawer.topAnchor)
+        newSplitBottom.isActive = true
+        splitViewBottomConstraint = newSplitBottom
+
+        blastDrawerView = drawer
+        blastDrawerBottomConstraint = bottomConstraint
+        view.layoutSubtreeIfNeeded()
+
+        return drawer
+    }
+
+    private func openBlastDrawerIfNeeded() {
+        guard !isBlastDrawerOpen else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.25
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.allowsImplicitAnimation = true
+            blastDrawerBottomConstraint?.animator().constant = 0
+            view.layoutSubtreeIfNeeded()
+        }
+        isBlastDrawerOpen = true
     }
 
     // MARK: - Context Menu
@@ -899,12 +1105,20 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
 
     // MARK: - NSSplitViewDelegate
 
-    public func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofDividerAt dividerIndex: Int) -> CGFloat {
-        return max(proposedMinimumPosition, 300)
+    public func splitView(
+        _ splitView: NSSplitView,
+        constrainMinCoordinate proposedMinimumPosition: CGFloat,
+        ofSubviewAt dividerIndex: Int
+    ) -> CGFloat {
+        max(proposedMinimumPosition, 250)
     }
 
-    public func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofDividerAt dividerIndex: Int) -> CGFloat {
-        return min(proposedMaximumPosition, splitView.bounds.width - 200)
+    public func splitView(
+        _ splitView: NSSplitView,
+        constrainMaxCoordinate proposedMaximumPosition: CGFloat,
+        ofSubviewAt dividerIndex: Int
+    ) -> CGFloat {
+        min(proposedMaximumPosition, splitView.bounds.width - 300)
     }
 
     // MARK: - Export
@@ -922,11 +1136,11 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
                   let self, let result = self.naoMgsResult else { return }
 
             var lines: [String] = []
-            lines.append("taxon_id\tname\thit_count\tavg_identity\tavg_bit_score\tavg_edit_distance\taccessions")
+            lines.append("taxon_id\tname\thit_count\tunique_read_count\tpcr_duplicate_count\tavg_identity\tavg_bit_score\tavg_edit_distance\taccessions")
 
             for summary in result.taxonSummaries {
                 let accStr = summary.accessions.joined(separator: ",")
-                lines.append("\(summary.taxId)\t\(summary.name)\t\(summary.hitCount)\t\(String(format: "%.2f", summary.avgIdentity))\t\(String(format: "%.1f", summary.avgBitScore))\t\(String(format: "%.1f", summary.avgEditDistance))\t\(accStr)")
+                lines.append("\(summary.taxId)\t\(summary.name)\t\(summary.hitCount)\t\(summary.uniqueReadCount)\t\(summary.pcrDuplicateCount)\t\(String(format: "%.2f", summary.avgIdentity))\t\(String(format: "%.1f", summary.avgBitScore))\t\(String(format: "%.1f", summary.avgEditDistance))\t\(accStr)")
             }
 
             let content = lines.joined(separator: "\n") + "\n"
@@ -939,28 +1153,92 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         }
     }
 
-    // MARK: - Sorted Data
+    // MARK: - Filtered / Sorted Data
 
-    private var sortedSummaries: [NaoMgsTaxonSummary] {
+    private static func buildSampleNamesByTaxId(
+        hitsByTaxon: [Int: [NaoMgsVirusHit]],
+        fallbackSampleName: String
+    ) -> [Int: String] {
+        hitsByTaxon.mapValues { taxHits in
+            let names = Array(Set(taxHits.map(\.sample).filter { !$0.isEmpty })).sorted()
+            if names.isEmpty {
+                return fallbackSampleName
+            }
+            return names.joined(separator: ", ")
+        }
+    }
+
+    private func sampleLabel(forTaxId taxId: Int) -> String {
+        sampleNamesByTaxId[taxId] ?? naoMgsResult?.sampleName ?? "—"
+    }
+
+    private func parseMinFilter(_ rawValue: String) -> Int? {
+        let trimmed = rawValue
+            .replacingOccurrences(of: ",", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let lower = trimmed.lowercased()
+        if lower.hasSuffix("k"), let value = Double(lower.dropLast()) {
+            return Int(value * 1_000)
+        }
+        if lower.hasSuffix("m"), let value = Double(lower.dropLast()) {
+            return Int(value * 1_000_000)
+        }
+        return Int(lower)
+    }
+
+    private var displayedSummaries: [NaoMgsTaxonSummary] {
         guard let result = naoMgsResult else { return [] }
         var summaries = result.taxonSummaries
 
+        let sampleFilter = sampleFilterField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !sampleFilter.isEmpty {
+            summaries = summaries.filter { sampleLabel(forTaxId: $0.taxId).localizedCaseInsensitiveContains(sampleFilter) }
+        }
+
+        let taxonFilter = taxonFilterField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !taxonFilter.isEmpty {
+            summaries = summaries.filter {
+                ($0.name.isEmpty ? "Taxid \($0.taxId)" : $0.name)
+                    .localizedCaseInsensitiveContains(taxonFilter)
+            }
+        }
+
+        if let minHits = parseMinFilter(hitsFilterField.stringValue) {
+            summaries = summaries.filter { $0.hitCount >= minHits }
+        }
+        if let minUnique = parseMinFilter(uniqueReadsFilterField.stringValue) {
+            summaries = summaries.filter { $0.uniqueReadCount >= minUnique }
+        }
+        if let minRefs = parseMinFilter(refsFilterField.stringValue) {
+            summaries = summaries.filter { $0.accessions.count >= minRefs }
+        }
+
         if let sortDescriptor = taxonomyTableView.sortDescriptors.first {
             switch sortDescriptor.key {
+            case "sample":
+                summaries.sort {
+                    let lhs = sampleLabel(forTaxId: $0.taxId)
+                    let rhs = sampleLabel(forTaxId: $1.taxId)
+                    let compare = lhs.localizedCaseInsensitiveCompare(rhs)
+                    return sortDescriptor.ascending ? compare == .orderedAscending : compare == .orderedDescending
+                }
             case "name":
                 summaries.sort {
-                    let result = $0.name.localizedCaseInsensitiveCompare($1.name)
-                    return sortDescriptor.ascending ? result == .orderedAscending : result == .orderedDescending
+                    let compare = $0.name.localizedCaseInsensitiveCompare($1.name)
+                    return sortDescriptor.ascending ? compare == .orderedAscending : compare == .orderedDescending
                 }
             case "hits":
                 summaries.sort {
                     sortDescriptor.ascending ? $0.hitCount < $1.hitCount : $0.hitCount > $1.hitCount
                 }
-            case "identity":
+            case "unique":
                 summaries.sort {
-                    sortDescriptor.ascending ? $0.avgIdentity < $1.avgIdentity : $0.avgIdentity > $1.avgIdentity
+                    sortDescriptor.ascending
+                        ? $0.uniqueReadCount < $1.uniqueReadCount
+                        : $0.uniqueReadCount > $1.uniqueReadCount
                 }
-            case "accessions":
+            case "refs":
                 summaries.sort {
                     sortDescriptor.ascending
                         ? $0.accessions.count < $1.accessions.count
@@ -972,6 +1250,32 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         }
 
         return summaries
+    }
+
+    private func applyTaxonomyFilters() {
+        let selectedTaxId = selectedTaxonSummary?.taxId
+        taxonomyTableView.reloadData()
+
+        guard !displayedSummaries.isEmpty else {
+            suppressSelectionSync = true
+            taxonomyTableView.deselectAll(nil)
+            suppressSelectionSync = false
+            showOverview()
+            return
+        }
+
+        if let selectedTaxId,
+           let idx = displayedSummaries.firstIndex(where: { $0.taxId == selectedTaxId }) {
+            suppressSelectionSync = true
+            taxonomyTableView.selectRowIndexes(IndexSet(integer: idx), byExtendingSelection: false)
+            suppressSelectionSync = false
+            return
+        }
+
+        suppressSelectionSync = true
+        taxonomyTableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        suppressSelectionSync = false
+        showTaxonDetail(displayedSummaries[0])
     }
 }
 
@@ -1025,11 +1329,11 @@ private final class NaoMgsDetailContainer: NSView {
 extension NaoMgsResultViewController: NSTableViewDataSource {
 
     public func numberOfRows(in tableView: NSTableView) -> Int {
-        sortedSummaries.count
+        displayedSummaries.count
     }
 
     public func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
-        tableView.reloadData()
+        applyTaxonomyFilters()
     }
 }
 
@@ -1038,7 +1342,7 @@ extension NaoMgsResultViewController: NSTableViewDataSource {
 extension NaoMgsResultViewController: NSTableViewDelegate {
 
     public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let summaries = sortedSummaries
+        let summaries = displayedSummaries
         guard row < summaries.count else { return nil }
 
         let summary = summaries[row]
@@ -1048,19 +1352,25 @@ extension NaoMgsResultViewController: NSTableViewDelegate {
             ?? makeCellView(identifier: identifier)
 
         switch identifier.rawValue {
+        case "sample":
+            cellView.textField?.stringValue = sampleLabel(forTaxId: summary.taxId)
+            cellView.textField?.font = .systemFont(ofSize: 11)
+            cellView.textField?.lineBreakMode = .byTruncatingTail
+            cellView.textField?.alignment = .left
         case "name":
             cellView.textField?.stringValue = summary.name.isEmpty ? "Taxid \(summary.taxId)" : summary.name
             cellView.textField?.font = .systemFont(ofSize: 11)
             cellView.textField?.lineBreakMode = .byTruncatingTail
+            cellView.textField?.alignment = .left
         case "hits":
             cellView.textField?.stringValue = naoMgsFormatCount(summary.hitCount)
             cellView.textField?.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
             cellView.textField?.alignment = .right
-        case "identity":
-            cellView.textField?.stringValue = String(format: "%.1f%%", summary.avgIdentity)
+        case "unique":
+            cellView.textField?.stringValue = naoMgsFormatCount(summary.uniqueReadCount)
             cellView.textField?.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
             cellView.textField?.alignment = .right
-        case "accessions":
+        case "refs":
             cellView.textField?.stringValue = "\(summary.accessions.count)"
             cellView.textField?.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
             cellView.textField?.alignment = .right
@@ -1075,7 +1385,7 @@ extension NaoMgsResultViewController: NSTableViewDelegate {
         guard !suppressSelectionSync else { return }
 
         let row = taxonomyTableView.selectedRow
-        let summaries = sortedSummaries
+        let summaries = displayedSummaries
 
         if row >= 0, row < summaries.count {
             showTaxonDetail(summaries[row])
@@ -1118,7 +1428,7 @@ extension NaoMgsResultViewController: NSMenuDelegate {
 
     public func menuNeedsUpdate(_ menu: NSMenu) {
         let clickedRow = taxonomyTableView.clickedRow
-        let summaries = sortedSummaries
+        let summaries = displayedSummaries
 
         guard clickedRow >= 0, clickedRow < summaries.count else {
             menu.removeAllItems()
@@ -1126,6 +1436,12 @@ extension NaoMgsResultViewController: NSMenuDelegate {
         }
 
         populateContextMenu(menu, for: summaries[clickedRow])
+    }
+}
+
+extension NaoMgsResultViewController: NSTextFieldDelegate {
+    public func controlTextDidChange(_ obj: Notification) {
+        applyTaxonomyFilters()
     }
 }
 

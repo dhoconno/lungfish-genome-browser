@@ -71,7 +71,7 @@ extension ViewerViewController {
         // submit through our native BlastService pipeline.
         //
         // Fallback 1: submit consensus sequence from final_consensus.fasta.
-        // Fallback 2: open NCBI BLAST web for the accession.
+        // If neither read nor consensus data is available, fail in-app.
         let capturedConfig = config
         controller.onBlastVerification = { [weak controller] detection, readCount, accessions, bamURL, bamIndexURL in
             let selectedReadCount = min(50, max(1, readCount))
@@ -175,22 +175,9 @@ extension ViewerViewController {
                         }
                     }
 
-                    // Fallback 2: open NCBI BLAST in browser.
+                    // Fail in-app if we cannot build a query.
                     guard let request, !request.sequences.isEmpty else {
-                        let encodedAccession = accession
-                            .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? accession
-                        if let url = URL(string: "https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastSearch&QUERY=\(encodedAccession)") {
-                            DispatchQueue.main.async {
-                                MainActor.assumeIsolated {
-                                    NSWorkspace.shared.open(url)
-                                    OperationCenter.shared.complete(
-                                        id: opID,
-                                        detail: "Opened NCBI BLAST in browser"
-                                    )
-                                }
-                            }
-                        }
-                        return
+                        throw BlastServiceError.noSequences
                     }
 
                     DispatchQueue.main.async {
@@ -200,6 +187,7 @@ extension ViewerViewController {
                                 progress: 0.1,
                                 detail: "Submitting \(request.sequences.count) reads to NCBI BLAST\u{2026}"
                             )
+                            blastController?.showBlastLoading(phase: .submitting, requestId: nil)
                         }
                     }
 
@@ -211,6 +199,14 @@ extension ViewerViewController {
                                     OperationCenter.shared.update(
                                         id: opID, progress: fraction, detail: message
                                     )
+                                    let lower = message.lowercased()
+                                    if lower.contains("waiting") {
+                                        blastController?.showBlastLoading(phase: .waiting, requestId: nil)
+                                    } else if lower.contains("parsing") {
+                                        blastController?.showBlastLoading(phase: .parsing, requestId: nil)
+                                    } else {
+                                        blastController?.showBlastLoading(phase: .submitting, requestId: nil)
+                                    }
                                 }
                             }
                         }
@@ -231,6 +227,7 @@ extension ViewerViewController {
                     DispatchQueue.main.async {
                         MainActor.assumeIsolated {
                             OperationCenter.shared.fail(id: opID, detail: errorDesc)
+                            blastController?.showBlastFailure(errorDesc)
                         }
                     }
                 }

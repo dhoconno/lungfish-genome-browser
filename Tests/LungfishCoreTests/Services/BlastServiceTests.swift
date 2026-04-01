@@ -1085,6 +1085,7 @@ final class BlastServiceTests: XCTestCase {
             .noSequences,
             .rateLimitExceeded(retryAfter: 30),
             .httpError(statusCode: 503, body: "Service Unavailable"),
+            .networkFailed(message: "The network connection was lost"),
         ]
 
         for error in errors {

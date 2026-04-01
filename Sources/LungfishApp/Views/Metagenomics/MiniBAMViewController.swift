@@ -9,6 +9,12 @@ import os.log
 
 private let logger = Logger(subsystem: LogSubsystem.app, category: "MiniBAM")
 
+private func miniBAMFormatCount(_ count: Int) -> String {
+    let formatter = NumberFormatter()
+    formatter.numberStyle = .decimal
+    return formatter.string(from: NSNumber(value: count)) ?? "\(count)"
+}
+
 /// Drag handle used to resize the embedded mini-BAM viewport vertically.
 private final class MiniBAMResizeHandleView: NSView {
     var onDragDeltaY: ((CGFloat) -> Void)?
@@ -30,8 +36,8 @@ private final class MiniBAMResizeHandleView: NSView {
     override func mouseDragged(with event: NSEvent) {
         guard let lastWindowPoint else { return }
         let next = event.locationInWindow
-        // Match app-standard divider behavior: dragging up increases height.
-        let deltaY = next.y - lastWindowPoint.y
+        // Bottom-edge resize handle semantics: dragging down increases height.
+        let deltaY = lastWindowPoint.y - next.y
         onDragDeltaY?(deltaY)
         self.lastWindowPoint = next
     }
@@ -117,6 +123,7 @@ public final class MiniBAMViewController: NSViewController {
     private var keyMonitorToken: Any?
     private var clipBoundsObserver: NSObjectProtocol?
     private var clipFrameObserver: NSObjectProtocol?
+    private var loadTask: Task<Void, Never>?
 
     // MARK: - Lifecycle
 
@@ -176,13 +183,19 @@ public final class MiniBAMViewController: NSViewController {
     public override func viewWillAppear() {
         super.viewWillAppear()
         installClipViewObserversIfNeeded()
-        installLocalKeyMonitorIfNeeded()
+        if keyboardShortcutsEnabled {
+            installLocalKeyMonitorIfNeeded()
+        }
     }
 
     public override func viewDidDisappear() {
         super.viewDidDisappear()
         removeLocalKeyMonitor()
         removeClipViewObservers()
+    }
+
+    deinit {
+        loadTask?.cancel()
     }
 
     public override func viewDidLayout() {
@@ -212,6 +225,20 @@ public final class MiniBAMViewController: NSViewController {
     public var onResizeBy: ((CGFloat) -> Void)? {
         didSet {
             updateResizeHandleVisibility()
+        }
+    }
+
+    /// Whether this panel should register local keyboard zoom shortcuts.
+    ///
+    /// Disable when many miniBAM panels are visible to avoid overlapping
+    /// keyboard monitors across embedded viewers.
+    public var keyboardShortcutsEnabled: Bool = true {
+        didSet {
+            if keyboardShortcutsEnabled {
+                installLocalKeyMonitorIfNeeded()
+            } else {
+                removeLocalKeyMonitor()
+            }
         }
     }
 
@@ -396,10 +423,11 @@ public final class MiniBAMViewController: NSViewController {
 
         let total = allReads.count
         let unique = uniqueReadCount
-        let dupCount = pcrDuplicateReadCount
-        let visibilitySuffix = showsPCRDuplicates ? " shown" : " hidden"
-        let dupText = dupCount > 0 ? " (\(unique) unique, \(dupCount) PCR dups\(visibilitySuffix))" : ""
-        statusLabel.stringValue = "\(total) reads\(dupText) · \(zoomText) · ⌘+/⌘- to zoom"
+        if showsPCRDuplicates {
+            statusLabel.stringValue = "\(miniBAMFormatCount(total)) total reads (\(miniBAMFormatCount(unique)) unique) · \(zoomText) · ⌘+/⌘- to zoom"
+        } else {
+            statusLabel.stringValue = "\(miniBAMFormatCount(unique)) unique / \(miniBAMFormatCount(total)) total reads · \(zoomText) · ⌘+/⌘- to zoom"
+        }
         onReadStatsUpdated?(total, unique)
     }
 
@@ -411,17 +439,21 @@ public final class MiniBAMViewController: NSViewController {
     ///   - contigLength: Length of the reference contig in base pairs.
     ///   - indexURL: Optional explicit index path (.bai/.csi).
     ///   - referenceSequence: Optional reference sequence for this contig.
+    ///   - maxReads: Maximum reads to load for this panel.
     public func displayContig(
         bamURL: URL,
         contig: String,
         contigLength: Int,
         indexURL: URL? = nil,
-        referenceSequence: String? = nil
+        referenceSequence: String? = nil,
+        maxReads: Int = .max
     ) {
+        loadTask?.cancel()
         self.bamURL = bamURL
         self.contigName = contig
         self.contigLength = contigLength
         self.referenceSequence = referenceSequence
+        statusLabel.stringValue = "Loading alignments…"
 
         let fm = FileManager.default
         let resolvedIndexPath: String? = {
@@ -451,15 +483,19 @@ public final class MiniBAMViewController: NSViewController {
             indexPath: indexPath
         )
 
-        // Fetch all reads for this contig (viral genomes are small, so fetch everything)
-        Task { @MainActor in
+        // Fetch all reads for this contig.
+        loadTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let requestedContig = contig
             do {
                 let fetchedReads = try await provider.fetchReads(
                     chromosome: contig,
                     start: 0,
                     end: contigLength,
-                    maxReads: 5000
+                    maxReads: maxReads
                 )
+                guard !Task.isCancelled else { return }
+                guard self.contigName == requestedContig else { return }
 
                 self.allReads = fetchedReads
                 self.allDuplicateIndices = self.detectDuplicates(in: fetchedReads)
@@ -473,6 +509,7 @@ public final class MiniBAMViewController: NSViewController {
 
                 logger.info("Loaded \(fetchedReads.count) reads for \(contig, privacy: .public), \(self.pcrDuplicateReadCount) potential duplicates")
             } catch {
+                guard !Task.isCancelled else { return }
                 self.statusLabel.stringValue = "Failed to load reads: \(error.localizedDescription)"
                 logger.error("Failed to fetch reads for \(contig, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
@@ -604,11 +641,7 @@ public final class MiniBAMViewController: NSViewController {
         guard let window = view.window else { return false }
         guard window == event.window, window.isKeyWindow else { return false }
         guard isVisibleInHierarchy else { return false }
-        // Keep working even when focus moved to the split view/clip view after drag interactions.
-        if responderIsWithinMiniBAM(window.firstResponder) {
-            return true
-        }
-        return window.firstResponder === window
+        return responderIsWithinMiniBAM(window.firstResponder)
     }
 
     private func responderIsWithinMiniBAM(_ responder: NSResponder?) -> Bool {
@@ -660,6 +693,8 @@ public final class MiniBAMViewController: NSViewController {
 
     /// Clears the current display.
     public func clear() {
+        loadTask?.cancel()
+        loadTask = nil
         allReads = []
         reads = []
         allDuplicateIndices = []

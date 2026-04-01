@@ -1419,6 +1419,14 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         }
     }
 
+    /// Shows BLAST failure state in the bottom drawer.
+    public func showBlastFailure(_ message: String) {
+        blastDrawer.showFailure(message: message)
+        if !isBlastDrawerOpen {
+            toggleBlastDrawer()
+        }
+    }
+
     /// Toggles the BLAST results drawer open or closed with animation.
     public func toggleBlastDrawer() {
         let drawerHeight: CGFloat = 250

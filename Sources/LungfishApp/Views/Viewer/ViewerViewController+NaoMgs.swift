@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import LungfishCore
 import LungfishIO
 import os.log
 
@@ -36,27 +37,113 @@ extension ViewerViewController {
         addChild(controller)
 
         // Wire BLAST verification callback.
-        controller.onBlastVerification = { [weak self] summary, readCount, reads in
-            guard let self else { return }
-            let readSequences = reads.compactMap { hit -> (String, String, String)? in
-                guard !hit.readSequence.isEmpty else { return nil }
-                return (hit.seqId, hit.readSequence, hit.readQuality)
+        controller.onBlastVerification = { [weak controller] summary, readCount, reads in
+            let selectedReadCount = min(50, max(1, readCount))
+            let taxonName = summary.name.isEmpty ? "Taxid \(summary.taxId)" : summary.name
+            naoMgsDisplayLogger.info(
+                "BLAST verification requested for \(taxonName, privacy: .public), readCount=\(selectedReadCount, privacy: .public), availableReads=\(reads.count, privacy: .public)"
+            )
+
+            let blastCliCmd = OperationCenter.buildCLICommand(
+                subcommand: "blast verify",
+                args: ["--taxid", "\(summary.taxId)"]
+            )
+            let opID = OperationCenter.shared.start(
+                title: "BLAST \(taxonName)",
+                detail: "Preparing BLAST verification\u{2026}",
+                operationType: .blastVerification,
+                cliCommand: blastCliCmd
+            )
+
+            let blastController = controller
+            let task = Task.detached {
+                do {
+                    let blastService = BlastService.shared
+                    let allReads = reads.compactMap { hit -> (id: String, sequence: String)? in
+                        let sequence = hit.readSequence.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !sequence.isEmpty else { return nil }
+                        return (id: hit.seqId, sequence: sequence)
+                    }
+
+                    guard !allReads.isEmpty else {
+                        throw BlastServiceError.noSequences
+                    }
+
+                    let longestCount = min(5, selectedReadCount / 4)
+                    let strategy = SubsampleStrategy.mixed(
+                        longest: longestCount,
+                        random: selectedReadCount - longestCount
+                    )
+                    let subsampled = blastService.subsampleReads(from: allReads, strategy: strategy)
+
+                    guard !subsampled.isEmpty else {
+                        throw BlastServiceError.noSequences
+                    }
+
+                    let request = BlastVerificationRequest(
+                        taxonName: taxonName,
+                        taxId: summary.taxId,
+                        sequences: subsampled,
+                        database: "core_nt",
+                        entrezQuery: "txid\(summary.taxId)[Organism:exp]"
+                    )
+
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated {
+                            OperationCenter.shared.update(
+                                id: opID,
+                                progress: 0.1,
+                                detail: "Submitting \(request.sequences.count) reads to NCBI BLAST\u{2026}"
+                            )
+                            blastController?.showBlastLoading(phase: .submitting, requestId: nil)
+                        }
+                    }
+
+                    let blastResult = try await blastService.verify(
+                        request: request,
+                        progress: { fraction, message in
+                            DispatchQueue.main.async {
+                                MainActor.assumeIsolated {
+                                    OperationCenter.shared.update(
+                                        id: opID,
+                                        progress: fraction,
+                                        detail: message
+                                    )
+
+                                    let lower = message.lowercased()
+                                    if lower.contains("waiting") {
+                                        blastController?.showBlastLoading(phase: .waiting, requestId: nil)
+                                    } else if lower.contains("parsing") {
+                                        blastController?.showBlastLoading(phase: .parsing, requestId: nil)
+                                    } else {
+                                        blastController?.showBlastLoading(phase: .submitting, requestId: nil)
+                                    }
+                                }
+                            }
+                        }
+                    )
+
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated {
+                            OperationCenter.shared.complete(
+                                id: opID,
+                                detail: "\(blastResult.verifiedCount)/\(blastResult.readResults.count) verified"
+                            )
+                            blastController?.showBlastResults(blastResult)
+                        }
+                    }
+                } catch {
+                    let errorDesc = error.localizedDescription
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated {
+                            OperationCenter.shared.fail(id: opID, detail: errorDesc)
+                            blastController?.showBlastFailure(errorDesc)
+                        }
+                    }
+                }
             }
-            guard !readSequences.isEmpty else {
-                naoMgsDisplayLogger.warning("BLAST verify for \(summary.name): no read sequences available")
-                return
-            }
-            // Build FASTA from reads for BLAST submission
-            var fasta = ""
-            for (seqId, seq, _) in readSequences.prefix(min(50, readCount)) {
-                fasta += ">\(seqId)\n\(seq)\n"
-            }
-            // Open NCBI BLAST web with the sequences
-            let encodedFasta = fasta.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-            let blastURL = "https://blast.ncbi.nlm.nih.gov/Blast.cgi?PROGRAM=blastn&DATABASE=nt&QUERY=\(encodedFasta)"
-            if let url = URL(string: blastURL) {
-                NSWorkspace.shared.open(url)
-            }
+
+            OperationCenter.shared.setCancelCallback(for: opID) { task.cancel() }
         }
 
         // Hide normal genomic viewer components (same pattern as Taxonomy/EsViritu/TaxTriage).

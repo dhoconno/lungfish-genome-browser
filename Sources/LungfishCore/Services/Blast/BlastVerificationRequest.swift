@@ -218,6 +218,9 @@ public enum BlastServiceError: Error, LocalizedError, Sendable {
     /// The HTTP response was not successful.
     case httpError(statusCode: Int, body: String)
 
+    /// A network transport error occurred while contacting NCBI BLAST.
+    case networkFailed(message: String)
+
     public var errorDescription: String? {
         switch self {
         case .submissionFailed(let message):
@@ -238,6 +241,8 @@ public enum BlastServiceError: Error, LocalizedError, Sendable {
             return "NCBI rate limit exceeded. Retry after \(Int(retryAfter)) seconds."
         case .httpError(let statusCode, let body):
             return "HTTP \(statusCode): \(body.prefix(200))"
+        case .networkFailed(let message):
+            return "Network error while contacting NCBI BLAST: \(message)"
         }
     }
 }

@@ -1833,6 +1833,22 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                     hitsByTaxId[hit.taxId, default: []].append(hit)
                 }
 
+                // Recompute duplicate counts from raw hits so older caches without
+                // persisted duplicate metadata are transparently upgraded at load.
+                let duplicateCountsByTaxId: [Int: Int] = hitsByTaxId.mapValues { taxHits in
+                    var groups: [String: Int] = [:]
+                    for hit in taxHits {
+                        let strand = hit.isReverseComplement ? "R" : "F"
+                        let readLength = hit.queryLength > 0 ? hit.queryLength : max(0, hit.readSequence.count)
+                        let inferredRefEnd = max(hit.refEnd, hit.refStart + max(1, readLength))
+                        let key = "\(hit.subjectSeqId)|\(hit.refStart)|\(inferredRefEnd)|\(strand)"
+                        groups[key, default: 0] += 1
+                    }
+                    return groups.values.reduce(0) { sum, count in
+                        sum + max(0, count - 1)
+                    }
+                }
+
                 // Rebuild taxon summaries with enriched names and recomputed identity.
                 let enrichedSummaries = hitsFile.taxonSummaries.map { summary in
                     let resolvedName = summary.name.isEmpty
@@ -1859,7 +1875,8 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                         avgIdentity: avgIdentity,
                         avgBitScore: summary.avgBitScore,
                         avgEditDistance: summary.avgEditDistance,
-                        accessions: summary.accessions
+                        accessions: summary.accessions,
+                        pcrDuplicateCount: duplicateCountsByTaxId[summary.taxId] ?? summary.pcrDuplicateCount
                     )
                 }
 

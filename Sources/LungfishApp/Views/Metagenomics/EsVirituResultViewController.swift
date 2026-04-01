@@ -591,53 +591,74 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
     // MARK: - BLAST Results
 
+    /// Shows BLAST loading state in a bottom drawer.
+    public func showBlastLoading(phase: BlastJobPhase, requestId: String?) {
+        let drawer = ensureBlastDrawer()
+        drawer.showLoading(phase: phase, requestId: requestId)
+        openBlastDrawerIfNeeded()
+    }
+
     /// Shows BLAST verification results in a bottom drawer.
     ///
     /// Creates a ``BlastResultsDrawerTab`` if needed, populates it with the
     /// results, and slides the drawer open with animation.
     public func showBlastResults(_ result: BlastVerificationResult) {
-        if blastDrawerView == nil {
-            let drawer = BlastResultsDrawerTab()
-            drawer.translatesAutoresizingMaskIntoConstraints = false
-            view.addSubview(drawer)
-
-            let bottomConstraint = drawer.bottomAnchor.constraint(equalTo: actionBar.topAnchor, constant: 220)
-            let heightConstraint = drawer.heightAnchor.constraint(equalToConstant: 220)
-
-            NSLayoutConstraint.activate([
-                drawer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-                drawer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-                heightConstraint,
-                bottomConstraint,
-            ])
-
-            // Re-pin main content above the drawer so opening it resizes the
-            // top panels instead of drawing over them.
-            splitViewBottomConstraint?.isActive = false
-            let newSplitBottom = splitView.bottomAnchor.constraint(equalTo: drawer.topAnchor)
-            newSplitBottom.isActive = true
-            splitViewBottomConstraint = newSplitBottom
-
-            blastDrawerView = drawer
-            blastDrawerBottomConstraint = bottomConstraint
-            view.layoutSubtreeIfNeeded()
-        }
-
-        blastDrawerView?.showResults(result)
-
-        // Animate drawer open
-        if !isBlastDrawerOpen {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.25
-                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                context.allowsImplicitAnimation = true
-                self.blastDrawerBottomConstraint?.animator().constant = 0
-                self.view.layoutSubtreeIfNeeded()
-            }
-            isBlastDrawerOpen = true
-        }
+        let drawer = ensureBlastDrawer()
+        drawer.showResults(result)
+        openBlastDrawerIfNeeded()
 
         logger.info("Showing BLAST results: \(result.verifiedCount)/\(result.readResults.count) verified for \(result.taxonName)")
+    }
+
+    /// Shows BLAST failure state in a bottom drawer.
+    public func showBlastFailure(_ message: String) {
+        let drawer = ensureBlastDrawer()
+        drawer.showFailure(message: message)
+        openBlastDrawerIfNeeded()
+    }
+
+    private func ensureBlastDrawer() -> BlastResultsDrawerTab {
+        if let blastDrawerView {
+            return blastDrawerView
+        }
+
+        let drawer = BlastResultsDrawerTab()
+        drawer.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(drawer)
+
+        let bottomConstraint = drawer.bottomAnchor.constraint(equalTo: actionBar.topAnchor, constant: 220)
+        let heightConstraint = drawer.heightAnchor.constraint(equalToConstant: 220)
+
+        NSLayoutConstraint.activate([
+            drawer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            drawer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            heightConstraint,
+            bottomConstraint,
+        ])
+
+        // Re-pin main content above the drawer so opening it resizes the
+        // top panels instead of drawing over them.
+        splitViewBottomConstraint?.isActive = false
+        let newSplitBottom = splitView.bottomAnchor.constraint(equalTo: drawer.topAnchor)
+        newSplitBottom.isActive = true
+        splitViewBottomConstraint = newSplitBottom
+
+        blastDrawerView = drawer
+        blastDrawerBottomConstraint = bottomConstraint
+        view.layoutSubtreeIfNeeded()
+        return drawer
+    }
+
+    private func openBlastDrawerIfNeeded() {
+        guard !isBlastDrawerOpen else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.25
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.allowsImplicitAnimation = true
+            self.blastDrawerBottomConstraint?.animator().constant = 0
+            self.view.layoutSubtreeIfNeeded()
+        }
+        isBlastDrawerOpen = true
     }
 
     // MARK: - NSSplitViewDelegate

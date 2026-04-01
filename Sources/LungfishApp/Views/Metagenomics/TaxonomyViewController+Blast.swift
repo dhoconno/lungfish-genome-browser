@@ -56,6 +56,18 @@ extension TaxonomyViewController {
         taxaCollectionsDrawerView?.blastResultsTab.showLoading(phase: phase, requestId: requestId)
     }
 
+    /// Shows BLAST failure state in the drawer.
+    ///
+    /// Opens the drawer (if needed), switches to the BLAST tab, and displays
+    /// the failure message in place of the loading spinner.
+    ///
+    /// - Parameter message: User-facing error description.
+    func showBlastFailure(message: String) {
+        ensureDrawerOpenOnBlastTab()
+        taxaCollectionsDrawerView?.blastResultsTab.showFailure(message: message)
+        blastVCLogger.error("BLAST verification failed: \(message, privacy: .public)")
+    }
+
     // MARK: - Private Helpers
 
     /// Ensures the drawer is created and open, with the BLAST tab selected.

@@ -65,6 +65,15 @@ public actor BlastService {
     /// Default maximum time to wait for a BLAST job to complete.
     private let defaultTimeout: TimeInterval = 600.0 // 10 minutes
 
+    /// Maximum attempts for transient network/transport failures.
+    private let maxNetworkRetryAttempts = 3
+
+    /// Initial retry backoff delay (seconds).
+    private let initialRetryBackoff: TimeInterval = 1.0
+
+    /// Maximum retry backoff delay (seconds).
+    private let maxRetryBackoff: TimeInterval = 8.0
+
     /// Identity threshold for a "verified" verdict (percentage).
     nonisolated let verifiedIdentityThreshold: Double = 90.0
 
@@ -523,15 +532,22 @@ public actor BlastService {
         request.httpBody = body.data(using: .utf8)
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
 
-        let (data, response) = try await httpClient.data(for: request)
+        let (data, _) = try await requestWithTransportRetry(operation: "submit BLAST job") {
+            let (data, response) = try await httpClient.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw BlastServiceError.submissionFailed(message: "Non-HTTP response")
-        }
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw BlastServiceError.submissionFailed(message: "Non-HTTP response")
+            }
 
-        guard httpResponse.statusCode == 200 else {
-            let body = String(data: data, encoding: .utf8) ?? "(non-UTF8)"
-            throw BlastServiceError.httpError(statusCode: httpResponse.statusCode, body: body)
+            guard httpResponse.statusCode == 200 else {
+                let body = String(data: data, encoding: .utf8) ?? "(non-UTF8)"
+                if Self.retryableHTTPStatusCodes.contains(httpResponse.statusCode) {
+                    throw RetryableHTTPError(statusCode: httpResponse.statusCode, body: body)
+                }
+                throw BlastServiceError.httpError(statusCode: httpResponse.statusCode, body: body)
+            }
+
+            return (data, httpResponse)
         }
 
         lastSubmitTime = Date()
@@ -563,12 +579,22 @@ public actor BlastService {
         var request = URLRequest(url: components.url!)
         request.httpMethod = "GET"
 
-        let (data, response) = try await httpClient.data(for: request)
+        let (data, _) = try await requestWithTransportRetry(operation: "poll BLAST status (\(rid))") {
+            let (data, response) = try await httpClient.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-            throw BlastServiceError.httpError(statusCode: statusCode, body: "Status check failed")
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw BlastServiceError.submissionFailed(message: "Status check returned non-HTTP response")
+            }
+
+            guard httpResponse.statusCode == 200 else {
+                let body = String(data: data, encoding: .utf8) ?? "Status check failed"
+                if Self.retryableHTTPStatusCodes.contains(httpResponse.statusCode) {
+                    throw RetryableHTTPError(statusCode: httpResponse.statusCode, body: body)
+                }
+                throw BlastServiceError.httpError(statusCode: httpResponse.statusCode, body: body)
+            }
+
+            return (data, httpResponse)
         }
 
         let body = String(data: data, encoding: .utf8) ?? ""
@@ -594,13 +620,22 @@ public actor BlastService {
         var request = URLRequest(url: components.url!)
         request.httpMethod = "GET"
 
-        let (data, response) = try await httpClient.data(for: request)
+        let (data, httpResponse) = try await requestWithTransportRetry(operation: "fetch BLAST results (\(rid))") {
+            let (data, response) = try await httpClient.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-            let body = String(data: data, encoding: .utf8) ?? ""
-            throw BlastServiceError.httpError(statusCode: statusCode, body: body)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw BlastServiceError.submissionFailed(message: "Result fetch returned non-HTTP response")
+            }
+
+            guard httpResponse.statusCode == 200 else {
+                let body = String(data: data, encoding: .utf8) ?? ""
+                if Self.retryableHTTPStatusCodes.contains(httpResponse.statusCode) {
+                    throw RetryableHTTPError(statusCode: httpResponse.statusCode, body: body)
+                }
+                throw BlastServiceError.httpError(statusCode: httpResponse.statusCode, body: body)
+            }
+
+            return (data, httpResponse)
         }
 
         let contentType = httpResponse.value(forHTTPHeaderField: "Content-Type") ?? "unknown"
@@ -1162,6 +1197,119 @@ public actor BlastService {
     }
 
     // MARK: - Helpers
+
+    /// HTTP error that should be retried with backoff.
+    private struct RetryableHTTPError: Error {
+        let statusCode: Int
+        let body: String
+    }
+
+    /// HTTP status codes that are commonly transient and safe to retry.
+    private nonisolated static let retryableHTTPStatusCodes: Set<Int> = [408, 429, 500, 502, 503, 504]
+
+    /// URL transport error codes that are commonly transient.
+    private nonisolated static let retryableURLErrorCodes: Set<URLError.Code> = [
+        .timedOut,
+        .cannotFindHost,
+        .cannotConnectToHost,
+        .dnsLookupFailed,
+        .networkConnectionLost,
+        .notConnectedToInternet,
+        .resourceUnavailable,
+        .internationalRoamingOff,
+        .callIsActive,
+        .dataNotAllowed,
+        .cannotLoadFromNetwork,
+    ]
+
+    /// Executes a network request with retry/backoff for transient transport failures.
+    ///
+    /// Non-transient errors are surfaced immediately. After retry exhaustion,
+    /// transport failures are normalized to ``BlastServiceError/networkFailed(message:)``.
+    private func requestWithTransportRetry<T>(
+        operation: String,
+        body: () async throws -> T
+    ) async throws -> T {
+        var attempt = 1
+        var delay = initialRetryBackoff
+
+        while true {
+            do {
+                return try await body()
+            } catch {
+                if error is CancellationError {
+                    throw error
+                }
+
+                let shouldRetry = attempt < maxNetworkRetryAttempts && isRetryableTransportError(error)
+                if shouldRetry {
+                    let failureSummary = (error as NSError).localizedDescription
+                    logger.warning(
+                        "\(operation, privacy: .public) attempt \(attempt, privacy: .public) failed: \(failureSummary, privacy: .public). Retrying in \(delay, privacy: .public)s"
+                    )
+                    try await Task.sleep(for: .seconds(delay))
+                    attempt += 1
+                    delay = min(delay * 2, maxRetryBackoff)
+                    continue
+                }
+
+                throw normalizeTransportError(error, operation: operation, attempts: attempt)
+            }
+        }
+    }
+
+    private func isRetryableTransportError(_ error: Error) -> Bool {
+        if error is RetryableHTTPError {
+            return true
+        }
+        guard let code = extractURLErrorCode(from: error) else {
+            return false
+        }
+        return Self.retryableURLErrorCodes.contains(code)
+    }
+
+    private nonisolated func normalizeTransportError(
+        _ error: Error,
+        operation: String,
+        attempts: Int
+    ) -> Error {
+        if let blastError = error as? BlastServiceError {
+            return blastError
+        }
+
+        if let retryableHTTP = error as? RetryableHTTPError {
+            return BlastServiceError.httpError(statusCode: retryableHTTP.statusCode, body: retryableHTTP.body)
+        }
+
+        let nsError = error as NSError
+        if let code = extractURLErrorCode(from: error) {
+            return BlastServiceError.networkFailed(
+                message: "\(operation) failed after \(attempts) attempt(s): \(nsError.localizedDescription) (NSURLError \(code.rawValue))"
+            )
+        }
+
+        return BlastServiceError.networkFailed(
+            message: "\(operation) failed after \(attempts) attempt(s): \(nsError.localizedDescription)"
+        )
+    }
+
+    private nonisolated func extractURLErrorCode(from error: Error) -> URLError.Code? {
+        if let urlError = error as? URLError {
+            return urlError.code
+        }
+
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain {
+            return URLError.Code(rawValue: nsError.code)
+        }
+
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError,
+           underlying.domain == NSURLErrorDomain {
+            return URLError.Code(rawValue: underlying.code)
+        }
+
+        return nil
+    }
 
     /// Extracts a value from the QBlastInfo block in an NCBI HTML response.
     ///
