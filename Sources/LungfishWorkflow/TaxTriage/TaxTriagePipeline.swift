@@ -618,7 +618,7 @@ public actor TaxTriagePipeline {
         }
 
         // Resource limits
-        args += ["--max_memory", taxTriageShellQuote(config.maxMemory)]
+        args += ["--max_memory", config.maxMemory]
         args += ["--max_cpus", String(config.maxCpus)]
 
         return args
@@ -914,7 +914,7 @@ public actor TaxTriagePipeline {
                 let script = """
                 #!/usr/bin/env bash
                 set -euo pipefail
-                cd \(shellQuote(directory.path))
+                cd \(shellEscape(directory.path))
                 \(launcherCommandLine)
                 """
                 let shURL = directory.appendingPathComponent("taxtriage-launch-command.sh")
@@ -930,19 +930,9 @@ public actor TaxTriagePipeline {
     }
 
     private nonisolated func shellCommand(executablePath: String, arguments: [String]) -> String {
-        ([executablePath] + arguments).map(shellQuote).joined(separator: " ")
+        ([executablePath] + arguments).map(shellEscape).joined(separator: " ")
     }
 
-    private nonisolated func shellQuote(_ value: String) -> String {
-        if value.isEmpty {
-            return "''"
-        }
-        let safeChars = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./-=:")
-        if value.unicodeScalars.allSatisfy({ safeChars.contains($0) }) {
-            return value
-        }
-        return "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
-    }
 }
 
 // MARK: - PrerequisiteStatus
@@ -1029,15 +1019,3 @@ private final class CompletedProcessTracker: @unchecked Sendable {
 }
 
 // MARK: - Shell Quoting
-
-/// Quotes a value for safe passing as a Nextflow parameter.
-///
-/// Nextflow resource strings like "16.GB" need to pass through without
-/// shell expansion. This wraps values containing dots in single quotes.
-///
-/// - Parameter value: The raw value.
-/// - Returns: The shell-safe value.
-private func taxTriageShellQuote(_ value: String) -> String {
-    // Nextflow expects resource strings unquoted in its argument parsing
-    value
-}

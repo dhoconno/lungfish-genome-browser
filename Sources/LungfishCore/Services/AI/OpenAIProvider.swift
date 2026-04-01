@@ -170,29 +170,6 @@ public actor OpenAIProvider: AIProvider {
         return result
     }
 
-    private func encodeArguments(_ arguments: [String: JSONValue]) -> [String: Any] {
-        var result: [String: Any] = [:]
-        for (key, value) in arguments {
-            result[key] = jsonValueToAny(value)
-        }
-        return result
-    }
-
-    private func jsonValueToAny(_ value: JSONValue) -> Any {
-        switch value {
-        case .string(let s): return s
-        case .number(let d): return d
-        case .integer(let i): return i
-        case .bool(let b): return b
-        case .null: return NSNull()
-        case .array(let a): return a.map { jsonValueToAny($0) }
-        case .object(let o):
-            var dict: [String: Any] = [:]
-            for (k, v) in o { dict[k] = jsonValueToAny(v) }
-            return dict
-        }
-    }
-
     // MARK: - Response Parsing
 
     private func parseResponse(_ data: Data) throws -> AIResponse {
@@ -241,28 +218,5 @@ public actor OpenAIProvider: AIProvider {
         }
 
         return AIResponse(text: text, toolCalls: toolCalls, stopReason: stopReason, usage: usage)
-    }
-
-    private func anyToJSONValue(_ value: Any) -> JSONValue {
-        switch value {
-        case let s as String: return .string(s)
-        case let i as Int: return .integer(i)
-        case let d as Double: return .number(d)
-        case let b as Bool: return .bool(b)
-        case is NSNull: return .null
-        case let a as [Any]: return .array(a.map { anyToJSONValue($0) })
-        case let d as [String: Any]:
-            return .object(d.mapValues { anyToJSONValue($0) })
-        default: return .string("\(value)")
-        }
-    }
-
-    private func parseErrorMessage(_ data: Data) -> String? {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let error = json["error"] as? [String: Any],
-              let message = error["message"] as? String else {
-            return String(data: data, encoding: .utf8)
-        }
-        return message
     }
 }

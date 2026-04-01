@@ -229,13 +229,13 @@ public actor ClassificationPipeline {
         progress?(0.10, "Detecting tool versions...")
 
         // Phase 2: Version detection (0.10 -- 0.30)
-        let toolVersion = await detectKraken2Version()
+        let toolVersion = await detectToolVersion(toolName: "kraken2", environment: Self.kraken2Environment, condaManager: condaManager, flags: ["--version"])
         logger.info("Detected kraken2 version: \(toolVersion, privacy: .public)")
 
         // Detect bracken version separately when profiling (Gap 22 fix).
         let brackenVersion: String
         if runBracken {
-            brackenVersion = await detectBrackenVersion()
+            brackenVersion = await detectToolVersion(toolName: "bracken", environment: Self.brackenEnvironment, condaManager: condaManager)
             logger.info("Detected bracken version: \(brackenVersion, privacy: .public)")
         } else {
             brackenVersion = "unknown"
@@ -492,72 +492,6 @@ public actor ClassificationPipeline {
         }
 
         return totalSize
-    }
-
-    // MARK: - Version Detection
-
-    /// Detects the kraken2 version by running `kraken2 --version`.
-    ///
-    /// - Returns: The version string, or "unknown" if detection fails.
-    private func detectKraken2Version() async -> String {
-        do {
-            let result = try await condaManager.runTool(
-                name: "kraken2",
-                arguments: ["--version"],
-                environment: Self.kraken2Environment,
-                timeout: 30
-            )
-            // kraken2 --version outputs something like "Kraken version 2.1.3"
-            let versionLine = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let range = versionLine.range(of: #"\d+\.\d+(\.\d+)?"#, options: .regularExpression) {
-                return String(versionLine[range])
-            }
-            // Fall back to full output if regex fails.
-            return versionLine.isEmpty ? "unknown" : versionLine
-        } catch {
-            logger.debug("kraken2 --version failed: \(error.localizedDescription, privacy: .public)")
-            return "unknown"
-        }
-    }
-
-    /// Detects the bracken version by running `bracken --version` or `bracken -v`.
-    ///
-    /// Bracken may report its version differently from kraken2, so this method
-    /// detects it independently rather than assuming it matches the kraken2 install
-    /// (Gap 22 fix). Tries `--version` first, then `-v` as a fallback.
-    ///
-    /// - Returns: The version string, or "unknown" if detection fails.
-    private func detectBrackenVersion() async -> String {
-        for flag in ["--version", "-v"] {
-            do {
-                let result = try await condaManager.runTool(
-                    name: "bracken",
-                    arguments: [flag],
-                    environment: Self.brackenEnvironment,
-                    timeout: 30
-                )
-                // Bracken may output "Bracken v2.9" or "bracken 2.9" or similar.
-                // Check both stdout and stderr since different versions may write
-                // the version to different streams.
-                let combined = result.stdout + result.stderr
-                let trimmed = combined.trimmingCharacters(in: .whitespacesAndNewlines)
-                if let range = trimmed.range(
-                    of: #"\d+\.\d+(\.\d+)?"#,
-                    options: .regularExpression
-                ) {
-                    return String(trimmed[range])
-                }
-                if !trimmed.isEmpty {
-                    return trimmed.components(separatedBy: .newlines).first ?? trimmed
-                }
-            } catch {
-                // Try next flag variant
-                continue
-            }
-        }
-
-        logger.debug("bracken version detection failed with both --version and -v")
-        return "unknown"
     }
 
     // MARK: - Helpers

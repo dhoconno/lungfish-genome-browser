@@ -502,13 +502,6 @@ public struct ProvenanceExporter: Sendable {
         return s.lowercased()
     }
 
-    private func shellEscape(_ arg: String) -> String {
-        if arg.isEmpty { return "''" }
-        if arg.allSatisfy({ $0.isLetter || $0.isNumber || "-._/=:@".contains($0) }) {
-            return arg
-        }
-        return "'\(arg.replacingOccurrences(of: "'", with: "'\\''"))'"
-    }
 
     /// Builds a portable command string (tool name instead of absolute path).
     private func portableCommand(_ step: StepExecution) -> String {

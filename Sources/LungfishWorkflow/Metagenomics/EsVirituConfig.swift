@@ -224,32 +224,9 @@ public struct EsVirituConfig: Sendable, Codable, Equatable {
     /// - Returns: A complete `EsViritu ...` command string.
     public func commandString() -> String {
         let args = esVirituArguments()
-        let escaped = args.map { esVirituShellEscape($0) }
+        let escaped = args.map { shellEscape($0) }
         return "EsViritu " + escaped.joined(separator: " \\\n  ")
     }
-}
-
-// MARK: - Shell Escaping
-
-/// Escapes a string for safe use in a POSIX shell command.
-///
-/// Wraps the value in single quotes if it contains characters that
-/// require escaping (spaces, parentheses, dollar signs, etc.).
-/// Single quotes within the value are escaped as `'\''`.
-///
-/// This is a module-level free function to avoid `@MainActor` isolation
-/// issues when called from `@Sendable` contexts.
-///
-/// - Parameter value: The raw string to escape.
-/// - Returns: A shell-safe representation of the string.
-func esVirituShellEscape(_ value: String) -> String {
-    let safeCharacters = CharacterSet.alphanumerics
-        .union(CharacterSet(charactersIn: "-_./:=@+,"))
-    if !value.isEmpty && value.unicodeScalars.allSatisfy({ safeCharacters.contains($0) }) {
-        return value
-    }
-    let escaped = value.replacingOccurrences(of: "'", with: "'\\''")
-    return "'\(escaped)'"
 }
 
 // MARK: - EsVirituConfigError

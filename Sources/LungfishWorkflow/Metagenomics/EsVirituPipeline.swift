@@ -362,7 +362,7 @@ public actor EsVirituPipeline {
         progress?(0.05, "Detecting EsViritu version...")
 
         // Phase 2: Version detection (0.05 -- 0.15)
-        let toolVersion = await detectEsVirituVersion()
+        let toolVersion = await detectToolVersion(toolName: "EsViritu", environment: Self.esVirituEnvironment, condaManager: condaManager)
         logger.info("Detected EsViritu version: \(toolVersion)")
 
         progress?(0.15, "Running EsViritu...")
@@ -576,41 +576,6 @@ public actor EsVirituPipeline {
         logger.info("Pipeline complete: \(virusCount) viruses detected, \(runtimeStr)s")
 
         return result
-    }
-
-    // MARK: - Version Detection
-
-    /// Detects the EsViritu version by running `EsViritu --version`.
-    ///
-    /// - Returns: The version string, or "unknown" if detection fails.
-    private func detectEsVirituVersion() async -> String {
-        // Try --version first, then -v as fallback.
-        for flag in ["--version", "-v"] {
-            do {
-                let result = try await condaManager.runTool(
-                    name: "EsViritu",
-                    arguments: [flag],
-                    environment: Self.esVirituEnvironment,
-                    timeout: 30
-                )
-                let combined = result.stdout + result.stderr
-                let trimmed = combined.trimmingCharacters(in: .whitespacesAndNewlines)
-                if let range = trimmed.range(
-                    of: #"\d+\.\d+(\.\d+)?"#,
-                    options: .regularExpression
-                ) {
-                    return String(trimmed[range])
-                }
-                if !trimmed.isEmpty {
-                    return trimmed.components(separatedBy: .newlines).first ?? trimmed
-                }
-            } catch {
-                continue
-            }
-        }
-
-        logger.debug("EsViritu version detection failed")
-        return "unknown"
     }
 
     // MARK: - Helpers

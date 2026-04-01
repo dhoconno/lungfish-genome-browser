@@ -27,9 +27,8 @@ import LungfishWorkflow
 ///
 /// ```
 /// +----------------------------------------------------+
-/// | Detect Viruses with EsViritu                       |
-/// +----------------------------------------------------+
-/// | Detect viruses from sequencing reads using...      |
+/// | (e) EsViritu Viral Detection      dataset_name     |
+/// |     Identify viral sequences...                     |
 /// +----------------------------------------------------+
 /// | Sample Name: [  my_sample              ]           |
 /// | Paired-End:  [x]                                   |
@@ -79,6 +78,17 @@ struct EsVirituWizardSheet: View {
 
     // MARK: - Computed Properties
 
+    /// Display name for a single input file/bundle.
+    /// Strips `.lungfishfastq` extensions so "SRR35520572.lungfishfastq" shows as "SRR35520572".
+    private var inputDisplayName: String {
+        guard let first = inputFiles.first else { return "" }
+        let name = first.deletingPathExtension().lastPathComponent
+        if name.hasSuffix(".lungfishfastq") {
+            return URL(fileURLWithPath: name).deletingPathExtension().lastPathComponent
+        }
+        return name
+    }
+
     /// Grouped sample inputs inferred from selected FASTQ files.
     private var groupedSamples: [MetagenomicsSampleInput] {
         MetagenomicsSampleGrouper.group(inputFiles)
@@ -109,19 +119,27 @@ struct EsVirituWizardSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Title
-            HStack {
-                Text("Detect Viruses with EsViritu")
-                    .font(.headline)
+            // Header: tool identity + dataset name
+            HStack(spacing: 10) {
+                Image(systemName: "e.circle")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Color.accentColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("EsViritu Viral Detection")
+                        .font(.headline)
+                    Text("Identify viral sequences using the EsViritu pipeline")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 if inputFiles.count == 1 {
-                    Text(inputFiles.first?.lastPathComponent ?? "")
+                    Text(inputDisplayName)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 } else {
-                    Text("\(groupedSamples.count) sample\(groupedSamples.count == 1 ? "" : "s") · \(inputFiles.count) files")
+                    Text("\(groupedSamples.count) sample\(groupedSamples.count == 1 ? "" : "s") \u{00B7} \(inputFiles.count) files")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -198,7 +216,7 @@ struct EsVirituWizardSheet: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
         }
-        .frame(width: 520, height: 480)
+        .frame(width: 520, height: 500)
         .onAppear {
             // Auto-populate sample name for single-sample runs
             if sampleName.isEmpty, let sample = groupedSamples.first {
@@ -226,13 +244,13 @@ struct EsVirituWizardSheet: View {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(groupedSamples.prefix(8)) { sample in
                         let mode = sample.isPairedEnd ? "PE" : "SE"
-                        Text("• \(sample.sampleId) (\(mode))")
+                        Text("\u{2022} \(sample.sampleId) (\(mode))")
                             .font(.system(size: 11))
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
                     if groupedSamples.count > 8 {
-                        Text("…and \(groupedSamples.count - 8) more")
+                        Text("\u{2026}and \(groupedSamples.count - 8) more")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

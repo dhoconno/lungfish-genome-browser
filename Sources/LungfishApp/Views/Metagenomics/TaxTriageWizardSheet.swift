@@ -73,6 +73,17 @@ struct TaxTriageWizardSheet: View {
 
     // MARK: - Computed Properties
 
+    /// Display name for a single input file/bundle.
+    /// Strips `.lungfishfastq` extensions so "SRR35520572.lungfishfastq" shows as "SRR35520572".
+    private var inputDisplayName: String {
+        guard let first = initialFiles.first else { return "" }
+        let name = first.deletingPathExtension().lastPathComponent
+        if name.hasSuffix(".lungfishfastq") {
+            return URL(fileURLWithPath: name).deletingPathExtension().lastPathComponent
+        }
+        return name
+    }
+
     /// Whether all prerequisites are met and the Run button should be enabled.
     private var canRun: Bool {
         !samples.isEmpty
@@ -86,14 +97,30 @@ struct TaxTriageWizardSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Title
-            HStack {
-                Text("Comprehensive Triage with TaxTriage")
-                    .font(.headline)
+            // Header: tool identity + dataset name
+            HStack(spacing: 10) {
+                Image(systemName: "t.circle")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Color.accentColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("TaxTriage Metagenomic Triage")
+                        .font(.headline)
+                    Text("Comprehensive taxonomic classification pipeline")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
-                Text("Nextflow Pipeline")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if initialFiles.count == 1 {
+                    Text(inputDisplayName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                } else if !samples.isEmpty {
+                    Text("\(samples.count) sample\(samples.count == 1 ? "" : "s")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding(.horizontal, 20)
             .padding(.top, 16)
@@ -163,7 +190,7 @@ struct TaxTriageWizardSheet: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
         }
-        .frame(width: 560, height: 580)
+        .frame(width: 520, height: 520)
         .onAppear {
             populateFromInitialFiles()
             checkPrerequisites()

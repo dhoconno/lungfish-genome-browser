@@ -246,7 +246,7 @@ extension ClassificationResult {
         // Try provenance first -- it has exact commands as executed.
         if let provenance = ProvenanceRecorder.load(from: directory) {
             let commands = provenance.steps.map { step in
-                step.command.map { classificationShellEscape($0) }.joined(separator: " \\\n  ")
+                step.command.map { shellEscape($0) }.joined(separator: " \\\n  ")
             }
             if !commands.isEmpty {
                 return commands.joined(separator: "\n\n")
@@ -270,13 +270,13 @@ extension ClassificationResult {
         // parameters (read length, level, threshold) use pipeline defaults
         // since they are not persisted in the sidecar.
         if sidecar.brackenPath != nil {
-            let reportPath = classificationShellEscape(
+            let reportPath = shellEscape(
                 directory.appendingPathComponent(sidecar.reportPath).path
             )
-            let brackenPath = classificationShellEscape(
+            let brackenPath = shellEscape(
                 directory.appendingPathComponent(sidecar.brackenPath!).path
             )
-            let dbPath = classificationShellEscape(sidecar.config.databasePath.path)
+            let dbPath = shellEscape(sidecar.config.databasePath.path)
 
             result += "\n\nbracken \\\n"
             result += "  -d \(dbPath) \\\n"
