@@ -375,6 +375,9 @@ public final class Minimap2Pipeline: @unchecked Sendable {
 
         try fm.createDirectory(at: config.outputDirectory, withIntermediateDirectories: true)
 
+        OperationMarker.markInProgress(config.outputDirectory, detail: "Running minimap2 alignment\u{2026}")
+        defer { OperationMarker.clearInProgress(config.outputDirectory) }
+
         let unsortedSAM = config.outputDirectory.appendingPathComponent("aligned.sam")
         let sortedBAM = config.outputDirectory.appendingPathComponent(
             "\(config.sampleName).sorted.bam"

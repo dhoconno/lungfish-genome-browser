@@ -213,6 +213,9 @@ public actor ClassificationPipeline {
             }
         }
 
+        OperationMarker.markInProgress(config.outputDirectory, detail: "Running Kraken2 classification\u{2026}")
+        defer { OperationMarker.clearInProgress(config.outputDirectory) }
+
         // Auto-enable memory mapping if database exceeds 80% of system RAM (Gap 19).
         var effectiveConfig = config
         if shouldAutoEnableMemoryMapping(config: config) {
