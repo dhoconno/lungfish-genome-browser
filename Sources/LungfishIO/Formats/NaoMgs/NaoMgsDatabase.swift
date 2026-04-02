@@ -353,8 +353,14 @@ public final class NaoMgsDatabase: @unchecked Sendable {
             "CREATE INDEX idx_hits_sample_taxon_accession ON virus_hits(sample, tax_id, subject_seq_id)",
             "CREATE INDEX idx_hits_taxon_accession ON virus_hits(tax_id, subject_seq_id)",
             "CREATE INDEX idx_hits_sample ON virus_hits(sample)",
+            // Note: idx_summaries_sample is redundant with PRIMARY KEY (sample, tax_id)
+            // but kept for clarity since SQLite's PK index behavior is an implementation detail.
             "CREATE INDEX idx_summaries_sample ON taxon_summaries(sample)",
             "CREATE INDEX idx_summaries_hitcount ON taxon_summaries(sample, hit_count DESC)",
+            // tax_id alone: used by UPDATE taxon_summaries SET name = ? WHERE tax_id = ?
+            // during name resolution. Without this, the PK (sample, tax_id) can't be used
+            // because tax_id is the second column.
+            "CREATE INDEX idx_summaries_taxid ON taxon_summaries(tax_id)",
         ]
         for sql in indices {
             guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
