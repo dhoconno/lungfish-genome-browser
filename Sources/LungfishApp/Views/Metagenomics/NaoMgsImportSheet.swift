@@ -256,16 +256,25 @@ struct NaoMgsImportSheet: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
 
-            HStack {
-                Text("Min % identity:")
-                    .font(.system(size: 12))
-                    .frame(width: 100, alignment: .trailing)
-                Slider(value: $minIdentity, in: 0...100, step: 5)
-                    .frame(maxWidth: 180)
-                Text(String(format: "%.0f%%", minIdentity))
-                    .font(.system(size: 12, design: .monospaced))
-                    .frame(width: 40)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Min % identity:")
+                        .font(.system(size: 12))
+                        .frame(width: 100, alignment: .trailing)
+                    Slider(value: $minIdentity, in: 0...100, step: 5)
+                        .frame(maxWidth: 180)
+                    Text(String(format: "%.0f%%", minIdentity))
+                        .font(.system(size: 12, design: .monospaced))
+                        .frame(width: 40)
+                }
+                Text(minIdentity > 0
+                     ? "Exclude virus hits below \(Int(minIdentity))% sequence identity."
+                     : "Import all virus hits regardless of sequence identity.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .padding(.leading, 104)
             }
+            .help("Filter virus hits by BLAST percent identity. Higher values keep only closely matching hits; 0% imports everything.")
         }
     }
 
