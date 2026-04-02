@@ -147,6 +147,7 @@ public final class ProjectUniversalSearchIndex {
             var classificationDirs: [URL] = []
             var esVirituDirs: [URL] = []
             var taxTriageDirs: [URL] = []
+            var naoMgsDirs: [URL] = []
             var manifestFiles: [URL] = []
 
             collectProjectArtifacts(
@@ -155,6 +156,7 @@ public final class ProjectUniversalSearchIndex {
                 classificationDirs: &classificationDirs,
                 esVirituDirs: &esVirituDirs,
                 taxTriageDirs: &taxTriageDirs,
+                naoMgsDirs: &naoMgsDirs,
                 manifestFiles: &manifestFiles
             )
 
@@ -196,6 +198,15 @@ public final class ProjectUniversalSearchIndex {
 
             for url in taxTriageDirs.sorted(by: pathCompare) {
                 try indexTaxTriageResult(
+                    at: url,
+                    entityCount: &entityCount,
+                    attributeCount: &attributeCount,
+                    perKindCounts: &perKindCounts
+                )
+            }
+
+            for url in naoMgsDirs.sorted(by: pathCompare) {
+                try indexNaoMgsResult(
                     at: url,
                     entityCount: &entityCount,
                     attributeCount: &attributeCount,
@@ -391,6 +402,7 @@ public final class ProjectUniversalSearchIndex {
         classificationDirs: inout [URL],
         esVirituDirs: inout [URL],
         taxTriageDirs: inout [URL],
+        naoMgsDirs: inout [URL],
         manifestFiles: inout [URL]
     ) {
         let fm = FileManager.default
@@ -411,6 +423,15 @@ public final class ProjectUniversalSearchIndex {
                 if url.pathExtension == FASTQBundle.directoryExtension {
                     fastqBundles.append(url)
                     enumerator.skipDescendants()
+                    // Scan derivatives/ subfolder for classifier results that live inside FASTQ bundles.
+                    let derivativesURL = url.appendingPathComponent("derivatives", isDirectory: true)
+                    scanDerivativesForClassifierResults(
+                        derivativesURL,
+                        classificationDirs: &classificationDirs,
+                        esVirituDirs: &esVirituDirs,
+                        taxTriageDirs: &taxTriageDirs,
+                        naoMgsDirs: &naoMgsDirs
+                    )
                     continue
                 }
 
@@ -438,12 +459,50 @@ public final class ProjectUniversalSearchIndex {
                     continue
                 }
 
+                if fileName.hasPrefix("naomgs-") && hasFile("manifest.json", in: url) {
+                    naoMgsDirs.append(url)
+                    enumerator.skipDescendants()
+                    continue
+                }
+
                 continue
             }
 
             guard url.pathExtension.lowercased() == "json" else { continue }
             if fileName == "manifest.json" || fileName.hasSuffix("-result.json") {
                 manifestFiles.append(url)
+            }
+        }
+    }
+
+    /// Scans a FASTQ bundle's derivatives/ directory for classifier result bundles.
+    private func scanDerivativesForClassifierResults(
+        _ derivativesURL: URL,
+        classificationDirs: inout [URL],
+        esVirituDirs: inout [URL],
+        taxTriageDirs: inout [URL],
+        naoMgsDirs: inout [URL]
+    ) {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: derivativesURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+
+        for url in contents {
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else { continue }
+            let name = url.lastPathComponent
+
+            if name.hasPrefix("classification-") && hasFile("classification-result.json", in: url) {
+                classificationDirs.append(url)
+            } else if name.hasPrefix("esviritu-") && hasFile("esviritu-result.json", in: url) {
+                esVirituDirs.append(url)
+            } else if name.hasPrefix("taxtriage-") && hasFile("taxtriage-result.json", in: url) {
+                taxTriageDirs.append(url)
+            } else if name.hasPrefix("naomgs-") && hasFile("manifest.json", in: url) {
+                naoMgsDirs.append(url)
             }
         }
     }
@@ -1225,6 +1284,156 @@ public final class ProjectUniversalSearchIndex {
                     attributeCount: &attributeCount
                 )
             }
+        }
+    }
+
+    private func indexNaoMgsResult(
+        at resultURL: URL,
+        entityCount: inout Int,
+        attributeCount: inout Int,
+        perKindCounts: inout [String: Int]
+    ) throws {
+        let relPath = relativePath(for: resultURL)
+        let manifestURL = resultURL.appendingPathComponent("manifest.json")
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: manifestURL.path) else { return }
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let manifestData = try? Data(contentsOf: manifestURL),
+              let manifest = try? decoder.decode(NaoMgsManifest.self, from: manifestData) else {
+            return
+        }
+
+        let title = manifest.sampleName
+
+        // Build parent entity attributes
+        var attributes: [String: Any] = [
+            "sample_name": manifest.sampleName,
+            "hit_count": manifest.hitCount,
+            "read_count": manifest.hitCount,
+            "taxon_count": manifest.taxonCount,
+            "source_file": (manifest.sourceFilePath as NSString).lastPathComponent,
+            "import_date": manifest.importDate,
+            "fetched_references": manifest.fetchedAccessions.count,
+        ]
+        if let topTaxon = manifest.topTaxon {
+            attributes["top_taxon"] = topTaxon
+            attributes["taxon"] = topTaxon
+            attributes["virus_name"] = topTaxon
+        }
+        if let topTaxonId = manifest.topTaxonId {
+            attributes["top_taxon_id"] = topTaxonId
+        }
+        if let version = manifest.workflowVersion {
+            attributes["workflow_version"] = version
+        }
+
+        // Load individual taxa — prefer cached rows from manifest, fall back to database
+        let taxonRows: [NaoMgsTaxonSummaryRow]
+        if let cached = manifest.cachedTaxonRows, !cached.isEmpty {
+            taxonRows = cached
+        } else {
+            let dbURL = resultURL.appendingPathComponent("hits.sqlite")
+            if fm.fileExists(atPath: dbURL.path),
+               let db = try? NaoMgsDatabase(at: dbURL) {
+                taxonRows = (try? db.fetchTaxonSummaryRows(samples: nil)) ?? []
+            } else {
+                taxonRows = []
+            }
+        }
+
+        // Deduplicate by taxId — same taxon may appear across multiple samples
+        var seenTaxIds = Set<Int>()
+        let uniqueTaxa = taxonRows.filter { seenTaxIds.insert($0.taxId).inserted }
+
+        // Collect organism names for parent entity detected_organisms attribute
+        let organismNames = uniqueTaxa.prefix(400).map { $0.name.isEmpty ? "Taxon \($0.taxId)" : $0.name }
+        if !organismNames.isEmpty {
+            attributes["detected_organisms"] = organismNames.prefix(200).joined(separator: " | ")
+            let allAliases = organismNames.prefix(200).flatMap { organismAliases(for: $0) }
+            if !allAliases.isEmpty {
+                attributes["detected_organism_aliases"] = allAliases.joined(separator: " ")
+            }
+        }
+
+        let row = entityRow(
+            id: "naomgs_result:\(relPath)",
+            kind: "naomgs_result",
+            title: title,
+            subtitle: "NAO-MGS: \(manifest.hitCount) hits, \(manifest.taxonCount) taxa",
+            format: "naomgs",
+            url: resultURL
+        )
+
+        try insertEntity(
+            row,
+            attributes: attributes,
+            entityCount: &entityCount,
+            attributeCount: &attributeCount,
+            perKindCounts: &perKindCounts
+        )
+
+        // Insert organism name attributes on parent entity for search
+        let uniqueOrganismNames = Set(organismNames)
+        for organismName in uniqueOrganismNames {
+            try insertOrganismAttributes(
+                entityID: row.id,
+                keys: ["organism", "taxon", "virus_name"],
+                name: organismName,
+                includeOriginal: true,
+                attributeCount: &attributeCount
+            )
+        }
+
+        // Index child entities for each unique taxon
+        for taxon in uniqueTaxa.prefix(400) {
+            let taxonName = taxon.name.isEmpty ? "Taxon \(taxon.taxId)" : taxon.name
+            let taxonComponent = stableIdentifierComponent(taxonName)
+            let childId = "naomgs_taxon:\(relPath):\(taxon.taxId):\(taxonComponent)"
+
+            var taxonAttrs: [String: Any] = [
+                "taxon": taxonName,
+                "virus_name": taxonName,
+                "organism": taxonName,
+                "tax_id": taxon.taxId,
+                "read_count": taxon.hitCount,
+                "hit_count": taxon.hitCount,
+                "unique_reads": taxon.uniqueReadCount,
+                "accession_count": taxon.accessionCount,
+            ]
+            if taxon.avgIdentity > 0 {
+                taxonAttrs["avg_identity"] = taxon.avgIdentity
+            }
+            let aliases = organismAliases(for: taxonName)
+            if !aliases.isEmpty {
+                taxonAttrs["search_aliases"] = aliases.joined(separator: " ")
+            }
+
+            let childRow = entityRow(
+                id: childId,
+                kind: "naomgs_taxon",
+                title: taxonName,
+                subtitle: "\(taxon.hitCount) hits, \(taxon.uniqueReadCount) unique",
+                format: "naomgs",
+                url: resultURL
+            )
+
+            try insertEntity(
+                childRow,
+                attributes: taxonAttrs,
+                entityCount: &entityCount,
+                attributeCount: &attributeCount,
+                perKindCounts: &perKindCounts
+            )
+
+            try insertOrganismAttributes(
+                entityID: childId,
+                keys: ["organism", "taxon", "virus_name"],
+                name: taxonName,
+                includeOriginal: false,
+                attributeCount: &attributeCount
+            )
         }
     }
 
