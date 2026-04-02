@@ -187,6 +187,63 @@ struct NaoMgsImportOptimizationTests {
         #expect(result.totalHitReads >= 0)
     }
 
+    // MARK: - Multi-Sample Database Tests
+
+    @Test
+    func importNaoMgsWithMultipleSamplesCreatesSQLite() async throws {
+        let workspace = makeTemporaryDirectory(prefix: "naomgs-multisample-")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let tsvContent = """
+        sample\tseq_id\taligner_taxid_lca\tquery_seq\tquery_qual\tprim_align_genome_id_all\tprim_align_ref_start\tprim_align_edit_distance\tquery_len\tprim_align_query_rc\tprim_align_pair_status
+        SAMPLE_A\treadA1\t111\tACGTACGT\tIIIIIIII\tACC001\t10\t0\t8\tFalse\tCP
+        SAMPLE_A\treadA2\t111\tACGTACGA\tIIIIIIII\tACC001\t10\t1\t8\tFalse\tCP
+        SAMPLE_A\treadA3\t222\tACGTACGG\tIIIIIIII\tACC002\t30\t0\t8\tTrue\tCP
+        SAMPLE_B\treadB1\t111\tACGTACGT\tIIIIIIII\tACC001\t50\t0\t8\tFalse\tCP
+        SAMPLE_B\treadB2\t333\tACGTACGC\tIIIIIIII\tACC003\t70\t2\t8\tFalse\tUP
+        """
+        let sourceFile = workspace.appendingPathComponent("virus_hits_final.tsv")
+        try tsvContent.write(to: sourceFile, atomically: true, encoding: .utf8)
+
+        let outputDirectory = workspace.appendingPathComponent("imports", isDirectory: true)
+        let result = try await MetagenomicsImportService.importNaoMgs(
+            inputURL: sourceFile,
+            outputDirectory: outputDirectory,
+            sampleName: "MULTI_TEST",
+            fetchReferences: false
+        )
+
+        // Verify SQLite exists, no JSON or BAM
+        let bundle = result.resultDirectory
+        #expect(FileManager.default.fileExists(atPath: bundle.appendingPathComponent("hits.sqlite").path))
+        #expect(!FileManager.default.fileExists(atPath: bundle.appendingPathComponent("virus_hits.json").path))
+
+        // Open and query
+        let db = try NaoMgsDatabase(at: bundle.appendingPathComponent("hits.sqlite"))
+
+        // 2 samples
+        let samples = try db.fetchSamples()
+        #expect(samples.count == 2)
+
+        // Sample A: taxon 111 (2 hits), taxon 222 (1 hit) = 2 rows
+        let sampleARows = try db.fetchTaxonSummaryRows(samples: ["SAMPLE_A"])
+        #expect(sampleARows.count == 2)
+
+        // Sample B: taxon 111 (1 hit), taxon 333 (1 hit) = 2 rows
+        let sampleBRows = try db.fetchTaxonSummaryRows(samples: ["SAMPLE_B"])
+        #expect(sampleBRows.count == 2)
+
+        // All samples: 2 (from A) + 2 (from B) = 4 rows
+        let allRows = try db.fetchTaxonSummaryRows(samples: nil)
+        #expect(allRows.count == 4)
+
+        // Unique reads: SAMPLE_A taxon 111 has 2 hits at same position (ref_start=10) → 1 unique
+        let taxA111 = sampleARows.first(where: { $0.taxId == 111 })
+        #expect(taxA111 != nil)
+        #expect(taxA111?.hitCount == 2)
+        #expect(taxA111?.uniqueReadCount == 1, "Two reads at same position should be 1 unique")
+    }
+
     // MARK: - Error Handling
 
     @Test
