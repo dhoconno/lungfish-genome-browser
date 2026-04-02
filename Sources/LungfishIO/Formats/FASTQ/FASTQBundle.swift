@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import LungfishCore
 
 /// Helpers for `.lungfishfastq` package directories.
 ///
@@ -290,9 +291,8 @@ public enum FASTQBundle {
     /// Sentinel filename written inside a `.lungfishfastq` bundle to indicate
     /// that the bundle is still being processed (ingestion, post-import recipe, etc.).
     ///
-    /// The sidebar checks for this file and shows a "Processing..." badge.
-    /// The file is removed when processing completes (success or failure).
-    public static let processingMarkerFilename = ".processing"
+    /// Delegates to the shared ``OperationMarker`` utility.
+    public static var processingMarkerFilename: String { OperationMarker.filename }
 
     /// Processing state of a FASTQ bundle.
     public enum ProcessingState: Sendable, Equatable {
@@ -305,7 +305,7 @@ public enum FASTQBundle {
 
     /// Reads the processing state of a bundle by checking for the sentinel file.
     public static func processingState(of bundleURL: URL) -> ProcessingState {
-        let markerURL = bundleURL.appendingPathComponent(processingMarkerFilename)
+        let markerURL = bundleURL.appendingPathComponent(OperationMarker.filename)
         guard let data = try? Data(contentsOf: markerURL),
               let detail = String(data: data, encoding: .utf8) else {
             return .ready
@@ -315,24 +315,17 @@ public enum FASTQBundle {
 
     /// Returns `true` when the bundle has a `.processing` marker file.
     public static func isProcessing(_ bundleURL: URL) -> Bool {
-        let markerURL = bundleURL.appendingPathComponent(processingMarkerFilename)
-        return FileManager.default.fileExists(atPath: markerURL.path)
+        OperationMarker.isInProgress(bundleURL)
     }
 
     /// Writes the `.processing` sentinel file into the bundle.
-    ///
-    /// Call this as soon as the bundle directory is created but before
-    /// the long-running pipeline starts. The FileSystemWatcher will see
-    /// the bundle directory and the sidebar will display a processing badge.
     public static func markProcessing(_ bundleURL: URL, detail: String = "Processing\u{2026}") {
-        let markerURL = bundleURL.appendingPathComponent(processingMarkerFilename)
-        try? detail.data(using: .utf8)?.write(to: markerURL, options: .atomic)
+        OperationMarker.markInProgress(bundleURL, detail: detail)
     }
 
     /// Removes the `.processing` sentinel file, marking the bundle as ready.
     public static func clearProcessing(_ bundleURL: URL) {
-        let markerURL = bundleURL.appendingPathComponent(processingMarkerFilename)
-        try? FileManager.default.removeItem(at: markerURL)
+        OperationMarker.clearInProgress(bundleURL)
     }
 
     // MARK: - Derivatives Directory
