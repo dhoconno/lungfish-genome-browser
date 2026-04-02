@@ -654,9 +654,13 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
                 from: NSNumber(value: accessionSummary.readCount),
                 number: .decimal
             )
+            let coveredBP = NumberFormatter.localizedString(
+                from: NSNumber(value: accessionSummary.coveredBasePairs),
+                number: .decimal
+            )
             let coveragePct = String(format: "%.0f%%", accessionSummary.coverageFraction * 100)
             let titleLabel = NSTextField(
-                labelWithString: "\(accessionSummary.accession)  \u{2022}  \(uniqueReadCount) unique / \(readCount) total reads  \u{2022}  \(coveragePct) covered"
+                labelWithString: "\(accessionSummary.accession)  \u{2022}  \(uniqueReadCount) unique / \(readCount) total reads  \u{2022}  \(coveredBP) bp covered (\(coveragePct))"
             )
             titleLabel.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
             titleLabel.lineBreakMode = .byTruncatingTail
@@ -1201,8 +1205,34 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     private func populateContextMenu(_ menu: NSMenu, for row: NaoMgsTaxonSummaryRow) {
         menu.removeAllItems()
 
-        // BLAST is not available in database mode (no in-memory hits for read selection).
-        // Future: add a database query for BLAST read selection.
+        // BLAST verification items
+        if database != nil, onBlastVerification != nil {
+            let uniqueCount = row.uniqueReadCount
+            if uniqueCount > 0 {
+                // Smart BLAST count options
+                let blastCounts: [(label: String, count: Int)]
+                if uniqueCount <= 20 {
+                    blastCounts = [("BLAST All \(uniqueCount) Reads", uniqueCount)]
+                } else if uniqueCount <= 50 {
+                    blastCounts = [
+                        ("BLAST 20 Reads", 20),
+                        ("BLAST All \(uniqueCount) Reads", uniqueCount),
+                    ]
+                } else {
+                    blastCounts = [
+                        ("BLAST 20 Reads", 20),
+                        ("BLAST 50 Reads", 50),
+                    ]
+                }
+                for (label, count) in blastCounts {
+                    let item = NSMenuItem(title: label, action: #selector(contextBlastVerify(_:)), keyEquivalent: "")
+                    item.target = self
+                    item.representedObject = BlastMenuSelection(row: row, readCount: count)
+                    menu.addItem(item)
+                }
+                menu.addItem(NSMenuItem.separator())
+            }
+        }
 
         // Copy Taxon ID
         let copyTaxId = NSMenuItem(title: "Copy Taxon ID", action: #selector(contextCopyTaxonId(_:)), keyEquivalent: "")
@@ -1238,6 +1268,54 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     }
 
     // MARK: - Context Menu Actions
+
+    /// Selection data passed through the BLAST context menu item's representedObject.
+    private struct BlastMenuSelection {
+        let row: NaoMgsTaxonSummaryRow
+        let readCount: Int
+    }
+
+    @objc private func contextBlastVerify(_ sender: NSMenuItem) {
+        guard let selection = sender.representedObject as? BlastMenuSelection,
+              let database else { return }
+
+        let row = selection.row
+        let sample = row.sample
+
+        do {
+            // Fetch deduplicated virus hits from the database for BLAST
+            let hits = try database.fetchVirusHitsForBLAST(
+                sample: sample,
+                taxId: row.taxId,
+                maxReads: selection.readCount
+            )
+            guard !hits.isEmpty else {
+                logger.warning("No reads found for BLAST: taxId=\(row.taxId), sample=\(sample)")
+                return
+            }
+
+            // Build a NaoMgsTaxonSummary from the row data for the callback
+            let summary = NaoMgsTaxonSummary(
+                taxId: row.taxId,
+                name: row.name,
+                hitCount: row.hitCount,
+                avgIdentity: row.avgIdentity,
+                avgBitScore: row.avgBitScore,
+                avgEditDistance: row.avgEditDistance,
+                accessions: row.topAccessions
+            )
+
+            // Select reads using the coverage-stratified strategy
+            let selectedHits = NaoMgsDataConverter.selectBlastReads(
+                hits: hits,
+                count: selection.readCount
+            )
+
+            onBlastVerification?(summary, selection.readCount, selectedHits)
+        } catch {
+            logger.error("Failed to fetch BLAST reads: \(error.localizedDescription, privacy: .public)")
+        }
+    }
 
     @objc private func contextCopyTaxonId(_ sender: NSMenuItem) {
         guard let taxId = sender.representedObject as? Int else { return }
@@ -1710,8 +1788,9 @@ private final class AccessionDataWrapper: NSObject, NSTableViewDataSource, NSTab
             return c
         }()
 
+        let coveredBP = NumberFormatter.localizedString(from: NSNumber(value: summary.coveredBasePairs), number: .decimal)
         let coveragePct = String(format: "%.0f%%", summary.coverageFraction * 100)
-        cell.textField?.stringValue = "\(summary.accession)  \(naoMgsFormatCount(summary.readCount)) reads  \(coveragePct)"
+        cell.textField?.stringValue = "\(summary.accession)  \(naoMgsFormatCount(summary.readCount)) reads  \(coveredBP) bp (\(coveragePct))"
         cell.textField?.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
 
         if summary.accession == selectedAccession {

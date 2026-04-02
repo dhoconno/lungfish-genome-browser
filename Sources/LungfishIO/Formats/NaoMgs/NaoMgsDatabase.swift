@@ -61,6 +61,7 @@ public struct NaoMgsAccessionSummary: Sendable {
     public let readCount: Int
     public let uniqueReadCount: Int
     public let estimatedRefLength: Int
+    public let coveredBasePairs: Int
     public let coverageFraction: Double
 }
 
@@ -699,7 +700,7 @@ public final class NaoMgsDatabase: @unchecked Sendable {
                 WHERE v2.sample = ? AND v2.tax_id = ? AND v2.subject_seq_id = virus_hits.subject_seq_id
             )) as unique_read_count,
             MAX(ref_start + query_length) as estimated_ref_length,
-            COUNT(DISTINCT ref_start) as distinct_positions
+            SUM(query_length) as total_aligned_bp
         FROM virus_hits
         WHERE sample = ? AND tax_id = ?
         GROUP BY subject_seq_id
@@ -724,9 +725,9 @@ public final class NaoMgsDatabase: @unchecked Sendable {
             let readCount = Int(sqlite3_column_int64(stmt, 1))
             let uniqueReadCount = Int(sqlite3_column_int64(stmt, 2))
             let estimatedRefLength = Int(sqlite3_column_int64(stmt, 3))
-            let distinctPositions = Int(sqlite3_column_int64(stmt, 4))
+            let totalAlignedBP = Int(sqlite3_column_int64(stmt, 4))
             let coverageFraction = estimatedRefLength > 0
-                ? Double(distinctPositions) / Double(estimatedRefLength)
+                ? min(1.0, Double(totalAlignedBP) / Double(estimatedRefLength))
                 : 0.0
 
             results.append(NaoMgsAccessionSummary(
@@ -734,6 +735,7 @@ public final class NaoMgsDatabase: @unchecked Sendable {
                 readCount: readCount,
                 uniqueReadCount: uniqueReadCount,
                 estimatedRefLength: estimatedRefLength,
+                coveredBasePairs: totalAlignedBP,
                 coverageFraction: coverageFraction
             ))
         }
@@ -815,5 +817,75 @@ public final class NaoMgsDatabase: @unchecked Sendable {
             ))
         }
         return reads
+    }
+
+    // MARK: - BLAST Read Selection
+
+    /// Fetches full virus hit records for BLAST verification, selecting representative
+    /// reads from different genome positions. Returns reads deduplicated by alignment
+    /// signature (accession + position + strand + length).
+    ///
+    /// - Parameters:
+    ///   - sample: The sample name.
+    ///   - taxId: The taxonomy ID.
+    ///   - maxReads: Maximum number of reads to return (default 50).
+    /// - Returns: Array of ``NaoMgsVirusHit`` suitable for BLAST verification.
+    public func fetchVirusHitsForBLAST(
+        sample: String,
+        taxId: Int,
+        maxReads: Int = 50
+    ) throws -> [NaoMgsVirusHit] {
+        guard let db else { throw NaoMgsDatabaseError.queryFailed("Database not open") }
+
+        let sql = """
+            SELECT sample, seq_id, tax_id, subject_seq_id, subject_title,
+                   ref_start, cigar, read_sequence, read_quality,
+                   percent_identity, bit_score, e_value, edit_distance,
+                   query_length, is_reverse_complement, pair_status,
+                   fragment_length, best_alignment_score
+            FROM virus_hits
+            WHERE sample = ? AND tax_id = ?
+            GROUP BY subject_seq_id, ref_start, is_reverse_complement, query_length
+            ORDER BY edit_distance ASC
+            LIMIT ?
+            """
+
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw NaoMgsDatabaseError.queryFailed(String(cString: sqlite3_errmsg(db)))
+        }
+        naoBindText(stmt, 1, sample)
+        sqlite3_bind_int(stmt, 2, Int32(taxId))
+        sqlite3_bind_int(stmt, 3, Int32(maxReads))
+
+        var results: [NaoMgsVirusHit] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let hit = NaoMgsVirusHit(
+                sample: String(cString: sqlite3_column_text(stmt, 0)),
+                seqId: String(cString: sqlite3_column_text(stmt, 1)),
+                taxId: Int(sqlite3_column_int(stmt, 2)),
+                bestAlignmentScore: sqlite3_column_double(stmt, 17),
+                cigar: String(cString: sqlite3_column_text(stmt, 6)),
+                queryStart: 0,
+                queryEnd: Int(sqlite3_column_int(stmt, 13)),
+                refStart: Int(sqlite3_column_int(stmt, 5)),
+                refEnd: Int(sqlite3_column_int(stmt, 5)) + Int(sqlite3_column_int(stmt, 13)),
+                readSequence: String(cString: sqlite3_column_text(stmt, 7)),
+                readQuality: String(cString: sqlite3_column_text(stmt, 8)),
+                subjectSeqId: String(cString: sqlite3_column_text(stmt, 3)),
+                subjectTitle: String(cString: sqlite3_column_text(stmt, 4)),
+                bitScore: sqlite3_column_double(stmt, 10),
+                eValue: sqlite3_column_double(stmt, 11),
+                percentIdentity: sqlite3_column_double(stmt, 9),
+                editDistance: Int(sqlite3_column_int(stmt, 12)),
+                fragmentLength: Int(sqlite3_column_int(stmt, 16)),
+                isReverseComplement: sqlite3_column_int(stmt, 14) != 0,
+                pairStatus: String(cString: sqlite3_column_text(stmt, 15)),
+                queryLength: Int(sqlite3_column_int(stmt, 13))
+            )
+            results.append(hit)
+        }
+        return results
     }
 }
