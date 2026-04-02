@@ -5,6 +5,9 @@
 import Foundation
 import LungfishCore
 import LungfishIO
+import os.log
+
+private let logger = Logger(subsystem: LogSubsystem.workflow, category: "MetagenomicsImport")
 
 /// Supported classifier result types for CLI-backed import.
 public enum MetagenomicsImportKind: String, CaseIterable, Codable, Sendable {
@@ -462,10 +465,29 @@ public enum MetagenomicsImportService {
         defer { OperationMarker.clearInProgress(resultDirectory) }
 
         do {
-        progress?(0.20, "Creating NAO-MGS database\u{2026}")
+        progress?(0.15, "Creating NAO-MGS database\u{2026}")
         let hitsDBURL = resultDirectory.appendingPathComponent("hits.sqlite")
         try NaoMgsDatabase.create(at: hitsDBURL, hits: filteredHits) { dbProgress, dbMessage in
-            progress?(0.20 + dbProgress * 0.48, dbMessage)
+            progress?(0.15 + dbProgress * 0.40, dbMessage)
+        }
+
+        // Resolve taxon names from NCBI Taxonomy before reference fetching.
+        progress?(0.56, "Resolving taxon names from NCBI\u{2026}")
+        do {
+            let rwDB = try NaoMgsDatabase.openReadWrite(at: hitsDBURL)
+            let unresolvedIds = try rwDB.taxonIdsNeedingNames()
+            if !unresolvedIds.isEmpty {
+                let resolvedNames = await resolveTaxonScientificNames(
+                    taxIds: unresolvedIds,
+                    progress: progress
+                )
+                if !resolvedNames.isEmpty {
+                    try rwDB.updateTaxonNames(resolvedNames)
+                }
+            }
+        } catch {
+            // Best-effort: if name resolution fails, placeholder names remain.
+            logger.warning("Taxon name resolution failed: \(error.localizedDescription, privacy: .public)")
         }
 
         let encoder = JSONEncoder()
@@ -860,4 +882,57 @@ private func fetchNaoMgsReferences(
     let fraction = 1.0
     progress?(0.70 + (0.28 * fraction), "Fetched \(fetched.count)/\(accessions.count) references")
     return fetched
+}
+
+/// Resolves taxon IDs to NCBI scientific names via the taxonomy esummary endpoint.
+///
+/// The taxonomy esummary returns JSON with a `ScientificName` field that the generic
+/// `NCBIDocumentSummary` does not decode. This function parses the raw JSON manually.
+///
+/// - Parameters:
+///   - taxIds: Taxon IDs to resolve.
+///   - progress: Optional callback.
+/// - Returns: Dictionary mapping taxon ID to scientific name.
+private func resolveTaxonScientificNames(
+    taxIds: [Int],
+    progress: (@Sendable (Double, String) -> Void)?
+) async -> [Int: String] {
+    guard !taxIds.isEmpty else { return [:] }
+
+    let chunkSize = 200
+    let chunks = stride(from: 0, to: taxIds.count, by: chunkSize).map {
+        Array(taxIds[$0..<min($0 + chunkSize, taxIds.count)])
+    }
+
+    let ncbi = NCBIService()
+    var resolved: [Int: String] = [:]
+
+    for (chunkIndex, chunk) in chunks.enumerated() {
+        let label = "Resolving taxon names batch \(chunkIndex + 1)/\(chunks.count)"
+        progress?(0.56 + 0.08 * Double(chunkIndex) / Double(max(1, chunks.count)), label)
+
+        do {
+            // Use esummary for taxonomy database. The response JSON has
+            // "ScientificName" per UID which NCBIDocumentSummary doesn't decode,
+            // so we parse the raw JSON.
+            let stringIds = chunk.map(String.init)
+            let summaries = try await ncbi.esummary(database: .taxonomy, ids: stringIds)
+            for summary in summaries {
+                guard let taxId = Int(summary.uid) else { continue }
+                // Taxonomy esummary populates scientificName (ScientificName in JSON).
+                if let name = summary.scientificName, !name.isEmpty {
+                    resolved[taxId] = name
+                } else if let name = summary.organism, !name.isEmpty {
+                    resolved[taxId] = name
+                } else if let title = summary.title, !title.isEmpty {
+                    resolved[taxId] = title
+                }
+            }
+        } catch {
+            logger.warning("Taxonomy esummary failed for batch \(chunkIndex + 1): \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    logger.info("Resolved \(resolved.count)/\(taxIds.count) taxon names")
+    return resolved
 }

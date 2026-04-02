@@ -11,6 +11,17 @@ struct NaoMgsSampleEntry: Identifiable {
     let hitCount: Int
 }
 
+/// Observable state object for the sample picker.
+///
+/// Using `@Observable` instead of a raw `Binding<Set<String>>` ensures that
+/// the SwiftUI view inside an `NSHostingController` popover correctly reflects
+/// selection changes. A plain `Binding` captured in a closure loses its
+/// two-way connection once the hosting controller snapshots the view.
+@Observable
+final class NaoMgsSamplePickerState {
+    var selectedSamples: Set<String> = []
+}
+
 /// SwiftUI popover for selecting NAO-MGS samples.
 ///
 /// Shows a searchable, scrollable checklist of samples with hit counts.
@@ -18,7 +29,7 @@ struct NaoMgsSampleEntry: Identifiable {
 struct NaoMgsSamplePickerView: View {
 
     let samples: [NaoMgsSampleEntry]
-    @Binding var selectedSamples: Set<String>
+    @Bindable var pickerState: NaoMgsSamplePickerState
     @State private var searchText: String = ""
 
     /// Common prefix stripped from display (shown as caption).
@@ -33,7 +44,7 @@ struct NaoMgsSamplePickerView: View {
 
     private var allVisibleSelected: Bool {
         let visibleIds = Set(filteredSamples.map(\.id))
-        return !visibleIds.isEmpty && visibleIds.isSubset(of: selectedSamples)
+        return !visibleIds.isEmpty && visibleIds.isSubset(of: pickerState.selectedSamples)
     }
 
     var body: some View {
@@ -59,9 +70,9 @@ struct NaoMgsSamplePickerView: View {
                     set: { newValue in
                         let visibleIds = Set(filteredSamples.map(\.id))
                         if newValue {
-                            selectedSamples.formUnion(visibleIds)
+                            pickerState.selectedSamples.formUnion(visibleIds)
                         } else {
-                            selectedSamples.subtract(visibleIds)
+                            pickerState.selectedSamples.subtract(visibleIds)
                         }
                     }
                 )) {
@@ -105,12 +116,12 @@ struct NaoMgsSamplePickerView: View {
     private func sampleRow(_ sample: NaoMgsSampleEntry) -> some View {
         HStack {
             Toggle(isOn: Binding(
-                get: { selectedSamples.contains(sample.id) },
+                get: { pickerState.selectedSamples.contains(sample.id) },
                 set: { newValue in
                     if newValue {
-                        selectedSamples.insert(sample.id)
+                        pickerState.selectedSamples.insert(sample.id)
                     } else {
-                        selectedSamples.remove(sample.id)
+                        pickerState.selectedSamples.remove(sample.id)
                     }
                 }
             )) {

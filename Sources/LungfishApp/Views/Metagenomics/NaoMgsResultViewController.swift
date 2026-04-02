@@ -44,7 +44,7 @@ private typealias DBAccessionSummary = LungfishIO.NaoMgsAccessionSummary
 /// This class is `@MainActor` isolated and uses raw `NSSplitView` (not
 /// `NSSplitViewController`) per macOS 26 deprecated API rules.
 @MainActor
-public final class NaoMgsResultViewController: NSViewController, NSSplitViewDelegate {
+public final class NaoMgsResultViewController: NSViewController, NSSplitViewDelegate, NSPopoverDelegate {
 
     // MARK: - Data (Database-backed)
 
@@ -126,6 +126,9 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
 
     /// Active sample picker popover.
     private var samplePopover: NSPopover?
+
+    /// Observable state shared with the SwiftUI sample picker popover.
+    private let samplePickerState = NaoMgsSamplePickerState()
 
     // MARK: - Selection Sync
 
@@ -349,23 +352,12 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
             return
         }
 
+        // Sync current selection into the observable state object.
+        samplePickerState.selectedSamples = selectedSamples
+
         let pickerView = NaoMgsSamplePickerView(
             samples: sampleEntries,
-            selectedSamples: Binding(
-                get: { [weak self] in self?.selectedSamples ?? [] },
-                set: { [weak self] newValue in
-                    guard let self else { return }
-                    self.selectedSamples = newValue
-                    self.updateSampleFilterButtonTitle()
-                    self.updateSampleColumnVisibility()
-                    self.reloadTaxonomyTable()
-                    self.summaryBar.update(
-                        database: self.database,
-                        manifest: self.manifest,
-                        selectedSamples: Array(newValue)
-                    )
-                }
-            ),
+            pickerState: samplePickerState,
             strippedPrefix: strippedPrefix
         )
 
@@ -373,8 +365,28 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         let popover = NSPopover()
         popover.contentViewController = hostingController
         popover.behavior = .transient
+        popover.delegate = self
         popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
         samplePopover = popover
+    }
+
+    // MARK: - NSPopoverDelegate
+
+    public func popoverDidClose(_ notification: Notification) {
+        // Sync the observable state back to the view controller when the popover closes.
+        let newSelection = samplePickerState.selectedSamples
+        guard newSelection != selectedSamples else { return }
+
+        selectedSamples = newSelection
+        updateSampleFilterButtonTitle()
+        updateSampleColumnVisibility()
+        reloadTaxonomyTable()
+        summaryBar.update(
+            database: database,
+            manifest: manifest,
+            selectedSamples: Array(newSelection)
+        )
+        samplePopover = nil
     }
 
     // MARK: - Detail Pane Content
@@ -936,7 +948,9 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         let sampleColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("sample"))
         sampleColumn.title = "Sample"
         sampleColumn.width = 130
-        sampleColumn.minWidth = 90
+        sampleColumn.minWidth = 60
+        sampleColumn.maxWidth = 600
+        sampleColumn.resizingMask = .userResizingMask
         sampleColumn.sortDescriptorPrototype = NSSortDescriptor(key: "sample", ascending: true, selector: #selector(NSString.localizedCaseInsensitiveCompare(_:)))
         taxonomyTableView.addTableColumn(sampleColumn)
 

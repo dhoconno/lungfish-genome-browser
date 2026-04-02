@@ -1459,6 +1459,10 @@ public struct NCBIDocumentSummary: Codable, Sendable {
     public let slen: Int?
     public let createDate: Date?
 
+    /// Scientific name from taxonomy esummary responses.
+    /// Only populated when querying the taxonomy database.
+    public let scientificName: String?
+
     public var length: Int? { slen }
 
     enum CodingKeys: String, CodingKey {
@@ -1470,6 +1474,7 @@ public struct NCBIDocumentSummary: Codable, Sendable {
         case taxid
         case slen
         case createDate = "createdate"
+        case scientificName = "ScientificName"
     }
 
     public init(from decoder: Decoder) throws {
@@ -1481,6 +1486,7 @@ public struct NCBIDocumentSummary: Codable, Sendable {
         organism = try container.decodeIfPresent(String.self, forKey: .organism)
         taxid = try container.decodeIfPresent(Int.self, forKey: .taxid)
         slen = try container.decodeIfPresent(Int.self, forKey: .slen)
+        scientificName = try container.decodeIfPresent(String.self, forKey: .scientificName)
 
         // Parse date string
         if let dateStr = try container.decodeIfPresent(String.self, forKey: .createDate) {

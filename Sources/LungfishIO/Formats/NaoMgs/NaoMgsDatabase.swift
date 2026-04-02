@@ -222,6 +222,20 @@ public final class NaoMgsDatabase: @unchecked Sendable {
         }
     }
 
+    // MARK: - Sample Name Normalization
+
+    /// Strips Illumina sequencing metadata (`_S{index}_L{lane}`) from sample names.
+    ///
+    /// NAO-MGS sample names include Illumina lane/index suffixes like `_S2_L001`.
+    /// Stripping these produces the biological sample identity, allowing reads from
+    /// multiple lanes/indices to aggregate under one logical sample.
+    private static func normalizeSampleName(_ raw: String) -> String {
+        if let range = raw.range(of: #"_S\d+_L\d+.*$"#, options: .regularExpression) {
+            return String(raw[..<range.lowerBound])
+        }
+        return raw
+    }
+
     // MARK: - Bulk Insert
 
     private static func bulkInsertHits(
@@ -258,7 +272,7 @@ public final class NaoMgsDatabase: @unchecked Sendable {
             sqlite3_reset(stmt)
             sqlite3_clear_bindings(stmt)
 
-            naoBindText(stmt, 1, hit.sample)
+            naoBindText(stmt, 1, normalizeSampleName(hit.sample))
             naoBindText(stmt, 2, hit.seqId)
             sqlite3_bind_int64(stmt, 3, Int64(hit.taxId))
             naoBindText(stmt, 4, hit.subjectSeqId)
@@ -440,6 +454,87 @@ public final class NaoMgsDatabase: @unchecked Sendable {
                 throw NaoMgsDatabaseError.createFailed("Top accessions update failed: \(msg)")
             }
         }
+    }
+
+    // MARK: - Taxon Name Updates
+
+    /// Returns the distinct taxon IDs that have empty or placeholder names.
+    ///
+    /// - Returns: Array of taxon ID integers needing name resolution.
+    public func taxonIdsNeedingNames() throws -> [Int] {
+        guard let db else {
+            throw NaoMgsDatabaseError.queryFailed("Database not open")
+        }
+
+        let sql = "SELECT DISTINCT tax_id FROM taxon_summaries WHERE name = '' OR name LIKE 'Taxon %'"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            let msg = String(cString: sqlite3_errmsg(db))
+            throw NaoMgsDatabaseError.queryFailed(msg)
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        var ids: [Int] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            ids.append(Int(sqlite3_column_int64(stmt, 0)))
+        }
+        return ids
+    }
+
+    /// Updates taxon names in the summary table. Database must be open read-write.
+    ///
+    /// - Parameter names: Dictionary mapping taxon ID to resolved scientific name.
+    public func updateTaxonNames(_ names: [Int: String]) throws {
+        guard let db else {
+            throw NaoMgsDatabaseError.queryFailed("Database not open")
+        }
+        guard !names.isEmpty else { return }
+
+        let sql = "UPDATE taxon_summaries SET name = ? WHERE tax_id = ?"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            let msg = String(cString: sqlite3_errmsg(db))
+            throw NaoMgsDatabaseError.queryFailed("Prepare taxon name update failed: \(msg)")
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        for (taxId, name) in names {
+            sqlite3_reset(stmt)
+            sqlite3_clear_bindings(stmt)
+            naoBindText(stmt, 1, name)
+            sqlite3_bind_int64(stmt, 2, Int64(taxId))
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                let msg = String(cString: sqlite3_errmsg(db))
+                logger.warning("Failed to update name for taxId \(taxId): \(msg, privacy: .public)")
+                continue
+            }
+        }
+    }
+
+    // MARK: - Read-Write Access
+
+    /// Opens an existing NAO-MGS database for reading and writing.
+    ///
+    /// Used during import to update taxon names after creation.
+    ///
+    /// - Parameter url: URL to the SQLite database file.
+    /// - Throws: ``NaoMgsDatabaseError/openFailed(_:)`` if the file cannot be opened.
+    public static func openReadWrite(at url: URL) throws -> NaoMgsDatabase {
+        let instance = NaoMgsDatabase(url: url)
+        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX
+        let rc = sqlite3_open_v2(url.path, &instance.db, flags, nil)
+        guard rc == SQLITE_OK else {
+            let msg = instance.db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "Unknown error"
+            sqlite3_close(instance.db)
+            instance.db = nil
+            throw NaoMgsDatabaseError.openFailed(msg)
+        }
+        return instance
+    }
+
+    /// Private initializer used by `openReadWrite(at:)`.
+    private init(url: URL) {
+        self.url = url
     }
 
     // MARK: - Queries
