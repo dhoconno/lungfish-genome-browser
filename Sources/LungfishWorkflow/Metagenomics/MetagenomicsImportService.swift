@@ -636,11 +636,15 @@ public enum MetagenomicsImportService {
     public static func splitMultiRecordFASTA(_ fasta: String) -> [String: String] {
         guard !fasta.isEmpty else { return [:] }
 
+        // Normalize line endings — NCBI efetch may return \r\n
+        let normalized = fasta.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+
         var records: [String: String] = [:]
         var currentAccession: String?
         var currentLines: [String] = []
 
-        for line in fasta.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
+        for line in normalized.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
             if line.hasPrefix(">") {
                 if let acc = currentAccession, !currentLines.isEmpty {
                     records[acc] = currentLines.joined(separator: "\n")
@@ -917,7 +921,9 @@ private func fetchNaoMgsReferences(
             let records = MetagenomicsImportService.splitMultiRecordFASTA(fastaText)
             for (accession, recordText) in records {
                 let fastaURL = referencesDirectory.appendingPathComponent("\(accession).fasta")
-                try? recordText.data(using: .utf8)?.write(to: fastaURL, options: .atomic)
+                // Ensure record ends with newline for valid FASTA (required by samtools faidx)
+                let normalizedRecord = recordText.hasSuffix("\n") ? recordText : recordText + "\n"
+                try? normalizedRecord.data(using: .utf8)?.write(to: fastaURL, options: .atomic)
                 fetched.append(accession)
             }
         } catch {

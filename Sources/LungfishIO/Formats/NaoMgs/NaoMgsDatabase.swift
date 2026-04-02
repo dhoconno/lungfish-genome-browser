@@ -98,6 +98,37 @@ public final class NaoMgsDatabase: @unchecked Sendable {
             db = nil
             throw NaoMgsDatabaseError.openFailed(msg)
         }
+        // Schema migration: ensure reference_lengths table exists (added post-initial release)
+        let tableCheck = "SELECT name FROM sqlite_master WHERE type='table' AND name='reference_lengths'"
+        var checkStmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, tableCheck, -1, &checkStmt, nil) == SQLITE_OK {
+            if sqlite3_step(checkStmt) != SQLITE_ROW {
+                // Table doesn't exist — reopen read-write briefly to create it
+                sqlite3_finalize(checkStmt)
+                sqlite3_close(db)
+                self.db = nil
+
+                var rwDB: OpaquePointer?
+                if sqlite3_open_v2(url.path, &rwDB, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK {
+                    sqlite3_exec(rwDB, "CREATE TABLE IF NOT EXISTS reference_lengths (accession TEXT PRIMARY KEY, length INTEGER NOT NULL)", nil, nil, nil)
+                    sqlite3_close(rwDB)
+                }
+
+                // Reopen read-only
+                let rc2 = sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil)
+                guard rc2 == SQLITE_OK else {
+                    let msg = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "Unknown error"
+                    sqlite3_close(db)
+                    self.db = nil
+                    throw NaoMgsDatabaseError.openFailed(msg)
+                }
+            } else {
+                sqlite3_finalize(checkStmt)
+            }
+        } else {
+            sqlite3_finalize(checkStmt)
+        }
+
         // Read-side performance tuning
         sqlite3_exec(db, "PRAGMA cache_size = -65536", nil, nil, nil)   // 64 MB
         sqlite3_exec(db, "PRAGMA mmap_size = 268435456", nil, nil, nil) // 256 MB
@@ -575,6 +606,8 @@ public final class NaoMgsDatabase: @unchecked Sendable {
             instance.db = nil
             throw NaoMgsDatabaseError.openFailed(msg)
         }
+        // Schema migration: ensure reference_lengths table exists (added post-initial release)
+        sqlite3_exec(instance.db, "CREATE TABLE IF NOT EXISTS reference_lengths (accession TEXT PRIMARY KEY, length INTEGER NOT NULL)", nil, nil, nil)
         return instance
     }
 
@@ -735,7 +768,8 @@ public final class NaoMgsDatabase: @unchecked Sendable {
             throw NaoMgsDatabaseError.queryFailed("Database not open")
         }
 
-        let sql = """
+        // Step 1: Get read_count, unique_read_count, and ref_length per accession
+        let summarySQL = """
         SELECT
             vh.subject_seq_id,
             COUNT(*) as read_count,
@@ -747,8 +781,7 @@ public final class NaoMgsDatabase: @unchecked Sendable {
             COALESCE(
                 (SELECT length FROM reference_lengths WHERE accession = vh.subject_seq_id),
                 MAX(vh.ref_start + vh.query_length)
-            ) as ref_length,
-            SUM(vh.query_length) as total_aligned_bp
+            ) as ref_length
         FROM virus_hits vh
         WHERE vh.sample = ? AND vh.tax_id = ?
         GROUP BY vh.subject_seq_id
@@ -756,7 +789,7 @@ public final class NaoMgsDatabase: @unchecked Sendable {
         """
 
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+        guard sqlite3_prepare_v2(db, summarySQL, -1, &stmt, nil) == SQLITE_OK else {
             let msg = String(cString: sqlite3_errmsg(db))
             throw NaoMgsDatabaseError.queryFailed(msg)
         }
@@ -767,27 +800,79 @@ public final class NaoMgsDatabase: @unchecked Sendable {
         naoBindText(stmt, 3, sample)
         sqlite3_bind_int64(stmt, 4, Int64(taxId))
 
-        var results: [NaoMgsAccessionSummary] = []
+        // Collect intermediate results (accession, readCount, uniqueReadCount, refLength)
+        var intermediates: [(accession: String, readCount: Int, uniqueReadCount: Int, refLength: Int)] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             let accession = String(cString: sqlite3_column_text(stmt, 0))
             let readCount = Int(sqlite3_column_int64(stmt, 1))
             let uniqueReadCount = Int(sqlite3_column_int64(stmt, 2))
             let refLength = Int(sqlite3_column_int64(stmt, 3))
-            let totalAlignedBP = Int(sqlite3_column_int64(stmt, 4))
-            let coverageFraction = refLength > 0
-                ? min(1.0, Double(totalAlignedBP) / Double(refLength))
+            intermediates.append((accession, readCount, uniqueReadCount, refLength))
+        }
+
+        // Step 2: For each accession, compute true pileup coverage via interval merging
+        let pileupSQL = "SELECT ref_start, query_length FROM virus_hits WHERE sample = ? AND tax_id = ? AND subject_seq_id = ?"
+
+        var results: [NaoMgsAccessionSummary] = []
+        for entry in intermediates {
+            var pileupStmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, pileupSQL, -1, &pileupStmt, nil) == SQLITE_OK else {
+                // Fall back to 0 coverage on query failure
+                results.append(NaoMgsAccessionSummary(
+                    accession: entry.accession, readCount: entry.readCount,
+                    uniqueReadCount: entry.uniqueReadCount, referenceLength: entry.refLength,
+                    coveredBasePairs: 0, coverageFraction: 0.0
+                ))
+                continue
+            }
+            defer { sqlite3_finalize(pileupStmt) }
+
+            naoBindText(pileupStmt, 1, sample)
+            sqlite3_bind_int64(pileupStmt, 2, Int64(taxId))
+            naoBindText(pileupStmt, 3, entry.accession)
+
+            var intervals: [(start: Int, end: Int)] = []
+            while sqlite3_step(pileupStmt) == SQLITE_ROW {
+                let refStart = Int(sqlite3_column_int64(pileupStmt, 0))
+                let queryLen = Int(sqlite3_column_int64(pileupStmt, 1))
+                intervals.append((start: refStart, end: refStart + queryLen))
+            }
+
+            let coveredBP = Self.computeCoveredBasePairs(intervals)
+            let coverageFraction = entry.refLength > 0
+                ? min(1.0, Double(coveredBP) / Double(entry.refLength))
                 : 0.0
 
             results.append(NaoMgsAccessionSummary(
-                accession: accession,
-                readCount: readCount,
-                uniqueReadCount: uniqueReadCount,
-                referenceLength: refLength,
-                coveredBasePairs: totalAlignedBP,
+                accession: entry.accession,
+                readCount: entry.readCount,
+                uniqueReadCount: entry.uniqueReadCount,
+                referenceLength: entry.refLength,
+                coveredBasePairs: coveredBP,
                 coverageFraction: coverageFraction
             ))
         }
         return results
+    }
+
+    /// Merges overlapping intervals and returns total covered base pairs.
+    private static func computeCoveredBasePairs(_ intervals: [(start: Int, end: Int)]) -> Int {
+        guard !intervals.isEmpty else { return 0 }
+        let sorted = intervals.sorted { $0.start < $1.start }
+        var mergedStart = sorted[0].start
+        var mergedEnd = sorted[0].end
+        var total = 0
+        for interval in sorted.dropFirst() {
+            if interval.start <= mergedEnd {
+                mergedEnd = max(mergedEnd, interval.end)
+            } else {
+                total += mergedEnd - mergedStart
+                mergedStart = interval.start
+                mergedEnd = interval.end
+            }
+        }
+        total += mergedEnd - mergedStart
+        return total
     }
 
     // MARK: - Read Queries
