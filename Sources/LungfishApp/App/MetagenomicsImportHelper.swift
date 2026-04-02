@@ -60,15 +60,7 @@ public enum MetagenomicsImportHelper {
         let preferredName = value(for: "--name", in: arguments)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedName = preferredName?.isEmpty == true ? nil : preferredName
-        let sampleName = value(for: "--sample-name", in: arguments)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedSampleName = sampleName?.isEmpty == true ? nil : sampleName
         let minIdentity = Double(value(for: "--min-identity", in: arguments) ?? "") ?? 0
-        let includeAlignment = boolValue(
-            for: "--include-alignment",
-            in: arguments,
-            defaultValue: true
-        )
         let fetchReferences = boolValue(
             for: "--fetch-references",
             in: arguments,
@@ -229,9 +221,8 @@ public enum MetagenomicsImportHelper {
                     let result = try await MetagenomicsImportService.importNaoMgs(
                         inputURL: inputURL,
                         outputDirectory: outputDirectory,
-                        sampleName: normalizedSampleName ?? normalizedName,
+                        sampleName: nil,
                         minIdentity: minIdentity,
-                        includeAlignment: includeAlignment,
                         fetchReferences: fetchReferences,
                         preferredName: normalizedName
                     ) { progress, message in
@@ -272,11 +263,17 @@ public enum MetagenomicsImportHelper {
                 }
             } catch {
                 exitState.value = 1
+                let partialPath: String?
+                if case .importAborted(let dir, _) = error as? MetagenomicsImportError {
+                    partialPath = dir.path
+                } else {
+                    partialPath = nil
+                }
                 emit(Event(
                     event: "error",
                     progress: nil,
                     message: nil,
-                    resultPath: nil,
+                    resultPath: partialPath,
                     sampleName: nil,
                     totalReads: nil,
                     speciesCount: nil,

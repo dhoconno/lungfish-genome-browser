@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
-import os.log
+import LungfishCore
 import LungfishIO
+import os.log
 
 private let logger = Logger(subsystem: LogSubsystem.workflow, category: "SPAdesAssemblyPipeline")
 
@@ -193,6 +194,9 @@ public final class SPAdesAssemblyPipeline: @unchecked Sendable {
         // 1. Create workspace with symlinked input files
         let workspace = try createWorkspace(config: config)
         defer { try? FileManager.default.removeItem(at: workspace.tempDir) }
+
+        OperationMarker.markInProgress(workspace.outputDir, detail: "Running SPAdes assembly\u{2026}")
+        defer { OperationMarker.clearInProgress(workspace.outputDir) }
 
         // 2. Pull the SPAdes image
         progress(0.02, "Pulling SPAdes container image...")

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import LungfishCore
 import LungfishIO
 import os.log
 
@@ -210,6 +211,9 @@ public actor TaxTriagePipeline {
                 )
             }
         }
+
+        OperationMarker.markInProgress(profileAdjustedConfig.outputDirectory, detail: "Running TaxTriage\u{2026}")
+        defer { OperationMarker.clearInProgress(profileAdjustedConfig.outputDirectory) }
 
         progress?(0.05, "Generating samplesheet...")
 

@@ -10,7 +10,7 @@ import os.log
 public enum MetagenomicsImportHelperClientError: Error, LocalizedError {
     case helperExecutableNotFound
     case helperLaunchFailed(String)
-    case helperFailed(String)
+    case helperFailed(String, partialResultDirectory: URL?)
     case helperProtocolError(String)
 
     public var errorDescription: String? {
@@ -19,11 +19,17 @@ public enum MetagenomicsImportHelperClientError: Error, LocalizedError {
             return "Could not locate application executable for metagenomics import helper"
         case .helperLaunchFailed(let message):
             return "Failed to launch metagenomics import helper: \(message)"
-        case .helperFailed(let message):
+        case .helperFailed(let message, _):
             return "Metagenomics import helper failed: \(message)"
         case .helperProtocolError(let message):
             return "Metagenomics import helper protocol error: \(message)"
         }
+    }
+
+    /// The partial result directory that should be cleaned up, if any.
+    var partialResultDirectory: URL? {
+        if case .helperFailed(_, let dir) = self { return dir }
+        return nil
     }
 }
 
@@ -37,20 +43,14 @@ public enum MetagenomicsImportHelperClient {
 
     /// NAO-MGS-specific import options forwarded to helper mode.
     public struct NaoMgsOptions: Sendable {
-        public let sampleName: String?
         public let minIdentity: Double
-        public let includeAlignment: Bool
         public let fetchReferences: Bool
 
         public init(
-            sampleName: String? = nil,
             minIdentity: Double = 0,
-            includeAlignment: Bool = true,
             fetchReferences: Bool = true
         ) {
-            self.sampleName = sampleName
             self.minIdentity = minIdentity
-            self.includeAlignment = includeAlignment
             self.fetchReferences = fetchReferences
         }
     }
@@ -124,14 +124,8 @@ public enum MetagenomicsImportHelperClient {
         }
         if kind == .naomgs {
             let options = naoMgsOptions ?? NaoMgsOptions()
-            if let sampleName = options.sampleName?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-               !sampleName.isEmpty {
-                args.append(contentsOf: ["--sample-name", sampleName])
-            }
             let normalizedIdentity = max(0, min(100, options.minIdentity))
             args.append(contentsOf: ["--min-identity", String(normalizedIdentity)])
-            args.append(contentsOf: ["--include-alignment", options.includeAlignment ? "true" : "false"])
             args.append(contentsOf: ["--fetch-references", options.fetchReferences ? "true" : "false"])
         }
         process.arguments = args
@@ -172,6 +166,9 @@ public enum MetagenomicsImportHelperClient {
             case "error":
                 parseState.withLock { state in
                     state.helperError = event.error ?? event.message ?? "Import helper failed"
+                    if let path = event.resultPath, !path.isEmpty {
+                        state.resultPath = path
+                    }
                 }
             default:
                 break
@@ -232,14 +229,15 @@ public enum MetagenomicsImportHelperClient {
         }
 
         if process.terminationStatus != 0 {
-            let helperError = parseState.withLock { $0.helperError }
+            let (helperError, partialPath) = parseState.withLock { ($0.helperError, $0.resultPath) }
             let stderrMessage = stderrState.withLock { data -> String in
                 String(data: data, encoding: .utf8)?
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             }
             let fallback = "Helper exited with status \(process.terminationStatus)"
             let message = helperError ?? (stderrMessage.isEmpty ? fallback : stderrMessage)
-            throw MetagenomicsImportHelperClientError.helperFailed(message)
+            let partialDir = partialPath.map { URL(fileURLWithPath: $0) }
+            throw MetagenomicsImportHelperClientError.helperFailed(message, partialResultDirectory: partialDir)
         }
 
         let parsed = parseState.withLock { state -> (String?, String?) in

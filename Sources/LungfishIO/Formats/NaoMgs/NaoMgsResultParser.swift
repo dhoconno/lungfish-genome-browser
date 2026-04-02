@@ -330,8 +330,6 @@ public struct NaoMgsResult: Sendable {
 /// // Load a complete result set from a directory
 /// let result = try await parser.loadResults(from: resultsDir, sampleName: "sample1")
 ///
-/// // Convert hits to SAM for viewport display
-/// try parser.convertToSAM(hits: hits, outputURL: samOutputURL)
 /// ```
 ///
 /// ## Column Mapping
@@ -454,7 +452,10 @@ public final class NaoMgsResultParser: @unchecked Sendable {
     /// - Parameter url: Path to the virus_hits_final.tsv or .tsv.gz file.
     /// - Returns: Array of parsed virus hits.
     /// - Throws: ``NaoMgsError`` if the file is missing or malformed.
-    public func parseVirusHits(at url: URL) async throws -> [NaoMgsVirusHit] {
+    public func parseVirusHits(
+        at url: URL,
+        lineProgress: (@Sendable (Int) -> Void)? = nil
+    ) async throws -> [NaoMgsVirusHit] {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw NaoMgsError.fileNotFound(url)
         }
@@ -467,6 +468,10 @@ public final class NaoMgsResultParser: @unchecked Sendable {
 
         for try await line in url.linesAutoDecompressing() {
             lineNumber += 1
+
+            if lineProgress != nil, lineNumber % 1000 == 0 {
+                lineProgress?(lineNumber)
+            }
 
             // Skip empty lines
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -561,6 +566,7 @@ public final class NaoMgsResultParser: @unchecked Sendable {
             hits.append(hit)
         }
 
+        lineProgress?(lineNumber)
         logger.info("Parsed \(hits.count) virus hits from \(url.lastPathComponent)")
         return hits
     }
@@ -575,7 +581,11 @@ public final class NaoMgsResultParser: @unchecked Sendable {
     ///   - sampleName: Sample name override. If nil, derived from the first hit.
     /// - Returns: Aggregated ``NaoMgsResult``.
     /// - Throws: ``NaoMgsError`` if no result files are found.
-    public func loadResults(from directory: URL, sampleName: String? = nil) async throws -> NaoMgsResult {
+    public func loadResults(
+        from directory: URL,
+        sampleName: String? = nil,
+        lineProgress: (@Sendable (Int) -> Void)? = nil
+    ) async throws -> NaoMgsResult {
         let fm = FileManager.default
 
         // If the user passed a file directly (not a directory), use it
@@ -605,7 +615,7 @@ public final class NaoMgsResultParser: @unchecked Sendable {
             }
         }
 
-        let hits = try await parseVirusHits(at: virusHitsFile)
+        let hits = try await parseVirusHits(at: virusHitsFile, lineProgress: lineProgress)
 
         let resolvedSampleName = sampleName
             ?? hits.first?.sample
@@ -621,118 +631,6 @@ public final class NaoMgsResultParser: @unchecked Sendable {
             sourceDirectory: directory,
             virusHitsFile: virusHitsFile
         )
-    }
-
-    // MARK: - SAM Conversion
-
-    /// Converts NAO-MGS virus hits into a SAM file for display in the alignment viewer.
-    ///
-    /// Groups hits by reference accession, writes proper @HD and @SQ header lines,
-    /// and creates alignment records from the CIGAR, sequence, and quality data.
-    ///
-    /// - Parameters:
-    ///   - hits: Array of virus hits to convert.
-    ///   - outputURL: Path to write the SAM file.
-    /// - Throws: ``NaoMgsError/samConversionFailed(_:)`` if writing fails.
-    public func convertToSAM(hits: [NaoMgsVirusHit], outputURL: URL) throws {
-        guard !hits.isEmpty else {
-            throw NaoMgsError.samConversionFailed("No hits to convert")
-        }
-
-        logger.info("Converting \(hits.count) NAO-MGS hits to SAM at \(outputURL.lastPathComponent)")
-
-        // Group hits by reference accession to build @SQ lines.
-        // Track the maximum reference end position per accession for the sequence length.
-        var refLengths: [String: Int] = [:]
-        var refTitles: [String: String] = [:]
-
-        for hit in hits {
-            guard !hit.subjectSeqId.isEmpty else { continue }
-            let currentMax = refLengths[hit.subjectSeqId] ?? 0
-            // Estimate reference length from refStart + read length (refEnd may be 0 in v2)
-            let estimatedEnd = hit.refEnd > 0
-                ? hit.refEnd + 1
-                : hit.refStart + max(hit.readSequence.count, hit.queryStart) + 1
-            refLengths[hit.subjectSeqId] = max(currentMax, estimatedEnd)
-            if refTitles[hit.subjectSeqId] == nil {
-                refTitles[hit.subjectSeqId] = hit.subjectTitle
-            }
-        }
-
-        var samLines: [String] = []
-
-        // @HD header
-        samLines.append("@HD\tVN:1.6\tSO:unsorted")
-
-        // @SQ header lines, sorted by accession for deterministic output
-        for accession in refLengths.keys.sorted() {
-            let length = refLengths[accession] ?? 1
-            // Use at least 1 for length, and pad slightly to account for alignment overhangs
-            let paddedLength = max(length, 1)
-            samLines.append("@SQ\tSN:\(accession)\tLN:\(paddedLength)")
-        }
-
-        // @RG header for the sample
-        if let firstSample = hits.first?.sample {
-            samLines.append("@RG\tID:\(firstSample)\tSM:\(firstSample)")
-        }
-
-        // @PG header
-        samLines.append("@PG\tID:nao-mgs\tPN:nao-mgs-workflow\tVN:1.0")
-
-        // Alignment records
-        for hit in hits {
-            let refName = hit.subjectSeqId.isEmpty ? "*" : hit.subjectSeqId
-            let cigar = hit.cigar.isEmpty ? "*" : hit.cigar
-            let sequence = hit.readSequence.isEmpty ? "*" : hit.readSequence
-            let quality = hit.readQuality.isEmpty ? "*" : hit.readQuality
-
-            // FLAG: 16 = reverse strand, 0 = forward strand.
-            let flag = hit.isReverseComplement ? 16 : 0
-
-            // POS is 1-based in SAM (NAO-MGS refStart is 0-based)
-            let pos = hit.refStart + 1
-
-            // MAPQ: derive from bit score (capped at 60)
-            let mapq = min(Int(hit.bitScore / 5.0), 60)
-
-            // RNEXT, PNEXT, TLEN are unknown for single-end virus hits
-            let record = [
-                hit.seqId,              // QNAME
-                String(flag),           // FLAG
-                refName,                // RNAME
-                String(pos),            // POS
-                String(mapq),           // MAPQ
-                cigar,                  // CIGAR
-                "*",                    // RNEXT
-                "0",                    // PNEXT
-                "0",                    // TLEN
-                sequence,               // SEQ
-                quality,                // QUAL
-                "RG:Z:\(hit.sample)",   // Read group tag
-                "XI:f:\(String(format: "%.1f", hit.percentIdentity))",  // Percent identity
-                "XS:f:\(String(format: "%.1f", hit.bitScore))",         // Bit score
-                "XE:f:\(hit.eValue)",   // E-value
-                "XT:i:\(hit.taxId)",    // Taxonomy ID
-                "NM:i:\(hit.editDistance)",  // Edit distance
-            ].joined(separator: "\t")
-
-            samLines.append(record)
-        }
-
-        // Write SAM file
-        let content = samLines.joined(separator: "\n") + "\n"
-        guard let data = content.data(using: .utf8) else {
-            throw NaoMgsError.samConversionFailed("Failed to encode SAM content as UTF-8")
-        }
-
-        do {
-            try data.write(to: outputURL, options: .atomic)
-        } catch {
-            throw NaoMgsError.samConversionFailed("Failed to write SAM file: \(error.localizedDescription)")
-        }
-
-        logger.info("Wrote SAM file with \(hits.count) alignments across \(refLengths.count) references")
     }
 
     // MARK: - Aggregation

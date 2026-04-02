@@ -1192,22 +1192,15 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
     private func importNaoMgsResultFromURL(
         _ url: URL,
-        sampleName: String,
-        minIdentity: Double,
-        includeAlignment: Bool
+        minIdentity: Double
     ) {
-        let trimmedSampleName = sampleName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedSampleName = trimmedSampleName.isEmpty ? nil : trimmedSampleName
         importClassifierResultFromURL(
             url,
             kind: .naomgs,
             operationTitle: "NAO-MGS Import",
             missingProjectMessage: "Please open a project before importing NAO-MGS results.",
-            preferredName: resolvedSampleName,
             naoMgsOptions: .init(
-                sampleName: resolvedSampleName,
                 minIdentity: minIdentity,
-                includeAlignment: includeAlignment,
                 fetchReferences: true
             )
         )
@@ -1243,14 +1236,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         }
         if kind == .naomgs {
             let options = naoMgsOptions ?? .init()
-            if let sampleName = options.sampleName?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-               !sampleName.isEmpty {
-                cliArgs.append(contentsOf: ["--sample-name", sampleName])
-            }
             let identityFloor = max(0, min(100, options.minIdentity))
             cliArgs.append(contentsOf: ["--min-identity", String(identityFloor)])
-            cliArgs.append(contentsOf: ["--include-alignment", options.includeAlignment ? "true" : "false"])
             cliArgs.append(contentsOf: ["--fetch-references", options.fetchReferences ? "true" : "false"])
         }
 
@@ -1304,6 +1291,18 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     MainActor.assumeIsolated {
                         let detail = error.localizedDescription
                         OperationCenter.shared.fail(id: opID, detail: detail)
+
+                        // Cleanup partial result directory left by failed import
+                        if let partialDir = (error as? MetagenomicsImportHelperClientError)?
+                            .partialResultDirectory {
+                            try? FileManager.default.removeItem(at: partialDir)
+                            OperationCenter.shared.log(
+                                id: opID,
+                                level: .info,
+                                message: "Cleaned up partial import directory"
+                            )
+                        }
+
                         self?.showAlert(
                             title: "\(operationTitle) Failed",
                             message: detail
@@ -3867,13 +3866,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         wizardPanel.isReleasedWhenClosed = false
 
         var sheet = NaoMgsImportSheet(datasetURL: nil)
-        sheet.onImport = { [weak self] (resultsDir: URL, sampleName: String, convertToSAM: Bool, minIdentity: Double) in
+        sheet.onImport = { [weak self] (resultsDir: URL, minIdentity: Double) in
             window.endSheet(wizardPanel)
             self?.importNaoMgsResultFromURL(
                 resultsDir,
-                sampleName: sampleName,
-                minIdentity: minIdentity,
-                includeAlignment: convertToSAM
+                minIdentity: minIdentity
             )
         }
         sheet.onCancel = {

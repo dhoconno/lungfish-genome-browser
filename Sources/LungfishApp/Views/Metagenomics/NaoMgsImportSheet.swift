@@ -25,16 +25,12 @@ import LungfishIO
 /// | Results Location                                    |
 /// | [  /path/to/results/              ] [Browse...]     |
 /// +----------------------------------------------------+
-/// | Sample Name                                         |
-/// | [  WW-2024-01                     ]                 |
-/// +----------------------------------------------------+
 /// | Preview                                             |
 /// |   Virus hits:     1,234                             |
 /// |   Distinct taxa:  42                                |
 /// |   Source file:     virus_hits_final.tsv.gz           |
 /// +----------------------------------------------------+
 /// | Options                                             |
-/// |   [x] Convert to SAM for alignment view             |
 /// |   Min % identity: [---|----90--------]  90%         |
 /// +----------------------------------------------------+
 /// |                        [Cancel]  [Run]              |
@@ -53,8 +49,8 @@ struct NaoMgsImportSheet: View {
     /// The FASTQ bundle URL that triggered this import (for context display).
     let datasetURL: URL?
 
-    /// Called when the user clicks Run. Parameters: (results URL, sample name, convert to SAM, min identity).
-    var onImport: ((URL, String, Bool, Double) -> Void)?
+    /// Called when the user clicks Run. Parameters: (results URL, min identity).
+    var onImport: ((URL, Double) -> Void)?
 
     /// Called when the user clicks Cancel.
     var onCancel: (() -> Void)?
@@ -62,10 +58,9 @@ struct NaoMgsImportSheet: View {
     // MARK: - State
 
     @State private var selectedPath: URL? = nil
-    @State private var sampleName: String = ""
-    @State private var convertToSAM: Bool = true
     @State private var minIdentity: Double = 0
     @State private var isScanning: Bool = false
+    @State private var linesScanned: Int = 0
     @State private var scanError: String? = nil
 
     // Preview data from scanning
@@ -87,7 +82,7 @@ struct NaoMgsImportSheet: View {
 
     /// Whether the Run button should be enabled.
     private var canRun: Bool {
-        selectedPath != nil && !sampleName.isEmpty && !isScanning && hitCount != nil
+        selectedPath != nil && !isScanning && hitCount != nil
     }
 
     // MARK: - Body
@@ -103,11 +98,6 @@ struct NaoMgsImportSheet: View {
                 VStack(alignment: .leading, spacing: 16) {
                     // Results location
                     locationSection
-
-                    Divider()
-
-                    // Sample name
-                    sampleNameSection
 
                     Divider()
 
@@ -193,20 +183,6 @@ struct NaoMgsImportSheet: View {
         }
     }
 
-    // MARK: - Sample Name
-
-    private var sampleNameSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Sample Name")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-
-            TextField("e.g., WW-2024-01", text: $sampleName)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 12))
-        }
-    }
-
     // MARK: - Preview
 
     private var previewSection: some View {
@@ -219,9 +195,15 @@ struct NaoMgsImportSheet: View {
                 HStack(spacing: 8) {
                     ProgressView()
                         .controlSize(.small)
-                    Text("Scanning results\u{2026}")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                    if linesScanned > 0 {
+                        Text("Scanning\u{2026} \(formatNumber(linesScanned)) lines")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Scanning results\u{2026}")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
                 }
             } else if let error = scanError {
                 HStack(alignment: .top, spacing: 6) {
@@ -273,10 +255,6 @@ struct NaoMgsImportSheet: View {
             Text("Options")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
-
-            Toggle("Convert to SAM for alignment view", isOn: $convertToSAM)
-                .font(.system(size: 12))
-                .toggleStyle(.checkbox)
 
             HStack {
                 Text("Min % identity:")
@@ -345,6 +323,7 @@ struct NaoMgsImportSheet: View {
         hitCount = nil
         taxonCount = nil
         sourceFileName = nil
+        linesScanned = 0
 
         Task {
             do {
@@ -355,9 +334,17 @@ struct NaoMgsImportSheet: View {
 
                 let result: NaoMgsResult
                 if isDir.boolValue {
-                    result = try await parser.loadResults(from: url)
+                    result = try await parser.loadResults(from: url) { count in
+                        Task { @MainActor in
+                            self.linesScanned = count
+                        }
+                    }
                 } else {
-                    let hits = try await parser.parseVirusHits(at: url)
+                    let hits = try await parser.parseVirusHits(at: url) { count in
+                        Task { @MainActor in
+                            self.linesScanned = count
+                        }
+                    }
                     let summaries = parser.aggregateByTaxon(hits)
                     result = NaoMgsResult(
                         virusHits: hits,
@@ -374,9 +361,6 @@ struct NaoMgsImportSheet: View {
                     hitCount = result.totalHitReads
                     taxonCount = result.taxonSummaries.count
                     sourceFileName = result.virusHitsFile.lastPathComponent
-                    if sampleName.isEmpty {
-                        sampleName = result.sampleName
-                    }
                     isScanning = false
                 }
             } catch {
@@ -390,8 +374,8 @@ struct NaoMgsImportSheet: View {
 
     /// Triggers the import callback with the current configuration.
     private func performImport() {
-        guard let url = selectedPath, !sampleName.isEmpty else { return }
-        onImport?(url, sampleName, convertToSAM, minIdentity)
+        guard let url = selectedPath else { return }
+        onImport?(url, minIdentity)
     }
 
     // MARK: - Formatting

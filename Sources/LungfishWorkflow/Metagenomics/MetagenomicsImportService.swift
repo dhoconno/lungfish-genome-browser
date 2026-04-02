@@ -5,6 +5,9 @@
 import Foundation
 import LungfishCore
 import LungfishIO
+import os.log
+
+private let logger = Logger(subsystem: LogSubsystem.workflow, category: "MetagenomicsImport")
 
 /// Supported classifier result types for CLI-backed import.
 public enum MetagenomicsImportKind: String, CaseIterable, Codable, Sendable {
@@ -100,6 +103,7 @@ public enum MetagenomicsImportError: Error, LocalizedError, Sendable {
     case copyFailed(source: URL, destination: URL, reason: String)
     case parseFailed(URL, String)
     case toolUnavailable(String)
+    case importAborted(resultDirectory: URL, underlying: Error)
 
     public var errorDescription: String? {
         switch self {
@@ -113,6 +117,8 @@ public enum MetagenomicsImportError: Error, LocalizedError, Sendable {
             return "Failed to parse \(url.lastPathComponent): \(reason)"
         case .toolUnavailable(let tool):
             return "Required tool is unavailable: \(tool)"
+        case .importAborted(_, let underlying):
+            return "Import aborted: \(underlying.localizedDescription)"
         }
     }
 }
@@ -155,6 +161,8 @@ public enum MetagenomicsImportService {
 
         progress?(0.05, "Preparing output directory...")
         try ensureDirectoryExists(resultDirectory)
+        OperationMarker.markInProgress(resultDirectory, detail: "Importing Kraken2 results\u{2026}")
+        defer { OperationMarker.clearInProgress(resultDirectory) }
 
         let canonicalReportURL = resultDirectory.appendingPathComponent("classification.kreport")
         progress?(0.25, "Copying report...")
@@ -243,6 +251,8 @@ public enum MetagenomicsImportService {
             in: outputDirectory
         )
         try ensureDirectoryExists(resultDirectory)
+        OperationMarker.markInProgress(resultDirectory, detail: "Importing EsViritu results\u{2026}")
+        defer { OperationMarker.clearInProgress(resultDirectory) }
         progress?(0.05, "Copying EsViritu files...")
 
         let copiedFiles = try copyInputPayload(from: inputURL, into: resultDirectory)
@@ -336,6 +346,8 @@ public enum MetagenomicsImportService {
             in: outputDirectory
         )
         try ensureDirectoryExists(resultDirectory)
+        OperationMarker.markInProgress(resultDirectory, detail: "Importing TaxTriage results\u{2026}")
+        defer { OperationMarker.clearInProgress(resultDirectory) }
         progress?(0.05, "Copying TaxTriage files...")
 
         _ = try copyInputPayload(from: inputURL, into: resultDirectory)
@@ -394,15 +406,13 @@ public enum MetagenomicsImportService {
 
     /// Imports NAO-MGS results into a canonical result directory:
     /// - `manifest.json`
-    /// - `virus_hits.json`
-    /// - `{sample}.sorted.bam` + index (when alignment conversion is enabled)
+    /// - `hits.sqlite` (SQLite database with all hits and taxon summaries)
     /// - `references/*.fasta` (best-effort fetch from NCBI)
     public static func importNaoMgs(
         inputURL: URL,
         outputDirectory: URL,
         sampleName: String? = nil,
         minIdentity: Double = 0,
-        includeAlignment: Bool = true,
         fetchReferences: Bool = true,
         preferredName: String? = nil,
         progress: (@Sendable (Double, String) -> Void)? = nil
@@ -451,32 +461,64 @@ public enum MetagenomicsImportService {
             in: outputDirectory
         )
         try ensureDirectoryExists(resultDirectory)
+        OperationMarker.markInProgress(resultDirectory, detail: "Importing NAO-MGS results\u{2026}")
+        defer { OperationMarker.clearInProgress(resultDirectory) }
 
-        let referencesDirectory = resultDirectory.appendingPathComponent("references", isDirectory: true)
-        try ensureDirectoryExists(referencesDirectory)
+        do {
+        progress?(0.15, "Creating NAO-MGS database\u{2026}")
+        let hitsDBURL = resultDirectory.appendingPathComponent("hits.sqlite")
+        try NaoMgsDatabase.create(at: hitsDBURL, hits: filteredHits) { dbProgress, dbMessage in
+            progress?(0.15 + dbProgress * 0.40, dbMessage)
+        }
 
-        progress?(0.20, "Writing NAO-MGS sidecars...")
+        // Resolve taxon names from local NCBI Taxonomy database.
+        progress?(0.56, "Resolving taxon names\u{2026}")
+        do {
+            let rwDB = try NaoMgsDatabase.openReadWrite(at: hitsDBURL)
+            let unresolvedIds = try rwDB.taxonIdsNeedingNames()
+            if !unresolvedIds.isEmpty {
+                // Try to find installed NCBI Taxonomy database
+                let registry = MetagenomicsDatabaseRegistry.shared
+                var taxonomyPath: URL?
+
+                // Check if taxonomy DB is already installed
+                if let installed = try await registry.installedDatabase(tool: .ncbiTaxonomy),
+                   let path = installed.path {
+                    taxonomyPath = path
+                } else {
+                    // Auto-download taxonomy DB on first use
+                    logger.info("NCBI Taxonomy database not installed \u{2014} downloading automatically")
+                    progress?(0.56, "Downloading NCBI Taxonomy database\u{2026}")
+                    do {
+                        let installedURL = try await registry.downloadDatabase(
+                            name: "NCBI Taxonomy"
+                        ) { dlProgress, dlMessage in
+                            progress?(0.56 + dlProgress * 0.08, dlMessage)
+                        }
+                        taxonomyPath = installedURL
+                        logger.info("NCBI Taxonomy database installed at \(installedURL.path, privacy: .public)")
+                    } catch {
+                        logger.warning("Failed to download NCBI Taxonomy database: \(error.localizedDescription, privacy: .public)")
+                    }
+                }
+
+                if let taxonomyPath {
+                    let resolver = try TaxonomyNameResolver(taxonomyDirectory: taxonomyPath)
+                    let resolvedNames = resolver.resolve(taxIds: unresolvedIds)
+                    if !resolvedNames.isEmpty {
+                        try rwDB.updateTaxonNames(resolvedNames)
+                    }
+                    logger.info("Resolved \(resolvedNames.count)/\(unresolvedIds.count) taxon names from local taxonomy DB")
+                }
+            }
+        } catch {
+            // Best-effort: if name resolution fails, placeholder names remain.
+            logger.warning("Taxon name resolution failed: \(error.localizedDescription, privacy: .public)")
+        }
+
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-
-        let hitsFile = NaoMgsVirusHitsFile(
-            virusHits: result.virusHits,
-            taxonSummaries: result.taxonSummaries
-        )
-        do {
-            let data = try encoder.encode(hitsFile)
-            try data.write(
-                to: resultDirectory.appendingPathComponent("virus_hits.json"),
-                options: .atomic
-            )
-        } catch {
-            throw MetagenomicsImportError.copyFailed(
-                source: loaded.virusHitsFile,
-                destination: resultDirectory.appendingPathComponent("virus_hits.json"),
-                reason: error.localizedDescription
-            )
-        }
 
         var manifest = NaoMgsManifest(
             sampleName: normalizedSampleName,
@@ -488,55 +530,12 @@ public enum MetagenomicsImportService {
         )
         try writeNaoMgsManifest(manifest, to: resultDirectory, encoder: encoder)
 
-        var createdBAM = false
-        let safeSampleStem = sanitizePathComponent(normalizedSampleName)
-        if includeAlignment, !result.virusHits.isEmpty {
-            progress?(0.40, "Converting NAO-MGS hits to alignment files...")
-            let samURL = resultDirectory.appendingPathComponent("\(safeSampleStem).sam")
-            let bamURL = resultDirectory.appendingPathComponent("\(safeSampleStem).sorted.bam")
-            do {
-                try parser.convertToSAM(hits: result.virusHits, outputURL: samURL)
-            } catch {
-                throw MetagenomicsImportError.parseFailed(samURL, error.localizedDescription)
-            }
-
-            let runner = NativeToolRunner.shared
-            let sortResult = try await runner.run(
-                .samtools,
-                arguments: ["sort", "-o", bamURL.path, samURL.path],
-                workingDirectory: resultDirectory,
-                timeout: 1800
-            )
-            guard sortResult.isSuccess else {
-                throw MetagenomicsImportError.copyFailed(
-                    source: samURL,
-                    destination: bamURL,
-                    reason: sortResult.combinedOutput
-                )
-            }
-
-            let indexResult = try await runner.run(
-                .samtools,
-                arguments: ["index", bamURL.path],
-                workingDirectory: resultDirectory,
-                timeout: 900
-            )
-            guard indexResult.isSuccess else {
-                throw MetagenomicsImportError.copyFailed(
-                    source: bamURL,
-                    destination: bamURL.appendingPathExtension("bai"),
-                    reason: indexResult.combinedOutput
-                )
-            }
-
-            createdBAM = true
-            try? fm.removeItem(at: samURL)
-        }
-
         var fetchedAccessions: [String] = []
         if fetchReferences {
+            let referencesDirectory = resultDirectory.appendingPathComponent("references", isDirectory: true)
+            try ensureDirectoryExists(referencesDirectory)
             progress?(0.70, "Fetching reference FASTA files...")
-            let accessions = Array(Set(result.virusHits.map(\.subjectSeqId).filter { !$0.isEmpty })).sorted()
+            let accessions = selectTopAccessionsPerTaxon(hits: result.virusHits, maxPerTaxon: 5)
             fetchedAccessions = await fetchNaoMgsReferences(
                 accessions: accessions,
                 into: referencesDirectory,
@@ -544,6 +543,42 @@ public enum MetagenomicsImportService {
             )
             manifest.fetchedAccessions = fetchedAccessions
             try writeNaoMgsManifest(manifest, to: resultDirectory, encoder: encoder)
+
+            // Extract reference lengths by indexing downloaded FASTA files with samtools faidx.
+            // Each .fai index contains sequence name and length — parsed via FASTAIndex.
+            var refLengths: [String: Int] = [:]
+            let runner = NativeToolRunner.shared
+            if let files = try? FileManager.default.contentsOfDirectory(
+                at: referencesDirectory,
+                includingPropertiesForKeys: nil
+            ) {
+                for file in files where file.pathExtension == "fasta" {
+                    let accession = file.deletingPathExtension().lastPathComponent
+                    let faiURL = URL(fileURLWithPath: file.path + ".fai")
+                    do {
+                        let result = try await runner.run(
+                            .samtools,
+                            arguments: ["faidx", file.path],
+                            workingDirectory: referencesDirectory,
+                            timeout: 30
+                        )
+                        if result.isSuccess, FileManager.default.fileExists(atPath: faiURL.path) {
+                            let index = try FASTAIndex(url: faiURL)
+                            if let entry = index.sequenceNames.first.flatMap({ index.entry(for: $0) }) {
+                                refLengths[accession] = entry.length
+                            }
+                        }
+                    } catch {
+                        // Best-effort: skip accessions where indexing fails
+                        logger.warning("Failed to index \(accession).fasta: \(error.localizedDescription, privacy: .public)")
+                    }
+                }
+            }
+            if !refLengths.isEmpty {
+                let rwDB = try NaoMgsDatabase.openReadWrite(at: hitsDBURL)
+                try rwDB.updateReferenceLengths(refLengths)
+                logger.info("Stored \(refLengths.count) reference lengths from downloaded FASTAs")
+            }
         }
 
         progress?(1.0, "NAO-MGS import complete")
@@ -553,8 +588,86 @@ public enum MetagenomicsImportService {
             totalHitReads: result.totalHitReads,
             taxonCount: result.taxonSummaries.count,
             fetchedReferenceCount: fetchedAccessions.count,
-            createdBAM: createdBAM
+            createdBAM: false
         )
+        } catch {
+            throw MetagenomicsImportError.importAborted(
+                resultDirectory: resultDirectory,
+                underlying: error
+            )
+        }
+    }
+
+    /// Selects the top N accessions per taxon by hit count, deduplicated across taxa.
+    public static func selectTopAccessionsPerTaxon(
+        hits: [NaoMgsVirusHit],
+        maxPerTaxon: Int = 5
+    ) -> [String] {
+        var taxonHits: [Int: [NaoMgsVirusHit]] = [:]
+        for hit in hits where !hit.subjectSeqId.isEmpty {
+            taxonHits[hit.taxId, default: []].append(hit)
+        }
+
+        var selectedAccessions: Set<String> = []
+
+        for (_, hitsForTaxon) in taxonHits {
+            var accessionCounts: [String: Int] = [:]
+            for hit in hitsForTaxon {
+                accessionCounts[hit.subjectSeqId, default: 0] += 1
+            }
+
+            let sorted = accessionCounts.sorted { lhs, rhs in
+                if lhs.value != rhs.value { return lhs.value > rhs.value }
+                return lhs.key < rhs.key
+            }
+
+            for entry in sorted.prefix(maxPerTaxon) {
+                selectedAccessions.insert(entry.key)
+            }
+        }
+
+        return selectedAccessions.sorted()
+    }
+
+    /// Splits a concatenated multi-record FASTA string into individual records.
+    ///
+    /// - Parameter fasta: Concatenated FASTA text (multiple `>` headers).
+    /// - Returns: Dictionary mapping accession (first token after `>`) to full FASTA record text.
+    public static func splitMultiRecordFASTA(_ fasta: String) -> [String: String] {
+        guard !fasta.isEmpty else { return [:] }
+
+        // Normalize line endings — NCBI efetch may return \r\n
+        let normalized = fasta.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+
+        var records: [String: String] = [:]
+        var currentAccession: String?
+        var currentLines: [String] = []
+
+        for line in normalized.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
+            if line.hasPrefix(">") {
+                if let acc = currentAccession, !currentLines.isEmpty {
+                    records[acc] = currentLines.joined(separator: "\n")
+                }
+                let header = line.dropFirst()
+                let accession = header.split(separator: " ", maxSplits: 1).first
+                    .map(String.init)?
+                    .trimmingCharacters(in: .whitespaces) ?? ""
+                currentAccession = accession.isEmpty ? nil : accession
+                currentLines = [line]
+            } else if !line.trimmingCharacters(in: .whitespaces).isEmpty {
+                // Skip blank lines — NCBI efetch may insert them between records,
+                // and samtools faidx produces incorrect lengths when blank lines
+                // appear within a FASTA sequence.
+                currentLines.append(line)
+            }
+        }
+
+        if let acc = currentAccession, !currentLines.isEmpty {
+            records[acc] = currentLines.joined(separator: "\n")
+        }
+
+        return records
     }
 }
 
@@ -787,26 +900,58 @@ private func fetchNaoMgsReferences(
 ) async -> [String] {
     guard !accessions.isEmpty else { return [] }
 
+    let chunkSize = 200
+    let chunks = stride(from: 0, to: accessions.count, by: chunkSize).map {
+        Array(accessions[$0..<min($0 + chunkSize, accessions.count)])
+    }
+
     let ncbi = NCBIService()
     var fetched: [String] = []
-    for (index, accession) in accessions.enumerated() {
+
+    for (chunkIndex, chunk) in chunks.enumerated() {
+        let chunkLabel = "Fetching references batch \(chunkIndex + 1)/\(chunks.count) (\(chunk.count) accessions)"
+        let baseFraction = Double(chunkIndex) / Double(chunks.count)
+        progress?(0.70 + (0.28 * baseFraction), chunkLabel)
+
         do {
             let data = try await ncbi.efetch(
                 database: .nucleotide,
-                ids: [accession],
+                ids: chunk,
                 format: .fasta
             )
-            let fastaURL = referencesDirectory.appendingPathComponent("\(accession).fasta")
-            try data.write(to: fastaURL, options: .atomic)
-            fetched.append(accession)
-        } catch {
-            // Best effort only: missing references do not invalidate the import.
-        }
+            guard let fastaText = String(data: data, encoding: .utf8) else { continue }
 
-        let fraction = Double(index + 1) / Double(accessions.count)
-        let status = "Fetched references \(index + 1)/\(accessions.count)"
-        progress?(0.70 + (0.28 * fraction), status)
+            let records = MetagenomicsImportService.splitMultiRecordFASTA(fastaText)
+            for (accession, recordText) in records {
+                let fastaURL = referencesDirectory.appendingPathComponent("\(accession).fasta")
+                // Ensure record ends with newline for valid FASTA (required by samtools faidx)
+                let normalizedRecord = recordText.hasSuffix("\n") ? recordText : recordText + "\n"
+                try? normalizedRecord.data(using: .utf8)?.write(to: fastaURL, options: .atomic)
+                fetched.append(accession)
+            }
+        } catch {
+            // Fallback: try individual accessions in this chunk (best-effort)
+            for (i, accession) in chunk.enumerated() {
+                let individualFraction = baseFraction + (Double(i) / Double(accessions.count)) * (1.0 / Double(chunks.count))
+                progress?(0.70 + (0.28 * individualFraction), "Fetching \(accession) (fallback)")
+                do {
+                    let data = try await ncbi.efetch(
+                        database: .nucleotide,
+                        ids: [accession],
+                        format: .fasta
+                    )
+                    let fastaURL = referencesDirectory.appendingPathComponent("\(accession).fasta")
+                    try data.write(to: fastaURL, options: .atomic)
+                    fetched.append(accession)
+                } catch {
+                    // Best effort: skip failed accessions
+                }
+            }
+        }
     }
 
+    let fraction = 1.0
+    progress?(0.70 + (0.28 * fraction), "Fetched \(fetched.count)/\(accessions.count) references")
     return fetched
 }
+

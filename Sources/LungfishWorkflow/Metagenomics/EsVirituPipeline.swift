@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
-
+import LungfishCore
 import os.log
 
 private let logger = Logger(subsystem: "com.lungfish.workflow", category: "EsVirituPipeline")
@@ -358,6 +358,9 @@ public actor EsVirituPipeline {
                 )
             }
         }
+
+        OperationMarker.markInProgress(config.outputDirectory, detail: "Running EsViritu detection\u{2026}")
+        defer { OperationMarker.clearInProgress(config.outputDirectory) }
 
         progress?(0.05, "Detecting EsViritu version...")
 
