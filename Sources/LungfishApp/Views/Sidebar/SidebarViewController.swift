@@ -149,6 +149,9 @@ public class SidebarViewController: NSViewController {
     /// Current advanced-search popover (if shown).
     private var universalSearchPopover: NSPopover?
 
+    /// Spinner shown during async universal search queries.
+    private var searchSpinner: NSProgressIndicator?
+
     /// Suppresses delegate and notification callbacks during programmatic selection changes.
     private var suppressSelectionCallbacks = false
 
@@ -245,6 +248,23 @@ public class SidebarViewController: NSViewController {
         scrollView.drawsBackground = false
         containerView.addSubview(scrollView)
 
+        // Search progress indicator — shown during async universal search queries
+        let spinner = NSProgressIndicator()
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        spinner.isHidden = true
+        containerView.addSubview(spinner)
+        searchSpinner = spinner
+
+        let searchingLabel = NSTextField(labelWithString: "Searching project…")
+        searchingLabel.font = .systemFont(ofSize: 10)
+        searchingLabel.textColor = .tertiaryLabelColor
+        searchingLabel.translatesAutoresizingMaskIntoConstraints = false
+        searchingLabel.isHidden = true
+        searchingLabel.tag = 9901  // Tag for toggling visibility alongside spinner
+        containerView.addSubview(searchingLabel)
+
         // Layout constraints
         // Note: Top margin of 52 accounts for window title bar and traffic light buttons
         NSLayoutConstraint.activate([
@@ -255,6 +275,12 @@ public class SidebarViewController: NSViewController {
             advancedSearchButton.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -8),
             advancedSearchButton.centerYAnchor.constraint(equalTo: searchField.centerYAnchor),
             advancedSearchButton.widthAnchor.constraint(equalToConstant: 24),
+
+            spinner.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 4),
+            spinner.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 12),
+
+            searchingLabel.centerYAnchor.constraint(equalTo: spinner.centerYAnchor),
+            searchingLabel.leadingAnchor.constraint(equalTo: spinner.trailingAnchor, constant: 4),
 
             scrollView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 8),
             scrollView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
@@ -324,6 +350,7 @@ public class SidebarViewController: NSViewController {
         if searchText.isEmpty {
             filteredRootItems = nil
             outlineView.reloadData()
+            setSearchSpinnerVisible(false)
             return
         }
 
@@ -335,6 +362,9 @@ public class SidebarViewController: NSViewController {
         }
 
         guard let projectURL = projectURL else { return }
+
+        // Show spinner while universal search runs in the background
+        setSearchSpinnerVisible(true)
 
         universalSearchTask = Task { [weak self] in
             guard let self else { return }
@@ -364,7 +394,22 @@ public class SidebarViewController: NSViewController {
             } catch {
                 logger.debug("searchFieldChanged: universal search unavailable: \(error.localizedDescription, privacy: .public)")
             }
+
+            self.setSearchSpinnerVisible(false)
         }
+    }
+
+    /// Shows or hides the search progress spinner and label.
+    private func setSearchSpinnerVisible(_ visible: Bool) {
+        if visible {
+            searchSpinner?.isHidden = false
+            searchSpinner?.startAnimation(nil)
+        } else {
+            searchSpinner?.stopAnimation(nil)
+            searchSpinner?.isHidden = true
+        }
+        // Toggle the "Searching project…" label (tagged 9901)
+        view.subviews.first(where: { $0.tag == 9901 })?.isHidden = !visible
     }
 
     @objc private func showAdvancedSearchPopover(_ sender: NSButton) {
