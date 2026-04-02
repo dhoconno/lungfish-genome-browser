@@ -544,22 +544,33 @@ public enum MetagenomicsImportService {
             manifest.fetchedAccessions = fetchedAccessions
             try writeNaoMgsManifest(manifest, to: resultDirectory, encoder: encoder)
 
-            // Extract reference lengths from downloaded FASTA files
+            // Extract reference lengths by indexing downloaded FASTA files with samtools faidx.
+            // Each .fai index contains sequence name and length — parsed via FASTAIndex.
             var refLengths: [String: Int] = [:]
+            let runner = NativeToolRunner.shared
             if let files = try? FileManager.default.contentsOfDirectory(
                 at: referencesDirectory,
                 includingPropertiesForKeys: nil
             ) {
                 for file in files where file.pathExtension == "fasta" {
                     let accession = file.deletingPathExtension().lastPathComponent
-                    if let content = try? String(contentsOf: file, encoding: .utf8) {
-                        let seqLength = content.split(separator: "\n")
-                            .filter { !$0.hasPrefix(">") }
-                            .joined()
-                            .count
-                        if seqLength > 0 {
-                            refLengths[accession] = seqLength
+                    let faiURL = URL(fileURLWithPath: file.path + ".fai")
+                    do {
+                        let result = try await runner.run(
+                            .samtools,
+                            arguments: ["faidx", file.path],
+                            workingDirectory: referencesDirectory,
+                            timeout: 30
+                        )
+                        if result.isSuccess, FileManager.default.fileExists(atPath: faiURL.path) {
+                            let index = try FASTAIndex(url: faiURL)
+                            if let entry = index.sequenceNames.first.flatMap({ index.entry(for: $0) }) {
+                                refLengths[accession] = entry.length
+                            }
                         }
+                    } catch {
+                        // Best-effort: skip accessions where indexing fails
+                        logger.warning("Failed to index \(accession).fasta: \(error.localizedDescription, privacy: .public)")
                     }
                 }
             }
