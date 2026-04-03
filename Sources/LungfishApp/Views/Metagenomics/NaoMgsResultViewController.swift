@@ -282,15 +282,16 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
             allSamples = []
         }
 
-        // Compute common prefix for display names
+        // Resolve human-readable display names via manifest lookup.
+        // bundleURL is the .lungfishfastq bundle; project is its parent.
         let sampleNames = allSamples.map(\.sample)
-        strippedPrefix = ClassifierSamplePickerView.commonPrefix(of: sampleNames)
+        let projectURL = bundleURL?.deletingLastPathComponent()
+        strippedPrefix = ""
 
-        // Create sample entries with stripped display names
+        // Create sample entries with resolved display names
         sampleEntries = allSamples.map { item in
-            let displayName = strippedPrefix.isEmpty
-                ? item.sample
-                : String(item.sample.dropFirst(strippedPrefix.count))
+            let displayName = FASTQDisplayNameResolver.resolveDisplayName(
+                sampleId: item.sample, projectURL: projectURL)
             return NaoMgsSampleEntry(id: item.sample, displayName: displayName, hitCount: item.hitCount)
         }
 

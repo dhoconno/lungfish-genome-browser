@@ -127,6 +127,9 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     /// Distinct sample identifiers discovered from the metrics, in natural order.
     private(set) var sampleIds: [String] = []
 
+    /// Resolved human-readable display names keyed by raw sample ID.
+    private var resolvedDisplayNames: [String: String] = [:]
+
     /// Currently selected sample filter index (0 = "All Samples", 1.. = per-sample).
     private(set) var selectedSampleIndex: Int = 0
 
@@ -536,6 +539,18 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         // Extract distinct sample IDs from metrics for the sample filter control.
         let discoveredSamples = extractSampleIds(from: metrics)
         sampleIds = discoveredSamples
+
+        // Resolve human-readable display names for each sample ID.
+        // Derive project URL by walking up from the output directory:
+        // outputDirectory = project/bundle.lungfishfastq/derivatives/taxtriage-*/
+        let projectURL = result.outputDirectory
+            .deletingLastPathComponent()  // derivatives/
+            .deletingLastPathComponent()  // bundle.lungfishfastq/
+            .deletingLastPathComponent()  // project/
+        resolvedDisplayNames = Dictionary(uniqueKeysWithValues: discoveredSamples.map { sampleId in
+            (sampleId, FASTQDisplayNameResolver.resolveDisplayName(sampleId: sampleId, projectURL: projectURL))
+        })
+
         rebuildSampleFilterSegments()
 
         // Update summary bar
@@ -625,12 +640,10 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         logger.info("Configured with \(mergedRows.count) organisms, \(result.metricsFiles.count) metrics files, \(result.kronaFiles.count) Krona files")
 
         // Build sample picker entries for the Inspector.
-        let sampleNames = sampleIds
-        let prefix = ClassifierSamplePickerView.commonPrefix(of: sampleNames)
-        strippedPrefix = prefix
+        strippedPrefix = ""
         sampleEntries = sampleIds.map { sampleId in
             let count = metrics.filter { $0.sample == sampleId }.count
-            let display = prefix.isEmpty ? sampleId : String(sampleId.dropFirst(prefix.count))
+            let display = resolvedDisplayNames[sampleId] ?? sampleId
             return TaxTriageSampleEntry(id: sampleId, displayName: display, organismCount: count)
         }
         samplePickerState = ClassifierSamplePickerState(allSamples: Set(sampleIds))
@@ -866,7 +879,8 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         sampleFilterControl.segmentCount = ids.count + 1
         sampleFilterControl.setLabel("All Samples", forSegment: 0)
         for (i, sampleId) in ids.enumerated() {
-            sampleFilterControl.setLabel(sampleId, forSegment: i + 1)
+            let display = resolvedDisplayNames[sampleId] ?? sampleId
+            sampleFilterControl.setLabel(display, forSegment: i + 1)
         }
 
         // Apply pre-selected sample if set by sidebar routing

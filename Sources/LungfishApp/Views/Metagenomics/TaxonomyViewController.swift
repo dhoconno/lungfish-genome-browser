@@ -327,13 +327,20 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
 
         logger.info("Configured with \(result.tree.totalReads) reads, \(result.tree.speciesCount) species")
 
-        // Build single-sample picker entry from classification result
-        let sampleName = result.config.sampleDisplayName
+        // Build single-sample picker entry from classification result.
+        // Resolve human-readable display name via manifest lookup.
+        let rawSampleName = result.config.sampleDisplayName
             ?? result.config.inputFiles.first?
                 .deletingPathExtension().lastPathComponent
             ?? "sample"
+        let projectURL = result.config.outputDirectory
+            .deletingLastPathComponent()  // derivatives/
+            .deletingLastPathComponent()  // bundle.lungfishfastq/
+            .deletingLastPathComponent()  // project/
+        let sampleName = FASTQDisplayNameResolver.resolveDisplayName(
+            sampleId: rawSampleName, projectURL: projectURL)
         sampleEntries = [Kraken2SampleEntry(
-            id: sampleName,
+            id: rawSampleName,
             displayName: sampleName,
             classifiedReads: result.tree.classifiedReads
         )]

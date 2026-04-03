@@ -394,15 +394,16 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
             allSamples = []
         }
 
-        // Compute common prefix for display names
+        // Resolve human-readable display names via manifest lookup.
+        // bundleURL is the .lungfishfastq bundle; project is its parent.
         let sampleNames = allSamples.map(\.sampleId)
-        strippedPrefix = NvdDataConverter.commonPrefix(of: sampleNames)
+        let projectURL = bundleURL.deletingLastPathComponent()
+        strippedPrefix = ""
 
-        // Create sample entries with stripped display names
+        // Create sample entries with resolved display names
         sampleEntries = allSamples.map { sample in
-            let displayName = strippedPrefix.isEmpty
-                ? sample.sampleId
-                : String(sample.sampleId.dropFirst(strippedPrefix.count))
+            let displayName = FASTQDisplayNameResolver.resolveDisplayName(
+                sampleId: sample.sampleId, projectURL: projectURL)
             return NvdSampleEntry(
                 id: sample.sampleId,
                 displayName: displayName,

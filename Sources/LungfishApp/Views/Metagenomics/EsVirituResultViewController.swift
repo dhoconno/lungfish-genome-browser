@@ -315,10 +315,17 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             scheduleUniqueReadComputation(assemblies: result.assemblies, bamURL: bamURL, bamIndexURL: bamIndexURL)
         }
 
-        // Build single-sample picker entry from EsViritu result
-        let sampleName = result.sampleId
+        // Build single-sample picker entry from EsViritu result.
+        // Resolve human-readable display name via manifest lookup.
+        let rawSampleName = result.sampleId
+        let esProjectURL = config?.outputDirectory
+            .deletingLastPathComponent()  // derivatives/
+            .deletingLastPathComponent()  // bundle.lungfishfastq/
+            .deletingLastPathComponent()  // project/
+        let sampleName = FASTQDisplayNameResolver.resolveDisplayName(
+            sampleId: rawSampleName, projectURL: esProjectURL)
         sampleEntries = [EsVirituSampleEntry(
-            id: sampleName,
+            id: rawSampleName,
             displayName: sampleName,
             detectedVirusCount: result.assemblies.count
         )]
