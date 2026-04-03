@@ -133,6 +133,39 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     /// Optional pre-selected sample ID set by sidebar routing before `configure` runs.
     var preselectedSampleId: String?
 
+    // MARK: - Multi-Selection Placeholder
+
+    private lazy var multiSelectionPlaceholder: NSView = {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let primary = NSTextField(labelWithString: "")
+        primary.font = .systemFont(ofSize: 13, weight: .semibold)
+        primary.alignment = .center
+        primary.translatesAutoresizingMaskIntoConstraints = false
+
+        let secondary = NSTextField(labelWithString: "Select a single row to view details")
+        secondary.font = .systemFont(ofSize: 11)
+        secondary.textColor = .tertiaryLabelColor
+        secondary.alignment = .center
+        secondary.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [primary, secondary])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 4
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+        ])
+
+        container.isHidden = true
+        return container
+    }()
+
     // MARK: - Child Views
 
     private let summaryBar = TaxTriageSummaryBar()
@@ -1011,6 +1044,15 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         splitView.addArrangedSubview(leftPaneContainer)
         splitView.addArrangedSubview(tableContainer)
 
+        // Multi-selection placeholder overlay on the left pane container
+        leftPaneContainer.addSubview(multiSelectionPlaceholder)
+        NSLayoutConstraint.activate([
+            multiSelectionPlaceholder.topAnchor.constraint(equalTo: leftPaneContainer.topAnchor),
+            multiSelectionPlaceholder.bottomAnchor.constraint(equalTo: leftPaneContainer.bottomAnchor),
+            multiSelectionPlaceholder.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor),
+            multiSelectionPlaceholder.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor),
+        ])
+
         splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
         splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
 
@@ -1717,9 +1759,19 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     // MARK: - Callback Wiring
 
     private func wireCallbacks() {
+        // Table multi-selection -> placeholder + action bar update
+        organismTableView.onMultipleRowsSelected = { [weak self] count in
+            guard let self else { return }
+            self.showMultiSelectionPlaceholder(count: count)
+            self.actionBar.updateInfoText("\(count) items selected")
+            self.actionBar.setBlastEnabled(false, reason: "Select a single row to use BLAST Verify")
+            self.actionBar.setExtractEnabled(true)
+        }
+
         // Table selection -> action bar update + BAM viewer update
         organismTableView.onRowSelected = { [weak self] row in
             guard let self else { return }
+            self.hideMultiSelectionPlaceholder()
             self.selectedOrganismName = row?.organism
             self.selectedReadCount = row?.reads
             self.updateActionBarForOrganism(
@@ -1908,6 +1960,22 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         min(proposedMaximumPosition, splitView.bounds.width - 300)
     }
 
+    // MARK: - Multi-Selection Helpers
+
+    private func showMultiSelectionPlaceholder(count: Int) {
+        if let stack = multiSelectionPlaceholder.subviews.first as? NSStackView,
+           let primary = stack.arrangedSubviews.first as? NSTextField {
+            primary.stringValue = "\(count) items selected"
+        }
+        miniBAMController?.view.isHidden = true
+        multiSelectionPlaceholder.isHidden = false
+    }
+
+    private func hideMultiSelectionPlaceholder() {
+        multiSelectionPlaceholder.isHidden = true
+        // miniBAMController visibility is managed by the row selection handler
+    }
+
     // MARK: - Action Bar Selection Helper
 
     /// Updates the unified action bar info text from organism selection.
@@ -1923,8 +1991,12 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             } else {
                 actionBar.updateInfoText("\(name) \u{2014} \(readStr) reads")
             }
+            actionBar.setBlastEnabled(true)
+            actionBar.setExtractEnabled(true)
         } else {
             actionBar.updateInfoText("Select an organism to view details")
+            actionBar.setBlastEnabled(false, reason: "Select a row to use BLAST Verify")
+            actionBar.setExtractEnabled(false)
         }
     }
 
@@ -2340,6 +2412,9 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
     /// Called when a row is selected. Passes nil for deselection.
     var onRowSelected: ((TaxTriageTableRow?) -> Void)?
 
+    /// Called when multiple rows are selected. Parameter is the count.
+    var onMultipleRowsSelected: ((Int) -> Void)?
+
     /// Called when the user requests BLAST verification for a row with a chosen read count.
     var onBlastRequested: ((TaxTriageTableRow, Int) -> Void)?
 
@@ -2435,6 +2510,7 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
         tableView.dataSource = self
         tableView.delegate = self
         tableView.usesAlternatingRowBackgroundColors = true
+        tableView.allowsMultipleSelection = true
         tableView.allowsColumnReordering = true
         tableView.allowsColumnResizing = true
         tableView.allowsColumnSelection = false
@@ -2723,9 +2799,11 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        let selectedRow = tableView.selectedRow
-        if selectedRow >= 0, selectedRow < sortedRows.count {
-            onRowSelected?(sortedRows[selectedRow])
+        let selectedIndexes = tableView.selectedRowIndexes
+        if selectedIndexes.count > 1 {
+            onMultipleRowsSelected?(selectedIndexes.count)
+        } else if selectedIndexes.count == 1, let idx = selectedIndexes.first, idx < sortedRows.count {
+            onRowSelected?(sortedRows[idx])
         } else {
             onRowSelected?(nil)
         }

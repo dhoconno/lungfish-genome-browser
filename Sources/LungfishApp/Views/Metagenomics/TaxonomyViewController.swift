@@ -139,6 +139,39 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
         return btn
     }()
 
+    // MARK: - Multi-Selection Placeholder
+
+    private lazy var multiSelectionPlaceholder: NSView = {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let primary = NSTextField(labelWithString: "")
+        primary.font = .systemFont(ofSize: 13, weight: .semibold)
+        primary.alignment = .center
+        primary.translatesAutoresizingMaskIntoConstraints = false
+
+        let secondary = NSTextField(labelWithString: "Select a single row to view details")
+        secondary.font = .systemFont(ofSize: 11)
+        secondary.textColor = .tertiaryLabelColor
+        secondary.alignment = .center
+        secondary.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [primary, secondary])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 4
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+        ])
+
+        container.isHidden = true
+        return container
+    }()
+
     // MARK: - Action Bar State
 
     /// The currently selected taxon node (for info text updates).
@@ -390,6 +423,15 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
         sunburstView.autoresizingMask = [.width, .height]
         sunburstContainer.addSubview(sunburstView)
 
+        // Multi-selection placeholder overlay on the sunburst container
+        sunburstContainer.addSubview(multiSelectionPlaceholder)
+        NSLayoutConstraint.activate([
+            multiSelectionPlaceholder.topAnchor.constraint(equalTo: sunburstContainer.topAnchor),
+            multiSelectionPlaceholder.bottomAnchor.constraint(equalTo: sunburstContainer.bottomAnchor),
+            multiSelectionPlaceholder.leadingAnchor.constraint(equalTo: sunburstContainer.leadingAnchor),
+            multiSelectionPlaceholder.trailingAnchor.constraint(equalTo: sunburstContainer.trailingAnchor),
+        ])
+
         // Table container (right pane)
         let tableContainer = NSView()
         taxonomyTableView.autoresizingMask = [.width, .height]
@@ -452,6 +494,7 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
             guard let self, !self.suppressSelectionSync else { return }
             self.suppressSelectionSync = true
             self.taxonomyTableView.selectAndScrollTo(node: node)
+            self.hideMultiSelectionPlaceholder()
             self.updateActionBarSelection(node)
             self.suppressSelectionSync = false
         }
@@ -485,7 +528,21 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
             guard let self, !self.suppressSelectionSync else { return }
             self.suppressSelectionSync = true
             self.sunburstView.selectedNode = node
+            self.hideMultiSelectionPlaceholder()
             self.updateActionBarSelection(node)
+            self.actionBar.setExtractEnabled(true)
+            self.suppressSelectionSync = false
+        }
+
+        // Table multi-selection -> placeholder + action bar update
+        taxonomyTableView.onMultipleNodesSelected = { [weak self] count in
+            guard let self else { return }
+            self.suppressSelectionSync = true
+            self.sunburstView.selectedNode = nil
+            self.showMultiSelectionPlaceholder(count: count)
+            self.actionBar.updateInfoText("\(count) items selected")
+            self.actionBar.setBlastEnabled(false, reason: "Select a single row to use BLAST Verify")
+            self.actionBar.setExtractEnabled(true)
             self.suppressSelectionSync = false
         }
 
@@ -617,6 +674,22 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
         toggleBlastResultsTab()
     }
 
+    // MARK: - Multi-Selection Helpers
+
+    private func showMultiSelectionPlaceholder(count: Int) {
+        if let stack = multiSelectionPlaceholder.subviews.first as? NSStackView,
+           let primary = stack.arrangedSubviews.first as? NSTextField {
+            primary.stringValue = "\(count) items selected"
+        }
+        sunburstView.isHidden = true
+        multiSelectionPlaceholder.isHidden = false
+    }
+
+    private func hideMultiSelectionPlaceholder() {
+        multiSelectionPlaceholder.isHidden = true
+        sunburstView.isHidden = false
+    }
+
     // MARK: - Action Bar Selection Helper
 
     /// Updates the unified action bar info text and BLAST button state from a taxon node.
@@ -636,9 +709,11 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
 
             actionBar.updateInfoText("\(node.name) \u{2014} \(readStr) reads (\(pctStr))")
             actionBar.setBlastEnabled(true)
+            actionBar.setExtractEnabled(true)
         } else {
             actionBar.updateInfoText("Select a taxon to view details")
-            actionBar.setBlastEnabled(false)
+            actionBar.setBlastEnabled(false, reason: "Select a row to use BLAST Verify")
+            actionBar.setExtractEnabled(false)
         }
     }
 

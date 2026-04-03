@@ -148,6 +148,9 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
     /// Called when the user selects a detection (contig) row.
     public var onDetectionSelected: ((ViralDetection) -> Void)?
 
+    /// Called when multiple rows are selected. Parameter is the count.
+    public var onMultipleSelected: ((Int) -> Void)?
+
     /// Called when the user requests BLAST verification via context menu.
     ///
     /// Parameters:
@@ -326,7 +329,7 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         outlineView.usesAlternatingRowBackgroundColors = true
         outlineView.rowHeight = 24
         outlineView.allowsColumnReordering = true
-        outlineView.allowsMultipleSelection = false
+        outlineView.allowsMultipleSelection = true
         outlineView.headerView = NSTableHeaderView()
         outlineView.indentationPerLevel = 16
 
@@ -845,6 +848,12 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
 
     public func outlineViewSelectionDidChange(_ notification: Notification) {
         guard !suppressSelectionCallback else { return }
+
+        let selectedRows = outlineView.selectedRowIndexes
+        if selectedRows.count > 1 {
+            onMultipleSelected?(selectedRows.count)
+            return
+        }
 
         let row = outlineView.selectedRow
         guard row >= 0 else {

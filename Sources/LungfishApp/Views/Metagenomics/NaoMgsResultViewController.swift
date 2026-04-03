@@ -111,6 +111,39 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     private let detailContentView = FlippedNaoMgsContentView()
     let actionBar = ClassifierActionBar()
 
+    // MARK: - Multi-Selection Placeholder
+
+    private lazy var multiSelectionPlaceholder: NSView = {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let primary = NSTextField(labelWithString: "")
+        primary.font = .systemFont(ofSize: 13, weight: .semibold)
+        primary.alignment = .center
+        primary.translatesAutoresizingMaskIntoConstraints = false
+
+        let secondary = NSTextField(labelWithString: "Select a single row to view details")
+        secondary.font = .systemFont(ofSize: 11)
+        secondary.textColor = .tertiaryLabelColor
+        secondary.alignment = .center
+        secondary.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [primary, secondary])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 4
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+        ])
+
+        container.isHidden = true
+        return container
+    }()
+
     // MARK: - MiniBAM
 
     /// Embedded miniBAM controllers currently shown in the detail pane.
@@ -471,9 +504,11 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         selectedRow = nil
         selectedAccession = nil
 
+        hideMultiSelectionPlaceholder()
         rebuildDetailContent()
         actionBar.updateInfoText("Select a taxon to view details")
-        actionBar.setBlastEnabled(false)
+        actionBar.setBlastEnabled(false, reason: "Select a row to use BLAST Verify")
+        actionBar.setExtractEnabled(false)
     }
 
     /// Shows the detail pane for the selected taxon row.
@@ -482,9 +517,11 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         miniBAMLoadingTask = nil
         selectedRow = row
         selectedAccession = nil
+        hideMultiSelectionPlaceholder()
         rebuildDetailContent()
         // Create a lightweight summary for the action bar
         updateActionBarForRow(row, totalHits: (try? database?.totalHitCount(samples: Array(selectedSamples))) ?? 0)
+        actionBar.setExtractEnabled(true)
     }
 
     /// Stores accession selection from legacy list/table widgets.
@@ -1179,6 +1216,15 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         splitView.addArrangedSubview(detail)
         splitView.addArrangedSubview(tableCont)
 
+        // Multi-selection placeholder overlay on the detail container
+        detail.addSubview(multiSelectionPlaceholder)
+        NSLayoutConstraint.activate([
+            multiSelectionPlaceholder.topAnchor.constraint(equalTo: detail.topAnchor),
+            multiSelectionPlaceholder.bottomAnchor.constraint(equalTo: detail.bottomAnchor),
+            multiSelectionPlaceholder.leadingAnchor.constraint(equalTo: detail.leadingAnchor),
+            multiSelectionPlaceholder.trailingAnchor.constraint(equalTo: detail.trailingAnchor),
+        ])
+
         // Table pane resizes first; detail pane holds width firmly.
         splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
         splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
@@ -1196,7 +1242,7 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     private func setupTaxonomyTable() {
         taxonomyTableView.headerView = NSTableHeaderView()
         taxonomyTableView.usesAlternatingRowBackgroundColors = true
-        taxonomyTableView.allowsMultipleSelection = false
+        taxonomyTableView.allowsMultipleSelection = true
         taxonomyTableView.allowsColumnReordering = true
         taxonomyTableView.allowsColumnResizing = true
         taxonomyTableView.style = .inset
@@ -1777,6 +1823,30 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         min(proposedMaximumPosition, splitView.bounds.width - 300)
     }
 
+    // MARK: - Multi-Selection Helpers
+
+    private func showMultiSelectionPlaceholder(count: Int) {
+        miniBAMLoadingTask?.cancel()
+        miniBAMLoadingTask = nil
+        selectedRow = nil
+        selectedAccession = nil
+
+        if let stack = multiSelectionPlaceholder.subviews.first as? NSStackView,
+           let primary = stack.arrangedSubviews.first as? NSTextField {
+            primary.stringValue = "\(count) items selected"
+        }
+        detailScrollView.isHidden = true
+        multiSelectionPlaceholder.isHidden = false
+        actionBar.updateInfoText("\(count) items selected")
+        actionBar.setBlastEnabled(false, reason: "Select a single row to use BLAST Verify")
+        actionBar.setExtractEnabled(true)
+    }
+
+    private func hideMultiSelectionPlaceholder() {
+        multiSelectionPlaceholder.isHidden = true
+        detailScrollView.isHidden = false
+    }
+
     // MARK: - Action Bar Selection Helper
 
     /// Updates the unified action bar info text from a taxon row.
@@ -1961,9 +2031,10 @@ extension NaoMgsResultViewController: NSTableViewDelegate {
     public func tableViewSelectionDidChange(_ notification: Notification) {
         guard !suppressSelectionSync else { return }
 
-        let row = taxonomyTableView.selectedRow
-
-        if row >= 0, row < displayedRows.count {
+        let selectedIndexes = taxonomyTableView.selectedRowIndexes
+        if selectedIndexes.count > 1 {
+            showMultiSelectionPlaceholder(count: selectedIndexes.count)
+        } else if selectedIndexes.count == 1, let row = selectedIndexes.first, row < displayedRows.count {
             showTaxonDetail(displayedRows[row])
         } else {
             showOverview()

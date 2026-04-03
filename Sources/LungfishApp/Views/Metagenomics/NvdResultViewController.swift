@@ -227,6 +227,39 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
     let actionBar = ClassifierActionBar()
     private let groupingSegment = NSSegmentedControl(labels: ["By Sample", "By Taxon"], trackingMode: .selectOne, target: nil, action: nil)
 
+    // MARK: - Multi-Selection Placeholder
+
+    private lazy var multiSelectionPlaceholder: NSView = {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let primary = NSTextField(labelWithString: "")
+        primary.font = .systemFont(ofSize: 13, weight: .semibold)
+        primary.alignment = .center
+        primary.translatesAutoresizingMaskIntoConstraints = false
+
+        let secondary = NSTextField(labelWithString: "Select a single row to view details")
+        secondary.font = .systemFont(ofSize: 11)
+        secondary.textColor = .tertiaryLabelColor
+        secondary.alignment = .center
+        secondary.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [primary, secondary])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 4
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+        ])
+
+        container.isHidden = true
+        return container
+    }()
+
     // MARK: - MiniBAM
 
     private var miniBAMController: MiniBAMViewController?
@@ -481,6 +514,7 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
 
     private func showOverview() {
         teardownMiniBAM()
+        hideMultiSelectionPlaceholder()
 
         for subview in detailContentView.subviews {
             subview.removeFromSuperview()
@@ -516,6 +550,7 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
 
     private func showContigDetail(_ hit: NvdBlastHit) {
         teardownMiniBAM()
+        hideMultiSelectionPlaceholder()
 
         for subview in detailContentView.subviews {
             subview.removeFromSuperview()
@@ -875,6 +910,15 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
         splitView.addArrangedSubview(detail)
         splitView.addArrangedSubview(outlineCont)
 
+        // Multi-selection placeholder overlay on the detail container
+        detail.addSubview(multiSelectionPlaceholder)
+        NSLayoutConstraint.activate([
+            multiSelectionPlaceholder.topAnchor.constraint(equalTo: detail.topAnchor),
+            multiSelectionPlaceholder.bottomAnchor.constraint(equalTo: detail.bottomAnchor),
+            multiSelectionPlaceholder.leadingAnchor.constraint(equalTo: detail.leadingAnchor),
+            multiSelectionPlaceholder.trailingAnchor.constraint(equalTo: detail.trailingAnchor),
+        ])
+
         // Outline pane resizes first; detail pane holds width firmly.
         splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
         splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
@@ -888,7 +932,7 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
     private func setupOutlineView() {
         outlineView.headerView = NSTableHeaderView()
         outlineView.usesAlternatingRowBackgroundColors = true
-        outlineView.allowsMultipleSelection = false
+        outlineView.allowsMultipleSelection = true
         outlineView.allowsColumnReordering = true
         outlineView.allowsColumnResizing = true
         outlineView.style = .inset
@@ -1465,6 +1509,27 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
         }
     }
 
+    // MARK: - Multi-Selection Helpers
+
+    private func showMultiSelectionPlaceholder(count: Int) {
+        teardownMiniBAM()
+
+        if let stack = multiSelectionPlaceholder.subviews.first as? NSStackView,
+           let primary = stack.arrangedSubviews.first as? NSTextField {
+            primary.stringValue = "\(count) items selected"
+        }
+        detailScrollView.isHidden = true
+        multiSelectionPlaceholder.isHidden = false
+        actionBar.updateInfoText("\(count) items selected")
+        actionBar.setBlastEnabled(false, reason: "Select a single row to use BLAST Verify")
+        actionBar.setExtractEnabled(true)
+    }
+
+    private func hideMultiSelectionPlaceholder() {
+        multiSelectionPlaceholder.isHidden = true
+        detailScrollView.isHidden = false
+    }
+
     // MARK: - Action Bar Selection Helper
 
     /// Updates the unified action bar info text from a BLAST hit.
@@ -1474,9 +1539,11 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
             let classification = hit.adjustedTaxidName.isEmpty ? "Unclassified" : hit.adjustedTaxidName
             actionBar.updateInfoText("\(displayName) \u{2014} \(classification)")
             actionBar.setBlastEnabled(true)
+            actionBar.setExtractEnabled(true)
         } else {
             actionBar.updateInfoText("Select a contig to view details")
-            actionBar.setBlastEnabled(false)
+            actionBar.setBlastEnabled(false, reason: "Select a row to use BLAST Verify")
+            actionBar.setExtractEnabled(false)
         }
     }
 
@@ -1774,6 +1841,12 @@ extension NvdResultViewController {
 
     public func outlineViewSelectionDidChange(_ notification: Notification) {
         guard !suppressSelectionSync else { return }
+
+        let selectedIndexes = outlineView.selectedRowIndexes
+        if selectedIndexes.count > 1 {
+            showMultiSelectionPlaceholder(count: selectedIndexes.count)
+            return
+        }
 
         let row = outlineView.selectedRow
         guard row >= 0, let item = outlineView.item(atRow: row) as? NvdOutlineItem else {

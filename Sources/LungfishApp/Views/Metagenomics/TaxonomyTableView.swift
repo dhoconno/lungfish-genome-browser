@@ -66,6 +66,9 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     /// Called when the user selects a row.
     public var onNodeSelected: ((TaxonNode) -> Void)?
 
+    /// Called when multiple rows are selected. Parameter is the count.
+    public var onMultipleNodesSelected: ((Int) -> Void)?
+
     /// Called when the user right-clicks a row to extract sequences.
     public var onExtractRequested: ((TaxonNode) -> Void)?
 
@@ -218,7 +221,7 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         outlineView.usesAlternatingRowBackgroundColors = true
         outlineView.rowHeight = 22
         outlineView.allowsColumnReordering = false
-        outlineView.allowsMultipleSelection = false
+        outlineView.allowsMultipleSelection = true
         outlineView.headerView = NSTableHeaderView()
         outlineView.indentationPerLevel = 16
 
@@ -687,14 +690,22 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     public func outlineViewSelectionDidChange(_ notification: Notification) {
         guard !suppressSelectionCallback else { return }
 
-        let row = outlineView.selectedRow
-        guard row >= 0, let node = outlineView.item(atRow: row) as? TaxonNode else {
+        let selectedRows = outlineView.selectedRowIndexes
+        if selectedRows.count == 1 {
+            let row = selectedRows.first!
+            guard let node = outlineView.item(atRow: row) as? TaxonNode else {
+                onNodeSelected?(tree!.root)
+                return
+            }
+            selectedNode = node
+            onNodeSelected?(node)
+        } else if selectedRows.count > 1 {
+            selectedNode = nil
+            onMultipleNodesSelected?(selectedRows.count)
+        } else {
+            selectedNode = nil
             onNodeSelected?(tree!.root)
-            return
         }
-
-        selectedNode = node
-        onNodeSelected?(node)
     }
 
     // MARK: - Cell Factories

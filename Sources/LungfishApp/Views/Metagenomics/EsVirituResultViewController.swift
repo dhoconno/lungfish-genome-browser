@@ -86,6 +86,39 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     let actionBar = ClassifierActionBar()
     private var splitViewBottomConstraint: NSLayoutConstraint?
 
+    // MARK: - Multi-Selection Placeholder
+
+    private lazy var multiSelectionPlaceholder: NSView = {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let primary = NSTextField(labelWithString: "")
+        primary.font = .systemFont(ofSize: 13, weight: .semibold)
+        primary.alignment = .center
+        primary.translatesAutoresizingMaskIntoConstraints = false
+
+        let secondary = NSTextField(labelWithString: "Select a single row to view details")
+        secondary.font = .systemFont(ofSize: 11)
+        secondary.textColor = .tertiaryLabelColor
+        secondary.alignment = .center
+        secondary.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [primary, secondary])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 4
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+        ])
+
+        container.isHidden = true
+        return container
+    }()
+
     // MARK: - Split View State
 
     /// Whether the initial divider position has been applied.
@@ -454,6 +487,15 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         detailPane.autoresizingMask = [.width, .height]
         detailContainer.addSubview(detailPane)
 
+        // Multi-selection placeholder overlay on the detail container
+        detailContainer.addSubview(multiSelectionPlaceholder)
+        NSLayoutConstraint.activate([
+            multiSelectionPlaceholder.topAnchor.constraint(equalTo: detailContainer.topAnchor),
+            multiSelectionPlaceholder.bottomAnchor.constraint(equalTo: detailContainer.bottomAnchor),
+            multiSelectionPlaceholder.leadingAnchor.constraint(equalTo: detailContainer.leadingAnchor),
+            multiSelectionPlaceholder.trailingAnchor.constraint(equalTo: detailContainer.trailingAnchor),
+        ])
+
         // Table container (right pane)
         let tableContainer = NSView()
         detectionTableView.autoresizingMask = [.width, .height]
@@ -509,14 +551,25 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         // Table selection -> detail pane + action bar update
         detectionTableView.onAssemblySelected = { [weak self] assembly in
             guard let self else { return }
+            self.hideMultiSelectionPlaceholder()
             if let assembly {
                 // Update action bar with selection info
                 self.updateActionBarForAssembly(name: assembly.name, readCount: assembly.totalReads)
-
+                self.actionBar.setExtractEnabled(true)
                 self.showAssemblyDetail(assembly)
             } else {
                 self.showOverview()
+                self.actionBar.setExtractEnabled(false)
             }
+        }
+
+        // Table multi-selection -> placeholder + action bar update
+        detectionTableView.onMultipleSelected = { [weak self] count in
+            guard let self else { return }
+            self.showMultiSelectionPlaceholder(count: count)
+            self.actionBar.updateInfoText("\(count) items selected")
+            self.actionBar.setBlastEnabled(false, reason: "Select a single row to use BLAST Verify")
+            self.actionBar.setExtractEnabled(true)
         }
 
         // Detail pane "View Alignments" button -> forward to host VC
@@ -531,7 +584,9 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         // Table detection selection -> action bar update
         detectionTableView.onDetectionSelected = { [weak self] detection in
             guard let self else { return }
+            self.hideMultiSelectionPlaceholder()
             self.updateActionBarForAssembly(name: detection.name, readCount: detection.readCount)
+            self.actionBar.setExtractEnabled(true)
 
             guard let assembly = self.resolveAssembly(for: detection) else {
                 logger.warning("Unable to resolve parent assembly for detection \(detection.accession, privacy: .public)")
@@ -754,6 +809,22 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         ofSubviewAt dividerIndex: Int
     ) -> CGFloat {
         min(proposedMaximumPosition, splitView.bounds.width - 300)
+    }
+
+    // MARK: - Multi-Selection Helpers
+
+    private func showMultiSelectionPlaceholder(count: Int) {
+        if let stack = multiSelectionPlaceholder.subviews.first as? NSStackView,
+           let primary = stack.arrangedSubviews.first as? NSTextField {
+            primary.stringValue = "\(count) items selected"
+        }
+        detailPane.isHidden = true
+        multiSelectionPlaceholder.isHidden = false
+    }
+
+    private func hideMultiSelectionPlaceholder() {
+        multiSelectionPlaceholder.isHidden = true
+        detailPane.isHidden = false
     }
 
     // MARK: - Action Bar Selection Helper
