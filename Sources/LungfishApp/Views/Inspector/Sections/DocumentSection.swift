@@ -117,6 +117,11 @@ public final class DocumentSectionViewModel {
     /// Common prefix stripped from classifier sample display names.
     var classifierStrippedPrefix: String = ""
 
+    /// Sample metadata store for the current classifier bundle.
+    var sampleMetadataStore: SampleMetadataStore?
+    /// Bundle attachment store for the current classifier bundle.
+    var bundleAttachmentStore: BundleAttachmentStore?
+
     /// Whether any content is available for display (bundle, FASTQ, SRA, NAO-MGS, or NVD metadata).
     var hasAnyContent: Bool {
         manifest != nil || fastqStatistics != nil || sraRunInfo != nil || enaReadRecord != nil || naoMgsManifest != nil || nvdManifest != nil

@@ -816,11 +816,15 @@ public class InspectorViewController: NSViewController {
     func updateClassifierSampleState(
         pickerState: ClassifierSamplePickerState,
         entries: [any ClassifierSampleEntry],
-        strippedPrefix: String
+        strippedPrefix: String,
+        metadata: SampleMetadataStore? = nil,
+        attachments: BundleAttachmentStore? = nil
     ) {
         viewModel.documentSectionViewModel.classifierPickerState = pickerState
         viewModel.documentSectionViewModel.classifierSampleEntries = entries
         viewModel.documentSectionViewModel.classifierStrippedPrefix = strippedPrefix
+        viewModel.documentSectionViewModel.sampleMetadataStore = metadata
+        viewModel.documentSectionViewModel.bundleAttachmentStore = attachments
     }
 
     /// Updates the NVD manifest in the Document section.
@@ -1534,6 +1538,18 @@ private struct MetagenomicsResultSummarySection: View {
                 .onChange(of: pickerState.selectedSamples) { _, _ in
                     NotificationCenter.default.post(name: .metagenomicsSampleSelectionChanged, object: nil)
                 }
+            }
+
+            // Sample Metadata section
+            if let metadataStore = viewModel.sampleMetadataStore {
+                Divider().padding(.vertical, 4)
+                SampleMetadataSection(store: metadataStore)
+            }
+
+            // Attachments section
+            if let attachmentStore = viewModel.bundleAttachmentStore {
+                Divider().padding(.vertical, 4)
+                AttachmentsSection(store: attachmentStore)
             }
         }
     }
