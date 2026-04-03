@@ -63,6 +63,21 @@ private final class NvdDetailContainer: NSView {
         scrollView.drawsBackground = false
         scrollView.documentView = contentView
         scrollView.autoresizingMask = [.width, .height]
+
+        // Ensure the content view fills at least the visible area so
+        // subviews pinned to its bottom edge use the full height.
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        let minHeight = contentView.heightAnchor.constraint(
+            greaterThanOrEqualTo: scrollView.contentView.heightAnchor
+        )
+        minHeight.priority = .defaultHigh
+        minHeight.isActive = true
+
+        // Width tracks the clip view
+        contentView.widthAnchor.constraint(
+            equalTo: scrollView.contentView.widthAnchor
+        ).isActive = true
+
         addSubview(scrollView)
     }
 
