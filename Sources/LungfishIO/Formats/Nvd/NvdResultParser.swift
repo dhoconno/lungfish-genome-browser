@@ -128,6 +128,62 @@ public struct NvdBlastHit: Sendable, Codable, Equatable {
     ///
     /// Returns 0.0 when totalReads is zero.
     public let readsPerBillion: Double
+
+    // MARK: - Init
+
+    public init(
+        experiment: String,
+        blastTask: String,
+        sampleId: String,
+        qseqid: String,
+        qlen: Int,
+        sseqid: String,
+        stitle: String,
+        taxRank: String,
+        length: Int,
+        pident: Double,
+        evalue: Double,
+        bitscore: Double,
+        sscinames: String,
+        staxids: String,
+        blastDbVersion: String,
+        snakemakeRunId: String,
+        mappedReads: Int,
+        totalReads: Int,
+        statDbVersion: String,
+        adjustedTaxid: String,
+        adjustmentMethod: String,
+        adjustedTaxidName: String,
+        adjustedTaxidRank: String,
+        hitRank: Int,
+        readsPerBillion: Double
+    ) {
+        self.experiment = experiment
+        self.blastTask = blastTask
+        self.sampleId = sampleId
+        self.qseqid = qseqid
+        self.qlen = qlen
+        self.sseqid = sseqid
+        self.stitle = stitle
+        self.taxRank = taxRank
+        self.length = length
+        self.pident = pident
+        self.evalue = evalue
+        self.bitscore = bitscore
+        self.sscinames = sscinames
+        self.staxids = staxids
+        self.blastDbVersion = blastDbVersion
+        self.snakemakeRunId = snakemakeRunId
+        self.mappedReads = mappedReads
+        self.totalReads = totalReads
+        self.statDbVersion = statDbVersion
+        self.adjustedTaxid = adjustedTaxid
+        self.adjustmentMethod = adjustmentMethod
+        self.adjustedTaxidName = adjustedTaxidName
+        self.adjustedTaxidRank = adjustedTaxidRank
+        self.hitRank = hitRank
+        self.readsPerBillion = readsPerBillion
+    }
 }
 
 // MARK: - NvdParseResult
