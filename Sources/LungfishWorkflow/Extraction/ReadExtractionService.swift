@@ -91,13 +91,14 @@ public actor ReadExtractionService {
             } else {
                 suffix = "_R\(index + 1)"
             }
-            let outputName = "\(config.outputBaseName)\(suffix).fastq.gz"
+            let sanitizedBaseName = ExtractionBundleNaming.sanitizeFilename(config.outputBaseName)
+            let outputName = "\(sanitizedBaseName)\(suffix).fastq.gz"
             let outputURL = config.outputDirectory.appendingPathComponent(outputName)
 
             let baseFraction = 0.1 + 0.7 * Double(index) / Double(totalSources)
             progress?(baseFraction, "Extracting reads from \(sourceURL.lastPathComponent)...")
 
-            var args = [
+            let args = [
                 "grep",
                 "-f", readIDFile.path,
                 sourceURL.path,
@@ -241,7 +242,8 @@ public actor ReadExtractionService {
 
         progress?(0.3, "Extracting reads from BAM...")
 
-        let outputName = "\(config.outputBaseName).fastq"
+        let sanitizedBaseName = ExtractionBundleNaming.sanitizeFilename(config.outputBaseName)
+        let outputName = "\(sanitizedBaseName).fastq"
         let outputURL = config.outputDirectory.appendingPathComponent(outputName)
 
         if useFallback {
@@ -262,17 +264,17 @@ public actor ReadExtractionService {
                 }
                 let dedupFastqResult = try await toolRunner.run(
                     .samtools,
-                    arguments: ["fastq", "-0", outputURL.path, dedupBAM.path],
+                    arguments: ["fastq", "-o", outputURL.path, dedupBAM.path],
                     timeout: 7200
                 )
                 guard dedupFastqResult.isSuccess else {
                     throw ExtractionError.samtoolsFailed(dedupFastqResult.stderr)
                 }
             } else {
-                // Extract all reads: samtools fastq -0 output.fastq bam.bam
+                // Extract all reads: samtools fastq -o output.fastq bam.bam
                 let result = try await toolRunner.run(
                     .samtools,
-                    arguments: ["fastq", "-0", outputURL.path, config.bamURL.path],
+                    arguments: ["fastq", "-o", outputURL.path, config.bamURL.path],
                     timeout: 7200
                 )
                 guard result.isSuccess else {
@@ -311,7 +313,7 @@ public actor ReadExtractionService {
             if tempBAMSize < 100 {
                 logger.warning("Region extraction produced empty BAM (\(tempBAMSize) bytes). Trying fallback: extract all reads.")
                 // Fall through to full extraction — convert all reads in the source BAM
-                let fallbackArgs = ["fastq", "-0", outputURL.path, config.bamURL.path]
+                let fallbackArgs = ["fastq", "-o", outputURL.path, config.bamURL.path]
                 let fallbackResult = try await toolRunner.run(.samtools, arguments: fallbackArgs, timeout: 7200)
                 guard fallbackResult.isSuccess else {
                     throw ExtractionError.samtoolsFailed(fallbackResult.stderr)
@@ -319,10 +321,10 @@ public actor ReadExtractionService {
             } else {
                 progress?(0.6, "Converting BAM to FASTQ...")
 
-                // samtools fastq -0 output.fastq extracted.bam
+                // samtools fastq -o output.fastq extracted.bam
                 let fastqResult = try await toolRunner.run(
                     .samtools,
-                    arguments: ["fastq", "-0", outputURL.path, tempBAM.path],
+                    arguments: ["fastq", "-o", outputURL.path, tempBAM.path],
                     timeout: 7200
                 )
                 guard fastqResult.isSuccess else {
@@ -496,7 +498,8 @@ public actor ReadExtractionService {
         progress?(0.6, "Writing \(allReads.count) reads to FASTQ...")
 
         // Write reads to FASTQ file
-        let outputName = "\(config.outputBaseName).fastq"
+        let sanitizedBaseName = ExtractionBundleNaming.sanitizeFilename(config.outputBaseName)
+        let outputName = "\(sanitizedBaseName).fastq"
         let outputURL = config.outputDirectory.appendingPathComponent(outputName)
 
         var fastqContent = ""

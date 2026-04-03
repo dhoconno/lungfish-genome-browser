@@ -1509,12 +1509,10 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         let taxIds = Set(selectedRows.map(\.taxId))
         let capturedDatabaseURL = database?.databaseURL
         let capturedSampleId = selectedRows.first?.sample
-        // Derive project URL: bundleURL is the NAO-MGS result bundle directory.
-        // Navigate up to the project: bundle.lungfishfastq/derivatives/naomgs-* -> project
-        let capturedProjectURL = bundleURL?
-            .deletingLastPathComponent()  // derivatives/ or bundle root
-            .deletingLastPathComponent()  // bundle.lungfishfastq/
-            .deletingLastPathComponent()  // project/
+        // Derive project URL by walking up from bundleURL to the .lungfish project root.
+        // Works for both derivatives paths (bundle.lungfishfastq/derivatives/naomgs-*)
+        // and import paths (project.lungfish/Imports/naomgs-*).
+        let capturedProjectURL = bundleURL.flatMap { findProjectRoot($0) }
 
         let sheet = ClassifierExtractionSheet(
             selectedItems: items,
@@ -1567,19 +1565,18 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
 
                         // Determine output directory: prefer the project directory so the
                         // bundle appears in the sidebar. If capturedProjectURL is nil (e.g.
-                        // bundleURL was not set during configure), fall back to the parent
-                        // of the database file so the bundle is at least discoverable.
+                        // bundleURL was not set during configure), fall back to walking
+                        // up from the database file to find the .lungfish project root.
                         let bundleDir: URL
                         if let projectURL = capturedProjectURL {
                             bundleDir = projectURL
-                        } else {
-                            // Fallback: place bundle next to the database file's enclosing bundle
-                            bundleDir = databaseURL
-                                .deletingLastPathComponent()  // naomgs-*/
-                                .deletingLastPathComponent()  // derivatives/
-                                .deletingLastPathComponent()  // bundle.lungfishfastq/
-                                .deletingLastPathComponent()  // project/
+                        } else if let projectURL = findProjectRoot(databaseURL) {
+                            bundleDir = projectURL
                             logger.warning("NAO-MGS extraction: bundleURL was nil; derived project path from database URL: \(bundleDir.path, privacy: .public)")
+                        } else {
+                            // Last resort: place next to the database's enclosing directory
+                            bundleDir = databaseURL.deletingLastPathComponent().deletingLastPathComponent()
+                            logger.warning("NAO-MGS extraction: could not find .lungfish project root; placing bundle at: \(bundleDir.path, privacy: .public)")
                         }
 
                         DispatchQueue.main.async {
@@ -2457,3 +2454,4 @@ private final class AccessionDataWrapper: NSObject, NSTableViewDataSource, NSTab
         []
     }
 }
+

@@ -1926,10 +1926,9 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             self.accessions(for: row) ?? []
         }
         let capturedBamURL = self.bamURL
-        let capturedProjectURL = taxTriageResult?.outputDirectory
-            .deletingLastPathComponent()  // derivatives/
-            .deletingLastPathComponent()  // bundle.lungfishfastq/
-            .deletingLastPathComponent()  // project/
+        // Derive project URL by walking up from the output directory
+        // to the .lungfish project root.
+        let capturedProjectURL: URL? = taxTriageResult.flatMap { findProjectRoot($0.outputDirectory) }
 
         let sheet = ClassifierExtractionSheet(
             selectedItems: items,

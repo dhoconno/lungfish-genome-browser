@@ -380,6 +380,16 @@ public enum ExtractionBundleNaming: Sendable {
         return sanitize(combined)
     }
 
+    // MARK: - Filename Sanitization
+
+    /// Sanitises a raw string for use as a filename component.
+    ///
+    /// Replaces whitespace runs with underscores, strips characters that are not
+    /// alphanumeric, dash, underscore, or dot, and truncates to 200 characters.
+    public static func sanitizeFilename(_ raw: String) -> String {
+        sanitize(raw)
+    }
+
     // MARK: - Private Helpers
 
     private static func sanitize(_ raw: String) -> String {

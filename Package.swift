@@ -213,6 +213,7 @@ let package = Package(
                 "LungfishCore",
                 "LungfishIO",
                 "LungfishUI",
+                "LungfishWorkflow",
                 "LungfishCLI",
             ],
             path: "Tests/LungfishIntegrationTests",
