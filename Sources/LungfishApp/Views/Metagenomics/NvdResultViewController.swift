@@ -536,10 +536,11 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
             miniBAMContainer.trailingAnchor.constraint(equalTo: detailContentView.trailingAnchor, constant: -8),
         ])
 
+        // Pin miniBAM container to bottom of detail pane so it fills available vertical space
         let bottomConstraint = miniBAMContainer.bottomAnchor.constraint(
-            lessThanOrEqualTo: detailContentView.bottomAnchor, constant: -8
+            equalTo: detailContentView.bottomAnchor, constant: -8
         )
-        bottomConstraint.priority = .defaultHigh
+        bottomConstraint.priority = .required - 1
         bottomConstraint.isActive = true
     }
 
@@ -655,8 +656,9 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
         bamView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(bamView)
 
-        let heightConstraint = bamView.heightAnchor.constraint(equalToConstant: miniBAMDefaultHeight)
-        miniBAMHeightConstraint = heightConstraint
+        // Use a minimum height but allow the view to grow to fill available space
+        let heightConstraint = bamView.heightAnchor.constraint(greaterThanOrEqualToConstant: miniBAMMinHeight)
+        miniBAMHeightConstraint = nil  // No fixed height — fills available space
 
         miniBAM.onResizeBy = { [weak self] deltaY in
             self?.adjustMiniBAMHeight(by: deltaY)

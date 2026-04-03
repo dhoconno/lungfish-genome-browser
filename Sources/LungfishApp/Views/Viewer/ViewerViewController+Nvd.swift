@@ -41,9 +41,11 @@ extension ViewerViewController {
         // NVD submits a single contig sequence rather than multiple reads.
         controller.onBlastVerification = { [weak controller] hit, sequence in
             let contigName = NvdDataConverter.displayName(for: hit.qseqid, qlen: hit.qlen)
+            // Use the classification name for concordance checking, not the contig name
+            let classificationName = hit.adjustedTaxidName.isEmpty ? contigName : hit.adjustedTaxidName
             let taxIdInt = Int(hit.adjustedTaxid) ?? 0
             nvdDisplayLogger.info(
-                "BLAST verification requested for \(contigName, privacy: .public), taxId=\(taxIdInt, privacy: .public)"
+                "BLAST verification requested for \(contigName, privacy: .public) (\(classificationName, privacy: .public)), taxId=\(taxIdInt, privacy: .public)"
             )
 
             let blastCliCmd = OperationCenter.buildCLICommand(
@@ -51,7 +53,7 @@ extension ViewerViewController {
                 args: ["--taxid", "\(taxIdInt)"]
             )
             let opID = OperationCenter.shared.start(
-                title: "BLAST \(contigName)",
+                title: "BLAST \(contigName) \u{2014} \(classificationName)",
                 detail: "Preparing BLAST verification\u{2026}",
                 operationType: .blastVerification,
                 cliCommand: blastCliCmd
@@ -70,7 +72,7 @@ extension ViewerViewController {
                     let sequences: [(id: String, sequence: String)] = [(id: hit.qseqid, sequence: trimmedSequence)]
 
                     let request = BlastVerificationRequest(
-                        taxonName: contigName,
+                        taxonName: classificationName,
                         taxId: taxIdInt,
                         sequences: sequences,
                         database: "core_nt",
