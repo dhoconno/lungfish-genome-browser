@@ -922,7 +922,7 @@ public final class NaoMgsDatabase: @unchecked Sendable {
         naoBindText(stmt, 1, sample)
         sqlite3_bind_int64(stmt, 2, Int64(taxId))
         naoBindText(stmt, 3, accession)
-        sqlite3_bind_int(stmt, 4, Int32(maxReads))
+        sqlite3_bind_int(stmt, 4, Int32(clamping: min(maxReads, Int(Int32.max))))
 
         var reads: [AlignedRead] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
@@ -938,16 +938,23 @@ public final class NaoMgsDatabase: @unchecked Sendable {
             let fragLength = Int(sqlite3_column_int(stmt, 9))
 
             let flag: UInt16 = isRC ? 0x10 : 0
-            let mapq = min(UInt8(bitScore / 5.0), 60)
+            // Safe conversion: clamp bitScore/5.0 to UInt8 range to prevent overflow crash
+            let rawMapq = bitScore / 5.0
+            let mapq = UInt8(clamping: Int(max(0, min(255, rawMapq))))
+            let clampedMapq = min(mapq, 60)
             let cigar = CIGAROperation.parse(cigarStr) ?? []
-            let qualities = readQuality.unicodeScalars.map { UInt8($0.value) - 33 }
+            // Safe conversion: clamp quality values to prevent UInt8 underflow when subtracting 33
+            let qualities = readQuality.unicodeScalars.map { scalar -> UInt8 in
+                let val = Int(scalar.value) - 33
+                return UInt8(clamping: max(0, min(255, val)))
+            }
 
             reads.append(AlignedRead(
                 name: seqId,
                 flag: flag,
                 chromosome: subjectSeqId,
                 position: refStart,
-                mapq: mapq,
+                mapq: clampedMapq,
                 cigar: cigar,
                 sequence: readSequence,
                 qualities: qualities,

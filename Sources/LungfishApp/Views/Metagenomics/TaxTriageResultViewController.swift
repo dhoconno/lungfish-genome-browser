@@ -1859,11 +1859,32 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             let rows = self.organismTableView.selectedTableRows()
             guard !rows.isEmpty else { return }
 
+            // Resolve BAM reference accessions (not organism display names) for extraction.
+            // accessions(for:) maps organism names/taxIDs → actual BAM reference accessions
+            // via gcfmapping.tsv and merged.taxid.tsv.
+            var resolvedAccessions: [String] = []
+            var unresolvedOrganisms: [String] = []
+            for row in rows {
+                if let rowAccessions = self.accessions(for: row), !rowAccessions.isEmpty {
+                    resolvedAccessions.append(contentsOf: rowAccessions)
+                } else {
+                    unresolvedOrganisms.append(row.organism)
+                }
+            }
+            if !unresolvedOrganisms.isEmpty {
+                logger.warning("Could not resolve accessions for: \(unresolvedOrganisms.joined(separator: ", "))")
+            }
+
             let items = rows.map { $0.organism }
             let sampleId = self.sampleIds.first ?? "sample"
             let source = self.bamURL?.lastPathComponent ?? "TaxTriage result"
             let suggestedName = "\(sampleId)_\(items.first ?? "extract")_extract"
             self.presentExtractionSheet(items: items, source: source, suggestedName: suggestedName)
+        }
+
+        // Context menu Extract FASTQ -> delegate to the same extraction logic as the action bar
+        organismTableView.onExtractFASTQ = { [weak self] in
+            self?.actionBar.onExtractFASTQ?()
         }
 
         // Action bar BLAST verify (TaxTriage triggers BLAST via table context menu)
@@ -2602,6 +2623,9 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
     /// Called when the user requests BLAST verification for a row with a chosen read count.
     var onBlastRequested: ((TaxTriageTableRow, Int) -> Void)?
 
+    /// Called when the user requests FASTQ extraction from the context menu.
+    var onExtractFASTQ: (() -> Void)?
+
     /// Returns the currently selected table rows.
     func selectedTableRows() -> [TaxTriageTableRow] {
         tableView.selectedRowIndexes.compactMap { index in
@@ -2782,6 +2806,16 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
         lookupItem.target = self
         menu.addItem(lookupItem)
 
+        menu.addItem(NSMenuItem.separator())
+
+        let extractItem = NSMenuItem(
+            title: "Extract FASTQ\u{2026}",
+            action: #selector(contextExtractFASTQ(_:)),
+            keyEquivalent: ""
+        )
+        extractItem.target = self
+        menu.addItem(extractItem)
+
         tableView.menu = menu
     }
 
@@ -2815,6 +2849,10 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
         if menuItem.action == #selector(contextBlastAction(_:)) {
             // BLAST requires exactly one selected row
             return tableView.clickedRow >= 0 && tableView.selectedRowIndexes.count <= 1
+        }
+        if menuItem.action == #selector(contextExtractFASTQ(_:)) {
+            // Extract FASTQ requires at least one selected row
+            return !tableView.selectedRowIndexes.isEmpty || tableView.clickedRow >= 0
         }
         return true
     }
@@ -2899,6 +2937,10 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
         if let url = URL(string: urlString) {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    @objc private func contextExtractFASTQ(_ sender: Any?) {
+        onExtractFASTQ?()
     }
 
     /// Selects the first row matching the given organism name (case-insensitive).

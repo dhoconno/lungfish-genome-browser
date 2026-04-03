@@ -196,6 +196,8 @@ public actor ReadExtractionService {
             runner: toolRunner
         )
 
+        logger.info("BAM contains \(bamRefs.count) references: \(bamRefs.prefix(5).joined(separator: ", "))\(bamRefs.count > 5 ? "..." : "")")
+
         let matchResult: RegionMatchResult
         let useFallback: Bool
 
@@ -273,16 +275,30 @@ public actor ReadExtractionService {
                 throw ExtractionError.samtoolsFailed(viewResult.stderr)
             }
 
-            progress?(0.6, "Converting BAM to FASTQ...")
+            // Check if the intermediate BAM is empty (just a header, typically ~70 bytes).
+            // This happens when the region matched a reference name but no reads aligned there.
+            let tempBAMSize = (try? fm.attributesOfItem(atPath: tempBAM.path)[.size] as? Int64) ?? 0
 
-            // samtools fastq -0 output.fastq extracted.bam
-            let fastqResult = try await toolRunner.run(
-                .samtools,
-                arguments: ["fastq", "-0", outputURL.path, tempBAM.path],
-                timeout: 7200
-            )
-            guard fastqResult.isSuccess else {
-                throw ExtractionError.samtoolsFailed(fastqResult.stderr)
+            if tempBAMSize < 100 {
+                logger.warning("Region extraction produced empty BAM (\(tempBAMSize) bytes). Trying fallback: extract all reads.")
+                // Fall through to full extraction — convert all reads in the source BAM
+                let fallbackArgs = ["fastq", "-0", outputURL.path, config.bamURL.path]
+                let fallbackResult = try await toolRunner.run(.samtools, arguments: fallbackArgs, timeout: 7200)
+                guard fallbackResult.isSuccess else {
+                    throw ExtractionError.samtoolsFailed(fallbackResult.stderr)
+                }
+            } else {
+                progress?(0.6, "Converting BAM to FASTQ...")
+
+                // samtools fastq -0 output.fastq extracted.bam
+                let fastqResult = try await toolRunner.run(
+                    .samtools,
+                    arguments: ["fastq", "-0", outputURL.path, tempBAM.path],
+                    timeout: 7200
+                )
+                guard fastqResult.isSuccess else {
+                    throw ExtractionError.samtoolsFailed(fastqResult.stderr)
+                }
             }
         }
 
@@ -397,7 +413,7 @@ public actor ReadExtractionService {
                             guard allReads.count < maxReads else { break }
                             if seenReadIDs.insert(read.name).inserted {
                                 // Reconstruct quality string from UInt8 array
-                                let qualStr = String(read.qualities.map { Character(UnicodeScalar($0 + 33)) })
+                                let qualStr = String(read.qualities.map { Character(Unicode.Scalar(UInt32($0) + 33) ?? Unicode.Scalar(33)) })
                                 allReads.append((seqId: read.name, sequence: read.sequence, quality: qualStr))
                             }
                         }
@@ -432,7 +448,7 @@ public actor ReadExtractionService {
                         for read in reads {
                             guard allReads.count < maxReads else { break }
                             if seenReadIDs.insert(read.name).inserted {
-                                let qualStr = String(read.qualities.map { Character(UnicodeScalar($0 + 33)) })
+                                let qualStr = String(read.qualities.map { Character(Unicode.Scalar(UInt32($0) + 33) ?? Unicode.Scalar(33)) })
                                 allReads.append((seqId: read.name, sequence: read.sequence, quality: qualStr))
                             }
                         }

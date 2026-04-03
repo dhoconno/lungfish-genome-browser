@@ -1818,6 +1818,12 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         searchPubMed.target = self
         searchPubMed.representedObject = row.name
         menu.addItem(searchPubMed)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let extractItem = NSMenuItem(title: "Extract FASTQ\u{2026}", action: #selector(contextExtractFASTQ(_:)), keyEquivalent: "")
+        extractItem.target = self
+        menu.addItem(extractItem)
     }
 
     // MARK: - Context Menu Actions
@@ -1962,6 +1968,11 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         let encodedName = name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? name
         let url = URL(string: "https://pubmed.ncbi.nlm.nih.gov/?term=\(encodedName)")!
         NSWorkspace.shared.open(url)
+    }
+
+    @objc private func contextExtractFASTQ(_ sender: Any?) {
+        // Delegate to the same extraction logic as the action bar button
+        actionBar.onExtractFASTQ?()
     }
 
     // MARK: - NSSplitViewDelegate
