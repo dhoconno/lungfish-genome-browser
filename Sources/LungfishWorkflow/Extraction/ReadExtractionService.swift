@@ -1,0 +1,602 @@
+// ReadExtractionService.swift - Central actor for universal read extraction
+// Copyright (c) 2026 Lungfish Contributors
+// SPDX-License-Identifier: MIT
+
+import Foundation
+import LungfishIO
+import os.log
+
+private let logger = Logger(subsystem: "com.lungfish.workflow", category: "ReadExtractionService")
+
+// MARK: - ReadExtractionService
+
+/// Central actor providing three read extraction strategies and bundle creation.
+///
+/// Each strategy extracts reads from a different source type:
+/// - **Read IDs** — extracts reads by name from FASTQ files via `seqkit grep`.
+/// - **BAM region** — extracts reads from a BAM file by genomic region via `samtools`.
+/// - **Database** — extracts reads stored in an NAO-MGS SQLite database.
+///
+/// After extraction, ``createBundle(from:metadata:in:)`` packages the output
+/// into a `.lungfishfastq` bundle with provenance metadata.
+///
+/// ## Thread Safety
+///
+/// `ReadExtractionService` is an actor — all method calls are serialised and
+/// safe from any isolation domain.
+public actor ReadExtractionService {
+
+    // MARK: - Properties
+
+    private let toolRunner: NativeToolRunner
+
+    // MARK: - Initialization
+
+    /// Creates a new extraction service.
+    ///
+    /// - Parameter toolRunner: The tool runner to use for subprocess execution.
+    ///   Defaults to ``NativeToolRunner/shared``.
+    public init(toolRunner: NativeToolRunner = .shared) {
+        self.toolRunner = toolRunner
+    }
+
+    // MARK: - Extract by Read IDs
+
+    /// Extracts reads from FASTQ files by matching read IDs via `seqkit grep`.
+    ///
+    /// For each source FASTQ in the config, runs `seqkit grep` with the read ID
+    /// set written to a temporary file. Paired-end data produces two output files.
+    ///
+    /// - Parameters:
+    ///   - config: Configuration specifying source FASTQs, read IDs, and output location.
+    ///   - progress: Optional callback reporting progress as `(fraction, message)`.
+    /// - Returns: An ``ExtractionResult`` with output FASTQ URL(s) and read count.
+    /// - Throws: ``ExtractionError`` on validation failure, tool errors, or empty output.
+    public func extractByReadIDs(
+        config: ReadIDExtractionConfig,
+        progress: (@Sendable (Double, String) -> Void)? = nil
+    ) async throws -> ExtractionResult {
+        // Validate inputs
+        guard !config.sourceFASTQs.isEmpty else {
+            throw ExtractionError.noSourceFASTQ
+        }
+        guard !config.readIDs.isEmpty else {
+            throw ExtractionError.emptyReadIDSet
+        }
+
+        let fm = FileManager.default
+        try fm.createDirectory(at: config.outputDirectory, withIntermediateDirectories: true)
+
+        // Write read IDs to a temporary file for seqkit grep -f
+        let tempDir = fm.temporaryDirectory.appendingPathComponent("lungfish-extract-\(UUID().uuidString)")
+        try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: tempDir) }
+
+        let readIDFile = tempDir.appendingPathComponent("read_ids.txt")
+        let readIDContent = config.readIDs.sorted().joined(separator: "\n")
+        try readIDContent.write(to: readIDFile, atomically: true, encoding: .utf8)
+
+        progress?(0.1, "Wrote \(config.readIDs.count) read IDs to filter file")
+
+        // Process each source FASTQ
+        var outputURLs: [URL] = []
+        let totalSources = config.sourceFASTQs.count
+
+        for (index, sourceURL) in config.sourceFASTQs.enumerated() {
+            try Task.checkCancellation()
+
+            let suffix: String
+            if totalSources == 1 {
+                suffix = ""
+            } else {
+                suffix = "_R\(index + 1)"
+            }
+            let outputName = "\(config.outputBaseName)\(suffix).fastq.gz"
+            let outputURL = config.outputDirectory.appendingPathComponent(outputName)
+
+            let baseFraction = 0.1 + 0.7 * Double(index) / Double(totalSources)
+            progress?(baseFraction, "Extracting reads from \(sourceURL.lastPathComponent)...")
+
+            var args = [
+                "grep",
+                "-f", readIDFile.path,
+                sourceURL.path,
+                "-o", outputURL.path,
+                "--threads", "4"
+            ]
+
+            // When keeping read pairs, use -n flag to match by read name (strip /1 /2)
+            if config.keepReadPairs {
+                args.append("-n")
+            }
+
+            let result = try await toolRunner.run(.seqkit, arguments: args, timeout: 7200)
+
+            guard result.isSuccess else {
+                throw ExtractionError.seqkitFailed(result.stderr)
+            }
+
+            // Verify the output file exists and is non-empty
+            guard fm.fileExists(atPath: outputURL.path) else {
+                throw ExtractionError.emptyExtraction
+            }
+            let attrs = try fm.attributesOfItem(atPath: outputURL.path)
+            let fileSize = attrs[.size] as? UInt64 ?? 0
+            if fileSize == 0 {
+                throw ExtractionError.emptyExtraction
+            }
+
+            outputURLs.append(outputURL)
+        }
+
+        progress?(0.8, "Counting extracted reads...")
+
+        // Count reads in the first output file
+        let readCount = try await countReads(in: outputURLs[0])
+
+        guard readCount > 0 else {
+            throw ExtractionError.emptyExtraction
+        }
+
+        progress?(1.0, "Extracted \(readCount) reads")
+        logger.info("Read ID extraction complete: \(readCount) reads from \(config.readIDs.count) IDs")
+
+        return ExtractionResult(
+            fastqURLs: outputURLs,
+            readCount: readCount,
+            pairedEnd: config.isPairedEnd
+        )
+    }
+
+    // MARK: - Extract by BAM Region
+
+    /// Extracts reads from a BAM file by genomic region via `samtools`.
+    ///
+    /// The method reads the BAM header, matches the requested regions against
+    /// reference names using ``BAMRegionMatcher``, then extracts matching reads
+    /// to FASTQ format.
+    ///
+    /// - Parameters:
+    ///   - config: Configuration specifying the BAM file, regions, and output location.
+    ///   - progress: Optional callback reporting progress as `(fraction, message)`.
+    /// - Returns: An ``ExtractionResult`` with the output FASTQ URL and read count.
+    /// - Throws: ``ExtractionError`` on validation failure, tool errors, or empty output.
+    public func extractByBAMRegion(
+        config: BAMRegionExtractionConfig,
+        progress: (@Sendable (Double, String) -> Void)? = nil
+    ) async throws -> ExtractionResult {
+        let fm = FileManager.default
+
+        // Validate BAM file exists
+        guard fm.fileExists(atPath: config.bamURL.path) else {
+            throw ExtractionError.bamFileNotFound(config.bamURL)
+        }
+
+        // Check for BAM index
+        let baiPath1 = config.bamURL.path + ".bai"
+        let baiPath2 = config.bamURL.deletingPathExtension().path + ".bai"
+        let csiPath = config.bamURL.path + ".csi"
+        let hasIndex = fm.fileExists(atPath: baiPath1)
+            || fm.fileExists(atPath: baiPath2)
+            || fm.fileExists(atPath: csiPath)
+
+        guard hasIndex else {
+            throw ExtractionError.bamNotIndexed(config.bamURL)
+        }
+
+        try fm.createDirectory(at: config.outputDirectory, withIntermediateDirectories: true)
+
+        progress?(0.1, "Reading BAM header...")
+
+        // Read BAM references and match regions
+        let bamRefs = try await BAMRegionMatcher.readBAMReferences(
+            bamURL: config.bamURL,
+            runner: toolRunner
+        )
+
+        let matchResult: RegionMatchResult
+        let useFallback: Bool
+
+        if config.regions.isEmpty {
+            if config.fallbackToAll {
+                useFallback = true
+                matchResult = RegionMatchResult(
+                    matchedRegions: bamRefs,
+                    unmatchedRegions: [],
+                    strategy: .fallbackAll,
+                    bamReferenceNames: bamRefs
+                )
+            } else {
+                throw ExtractionError.noMatchingRegions([])
+            }
+        } else {
+            matchResult = BAMRegionMatcher.match(
+                regions: config.regions,
+                againstReferences: bamRefs
+            )
+
+            switch matchResult.strategy {
+            case .fallbackAll:
+                if config.fallbackToAll {
+                    useFallback = true
+                    logger.warning("No regions matched BAM references; falling back to all reads")
+                } else {
+                    throw ExtractionError.noMatchingRegions(config.regions)
+                }
+            case .noBAM:
+                throw ExtractionError.noMatchingRegions(config.regions)
+            default:
+                useFallback = false
+                if !matchResult.unmatchedRegions.isEmpty {
+                    logger.warning(
+                        "Some regions did not match: \(matchResult.unmatchedRegions.joined(separator: ", "), privacy: .public)"
+                    )
+                }
+            }
+        }
+
+        progress?(0.3, "Extracting reads from BAM...")
+
+        let outputName = "\(config.outputBaseName).fastq"
+        let outputURL = config.outputDirectory.appendingPathComponent(outputName)
+
+        if useFallback {
+            // Extract all reads: samtools fastq -0 output.fastq bam.bam
+            let result = try await toolRunner.run(
+                .samtools,
+                arguments: ["fastq", "-0", outputURL.path, config.bamURL.path],
+                timeout: 7200
+            )
+            guard result.isSuccess else {
+                throw ExtractionError.samtoolsFailed(result.stderr)
+            }
+        } else {
+            // First extract matching regions to a temporary BAM
+            let tempDir = fm.temporaryDirectory.appendingPathComponent("lungfish-bam-extract-\(UUID().uuidString)")
+            try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
+            defer { try? fm.removeItem(at: tempDir) }
+
+            let tempBAM = tempDir.appendingPathComponent("extracted.bam")
+
+            // samtools view -b -o extracted.bam bam.bam region1 region2 ...
+            var viewArgs = ["view", "-b", "-o", tempBAM.path, config.bamURL.path]
+            viewArgs.append(contentsOf: matchResult.matchedRegions)
+
+            let viewResult = try await toolRunner.run(
+                .samtools,
+                arguments: viewArgs,
+                timeout: 7200
+            )
+            guard viewResult.isSuccess else {
+                throw ExtractionError.samtoolsFailed(viewResult.stderr)
+            }
+
+            progress?(0.6, "Converting BAM to FASTQ...")
+
+            // samtools fastq -0 output.fastq extracted.bam
+            let fastqResult = try await toolRunner.run(
+                .samtools,
+                arguments: ["fastq", "-0", outputURL.path, tempBAM.path],
+                timeout: 7200
+            )
+            guard fastqResult.isSuccess else {
+                throw ExtractionError.samtoolsFailed(fastqResult.stderr)
+            }
+        }
+
+        // Verify non-empty output
+        guard fm.fileExists(atPath: outputURL.path) else {
+            throw ExtractionError.emptyExtraction
+        }
+        let attrs = try fm.attributesOfItem(atPath: outputURL.path)
+        let fileSize = attrs[.size] as? UInt64 ?? 0
+        if fileSize == 0 {
+            throw ExtractionError.emptyExtraction
+        }
+
+        progress?(0.8, "Counting extracted reads...")
+
+        let readCount = try await countReads(in: outputURL)
+
+        guard readCount > 0 else {
+            throw ExtractionError.emptyExtraction
+        }
+
+        progress?(1.0, "Extracted \(readCount) reads from BAM")
+        logger.info(
+            "BAM region extraction complete: \(readCount) reads, strategy=\(matchResult.strategy.rawValue, privacy: .public)"
+        )
+
+        return ExtractionResult(
+            fastqURLs: [outputURL],
+            readCount: readCount,
+            pairedEnd: false
+        )
+    }
+
+    // MARK: - Extract from Database
+
+    /// Extracts reads from an NAO-MGS SQLite database by tax ID and/or accession.
+    ///
+    /// Queries the `virus_hits` table directly for read sequences and quality scores,
+    /// then writes them as a FASTQ file. This avoids requiring the original source
+    /// FASTQ when the database already stores complete read data.
+    ///
+    /// - Parameters:
+    ///   - config: Configuration specifying the database, filters, and output location.
+    ///   - progress: Optional callback reporting progress as `(fraction, message)`.
+    /// - Returns: An ``ExtractionResult`` with the output FASTQ URL and read count.
+    /// - Throws: ``ExtractionError`` on database errors, validation failure, or empty output.
+    public func extractFromDatabase(
+        config: DatabaseExtractionConfig,
+        progress: (@Sendable (Double, String) -> Void)? = nil
+    ) async throws -> ExtractionResult {
+        let fm = FileManager.default
+
+        guard fm.fileExists(atPath: config.databaseURL.path) else {
+            throw ExtractionError.databaseQueryFailed("Database file not found: \(config.databaseURL.lastPathComponent)")
+        }
+
+        try fm.createDirectory(at: config.outputDirectory, withIntermediateDirectories: true)
+
+        progress?(0.1, "Opening database...")
+
+        // Open the database and query reads
+        let database: NaoMgsDatabase
+        do {
+            database = try NaoMgsDatabase(at: config.databaseURL)
+        } catch {
+            throw ExtractionError.databaseQueryFailed("Failed to open database: \(error.localizedDescription)")
+        }
+
+        progress?(0.2, "Querying reads from database...")
+
+        // Determine which sample to query — use config.sampleId or find the first sample
+        let sampleId: String
+        if let configSample = config.sampleId {
+            sampleId = configSample
+        } else {
+            let samples = try database.fetchSamples()
+            guard let first = samples.first else {
+                throw ExtractionError.databaseQueryFailed("No samples found in database")
+            }
+            sampleId = first.sample
+        }
+
+        // Collect reads from the database matching tax IDs and/or accessions
+        var allReads: [(seqId: String, sequence: String, quality: String)] = []
+        var seenReadIDs = Set<String>()
+        let maxReads = config.maxReads ?? Int.max
+
+        // Query by tax IDs
+        if !config.taxIds.isEmpty {
+            for taxId in config.taxIds {
+                if allReads.count >= maxReads { break }
+
+                do {
+                    // Get accession summaries for this taxon so we can fetch reads per accession
+                    let accSummaries = try database.fetchAccessionSummaries(
+                        sample: sampleId,
+                        taxId: taxId
+                    )
+
+                    for summary in accSummaries {
+                        if allReads.count >= maxReads { break }
+
+                        let remaining = maxReads - allReads.count
+                        let reads = try database.fetchReadsForAccession(
+                            sample: sampleId,
+                            taxId: taxId,
+                            accession: summary.accession,
+                            maxReads: remaining
+                        )
+
+                        for read in reads {
+                            guard allReads.count < maxReads else { break }
+                            if seenReadIDs.insert(read.name).inserted {
+                                // Reconstruct quality string from UInt8 array
+                                let qualStr = String(read.qualities.map { Character(UnicodeScalar($0 + 33)) })
+                                allReads.append((seqId: read.name, sequence: read.sequence, quality: qualStr))
+                            }
+                        }
+                    }
+                } catch {
+                    logger.warning("Failed to query tax ID \(taxId): \(error.localizedDescription, privacy: .public)")
+                }
+            }
+        }
+
+        // Query by accessions (if specified and we haven't hit the limit)
+        if !config.accessions.isEmpty && allReads.count < maxReads {
+            // For accession-based queries, we need to find which taxIds contain these accessions.
+            // Fetch taxon summaries, then check which have matching accessions.
+            let taxonRows = try database.fetchTaxonSummaryRows(samples: [sampleId])
+
+            for row in taxonRows {
+                if allReads.count >= maxReads { break }
+
+                for accession in config.accessions {
+                    if allReads.count >= maxReads { break }
+
+                    let remaining = maxReads - allReads.count
+                    do {
+                        let reads = try database.fetchReadsForAccession(
+                            sample: sampleId,
+                            taxId: row.taxId,
+                            accession: accession,
+                            maxReads: remaining
+                        )
+
+                        for read in reads {
+                            guard allReads.count < maxReads else { break }
+                            if seenReadIDs.insert(read.name).inserted {
+                                let qualStr = String(read.qualities.map { Character(UnicodeScalar($0 + 33)) })
+                                allReads.append((seqId: read.name, sequence: read.sequence, quality: qualStr))
+                            }
+                        }
+                    } catch {
+                        // Accession may not exist under this taxon — silently skip
+                        continue
+                    }
+                }
+            }
+        }
+
+        guard !allReads.isEmpty else {
+            throw ExtractionError.emptyExtraction
+        }
+
+        progress?(0.6, "Writing \(allReads.count) reads to FASTQ...")
+
+        // Write reads to FASTQ file
+        let outputName = "\(config.outputBaseName).fastq"
+        let outputURL = config.outputDirectory.appendingPathComponent(outputName)
+
+        var fastqContent = ""
+        fastqContent.reserveCapacity(allReads.count * 300) // rough estimate
+        for read in allReads {
+            fastqContent += "@\(read.seqId)\n"
+            fastqContent += "\(read.sequence)\n"
+            fastqContent += "+\n"
+            fastqContent += "\(read.quality)\n"
+        }
+
+        try fastqContent.write(to: outputURL, atomically: true, encoding: .utf8)
+
+        progress?(1.0, "Extracted \(allReads.count) reads from database")
+        logger.info("Database extraction complete: \(allReads.count) reads from \(config.databaseURL.lastPathComponent, privacy: .public)")
+
+        return ExtractionResult(
+            fastqURLs: [outputURL],
+            readCount: allReads.count,
+            pairedEnd: false
+        )
+    }
+
+    // MARK: - Bundle Creation
+
+    /// Packages extracted FASTQ file(s) into a `.lungfishfastq` bundle with provenance metadata.
+    ///
+    /// The bundle is created in ``outputDirectory`` with a name derived from the
+    /// source and selection descriptors via ``ExtractionBundleNaming``.
+    ///
+    /// - Parameters:
+    ///   - result: The extraction result containing FASTQ file URLs.
+    ///   - metadata: Provenance metadata to write into the bundle.
+    ///   - outputDirectory: The directory in which to create the bundle.
+    /// - Returns: The URL of the created `.lungfishfastq` bundle directory.
+    /// - Throws: ``ExtractionError/bundleCreationFailed(_:)`` on filesystem errors.
+    public func createBundle(
+        from result: ExtractionResult,
+        metadata: ExtractionMetadata,
+        in outputDirectory: URL
+    ) throws -> URL {
+        let fm = FileManager.default
+
+        // Build bundle name from metadata
+        let bundleName = ExtractionBundleNaming.bundleName(
+            source: metadata.sourceDescription,
+            selection: metadata.toolName
+        )
+        let bundleDirName = "\(bundleName).\(FASTQBundle.directoryExtension)"
+        let bundleURL = outputDirectory.appendingPathComponent(bundleDirName)
+
+        do {
+            try fm.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+        } catch {
+            throw ExtractionError.bundleCreationFailed(
+                "Could not create bundle directory: \(error.localizedDescription)"
+            )
+        }
+
+        // Move FASTQ files into the bundle
+        for fastqURL in result.fastqURLs {
+            let destURL = bundleURL.appendingPathComponent(fastqURL.lastPathComponent)
+            do {
+                if fm.fileExists(atPath: destURL.path) {
+                    try fm.removeItem(at: destURL)
+                }
+                try fm.moveItem(at: fastqURL, to: destURL)
+            } catch {
+                throw ExtractionError.bundleCreationFailed(
+                    "Could not move \(fastqURL.lastPathComponent) into bundle: \(error.localizedDescription)"
+                )
+            }
+        }
+
+        // Write extraction-metadata.json (provenance)
+        do {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let metadataData = try encoder.encode(metadata)
+            let metadataURL = bundleURL.appendingPathComponent("extraction-metadata.json")
+            try metadataData.write(to: metadataURL)
+        } catch {
+            throw ExtractionError.bundleCreationFailed(
+                "Could not write extraction metadata: \(error.localizedDescription)"
+            )
+        }
+
+        // Write .lungfish-meta.json for the primary FASTQ file
+        if let primaryFASTQ = result.fastqURLs.first {
+            let movedPrimaryName = primaryFASTQ.lastPathComponent
+            let movedPrimaryURL = bundleURL.appendingPathComponent(movedPrimaryName)
+            let metaURL = movedPrimaryURL.appendingPathExtension("lungfish-meta.json")
+
+            let basicMeta: [String: Any] = [
+                "readCount": result.readCount,
+                "pairedEnd": result.pairedEnd,
+                "extractionDate": ISO8601DateFormatter().string(from: metadata.extractionDate),
+                "source": metadata.sourceDescription
+            ]
+
+            if let jsonData = try? JSONSerialization.data(
+                withJSONObject: basicMeta,
+                options: [.prettyPrinted, .sortedKeys]
+            ) {
+                try? jsonData.write(to: metaURL)
+            }
+        }
+
+        logger.info("Created extraction bundle: \(bundleDirName, privacy: .public)")
+        return bundleURL
+    }
+
+    // MARK: - Private Helpers
+
+    /// Counts reads in a FASTQ file via `seqkit stats -T`.
+    ///
+    /// Parses the tab-separated output to extract the `num_seqs` column.
+    ///
+    /// - Parameter url: URL of the FASTQ file.
+    /// - Returns: The number of reads in the file.
+    private func countReads(in url: URL) async throws -> Int {
+        let result = try await toolRunner.run(
+            .seqkit,
+            arguments: ["stats", "-T", url.path],
+            timeout: 600
+        )
+
+        guard result.isSuccess else {
+            logger.warning("seqkit stats failed: \(result.stderr, privacy: .public)")
+            return 0
+        }
+
+        // Parse tab-separated output: file\tformat\ttype\tnum_seqs\t...
+        let lines = result.stdout.components(separatedBy: "\n")
+        guard lines.count >= 2 else { return 0 }
+
+        let headerFields = lines[0].components(separatedBy: "\t")
+        let dataFields = lines[1].components(separatedBy: "\t")
+
+        // Find the num_seqs column index
+        if let numSeqsIndex = headerFields.firstIndex(of: "num_seqs"),
+           numSeqsIndex < dataFields.count {
+            let rawValue = dataFields[numSeqsIndex].replacingOccurrences(of: ",", with: "")
+            return Int(rawValue) ?? 0
+        }
+
+        return 0
+    }
+}
