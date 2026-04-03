@@ -105,10 +105,12 @@ public actor ReadExtractionService {
                 "--threads", "4"
             ]
 
-            // When keeping read pairs, use -n flag to match by read name (strip /1 /2)
-            if config.keepReadPairs {
-                args.append("-n")
-            }
+            // Note: we do NOT use -n (match by full name) because FASTQ headers
+            // often have descriptions after the ID (e.g., "@READ1 instrument:run/1").
+            // The default seqkit behavior matches by ID (first whitespace-separated
+            // token), which correctly matches read IDs like "SRR123.456" against
+            // headers like "@SRR123.456 description/1". The keepReadPairs logic is
+            // handled upstream in buildReadIdSet by stripping /1 /2 suffixes.
 
             let result = try await toolRunner.run(.seqkit, arguments: args, timeout: 7200)
 
