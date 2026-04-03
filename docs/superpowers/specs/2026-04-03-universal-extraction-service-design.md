@@ -180,6 +180,34 @@ lungfish extract reads \
 
 All three strategies exposed as CLI subcommands under `lungfish extract reads`.
 
+### Bundle and Display Naming
+
+Extraction output names must be informative in the sidebar — never "materialized", "extracted", "output", or other generic names. The `createBundle()` method enforces a naming convention:
+
+**Pattern:** `{sourceName}_{selectionDescription}_extract`
+
+Examples:
+- Kraken2 single taxon: `SRR35520572_Human_coronavirus_OC43_extract.lungfishfastq`
+- Kraken2 multi-taxon: `SRR35520572_3_taxa_extract.lungfishfastq`
+- EsViritu assembly: `sample1_Rift_Valley_fever_virus_extract.lungfishfastq`
+- TaxTriage organism: `sample1_E_coli_extract.lungfishfastq`
+- NAO-MGS taxon: `sample1_Influenza_A_extract.lungfishfastq`
+- Mapper region: `sample1_chr1_1000_2000_extract.lungfishfastq`
+
+**Source name resolution:** The `sourceName` component comes from the FASTQ bundle's sidebar display name (via `FASTQDisplayNameResolver`), NOT from internal file paths or temp file names. If the source is a virtual FASTQ, the display name from its `FASTQDerivedBundleManifest.name` is used.
+
+**Selection description:** The caller provides a human-readable description of what was selected (taxon name, organism name, region). For multi-select, use count: "3 taxa", "5 organisms".
+
+**Sanitization:** Bundle names are filesystem-safe: spaces → underscores, strip special characters, truncate to 200 chars.
+
+The `createBundle()` method:
+1. Builds the name from source + selection
+2. Writes a `FASTQDerivedBundleManifest` with the display name (so the sidebar shows a readable title)
+3. Writes `ExtractionMetadata` sidecar with full provenance
+4. Never uses temp file names in any user-visible context
+
+**`FASTQSourceResolver` temp files:** When materializing virtual FASTQs, temp files use UUIDs (not "materialized.fastq"). These temp files are intermediate — they're consumed by the extraction tool and deleted. They never become bundle names.
+
 ### File Structure
 
 ```
