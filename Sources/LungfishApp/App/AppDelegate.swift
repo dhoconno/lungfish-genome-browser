@@ -4237,10 +4237,31 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             detail: "Mapping \(config.inputFiles.count) file(s) to \(config.referenceURL.lastPathComponent)"
         )
 
-        Task.detached {
+        Task.detached { [weak self] in
             do {
+                // Materialize virtual FASTQs before running the pipeline.
+                let materializeTempDir = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("lungfish-minimap2-\(UUID().uuidString)")
+                try FileManager.default.createDirectory(
+                    at: materializeTempDir, withIntermediateDirectories: true)
+                defer { try? FileManager.default.removeItem(at: materializeTempDir) }
+
+                let resolvedFiles = try await self?.resolveInputFiles(
+                    config.inputFiles,
+                    tempDirectory: materializeTempDir,
+                    progress: { message in
+                        DispatchQueue.main.async { MainActor.assumeIsolated {
+                            OperationCenter.shared.update(id: opID, progress: 0, detail: message)
+                            OperationCenter.shared.log(id: opID, level: .info, message: message)
+                        }}
+                    }
+                ) ?? config.inputFiles
+
+                var resolvedConfig = config
+                resolvedConfig.inputFiles = resolvedFiles
+
                 let pipeline = Minimap2Pipeline()
-                let result = try await pipeline.run(config: config) { fraction, message in
+                let result = try await pipeline.run(config: resolvedConfig) { fraction, message in
                     DispatchQueue.main.async { MainActor.assumeIsolated {
                         OperationCenter.shared.update(id: opID, progress: fraction, detail: message)
                         OperationCenter.shared.log(id: opID, level: .info, message: message)
@@ -4267,10 +4288,38 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             detail: "Orienting reads against \(config.referenceURL.lastPathComponent)"
         )
 
-        Task.detached {
+        Task.detached { [weak self] in
             do {
+                // Materialize virtual FASTQs before running the pipeline.
+                let materializeTempDir = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("lungfish-orient-\(UUID().uuidString)")
+                try FileManager.default.createDirectory(
+                    at: materializeTempDir, withIntermediateDirectories: true)
+                defer { try? FileManager.default.removeItem(at: materializeTempDir) }
+
+                let resolvedFiles = try await self?.resolveInputFiles(
+                    [config.inputURL],
+                    tempDirectory: materializeTempDir,
+                    progress: { message in
+                        DispatchQueue.main.async { MainActor.assumeIsolated {
+                            OperationCenter.shared.update(id: opID, progress: 0, detail: message)
+                            OperationCenter.shared.log(id: opID, level: .info, message: message)
+                        }}
+                    }
+                ) ?? [config.inputURL]
+
+                let resolvedConfig = OrientConfig(
+                    inputURL: resolvedFiles.first ?? config.inputURL,
+                    referenceURL: config.referenceURL,
+                    wordLength: config.wordLength,
+                    dbMask: config.dbMask,
+                    qMask: config.qMask,
+                    saveUnoriented: config.saveUnoriented,
+                    threads: config.threads
+                )
+
                 let pipeline = OrientPipeline()
-                let result = try await pipeline.run(config: config) { fraction, message in
+                let result = try await pipeline.run(config: resolvedConfig) { fraction, message in
                     DispatchQueue.main.async { MainActor.assumeIsolated {
                         OperationCenter.shared.update(id: opID, progress: fraction, detail: message)
                         OperationCenter.shared.log(id: opID, level: .info, message: message)
@@ -4422,55 +4471,6 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         }
 
         return bundleURLs
-    }
-
-    /// Resolves FASTQ input files for classification, materializing virtual datasets.
-    ///
-    /// Virtual bundles (subset, trim, demux derivatives) only contain `preview.fastq`
-    /// on disk (~1000 reads). This method detects virtual bundles and materializes the
-    /// full dataset by reconstructing it from the root bundle + read ID pointers.
-    ///
-    /// - Parameters:
-    ///   - bundleURLs: The `.lungfishfastq` bundle URLs (or raw FASTQ paths) to resolve.
-    ///   - tempDirectory: Directory for materialized temp files (caller cleans up).
-    ///   - progress: Optional callback for reporting materialization progress.
-    /// - Returns: Array of resolved FASTQ file URLs (physical or materialized).
-    private func resolveClassificationInputFiles(
-        _ bundleURLs: [URL],
-        tempDirectory: URL,
-        progress: (@Sendable (String) -> Void)? = nil
-    ) async throws -> [URL] {
-        var resolvedFiles: [URL] = []
-
-        for (index, bundleURL) in bundleURLs.enumerated() {
-            try Task.checkCancellation()
-
-            let bundleName = bundleURL.deletingPathExtension().lastPathComponent
-
-            // Non-bundle FASTQ files are used directly
-            guard bundleURL.pathExtension.lowercased() == FASTQBundle.directoryExtension else {
-                resolvedFiles.append(bundleURL)
-                continue
-            }
-
-            // Check if this is a derived (potentially virtual) bundle
-            if FASTQBundle.isDerivedBundle(bundleURL) {
-                progress?("Materializing \(bundleName) (\(index + 1)/\(bundleURLs.count))...")
-                let materializedURL = try await FASTQDerivativeService.shared.materializeDatasetFASTQ(
-                    fromBundle: bundleURL,
-                    tempDirectory: tempDirectory,
-                    progress: { msg in progress?(msg) }
-                )
-                resolvedFiles.append(materializedURL)
-            } else {
-                // Not a derived bundle -- use standard resolution
-                if let url = FASTQBundle.resolvePrimaryFASTQURL(for: bundleURL) {
-                    resolvedFiles.append(url)
-                }
-            }
-        }
-
-        return resolvedFiles
     }
 
     /// Launches Kraken2 classification directly (skipping the wizard chooser step).
