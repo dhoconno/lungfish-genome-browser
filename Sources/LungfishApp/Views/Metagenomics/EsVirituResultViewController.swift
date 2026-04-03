@@ -768,49 +768,108 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             // Step 1: Validate regions against BAM header, then extract
             OperationCenter.shared.update(id: opID, progress: 0.05, detail: "Checking BAM reference names\u{2026}")
 
-            // Read BAM header to verify region names match @SQ lines
+            // Read BAM header to get all @SQ reference names
             let headerResult = try await runner.run(.samtools, arguments: ["view", "-H", bamURL.path])
-            let bamRefNames: Set<String> = {
-                var refs = Set<String>()
-                for line in headerResult.stdout.split(separator: "\n") where line.hasPrefix("@SQ") {
-                    for field in line.split(separator: "\t") where field.hasPrefix("SN:") {
-                        refs.insert(String(field.dropFirst(3)))
+            let bamRefNames: [String] = headerResult.stdout.split(separator: "\n")
+                .filter { $0.hasPrefix("@SQ") }
+                .compactMap { line in
+                    line.split(separator: "\t")
+                        .first(where: { $0.hasPrefix("SN:") })
+                        .map { String($0.dropFirst(3)) }
+                }
+            let bamRefNameSet = Set(bamRefNames)
+
+            logger.info("BAM contains \(bamRefNames.count) references: \(bamRefNames.prefix(5).joined(separator: ", "))\(bamRefNames.count > 5 ? "..." : "")")
+            OperationCenter.shared.log(id: opID, level: .info,
+                message: "BAM has \(bamRefNames.count) @SQ references: \(bamRefNames.prefix(5).joined(separator: ", "))\(bamRefNames.count > 5 ? "..." : "")")
+
+            // Multi-strategy matching: try progressively fuzzier approaches
+            var matchedRegions: [String] = []
+
+            // Strategy A: exact match (accession matches @SQ name exactly)
+            matchedRegions = regions.filter { bamRefNameSet.contains($0) }
+            if !matchedRegions.isEmpty {
+                OperationCenter.shared.log(id: opID, level: .info,
+                    message: "Exact match: \(matchedRegions.count)/\(regions.count) regions matched")
+            }
+
+            // Strategy B: prefix match (accession is prefix of @SQ name, or vice versa)
+            if matchedRegions.isEmpty {
+                for region in regions {
+                    for ref in bamRefNames {
+                        if ref.hasPrefix(region) || region.hasPrefix(ref) {
+                            matchedRegions.append(ref)
+                            break
+                        }
                     }
                 }
-                return refs
-            }()
+                if !matchedRegions.isEmpty {
+                    OperationCenter.shared.log(id: opID, level: .info,
+                        message: "Prefix match: \(matchedRegions.count)/\(regions.count) regions matched")
+                }
+            }
 
-            let matchedRegions = regions.filter { bamRefNames.contains($0) }
-            let unmatchedRegions = regions.filter { !bamRefNames.contains($0) }
-            if !unmatchedRegions.isEmpty {
-                logger.warning("Regions not found in BAM: \(unmatchedRegions.joined(separator: ", "), privacy: .public)")
+            // Strategy C: contains match (accession appears anywhere in @SQ name, or vice versa)
+            if matchedRegions.isEmpty {
+                for region in regions {
+                    for ref in bamRefNames {
+                        if ref.contains(region) || region.contains(ref) {
+                            matchedRegions.append(ref)
+                            break
+                        }
+                    }
+                }
+                if !matchedRegions.isEmpty {
+                    OperationCenter.shared.log(id: opID, level: .info,
+                        message: "Contains match: \(matchedRegions.count)/\(regions.count) regions matched")
+                }
+            }
+
+            // Strategy D: no region filter -- extract ALL reads from the BAM
+            // EsViritu BAMs are pre-filtered to virus alignments, so this is still useful.
+            let extractAllReads = matchedRegions.isEmpty
+
+            if extractAllReads {
+                logger.warning("No region match found in BAM. Extracting ALL reads (BAM is pre-filtered to virus alignments)")
                 OperationCenter.shared.log(id: opID, level: .warning,
-                    message: "Skipping \(unmatchedRegions.count) region(s) not in BAM header: \(unmatchedRegions.joined(separator: ", "))")
-            }
+                    message: "Could not match regions to BAM references. Extracting all reads from \(bamRefNames.count) references.")
+                OperationCenter.shared.update(id: opID, progress: 0.1, detail: "Extracting all reads from BAM\u{2026}")
+                OperationCenter.shared.log(id: opID, level: .info, message: "Running samtools fastq on full BAM (no region filter)")
 
-            guard !matchedRegions.isEmpty else {
-                OperationCenter.shared.fail(id: opID, detail: "None of the selected regions (\(regions.joined(separator: ", "))) match reference names in the BAM file")
-                return
-            }
+                let fastqArgs = ["fastq", "-0", outputFASTQ.path, bamURL.path]
+                let fastqResult = try await runner.run(.samtools, arguments: fastqArgs)
+                guard fastqResult.isSuccess else {
+                    throw NativeToolError.executionFailed("samtools fastq", fastqResult.exitCode, fastqResult.stderr)
+                }
+            } else {
+                let unmatchedRegions = regions.filter { region in
+                    !matchedRegions.contains(where: { $0 == region })
+                }
+                if !unmatchedRegions.isEmpty {
+                    logger.warning("Regions not found in BAM: \(unmatchedRegions.joined(separator: ", "), privacy: .public)")
+                    OperationCenter.shared.log(id: opID, level: .warning,
+                        message: "Skipping \(unmatchedRegions.count) unmatched region(s): \(unmatchedRegions.joined(separator: ", "))")
+                }
 
-            OperationCenter.shared.update(id: opID, progress: 0.1, detail: "Extracting alignments from BAM\u{2026}")
-            OperationCenter.shared.log(id: opID, level: .info, message: "Running samtools view for \(matchedRegions.count) regions")
+                OperationCenter.shared.update(id: opID, progress: 0.1, detail: "Extracting alignments from BAM\u{2026}")
+                OperationCenter.shared.log(id: opID, level: .info, message: "Running samtools view for \(matchedRegions.count) regions: \(matchedRegions.joined(separator: ", "))")
 
-            var viewArgs = ["view", "-b", "-o", extractedBAM.path, bamURL.path]
-            viewArgs.append(contentsOf: matchedRegions)
-            let viewResult = try await runner.run(.samtools, arguments: viewArgs)
-            guard viewResult.isSuccess else {
-                throw NativeToolError.executionFailed("samtools view", viewResult.exitCode, viewResult.stderr)
-            }
+                var viewArgs = ["view", "-b", "-o", extractedBAM.path, bamURL.path]
+                viewArgs.append(contentsOf: matchedRegions)
+                let viewResult = try await runner.run(.samtools, arguments: viewArgs)
+                guard viewResult.isSuccess else {
+                    throw NativeToolError.executionFailed("samtools view", viewResult.exitCode, viewResult.stderr)
+                }
 
-            // Step 2: samtools fastq to convert extracted BAM to FASTQ
-            OperationCenter.shared.update(id: opID, progress: 0.5, detail: "Converting to FASTQ\u{2026}")
-            OperationCenter.shared.log(id: opID, level: .info, message: "Running samtools fastq")
+                // Convert extracted BAM to FASTQ
+                OperationCenter.shared.update(id: opID, progress: 0.5, detail: "Converting to FASTQ\u{2026}")
+                OperationCenter.shared.log(id: opID, level: .info, message: "Running samtools fastq")
 
-            let fastqArgs = ["fastq", "-0", outputFASTQ.path, extractedBAM.path]
-            let fastqResult = try await runner.run(.samtools, arguments: fastqArgs)
-            guard fastqResult.isSuccess else {
-                throw NativeToolError.executionFailed("samtools fastq", fastqResult.exitCode, fastqResult.stderr)
+                let fastqArgs = ["fastq", "-0", outputFASTQ.path, extractedBAM.path]
+                let fastqResult = try await runner.run(.samtools, arguments: fastqArgs)
+                guard fastqResult.isSuccess else {
+                    throw NativeToolError.executionFailed("samtools fastq", fastqResult.exitCode, fastqResult.stderr)
+                }
             }
 
             // Verify output exists and is non-empty
