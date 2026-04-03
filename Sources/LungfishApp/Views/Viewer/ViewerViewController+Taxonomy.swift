@@ -190,6 +190,8 @@ extension ViewerViewController {
                     let parentDir = outputURLs[0].deletingLastPathComponent()
                     let bundleURL = try await service.createBundle(
                         from: extractionResult,
+                        sourceName: config.sourceFile.deletingPathExtension().lastPathComponent,
+                        selectionDescription: taxonLabel,
                         metadata: metadata,
                         in: parentDir
                     )

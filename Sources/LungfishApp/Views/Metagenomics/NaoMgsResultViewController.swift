@@ -1571,7 +1571,13 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
                             parameters: ["taxIds": taxIds.sorted().map(String.init).joined(separator: ",")]
                         )
                         let bundleDir = capturedProjectURL ?? tempDir
-                        let bundleURL = try await service.createBundle(from: result, metadata: metadata, in: bundleDir)
+                        let bundleURL = try await service.createBundle(
+                            from: result,
+                            sourceName: capturedSampleId ?? "NAO-MGS",
+                            selectionDescription: outputName,
+                            metadata: metadata,
+                            in: bundleDir
+                        )
 
                         DispatchQueue.main.async {
                             MainActor.assumeIsolated {

@@ -209,6 +209,8 @@ struct ExtractReadsSubcommand: AsyncParsableCommand {
 
             let bundleURL = try await service.createBundle(
                 from: result,
+                sourceName: bundleName ?? outputBase,
+                selectionDescription: "extract",
                 metadata: metadata,
                 in: outputDir
             )

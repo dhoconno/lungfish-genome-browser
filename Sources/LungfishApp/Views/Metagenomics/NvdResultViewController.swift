@@ -1314,7 +1314,13 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
                             parameters: ["contigs": frozenContigNames.joined(separator: ",")]
                         )
                         let bundleDir = capturedProjectURL ?? tempDir
-                        let createdBundleURL = try await service.createBundle(from: result, metadata: metadata, in: bundleDir)
+                        let createdBundleURL = try await service.createBundle(
+                            from: result,
+                            sourceName: outputName,
+                            selectionDescription: frozenContigNames.joined(separator: ", "),
+                            metadata: metadata,
+                            in: bundleDir
+                        )
 
                         DispatchQueue.main.async {
                             MainActor.assumeIsolated {

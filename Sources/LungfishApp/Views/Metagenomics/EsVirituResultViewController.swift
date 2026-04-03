@@ -751,7 +751,13 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
                             parameters: ["regions": capturedAccessions.joined(separator: ",")]
                         )
                         let bundleDir = projectURL ?? tempDir
-                        let bundleURL = try await service.createBundle(from: result, metadata: metadata, in: bundleDir)
+                        let bundleURL = try await service.createBundle(
+                            from: result,
+                            sourceName: capturedAccessions.first.map { _ in outputName } ?? "EsViritu",
+                            selectionDescription: capturedAccessions.joined(separator: ", "),
+                            metadata: metadata,
+                            in: bundleDir
+                        )
 
                         DispatchQueue.main.async {
                             MainActor.assumeIsolated {

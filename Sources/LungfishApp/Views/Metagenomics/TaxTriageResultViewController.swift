@@ -1965,7 +1965,13 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
                             parameters: ["regions": accessions.joined(separator: ",")]
                         )
                         let bundleDir = capturedProjectURL ?? tempDir
-                        let bundleURL = try await service.createBundle(from: result, metadata: metadata, in: bundleDir)
+                        let bundleURL = try await service.createBundle(
+                            from: result,
+                            sourceName: outputName,
+                            selectionDescription: accessions.joined(separator: ", "),
+                            metadata: metadata,
+                            in: bundleDir
+                        )
 
                         DispatchQueue.main.async {
                             MainActor.assumeIsolated {

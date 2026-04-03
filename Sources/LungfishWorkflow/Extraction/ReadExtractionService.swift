@@ -17,7 +17,7 @@ private let logger = Logger(subsystem: "com.lungfish.workflow", category: "ReadE
 /// - **BAM region** — extracts reads from a BAM file by genomic region via `samtools`.
 /// - **Database** — extracts reads stored in an NAO-MGS SQLite database.
 ///
-/// After extraction, ``createBundle(from:metadata:in:)`` packages the output
+/// After extraction, ``createBundle(from:sourceName:selectionDescription:metadata:in:)`` packages the output
 /// into a `.lungfishfastq` bundle with provenance metadata.
 ///
 /// ## Thread Safety
@@ -488,17 +488,25 @@ public actor ReadExtractionService {
     ///   - outputDirectory: The directory in which to create the bundle.
     /// - Returns: The URL of the created `.lungfishfastq` bundle directory.
     /// - Throws: ``ExtractionError/bundleCreationFailed(_:)`` on filesystem errors.
+    /// - Parameters:
+    ///   - result: The extraction result containing FASTQ file(s).
+    ///   - sourceName: Human-readable source name (e.g., "SRR35520572") for bundle naming.
+    ///   - selectionDescription: What was selected (e.g., "Human_coronavirus_OC43") for bundle naming.
+    ///   - metadata: Provenance metadata for the extraction.
+    ///   - outputDirectory: Parent directory where the bundle will be created.
     public func createBundle(
         from result: ExtractionResult,
+        sourceName: String,
+        selectionDescription: String,
         metadata: ExtractionMetadata,
         in outputDirectory: URL
     ) throws -> URL {
         let fm = FileManager.default
 
-        // Build bundle name from metadata
+        // Build bundle name: {sourceName}_{selectionDescription}_extract
         let bundleName = ExtractionBundleNaming.bundleName(
-            source: metadata.sourceDescription,
-            selection: metadata.toolName
+            source: sourceName,
+            selection: selectionDescription
         )
         let bundleDirName = "\(bundleName).\(FASTQBundle.directoryExtension)"
         let bundleURL = outputDirectory.appendingPathComponent(bundleDirName)
@@ -540,25 +548,15 @@ public actor ReadExtractionService {
             )
         }
 
-        // Write .lungfish-meta.json for the primary FASTQ file
+        // Write PersistedFASTQMetadata for the primary FASTQ
         if let primaryFASTQ = result.fastqURLs.first {
             let movedPrimaryName = primaryFASTQ.lastPathComponent
             let movedPrimaryURL = bundleURL.appendingPathComponent(movedPrimaryName)
-            let metaURL = movedPrimaryURL.appendingPathExtension("lungfish-meta.json")
 
-            let basicMeta: [String: Any] = [
-                "readCount": result.readCount,
-                "pairedEnd": result.pairedEnd,
-                "extractionDate": ISO8601DateFormatter().string(from: metadata.extractionDate),
-                "source": metadata.sourceDescription
-            ]
-
-            if let jsonData = try? JSONSerialization.data(
-                withJSONObject: basicMeta,
-                options: [.prettyPrinted, .sortedKeys]
-            ) {
-                try? jsonData.write(to: metaURL)
-            }
+            var persistedMeta = PersistedFASTQMetadata()
+            persistedMeta.downloadSource = "read-extraction"
+            persistedMeta.downloadDate = metadata.extractionDate
+            FASTQMetadataStore.save(persistedMeta, for: movedPrimaryURL)
         }
 
         logger.info("Created extraction bundle: \(bundleDirName, privacy: .public)")
