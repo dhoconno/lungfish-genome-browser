@@ -664,6 +664,36 @@ public class SidebarViewController: NSViewController {
         reloadOutlineView()
     }
 
+    /// Collect URLs of all currently expanded items (recursive).
+    private func saveExpandedItemURLs() -> Set<URL> {
+        var expanded = Set<URL>()
+        func collectExpanded(items: [SidebarItem]) {
+            for item in items {
+                if outlineView.isItemExpanded(item), let url = item.url {
+                    expanded.insert(url.standardizedFileURL)
+                }
+                if outlineView.isItemExpanded(item) {
+                    collectExpanded(items: item.children)
+                }
+            }
+        }
+        collectExpanded(items: rootItems)
+        return expanded
+    }
+
+    /// Re-expand items whose URLs match the saved set (recursive).
+    private func restoreExpandedItemURLs(_ urls: Set<URL>) {
+        func restoreExpanded(items: [SidebarItem]) {
+            for item in items {
+                if let url = item.url, urls.contains(url.standardizedFileURL) {
+                    outlineView.expandItem(item)
+                    restoreExpanded(items: item.children)
+                }
+            }
+        }
+        restoreExpanded(items: rootItems)
+    }
+
     /// Reloads the sidebar from the filesystem.
     ///
     /// Scans the project directory and rebuilds the SidebarItem tree to match
@@ -687,6 +717,9 @@ public class SidebarViewController: NSViewController {
         // Suppress selection side effects while rebuilding and restoring rows.
         suppressSelectionCallbacks = true
 
+        // Save expansion state before rebuilding (items are recreated, so match by URL)
+        let expandedURLs = saveExpandedItemURLs()
+
         // Build the sidebar items from the project folder's contents (not the folder itself)
         // This shows the contents at the root level, similar to how Finder shows folder contents
         rootItems = buildRootItems(from: projectURL)
@@ -698,6 +731,9 @@ public class SidebarViewController: NSViewController {
         for item in rootItems where item.type == .folder {
             outlineView.expandItem(item)
         }
+
+        // Restore nested expansion state beyond root level
+        restoreExpandedItemURLs(expandedURLs)
 
         // Restore selection if possible
         restoreSelection(urls: selectedURLs)
