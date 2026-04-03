@@ -237,16 +237,30 @@ extension ViewerViewController {
             OperationCenter.shared.setCancelCallback(for: opID) { task.cancel() }
         }
 
-        // Wire read extraction callback
-        controller.onExtractReads = { detection in
+        // Wire read extraction callback (context menu on a single detection/contig)
+        controller.onExtractReads = { [weak controller] detection in
+            guard let controller else { return }
             esVirituLogger.info("Read extraction requested for \(detection.name, privacy: .public) (\(detection.accession, privacy: .public), \(detection.readCount) reads)")
-            // TODO: Wire to extraction pipeline when available
+            let items = ["Contig: \(detection.accession)"]
+            let source = controller.bamURL?.lastPathComponent ?? "EsViritu result"
+            let safeName = detection.name
+                .replacingOccurrences(of: " ", with: "_")
+                .replacingOccurrences(of: "/", with: "-")
+            let suggestedName = "\(safeName)_\(detection.accession)_extract"
+            controller.presentExtractionSheet(items: items, source: source, suggestedName: suggestedName)
         }
 
-        // Wire assembly read extraction callback
-        controller.onExtractAssemblyReads = { assembly in
+        // Wire assembly read extraction callback (context menu on an assembly row)
+        controller.onExtractAssemblyReads = { [weak controller] assembly in
+            guard let controller else { return }
             esVirituLogger.info("Assembly read extraction requested for \(assembly.name, privacy: .public) (\(assembly.assembly, privacy: .public), \(assembly.totalReads) reads)")
-            // TODO: Wire to extraction pipeline when available
+            let items = assembly.contigs.map { "Contig: \($0.accession)" }
+            let source = controller.bamURL?.lastPathComponent ?? "EsViritu result"
+            let safeName = assembly.name
+                .replacingOccurrences(of: " ", with: "_")
+                .replacingOccurrences(of: "/", with: "-")
+            let suggestedName = "\(safeName)_\(assembly.assembly)_extract"
+            controller.presentExtractionSheet(items: items, source: source, suggestedName: suggestedName)
         }
 
         // Wire re-run callback

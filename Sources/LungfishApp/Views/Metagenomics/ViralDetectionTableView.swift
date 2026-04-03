@@ -614,9 +614,18 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         }
     }
 
-    @objc private func contextBlastVerify(_ sender: Any?) {
-        let row = outlineView.clickedRow
-        guard row >= 0 else { return }
+    /// Shows the BLAST config popover for the currently selected row.
+    ///
+    /// Called by the action bar BLAST button. If there is no single selection,
+    /// this is a no-op.
+    public func showBlastPopoverForSelectedRow() {
+        let row = outlineView.selectedRow
+        guard row >= 0, outlineView.selectedRowIndexes.count == 1 else { return }
+        showBlastPopover(forRow: row)
+    }
+
+    /// Shows the BLAST config popover anchored to the given row.
+    private func showBlastPopover(forRow row: Int) {
         let item = outlineView.item(atRow: row)
         let detection: ViralDetection
         let accessions: [String]
@@ -650,6 +659,12 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
 
         let rowRect = outlineView.rect(ofRow: row)
         popover.show(relativeTo: rowRect, of: outlineView, preferredEdge: .maxY)
+    }
+
+    @objc private func contextBlastVerify(_ sender: Any?) {
+        let row = outlineView.clickedRow
+        guard row >= 0 else { return }
+        showBlastPopover(forRow: row)
     }
 
     @objc private func contextCopyName(_ sender: Any?) {

@@ -67,9 +67,12 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     private(set) var esVirituConfig: EsVirituConfig?
 
     /// Path to the final BAM file, if available (from --keep True).
-    private var bamURL: URL?
+    ///
+    /// Internal visibility so that ``ViewerViewController+EsViritu`` extraction
+    /// callbacks can check BAM availability.
+    var bamURL: URL?
     /// Path to the BAM index (.csi/.bai), if available.
-    private var bamIndexURL: URL?
+    var bamIndexURL: URL?
 
     /// Background task computing unique reads for all assemblies.
     private var uniqueReadComputationTask: Task<Void, Never>?
@@ -562,10 +565,12 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             if let assembly {
                 // Update action bar with selection info
                 self.updateActionBarForAssembly(name: assembly.name, readCount: assembly.totalReads)
+                self.actionBar.setBlastEnabled(true)
                 self.actionBar.setExtractEnabled(true)
                 self.showAssemblyDetail(assembly)
             } else {
                 self.showOverview()
+                self.actionBar.setBlastEnabled(false, reason: "Select a row to use BLAST Verify")
                 self.actionBar.setExtractEnabled(false)
             }
         }
@@ -593,6 +598,7 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             guard let self else { return }
             self.hideMultiSelectionPlaceholder()
             self.updateActionBarForAssembly(name: detection.name, readCount: detection.readCount)
+            self.actionBar.setBlastEnabled(true)
             self.actionBar.setExtractEnabled(true)
 
             guard let assembly = self.resolveAssembly(for: detection) else {
@@ -630,11 +636,10 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             self.presentExtractionSheet(items: items, source: source, suggestedName: suggestedName)
         }
 
-        // Action bar BLAST verify (EsViritu triggers BLAST via table context menu,
-        // but the action bar button gives quick access to the table's BLAST flow)
+        // Action bar BLAST verify -> show BLAST config popover for the current selection
         actionBar.onBlastVerify = { [weak self] in
-            // EsViritu BLAST is triggered via the table context menu per-detection;
-            // the action bar button is intentionally a no-op placeholder
+            guard let self else { return }
+            self.detectionTableView.showBlastPopoverForSelectedRow()
         }
 
         // Action bar export
@@ -658,17 +663,39 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     // MARK: - Extraction Sheet
 
     /// Presents a ``ClassifierExtractionSheet`` for the given selected items.
-    private func presentExtractionSheet(items: [String], source: String, suggestedName: String) {
+    ///
+    /// Internal visibility so that ``ViewerViewController+EsViritu`` context menu
+    /// callbacks can trigger extraction directly on the EsViritu VC.
+    func presentExtractionSheet(items: [String], source: String, suggestedName: String) {
         guard let window = view.window else { return }
+
+        let accessions = detectionTableView.selectedAssemblyAccessions()
 
         let sheet = ClassifierExtractionSheet(
             selectedItems: items,
             sourceDescription: source,
             suggestedName: suggestedName,
-            onExtract: { [weak window] outputName in
-                guard let window else { return }
+            onExtract: { [weak self, weak window] outputName in
+                guard let self, let window else { return }
                 if let attached = window.attachedSheet { window.endSheet(attached) }
-                logger.info("Extract FASTQ confirmed: \(outputName, privacy: .public) from EsViritu")
+
+                guard let bamURL = self.bamURL else {
+                    let alert = NSAlert()
+                    alert.messageText = "BAM File Not Available"
+                    alert.informativeText = "EsViritu was not run with --keep True, so the BAM file is not available for read extraction."
+                    alert.alertStyle = .warning
+                    alert.addButton(withTitle: "OK")
+                    alert.beginSheetModal(for: window)
+                    return
+                }
+
+                Task { @MainActor in
+                    await self.runBamExtractionPipeline(
+                        bamURL: bamURL,
+                        regions: accessions,
+                        outputName: outputName
+                    )
+                }
             },
             onCancel: { [weak window] in
                 guard let window else { return }
@@ -684,6 +711,120 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         )
         panel.contentViewController = NSHostingController(rootView: sheet)
         window.beginSheet(panel)
+    }
+
+    // MARK: - BAM Extraction Pipeline
+
+    /// Extracts reads from the EsViritu BAM for the given reference accessions
+    /// and creates a new FASTQ bundle in the project.
+    ///
+    /// Pipeline:
+    /// 1. `samtools view -b -o extracted.bam BAM region1 region2 ...`
+    /// 2. `samtools fastq -0 output.fastq extracted.bam`
+    /// 3. Create a `.lungfishfastq` bundle containing the output FASTQ.
+    ///
+    /// Progress is reported via ``OperationCenter``.
+    private func runBamExtractionPipeline(
+        bamURL: URL,
+        regions: [String],
+        outputName: String
+    ) async {
+        let opID = OperationCenter.shared.start(
+            title: "Extract \(outputName)",
+            detail: "Extracting reads from EsViritu BAM\u{2026}",
+            operationType: .taxonomyExtraction,
+            cliCommand: "# samtools view + fastq extraction"
+        )
+        OperationCenter.shared.log(id: opID, level: .info, message: "Extracting reads for regions: \(regions.joined(separator: ", "))")
+
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("esviritu-extract-\(UUID().uuidString)")
+        do {
+            try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        } catch {
+            OperationCenter.shared.fail(id: opID, detail: "Failed to create temp directory: \(error.localizedDescription)")
+            return
+        }
+
+        let extractedBAM = tempDir.appendingPathComponent("extracted.bam")
+        let outputFASTQ = tempDir.appendingPathComponent("\(outputName).fastq")
+
+        defer {
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+
+        do {
+            let runner = NativeToolRunner.shared
+
+            // Step 1: samtools view to extract alignments for selected regions
+            OperationCenter.shared.update(id: opID, progress: 0.1, detail: "Extracting alignments from BAM\u{2026}")
+            OperationCenter.shared.log(id: opID, level: .info, message: "Running samtools view for \(regions.count) regions")
+
+            var viewArgs = ["view", "-b", "-o", extractedBAM.path, bamURL.path]
+            viewArgs.append(contentsOf: regions)
+            let viewResult = try await runner.run(.samtools, arguments: viewArgs)
+            guard viewResult.isSuccess else {
+                throw NativeToolError.executionFailed("samtools view", viewResult.exitCode, viewResult.stderr)
+            }
+
+            // Step 2: samtools fastq to convert extracted BAM to FASTQ
+            OperationCenter.shared.update(id: opID, progress: 0.5, detail: "Converting to FASTQ\u{2026}")
+            OperationCenter.shared.log(id: opID, level: .info, message: "Running samtools fastq")
+
+            let fastqArgs = ["fastq", "-0", outputFASTQ.path, extractedBAM.path]
+            let fastqResult = try await runner.run(.samtools, arguments: fastqArgs)
+            guard fastqResult.isSuccess else {
+                throw NativeToolError.executionFailed("samtools fastq", fastqResult.exitCode, fastqResult.stderr)
+            }
+
+            // Verify output exists and is non-empty
+            let attrs = try FileManager.default.attributesOfItem(atPath: outputFASTQ.path)
+            let fileSize = (attrs[.size] as? Int) ?? 0
+            guard fileSize > 0 else {
+                OperationCenter.shared.fail(id: opID, detail: "Extraction produced an empty FASTQ (no reads matched the selected regions)")
+                return
+            }
+
+            // Step 3: Create a .lungfishfastq bundle in the project directory
+            OperationCenter.shared.update(id: opID, progress: 0.8, detail: "Creating FASTQ bundle\u{2026}")
+            OperationCenter.shared.log(id: opID, level: .info, message: "Creating bundle: \(outputName).lungfishfastq")
+
+            // Derive project directory from the EsViritu output directory:
+            // outputDirectory / derivatives / bundle.lungfishfastq / project
+            let projectURL = esVirituConfig?.outputDirectory
+                .deletingLastPathComponent()  // derivatives/
+                .deletingLastPathComponent()  // bundle.lungfishfastq/
+                .deletingLastPathComponent()  // project/
+
+            guard let projectURL else {
+                OperationCenter.shared.fail(id: opID, detail: "Cannot determine project directory")
+                return
+            }
+
+            let bundleURL = projectURL.appendingPathComponent("\(outputName).lungfishfastq")
+            try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+
+            // Move the FASTQ into the bundle
+            let destFASTQ = bundleURL.appendingPathComponent("\(outputName).fastq")
+            try FileManager.default.moveItem(at: outputFASTQ, to: destFASTQ)
+
+            OperationCenter.shared.complete(id: opID, detail: "Created \(outputName).lungfishfastq")
+            OperationCenter.shared.log(id: opID, level: .info, message: "Bundle created at \(bundleURL.path)")
+
+            logger.info("BAM extraction complete: \(bundleURL.path, privacy: .public)")
+
+            // Refresh sidebar to pick up new extracted bundle
+            if let appDelegate = NSApp.delegate as? AppDelegate {
+                if let sidebar = appDelegate.mainWindowController?.mainSplitViewController?.sidebarController {
+                    sidebar.reloadFromFilesystem()
+                }
+            }
+
+        } catch {
+            logger.error("BAM extraction failed: \(error.localizedDescription, privacy: .public)")
+            OperationCenter.shared.fail(id: opID, detail: error.localizedDescription)
+            OperationCenter.shared.log(id: opID, level: .error, message: "Extraction failed: \(error.localizedDescription)")
+        }
     }
 
     @objc private func handleLayoutSwapRequested(_ notification: Notification) {
