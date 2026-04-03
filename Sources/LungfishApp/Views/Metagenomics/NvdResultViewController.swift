@@ -175,11 +175,36 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
     /// Sample entries for the picker view.
     public var sampleEntries: [NvdSampleEntry] = []
 
+    /// NVD sample entry for the unified picker.
+    public struct NvdSampleEntry: ClassifierSampleEntry {
+        public let id: String
+        public let displayName: String
+        public let contigCount: Int
+        public let hitCount: Int
+
+        public var metricLabel: String { "Contigs / Hits" }
+        public var metricValue: String {
+            let formatter = NumberFormatter()
+            formatter.numberStyle = .decimal
+            let c = formatter.string(from: NSNumber(value: contigCount)) ?? "\(contigCount)"
+            let h = formatter.string(from: NSNumber(value: hitCount)) ?? "\(hitCount)"
+            return "\(c) / \(h)"
+        }
+        public var secondaryMetric: String? { metricValue }
+
+        public init(id: String, displayName: String, contigCount: Int, hitCount: Int) {
+            self.id = id
+            self.displayName = displayName
+            self.contigCount = contigCount
+            self.hitCount = hitCount
+        }
+    }
+
     /// Common prefix stripped from sample display names.
     public var strippedPrefix: String = ""
 
     /// Observable state shared with the SwiftUI sample picker popover and Inspector.
-    public let samplePickerState = NvdSamplePickerState()
+    public var samplePickerState: ClassifierSamplePickerState!
 
     // MARK: - Callbacks
 
@@ -355,7 +380,7 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
 
         // Select all samples initially
         selectedSamples = Set(sampleNames)
-        samplePickerState.selectedSamples = selectedSamples
+        samplePickerState = ClassifierSamplePickerState(allSamples: selectedSamples)
 
         // Update summary bar
         summaryBar.update(
@@ -1169,10 +1194,11 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
 
         samplePickerState.selectedSamples = selectedSamples
 
-        let pickerView = NvdSamplePickerView(
+        let pickerView = ClassifierSamplePickerView(
             samples: sampleEntries,
             pickerState: samplePickerState,
-            strippedPrefix: strippedPrefix
+            strippedPrefix: strippedPrefix,
+            isInline: false
         )
 
         let hostingController = NSHostingController(rootView: pickerView)

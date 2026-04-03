@@ -76,13 +76,13 @@ enum NvdDataConverter {
 
     /// Strips the common prefix from an array of sample IDs.
     ///
-    /// Delegates to `NvdSamplePickerView.commonPrefix(of:)` for consistent behavior
+    /// Delegates to `ClassifierSamplePickerView.commonPrefix(of:)` for consistent behavior
     /// across the sample picker and the result view controller.
     ///
     /// - Parameter names: Array of sample ID strings.
     /// - Returns: The longest common prefix ending at a word boundary.
     static func commonPrefix(of names: [String]) -> String {
-        NvdSamplePickerView.commonPrefix(of: names)
+        ClassifierSamplePickerView.commonPrefix(of: names)
     }
 
     // MARK: - Private Helpers

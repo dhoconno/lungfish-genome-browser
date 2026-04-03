@@ -66,6 +66,20 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     /// Sample entries for the picker view.
     var sampleEntries: [NaoMgsSampleEntry] = []
 
+    /// NAO-MGS sample entry for the unified picker.
+    struct NaoMgsSampleEntry: ClassifierSampleEntry {
+        let id: String
+        let displayName: String
+        let hitCount: Int
+
+        var metricLabel: String { "hits" }
+        var metricValue: String {
+            let formatter = NumberFormatter()
+            formatter.numberStyle = .decimal
+            return formatter.string(from: NSNumber(value: hitCount)) ?? "\(hitCount)"
+        }
+    }
+
     /// Common prefix stripped from sample display names.
     var strippedPrefix: String = ""
 
@@ -150,7 +164,7 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     private var samplePopover: NSPopover?
 
     /// Observable state shared with the SwiftUI sample picker popover and Inspector.
-    let samplePickerState = NaoMgsSamplePickerState()
+    var samplePickerState: ClassifierSamplePickerState!
 
     // MARK: - Selection Sync
 
@@ -233,7 +247,7 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
 
         // Compute common prefix for display names
         let sampleNames = allSamples.map(\.sample)
-        strippedPrefix = NaoMgsSamplePickerView.commonPrefix(of: sampleNames)
+        strippedPrefix = ClassifierSamplePickerView.commonPrefix(of: sampleNames)
 
         // Create sample entries with stripped display names
         sampleEntries = allSamples.map { item in
@@ -245,7 +259,7 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
 
         // Select all samples initially
         selectedSamples = Set(sampleNames)
-        samplePickerState.selectedSamples = selectedSamples
+        samplePickerState = ClassifierSamplePickerState(allSamples: selectedSamples)
 
         // Update summary bar
         summaryBar.update(database: database, manifest: manifest, selectedSamples: Array(selectedSamples))
@@ -408,10 +422,11 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         // Sync current selection into the observable state object.
         samplePickerState.selectedSamples = selectedSamples
 
-        let pickerView = NaoMgsSamplePickerView(
+        let pickerView = ClassifierSamplePickerView(
             samples: sampleEntries,
             pickerState: samplePickerState,
-            strippedPrefix: strippedPrefix
+            strippedPrefix: strippedPrefix,
+            isInline: false
         )
 
         let hostingController = NSHostingController(rootView: pickerView)

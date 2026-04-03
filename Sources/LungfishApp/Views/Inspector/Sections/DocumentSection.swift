@@ -109,22 +109,13 @@ public final class DocumentSectionViewModel {
     /// When true, taxonomy table is on the left instead of the default right.
     var isTableOnLeft: Bool = UserDefaults.standard.bool(forKey: "metagenomicsTableOnLeft")
 
-    // MARK: - Sample Picker State
-    /// Shared sample picker state for Inspector-embedded sample selector.
-    var samplePickerState: NaoMgsSamplePickerState?
-    /// Sample entries for the picker view.
-    var sampleEntries: [NaoMgsSampleEntry] = []
-    /// Common prefix stripped from sample display names.
-    var sampleStrippedPrefix: String = ""
-
-    // MARK: - NVD Sample Picker State
-
-    /// Shared NVD sample picker state for Inspector-embedded sample selector.
-    var nvdSamplePickerState: NvdSamplePickerState?
-    /// NVD sample entries for the picker view.
-    var nvdSampleEntries: [NvdSampleEntry] = []
-    /// Common prefix stripped from NVD sample display names.
-    var nvdSampleStrippedPrefix: String = ""
+    // MARK: - Unified Classifier Sample Picker
+    /// Shared classifier sample picker state for Inspector-embedded sample selector.
+    var classifierPickerState: ClassifierSamplePickerState?
+    /// Classifier sample entries for the picker view.
+    var classifierSampleEntries: [any ClassifierSampleEntry] = []
+    /// Common prefix stripped from classifier sample display names.
+    var classifierStrippedPrefix: String = ""
 
     /// Whether any content is available for display (bundle, FASTQ, SRA, NAO-MGS, or NVD metadata).
     var hasAnyContent: Bool {

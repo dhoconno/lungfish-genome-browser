@@ -812,15 +812,15 @@ public class InspectorViewController: NSViewController {
         viewModel.documentSectionViewModel.updateNaoMgsManifest(manifest)
     }
 
-    /// Wires the shared sample picker state for the Inspector-embedded sample selector.
-    func updateMetagenomicsSampleState(
-        pickerState: NaoMgsSamplePickerState,
-        entries: [NaoMgsSampleEntry],
+    /// Wires the shared classifier sample picker state for the Inspector-embedded sample selector.
+    func updateClassifierSampleState(
+        pickerState: ClassifierSamplePickerState,
+        entries: [any ClassifierSampleEntry],
         strippedPrefix: String
     ) {
-        viewModel.documentSectionViewModel.samplePickerState = pickerState
-        viewModel.documentSectionViewModel.sampleEntries = entries
-        viewModel.documentSectionViewModel.sampleStrippedPrefix = strippedPrefix
+        viewModel.documentSectionViewModel.classifierPickerState = pickerState
+        viewModel.documentSectionViewModel.classifierSampleEntries = entries
+        viewModel.documentSectionViewModel.classifierStrippedPrefix = strippedPrefix
     }
 
     /// Updates the NVD manifest in the Document section.
@@ -828,17 +828,6 @@ public class InspectorViewController: NSViewController {
     /// - Parameter manifest: The NVD manifest, or nil to clear
     public func updateNvdManifest(_ manifest: NvdManifest?) {
         viewModel.documentSectionViewModel.updateNvdManifest(manifest)
-    }
-
-    /// Wires the shared NVD sample picker state for the Inspector-embedded sample selector.
-    func updateNvdSampleState(
-        pickerState: NvdSamplePickerState,
-        entries: [NvdSampleEntry],
-        strippedPrefix: String
-    ) {
-        viewModel.documentSectionViewModel.nvdSamplePickerState = pickerState
-        viewModel.documentSectionViewModel.nvdSampleEntries = entries
-        viewModel.documentSectionViewModel.nvdSampleStrippedPrefix = strippedPrefix
     }
 
     /// Injects the shared AI assistant service used by the embedded inspector tab.
@@ -1526,7 +1515,8 @@ private struct MetagenomicsResultSummarySection: View {
                 }
             }
 
-            if let pickerState = viewModel.samplePickerState, !viewModel.sampleEntries.isEmpty {
+            if let pickerState = viewModel.classifierPickerState,
+               !viewModel.classifierSampleEntries.isEmpty {
                 Divider()
                     .padding(.vertical, 4)
 
@@ -1534,30 +1524,10 @@ private struct MetagenomicsResultSummarySection: View {
                     Text("Sample Filter")
                         .font(.caption.weight(.semibold))
 
-                    NaoMgsSamplePickerView(
-                        samples: viewModel.sampleEntries,
+                    ClassifierSamplePickerView(
+                        samples: viewModel.classifierSampleEntries,
                         pickerState: pickerState,
-                        strippedPrefix: viewModel.sampleStrippedPrefix,
-                        isInline: true
-                    )
-                }
-                .onChange(of: pickerState.selectedSamples) { _, _ in
-                    NotificationCenter.default.post(name: .metagenomicsSampleSelectionChanged, object: nil)
-                }
-            }
-
-            if let pickerState = viewModel.nvdSamplePickerState, !viewModel.nvdSampleEntries.isEmpty {
-                Divider()
-                    .padding(.vertical, 4)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Sample Filter")
-                        .font(.caption.weight(.semibold))
-
-                    NvdSamplePickerView(
-                        samples: viewModel.nvdSampleEntries,
-                        pickerState: pickerState,
-                        strippedPrefix: viewModel.nvdSampleStrippedPrefix,
+                        strippedPrefix: viewModel.classifierStrippedPrefix,
                         isInline: true
                     )
                 }

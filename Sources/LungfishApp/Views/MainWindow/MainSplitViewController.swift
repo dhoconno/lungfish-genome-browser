@@ -1911,7 +1911,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                         self.inspectorController?.updateNaoMgsManifest(manifest)
 
                         // Wire sample picker state to Inspector for embedded sample selector
-                        self.inspectorController?.updateMetagenomicsSampleState(
+                        self.inspectorController?.updateClassifierSampleState(
                             pickerState: placeholderVC.samplePickerState,
                             entries: placeholderVC.sampleEntries,
                             strippedPrefix: placeholderVC.strippedPrefix
@@ -2001,7 +2001,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                         self.inspectorController?.updateNvdManifest(manifest)
 
                         // Wire sample picker state to Inspector for embedded sample selector
-                        self.inspectorController?.updateNvdSampleState(
+                        self.inspectorController?.updateClassifierSampleState(
                             pickerState: placeholderVC.samplePickerState,
                             entries: placeholderVC.sampleEntries,
                             strippedPrefix: placeholderVC.strippedPrefix
