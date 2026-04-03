@@ -929,6 +929,13 @@ public final class ProjectUniversalSearchIndex {
                 attributeCount: &attributeCount
             )
         }
+
+        try indexSampleMetadata(
+            at: resultDirectory,
+            entityCount: &entityCount,
+            attributeCount: &attributeCount,
+            perKindCounts: &perKindCounts
+        )
     }
 
     private func indexEsVirituResult(
@@ -1084,6 +1091,13 @@ public final class ProjectUniversalSearchIndex {
             try insertAttribute(entityID: parentEntityID, key: "species", value: species)
             attributeCount += 1
         }
+
+        try indexSampleMetadata(
+            at: resultDirectory,
+            entityCount: &entityCount,
+            attributeCount: &attributeCount,
+            perKindCounts: &perKindCounts
+        )
     }
 
     private func indexTaxTriageResult(
@@ -1307,6 +1321,13 @@ public final class ProjectUniversalSearchIndex {
                 )
             }
         }
+
+        try indexSampleMetadata(
+            at: resultDirectory,
+            entityCount: &entityCount,
+            attributeCount: &attributeCount,
+            perKindCounts: &perKindCounts
+        )
     }
 
     private func indexNaoMgsResult(
@@ -1457,6 +1478,13 @@ public final class ProjectUniversalSearchIndex {
                 attributeCount: &attributeCount
             )
         }
+
+        try indexSampleMetadata(
+            at: resultURL,
+            entityCount: &entityCount,
+            attributeCount: &attributeCount,
+            perKindCounts: &perKindCounts
+        )
     }
 
     private func indexNvdResult(
@@ -1573,6 +1601,69 @@ public final class ProjectUniversalSearchIndex {
                 includeOriginal: false,
                 attributeCount: &attributeCount
             )
+        }
+
+        try indexSampleMetadata(
+            at: resultURL,
+            entityCount: &entityCount,
+            attributeCount: &attributeCount,
+            perKindCounts: &perKindCounts
+        )
+    }
+
+    /// Index sample metadata values from a classification bundle.
+    private func indexSampleMetadata(
+        at bundleURL: URL,
+        entityCount: inout Int,
+        attributeCount: inout Int,
+        perKindCounts: inout [String: Int]
+    ) throws {
+        let tsvURL = bundleURL.appendingPathComponent("metadata/sample_metadata.tsv")
+        guard FileManager.default.fileExists(atPath: tsvURL.path),
+              let data = try? Data(contentsOf: tsvURL) else { return }
+
+        guard let text = String(data: data, encoding: .utf8) else { return }
+        let lines = text.components(separatedBy: .newlines).filter { !$0.isEmpty }
+        guard let headerLine = lines.first, lines.count > 1 else { return }
+        let delimiter: Character = headerLine.contains("\t") ? "\t" : ","
+        let headers = headerLine.split(separator: delimiter, omittingEmptySubsequences: false).map(String.init)
+        guard headers.count >= 2 else { return }
+        let columns = Array(headers.dropFirst())
+
+        let relPath = bundleURL.lastPathComponent
+
+        for line in lines.dropFirst() {
+            let fields = line.split(separator: delimiter, omittingEmptySubsequences: false).map(String.init)
+            guard let sampleId = fields.first else { continue }
+
+            for (i, col) in columns.enumerated() {
+                let value = (i + 1) < fields.count ? fields[i + 1] : ""
+                guard !value.isEmpty else { continue }
+
+                let entityId = "sample_metadata:\(relPath):\(sampleId):\(col)"
+                let row = EntityRow(
+                    id: entityId,
+                    kind: "sample_metadata",
+                    title: value,
+                    subtitle: "Sample: \(sampleId), Field: \(col)",
+                    format: nil,
+                    relPath: relPath,
+                    url: bundleURL,
+                    mtime: nil,
+                    sizeBytes: nil
+                )
+                try insertEntity(
+                    row,
+                    attributes: [
+                        "sample_id": sampleId,
+                        "field_name": col,
+                        "field_value": value,
+                    ],
+                    entityCount: &entityCount,
+                    attributeCount: &attributeCount,
+                    perKindCounts: &perKindCounts
+                )
+            }
         }
     }
 
