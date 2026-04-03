@@ -62,11 +62,18 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     }
 
     /// The currently selected node.
+    ///
+    /// Setting this property programmatically scrolls the outline view to the node.
+    /// Use `_selectedNode` directly when you need to clear the tracked node
+    /// without triggering a programmatic selection change (e.g., during multi-select).
     public var selectedNode: TaxonNode? {
-        didSet {
-            selectRowForNode(selectedNode)
+        get { _selectedNode }
+        set {
+            _selectedNode = newValue
+            selectRowForNode(newValue)
         }
     }
+    private var _selectedNode: TaxonNode?
 
     /// Called when the user selects a row.
     public var onNodeSelected: ((TaxonNode) -> Void)?
@@ -725,7 +732,11 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
             selectedNode = node
             onNodeSelected?(node)
         } else if selectedRows.count > 1 {
-            selectedNode = nil
+            // Clear selectedNode WITHOUT triggering didSet (which calls
+            // selectRowForNode → deselectAll, destroying the multi-selection).
+            suppressSelectionCallback = true
+            _selectedNode = nil
+            suppressSelectionCallback = false
             onMultipleNodesSelected?(selectedRows.count)
         } else {
             selectedNode = nil
