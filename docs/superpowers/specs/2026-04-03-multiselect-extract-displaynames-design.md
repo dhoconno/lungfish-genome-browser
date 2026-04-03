@@ -35,7 +35,7 @@ func outlineViewSelectionDidChange(_ notification: Notification) {
     } else if selectedRows.count > 1 {
         // Multi-selection: show placeholder in detail pane
         showMultiSelectionPlaceholder(count: selectedRows.count)
-        actionBar.setBlastEnabled(true)  // BLAST works on multi-select
+        actionBar.setBlastEnabled(false)  // BLAST requires single selection
     } else {
         // No selection
         clearDetailPane()
@@ -59,7 +59,7 @@ Styled: primary text (13pt semibold) + secondary text (11pt, tertiary color). Sa
 
 ### Action Bar with Multi-Select
 
-- **BLAST Verify:** Enabled when 1+ rows selected. With multi-select, submits reads from ALL selected taxa/organisms.
+- **BLAST Verify:** Enabled only when exactly 1 row is selected. When disabled due to multi-select, show a tooltip on the button: "Select a single row to use BLAST Verify". When disabled due to no selection, tooltip: "Select a row to use BLAST Verify".
 - **Extract FASTQ:** Enabled when 1+ rows selected. Extracts reads for all selected taxa.
 - **Export:** Always enabled (exports full table, not selection-dependent).
 - **Info label:** Shows "N items selected" when multiple rows selected.
@@ -95,6 +95,22 @@ var onExtractFASTQ: (() -> Void)?
 ```
 
 Disabled until at least one row is selected.
+
+### BLAST Verify Disabled Tooltip
+
+`ClassifierActionBar.setBlastEnabled` gains a `reason` parameter to explain why the button is disabled:
+
+```swift
+func setBlastEnabled(_ enabled: Bool, reason: String? = nil) {
+    blastButton.isEnabled = enabled
+    blastButton.toolTip = enabled ? "Verify selected taxon with BLAST" : reason
+}
+```
+
+Callers pass context-specific reasons:
+- No selection: `setBlastEnabled(false, reason: "Select a row to use BLAST Verify")`
+- Multi-select: `setBlastEnabled(false, reason: "Select a single row to use BLAST Verify")`
+- Single selection: `setBlastEnabled(true)`
 
 ### Per-Classifier Extraction Strategy
 
