@@ -4735,6 +4735,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
                 // Build a config with resolved (materialized) input files
                 var resolvedConfig = config
+                // Preserve the original bundle display name before materialization
+                // replaces inputFiles, so the taxonomy viewer shows the real sample
+                // name instead of "materialized".
+                if resolvedConfig.sampleDisplayName == nil {
+                    let bundleName = config.inputFiles.first?
+                        .deletingPathExtension().lastPathComponent
+                    resolvedConfig.sampleDisplayName = bundleName
+                }
                 resolvedConfig.inputFiles = resolvedFiles
 
                 let progressCallback: @Sendable (Double, String) -> Void = { progress, message in

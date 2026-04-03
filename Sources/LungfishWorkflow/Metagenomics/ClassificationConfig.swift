@@ -66,6 +66,11 @@ public struct ClassificationConfig: Sendable, Codable, Equatable {
 
     // MARK: - Input
 
+    /// Human-readable sample name for display. When classification runs on a
+    /// materialized virtual FASTQ, this preserves the original bundle's sidebar name
+    /// instead of showing "materialized".
+    public var sampleDisplayName: String?
+
     /// One or two FASTQ input files.
     ///
     /// For paired-end data, supply exactly two files (R1, R2). For single-end,
