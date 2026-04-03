@@ -56,6 +56,7 @@ struct ImportCommand: AsyncParsableCommand {
             EsVirituSubcommand.self,
             TaxTriageSubcommand.self,
             NaoMgsSubcommand.self,
+            NvdSubcommand.self,
         ]
     )
 }
@@ -1023,12 +1024,6 @@ extension ImportCommand {
         )
         var outputDir: String?
 
-        @Option(
-            name: .customLong("min-identity"),
-            help: "Minimum percent identity filter (0-100, default: 0)"
-        )
-        var minIdentity: Double = 0
-
         @Flag(
             name: .customLong("fetch-references"),
             inversion: .prefixedNo,
@@ -1060,7 +1055,6 @@ extension ImportCommand {
                     inputURL: inputURL,
                     outputDirectory: outputDirectory,
                     sampleName: sampleName,
-                    minIdentity: minIdentity,
                     fetchReferences: fetchReferences,
                     preferredName: sampleName
                 ) { progress, message in
@@ -1083,6 +1077,159 @@ extension ImportCommand {
             ]))
             print("")
             print(formatter.success("NAO-MGS import complete: \(imported.resultDirectory.lastPathComponent)"))
+        }
+    }
+
+    // MARK: - NVD Import
+
+    /// Import NVD (Novel Virus Diagnostics) BLAST results into a Lungfish project.
+    ///
+    /// Parses `*_blast_concatenated.csv` and writes a `manifest.json` summary
+    /// into an `nvd-{experiment}` bundle directory.
+    struct NvdSubcommand: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "nvd",
+            abstract: "Import NVD BLAST results"
+        )
+
+        @Argument(help: "Path to NVD results directory (containing 05_labkey_bundling/)")
+        var inputPath: String
+
+        @Option(
+            name: [.customLong("output-dir"), .customShort("o")],
+            help: "Output project/import directory (default: current directory)"
+        )
+        var outputDir: String?
+
+        @Option(
+            name: .customLong("name"),
+            help: "Override the bundle name (default: nvd-{experiment})"
+        )
+        var name: String?
+
+        @OptionGroup var globalOptions: GlobalOptions
+
+        func run() async throws {
+            let formatter = TerminalFormatter(useColors: globalOptions.useColors)
+            let inputURL = URL(fileURLWithPath: inputPath)
+
+            guard FileManager.default.fileExists(atPath: inputURL.path) else {
+                print(formatter.error("Input directory not found: \(inputPath)"))
+                throw ExitCode.failure
+            }
+
+            // Locate blast_concatenated.csv
+            let labkeyDir = inputURL.appendingPathComponent("05_labkey_bundling", isDirectory: true)
+            guard FileManager.default.fileExists(atPath: labkeyDir.path) else {
+                print(formatter.error("Expected 05_labkey_bundling/ inside: \(inputPath)"))
+                throw ExitCode.failure
+            }
+
+            let labkeyContents = try FileManager.default.contentsOfDirectory(
+                at: labkeyDir,
+                includingPropertiesForKeys: nil
+            )
+            guard let csvURL = labkeyContents.first(where: { $0.lastPathComponent.hasSuffix("_blast_concatenated.csv") }) else {
+                print(formatter.error("No *_blast_concatenated.csv found in 05_labkey_bundling/"))
+                throw ExitCode.failure
+            }
+
+            if !globalOptions.quiet {
+                print(formatter.header("NVD Import"))
+                print("")
+                print(formatter.info("Parsing \(csvURL.lastPathComponent)..."))
+            }
+
+            let parser = NvdResultParser()
+            let result = try await parser.parse(at: csvURL) { lineCount in
+                if lineCount % 5000 == 0 && !globalOptions.quiet {
+                    print(String(format: "[%3.0f%%] Parsed %d rows", 0.0, lineCount))
+                }
+            }
+
+            let outputDirectory: URL
+            if let dir = outputDir {
+                outputDirectory = URL(fileURLWithPath: dir)
+            } else {
+                outputDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            }
+
+            let bundleName = name ?? "nvd-\(result.experiment.isEmpty ? inputURL.lastPathComponent : result.experiment)"
+            let bundleDir = outputDirectory.appendingPathComponent(bundleName, isDirectory: true)
+            try FileManager.default.createDirectory(at: bundleDir, withIntermediateDirectories: true)
+
+            // Build per-sample summaries
+            var perSampleHits: [String: Int] = [:]
+            var perSampleContigs: [String: Set<String>] = [:]
+            var perSampleTotalReads: [String: Int] = [:]
+            for hit in result.hits {
+                perSampleHits[hit.sampleId, default: 0] += 1
+                perSampleContigs[hit.sampleId, default: []].insert(hit.qseqid)
+                if perSampleTotalReads[hit.sampleId] == nil {
+                    perSampleTotalReads[hit.sampleId] = hit.totalReads
+                }
+            }
+
+            let sampleSummaries = result.sampleIds.sorted().map { sampleId in
+                NvdSampleSummary(
+                    sampleId: sampleId,
+                    contigCount: perSampleContigs[sampleId]?.count ?? 0,
+                    hitCount: perSampleHits[sampleId] ?? 0,
+                    totalReads: perSampleTotalReads[sampleId] ?? 0,
+                    bamRelativePath: "bam/\(sampleId).filtered.bam",
+                    fastaRelativePath: "fasta/\(sampleId).human_virus.fasta"
+                )
+            }
+
+            let topContigs: [NvdContigRow] = result.hits
+                .filter { $0.hitRank == 1 }
+                .prefix(200)
+                .map { hit in
+                    NvdContigRow(
+                        sampleId: hit.sampleId,
+                        qseqid: hit.qseqid,
+                        qlen: hit.qlen,
+                        adjustedTaxidName: hit.adjustedTaxidName,
+                        adjustedTaxidRank: hit.adjustedTaxidRank,
+                        sseqid: hit.sseqid,
+                        stitle: hit.stitle,
+                        pident: hit.pident,
+                        evalue: hit.evalue,
+                        bitscore: hit.bitscore,
+                        mappedReads: hit.mappedReads,
+                        readsPerBillion: hit.readsPerBillion
+                    )
+                }
+
+            let manifest = NvdManifest(
+                experiment: result.experiment,
+                sampleCount: result.sampleIds.count,
+                contigCount: Set(result.hits.map { "\($0.sampleId)\u{1F}\($0.qseqid)" }).count,
+                hitCount: result.hits.count,
+                blastDbVersion: result.hits.first?.blastDbVersion,
+                snakemakeRunId: result.hits.first?.snakemakeRunId,
+                sourceDirectoryPath: inputURL.path,
+                samples: sampleSummaries,
+                cachedTopContigs: topContigs
+            )
+
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.dateEncodingStrategy = .iso8601
+            let manifestData = try encoder.encode(manifest)
+            let manifestURL = bundleDir.appendingPathComponent("manifest.json")
+            try manifestData.write(to: manifestURL, options: .atomic)
+
+            if !globalOptions.quiet {
+                print(formatter.keyValueTable([
+                    ("Experiment", result.experiment.isEmpty ? "(none)" : result.experiment),
+                    ("Total hits", String(result.hits.count)),
+                    ("Samples", String(result.sampleIds.count)),
+                    ("Output", bundleDir.lastPathComponent),
+                ]))
+                print("")
+                print(formatter.success("NVD import complete: \(bundleName)"))
+            }
         }
     }
 }

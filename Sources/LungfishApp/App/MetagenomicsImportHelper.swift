@@ -60,7 +60,6 @@ public enum MetagenomicsImportHelper {
         let preferredName = value(for: "--name", in: arguments)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedName = preferredName?.isEmpty == true ? nil : preferredName
-        let minIdentity = Double(value(for: "--min-identity", in: arguments) ?? "") ?? 0
         let fetchReferences = boolValue(
             for: "--fetch-references",
             in: arguments,
@@ -222,7 +221,6 @@ public enum MetagenomicsImportHelper {
                         inputURL: inputURL,
                         outputDirectory: outputDirectory,
                         sampleName: nil,
-                        minIdentity: minIdentity,
                         fetchReferences: fetchReferences,
                         preferredName: normalizedName
                     ) { progress, message in
@@ -256,6 +254,26 @@ public enum MetagenomicsImportHelper {
                         taxonCount: result.taxonCount,
                         fetchedReferenceCount: result.fetchedReferenceCount,
                         createdBAM: result.createdBAM,
+                        fileCount: nil,
+                        reportEntryCount: nil,
+                        error: nil
+                    ))
+
+                case .nvd:
+                    // NVD import is handled directly in AppDelegate (not via CLI subprocess).
+                    // This case is included for exhaustiveness; the helper path is not used.
+                    emit(Event(
+                        event: "done",
+                        progress: 1.0,
+                        message: "NVD import: use the NVD import wizard instead",
+                        resultPath: nil,
+                        sampleName: nil,
+                        totalReads: nil,
+                        speciesCount: nil,
+                        virusCount: nil,
+                        taxonCount: nil,
+                        fetchedReferenceCount: nil,
+                        createdBAM: nil,
                         fileCount: nil,
                         reportEntryCount: nil,
                         error: nil

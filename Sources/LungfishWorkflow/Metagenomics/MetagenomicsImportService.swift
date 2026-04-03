@@ -15,6 +15,7 @@ public enum MetagenomicsImportKind: String, CaseIterable, Codable, Sendable {
     case esviritu
     case taxtriage
     case naomgs
+    case nvd
 
     /// Directory prefix used for imported result folders.
     public var directoryPrefix: String {
@@ -27,6 +28,8 @@ public enum MetagenomicsImportKind: String, CaseIterable, Codable, Sendable {
             return "taxtriage-"
         case .naomgs:
             return "naomgs-"
+        case .nvd:
+            return "nvd-"
         }
     }
 }

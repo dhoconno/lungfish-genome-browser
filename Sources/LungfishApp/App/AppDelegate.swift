@@ -1190,19 +1190,13 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         )
     }
 
-    private func importNaoMgsResultFromURL(
-        _ url: URL,
-        minIdentity: Double
-    ) {
+    private func importNaoMgsResultFromURL(_ url: URL) {
         importClassifierResultFromURL(
             url,
             kind: .naomgs,
             operationTitle: "NAO-MGS Import",
             missingProjectMessage: "Please open a project before importing NAO-MGS results.",
-            naoMgsOptions: .init(
-                minIdentity: minIdentity,
-                fetchReferences: true
-            )
+            naoMgsOptions: .init(fetchReferences: true)
         )
     }
 
@@ -1236,8 +1230,6 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         }
         if kind == .naomgs {
             let options = naoMgsOptions ?? .init()
-            let identityFloor = max(0, min(100, options.minIdentity))
-            cliArgs.append(contentsOf: ["--min-identity", String(identityFloor)])
             cliArgs.append(contentsOf: ["--fetch-references", options.fetchReferences ? "true" : "false"])
         }
 
@@ -3869,12 +3861,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         wizardPanel.isReleasedWhenClosed = false
 
         var sheet = NaoMgsImportSheet(datasetURL: nil)
-        sheet.onImport = { [weak self] (resultsDir: URL, minIdentity: Double) in
+        sheet.onImport = { [weak self] (resultsDir: URL) in
             window.endSheet(wizardPanel)
-            self?.importNaoMgsResultFromURL(
-                resultsDir,
-                minIdentity: minIdentity
-            )
+            self?.importNaoMgsResultFromURL(resultsDir)
         }
         sheet.onCancel = {
             window.endSheet(wizardPanel)
@@ -3884,6 +3873,318 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         wizardPanel.contentViewController = hostingController
         wizardPanel.setContentSize(NSSize(width: 520, height: 400))
         window.beginSheet(wizardPanel)
+    }
+
+    @objc func launchNvdImport(_ sender: Any?) {
+        guard let window = mainWindowController?.window else {
+            debugLog("launchNvdImport: No main window available")
+            return
+        }
+
+        let wizardPanel = NSPanel(contentRect: .zero, styleMask: [.titled, .closable], backing: .buffered, defer: true)
+        wizardPanel.title = "NVD Import"
+        wizardPanel.isReleasedWhenClosed = false
+
+        var sheet = NvdImportSheet(datasetURL: nil)
+        sheet.onImport = { [weak self] (nvdDir: URL) in
+            window.endSheet(wizardPanel)
+            self?.importNvdResultFromURL(nvdDir)
+        }
+        sheet.onCancel = {
+            window.endSheet(wizardPanel)
+        }
+
+        let hostingController = NSHostingController(rootView: sheet)
+        wizardPanel.contentViewController = hostingController
+        wizardPanel.setContentSize(NSSize(width: 500, height: 450))
+        window.beginSheet(wizardPanel)
+    }
+
+    func importNvdResultFromURL(_ url: URL) {
+        guard let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController,
+              let projectURL = sidebarController.currentProjectURL else {
+            showAlert(title: "No Project Open", message: "Please open a project before importing NVD results.")
+            return
+        }
+
+        let importsDir = projectURL.appendingPathComponent("Imports", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: importsDir, withIntermediateDirectories: true)
+        } catch {
+            showAlert(title: "Import Failed", message: "Could not prepare Imports folder: \(error.localizedDescription)")
+            return
+        }
+
+        let opID = OperationCenter.shared.start(
+            title: "NVD Import",
+            detail: "Parsing \(url.lastPathComponent)...",
+            cliCommand: nil
+        )
+
+        let task = Task.detached { [weak self] in
+            do {
+                // Step 1: Parse the blast_concatenated.csv
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        OperationCenter.shared.update(id: opID, progress: 0.05, detail: "Finding NVD CSV...")
+                        OperationCenter.shared.log(id: opID, level: .info, message: "Locating blast_concatenated.csv in \(url.lastPathComponent)")
+                    }
+                }
+
+                let labkeyDir = url.appendingPathComponent("05_labkey_bundling", isDirectory: true)
+                let labkeyContents = try FileManager.default.contentsOfDirectory(
+                    at: labkeyDir,
+                    includingPropertiesForKeys: nil
+                )
+                guard let csvURL = labkeyContents.first(where: { $0.lastPathComponent.hasSuffix("_blast_concatenated.csv") }) else {
+                    throw NvdImportError.csvNotFound("No *_blast_concatenated.csv found in 05_labkey_bundling/")
+                }
+
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        OperationCenter.shared.update(id: opID, progress: 0.1, detail: "Parsing \(csvURL.lastPathComponent)...")
+                        OperationCenter.shared.log(id: opID, level: .info, message: "Parsing \(csvURL.lastPathComponent)")
+                    }
+                }
+
+                let parser = NvdResultParser()
+                let parseResult = try await parser.parse(at: csvURL) { lineCount in
+                    if lineCount % 5000 == 0 {
+                        DispatchQueue.main.async {
+                            MainActor.assumeIsolated {
+                                OperationCenter.shared.update(
+                                    id: opID,
+                                    progress: 0.1 + min(0.3, Double(lineCount) / 100_000.0 * 0.3),
+                                    detail: "Parsing CSV... \(lineCount) rows"
+                                )
+                            }
+                        }
+                    }
+                }
+
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        OperationCenter.shared.update(id: opID, progress: 0.4, detail: "Parsed \(parseResult.hits.count) BLAST hits from \(parseResult.sampleIds.count) samples")
+                        OperationCenter.shared.log(id: opID, level: .info, message: "Parsed \(parseResult.hits.count) hits, \(parseResult.sampleIds.count) samples")
+                    }
+                }
+
+                // Step 2: Compute per-sample metadata
+                let humanVirusDir = url
+                    .appendingPathComponent("02_human_viruses", isDirectory: true)
+                    .appendingPathComponent("03_human_virus_results", isDirectory: true)
+                let bamDir = humanVirusDir.appendingPathComponent("mapped_reads", isDirectory: true)
+
+                var perSampleHits: [String: Int] = [:]
+                var perSampleContigs: [String: Set<String>] = [:]
+                var perSampleTotalReads: [String: Int] = [:]
+                for hit in parseResult.hits {
+                    perSampleHits[hit.sampleId, default: 0] += 1
+                    perSampleContigs[hit.sampleId, default: []].insert(hit.qseqid)
+                    if perSampleTotalReads[hit.sampleId] == nil {
+                        perSampleTotalReads[hit.sampleId] = hit.totalReads
+                    }
+                }
+
+                // Step 3: Determine output bundle directory name
+                let bundleName = "nvd-\(parseResult.experiment.isEmpty ? url.lastPathComponent : parseResult.experiment)"
+                let bundleDir = importsDir.appendingPathComponent(bundleName, isDirectory: true)
+                let bamBundleDir = bundleDir.appendingPathComponent("bam", isDirectory: true)
+                let fastaBundleDir = bundleDir.appendingPathComponent("fasta", isDirectory: true)
+
+                try FileManager.default.createDirectory(at: bundleDir, withIntermediateDirectories: true)
+                try FileManager.default.createDirectory(at: bamBundleDir, withIntermediateDirectories: true)
+                try FileManager.default.createDirectory(at: fastaBundleDir, withIntermediateDirectories: true)
+
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        OperationCenter.shared.update(id: opID, progress: 0.45, detail: "Creating bundle directory...")
+                        OperationCenter.shared.log(id: opID, level: .info, message: "Bundle directory: \(bundleName)")
+                    }
+                }
+
+                // Step 4: Create SQLite database
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        OperationCenter.shared.update(id: opID, progress: 0.5, detail: "Building database...")
+                        OperationCenter.shared.log(id: opID, level: .info, message: "Creating NVD SQLite database")
+                    }
+                }
+
+                var sampleMetadataList: [NvdSampleMetadata] = []
+                for sampleId in parseResult.sampleIds.sorted() {
+                    let bamRelPath = "bam/\(sampleId).filtered.bam"
+                    let fastaRelPath = "fasta/\(sampleId).human_virus.fasta"
+                    let meta = NvdSampleMetadata(
+                        sampleId: sampleId,
+                        bamPath: bamRelPath,
+                        fastaPath: fastaRelPath,
+                        totalReads: perSampleTotalReads[sampleId] ?? 0,
+                        contigCount: perSampleContigs[sampleId]?.count ?? 0,
+                        hitCount: perSampleHits[sampleId] ?? 0
+                    )
+                    sampleMetadataList.append(meta)
+                }
+
+                let dbURL = bundleDir.appendingPathComponent("hits.sqlite")
+                try NvdDatabase.create(
+                    at: dbURL,
+                    hits: parseResult.hits,
+                    samples: sampleMetadataList
+                ) { fraction, message in
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated {
+                            OperationCenter.shared.update(
+                                id: opID,
+                                progress: 0.5 + fraction * 0.15,
+                                detail: message
+                            )
+                        }
+                    }
+                }
+
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        OperationCenter.shared.log(id: opID, level: .info, message: "Database created successfully")
+                    }
+                }
+
+                // Step 5: Copy BAM and BAI files
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        OperationCenter.shared.update(id: opID, progress: 0.65, detail: "Copying BAM files...")
+                        OperationCenter.shared.log(id: opID, level: .info, message: "Copying BAM and BAI files")
+                    }
+                }
+
+                if FileManager.default.fileExists(atPath: bamDir.path) {
+                    let bamFiles = (try? FileManager.default.contentsOfDirectory(
+                        at: bamDir, includingPropertiesForKeys: nil
+                    )) ?? []
+                    for bamFile in bamFiles where bamFile.pathExtension == "bam" || bamFile.lastPathComponent.hasSuffix(".bam.bai") {
+                        let dest = bamBundleDir.appendingPathComponent(bamFile.lastPathComponent)
+                        if !FileManager.default.fileExists(atPath: dest.path) {
+                            try? FileManager.default.copyItem(at: bamFile, to: dest)
+                        }
+                        // Also copy .bai index
+                        let baiFile = bamFile.appendingPathExtension("bai")
+                        let baiDest = bamBundleDir.appendingPathComponent(baiFile.lastPathComponent)
+                        if FileManager.default.fileExists(atPath: baiFile.path),
+                           !FileManager.default.fileExists(atPath: baiDest.path) {
+                            try? FileManager.default.copyItem(at: baiFile, to: baiDest)
+                        }
+                    }
+                }
+
+                // Step 6: Copy FASTA files
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        OperationCenter.shared.update(id: opID, progress: 0.8, detail: "Copying FASTA files...")
+                        OperationCenter.shared.log(id: opID, level: .info, message: "Copying FASTA assembly files")
+                    }
+                }
+
+                if FileManager.default.fileExists(atPath: humanVirusDir.path) {
+                    let fastaFiles = (try? FileManager.default.contentsOfDirectory(
+                        at: humanVirusDir, includingPropertiesForKeys: nil
+                    )) ?? []
+                    for fastaFile in fastaFiles where fastaFile.lastPathComponent.hasSuffix(".human_virus.fasta") {
+                        let dest = fastaBundleDir.appendingPathComponent(fastaFile.lastPathComponent)
+                        if !FileManager.default.fileExists(atPath: dest.path) {
+                            try? FileManager.default.copyItem(at: fastaFile, to: dest)
+                        }
+                    }
+                }
+
+                // Step 7: Write manifest
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        OperationCenter.shared.update(id: opID, progress: 0.9, detail: "Writing manifest...")
+                        OperationCenter.shared.log(id: opID, level: .info, message: "Writing manifest.json")
+                    }
+                }
+
+                let topContigs: [NvdContigRow] = parseResult.hits
+                    .filter { $0.hitRank == 1 }
+                    .prefix(200)
+                    .map { hit in
+                        NvdContigRow(
+                            sampleId: hit.sampleId,
+                            qseqid: hit.qseqid,
+                            qlen: hit.qlen,
+                            adjustedTaxidName: hit.adjustedTaxidName,
+                            adjustedTaxidRank: hit.adjustedTaxidRank,
+                            sseqid: hit.sseqid,
+                            stitle: hit.stitle,
+                            pident: hit.pident,
+                            evalue: hit.evalue,
+                            bitscore: hit.bitscore,
+                            mappedReads: hit.mappedReads,
+                            readsPerBillion: hit.readsPerBillion
+                        )
+                    }
+
+                let sampleSummaries: [NvdSampleSummary] = sampleMetadataList.map { meta in
+                    NvdSampleSummary(
+                        sampleId: meta.sampleId,
+                        contigCount: meta.contigCount,
+                        hitCount: meta.hitCount,
+                        totalReads: meta.totalReads,
+                        bamRelativePath: "bam/\(meta.sampleId).filtered.bam",
+                        fastaRelativePath: "fasta/\(meta.sampleId).human_virus.fasta"
+                    )
+                }
+
+                let manifest = NvdManifest(
+                    experiment: parseResult.experiment,
+                    sampleCount: parseResult.sampleIds.count,
+                    contigCount: Set(parseResult.hits.map { "\($0.sampleId)\u{1F}\($0.qseqid)" }).count,
+                    hitCount: parseResult.hits.count,
+                    blastDbVersion: parseResult.hits.first?.blastDbVersion,
+                    snakemakeRunId: parseResult.hits.first?.snakemakeRunId,
+                    sourceDirectoryPath: url.path,
+                    samples: sampleSummaries,
+                    cachedTopContigs: topContigs
+                )
+
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                encoder.dateEncodingStrategy = .iso8601
+                let manifestData = try encoder.encode(manifest)
+                let manifestURL = bundleDir.appendingPathComponent("manifest.json")
+                try manifestData.write(to: manifestURL, options: .atomic)
+
+                // Done
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        OperationCenter.shared.complete(
+                            id: opID,
+                            detail: "Imported \(parseResult.hits.count) BLAST hits from \(parseResult.sampleIds.count) samples",
+                            bundleURLs: [bundleDir]
+                        )
+                        OperationCenter.shared.log(
+                            id: opID,
+                            level: .info,
+                            message: "NVD import complete: \(bundleName)"
+                        )
+                        self?.refreshSidebarAndSelectImportedURL(bundleDir)
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        OperationCenter.shared.fail(id: opID, detail: error.localizedDescription)
+                        OperationCenter.shared.log(
+                            id: opID,
+                            level: .error,
+                            message: "NVD import failed: \(error.localizedDescription)"
+                        )
+                    }
+                }
+            }
+        }
+
+        OperationCenter.shared.setCancelCallback(for: opID) { task.cancel() }
     }
 
     @objc func launchOrientReads(_ sender: Any?) {
@@ -6254,5 +6555,20 @@ private class ExportFilenameUpdater: NSObject {
         default: compExt = ""
         }
         panel?.nameFieldStringValue = "\(baseName).\(formatExt)\(compExt)"
+    }
+}
+
+// MARK: - NVD Import Errors
+
+/// Errors thrown during the NVD import pipeline in AppDelegate.
+private enum NvdImportError: Error, LocalizedError {
+    case csvNotFound(String)
+    case bundleCreationFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .csvNotFound(let msg): return "NVD CSV not found: \(msg)"
+        case .bundleCreationFailed(let msg): return "Failed to create NVD bundle: \(msg)"
+        }
     }
 }
