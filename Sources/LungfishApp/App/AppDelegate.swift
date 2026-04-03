@@ -4620,64 +4620,54 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         runClassificationBatch(configs: configs, viewerController: viewerController)
     }
 
-    /// Resolves input FASTQ files, materializing virtual datasets as needed.
+    /// Resolves input FASTQ files using ``FASTQSourceResolver``, materializing
+    /// virtual datasets as needed.
     ///
-    /// If any input file lives inside a virtual `.lungfishfastq` bundle (subset,
-    /// trim, demux derivative), materializes the full FASTQ into `tempDirectory`.
-    /// Physical FASTQ files pass through unchanged.
+    /// Delegates to the centralized resolver from `LungfishWorkflow`, injecting
+    /// `FASTQDerivativeService` as the materializer for derived bundles.
     ///
     /// Called at the start of `runClassification` / `runEsViritu` / `runTaxTriage`
     /// so that dialogs appear instantly and materialization happens as the first
     /// pipeline step after the user clicks Run.
-    private func materializeInputFilesIfNeeded(
+    private func resolveInputFiles(
         _ inputFiles: [URL],
         tempDirectory: URL,
         progress: (@Sendable (String) -> Void)? = nil
     ) async throws -> [URL] {
+        let resolver = FASTQSourceResolver()
+        resolver.materializer = { bundleURL, tempDir, progressCallback in
+            try await FASTQDerivativeService.shared.materializeDatasetFASTQ(
+                fromBundle: bundleURL,
+                tempDirectory: tempDir,
+                progress: { msg in progressCallback(msg) }
+            )
+        }
+
         var resolved: [URL] = []
-        for (index, fileURL) in inputFiles.enumerated() {
+        for inputURL in inputFiles {
             try Task.checkCancellation()
 
             // Determine the bundle URL: either the input IS a bundle, or its parent is.
             let bundleURL: URL?
-            if FASTQBundle.isBundleURL(fileURL) {
-                bundleURL = fileURL
-            } else if FASTQBundle.isBundleURL(fileURL.deletingLastPathComponent()) {
-                bundleURL = fileURL.deletingLastPathComponent()
+            if FASTQBundle.isBundleURL(inputURL) {
+                bundleURL = inputURL
+            } else if FASTQBundle.isBundleURL(inputURL.deletingLastPathComponent()) {
+                bundleURL = inputURL.deletingLastPathComponent()
             } else {
                 // Not associated with a bundle — use as-is (plain FASTQ file)
-                resolved.append(fileURL)
+                resolved.append(inputURL)
                 continue
             }
 
-            guard let bundle = bundleURL else {
-                resolved.append(fileURL)
-                continue
-            }
-
-            // Check if the bundle is a virtual derivative that needs materialization
-            if let manifest = FASTQBundle.loadDerivedManifest(in: bundle) {
-                switch manifest.payload {
-                case .subset, .trim, .demuxedVirtual:
-                    let bundleName = bundle.deletingPathExtension().lastPathComponent
-                    progress?("Materializing \(bundleName) (\(index + 1)/\(inputFiles.count))...")
-                    let materializedURL = try await FASTQDerivativeService.shared.materializeDatasetFASTQ(
-                        fromBundle: bundle,
-                        tempDirectory: tempDirectory,
-                        progress: { msg in progress?(msg) }
-                    )
-                    resolved.append(materializedURL)
-                    continue
-                default:
-                    break
-                }
-            }
-
-            // Physical bundle or non-derived — resolve to primary FASTQ
-            if let primaryURL = FASTQBundle.resolvePrimaryFASTQURL(for: bundle) {
-                resolved.append(primaryURL)
+            if let bundle = bundleURL {
+                let urls = try await resolver.resolve(
+                    bundleURL: bundle,
+                    tempDirectory: tempDirectory,
+                    progress: { _, msg in progress?(msg) }
+                )
+                resolved.append(contentsOf: urls)
             } else {
-                resolved.append(fileURL)
+                resolved.append(inputURL)
             }
         }
         return resolved
@@ -4719,7 +4709,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     at: materializeTempDir, withIntermediateDirectories: true)
                 defer { try? FileManager.default.removeItem(at: materializeTempDir) }
 
-                let resolvedFiles = try await self?.materializeInputFilesIfNeeded(
+                let resolvedFiles = try await self?.resolveInputFiles(
                     config.inputFiles,
                     tempDirectory: materializeTempDir,
                     progress: { message in
@@ -4863,7 +4853,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     at: materializeTempDir, withIntermediateDirectories: true)
                 defer { try? FileManager.default.removeItem(at: materializeTempDir) }
 
-                let resolvedFiles = try await self?.materializeInputFilesIfNeeded(
+                let resolvedFiles = try await self?.resolveInputFiles(
                     config.inputFiles,
                     tempDirectory: materializeTempDir,
                     progress: { message in
@@ -5413,7 +5403,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 var resolvedConfig = config
                 for (i, sample) in resolvedConfig.samples.enumerated() {
                     let allFiles = [sample.fastq1] + (sample.fastq2.map { [$0] } ?? [])
-                    let resolved = try await self?.materializeInputFilesIfNeeded(
+                    let resolved = try await self?.resolveInputFiles(
                         allFiles,
                         tempDirectory: materializeTempDir,
                         progress: { message in

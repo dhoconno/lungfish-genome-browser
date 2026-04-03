@@ -40,7 +40,7 @@ public final class FASTQSourceResolver: Sendable {
     public typealias Materializer = @Sendable (
         _ bundleURL: URL,
         _ tempDirectory: URL,
-        _ progress: @Sendable (String) -> Void
+        _ progress: @escaping @Sendable (String) -> Void
     ) async throws -> URL
 
     /// Optional materializer for derived/virtual bundles.
@@ -64,7 +64,7 @@ public final class FASTQSourceResolver: Sendable {
     public func resolve(
         bundleURL: URL,
         tempDirectory: URL,
-        progress: @Sendable (Double, String) -> Void
+        progress: @escaping @Sendable (Double, String) -> Void
     ) async throws -> [URL] {
         // Verify bundle exists
         var isDirectory: ObjCBool = false
