@@ -25,6 +25,9 @@ public final class SampleMetadataStore: @unchecked Sendable {
     public var unmatchedRecords: [String: [String: String]]
     public private(set) var edits: [MetadataEdit] = []
 
+    /// Called after every edit to persist changes. Set by the controller that owns the store.
+    public nonisolated(unsafe) var onEditsChanged: (() -> Void)?
+
     public init(csvData: Data, knownSampleIds: Set<String>) throws {
         guard let text = String(data: csvData, encoding: .utf8) else {
             throw MetadataParseError.invalidEncoding
@@ -86,6 +89,7 @@ public final class SampleMetadataStore: @unchecked Sendable {
             newValue: newValue,
             timestamp: Date()
         ))
+        onEditsChanged?()
     }
 
     public func editsJSON() throws -> Data {
@@ -101,6 +105,17 @@ public final class SampleMetadataStore: @unchecked Sendable {
         if !edits.isEmpty {
             let json = try editsJSON()
             try json.write(to: metadataDir.appendingPathComponent("sample_metadata_edits.json"))
+        }
+    }
+
+    /// Wires the `onEditsChanged` callback to autosave the edit journal to the bundle.
+    public func wireAutosave(bundleURL: URL) {
+        onEditsChanged = { [weak self] in
+            guard let self else { return }
+            let metadataDir = bundleURL.appendingPathComponent("metadata", isDirectory: true)
+            try? FileManager.default.createDirectory(at: metadataDir, withIntermediateDirectories: true)
+            let editsURL = metadataDir.appendingPathComponent("sample_metadata_edits.json")
+            try? self.editsJSON().write(to: editsURL)
         }
     }
 

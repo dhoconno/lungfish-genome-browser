@@ -860,7 +860,12 @@ public class InspectorViewController: NSViewController {
         let knownIds = Set(viewModel.documentSectionViewModel.classifierSampleEntries.map(\.id))
         guard let store = try? SampleMetadataStore(csvData: data, knownSampleIds: knownIds) else { return }
         viewModel.documentSectionViewModel.sampleMetadataStore = store
-        // TODO: persist to bundle if bundleURL is available
+
+        // Persist to bundle so metadata survives between sessions
+        if let bundleURL = viewModel.documentSectionViewModel.bundleAttachmentStore?.bundleURL {
+            try? store.persist(originalData: data, to: bundleURL)
+            store.wireAutosave(bundleURL: bundleURL)
+        }
     }
 
     /// Updates the NVD manifest in the Document section.
