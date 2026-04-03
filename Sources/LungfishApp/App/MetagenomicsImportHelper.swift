@@ -258,6 +258,26 @@ public enum MetagenomicsImportHelper {
                         reportEntryCount: nil,
                         error: nil
                     ))
+
+                case .nvd:
+                    // NVD import is handled directly in AppDelegate (not via CLI subprocess).
+                    // This case is included for exhaustiveness; the helper path is not used.
+                    emit(Event(
+                        event: "done",
+                        progress: 1.0,
+                        message: "NVD import: use the NVD import wizard instead",
+                        resultPath: nil,
+                        sampleName: nil,
+                        totalReads: nil,
+                        speciesCount: nil,
+                        virusCount: nil,
+                        taxonCount: nil,
+                        fetchedReferenceCount: nil,
+                        createdBAM: nil,
+                        fileCount: nil,
+                        reportEntryCount: nil,
+                        error: nil
+                    ))
                 }
             } catch {
                 exitState.value = 1

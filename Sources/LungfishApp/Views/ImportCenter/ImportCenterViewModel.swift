@@ -56,6 +56,7 @@ struct ImportCardInfo: Identifiable, Sendable {
         case kraken2
         case esViritu
         case taxTriage
+        case nvd
     }
 
     /// The underlying ``ImportAction`` regardless of whether the card uses a
@@ -250,6 +251,15 @@ final class ImportCenterViewModel {
                 action: .taxTriage
             )
         ),
+        ImportCardInfo(
+            id: "nvd",
+            title: "NVD Results",
+            description: "Import Novel Virus Diagnostics (NVD) classification results. Parses blast_concatenated.csv with BLAST hit rankings and mapped reads.",
+            sfSymbol: "microscope",
+            fileHint: "*_blast_concatenated.csv",
+            tab: .classificationResults,
+            importKind: .wizardSheet(action: .nvd)
+        ),
 
         // References
         ImportCardInfo(
@@ -344,7 +354,7 @@ final class ImportCenterViewModel {
 
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
-        panel.canChooseDirectories = (action == .esViritu || action == .taxTriage)
+        panel.canChooseDirectories = (action == .esViritu || action == .taxTriage || action == .nvd)
         panel.allowsMultipleSelection = true
         panel.allowedContentTypes = allowedTypes
         panel.message = panelMessage(for: action)
@@ -364,6 +374,7 @@ final class ImportCenterViewModel {
         case .esViritu: return "Select EsViritu result files or directory"
         case .taxTriage: return "Select TaxTriage result files or directory"
         case .naoMgs:   return "Select NAO-MGS results"
+        case .nvd:      return "Select NVD results directory"
         }
     }
 
@@ -406,6 +417,8 @@ final class ImportCenterViewModel {
             }
         case .naoMgs:
             break // Handled by wizard sheet path
+        case .nvd:
+            break // Handled by wizard sheet path
         }
 
         recordHistory(urls: urls, action: action, succeeded: true)
@@ -426,6 +439,8 @@ final class ImportCenterViewModel {
         switch action {
         case .naoMgs:
             appDelegate.launchNaoMgsImport(nil)
+        case .nvd:
+            appDelegate.launchNvdImport(nil)
         case .kraken2:
             appDelegate.launchKraken2Classification(nil)
         case .esViritu:
@@ -450,6 +465,7 @@ final class ImportCenterViewModel {
         case .kraken2:  return "Kraken2"
         case .esViritu: return "EsViritu"
         case .taxTriage: return "TaxTriage"
+        case .nvd:      return "NVD"
         }
     }
 
