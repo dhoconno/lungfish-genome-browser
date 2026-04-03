@@ -655,6 +655,9 @@ public extension Notification.Name {
 
     /// Posted when sample selection changes in the Inspector-embedded sample picker.
     static let metagenomicsSampleSelectionChanged = Notification.Name("com.lungfish.metagenomicsSampleSelectionChanged")
+
+    /// Posted when the user clicks the "Import Metadata..." button in the Inspector.
+    static let metagenomicsMetadataImportRequested = Notification.Name("com.lungfish.metagenomicsMetadataImportRequested")
 }
 
 // MARK: - NotificationUserInfoKey Extensions

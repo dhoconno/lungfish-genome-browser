@@ -1712,10 +1712,15 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
             // Wire sample picker state to Inspector for embedded sample selector
             if let taxonomyVC = viewerController.taxonomyViewController {
+                let knownIds = Set(taxonomyVC.sampleEntries.map(\.id))
+                let metadataStore = SampleMetadataStore.load(from: url, knownSampleIds: knownIds)
+                let attachmentStore = BundleAttachmentStore(bundleURL: url)
                 self.inspectorController?.updateClassifierSampleState(
                     pickerState: taxonomyVC.samplePickerState,
                     entries: taxonomyVC.sampleEntries,
-                    strippedPrefix: taxonomyVC.strippedPrefix
+                    strippedPrefix: taxonomyVC.strippedPrefix,
+                    metadata: metadataStore,
+                    attachments: attachmentStore
                 )
             }
 
@@ -1778,10 +1783,16 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
             // Wire sample picker state to Inspector for embedded sample selector
             if let esVirituVC = viewerController.esVirituViewController {
+                let resultURL = url
+                let knownIds = Set(esVirituVC.sampleEntries.map(\.id))
+                let metadataStore = SampleMetadataStore.load(from: resultURL, knownSampleIds: knownIds)
+                let attachmentStore = BundleAttachmentStore(bundleURL: resultURL)
                 self.inspectorController?.updateClassifierSampleState(
                     pickerState: esVirituVC.samplePickerState,
                     entries: esVirituVC.sampleEntries,
-                    strippedPrefix: esVirituVC.strippedPrefix
+                    strippedPrefix: esVirituVC.strippedPrefix,
+                    metadata: metadataStore,
+                    attachments: attachmentStore
                 )
             }
 
@@ -1811,7 +1822,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         // Prefer the persisted sidecar so view parsing matches pipeline-time discovery.
         if let persisted = try? TaxTriageResult.load(from: url) {
             viewerController.displayTaxTriageResult(persisted, config: persisted.config, sampleId: sampleId)
-            wireTaxTriageInspector()
+            wireTaxTriageInspector(resultURL: url)
             return
         }
 
@@ -1868,16 +1879,21 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         )
 
         viewerController.displayTaxTriageResult(result, config: nil, sampleId: sampleId)
-        wireTaxTriageInspector()
+        wireTaxTriageInspector(resultURL: url)
     }
 
     /// Wires the TaxTriage sample picker state to the Inspector.
-    private func wireTaxTriageInspector() {
+    private func wireTaxTriageInspector(resultURL: URL) {
         if let taxTriageVC = viewerController.taxTriageViewController {
+            let knownIds = Set(taxTriageVC.sampleEntries.map(\.id))
+            let metadataStore = SampleMetadataStore.load(from: resultURL, knownSampleIds: knownIds)
+            let attachmentStore = BundleAttachmentStore(bundleURL: resultURL)
             self.inspectorController?.updateClassifierSampleState(
                 pickerState: taxTriageVC.samplePickerState,
                 entries: taxTriageVC.sampleEntries,
-                strippedPrefix: taxTriageVC.strippedPrefix
+                strippedPrefix: taxTriageVC.strippedPrefix,
+                metadata: metadataStore,
+                attachments: attachmentStore
             )
         }
     }
@@ -1944,10 +1960,15 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                         self.inspectorController?.updateNaoMgsManifest(manifest)
 
                         // Wire sample picker state to Inspector for embedded sample selector
+                        let knownIds = Set(placeholderVC.sampleEntries.map(\.id))
+                        let metadataStore = SampleMetadataStore.load(from: bundleURL, knownSampleIds: knownIds)
+                        let attachmentStore = BundleAttachmentStore(bundleURL: bundleURL)
                         self.inspectorController?.updateClassifierSampleState(
                             pickerState: placeholderVC.samplePickerState,
                             entries: placeholderVC.sampleEntries,
-                            strippedPrefix: placeholderVC.strippedPrefix
+                            strippedPrefix: placeholderVC.strippedPrefix,
+                            metadata: metadataStore,
+                            attachments: attachmentStore
                         )
 
                         let totalHits = (try? database.totalHitCount()) ?? manifest.hitCount
@@ -2034,10 +2055,15 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                         self.inspectorController?.updateNvdManifest(manifest)
 
                         // Wire sample picker state to Inspector for embedded sample selector
+                        let knownIds = Set(placeholderVC.sampleEntries.map(\.id))
+                        let metadataStore = SampleMetadataStore.load(from: bundleURL, knownSampleIds: knownIds)
+                        let attachmentStore = BundleAttachmentStore(bundleURL: bundleURL)
                         self.inspectorController?.updateClassifierSampleState(
                             pickerState: placeholderVC.samplePickerState,
                             entries: placeholderVC.sampleEntries,
-                            strippedPrefix: placeholderVC.strippedPrefix
+                            strippedPrefix: placeholderVC.strippedPrefix,
+                            metadata: metadataStore,
+                            attachments: attachmentStore
                         )
 
                         let totalHits = (try? database.totalHitCount()) ?? manifest.hitCount

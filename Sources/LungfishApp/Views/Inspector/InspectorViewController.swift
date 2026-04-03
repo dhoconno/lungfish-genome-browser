@@ -103,6 +103,13 @@ public class InspectorViewController: NSViewController {
     public override func viewDidLoad() {
         super.viewDidLoad()
         ensureInspectorWiring()
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleMetadataImportRequested),
+            name: .metagenomicsMetadataImportRequested,
+            object: nil
+        )
     }
 
     public override func viewWillAppear() {
@@ -827,6 +834,35 @@ public class InspectorViewController: NSViewController {
         viewModel.documentSectionViewModel.bundleAttachmentStore = attachments
     }
 
+    // MARK: - Metadata Import
+
+    @objc private func handleMetadataImportRequested() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.commaSeparatedText, .tabSeparatedText, .plainText]
+        panel.allowsMultipleSelection = false
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.message = "Select a CSV or TSV file with sample metadata"
+
+        guard let window = self.view.window else { return }
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.handleMetadataImport(from: url)
+                }
+            }
+        }
+    }
+
+    private func handleMetadataImport(from url: URL) {
+        guard let data = try? Data(contentsOf: url) else { return }
+        let knownIds = Set(viewModel.documentSectionViewModel.classifierSampleEntries.map(\.id))
+        guard let store = try? SampleMetadataStore(csvData: data, knownSampleIds: knownIds) else { return }
+        viewModel.documentSectionViewModel.sampleMetadataStore = store
+        // TODO: persist to bundle if bundleURL is available
+    }
+
     /// Updates the NVD manifest in the Document section.
     ///
     /// - Parameter manifest: The NVD manifest, or nil to clear
@@ -1538,6 +1574,18 @@ private struct MetagenomicsResultSummarySection: View {
                 .onChange(of: pickerState.selectedSamples) { _, _ in
                     NotificationCenter.default.post(name: .metagenomicsSampleSelectionChanged, object: nil)
                 }
+            }
+
+            // Import Metadata button (when no metadata loaded yet)
+            if viewModel.sampleMetadataStore == nil {
+                Divider().padding(.vertical, 4)
+                Button("Import Metadata\u{2026}") {
+                    NotificationCenter.default.post(
+                        name: .metagenomicsMetadataImportRequested,
+                        object: nil
+                    )
+                }
+                .controlSize(.small)
             }
 
             // Sample Metadata section
