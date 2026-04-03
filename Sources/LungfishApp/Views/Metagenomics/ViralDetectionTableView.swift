@@ -122,6 +122,23 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         }
     }
 
+    /// Returns the assembly accessions for all selected rows.
+    ///
+    /// For assembly rows, returns the assembly accession directly.
+    /// For detection (contig) rows, returns the parent assembly accession.
+    public func selectedAssemblyAccessions() -> [String] {
+        var accessions: [String] = []
+        for row in outlineView.selectedRowIndexes {
+            guard let item = outlineView.item(atRow: row) else { continue }
+            if let assemblyItem = item as? ViralAssemblyItem {
+                accessions.append(assemblyItem.assembly.assembly)
+            } else if let detectionItem = item as? ViralDetectionItem {
+                accessions.append(detectionItem.detection.accession)
+            }
+        }
+        return accessions
+    }
+
     private func reloadItemPreservingSelection(_ item: Any, reloadChildren: Bool) {
         let selectedItems: [Any] = outlineView.selectedRowIndexes.compactMap { row in
             let selected = outlineView.item(atRow: row)

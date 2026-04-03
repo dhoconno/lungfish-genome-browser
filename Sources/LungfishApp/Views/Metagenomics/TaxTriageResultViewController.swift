@@ -1829,6 +1829,19 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             self.onBlastVerification?(organism, readCount, rowAccessions, self.bamURL, self.bamIndexURL)
         }
 
+        // Action bar Extract FASTQ -> present extraction sheet for selected organisms
+        actionBar.onExtractFASTQ = { [weak self] in
+            guard let self else { return }
+            let rows = self.organismTableView.selectedTableRows()
+            guard !rows.isEmpty else { return }
+
+            let items = rows.map { $0.organism }
+            let sampleId = self.sampleIds.first ?? "sample"
+            let source = self.bamURL?.lastPathComponent ?? "TaxTriage result"
+            let suggestedName = "\(sampleId)_\(items.first ?? "extract")_extract"
+            self.presentExtractionSheet(items: items, source: source, suggestedName: suggestedName)
+        }
+
         // Action bar BLAST verify (TaxTriage triggers BLAST via table context menu)
         actionBar.onBlastVerify = { [weak self] in
             // TaxTriage BLAST is triggered via the table context menu per-organism;
@@ -1855,6 +1868,37 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         relatedAnalysesButton.action = #selector(relatedAnalysesTapped(_:))
         relatedAnalysesButton.isHidden = true
         actionBar.addCustomButton(relatedAnalysesButton)
+    }
+
+    // MARK: - Extraction Sheet
+
+    /// Presents a ``ClassifierExtractionSheet`` for the given selected items.
+    private func presentExtractionSheet(items: [String], source: String, suggestedName: String) {
+        guard let window = view.window else { return }
+
+        let sheet = ClassifierExtractionSheet(
+            selectedItems: items,
+            sourceDescription: source,
+            suggestedName: suggestedName,
+            onExtract: { [weak window] outputName in
+                guard let window else { return }
+                if let attached = window.attachedSheet { window.endSheet(attached) }
+                logger.info("Extract FASTQ confirmed: \(outputName, privacy: .public) from TaxTriage")
+            },
+            onCancel: { [weak window] in
+                guard let window else { return }
+                if let attached = window.attachedSheet { window.endSheet(attached) }
+            }
+        )
+
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 440, height: 320),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        panel.contentViewController = NSHostingController(rootView: sheet)
+        window.beginSheet(panel)
     }
 
     // MARK: - Negative Control Helpers
@@ -2417,6 +2461,14 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
 
     /// Called when the user requests BLAST verification for a row with a chosen read count.
     var onBlastRequested: ((TaxTriageTableRow, Int) -> Void)?
+
+    /// Returns the currently selected table rows.
+    func selectedTableRows() -> [TaxTriageTableRow] {
+        tableView.selectedRowIndexes.compactMap { index in
+            guard index < sortedRows.count else { return nil }
+            return sortedRows[index]
+        }
+    }
 
     // MARK: - Subviews
 

@@ -1428,6 +1428,22 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     // MARK: - Callback Wiring
 
     private func wireCallbacks() {
+        // Action bar Extract FASTQ -> present extraction sheet for selected taxa
+        actionBar.onExtractFASTQ = { [weak self] in
+            guard let self else { return }
+            let selectedIndexes = self.taxonomyTableView.selectedRowIndexes
+            let rows: [NaoMgsTaxonSummaryRow] = selectedIndexes.compactMap { index in
+                guard index < self.displayedRows.count else { return nil }
+                return self.displayedRows[index]
+            }
+            guard !rows.isEmpty else { return }
+
+            let items = rows.map { "\($0.name) (taxid:\($0.taxId))" }
+            let source = self.bundleURL?.lastPathComponent ?? "NAO-MGS result"
+            let suggestedName = "\(rows.first?.sample ?? "sample")_\(rows.first?.name ?? "extract")_extract"
+            self.presentExtractionSheet(items: items, source: source, suggestedName: suggestedName)
+        }
+
         // Action bar BLAST verify (NAO-MGS triggers BLAST via context menu)
         actionBar.onBlastVerify = { [weak self] in
             // NAO-MGS BLAST is triggered via the table context menu per-taxon;
@@ -1457,6 +1473,37 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
             name: .metagenomicsSampleSelectionChanged,
             object: nil
         )
+    }
+
+    // MARK: - Extraction Sheet
+
+    /// Presents a ``ClassifierExtractionSheet`` for the given selected items.
+    private func presentExtractionSheet(items: [String], source: String, suggestedName: String) {
+        guard let window = view.window else { return }
+
+        let sheet = ClassifierExtractionSheet(
+            selectedItems: items,
+            sourceDescription: source,
+            suggestedName: suggestedName,
+            onExtract: { [weak window] outputName in
+                guard let window else { return }
+                if let attached = window.attachedSheet { window.endSheet(attached) }
+                logger.info("Extract FASTQ confirmed: \(outputName, privacy: .public) from NAO-MGS")
+            },
+            onCancel: { [weak window] in
+                guard let window else { return }
+                if let attached = window.attachedSheet { window.endSheet(attached) }
+            }
+        )
+
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 440, height: 320),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        panel.contentViewController = NSHostingController(rootView: sheet)
+        window.beginSheet(panel)
     }
 
     @objc private func handleLayoutSwapRequested(_ notification: Notification) {

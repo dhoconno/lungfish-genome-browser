@@ -558,6 +558,17 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
             self.breadcrumbBar.update(zoomNode: node)
         }
 
+        // Action bar Extract FASTQ -> present extraction sheet for selected node(s)
+        actionBar.onExtractFASTQ = { [weak self] in
+            guard let self else { return }
+            let selectedRows = self.taxonomyTableView.outlineView.selectedRowIndexes
+            let nodes: [TaxonNode] = selectedRows.compactMap { row in
+                self.taxonomyTableView.outlineView.item(atRow: row) as? TaxonNode
+            }
+            guard let firstNode = nodes.first else { return }
+            self.presentExtractionSheet(for: firstNode, includeChildren: false)
+        }
+
         // Action bar BLAST verify -> show BLAST config for current selection
         actionBar.onBlastVerify = { [weak self] in
             guard let self, let node = self.selectedTaxonNode else { return }

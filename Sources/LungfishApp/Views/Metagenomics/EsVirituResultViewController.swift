@@ -610,6 +610,19 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             self?.onExtractAssemblyReads?(assembly)
         }
 
+        // Action bar Extract FASTQ -> present extraction sheet for selected assemblies
+        actionBar.onExtractFASTQ = { [weak self] in
+            guard let self else { return }
+            let accessions = self.detectionTableView.selectedAssemblyAccessions()
+            guard !accessions.isEmpty else { return }
+
+            let sampleId = self.esVirituResult?.sampleId ?? "sample"
+            let items = accessions.map { "Assembly: \($0)" }
+            let source = self.bamURL?.lastPathComponent ?? "EsViritu result"
+            let suggestedName = "\(sampleId)_\(accessions.first ?? "extract")_extract"
+            self.presentExtractionSheet(items: items, source: source, suggestedName: suggestedName)
+        }
+
         // Action bar BLAST verify (EsViritu triggers BLAST via table context menu,
         // but the action bar button gives quick access to the table's BLAST flow)
         actionBar.onBlastVerify = { [weak self] in
@@ -633,6 +646,37 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             name: .metagenomicsLayoutSwapRequested,
             object: nil
         )
+    }
+
+    // MARK: - Extraction Sheet
+
+    /// Presents a ``ClassifierExtractionSheet`` for the given selected items.
+    private func presentExtractionSheet(items: [String], source: String, suggestedName: String) {
+        guard let window = view.window else { return }
+
+        let sheet = ClassifierExtractionSheet(
+            selectedItems: items,
+            sourceDescription: source,
+            suggestedName: suggestedName,
+            onExtract: { [weak window] outputName in
+                guard let window else { return }
+                if let attached = window.attachedSheet { window.endSheet(attached) }
+                logger.info("Extract FASTQ confirmed: \(outputName, privacy: .public) from EsViritu")
+            },
+            onCancel: { [weak window] in
+                guard let window else { return }
+                if let attached = window.attachedSheet { window.endSheet(attached) }
+            }
+        )
+
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 440, height: 320),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        panel.contentViewController = NSHostingController(rootView: sheet)
+        window.beginSheet(panel)
     }
 
     @objc private func handleLayoutSwapRequested(_ notification: Notification) {

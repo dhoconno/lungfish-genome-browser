@@ -1142,6 +1142,30 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
     // MARK: - Callback Wiring
 
     private func wireCallbacks() {
+        // Action bar Extract FASTQ -> present extraction sheet for selected contigs
+        actionBar.onExtractFASTQ = { [weak self] in
+            guard let self else { return }
+            let selectedIndexes = self.outlineView.selectedRowIndexes
+            var contigNames: [String] = []
+            for row in selectedIndexes {
+                guard let item = self.outlineView.item(atRow: row) as? NvdOutlineItem else { continue }
+                switch item {
+                case .contig(_, let qseqid):
+                    contigNames.append(qseqid)
+                case .childHit(_, let qseqid, _):
+                    contigNames.append(qseqid)
+                case .taxonGroup:
+                    break
+                }
+            }
+            guard !contigNames.isEmpty else { return }
+
+            let items = contigNames.map { "Contig: \($0)" }
+            let source = self.bundleURL?.lastPathComponent ?? "NVD result"
+            let suggestedName = "\(contigNames.first ?? "extract")_extract"
+            self.presentExtractionSheet(items: items, source: source, suggestedName: suggestedName)
+        }
+
         actionBar.onBlastVerify = { [weak self] in
             self?.blastVerifySelectedContig()
         }
@@ -1167,6 +1191,37 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
             name: .metagenomicsSampleSelectionChanged,
             object: nil
         )
+    }
+
+    // MARK: - Extraction Sheet
+
+    /// Presents a ``ClassifierExtractionSheet`` for the given selected items.
+    private func presentExtractionSheet(items: [String], source: String, suggestedName: String) {
+        guard let window = view.window else { return }
+
+        let sheet = ClassifierExtractionSheet(
+            selectedItems: items,
+            sourceDescription: source,
+            suggestedName: suggestedName,
+            onExtract: { [weak window] outputName in
+                guard let window else { return }
+                if let attached = window.attachedSheet { window.endSheet(attached) }
+                logger.info("Extract FASTQ confirmed: \(outputName, privacy: .public) from NVD")
+            },
+            onCancel: { [weak window] in
+                guard let window else { return }
+                if let attached = window.attachedSheet { window.endSheet(attached) }
+            }
+        )
+
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 440, height: 320),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        panel.contentViewController = NSHostingController(rootView: sheet)
+        window.beginSheet(panel)
     }
 
     @objc private func handleLayoutSwapRequested(_ notification: Notification) {
