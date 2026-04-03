@@ -46,6 +46,20 @@ final class ClassifierActionBar: NSView {
         return btn
     }()
 
+    let extractButton: NSButton = {
+        let btn = NSButton()
+        btn.title = "Extract FASTQ"
+        btn.image = NSImage(systemSymbolName: "arrow.down.doc", accessibilityDescription: "Extract FASTQ")
+        btn.bezelStyle = .accessoryBarAction
+        btn.imagePosition = .imageLeading
+        btn.controlSize = .small
+        btn.font = .systemFont(ofSize: 11)
+        btn.setContentHuggingPriority(.required, for: .horizontal)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.isEnabled = false
+        return btn
+    }()
+
     let infoLabel: NSTextField = {
         let label = NSTextField(labelWithString: "")
         label.font = .systemFont(ofSize: 11)
@@ -72,6 +86,7 @@ final class ClassifierActionBar: NSView {
 
     var onBlastVerify: (() -> Void)?
     var onExport: (() -> Void)?
+    var onExtractFASTQ: (() -> Void)?
     var onProvenance: ((NSButton) -> Void)?
 
     // MARK: - Custom Buttons
@@ -106,9 +121,15 @@ final class ClassifierActionBar: NSView {
         infoLabel.stringValue = text
     }
 
-    /// Enable/disable BLAST button.
-    func setBlastEnabled(_ enabled: Bool) {
+    /// Enable/disable BLAST button, with an optional tooltip reason shown when disabled.
+    func setBlastEnabled(_ enabled: Bool, reason: String? = nil) {
         blastButton.isEnabled = enabled
+        blastButton.toolTip = enabled ? "Verify selected taxon with BLAST" : reason
+    }
+
+    /// Enable/disable Extract FASTQ button.
+    func setExtractEnabled(_ enabled: Bool) {
+        extractButton.isEnabled = enabled
     }
 
     // MARK: - Setup
@@ -125,6 +146,7 @@ final class ClassifierActionBar: NSView {
         // Core subviews
         addSubview(blastButton)
         addSubview(exportButton)
+        addSubview(extractButton)
         addSubview(infoLabel)
         addSubview(provenanceButton)
 
@@ -133,6 +155,8 @@ final class ClassifierActionBar: NSView {
         blastButton.action = #selector(blastTapped)
         exportButton.target = self
         exportButton.action = #selector(exportTapped)
+        extractButton.target = self
+        extractButton.action = #selector(extractTapped)
         provenanceButton.target = self
         provenanceButton.action = #selector(provenanceTapped)
 
@@ -151,7 +175,7 @@ final class ClassifierActionBar: NSView {
         NSLayoutConstraint.deactivate(layoutConstraints)
         layoutConstraints.removeAll()
 
-        let allLeftButtons: [NSButton] = [blastButton, exportButton] + customButtons
+        let allLeftButtons: [NSButton] = [blastButton, exportButton, extractButton] + customButtons
         var constraints: [NSLayoutConstraint] = []
 
         // First button: 8pt from leading
@@ -188,6 +212,10 @@ final class ClassifierActionBar: NSView {
 
     @objc private func exportTapped(_ sender: NSButton) {
         onExport?()
+    }
+
+    @objc private func extractTapped(_ sender: NSButton) {
+        onExtractFASTQ?()
     }
 
     @objc private func provenanceTapped(_ sender: NSButton) {
