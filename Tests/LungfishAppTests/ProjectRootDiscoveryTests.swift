@@ -4,6 +4,7 @@
 
 import XCTest
 @testable import LungfishApp
+@testable import LungfishIO
 
 final class ProjectRootDiscoveryTests: XCTestCase {
 
@@ -36,7 +37,7 @@ final class ProjectRootDiscoveryTests: XCTestCase {
             .appendingPathComponent("esviritu-ABC123")
         try FileManager.default.createDirectory(at: deepPath, withIntermediateDirectories: true)
 
-        let result = findProjectRoot(deepPath)
+        let result = ProjectTempDirectory.findProjectRoot(deepPath)
         XCTAssertEqual(result?.standardizedFileURL, projectURL.standardizedFileURL)
     }
 
@@ -51,7 +52,7 @@ final class ProjectRootDiscoveryTests: XCTestCase {
             .appendingPathComponent("naomgs-MU-CASPER-2026-03-31")
         try FileManager.default.createDirectory(at: importPath, withIntermediateDirectories: true)
 
-        let result = findProjectRoot(importPath)
+        let result = ProjectTempDirectory.findProjectRoot(importPath)
         XCTAssertEqual(result?.standardizedFileURL, projectURL.standardizedFileURL)
     }
 
@@ -62,7 +63,7 @@ final class ProjectRootDiscoveryTests: XCTestCase {
         let projectURL = tempDir.appendingPathComponent("test.lungfish")
         try FileManager.default.createDirectory(at: projectURL, withIntermediateDirectories: true)
 
-        let result = findProjectRoot(projectURL)
+        let result = ProjectTempDirectory.findProjectRoot(projectURL)
         XCTAssertEqual(result?.standardizedFileURL, projectURL.standardizedFileURL)
     }
 
@@ -70,7 +71,7 @@ final class ProjectRootDiscoveryTests: XCTestCase {
 
     /// When no .lungfish ancestor exists, returns nil.
     func testNoProjectRoot() {
-        let result = findProjectRoot(tempDir)
+        let result = ProjectTempDirectory.findProjectRoot(tempDir)
         XCTAssertNil(result)
     }
 
@@ -86,7 +87,7 @@ final class ProjectRootDiscoveryTests: XCTestCase {
         let dbFile = dbDir.appendingPathComponent("hits.sqlite")
         FileManager.default.createFile(atPath: dbFile.path, contents: nil)
 
-        let result = findProjectRoot(dbFile)
+        let result = ProjectTempDirectory.findProjectRoot(dbFile)
         XCTAssertEqual(result?.standardizedFileURL, projectURL.standardizedFileURL)
     }
 }

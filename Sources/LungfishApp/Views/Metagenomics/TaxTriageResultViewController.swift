@@ -1928,7 +1928,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         let capturedBamURL = self.bamURL
         // Derive project URL by walking up from the output directory
         // to the .lungfish project root.
-        let capturedProjectURL: URL? = taxTriageResult.flatMap { findProjectRoot($0.outputDirectory) }
+        let capturedProjectURL: URL? = taxTriageResult.flatMap { ProjectTempDirectory.findProjectRoot($0.outputDirectory) }
 
         let sheet = ClassifierExtractionSheet(
             selectedItems: items,

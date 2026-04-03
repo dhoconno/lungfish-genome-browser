@@ -1512,7 +1512,7 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         // Derive project URL by walking up from bundleURL to the .lungfish project root.
         // Works for both derivatives paths (bundle.lungfishfastq/derivatives/naomgs-*)
         // and import paths (project.lungfish/Imports/naomgs-*).
-        let capturedProjectURL = bundleURL.flatMap { findProjectRoot($0) }
+        let capturedProjectURL = bundleURL.flatMap { ProjectTempDirectory.findProjectRoot($0) }
 
         let sheet = ClassifierExtractionSheet(
             selectedItems: items,
@@ -1570,7 +1570,7 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
                         let bundleDir: URL
                         if let projectURL = capturedProjectURL {
                             bundleDir = projectURL
-                        } else if let projectURL = findProjectRoot(databaseURL) {
+                        } else if let projectURL = ProjectTempDirectory.findProjectRoot(databaseURL) {
                             bundleDir = projectURL
                             logger.warning("NAO-MGS extraction: bundleURL was nil; derived project path from database URL: \(bundleDir.path, privacy: .public)")
                         } else {

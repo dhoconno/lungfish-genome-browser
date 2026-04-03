@@ -700,7 +700,7 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
                 // Derive project directory by walking up from the output directory
                 // to the .lungfish project root.
-                let projectURL: URL? = self.esVirituConfig.flatMap { findProjectRoot($0.outputDirectory) }
+                let projectURL: URL? = self.esVirituConfig.flatMap { ProjectTempDirectory.findProjectRoot($0.outputDirectory) }
 
                 let opID = OperationCenter.shared.start(
                     title: "Extract \(outputName)",

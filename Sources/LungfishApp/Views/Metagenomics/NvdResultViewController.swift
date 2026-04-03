@@ -1254,7 +1254,7 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
         let frozenBamURL = capturedBamURL
 
         // Derive project URL by walking up from bundleURL to the .lungfish project root.
-        let capturedProjectURL = bundleURL.flatMap { findProjectRoot($0) }
+        let capturedProjectURL = bundleURL.flatMap { ProjectTempDirectory.findProjectRoot($0) }
 
         let sheet = ClassifierExtractionSheet(
             selectedItems: items,
