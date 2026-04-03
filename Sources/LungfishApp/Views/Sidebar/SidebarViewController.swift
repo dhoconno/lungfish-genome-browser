@@ -1633,7 +1633,7 @@ public class SidebarViewController: NSViewController {
             let item = SidebarItem(
                 title: title,
                 type: .naoMgsResult,
-                icon: "n.circle",
+                customImage: TextBadgeIcon.image(text: "Nao", size: NSSize(width: 16, height: 16)),
                 children: [],
                 url: childURL
             )
@@ -2678,7 +2678,10 @@ extension SidebarViewController: NSOutlineViewDelegate {
             cellView?.textField?.font = NSFont.systemFont(ofSize: 13)
             cellView?.textField?.textColor = .labelColor
 
-            if let iconName = sidebarItem.icon {
+            if let customImage = sidebarItem.customImage {
+                cellView?.imageView?.image = customImage
+                cellView?.imageView?.contentTintColor = nil  // custom image has its own colors
+            } else if let iconName = sidebarItem.icon {
                 cellView?.imageView?.image = NSImage(systemSymbolName: iconName, accessibilityDescription: sidebarItem.title)
                 cellView?.imageView?.contentTintColor = sidebarItem.type.tintColor
             }
@@ -2789,6 +2792,8 @@ public class SidebarItem: NSObject {
     public var title: String
     public let type: SidebarItemType
     public let icon: String?
+    /// Custom pre-rendered image for this item. When set, takes precedence over `icon`.
+    public var customImage: NSImage?
     public var children: [SidebarItem]
     public var url: URL?
     /// Optional subtitle for additional context (e.g. read composition label).
@@ -2796,10 +2801,11 @@ public class SidebarItem: NSObject {
     /// Arbitrary key-value metadata for routing (e.g. sampleId for batch children).
     public var userInfo: [String: String] = [:]
 
-    public init(title: String, type: SidebarItemType, icon: String? = nil, children: [SidebarItem] = [], url: URL? = nil, subtitle: String? = nil) {
+    public init(title: String, type: SidebarItemType, icon: String? = nil, customImage: NSImage? = nil, children: [SidebarItem] = [], url: URL? = nil, subtitle: String? = nil) {
         self.title = title
         self.type = type
         self.icon = icon
+        self.customImage = customImage
         self.children = children
         self.url = url
         self.subtitle = subtitle
