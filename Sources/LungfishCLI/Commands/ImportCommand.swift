@@ -52,6 +52,7 @@ struct ImportCommand: AsyncParsableCommand {
             BAMSubcommand.self,
             VCFSubcommand.self,
             FASTASubcommand.self,
+            FastqSubcommand.self,
             Kraken2Subcommand.self,
             EsVirituSubcommand.self,
             TaxTriageSubcommand.self,
