@@ -70,23 +70,47 @@ public enum FASTQBatchImporter {
     /// Configuration for a batch import run.
     public struct ImportConfig: Sendable {
         public let projectDirectory: URL
+        /// Sequencing platform. Drives default values for quality binning,
+        /// storage optimisation, and compression level.
+        public let platform: LungfishWorkflow.SequencingPlatform
+        /// Old-format recipe (for unmigrated recipes like WGS, amplicon, HiFi).
         public let recipe: ProcessingRecipe?
+        /// New-format declarative recipe (e.g., VSP2).
+        public let newRecipe: Recipe?
         public let qualityBinning: QualityBinningScheme
+        /// Whether to run clumpify for storage optimisation. Defaults to the
+        /// platform default; can be overridden explicitly.
+        public let optimizeStorage: Bool
+        /// Gzip compression level. Defaults to `.balanced`.
+        public let compressionLevel: CompressionLevel
         public let threads: Int
         public let logDirectory: URL?
+        /// When `true`, reimport even if a bundle already exists for the sample.
+        public let forceReimport: Bool
 
         public init(
             projectDirectory: URL,
-            recipe: ProcessingRecipe?,
-            qualityBinning: QualityBinningScheme = .illumina4,
+            platform: LungfishWorkflow.SequencingPlatform = .illumina,
+            recipe: ProcessingRecipe? = nil,
+            newRecipe: Recipe? = nil,
+            qualityBinning: QualityBinningScheme? = nil,
+            optimizeStorage: Bool? = nil,
+            compressionLevel: CompressionLevel? = nil,
             threads: Int = 4,
-            logDirectory: URL? = nil
+            logDirectory: URL? = nil,
+            forceReimport: Bool = false
         ) {
             self.projectDirectory = projectDirectory
+            self.platform = platform
             self.recipe = recipe
-            self.qualityBinning = qualityBinning
+            self.newRecipe = newRecipe
+            // Default resolution: explicit value > recipe suggestion > platform default
+            self.qualityBinning = qualityBinning ?? newRecipe?.qualityBinning ?? platform.defaultQualityBinning
+            self.optimizeStorage = optimizeStorage ?? platform.defaultOptimizeStorage
+            self.compressionLevel = compressionLevel ?? platform.defaultCompressionLevel
             self.threads = threads
             self.logDirectory = logDirectory
+            self.forceReimport = forceReimport
         }
     }
 
@@ -314,8 +338,8 @@ public enum FASTQBatchImporter {
         var errors: [(sample: String, error: String)] = []
 
         for (index, pair) in pairs.enumerated() {
-            // Check for skip before allocating anything
-            if bundleExists(for: pair, in: config.projectDirectory) {
+            // Check for skip before allocating anything (unless forceReimport is set)
+            if !config.forceReimport && bundleExists(for: pair, in: config.projectDirectory) {
                 let reason = "Bundle already exists"
                 log?(.sampleSkip(sample: pair.sampleName, reason: reason))
                 logger.info("Skipping \(pair.sampleName): \(reason)")
@@ -408,7 +432,38 @@ public enum FASTQBatchImporter {
             // read population, so k-mer grouping must be computed on the final reads)
             var recipeOutputFASTQ: URL? = nil
             var isPairedAfterRecipe = pair.r2 != nil
-            if let recipe = config.recipe, !recipe.steps.isEmpty {
+
+            if let newRecipe = config.newRecipe {
+                // New-format declarative recipe: delegate to RecipeEngine
+                let engine = RecipeEngine()
+                let inputFormat: RecipeFileFormat = pair.r2 != nil ? .pairedR1R2 : .single
+                let stepInput = StepInput(r1: pair.r1, r2: pair.r2, format: inputFormat)
+                let stepContext = StepContext(
+                    workspace: workspace,
+                    threads: config.threads,
+                    sampleName: pair.sampleName,
+                    runner: NativeToolRunner.shared,
+                    progress: { fraction, message in
+                        log?(.stepStart(sample: pair.sampleName, step: message,
+                                        stepIndex: Int(fraction * 100), totalSteps: 100))
+                    }
+                )
+                let output = try await engine.execute(recipe: newRecipe, input: stepInput, context: stepContext)
+                var currentURL = output.r1
+                // If output is merged format, concatenate r1/r2/r3 for bundle finalization
+                if output.format == .merged, let r2 = output.r2 {
+                    let combined = workspace.appendingPathComponent("\(pair.sampleName)_combined.fq.gz")
+                    var data = try Data(contentsOf: output.r1)
+                    data.append(try Data(contentsOf: r2))
+                    if let r3 = output.r3 { data.append(try Data(contentsOf: r3)) }
+                    try data.write(to: combined)
+                    currentURL = combined
+                }
+                recipeOutputFASTQ = currentURL
+                // New-format recipes produce interleaved or single output
+                isPairedAfterRecipe = output.format == .interleaved || output.format == .merged
+            } else if let recipe = config.recipe, !recipe.steps.isEmpty {
+                // Old-format recipe: use existing applyRecipe() code path
                 recipeOutputFASTQ = try await applyRecipe(
                     recipe: recipe,
                     inputR1: pair.r1,
@@ -439,13 +494,15 @@ public enum FASTQBatchImporter {
                 outputDirectory: workspace,
                 threads: config.threads,
                 deleteOriginals: true,
-                qualityBinning: config.qualityBinning
+                qualityBinning: config.qualityBinning,
+                skipClumpify: !config.optimizeStorage
             )
 
-            let totalSteps = (config.recipe?.steps.count ?? 0) + 1
+            let totalSteps = (config.recipe?.steps.count ?? config.newRecipe?.steps.count ?? 0) + 1
             let clumpifyStepIndex = totalSteps
-            log?(.stepStart(sample: pair.sampleName, step: "Clumpify + Compress", stepIndex: clumpifyStepIndex, totalSteps: totalSteps))
-            printProgress("  \u{2192} Clumpify + compress...")
+            let clumpifyLabel = config.optimizeStorage ? "Clumpify + Compress" : "Compress"
+            log?(.stepStart(sample: pair.sampleName, step: clumpifyLabel, stepIndex: clumpifyStepIndex, totalSteps: totalSteps))
+            printProgress("  \u{2192} \(clumpifyLabel)...")
             let clumpifyStart = Date()
 
             let pipeline = FASTQIngestionPipeline()
@@ -455,10 +512,10 @@ public enum FASTQBatchImporter {
 
             log?(.stepComplete(
                 sample: pair.sampleName,
-                step: "Clumpify + Compress",
+                step: clumpifyLabel,
                 durationSeconds: Date().timeIntervalSince(clumpifyStart)
             ))
-            printProgress("  \u{2192} Clumpify + compress... done (\(Int(Date().timeIntervalSince(clumpifyStart)))s)")
+            printProgress("  \u{2192} \(clumpifyLabel)... done (\(Int(Date().timeIntervalSince(clumpifyStart)))s)")
 
             let finalFASTQURL = ingestionResult.outputFile
 
