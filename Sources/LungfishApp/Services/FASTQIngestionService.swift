@@ -844,6 +844,8 @@ public enum FASTQIngestionService {
 
         var currentR1 = r1
         var currentR2 = r2
+        var previousR1: URL? = nil
+        var previousR2: URL? = nil
         var prefixStepResults: [RecipeStepResult] = []
         var consumedSteps = 0
 
@@ -969,6 +971,12 @@ public enum FASTQIngestionService {
                 )
             )
 
+            // Delete previous step's intermediate files (not the original inputs)
+            if let prev1 = previousR1 { try? FileManager.default.removeItem(at: prev1) }
+            if let prev2 = previousR2 { try? FileManager.default.removeItem(at: prev2) }
+
+            previousR1 = outR1
+            previousR2 = outR2
             currentR1 = outR1
             currentR2 = outR2
             consumedSteps += 1
