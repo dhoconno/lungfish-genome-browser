@@ -767,17 +767,29 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         // Only check directories created in the last hour (current session)
         let oneHourAgo = Date().addingTimeInterval(-3600)
 
+        // Every prefix used by ProjectTempDirectory.create/createFromContext across
+        // the codebase. Matches both old-style "lungfish-*" and new short prefixes.
         let escapedPrefixes = [
-            "lungfish-extract-", "lungfish-bam-", "lungfish-genbank-",
-            "lungfish-genome-", "lungfish-batch-", "lungfish-spades-",
-            "lungfish-classify-", "lungfish-esviritu-", "lungfish-taxtriage-",
-            "lungfish-minimap2-", "lungfish-orient-", "lungfish-trim-",
-            "lungfish-fasta-", "lungfish-demux-", "lungfish-scout-",
-            "lungfish-bbtools-", "lungfish-fastq-ingest-", "lungfish-ref-",
-            "lungfish-assembly-", "lungfish-sequence-",
-            "esviritu-", "taxtriage-", "naomgs-extract-", "nvd-extract-",
-            "bbmerge-", "bbrepair-", "bbduk-primer-",
-            "export-", "vcf-import-"
+            // ReadExtractionService
+            "lungfish-extract-", "lungfish-bam-dedup-", "lungfish-bam-extract-",
+            // LungfishWorkflow pipelines
+            "esviritu-", "taxtriage-", "lungfish-spades-", "lungfish-orient-",
+            "lungfish-demux-", "lungfish-scout-", "lungfish-bbtools-",
+            // FASTQDerivativeService
+            "lungfish-virtual-orient-", "lungfish-demux-trim-", "lungfish-trim-",
+            "lungfish-fasta-orient-", "lungfish-fasta-demux-trim-",
+            "lungfish-fasta-trim-", "lungfish-fasta-postrim-", "bbduk-primer-",
+            "fastq-export-", "fastq-derive-", "pe-search-",
+            // AppDelegate materialization + export
+            "minimap2-", "orient-", "classify-", "export-", "export-decomp-",
+            "vcf-import-",
+            // Classifier extraction controllers
+            "esviritu-extract-", "naomgs-extract-", "nvd-extract-", "taxtriage-extract-",
+            // ViewModels + services
+            "genbank-", "sequence-", "genome-", "assembly-", "fasta-preview-",
+            "ref-", "ref-import-", "extract-", "fastq-ingest-", "batch-",
+            // CLI commands
+            "bbmerge-", "bbrepair-", "lungfish-cli-ref-import-", ".lungfish-temp-",
         ]
 
         for item in contents {

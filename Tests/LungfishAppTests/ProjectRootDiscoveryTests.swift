@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: MIT
 
 import XCTest
-@testable import LungfishApp
 @testable import LungfishIO
 
 final class ProjectRootDiscoveryTests: XCTestCase {

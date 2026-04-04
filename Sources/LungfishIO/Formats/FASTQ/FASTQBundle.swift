@@ -194,20 +194,10 @@ public enum FASTQBundle {
 
     /// Finds the `.lungfish` project root directory by walking up from a bundle URL.
     ///
-    /// Returns `nil` if no `.lungfish` directory is found within 10 levels.
+    /// Delegates to ``ProjectTempDirectory/findProjectRoot(_:)`` which handles
+    /// deeply nested paths (up to 20 levels for multi-step recipe outputs).
     public static func findProjectRoot(from url: URL) -> URL? {
-        var current = url.standardizedFileURL
-        // Walk up to 20 levels — recipes with N steps create 2*N nested path
-        // components (derivatives/step-name.lungfishfastq per step).
-        for _ in 0..<20 {
-            if current.pathExtension == "lungfish" {
-                return current
-            }
-            let parent = current.deletingLastPathComponent()
-            if parent == current { break }
-            current = parent
-        }
-        return nil
+        ProjectTempDirectory.findProjectRoot(url)
     }
 
     /// Computes a path relative to the `.lungfish` project root.

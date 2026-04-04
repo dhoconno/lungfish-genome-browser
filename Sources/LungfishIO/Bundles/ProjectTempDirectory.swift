@@ -39,7 +39,10 @@ public enum ProjectTempDirectory {
     // MARK: - Private Constants
 
     private static let tmpDirName = ".tmp"
-    private static let maxWalkDepth = 10
+    // Recipes with N steps create 2*N nested path components
+    // (derivatives/step-name.lungfishfastq per step), so 20 handles
+    // even deeply nested multi-step pipeline outputs.
+    private static let maxWalkDepth = 20
     private static let lungfishExtension = "lungfish"
 
     // MARK: - findProjectRoot
