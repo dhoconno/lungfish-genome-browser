@@ -59,4 +59,83 @@ final class ImportFastqCommandTests: XCTestCase {
         ])
         XCTAssertEqual(command.project, "/projects/Test.lungfish")
     }
+
+    func testParseNewFlags() throws {
+        let command = try ImportCommand.FastqSubcommand.parse([
+            "/data/fastq_dir",
+            "--project", "/projects/Test.lungfish",
+            "--platform", "illumina",
+            "--recipe", "vsp2",
+            "--no-optimize-storage",
+            "--compression", "maximum",
+            "--force",
+        ])
+        XCTAssertEqual(command.platform, "illumina")
+        XCTAssertTrue(command.noOptimizeStorage)
+        XCTAssertEqual(command.compression, "maximum")
+        XCTAssertTrue(command.force)
+    }
+
+    func testParseDefaultNewFlags() throws {
+        let command = try ImportCommand.FastqSubcommand.parse([
+            "/data/fastq_dir",
+            "--project", "/projects/Test.lungfish",
+        ])
+        XCTAssertNil(command.platform)
+        XCTAssertFalse(command.noOptimizeStorage)
+        XCTAssertEqual(command.compression, "balanced")
+        XCTAssertFalse(command.force)
+    }
+
+    func testParsePlatformONT() throws {
+        let command = try ImportCommand.FastqSubcommand.parse([
+            "/data/fastq_dir",
+            "--project", "/projects/Test.lungfish",
+            "--platform", "ont",
+        ])
+        XCTAssertEqual(command.platform, "ont")
+    }
+
+    func testParsePlatformPacBio() throws {
+        let command = try ImportCommand.FastqSubcommand.parse([
+            "/data/fastq_dir",
+            "--project", "/projects/Test.lungfish",
+            "--platform", "pacbio",
+        ])
+        XCTAssertEqual(command.platform, "pacbio")
+    }
+
+    func testParseCompressionFast() throws {
+        let command = try ImportCommand.FastqSubcommand.parse([
+            "/data/fastq_dir",
+            "--project", "/projects/Test.lungfish",
+            "--compression", "fast",
+        ])
+        XCTAssertEqual(command.compression, "fast")
+    }
+
+    func testParseAllFlagsCombined() throws {
+        let command = try ImportCommand.FastqSubcommand.parse([
+            "/data/fastq_dir",
+            "--project", "/projects/Test.lungfish",
+            "--platform", "ultima",
+            "--recipe", "vsp2",
+            "--quality-binning", "none",
+            "--no-optimize-storage",
+            "--compression", "fast",
+            "--threads", "4",
+            "--log-dir", "/tmp/logs",
+            "--force",
+            "--dry-run",
+        ])
+        XCTAssertEqual(command.platform, "ultima")
+        XCTAssertEqual(command.recipe, "vsp2")
+        XCTAssertEqual(command.qualityBinning, "none")
+        XCTAssertTrue(command.noOptimizeStorage)
+        XCTAssertEqual(command.compression, "fast")
+        XCTAssertEqual(command.threads, 4)
+        XCTAssertEqual(command.logDir, "/tmp/logs")
+        XCTAssertTrue(command.force)
+        XCTAssertTrue(command.dryRun)
+    }
 }
