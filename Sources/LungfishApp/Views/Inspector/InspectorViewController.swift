@@ -858,10 +858,119 @@ public class InspectorViewController: NSViewController {
     private func handleMetadataImport(from url: URL) {
         guard let data = try? Data(contentsOf: url) else { return }
         let knownIds = Set(viewModel.documentSectionViewModel.classifierSampleEntries.map(\.id))
-        guard let store = try? SampleMetadataStore(csvData: data, knownSampleIds: knownIds) else { return }
+
+        guard let scanResult = try? SampleMetadataStore.scanForSampleColumn(
+            csvData: data,
+            knownSampleIds: knownIds
+        ) else { return }
+
+        guard let best = scanResult.bestColumn else {
+            let alert = NSAlert()
+            alert.messageText = "No Sample Column Found"
+            alert.informativeText = "No column in this file contains values matching the known sample IDs. Check that your metadata file includes a column with sample names."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            if let window = self.view.window {
+                alert.beginSheetModal(for: window)
+            }
+            return
+        }
+
+        if best.matchCount == scanResult.totalRows {
+            finishMetadataImport(
+                data: data,
+                scanResult: scanResult,
+                sampleColumnIndex: best.index,
+                knownSampleIds: knownIds
+            )
+        } else {
+            let alert = NSAlert()
+            alert.messageText = "Confirm Sample Column"
+            alert.informativeText = "Column \"\(best.name)\" matched \(best.matchCount) of \(scanResult.totalRows) rows to sample IDs. Use this column?"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "Use \"\(best.name)\"")
+            if scanResult.candidates.count > 1 {
+                alert.addButton(withTitle: "Choose Another\u{2026}")
+            }
+            alert.addButton(withTitle: "Cancel")
+
+            guard let window = self.view.window else { return }
+            alert.beginSheetModal(for: window) { [weak self] response in
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        switch response {
+                        case .alertFirstButtonReturn:
+                            self.finishMetadataImport(
+                                data: data,
+                                scanResult: scanResult,
+                                sampleColumnIndex: best.index,
+                                knownSampleIds: knownIds
+                            )
+                        case .alertSecondButtonReturn where scanResult.candidates.count > 1:
+                            self.showSampleColumnPicker(
+                                data: data,
+                                scanResult: scanResult,
+                                knownSampleIds: knownIds
+                            )
+                        default:
+                            break
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func showSampleColumnPicker(
+        data: Data,
+        scanResult: MetadataColumnScanResult,
+        knownSampleIds: Set<String>
+    ) {
+        let alert = NSAlert()
+        alert.messageText = "Select Sample Column"
+        alert.informativeText = "Choose which column contains sample IDs:"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 280, height: 25), pullsDown: false)
+        for candidate in scanResult.candidates {
+            popup.addItem(withTitle: "\(candidate.name) (\(candidate.matchCount) of \(scanResult.totalRows) matched)")
+            popup.lastItem?.tag = candidate.index
+        }
+        alert.accessoryView = popup
+
+        guard let window = self.view.window else { return }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, response == .alertFirstButtonReturn else { return }
+                    let selectedIndex = popup.selectedItem?.tag ?? scanResult.candidates[0].index
+                    self.finishMetadataImport(
+                        data: data,
+                        scanResult: scanResult,
+                        sampleColumnIndex: selectedIndex,
+                        knownSampleIds: knownSampleIds
+                    )
+                }
+            }
+        }
+    }
+
+    private func finishMetadataImport(
+        data: Data,
+        scanResult: MetadataColumnScanResult,
+        sampleColumnIndex: Int,
+        knownSampleIds: Set<String>
+    ) {
+        let store = SampleMetadataStore(
+            scanResult: scanResult,
+            sampleColumnIndex: sampleColumnIndex,
+            knownSampleIds: knownSampleIds
+        )
         viewModel.documentSectionViewModel.sampleMetadataStore = store
 
-        // Persist to bundle so metadata survives between sessions
         if let bundleURL = viewModel.documentSectionViewModel.bundleAttachmentStore?.bundleURL {
             try? store.persist(originalData: data, to: bundleURL)
             store.wireAutosave(bundleURL: bundleURL)
