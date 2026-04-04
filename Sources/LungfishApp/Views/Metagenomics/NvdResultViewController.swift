@@ -1955,9 +1955,20 @@ extension NvdResultViewController {
     public func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let outlineItem = item as? NvdOutlineItem else { return nil }
 
-        // Check for dynamic metadata columns first
-        if let tableColumn, let cell = metadataColumnController.cellForColumn(tableColumn) {
-            return cell
+        // Check for dynamic metadata columns first — pass per-row sample ID for join
+        if let tableColumn {
+            let rowSampleId: String?
+            switch outlineItem {
+            case .contig(let sampleId, _):
+                rowSampleId = sampleId
+            case .childHit(let sampleId, _, _):
+                rowSampleId = sampleId
+            case .taxonGroup:
+                rowSampleId = nil
+            }
+            if let cell = metadataColumnController.cellForColumn(tableColumn, sampleId: rowSampleId) {
+                return cell
+            }
         }
 
         let identifier = tableColumn?.identifier ?? NSUserInterfaceItemIdentifier("default")
