@@ -2255,3 +2255,613 @@ Expected: All tests pass.
 git add -A
 git commit -m "fix: update existing test call sites for expanded ImportConfig"
 ```
+
+---
+
+### Task 11: CLI parsing tests for new flags
+
+**Files:**
+- Modify: `Tests/LungfishCLITests/ImportFastqCommandTests.swift`
+
+The existing CLI tests cover `--recipe`, `--quality-binning`, `--dry-run`, `--threads`, `--log-dir` but not the new flags. Add comprehensive parsing tests for `--platform`, `--no-optimize-storage`, `--compression`, and `--force`.
+
+- [ ] **Step 1: Write failing tests for new CLI flags**
+
+Add to `Tests/LungfishCLITests/ImportFastqCommandTests.swift`:
+
+```swift
+    func testParseNewFlags() throws {
+        let command = try ImportCommand.FastqSubcommand.parse([
+            "/data/fastq_dir",
+            "--project", "/projects/Test.lungfish",
+            "--platform", "illumina",
+            "--recipe", "vsp2",
+            "--no-optimize-storage",
+            "--compression", "maximum",
+            "--force",
+        ])
+        XCTAssertEqual(command.platform, "illumina")
+        XCTAssertTrue(command.noOptimizeStorage)
+        XCTAssertEqual(command.compression, "maximum")
+        XCTAssertTrue(command.force)
+    }
+
+    func testParseDefaultNewFlags() throws {
+        let command = try ImportCommand.FastqSubcommand.parse([
+            "/data/fastq_dir",
+            "--project", "/projects/Test.lungfish",
+        ])
+        XCTAssertNil(command.platform)
+        XCTAssertFalse(command.noOptimizeStorage)
+        XCTAssertEqual(command.compression, "balanced")
+        XCTAssertFalse(command.force)
+    }
+
+    func testParsePlatformONT() throws {
+        let command = try ImportCommand.FastqSubcommand.parse([
+            "/data/fastq_dir",
+            "--project", "/projects/Test.lungfish",
+            "--platform", "ont",
+        ])
+        XCTAssertEqual(command.platform, "ont")
+    }
+
+    func testParsePlatformPacBio() throws {
+        let command = try ImportCommand.FastqSubcommand.parse([
+            "/data/fastq_dir",
+            "--project", "/projects/Test.lungfish",
+            "--platform", "pacbio",
+        ])
+        XCTAssertEqual(command.platform, "pacbio")
+    }
+
+    func testParseCompressionFast() throws {
+        let command = try ImportCommand.FastqSubcommand.parse([
+            "/data/fastq_dir",
+            "--project", "/projects/Test.lungfish",
+            "--compression", "fast",
+        ])
+        XCTAssertEqual(command.compression, "fast")
+    }
+
+    func testParseAllFlagsCombined() throws {
+        let command = try ImportCommand.FastqSubcommand.parse([
+            "/data/fastq_dir",
+            "--project", "/projects/Test.lungfish",
+            "--platform", "ultima",
+            "--recipe", "vsp2",
+            "--quality-binning", "none",
+            "--no-optimize-storage",
+            "--compression", "fast",
+            "--threads", "4",
+            "--log-dir", "/tmp/logs",
+            "--force",
+            "--dry-run",
+        ])
+        XCTAssertEqual(command.platform, "ultima")
+        XCTAssertEqual(command.recipe, "vsp2")
+        XCTAssertEqual(command.qualityBinning, "none")
+        XCTAssertTrue(command.noOptimizeStorage)
+        XCTAssertEqual(command.compression, "fast")
+        XCTAssertEqual(command.threads, 4)
+        XCTAssertEqual(command.logDir, "/tmp/logs")
+        XCTAssertTrue(command.force)
+        XCTAssertTrue(command.dryRun)
+    }
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `swift test --filter ImportFastqCommandTests 2>&1 | tail -20`
+Expected: Compilation error — new properties not found on `FastqSubcommand` (until Task 8 is implemented). If Task 8 is already done, these tests should pass immediately.
+
+- [ ] **Step 3: Run tests to verify they pass (after Task 8)**
+
+Run: `swift test --filter ImportFastqCommandTests 2>&1 | tail -20`
+Expected: All tests pass (existing + new).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add Tests/LungfishCLITests/ImportFastqCommandTests.swift
+git commit -m "test: add CLI parsing tests for --platform, --no-optimize-storage, --compression, --force"
+```
+
+---
+
+### Task 12: End-to-end recipe execution test on sarscov2 test fixtures
+
+**Files:**
+- Modify: `Tests/LungfishWorkflowTests/Recipes/RecipeIntegrationTests.swift`
+
+This test runs the recipe engine with real tool invocations on the sarscov2 paired-end test fixtures (9.2KB each, 100 reads). Since the test data is SARS-CoV-2 (not human), the deacon scrub step will remove zero reads — which is correct behavior and validates that non-human reads pass through.
+
+The test requires bundled tools to be available (fastp, seqkit). Deacon requires the panhuman-1 index. Tests that need tools unavailable in CI should be gated with an availability check.
+
+- [ ] **Step 1: Write the tool execution integration test**
+
+Add to `Tests/LungfishWorkflowTests/Recipes/RecipeIntegrationTests.swift`:
+
+```swift
+    // MARK: - Tool Execution Tests
+
+    /// Test helper: check if a tool binary exists at the expected path.
+    private func toolAvailable(_ tool: NativeTool) async -> Bool {
+        do {
+            _ = try await NativeToolRunner.shared.toolPath(for: tool)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Locate the sarscov2 test fixtures.
+    private var fixturesDir: URL? {
+        // Test fixtures are at Tests/Fixtures/sarscov2/ relative to the repo root.
+        // In test context, we need to find them via the source tree.
+        let thisFile = URL(fileURLWithPath: #filePath)
+        let testsDir = thisFile
+            .deletingLastPathComponent() // Recipes/
+            .deletingLastPathComponent() // LungfishWorkflowTests/
+            .deletingLastPathComponent() // Tests/
+        let dir = testsDir.appendingPathComponent("Fixtures/sarscov2")
+        return FileManager.default.fileExists(atPath: dir.path) ? dir : nil
+    }
+
+    func testExecuteFastpDedupOnFixtures() async throws {
+        guard await toolAvailable(.fastp) else {
+            throw XCTSkip("fastp not available")
+        }
+        guard let fixtures = fixturesDir else {
+            throw XCTSkip("Test fixtures not found")
+        }
+
+        let r1 = fixtures.appendingPathComponent("test_1.fastq.gz")
+        let r2 = fixtures.appendingPathComponent("test_2.fastq.gz")
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("recipe-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let step = try FastpDedupStep(params: nil)
+        let input = StepInput(r1: r1, r2: r2, format: .pairedR1R2)
+        let context = StepContext(
+            workspace: workspace,
+            threads: 2,
+            sampleName: "sarscov2-test",
+            runner: NativeToolRunner.shared,
+            progress: { _, _ in }
+        )
+
+        let output = try await step.execute(input: input, context: context)
+        XCTAssertEqual(output.format, .pairedR1R2)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: output.r1.path), "Output R1 should exist")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: output.r2!.path), "Output R2 should exist")
+
+        // Verify output is valid FASTQ (seqkit can read it)
+        let statsResult = try await NativeToolRunner.shared.run(
+            .seqkit, arguments: ["stats", "--tabular", output.r1.path])
+        XCTAssertEqual(statsResult.exitCode, 0, "seqkit stats should succeed on output R1")
+    }
+
+    func testExecuteFastpTrimOnFixtures() async throws {
+        guard await toolAvailable(.fastp) else {
+            throw XCTSkip("fastp not available")
+        }
+        guard let fixtures = fixturesDir else {
+            throw XCTSkip("Test fixtures not found")
+        }
+
+        let r1 = fixtures.appendingPathComponent("test_1.fastq.gz")
+        let r2 = fixtures.appendingPathComponent("test_2.fastq.gz")
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("recipe-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let step = try FastpTrimStep(params: [
+            "detectAdapter": .bool(true),
+            "quality": .int(15),
+            "window": .int(5),
+            "cutMode": .string("right"),
+        ])
+        let input = StepInput(r1: r1, r2: r2, format: .pairedR1R2)
+        let context = StepContext(
+            workspace: workspace,
+            threads: 2,
+            sampleName: "sarscov2-test",
+            runner: NativeToolRunner.shared,
+            progress: { _, _ in }
+        )
+
+        let output = try await step.execute(input: input, context: context)
+        XCTAssertEqual(output.format, .pairedR1R2)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: output.r1.path))
+    }
+
+    func testExecuteFastpMergeOnFixtures() async throws {
+        guard await toolAvailable(.fastp) else {
+            throw XCTSkip("fastp not available")
+        }
+        guard let fixtures = fixturesDir else {
+            throw XCTSkip("Test fixtures not found")
+        }
+
+        let r1 = fixtures.appendingPathComponent("test_1.fastq.gz")
+        let r2 = fixtures.appendingPathComponent("test_2.fastq.gz")
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("recipe-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let step = try FastpMergeStep(params: ["minOverlap": .int(15)])
+        let input = StepInput(r1: r1, r2: r2, format: .pairedR1R2)
+        let context = StepContext(
+            workspace: workspace,
+            threads: 2,
+            sampleName: "sarscov2-test",
+            runner: NativeToolRunner.shared,
+            progress: { _, _ in }
+        )
+
+        let output = try await step.execute(input: input, context: context)
+        XCTAssertEqual(output.format, .merged)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: output.r1.path), "Merged output should exist")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: output.r2!.path), "Unmerged R1 should exist")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: output.r3!.path), "Unmerged R2 should exist")
+    }
+
+    func testExecuteSeqkitLengthFilterOnFixtures() async throws {
+        guard await toolAvailable(.seqkit) else {
+            throw XCTSkip("seqkit not available")
+        }
+        guard let fixtures = fixturesDir else {
+            throw XCTSkip("Test fixtures not found")
+        }
+
+        let r1 = fixtures.appendingPathComponent("test_1.fastq.gz")
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("recipe-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let step = try SeqkitLengthFilterStep(params: ["minLength": .int(50)])
+        let input = StepInput(r1: r1, format: .single)
+        let context = StepContext(
+            workspace: workspace,
+            threads: 2,
+            sampleName: "sarscov2-test",
+            runner: NativeToolRunner.shared,
+            progress: { _, _ in }
+        )
+
+        let output = try await step.execute(input: input, context: context)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: output.r1.path))
+    }
+
+    /// End-to-end recipe engine execution using a recipe WITHOUT the deacon step
+    /// (since test fixtures are viral, not human, deacon would be a no-op anyway,
+    /// and the panhuman-1 index may not be present in CI).
+    func testRecipeEngineExecutionWithoutDeacon() async throws {
+        guard await toolAvailable(.fastp), await toolAvailable(.seqkit) else {
+            throw XCTSkip("Required tools not available")
+        }
+        guard let fixtures = fixturesDir else {
+            throw XCTSkip("Test fixtures not found")
+        }
+
+        // Create a mini recipe that skips deacon (dedup → trim → merge → length filter)
+        let testRecipeJSON = """
+        {
+            "formatVersion": 1,
+            "id": "test-no-deacon",
+            "name": "Test Without Deacon",
+            "platforms": ["illumina"],
+            "requiredInput": "paired",
+            "steps": [
+                { "type": "fastp-dedup", "label": "Dedup" },
+                { "type": "fastp-trim", "label": "Trim", "params": { "quality": 15, "window": 5, "cutMode": "right", "detectAdapter": true } },
+                { "type": "fastp-merge", "label": "Merge", "params": { "minOverlap": 15 } },
+                { "type": "seqkit-length-filter", "label": "Length Filter", "params": { "minLength": 50 } }
+            ]
+        }
+        """.data(using: .utf8)!
+
+        let recipe = try JSONDecoder().decode(Recipe.self, from: testRecipeJSON)
+        let engine = RecipeEngine()
+
+        let r1 = fixtures.appendingPathComponent("test_1.fastq.gz")
+        let r2 = fixtures.appendingPathComponent("test_2.fastq.gz")
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("recipe-e2e-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let input = StepInput(r1: r1, r2: r2, format: .pairedR1R2)
+        let context = StepContext(
+            workspace: workspace,
+            threads: 2,
+            sampleName: "sarscov2-e2e",
+            runner: NativeToolRunner.shared,
+            progress: { _, _ in }
+        )
+
+        let output = try await engine.execute(recipe: recipe, input: input, context: context)
+
+        // Output should exist and be valid FASTQ
+        XCTAssertTrue(FileManager.default.fileExists(atPath: output.r1.path), "Final output should exist")
+
+        // Verify with seqkit stats
+        let statsResult = try await NativeToolRunner.shared.run(
+            .seqkit, arguments: ["stats", "--tabular", output.r1.path])
+        XCTAssertEqual(statsResult.exitCode, 0, "seqkit stats should succeed on final output")
+
+        // Output should have fewer or equal reads than input (processing removed some)
+        let inputStats = try await NativeToolRunner.shared.run(
+            .seqkit, arguments: ["stats", "--tabular", r1.path])
+        // Parse read counts from seqkit tabular output (column 4)
+        let inputReads = inputStats.stdout.components(separatedBy: "\n")
+            .last(where: { !$0.isEmpty })?
+            .components(separatedBy: "\t")
+            .dropFirst(3).first.flatMap(Int.init) ?? 0
+        let outputReads = statsResult.stdout.components(separatedBy: "\n")
+            .last(where: { !$0.isEmpty })?
+            .components(separatedBy: "\t")
+            .dropFirst(3).first.flatMap(Int.init) ?? 0
+
+        XCTAssertGreaterThan(inputReads, 0, "Input should have reads")
+        XCTAssertGreaterThan(outputReads, 0, "Output should have reads")
+        XCTAssertLessThanOrEqual(outputReads, inputReads * 2,
+            "Output reads should be at most 2x input (merge can increase count but not dramatically)")
+    }
+
+    /// Full VSP2 recipe with deacon — only runs if deacon + index are available.
+    func testFullVSP2RecipeExecution() async throws {
+        guard await toolAvailable(.fastp),
+              await toolAvailable(.seqkit),
+              await toolAvailable(.deacon) else {
+            throw XCTSkip("Required tools not available (fastp, seqkit, deacon)")
+        }
+        // Also check deacon index exists
+        guard let _ = await DatabaseRegistry.shared.effectiveDatabasePath(for: "deacon") else {
+            throw XCTSkip("Deacon panhuman-1 index not installed")
+        }
+        guard let fixtures = fixturesDir else {
+            throw XCTSkip("Test fixtures not found")
+        }
+
+        let recipes = RecipeRegistryV2.builtinRecipes()
+        let vsp2 = try XCTUnwrap(recipes.first { $0.id == "vsp2-target-enrichment" })
+        let engine = RecipeEngine()
+
+        let r1 = fixtures.appendingPathComponent("test_1.fastq.gz")
+        let r2 = fixtures.appendingPathComponent("test_2.fastq.gz")
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("recipe-vsp2-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let input = StepInput(r1: r1, r2: r2, format: .pairedR1R2)
+        let context = StepContext(
+            workspace: workspace,
+            threads: 2,
+            sampleName: "sarscov2-vsp2",
+            runner: NativeToolRunner.shared,
+            progress: { _, _ in }
+        )
+
+        let output = try await engine.execute(recipe: vsp2, input: input, context: context)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: output.r1.path), "Final VSP2 output should exist")
+
+        // Since input is SARS-CoV-2, deacon should pass all reads through (no human)
+        let statsResult = try await NativeToolRunner.shared.run(
+            .seqkit, arguments: ["stats", "--tabular", output.r1.path])
+        XCTAssertEqual(statsResult.exitCode, 0)
+    }
+```
+
+- [ ] **Step 2: Run tests to verify they pass (requires tool binaries)**
+
+Run: `swift test --filter RecipeIntegrationTests 2>&1 | tail -40`
+
+Expected: Tests that have tools available pass. Tests where tools are missing are skipped via `XCTSkip`. On the development machine (with bundled tools and deacon installed), all tests should pass.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add Tests/LungfishWorkflowTests/Recipes/RecipeIntegrationTests.swift
+git commit -m "test: add end-to-end recipe execution tests on sarscov2 fixtures"
+```
+
+---
+
+### Task 13: CLI end-to-end test via subprocess
+
+**Files:**
+- Create: `Tests/LungfishCLITests/ImportFastqE2ETests.swift`
+
+This test invokes the actual `lungfish import fastq` CLI as a subprocess to verify the full command works end-to-end. Uses `--dry-run` for fast, side-effect-free validation, and a real import on the small test fixtures for full coverage.
+
+- [ ] **Step 1: Write the CLI end-to-end tests**
+
+```swift
+// Tests/LungfishCLITests/ImportFastqE2ETests.swift
+import XCTest
+import Foundation
+
+/// End-to-end CLI tests that invoke `lungfish import fastq` as a subprocess.
+/// These verify the full CLI pipeline works, not just argument parsing.
+final class ImportFastqE2ETests: XCTestCase {
+
+    /// Path to the built CLI binary.
+    private var cliBinaryPath: URL {
+        // The CLI binary is built alongside tests; find it in the build directory
+        let thisFile = URL(fileURLWithPath: #filePath)
+        let repoRoot = thisFile
+            .deletingLastPathComponent() // LungfishCLITests/
+            .deletingLastPathComponent() // Tests/
+            .deletingLastPathComponent() // repo root
+        // swift build puts binaries in .build/debug/ or .build/arm64-apple-macosx/debug/
+        let debugDir = repoRoot.appendingPathComponent(".build/debug")
+        return debugDir.appendingPathComponent("lungfish")
+    }
+
+    /// Sarscov2 test fixtures directory.
+    private var fixturesDir: URL? {
+        let thisFile = URL(fileURLWithPath: #filePath)
+        let testsDir = thisFile
+            .deletingLastPathComponent() // LungfishCLITests/
+            .deletingLastPathComponent() // Tests/
+        let dir = testsDir.appendingPathComponent("Fixtures/sarscov2")
+        return FileManager.default.fileExists(atPath: dir.path) ? dir : nil
+    }
+
+    /// Run a CLI command and return (exitCode, stdout, stderr).
+    private func runCLI(_ arguments: [String]) throws -> (Int32, String, String) {
+        let process = Process()
+        process.executableURL = cliBinaryPath
+        process.arguments = arguments
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        try process.run()
+        process.waitUntilExit()
+
+        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+
+        return (
+            process.terminationStatus,
+            String(data: stdoutData, encoding: .utf8) ?? "",
+            String(data: stderrData, encoding: .utf8) ?? ""
+        )
+    }
+
+    func testHelpFlag() throws {
+        guard FileManager.default.fileExists(atPath: cliBinaryPath.path) else {
+            throw XCTSkip("CLI binary not built: \(cliBinaryPath.path)")
+        }
+
+        let (exitCode, stdout, _) = try runCLI(["import", "fastq", "--help"])
+        XCTAssertEqual(exitCode, 0)
+        XCTAssertTrue(stdout.contains("--platform"), "Help should mention --platform flag")
+        XCTAssertTrue(stdout.contains("--no-optimize-storage"), "Help should mention --no-optimize-storage flag")
+        XCTAssertTrue(stdout.contains("--compression"), "Help should mention --compression flag")
+        XCTAssertTrue(stdout.contains("--force"), "Help should mention --force flag")
+        XCTAssertTrue(stdout.contains("--recipe"), "Help should mention --recipe flag")
+    }
+
+    func testDryRunWithFixtures() throws {
+        guard FileManager.default.fileExists(atPath: cliBinaryPath.path) else {
+            throw XCTSkip("CLI binary not built")
+        }
+        guard let fixtures = fixturesDir else {
+            throw XCTSkip("Test fixtures not found")
+        }
+
+        // Create a temporary project directory
+        let tmpProject = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cli-test-\(UUID().uuidString).lungfish")
+        try FileManager.default.createDirectory(at: tmpProject, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmpProject) }
+
+        let (exitCode, stdout, stderr) = try runCLI([
+            "import", "fastq",
+            fixtures.path,
+            "--project", tmpProject.path,
+            "--platform", "illumina",
+            "--recipe", "none",
+            "--dry-run",
+        ])
+
+        XCTAssertEqual(exitCode, 0, "Dry run should succeed. stderr: \(stderr)")
+        // Dry run should detect paired files and print them
+        XCTAssertTrue(stdout.contains("test") || stderr.contains("test"),
+            "Dry run should mention detected test files")
+    }
+
+    func testDryRunWithVSP2Recipe() throws {
+        guard FileManager.default.fileExists(atPath: cliBinaryPath.path) else {
+            throw XCTSkip("CLI binary not built")
+        }
+        guard let fixtures = fixturesDir else {
+            throw XCTSkip("Test fixtures not found")
+        }
+
+        let tmpProject = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cli-test-\(UUID().uuidString).lungfish")
+        try FileManager.default.createDirectory(at: tmpProject, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmpProject) }
+
+        let (exitCode, stdout, stderr) = try runCLI([
+            "import", "fastq",
+            fixtures.path,
+            "--project", tmpProject.path,
+            "--platform", "illumina",
+            "--recipe", "vsp2",
+            "--no-optimize-storage",
+            "--compression", "fast",
+            "--dry-run",
+        ])
+
+        XCTAssertEqual(exitCode, 0, "Dry run with VSP2 recipe should succeed. stderr: \(stderr)")
+    }
+
+    func testRealImportOnFixtures() throws {
+        guard FileManager.default.fileExists(atPath: cliBinaryPath.path) else {
+            throw XCTSkip("CLI binary not built")
+        }
+        guard let fixtures = fixturesDir else {
+            throw XCTSkip("Test fixtures not found")
+        }
+
+        let tmpProject = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cli-import-\(UUID().uuidString).lungfish")
+        try FileManager.default.createDirectory(at: tmpProject, withIntermediateDirectories: true)
+        // Create Imports/ subdirectory (required by batch importer)
+        try FileManager.default.createDirectory(
+            at: tmpProject.appendingPathComponent("Imports"),
+            withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmpProject) }
+
+        // Import without recipe (raw import) — fastest, doesn't need deacon
+        let (exitCode, _, stderr) = try runCLI([
+            "import", "fastq",
+            fixtures.path,
+            "--project", tmpProject.path,
+            "--platform", "illumina",
+            "--no-optimize-storage",
+            "--compression", "fast",
+        ])
+
+        XCTAssertEqual(exitCode, 0, "Real import should succeed. stderr: \(stderr)")
+
+        // Verify a bundle was created in the Imports/ directory
+        let imports = try FileManager.default.contentsOfDirectory(
+            at: tmpProject.appendingPathComponent("Imports"),
+            includingPropertiesForKeys: nil)
+        let bundles = imports.filter { $0.pathExtension == "lungfishfastq" }
+        XCTAssertFalse(bundles.isEmpty, "At least one .lungfishfastq bundle should be created")
+    }
+}
+```
+
+- [ ] **Step 2: Build the CLI binary before running tests**
+
+Run: `swift build --product lungfish 2>&1 | tail -10`
+Expected: Build succeeds.
+
+- [ ] **Step 3: Run the CLI E2E tests**
+
+Run: `swift test --filter ImportFastqE2ETests 2>&1 | tail -30`
+Expected: Tests pass (or skip if binary not found). `testHelpFlag`, `testDryRunWithFixtures`, `testDryRunWithVSP2Recipe` should pass. `testRealImportOnFixtures` may need adjustments depending on exact project directory structure requirements.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add Tests/LungfishCLITests/ImportFastqE2ETests.swift
+git commit -m "test: add CLI end-to-end tests for import fastq (dry-run and real import)"
+```
