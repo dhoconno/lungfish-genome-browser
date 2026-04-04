@@ -143,7 +143,8 @@ let package = Package(
             resources: [
                 .copy("Resources/Containerization"),
                 .copy("Resources/Tools"),
-                .copy("Resources/Databases")
+                .copy("Resources/Databases"),
+                .copy("Resources/Recipes")
             ]
         ),
         .testTarget(
