@@ -13,7 +13,80 @@ All five classifier table delegates call `metadataColumns.cellForColumn(column)`
 
 ## Approach
 
-Fix each table delegate to pass the correct sample ID for each row. No new abstractions — just wire the existing `cellForColumn(_:sampleId:)` API to the sample ID that each row's data model already carries (or needs to carry).
+Two changes:
+
+1. **Sample column auto-detection:** Instead of hardcoding the first column as the sample ID column, infer which column contains sample IDs by matching column values against the classifier's known sample IDs. Present the best guess for user confirmation.
+
+2. **Per-row sample ID passing:** Fix each table delegate to pass the correct sample ID for each row via the existing `cellForColumn(_:sampleId:)` API.
+
+## Sample Column Auto-Detection
+
+### Current Behavior
+
+`SampleMetadataStore.init(csvData:knownSampleIds:)` assumes the first column is always the sample ID column. This is fragile — real-world metadata CSVs may have sample IDs in any column (e.g., "sample_name", "accession", "barcode").
+
+### New Behavior
+
+When parsing metadata CSV/TSV:
+
+1. **Scan all columns** for values that match `knownSampleIds` (case-insensitive)
+2. **Score each column** by the number of rows whose value in that column matches a known sample ID
+3. **Select the column with the highest match count** as the candidate sample ID column
+4. **Return the candidate** along with match stats so the caller can present a confirmation dialog
+
+### API Changes to SampleMetadataStore
+
+Replace the current `init(csvData:knownSampleIds:)` with a two-step flow:
+
+```swift
+/// Result of scanning a CSV/TSV for sample ID columns.
+public struct MetadataColumnScanResult: Sendable {
+    /// The candidate column index and name with the most matches.
+    public let bestColumn: (index: Int, name: String, matchCount: Int)
+    /// All columns that had at least one match, sorted by match count descending.
+    public let candidates: [(index: Int, name: String, matchCount: Int)]
+    /// Total number of data rows in the file.
+    public let totalRows: Int
+    /// The parsed headers and rows (retained so we don't re-parse).
+    internal let headers: [String]
+    internal let rows: [[String]]
+    internal let delimiter: Character
+}
+
+/// Scans a CSV/TSV to find which column contains sample IDs.
+public static func scanForSampleColumn(
+    csvData: Data,
+    knownSampleIds: Set<String>
+) throws -> MetadataColumnScanResult
+
+/// Creates a store using a specific column as the sample ID column.
+public init(
+    scanResult: MetadataColumnScanResult,
+    sampleColumnIndex: Int,
+    knownSampleIds: Set<String>
+) throws
+```
+
+The old `init(csvData:knownSampleIds:)` remains as a convenience that auto-selects the best column (for programmatic/test use).
+
+### Confirmation UI
+
+When the user imports metadata via the Inspector's "Import Metadata..." button:
+
+1. Call `SampleMetadataStore.scanForSampleColumn(csvData:knownSampleIds:)`
+2. If `bestColumn.matchCount == totalRows` (100% match), auto-accept without confirmation
+3. Otherwise, show a brief confirmation alert:
+   - Title: "Confirm Sample Column"
+   - Message: "Column **'{bestColumn.name}'** matched {matchCount} of {totalRows} rows to sample IDs. Use this column?"
+   - Buttons: "Use '{bestColumn.name}'" (default), "Choose Another...", "Cancel"
+4. "Choose Another..." shows a dropdown of `candidates` sorted by match count
+5. On confirmation, create the store with `init(scanResult:sampleColumnIndex:knownSampleIds:)`
+
+### Edge Cases
+
+- **No column matches any sample ID:** Show an error alert explaining that no column values matched the known sample IDs. List the known sample IDs so the user can check their CSV.
+- **Multiple columns tie:** Pick the leftmost column as tiebreaker (earlier columns are more likely to be identifiers).
+- **All rows match in multiple columns:** Pick leftmost. This can happen when sample IDs appear in multiple columns (e.g., both "sample_id" and "sample_name" columns).
 
 ## Per-Classifier Changes
 
@@ -80,10 +153,14 @@ This is the same pattern as the cell rendering fix — pass the row's sample ID 
 
 ### Unit Tests (SampleMetadataStore)
 
+- **Column auto-detection:** CSV where sample IDs are in the 3rd column, verify `scanForSampleColumn` picks column 3
+- **Tie-breaking:** Two columns with equal match counts, verify leftmost wins
+- **No matches:** CSV with no matching values, verify `candidates` is empty
+- **Case-insensitive matching:** "Sample_A" in CSV matches "sample_a" in known IDs
+- **100% match detection:** All rows match, verify `bestColumn.matchCount == totalRows`
 - Parse CSV with multiple samples, verify `records` dictionary has correct per-sample values
-- Case-insensitive sample ID matching (e.g., "Sample_A" matches "sample_a")
 - Missing samples return nil (no crash, results in em-dash at render time)
-- Column ordering preserved from header
+- Column ordering preserved from header (metadata columns exclude the sample ID column)
 
 ### Unit Tests (MetadataColumnController)
 
@@ -121,7 +198,8 @@ Paired with synthetic classifier results that reference SAMPLE_A and SAMPLE_B.
 | `TaxonomyTableView.swift` | Verify `currentSampleId` wiring (may need no code change) |
 | `ViralDetectionTableView.swift` | Verify `currentSampleId` wiring (may need no code change) |
 | `MetadataColumnController.swift` | No changes needed (API already exists) |
-| `SampleMetadataStore.swift` | No changes needed |
+| `SampleMetadataStore.swift` | Add `scanForSampleColumn`, two-step init |
+| Inspector metadata import code | Add confirmation alert for sample column selection |
 
 ## Out of Scope
 
