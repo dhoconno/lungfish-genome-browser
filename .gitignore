@@ -64,3 +64,6 @@ Sources/LungfishWorkflow/Resources/Databases/**/*.db.*
 .nextflow/
 .nextflow.log
 .nextflow.log.*
+
+# Benchmark outputs (large temporary files)
+benchmarks/
