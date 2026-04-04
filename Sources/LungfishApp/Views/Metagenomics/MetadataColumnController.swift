@@ -53,7 +53,7 @@ final class MetadataColumnController {
     private(set) var currentSampleId: String?
 
     /// Set of metadata column names currently toggled visible by the user.
-    private(set) var visibleColumns: Set<String> = []
+    internal(set) var visibleColumns: Set<String> = []
 
     /// Whether multiple samples are currently being viewed.
     ///
