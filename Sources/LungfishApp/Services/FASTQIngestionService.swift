@@ -1011,4 +1011,173 @@ public enum FASTQIngestionService {
 
         return (materialized.url, prefixStepResults + materialized.stepResults)
     }
+
+    // MARK: - CLI Subprocess Import
+
+    /// Spawns `lungfish import fastq` as a child process for memory-safe batch import.
+    ///
+    /// Progress is parsed from the CLI's stdout JSON lines. The app stays alive
+    /// even if the CLI process is killed by jetsam.
+    public static func importViaSubprocess(
+        inputDirectory: URL,
+        projectDirectory: URL,
+        recipe: String,
+        qualityBinning: QualityBinningScheme = .illumina4,
+        completion: @escaping @MainActor (Result<Int, Error>) -> Void
+    ) {
+        let title = "FASTQ Batch Import"
+        let cliCmd = "lungfish import fastq \(inputDirectory.path) --project \(projectDirectory.path) --recipe \(recipe)"
+        let opID = OperationCenter.shared.start(
+            title: title,
+            detail: "Starting batch import\u{2026}",
+            operationType: .ingestion,
+            cliCommand: cliCmd
+        )
+
+        let task = Task.detached {
+            await Self.runCLISubprocess(
+                inputDirectory: inputDirectory,
+                projectDirectory: projectDirectory,
+                recipe: recipe,
+                qualityBinning: qualityBinning,
+                operationID: opID,
+                completion: completion
+            )
+        }
+
+        OperationCenter.shared.setCancelCallback(for: opID) { task.cancel() }
+    }
+
+    nonisolated private static func runCLISubprocess(
+        inputDirectory: URL,
+        projectDirectory: URL,
+        recipe: String,
+        qualityBinning: QualityBinningScheme,
+        operationID opID: UUID,
+        completion: @escaping @MainActor (Result<Int, Error>) -> Void
+    ) async {
+        do {
+            // Find the CLI executable (same bundle as the app)
+            let cliURL: URL = {
+                // Production: auxiliary executable in app bundle
+                if let bundledCLI = Bundle.main.url(forAuxiliaryExecutable: "lungfish") {
+                    return bundledCLI
+                }
+                // Development: look next to the app executable
+                let buildDir = Bundle.main.executableURL!.deletingLastPathComponent()
+                return buildDir.appendingPathComponent("lungfish")
+            }()
+
+            guard FileManager.default.fileExists(atPath: cliURL.path) else {
+                throw BatchImportError.projectNotFound(cliURL)
+            }
+
+            let process = Process()
+            process.executableURL = cliURL
+            process.arguments = [
+                "import", "fastq",
+                inputDirectory.path,
+                "--project", projectDirectory.path,
+                "--recipe", recipe,
+                "--quality-binning", qualityBinning.rawValue,
+            ]
+
+            let stdoutPipe = Pipe()
+            let stderrPipe = Pipe()
+            process.standardOutput = stdoutPipe
+            process.standardError = stderrPipe
+
+            try process.run()
+
+            // Track last known progress so detail-only events can reuse it
+            var lastProgress: Double = 0.0
+
+            // Parse JSON lines from stdout for progress updates
+            let handle = stdoutPipe.fileHandleForReading
+            while true {
+                let data = handle.availableData
+                if data.isEmpty { break }
+                guard let text = String(data: data, encoding: .utf8) else { continue }
+
+                for line in text.split(separator: "\n") {
+                    guard let jsonData = line.data(using: .utf8),
+                          let dict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                          let event = dict["event"] as? String else { continue }
+
+                    let detail: String
+                    var progress: Double? = nil
+
+                    switch event {
+                    case "sampleStart":
+                        let sample = dict["sample"] as? String ?? "?"
+                        let index = dict["index"] as? Int ?? 0
+                        let total = dict["total"] as? Int ?? 1
+                        detail = "[\(index)/\(total)] \(sample)"
+                        progress = Double(index - 1) / Double(max(1, total))
+                    case "stepStart":
+                        let sample = dict["sample"] as? String ?? "?"
+                        let step = dict["step"] as? String ?? "?"
+                        detail = "\(sample): \(step)"
+                    case "sampleComplete":
+                        let sample = dict["sample"] as? String ?? "?"
+                        detail = "\(sample): complete"
+                    case "sampleSkip":
+                        let sample = dict["sample"] as? String ?? "?"
+                        detail = "\(sample): skipped"
+                    case "sampleFailed":
+                        let sample = dict["sample"] as? String ?? "?"
+                        let error = dict["error"] as? String ?? "unknown error"
+                        detail = "\(sample): failed — \(error)"
+                    case "importComplete":
+                        let completed = dict["completed"] as? Int ?? 0
+                        let failed = dict["failed"] as? Int ?? 0
+                        detail = "Complete: \(completed) imported, \(failed) failed"
+                        progress = 1.0
+                    default:
+                        continue
+                    }
+
+                    let resolvedProgress = progress ?? lastProgress
+                    if let p = progress { lastProgress = p }
+
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated {
+                            OperationCenter.shared.update(id: opID, progress: resolvedProgress, detail: detail)
+                        }
+                    }
+                }
+            }
+
+            process.waitUntilExit()
+
+            let exitCode = process.terminationStatus
+            if exitCode == 0 {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        OperationCenter.shared.complete(id: opID, detail: "Batch import complete", bundleURLs: [])
+                        completion(.success(Int(exitCode)))
+                    }
+                }
+            } else {
+                let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                let stderrStr = String(data: stderrData, encoding: .utf8) ?? "unknown error"
+                let truncated = String(stderrStr.suffix(500))
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        OperationCenter.shared.fail(id: opID, detail: "Exit code \(exitCode): \(truncated)")
+                        completion(.failure(BatchImportError.projectNotFound(projectDirectory)))
+                    }
+                }
+            }
+
+        } catch {
+            logger.error("CLI subprocess failed: \(error)")
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    OperationCenter.shared.fail(id: opID, detail: "\(error)")
+                    completion(.failure(error))
+                }
+            }
+        }
+    }
 }
