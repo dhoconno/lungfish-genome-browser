@@ -13,6 +13,30 @@ public struct MetadataEdit: Codable, Sendable {
     public let timestamp: Date
 }
 
+/// Result of scanning a CSV/TSV for the column containing sample IDs.
+public struct MetadataColumnScanResult: Sendable {
+    /// A candidate column that matched at least one known sample ID.
+    public struct Candidate: Sendable {
+        public let index: Int
+        public let name: String
+        public let matchCount: Int
+    }
+
+    /// The candidate with the most matches (leftmost wins ties). Nil if no column matched.
+    public let bestColumn: Candidate?
+
+    /// All columns with at least one match, sorted by match count descending then index ascending.
+    public let candidates: [Candidate]
+
+    /// Total number of data rows in the file.
+    public let totalRows: Int
+
+    /// Parsed file contents retained for creating the store without re-parsing.
+    internal let headers: [String]
+    internal let dataRows: [[String]]
+    internal let delimiter: Character
+}
+
 /// Imports, stores, and manages free-form sample metadata from CSV/TSV files.
 ///
 /// Metadata is matched to known sample IDs (case-insensitive). Edits are tracked
@@ -28,8 +52,9 @@ public final class SampleMetadataStore: @unchecked Sendable {
     /// Called after every edit to persist changes. Set by the controller that owns the store.
     public nonisolated(unsafe) var onEditsChanged: (() -> Void)?
 
-    public init(csvData: Data, knownSampleIds: Set<String>) throws {
-        guard let text = String(data: csvData, encoding: .utf8) else {
+    /// Decodes CSV/TSV data into headers, data rows, and the detected delimiter.
+    private static func parseCSV(_ data: Data) throws -> (headers: [String], dataRows: [[String]], delimiter: Character) {
+        guard let text = String(data: data, encoding: .utf8) else {
             throw MetadataParseError.invalidEncoding
         }
 
@@ -44,6 +69,16 @@ public final class SampleMetadataStore: @unchecked Sendable {
             throw MetadataParseError.insufficientColumns
         }
 
+        let dataRows = lines.dropFirst().map { line in
+            line.split(separator: delimiter, omittingEmptySubsequences: false).map(String.init)
+        }
+
+        return (headers: headers, dataRows: dataRows, delimiter: delimiter)
+    }
+
+    public init(csvData: Data, knownSampleIds: Set<String>) throws {
+        let (headers, dataRows, _) = try Self.parseCSV(csvData)
+
         let metadataColumns = Array(headers.dropFirst())
         self.columnNames = metadataColumns
 
@@ -56,8 +91,7 @@ public final class SampleMetadataStore: @unchecked Sendable {
         var unmatched: [String: [String: String]] = [:]
         var matchedIds: Set<String> = []
 
-        for line in lines.dropFirst() {
-            let fields = line.split(separator: delimiter, omittingEmptySubsequences: false).map(String.init)
+        for fields in dataRows {
             guard let rawId = fields.first else { continue }
 
             var record: [String: String] = [:]
@@ -77,6 +111,105 @@ public final class SampleMetadataStore: @unchecked Sendable {
         self.records = matched
         self.matchedSampleIds = matchedIds
         self.unmatchedRecords = unmatched
+    }
+
+    /// Internal memberwise initializer for scan-based construction.
+    internal init(
+        columnNames: [String],
+        records: [String: [String: String]],
+        matchedSampleIds: Set<String>,
+        unmatchedRecords: [String: [String: String]]
+    ) {
+        self.columnNames = columnNames
+        self.records = records
+        self.matchedSampleIds = matchedSampleIds
+        self.unmatchedRecords = unmatchedRecords
+    }
+
+    /// Creates a store using a specific column as the sample ID column.
+    public convenience init(
+        scanResult: MetadataColumnScanResult,
+        sampleColumnIndex: Int,
+        knownSampleIds: Set<String>
+    ) {
+        let metadataColumns = scanResult.headers.enumerated()
+            .filter { $0.offset != sampleColumnIndex }
+            .map(\.element)
+
+        let knownLookup: [String: String] = Dictionary(
+            knownSampleIds.map { ($0.lowercased(), $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        var matched: [String: [String: String]] = [:]
+        var unmatched: [String: [String: String]] = [:]
+        var matchedIds: Set<String> = []
+
+        for row in scanResult.dataRows {
+            guard sampleColumnIndex < row.count else { continue }
+            let rawId = row[sampleColumnIndex]
+
+            var record: [String: String] = [:]
+            var metaIdx = 0
+            for (colIdx, value) in row.enumerated() where colIdx != sampleColumnIndex {
+                if metaIdx < metadataColumns.count {
+                    record[metadataColumns[metaIdx]] = value
+                }
+                metaIdx += 1
+            }
+
+            if let knownId = knownLookup[rawId.lowercased()] {
+                matched[knownId] = record
+                matchedIds.insert(knownId)
+            } else {
+                unmatched[rawId] = record
+            }
+        }
+
+        self.init(
+            columnNames: metadataColumns,
+            records: matched,
+            matchedSampleIds: matchedIds,
+            unmatchedRecords: unmatched
+        )
+    }
+
+    /// Scans a CSV/TSV to find which column contains sample IDs.
+    public static func scanForSampleColumn(
+        csvData: Data,
+        knownSampleIds: Set<String>
+    ) throws -> MetadataColumnScanResult {
+        let (headers, dataRows, delimiter) = try parseCSV(csvData)
+
+        let knownLookup = Set(knownSampleIds.map { $0.lowercased() })
+
+        var candidates: [MetadataColumnScanResult.Candidate] = []
+        for (colIdx, colName) in headers.enumerated() {
+            var matchCount = 0
+            for row in dataRows {
+                guard colIdx < row.count else { continue }
+                if knownLookup.contains(row[colIdx].lowercased()) {
+                    matchCount += 1
+                }
+            }
+            if matchCount > 0 {
+                candidates.append(.init(index: colIdx, name: colName, matchCount: matchCount))
+            }
+        }
+
+        candidates.sort { a, b in
+            if a.matchCount != b.matchCount { return a.matchCount > b.matchCount }
+            return a.index < b.index
+        }
+
+        return MetadataColumnScanResult(
+            bestColumn: candidates.first,
+            candidates: candidates,
+            totalRows: dataRows.count,
+            headers: headers,
+            dataRows: dataRows,
+            delimiter: delimiter
+        )
     }
 
     public func applyEdit(sampleId: String, column: String, newValue: String) {

@@ -79,4 +79,74 @@ struct SampleMetadataStoreTests {
         #expect(store.records["S1"]?["Type"] == "")
         #expect(store.records["S1"]?["Location"] == "Columbia")
     }
+
+    // MARK: - Column Scanning Tests
+
+    @Test("scanForSampleColumn picks column with most matches")
+    func scanPicksBestColumn() throws {
+        let tsv = "Index\tBarcode\tType\n1\tS1\tww\n2\tS2\tclinical\n3\tS3\tenv\n"
+        let data = Data(tsv.utf8)
+        let result = try SampleMetadataStore.scanForSampleColumn(
+            csvData: data,
+            knownSampleIds: Set(["S1", "S2", "S3"])
+        )
+        #expect(result.bestColumn!.name == "Barcode")
+        #expect(result.bestColumn!.matchCount == 3)
+        #expect(result.totalRows == 3)
+    }
+
+    @Test("scanForSampleColumn tie-breaks by leftmost column")
+    func scanTieBreaksLeftmost() throws {
+        let tsv = "A\tB\nS1\tS1\nS2\tS2\n"
+        let data = Data(tsv.utf8)
+        let result = try SampleMetadataStore.scanForSampleColumn(
+            csvData: data,
+            knownSampleIds: Set(["S1", "S2"])
+        )
+        #expect(result.bestColumn!.name == "A")
+    }
+
+    @Test("scanForSampleColumn returns empty candidates when nothing matches")
+    func scanNoMatches() throws {
+        let tsv = "Foo\tBar\nX\tY\n"
+        let data = Data(tsv.utf8)
+        let result = try SampleMetadataStore.scanForSampleColumn(
+            csvData: data,
+            knownSampleIds: Set(["S1", "S2"])
+        )
+        #expect(result.candidates.isEmpty)
+        #expect(result.bestColumn == nil)
+    }
+
+    @Test("scanForSampleColumn case-insensitive matching")
+    func scanCaseInsensitive() throws {
+        let tsv = "Name\tType\ns1\tww\nS2\tclinical\n"
+        let data = Data(tsv.utf8)
+        let result = try SampleMetadataStore.scanForSampleColumn(
+            csvData: data,
+            knownSampleIds: Set(["S1", "S2"])
+        )
+        #expect(result.bestColumn!.name == "Name")
+        #expect(result.bestColumn!.matchCount == 2)
+    }
+
+    @Test("Init from scan result uses correct sample column")
+    func initFromScanResult() throws {
+        let tsv = "Index\tBarcode\tType\n1\tS1\tww\n2\tS2\tclinical\n"
+        let data = Data(tsv.utf8)
+        let scanResult = try SampleMetadataStore.scanForSampleColumn(
+            csvData: data,
+            knownSampleIds: Set(["S1", "S2"])
+        )
+        let store = SampleMetadataStore(
+            scanResult: scanResult,
+            sampleColumnIndex: scanResult.bestColumn!.index,
+            knownSampleIds: Set(["S1", "S2"])
+        )
+        #expect(store.columnNames == ["Index", "Type"])
+        #expect(store.records["S1"]?["Type"] == "ww")
+        #expect(store.records["S1"]?["Index"] == "1")
+        #expect(store.records["S2"]?["Type"] == "clinical")
+        #expect(store.matchedSampleIds == Set(["S1", "S2"]))
+    }
 }
