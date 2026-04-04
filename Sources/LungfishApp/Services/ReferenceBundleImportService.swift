@@ -171,9 +171,8 @@ public final class ReferenceBundleImportService {
         let baseName = sanitizedBaseName(preferredBundleName ?? defaultBundleName(for: sourceURL))
         let bundleName = makeUniqueBundleName(base: baseName, in: outputDirectory)
 
-        let tempDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("lungfish-ref-import-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        let tempDirectory = try ProjectTempDirectory.createFromContext(
+            prefix: "ref-import-", contextURL: outputDirectory)
         defer { try? FileManager.default.removeItem(at: tempDirectory) }
 
         progressHandler?(0.02, "Preparing reference input...")

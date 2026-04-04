@@ -231,9 +231,10 @@ public actor TaxTriagePipeline {
         var tempRedirectDir: URL?
 
         if needsRedirect {
-            let safeDir = fm.temporaryDirectory
-                .appendingPathComponent("taxtriage-\(UUID().uuidString.prefix(8))")
-            try fm.createDirectory(at: safeDir, withIntermediateDirectories: true)
+            let safeDir = try ProjectTempDirectory.createFromContext(
+                prefix: "taxtriage-",
+                contextURL: config.outputDirectory
+            )
             tempRedirectDir = safeDir
 
             // Create symlinks for input FASTQ files

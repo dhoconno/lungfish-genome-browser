@@ -713,8 +713,8 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
                 let capturedAccessions = accessions
                 let task = Task.detached {
                     do {
-                        let tempDir = FileManager.default.temporaryDirectory
-                            .appendingPathComponent("esviritu-extract-\(UUID().uuidString)")
+                        let tempDir = try ProjectTempDirectory.create(
+                            prefix: "esviritu-extract-", in: projectURL)
 
                         let config = BAMRegionExtractionConfig(
                             bamURL: bamURL,

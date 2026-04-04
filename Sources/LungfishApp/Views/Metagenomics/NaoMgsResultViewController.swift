@@ -1541,8 +1541,8 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
 
                 let task = Task.detached {
                     do {
-                        let tempDir = FileManager.default.temporaryDirectory
-                            .appendingPathComponent("naomgs-extract-\(UUID().uuidString)")
+                        let tempDir = try ProjectTempDirectory.create(
+                            prefix: "naomgs-extract-", in: capturedProjectURL)
 
                         let config = DatabaseExtractionConfig(
                             databaseURL: databaseURL,

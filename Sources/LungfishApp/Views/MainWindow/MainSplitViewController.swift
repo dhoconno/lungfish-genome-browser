@@ -2453,9 +2453,8 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
         Task.detached { [weak self] in
             do {
-                let tempDir = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("lungfish-ref-\(UUID().uuidString)", isDirectory: true)
-                try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+                let tempDir = try ProjectTempDirectory.createFromContext(
+                    prefix: "ref-", contextURL: bundleURL)
                 defer { try? FileManager.default.removeItem(at: tempDir) }
 
                 // Strategy 1: Try NCBI Assembly search

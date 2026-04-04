@@ -5,6 +5,7 @@
 import Foundation
 import os.log
 import LungfishCore
+import LungfishIO
 
 // MARK: - NativeToolResult
 
@@ -407,8 +408,10 @@ public actor NativeToolRunner {
                 let value = String(arg[arg.index(after: eqIdx)...])
                 guard value.contains(" ") else { continue }
                 let key = String(arg[..<eqIdx])
-                let linkDir = fm.temporaryDirectory.appendingPathComponent("lungfish-bbtools-\(UUID().uuidString)")
-                try fm.createDirectory(at: linkDir, withIntermediateDirectories: true)
+                let linkDir = try ProjectTempDirectory.createFromContext(
+                    prefix: "lungfish-bbtools-",
+                    contextURL: URL(fileURLWithPath: value)
+                )
                 let linkURL = linkDir.appendingPathComponent(URL(fileURLWithPath: value).lastPathComponent)
                 try fm.createSymbolicLink(at: linkURL, withDestinationURL: URL(fileURLWithPath: value))
                 resolvedArgs[i] = "\(key)=\(linkURL.path)"

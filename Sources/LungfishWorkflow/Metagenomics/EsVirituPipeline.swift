@@ -4,6 +4,7 @@
 
 import Foundation
 import LungfishCore
+import LungfishIO
 import os.log
 
 private let logger = Logger(subsystem: "com.lungfish.workflow", category: "EsVirituPipeline")
@@ -393,9 +394,10 @@ public actor EsVirituPipeline {
             // copy results back later.
             let safeOutputDir: URL
             if config.outputDirectory.path.contains(" ") {
-                safeOutputDir = fm.temporaryDirectory
-                    .appendingPathComponent("esviritu-\(UUID().uuidString.prefix(8))")
-                try fm.createDirectory(at: safeOutputDir, withIntermediateDirectories: true)
+                safeOutputDir = try ProjectTempDirectory.createFromContext(
+                    prefix: "esviritu-",
+                    contextURL: config.outputDirectory
+                )
             } else {
                 safeOutputDir = config.outputDirectory
             }

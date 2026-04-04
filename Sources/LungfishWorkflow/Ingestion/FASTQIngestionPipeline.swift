@@ -5,6 +5,7 @@
 import Foundation
 import os.log
 import LungfishCore
+import LungfishIO
 
 private let logger = Logger(subsystem: LogSubsystem.workflow, category: "FASTQIngestionPipeline")
 
@@ -395,8 +396,10 @@ public final class FASTQIngestionPipeline: @unchecked Sendable {
     ) throws -> URL {
         guard url.path.contains(" ") else { return url }
         let safeName = url.lastPathComponent.replacingOccurrences(of: " ", with: "_")
-        let linkDir = fm.temporaryDirectory.appendingPathComponent("lungfish-bbtools-\(UUID().uuidString)")
-        try fm.createDirectory(at: linkDir, withIntermediateDirectories: true)
+        let linkDir = try ProjectTempDirectory.createFromContext(
+            prefix: "lungfish-bbtools-",
+            contextURL: url
+        )
         let linkURL = linkDir.appendingPathComponent(safeName)
         try fm.createSymbolicLink(at: linkURL, withDestinationURL: url)
         cleanup.append(linkDir)

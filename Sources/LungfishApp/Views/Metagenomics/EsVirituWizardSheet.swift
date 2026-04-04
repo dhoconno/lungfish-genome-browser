@@ -407,7 +407,7 @@ struct EsVirituWizardSheet: View {
 
         let runToken = String(UUID().uuidString.prefix(8))
         let baseDir = inputFiles.first?.deletingLastPathComponent()
-            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+            ?? FileManager.default.temporaryDirectory
         let batchRoot = baseDir.appendingPathComponent("esviritu-batch-\(runToken)")
         let trimmedName = sampleName.trimmingCharacters(in: .whitespaces)
 

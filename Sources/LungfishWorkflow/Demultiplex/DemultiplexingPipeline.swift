@@ -348,9 +348,10 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
         }
 
         // Create working directories
-        let workDir = fm.temporaryDirectory
-            .appendingPathComponent("lungfish-demux-\(UUID().uuidString)", isDirectory: true)
-        try fm.createDirectory(at: workDir, withIntermediateDirectories: true)
+        let workDir = try ProjectTempDirectory.createFromContext(
+            prefix: "lungfish-demux-",
+            contextURL: config.outputDirectory
+        )
         defer { try? fm.removeItem(at: workDir) }
 
         try fm.createDirectory(at: config.outputDirectory, withIntermediateDirectories: true)

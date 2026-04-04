@@ -48,9 +48,10 @@ extension DemultiplexingPipeline {
         }
 
         let fm = FileManager.default
-        let workDir = fm.temporaryDirectory
-            .appendingPathComponent("lungfish-scout-\(UUID().uuidString)", isDirectory: true)
-        try fm.createDirectory(at: workDir, withIntermediateDirectories: true)
+        let workDir = try ProjectTempDirectory.createFromContext(
+            prefix: "lungfish-scout-",
+            contextURL: inputURL
+        )
         defer { try? fm.removeItem(at: workDir) }
 
         // Step 1: Extract first N reads to a temp file

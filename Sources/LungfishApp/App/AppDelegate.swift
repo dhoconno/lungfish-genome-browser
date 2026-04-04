@@ -1786,8 +1786,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             throw VariantDatabaseError.createFailed("Could not locate application executable for helper import")
         }
 
-        let debugLogURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("lungfish-vcf-import-\(UUID().uuidString).log")
+        let vcfImportTempDir = try ProjectTempDirectory.createFromContext(
+            prefix: "vcf-import-", contextURL: outputDBURL)
+        defer { try? FileManager.default.removeItem(at: vcfImportTempDir) }
+        let debugLogURL = vcfImportTempDir.appendingPathComponent("debug.log")
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executablePath)
@@ -2494,8 +2496,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         // Determine write target (temp file if compressing, final file if not)
         let writeURL: URL
         if compression != .none {
-            writeURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("export-\(UUID().uuidString).\(format == .genbank ? "gb" : "fa")")
+            let exportTempDir = try ProjectTempDirectory.createFromContext(
+                prefix: "export-", contextURL: outputURL)
+            writeURL = exportTempDir.appendingPathComponent("export.\(format == .genbank ? "gb" : "fa")")
         } else {
             writeURL = outputURL
         }
@@ -2541,7 +2544,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         // Apply compression if needed
         if compression != .none {
-            defer { try? FileManager.default.removeItem(at: writeURL) }
+            defer { try? FileManager.default.removeItem(at: writeURL.deletingLastPathComponent()) }
             switch compression {
             case .gzip:
                 let process = Process()
@@ -2603,8 +2606,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             let readURL: URL
             var tempDecompressed: URL?
             if sourceURL.pathExtension.lowercased() == "gz" {
-                let tmpURL = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("export-decomp-\(UUID().uuidString).fa")
+                let decompTempDir = try ProjectTempDirectory.createFromContext(
+                    prefix: "export-decomp-", contextURL: url)
+                let tmpURL = decompTempDir.appendingPathComponent("decompressed.fa")
                 let gzStream = try GzipInputStream(url: sourceURL)
                 let content = try await gzStream.readAll()
                 try content.write(to: tmpURL, atomically: true, encoding: .utf8)
@@ -2613,7 +2617,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             } else {
                 readURL = sourceURL
             }
-            defer { if let tmp = tempDecompressed { try? FileManager.default.removeItem(at: tmp) } }
+            defer { if let tmp = tempDecompressed { try? FileManager.default.removeItem(at: tmp.deletingLastPathComponent()) } }
 
             let reader = try FASTAReader(url: readURL)
             let sequences = try await reader.readAll()
@@ -4240,10 +4244,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         Task.detached { [weak self] in
             do {
                 // Materialize virtual FASTQs before running the pipeline.
-                let materializeTempDir = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("lungfish-minimap2-\(UUID().uuidString)")
-                try FileManager.default.createDirectory(
-                    at: materializeTempDir, withIntermediateDirectories: true)
+                let materializeTempDir = try ProjectTempDirectory.createFromContext(
+                    prefix: "minimap2-", contextURL: config.inputFiles.first ?? config.referenceURL)
                 defer { try? FileManager.default.removeItem(at: materializeTempDir) }
 
                 let resolvedFiles = try await self?.resolveInputFiles(
@@ -4291,10 +4293,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         Task.detached { [weak self] in
             do {
                 // Materialize virtual FASTQs before running the pipeline.
-                let materializeTempDir = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("lungfish-orient-\(UUID().uuidString)")
-                try FileManager.default.createDirectory(
-                    at: materializeTempDir, withIntermediateDirectories: true)
+                let materializeTempDir = try ProjectTempDirectory.createFromContext(
+                    prefix: "orient-", contextURL: config.inputURL)
                 defer { try? FileManager.default.removeItem(at: materializeTempDir) }
 
                 let resolvedFiles = try await self?.resolveInputFiles(
@@ -4594,14 +4594,6 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         }
     }
 
-    /// Creates a temporary directory for classification materialization.
-    private func makeClassificationTempDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "lungfish-classify-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
-
     /// Runs the classification pipeline, dispatching based on the config's goal.
     ///
     /// Registers the operation with ``OperationCenter`` so it appears in the
@@ -4703,10 +4695,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             do {
                 // Materialize virtual FASTQs as the first pipeline step.
                 // This creates temp files that are cleaned up after classification.
-                let materializeTempDir = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("lungfish-classify-\(UUID().uuidString)")
-                try FileManager.default.createDirectory(
-                    at: materializeTempDir, withIntermediateDirectories: true)
+                let materializeTempDir = try ProjectTempDirectory.createFromContext(
+                    prefix: "classify-", contextURL: config.inputFiles.first ?? config.databasePath)
                 defer { try? FileManager.default.removeItem(at: materializeTempDir) }
 
                 let resolvedFiles = try await self?.resolveInputFiles(
@@ -4847,10 +4837,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         let task = Task.detached { [weak self] in
             do {
                 // Materialize virtual FASTQs before running EsViritu
-                let materializeTempDir = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("lungfish-esviritu-\(UUID().uuidString)")
-                try FileManager.default.createDirectory(
-                    at: materializeTempDir, withIntermediateDirectories: true)
+                let materializeTempDir = try ProjectTempDirectory.createFromContext(
+                    prefix: "esviritu-", contextURL: config.inputFiles.first ?? config.outputDirectory)
                 defer { try? FileManager.default.removeItem(at: materializeTempDir) }
 
                 let resolvedFiles = try await self?.resolveInputFiles(
@@ -5394,10 +5382,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         let task = Task.detached { [weak self] in
             do {
                 // Materialize virtual FASTQs for each sample before running TaxTriage
-                let materializeTempDir = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("lungfish-taxtriage-\(UUID().uuidString)")
-                try FileManager.default.createDirectory(
-                    at: materializeTempDir, withIntermediateDirectories: true)
+                let materializeTempDir = try ProjectTempDirectory.createFromContext(
+                    prefix: "taxtriage-", contextURL: config.samples.first?.fastq1 ?? config.outputDirectory)
                 defer { try? FileManager.default.removeItem(at: materializeTempDir) }
 
                 var resolvedConfig = config

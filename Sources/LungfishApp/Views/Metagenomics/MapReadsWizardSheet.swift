@@ -453,7 +453,7 @@ struct MapReadsWizardSheet: View {
 
         // Determine output directory: next to the first input file
         let baseDir = inputFiles.first?.deletingLastPathComponent()
-            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+            ?? FileManager.default.temporaryDirectory
         let runToken = String(UUID().uuidString.prefix(8))
         let outputDir = baseDir.appendingPathComponent("mapping-\(runToken)")
 

@@ -113,8 +113,8 @@ public enum AssemblyRunner {
             }
 
             var mutableConfig = config
-            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("lungfish-assembly-\(UUID().uuidString)")
-            try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+            let tempDir = try ProjectTempDirectory.createFromContext(
+                prefix: "assembly-", contextURL: config.forwardReads.first ?? config.outputDirectory)
             defer { try? FileManager.default.removeItem(at: tempDir) }
 
             let allInputs = config.forwardReads + config.reverseReads + config.unpairedReads

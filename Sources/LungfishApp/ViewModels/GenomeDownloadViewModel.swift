@@ -90,9 +90,8 @@ public final class GenomeDownloadViewModel: @unchecked Sendable {
         try await validateTools()
 
         // Create temp working directory
-        let tempDir = fileManager.temporaryDirectory
-            .appendingPathComponent("lungfish-genome-\(UUID().uuidString)", isDirectory: true)
-        try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let tempDir = try ProjectTempDirectory.createFromContext(
+            prefix: "genome-", contextURL: outputDirectory)
         defer { try? fileManager.removeItem(at: tempDir) }
 
         // Steps 1–4: Download FASTA + GFF3 (FTP path or Datasets API fallback)

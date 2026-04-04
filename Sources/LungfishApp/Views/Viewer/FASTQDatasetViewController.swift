@@ -1447,15 +1447,16 @@ public final class FASTQDatasetViewController: NSViewController {
 
     private static func buildFASTAPreviewWithSeqkit(from url: URL, readLimit: Int) async -> String? {
         let fm = FileManager.default
-        let tempDir = fm.temporaryDirectory.appendingPathComponent("lungfish-fasta-preview-\(UUID().uuidString)", isDirectory: true)
-        let sampledFASTQ = tempDir.appendingPathComponent("sample.fastq")
-        let outputFASTA = tempDir.appendingPathComponent("sample.fasta")
-
+        let tempDir: URL
         do {
-            try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
+            tempDir = try ProjectTempDirectory.createFromContext(
+                prefix: "fasta-preview-", contextURL: url)
         } catch {
             return nil
         }
+        let sampledFASTQ = tempDir.appendingPathComponent("sample.fastq")
+        let outputFASTA = tempDir.appendingPathComponent("sample.fasta")
+
         defer { try? fm.removeItem(at: tempDir) }
 
         do {

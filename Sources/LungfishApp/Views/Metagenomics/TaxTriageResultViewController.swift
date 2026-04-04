@@ -1984,8 +1984,8 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
 
                 let task = Task.detached {
                     do {
-                        let tempDir = FileManager.default.temporaryDirectory
-                            .appendingPathComponent("taxtriage-extract-\(UUID().uuidString)")
+                        let tempDir = try ProjectTempDirectory.create(
+                            prefix: "taxtriage-extract-", in: capturedProjectURL)
 
                         let config = BAMRegionExtractionConfig(
                             bamURL: bamURL,

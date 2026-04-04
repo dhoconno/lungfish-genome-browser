@@ -1713,9 +1713,7 @@ public class DatabaseBrowserViewModel: ObservableObject {
 
             // Create a unique batch directory once for all downloads in this batch
             // This avoids filename collisions when records have the same accession
-            let batchDir = FileManager.default.temporaryDirectory
-                .appendingPathComponent("lungfish-batch-\(UUID().uuidString)", isDirectory: true)
-            try? FileManager.default.createDirectory(at: batchDir, withIntermediateDirectories: true)
+            let batchDir = try ProjectTempDirectory.create(prefix: "batch-", in: nil)
             logger.info("performBatchDownload: Created batch directory at \(batchDir.path, privacy: .public)")
 
             for (index, record) in recordsToDownload.enumerated() {

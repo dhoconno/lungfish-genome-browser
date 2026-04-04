@@ -118,10 +118,10 @@ public final class OrientPipeline: @unchecked Sendable {
         }
 
         // Create work directory
-        let workDir = fm.temporaryDirectory.appendingPathComponent(
-            "lungfish-orient-\(UUID().uuidString)", isDirectory: true
+        let workDir = try ProjectTempDirectory.createFromContext(
+            prefix: "lungfish-orient-",
+            contextURL: config.inputURL
         )
-        try fm.createDirectory(at: workDir, withIntermediateDirectories: true)
 
         progress(0.05, "Starting orientation against reference...")
 

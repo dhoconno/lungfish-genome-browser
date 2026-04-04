@@ -45,9 +45,8 @@ public final class GenBankBundleDownloadViewModel: @unchecked Sendable {
         progressHandler?(0.01, "Checking tools...")
         try await validateTools()
 
-        let tempDir = fileManager.temporaryDirectory
-            .appendingPathComponent("lungfish-genbank-\(UUID().uuidString)", isDirectory: true)
-        try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let tempDir = try ProjectTempDirectory.createFromContext(
+            prefix: "genbank-", contextURL: outputDirectory)
         defer { try? fileManager.removeItem(at: tempDir) }
 
         progressHandler?(0.02, "Resolving accession \(accession)...")
@@ -227,9 +226,8 @@ public final class GenBankBundleDownloadViewModel: @unchecked Sendable {
             throw DatabaseServiceError.parseError(message: "No nucleotide sequence available for \(accession)")
         }
 
-        let tempDir = fileManager.temporaryDirectory
-            .appendingPathComponent("lungfish-sequence-\(UUID().uuidString)", isDirectory: true)
-        try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let tempDir = try ProjectTempDirectory.createFromContext(
+            prefix: "sequence-", contextURL: outputDirectory)
         defer { try? fileManager.removeItem(at: tempDir) }
 
         progressHandler?(0.12, "Writing FASTA...")

@@ -1283,8 +1283,8 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
 
                 let task = Task.detached {
                     do {
-                        let tempDir = FileManager.default.temporaryDirectory
-                            .appendingPathComponent("nvd-extract-\(UUID().uuidString)")
+                        let tempDir = try ProjectTempDirectory.create(
+                            prefix: "nvd-extract-", in: capturedProjectURL)
 
                         let config = BAMRegionExtractionConfig(
                             bamURL: bamURL,

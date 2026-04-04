@@ -489,7 +489,7 @@ struct ClassificationWizardSheet: View {
 
         let runToken = String(UUID().uuidString.prefix(8))
         let baseDir = inputFiles.first?.deletingLastPathComponent()
-            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+            ?? FileManager.default.temporaryDirectory
         let batchRoot = baseDir.appendingPathComponent("classification-batch-\(runToken)")
 
         let configs = samples.map { sample in

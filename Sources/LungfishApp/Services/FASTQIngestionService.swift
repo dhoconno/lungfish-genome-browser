@@ -786,9 +786,8 @@ public enum FASTQIngestionService {
                 create: true
             )
         } catch {
-            let fallback = fm.temporaryDirectory
-                .appendingPathComponent("lungfish-fastq-ingest-\(UUID().uuidString)", isDirectory: true)
-            try fm.createDirectory(at: fallback, withIntermediateDirectories: true)
+            let fallback = try ProjectTempDirectory.createFromContext(
+                prefix: "fastq-ingest-", contextURL: anchor)
             logger.error("createIngestionWorkspace: same-volume workspace unavailable; falling back to \(fallback.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
             return fallback
         }

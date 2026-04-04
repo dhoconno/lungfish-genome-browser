@@ -78,9 +78,8 @@ public final class SequenceExtractionPipeline: @unchecked Sendable {
         progressHandler?(0.05, "Checking tools...")
         try await BundleBuildHelpers.validateTools(using: toolRunner)
 
-        let tempDir = fileManager.temporaryDirectory
-            .appendingPathComponent("lungfish-extract-\(UUID().uuidString)", isDirectory: true)
-        try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let tempDir = try ProjectTempDirectory.createFromContext(
+            prefix: "extract-", contextURL: outputDirectory)
         // Cleanup is best-effort and asynchronous to avoid blocking return after
         // bundle creation on platforms where temp dir removal can stall.
         defer {

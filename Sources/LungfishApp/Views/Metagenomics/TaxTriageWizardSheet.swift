@@ -567,7 +567,7 @@ struct TaxTriageWizardSheet: View {
         } else {
             outputDir = initialFiles.first?.deletingLastPathComponent()
                 .appendingPathComponent("taxtriage-\(UUID().uuidString.prefix(8))")
-                ?? URL(fileURLWithPath: NSTemporaryDirectory())
+                ?? FileManager.default.temporaryDirectory
                     .appendingPathComponent("taxtriage-\(UUID().uuidString.prefix(8))")
         }
 
@@ -594,7 +594,7 @@ struct TaxTriageWizardSheet: View {
     /// Computes the deepest common ancestor directory of the given URLs.
     static func commonAncestorDirectory(of urls: [URL]) -> URL {
         guard let first = urls.first else {
-            return URL(fileURLWithPath: NSTemporaryDirectory())
+            return FileManager.default.temporaryDirectory
         }
         guard urls.count > 1 else {
             return first
