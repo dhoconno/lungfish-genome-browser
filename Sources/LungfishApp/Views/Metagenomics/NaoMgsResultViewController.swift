@@ -2227,8 +2227,9 @@ extension NaoMgsResultViewController: NSTableViewDelegate {
     public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard row < displayedRows.count, let tableColumn else { return nil }
 
-        // Check for dynamic metadata columns first
-        if let cell = metadataColumnController.cellForColumn(tableColumn) {
+        // Check for dynamic metadata columns first — pass per-row sample ID for join
+        let rowSampleId = displayedRows[row].sample
+        if let cell = metadataColumnController.cellForColumn(tableColumn, sampleId: rowSampleId) {
             return cell
         }
 
