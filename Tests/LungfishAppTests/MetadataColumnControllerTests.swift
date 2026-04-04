@@ -34,9 +34,8 @@ struct MetadataColumnControllerTests {
         controller.visibleColumns = Set(["Type"])
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("metadata_Type"))
-        let cell = controller.cellForColumn(column, sampleId: "S1")
-        let field = cell as? NSTextField
-        #expect(field?.stringValue == "clinical")
+        let cell = controller.cellForColumn(column, sampleId: "S1") as? NSTableCellView
+        #expect(cell?.textField?.stringValue == "clinical")
     }
 
     @Test("cellForColumn returns em-dash for unknown sample")
@@ -48,9 +47,8 @@ struct MetadataColumnControllerTests {
         controller.update(store: store, sampleId: "S1")
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("metadata_Type"))
-        let cell = controller.cellForColumn(column, sampleId: "UNKNOWN")
-        let field = cell as? NSTextField
-        #expect(field?.stringValue == "\u{2014}")
+        let cell = controller.cellForColumn(column, sampleId: "UNKNOWN") as? NSTableCellView
+        #expect(cell?.textField?.stringValue == "\u{2014}")
     }
 
     @Test("cellForColumn returns em-dash for nil sample")
@@ -62,9 +60,8 @@ struct MetadataColumnControllerTests {
         controller.update(store: store, sampleId: nil)
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("metadata_Type"))
-        let cell = controller.cellForColumn(column, sampleId: nil)
-        let field = cell as? NSTextField
-        #expect(field?.stringValue == "\u{2014}")
+        let cell = controller.cellForColumn(column, sampleId: nil) as? NSTableCellView
+        #expect(cell?.textField?.stringValue == "\u{2014}")
     }
 
     @Test("cellForColumn with different sample IDs returns different values")
@@ -76,10 +73,10 @@ struct MetadataColumnControllerTests {
         controller.update(store: store, sampleId: "S1")
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("metadata_Type"))
-        let cell1 = controller.cellForColumn(column, sampleId: "S1") as? NSTextField
-        let cell2 = controller.cellForColumn(column, sampleId: "S2") as? NSTextField
-        #expect(cell1?.stringValue == "clinical")
-        #expect(cell2?.stringValue == "environmental")
+        let cell1 = controller.cellForColumn(column, sampleId: "S1") as? NSTableCellView
+        let cell2 = controller.cellForColumn(column, sampleId: "S2") as? NSTableCellView
+        #expect(cell1?.textField?.stringValue == "clinical")
+        #expect(cell2?.textField?.stringValue == "environmental")
     }
 
     @Test("exportValues returns correct per-sample values")

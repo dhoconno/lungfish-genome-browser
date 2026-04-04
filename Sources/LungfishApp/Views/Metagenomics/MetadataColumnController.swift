@@ -238,13 +238,22 @@ final class MetadataColumnController {
             value = "\u{2014}" // em dash for missing
         }
 
+        let cell = NSTableCellView()
         let field = NSTextField(labelWithString: value)
         field.font = .systemFont(ofSize: 11)
         field.lineBreakMode = .byTruncatingTail
+        field.translatesAutoresizingMaskIntoConstraints = false
         if value == "\u{2014}" {
             field.textColor = .tertiaryLabelColor
         }
-        return field
+        cell.addSubview(field)
+        cell.textField = field
+        NSLayoutConstraint.activate([
+            field.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
+            field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -2),
+            field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
+        return cell
     }
 
     // MARK: - Export Support
