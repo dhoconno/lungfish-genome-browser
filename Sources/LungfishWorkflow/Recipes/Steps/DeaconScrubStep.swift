@@ -49,7 +49,6 @@ public struct DeaconScrubStep: RecipeStepExecutor {
         let outR1 = context.workspace.appendingPathComponent("\(context.sampleName)_scrubbed_R1.fq.gz")
         let outR2 = context.workspace.appendingPathComponent("\(context.sampleName)_scrubbed_R2.fq.gz")
 
-        // TODO: Replace .fastp placeholder with .deacon once Task 6 adds it to NativeTool.
         let args = [
             "filter",
             "-d", dbPath.path,
@@ -60,7 +59,7 @@ public struct DeaconScrubStep: RecipeStepExecutor {
             "-t", "\(context.threads)",
         ]
 
-        let result = try await context.runner.run(.fastp, arguments: args)
+        let result = try await context.runner.run(.deacon, arguments: args)
         if result.exitCode != 0 {
             throw RecipeEngineError.toolFailed(
                 tool: "deacon", step: Self.typeID, stderr: result.stderr ?? "")

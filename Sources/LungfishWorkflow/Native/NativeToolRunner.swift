@@ -129,6 +129,8 @@ public enum NativeTool: String, CaseIterable, Sendable {
     // SRA toolkit
     case fasterqDump
     case prefetch
+    // Deacon human-read scrubber (conda-installed, not bundled)
+    case deacon
 
     /// The executable name for this tool.
     public var executableName: String {
@@ -155,6 +157,7 @@ public enum NativeTool: String, CaseIterable, Sendable {
         case .scrubSh: return "scrub.sh"
         case .fasterqDump: return "fasterq-dump"
         case .prefetch: return "prefetch"
+        case .deacon: return "deacon"
         }
     }
 
@@ -207,6 +210,7 @@ public enum NativeTool: String, CaseIterable, Sendable {
         case .java: return "openjdk"
         case .alignsTo, .scrubSh: return "sra-human-scrubber"
         case .fasterqDump, .prefetch: return "sra-tools"
+        case .deacon: return "deacon"
         }
     }
 
@@ -245,6 +249,8 @@ public enum NativeTool: String, CaseIterable, Sendable {
             return "Public Domain (NCBI)"
         case .fasterqDump, .prefetch:
             return "Public Domain (NCBI)"
+        case .deacon:
+            return "MIT License"
         }
     }
 
@@ -682,6 +688,25 @@ public actor NativeToolRunner {
     // MARK: - Private Methods
 
     private func discoverToolPath(_ tool: NativeTool) throws -> URL {
+        // Deacon is installed via conda, not bundled with the app.
+        // Check the dedicated deacon-bench conda environment first, then fall
+        // back to /usr/local/bin for system-wide installs.
+        if tool == .deacon {
+            let condaPath = URL(fileURLWithPath: NSHomeDirectory())
+                .appendingPathComponent("miniforge3/envs/deacon-bench/bin/deacon")
+            if FileManager.default.isExecutableFile(atPath: condaPath.path) {
+                logger.info("Found deacon via conda env at \(condaPath.path, privacy: .public)")
+                return condaPath
+            }
+            let systemPath = URL(fileURLWithPath: "/usr/local/bin/deacon")
+            if FileManager.default.isExecutableFile(atPath: systemPath.path) {
+                logger.info("Found deacon at system path \(systemPath.path, privacy: .public)")
+                return systemPath
+            }
+            logger.error("deacon not found at conda env path or /usr/local/bin")
+            throw NativeToolError.toolNotFound(tool.rawValue)
+        }
+
         let relativePath = tool.relativeExecutablePath
 
         guard let toolsDir = toolsDirectory else {
