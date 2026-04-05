@@ -770,6 +770,11 @@ public class MainSplitViewController: NSSplitViewController {
         )
     }
 
+    /// Entry point for Import Center FASTQ import (no sidebar request ID).
+    func presentFASTQImportSheetFromImportCenter(pairs: [FASTQFilePair], projectDirectory: URL) {
+        presentFASTQImportSheet(pairs: pairs, projectDirectory: projectDirectory, requestID: nil)
+    }
+
     /// Imports multiple FASTQ file pairs using the same user-configured settings.
     private func importFASTQBatchWithConfig(
         pairs: [FASTQFilePair],

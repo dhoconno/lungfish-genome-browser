@@ -1267,6 +1267,47 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     }
 
     /// Import a reference FASTA file from a known URL (called from Import Center).
+    /// Import FASTQ files from known URLs (called from Import Center).
+    ///
+    /// Groups URLs into R1/R2 pairs and presents the FASTQ import config sheet
+    /// via ``MainSplitViewController``.
+    func importFASTQFromURLs(_ urls: [URL]) {
+        guard let mainSplit = mainWindowController?.mainSplitViewController else {
+            showAlert(title: "No Project Open", message: "Please open a project before importing sequencing reads.")
+            return
+        }
+
+        guard let projectURL = mainSplit.sidebarController.currentProjectURL else {
+            showAlert(title: "No Project Open", message: "Please open a project before importing sequencing reads.")
+            return
+        }
+
+        // Collect FASTQ files, expanding directories
+        var fastqURLs: [URL] = []
+        let fm = FileManager.default
+        for url in urls {
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+                // Scan directory for FASTQ files
+                if let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: nil) {
+                    for case let fileURL as URL in enumerator where FASTQBundle.isFASTQFileURL(fileURL) {
+                        fastqURLs.append(fileURL)
+                    }
+                }
+            } else if FASTQBundle.isFASTQFileURL(url) {
+                fastqURLs.append(url)
+            }
+        }
+
+        guard !fastqURLs.isEmpty else {
+            showAlert(title: "No FASTQ Files Found", message: "The selected files or folders do not contain any FASTQ files.")
+            return
+        }
+
+        let pairs = groupFASTQByPairs(fastqURLs)
+        mainSplit.presentFASTQImportSheetFromImportCenter(pairs: pairs, projectDirectory: projectURL)
+    }
+
     func importFASTAFromURL(_ url: URL) {
         guard let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController,
               let projectURL = sidebarController.currentProjectURL else {

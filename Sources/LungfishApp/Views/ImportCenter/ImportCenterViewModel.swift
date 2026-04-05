@@ -64,6 +64,7 @@ struct ImportCardInfo: Identifiable, Sendable {
 
     /// Identifies which import action to dispatch.
     enum ImportAction: Sendable {
+        case fastq
         case bam
         case vcf
         case fasta
@@ -97,8 +98,9 @@ final class ImportCenterViewModel {
 
     // MARK: - Tab
 
-    /// The four sections of the Import Center.
+    /// The five sections of the Import Center.
     enum Tab: Int, CaseIterable, Hashable, Sendable {
+        case sequencingReads
         case alignments
         case variants
         case classificationResults
@@ -107,6 +109,7 @@ final class ImportCenterViewModel {
         /// Human-readable tab title for the segmented control.
         var title: String {
             switch self {
+            case .sequencingReads:       return "Sequencing Reads"
             case .alignments:            return "Alignments"
             case .variants:              return "Variants"
             case .classificationResults: return "Classification"
@@ -117,6 +120,7 @@ final class ImportCenterViewModel {
         /// SF Symbol for the tab.
         var sfSymbol: String {
             switch self {
+            case .sequencingReads:       return "waveform.path"
             case .alignments:            return "arrow.left.arrow.right"
             case .variants:              return "diamond.fill"
             case .classificationResults: return "chart.bar.doc.horizontal"
@@ -136,7 +140,7 @@ final class ImportCenterViewModel {
     // MARK: - State
 
     /// Currently selected tab.
-    var selectedTab: Tab = .classificationResults
+    var selectedTab: Tab = .sequencingReads
 
     /// Search text from the toolbar search field.
     var searchText: String = ""
@@ -174,6 +178,25 @@ final class ImportCenterViewModel {
 
     /// All importable data type cards, organized by tab.
     let allCards: [ImportCardInfo] = [
+        // Sequencing Reads
+        ImportCardInfo(
+            id: "fastq",
+            title: "FASTQ Files",
+            description: "Import paired-end or single-end sequencing reads. Supports individual files and folders with automatic pair detection.",
+            sfSymbol: "waveform.path",
+            fileHint: ".fastq.gz, .fq.gz, .fastq, .fq (files or folders)",
+            tab: .sequencingReads,
+            importKind: .filePanel(
+                allowedTypes: [
+                    UTType(filenameExtension: "gz") ?? .data,
+                    UTType(filenameExtension: "fastq") ?? .data,
+                    UTType(filenameExtension: "fq") ?? .data,
+                    .folder,
+                ],
+                action: .fastq
+            )
+        ),
+
         // Alignments
         ImportCardInfo(
             id: "bam-cram",
@@ -371,7 +394,7 @@ final class ImportCenterViewModel {
 
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
-        panel.canChooseDirectories = (action == .esViritu || action == .taxTriage || action == .nvd)
+        panel.canChooseDirectories = (action == .fastq || action == .esViritu || action == .taxTriage || action == .nvd)
         panel.allowsMultipleSelection = true
         panel.allowedContentTypes = allowedTypes
         panel.message = panelMessage(for: action)
@@ -384,6 +407,7 @@ final class ImportCenterViewModel {
 
     private func panelMessage(for action: ImportCardInfo.ImportAction) -> String {
         switch action {
+        case .fastq:    return "Select FASTQ files or folders to import"
         case .bam:      return "Select BAM or CRAM alignment files to import"
         case .vcf:      return "Select VCF variant files to import"
         case .fasta:    return "Select standalone reference sequence files (.fa/.fasta/.gb/.embl, optionally .gz) to import"
@@ -408,6 +432,8 @@ final class ImportCenterViewModel {
         ImportCenterWindowController.close()
 
         switch action {
+        case .fastq:
+            appDelegate.importFASTQFromURLs(urls)
         case .bam:
             for url in urls {
                 appDelegate.importBAMFromURL(url)
@@ -475,6 +501,7 @@ final class ImportCenterViewModel {
     /// for a given ``ImportCardInfo/ImportAction``.
     private func historyLabel(for action: ImportCardInfo.ImportAction) -> String {
         switch action {
+        case .fastq:    return "FASTQ"
         case .bam:      return "BAM"
         case .vcf:      return "VCF"
         case .fasta:    return "FASTA"

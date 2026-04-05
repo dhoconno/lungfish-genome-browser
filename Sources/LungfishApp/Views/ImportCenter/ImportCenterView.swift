@@ -77,6 +77,8 @@ struct ImportCenterView: View {
 
     private var tabSubtitle: String {
         switch viewModel.selectedTab {
+        case .sequencingReads:
+            return "Import raw sequencing data for processing and analysis"
         case .alignments:
             return "Import aligned reads for visualization"
         case .variants:
