@@ -513,6 +513,8 @@ public enum FASTQIngestionService {
                         }
                     }
                 )
+            } else {
+                logger.warning("No FASTQ file found in bundle \(bundleURL.lastPathComponent) — skipping stats")
             }
 
             // 8. Record provenance

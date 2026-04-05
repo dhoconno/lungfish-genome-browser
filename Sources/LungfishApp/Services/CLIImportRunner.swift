@@ -360,7 +360,8 @@ public actor CLIImportRunner {
                             }
 
                         case let .stepStart(sample, step, stepIndex, totalSteps):
-                            let fraction = Double(stepIndex) / Double(max(1, totalSteps + 1))
+                            // stepIndex is 1-based from the CLI
+                            let fraction = Double(stepIndex) / Double(max(1, totalSteps))
                             DispatchQueue.main.async {
                                 MainActor.assumeIsolated {
                                     OperationCenter.shared.update(
@@ -371,7 +372,7 @@ public actor CLIImportRunner {
                                     OperationCenter.shared.log(
                                         id: opID,
                                         level: .info,
-                                        message: "\(sample) — step \(stepIndex + 1)/\(totalSteps): \(step)"
+                                        message: "\(sample) — step \(stepIndex)/\(totalSteps): \(step)"
                                     )
                                 }
                             }

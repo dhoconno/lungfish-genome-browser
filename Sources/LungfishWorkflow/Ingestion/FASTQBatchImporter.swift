@@ -538,7 +538,8 @@ public enum FASTQBatchImporter {
                     var totalSteps: Int = 0
                 }
                 let tracker = RecipeStepTracker()
-                tracker.totalSteps = newRecipe.steps.count
+                // Total includes recipe steps + 1 for Clumpify/Compress at the end
+                tracker.totalSteps = newRecipe.steps.count + 1
 
                 let stepContext = StepContext(
                     workspace: workspace,
