@@ -809,19 +809,34 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         for item in contents {
             let name = item.lastPathComponent
 
-            // Skip known test fixture prefixes — these are test artifacts, not runtime escapes
+            // Skip known test fixture prefixes
             let isTestFixture = Self.testFixturePrefixes.contains { name.hasPrefix($0) }
             guard !isTestFixture else { continue }
 
             let matchesPrefix = escapedPrefixes.contains { name.hasPrefix($0) }
             guard matchesPrefix else { continue }
 
-            // Only assert on directories created during the current app session
+            // Only check directories created during the current app session
             let attrs = try? item.resourceValues(forKeys: [.creationDateKey])
             guard let created = attrs?.creationDate, created > debugSessionStartDate else { continue }
 
-            appDelegateLogger.warning("DEBUG: Found escaped temp dir in system temp: \(name, privacy: .public). Should be in project .tmp/")
-            assertionFailure("Escaped temp dir found in system temp: \(name). Use ProjectTempDirectory.createFromContext() instead.")
+            // Read provenance marker for policy-based decision
+            let marker = ProjectTempDirectory.readMarker(from: item)
+
+            if let marker = marker {
+                // Marker present — decide based on policy
+                if marker.policy == .requireProjectContext {
+                    // Real violation: requireProjectContext escaped to system temp
+                    appDelegateLogger.error("DEBUG: Policy violation — requireProjectContext temp escaped to system temp: \(name, privacy: .public) (caller: \(marker.caller, privacy: .public))")
+                    assertionFailure("Escaped temp dir (requireProjectContext) in system temp: \(name) — caller: \(marker.caller)")
+                } else {
+                    // Allowed fallback (preferProjectContext or systemOnly)
+                    appDelegateLogger.debug("DEBUG: Allowed system temp dir: \(name, privacy: .public) (policy: \(marker.policy.rawValue, privacy: .public))")
+                }
+            } else {
+                // No marker — legacy callsite, warn but don't crash during migration
+                appDelegateLogger.warning("DEBUG: Unmarked temp dir in system temp: \(name, privacy: .public). Consider migrating to policy-aware create API.")
+            }
         }
     }
 #endif
