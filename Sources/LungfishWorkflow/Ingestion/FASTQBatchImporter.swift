@@ -538,8 +538,8 @@ public enum FASTQBatchImporter {
                     var totalSteps: Int = 0
                 }
                 let tracker = RecipeStepTracker()
-                // Total includes recipe steps + 1 for Clumpify/Compress at the end
-                tracker.totalSteps = newRecipe.steps.count + 1
+                // Total includes recipe steps + clumpify + stats
+                tracker.totalSteps = newRecipe.steps.count + 2
 
                 let stepContext = StepContext(
                     workspace: workspace,
@@ -615,8 +615,11 @@ public enum FASTQBatchImporter {
                 skipClumpify: !config.optimizeStorage
             )
 
-            let totalSteps = (config.recipe?.steps.count ?? config.newRecipe?.steps.count ?? 0) + 1
-            let clumpifyStepIndex = totalSteps
+            // Total steps = recipe steps + clumpify + stats
+            let recipeStepCount = config.recipe?.steps.count ?? config.newRecipe?.steps.count ?? 0
+            let totalSteps = recipeStepCount + 2  // +1 clumpify, +1 stats
+            let clumpifyStepIndex = recipeStepCount + 1
+            let statsStepIndex = recipeStepCount + 2
             let clumpifyLabel = config.optimizeStorage ? "Clumpify + Compress" : "Compress"
             log?(.stepStart(sample: pair.sampleName, step: clumpifyLabel, stepIndex: clumpifyStepIndex, totalSteps: totalSteps))
             printProgress("  \u{2192} \(clumpifyLabel)...")
@@ -675,6 +678,18 @@ public enum FASTQBatchImporter {
             if let logDir = config.logDirectory {
                 writePerSampleLog(pair: pair, bundleURL: bundleURL, logDir: logDir)
             }
+
+            // Step: Compute FASTQ statistics
+            let statsLabel = "Compute statistics"
+            log?(.stepStart(sample: pair.sampleName, step: statsLabel, stepIndex: statsStepIndex, totalSteps: totalSteps))
+            let statsStart = Date()
+            do {
+                try await computeAndCacheStatistics(for: bundleFASTQURL)
+            } catch {
+                logger.warning("Stats computation failed for \(pair.sampleName): \(error) — bundle is still valid")
+            }
+            log?(.stepComplete(sample: pair.sampleName, step: statsLabel,
+                               durationSeconds: Date().timeIntervalSince(statsStart)))
 
             let finalBytes = bundleFileSize(bundleURL)
             let duration = Date().timeIntervalSince(sampleStart)
@@ -1093,6 +1108,129 @@ public enum FASTQBatchImporter {
         }
 
         return currentURL
+    }
+
+    // MARK: - Statistics Computation
+
+    /// Computes FASTQ statistics (via seqkit + read scan) and caches them in the metadata sidecar.
+    ///
+    /// This runs seqkit stats for summary metrics (read count, Q20/Q30, GC%, mean quality)
+    /// and scans the FASTQ to build a read-length histogram for N50/median/distribution.
+    /// Results are stored in the `.fastq.metadata.json` sidecar so the GUI can display
+    /// them immediately when the bundle is opened.
+    private static func computeAndCacheStatistics(for fastqURL: URL) async throws {
+        let runner = NativeToolRunner.shared
+
+        // 1. Run seqkit stats -a -T for summary metrics
+        let seqkitResult = try await runner.run(
+            .seqkit,
+            arguments: ["stats", "-a", "-T", fastqURL.path],
+            timeout: 900
+        )
+        guard seqkitResult.isSuccess else {
+            logger.warning("seqkit stats failed: \(seqkitResult.stderr)")
+            return
+        }
+
+        let lines = seqkitResult.stdout
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+            .filter { !$0.isEmpty }
+        guard lines.count >= 2 else {
+            logger.warning("seqkit stats returned incomplete output")
+            return
+        }
+
+        let headers = lines[0].split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+        let values = lines[1].split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+        guard headers.count == values.count else { return }
+
+        var map: [String: String] = [:]
+        for (h, v) in zip(headers, values) { map[h] = v }
+
+        func int(_ k: String) -> Int { Int(map[k] ?? "") ?? 0 }
+        func int64(_ k: String) -> Int64 { Int64(map[k] ?? "") ?? 0 }
+        func dbl(_ k: String) -> Double { Double(map[k] ?? "") ?? 0 }
+
+        let numSeqs = int("num_seqs")
+        let sumLen = int64("sum_len")
+        let minLen = int("min_len")
+        let avgLen = dbl("avg_len")
+        let maxLen = int("max_len")
+        let q20 = dbl("Q20(%)")
+        let q30 = dbl("Q30(%)")
+        let avgQual = dbl("AvgQual")
+        let gc = dbl("GC(%)")
+
+        // 2. Scan FASTQ for read-length histogram
+        let reader = FASTQReader(validateSequence: false)
+        var histogram: [Int: Int] = [:]
+        var readCount = 0
+        for try await record in reader.records(from: fastqURL) {
+            histogram[record.length, default: 0] += 1
+            readCount += 1
+        }
+
+        // 3. Compute derived metrics
+        let effectiveReadCount = numSeqs > 0 ? numSeqs : readCount
+        let effectiveBaseCount = sumLen > 0 ? sumLen : histogram.reduce(Int64(0)) { $0 + Int64($1.key * $1.value) }
+        let effectiveMinLen = minLen > 0 ? minLen : histogram.keys.min() ?? 0
+        let effectiveMaxLen = maxLen > 0 ? maxLen : histogram.keys.max() ?? 0
+        let effectiveAvgLen = avgLen > 0 ? avgLen : (effectiveReadCount > 0 ? Double(effectiveBaseCount) / Double(effectiveReadCount) : 0)
+
+        func medianLength() -> Int {
+            guard effectiveReadCount > 0 else { return 0 }
+            let target = (effectiveReadCount + 1) / 2
+            var cumulative = 0
+            for (length, count) in histogram.sorted(by: { $0.key < $1.key }) {
+                cumulative += count
+                if cumulative >= target { return length }
+            }
+            return histogram.keys.max() ?? 0
+        }
+
+        func n50Length() -> Int {
+            guard effectiveBaseCount > 0 else { return 0 }
+            let target = Double(effectiveBaseCount) / 2.0
+            var cumulative = 0.0
+            for (length, count) in histogram.sorted(by: { $0.key > $1.key }) {
+                cumulative += Double(length * count)
+                if cumulative >= target { return length }
+            }
+            return histogram.keys.max() ?? 0
+        }
+
+        let statistics = FASTQDatasetStatistics(
+            readCount: effectiveReadCount,
+            baseCount: effectiveBaseCount,
+            meanReadLength: effectiveAvgLen,
+            minReadLength: effectiveMinLen,
+            maxReadLength: effectiveMaxLen,
+            medianReadLength: medianLength(),
+            n50ReadLength: n50Length(),
+            meanQuality: avgQual,
+            q20Percentage: q20,
+            q30Percentage: q30,
+            gcContent: gc / 100.0,
+            readLengthHistogram: histogram,
+            qualityScoreHistogram: [:],
+            perPositionQuality: []
+        )
+
+        let seqkitMeta = SeqkitStatsMetadata(
+            numSeqs: numSeqs, sumLen: sumLen,
+            minLen: minLen, avgLen: avgLen, maxLen: maxLen,
+            q20Percentage: q20, q30Percentage: q30,
+            averageQuality: avgQual, gcPercentage: gc
+        )
+
+        // 4. Cache in metadata sidecar
+        var metadata = FASTQMetadataStore.load(for: fastqURL) ?? PersistedFASTQMetadata()
+        metadata.computedStatistics = statistics
+        metadata.seqkitStats = seqkitMeta
+        FASTQMetadataStore.save(metadata, for: fastqURL)
+
+        logger.info("Statistics cached: \(effectiveReadCount) reads, N50=\(n50Length()), Q30=\(String(format: "%.1f", q30))%")
     }
 
     // MARK: - Private Helpers

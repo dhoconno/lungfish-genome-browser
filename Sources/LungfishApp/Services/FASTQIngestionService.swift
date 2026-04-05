@@ -480,49 +480,10 @@ public enum FASTQIngestionService {
             }
 
             logger.info("CLI import produced bundle at \(bundleURL.path)")
+            // Statistics are computed by the CLI as the final pipeline step —
+            // no duplicate computation needed here.
 
-            // 7. Post-processing: compute FASTQ statistics
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    OperationCenter.shared.update(
-                        id: opID,
-                        progress: 0.85,
-                        detail: "Computing FASTQ statistics\u{2026}"
-                    )
-                }
-            }
-
-            let fm = FileManager.default
-            let bundleContents = (try? fm.contentsOfDirectory(at: bundleURL, includingPropertiesForKeys: nil)) ?? []
-            let primaryFASTQ = bundleContents.first(where: {
-                let name = $0.lastPathComponent.lowercased()
-                return name.hasSuffix(".fastq.gz") || name.hasSuffix(".fq.gz") ||
-                       name.hasSuffix(".fastq") || name.hasSuffix(".fq")
-            })
-
-            if let fastqURL = primaryFASTQ {
-                logger.info("Computing stats for \(fastqURL.lastPathComponent)")
-                let existingMetadata = FASTQMetadataStore.load(for: fastqURL)
-                _ = try await FASTQStatisticsService.computeAndCache(
-                    for: fastqURL,
-                    existingMetadata: existingMetadata,
-                    progress: { count in
-                        DispatchQueue.main.async {
-                            MainActor.assumeIsolated {
-                                OperationCenter.shared.update(
-                                    id: opID,
-                                    progress: 0.90,
-                                    detail: "Computing FASTQ statistics\u{2026} \(count) reads processed"
-                                )
-                            }
-                        }
-                    }
-                )
-            } else {
-                logger.warning("No FASTQ file found in bundle \(bundleURL.lastPathComponent) — skipping stats")
-            }
-
-            // 8. Record provenance
+            // 7. Record provenance
             var parameters: [String: ParameterValue] = [
                 "platform": .string(importConfig.confirmedPlatform.rawValue),
                 "pairingMode": .string(importConfig.pairingMode.rawValue),
