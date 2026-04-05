@@ -28,7 +28,7 @@ public final class FASTQImportConfigSheet: NSViewController {
     private let detectedPlatform: LungfishIO.SequencingPlatform
     private let onImport: FASTQImportCompletion?
     private let onCancel: (() -> Void)?
-    private var allRecipes: [ProcessingRecipe] = []
+    private var allV2Recipes: [Recipe] = []
 
     // MARK: - UI
 
@@ -40,7 +40,9 @@ public final class FASTQImportConfigSheet: NSViewController {
     private let pairingPopup = NSPopUpButton()
     private let binningLabel = NSTextField(labelWithString: "Quality Binning:")
     private let binningPopup = NSPopUpButton()
-    private let clumpifyCheckbox = NSButton(checkboxWithTitle: "Clumpify (k-mer sort for compression)", target: nil, action: nil)
+    private let clumpifyCheckbox = NSButton(checkboxWithTitle: "Optimize storage (reorder reads for better compression)", target: nil, action: nil)
+    private let compressionLabel = NSTextField(labelWithString: "Compression:")
+    private let compressionPopup = NSPopUpButton()
     private let recipeCheckbox = NSButton(checkboxWithTitle: "Apply processing recipe after import", target: nil, action: nil)
     private let recipePopup = NSPopUpButton()
     private let recipeDescLabel = NSTextField(wrappingLabelWithString: "")
@@ -68,7 +70,7 @@ public final class FASTQImportConfigSheet: NSViewController {
     // MARK: - View Lifecycle
 
     public override func loadView() {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 440))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 480))
         container.translatesAutoresizingMaskIntoConstraints = false
         self.view = container
         setupUI()
@@ -147,9 +149,22 @@ public final class FASTQImportConfigSheet: NSViewController {
         // Clumpify checkbox
         clumpifyCheckbox.state = .on
         clumpifyCheckbox.font = .systemFont(ofSize: 12)
-        clumpifyCheckbox.toolTip = "Disable if your machine has limited memory. Clumpify reorders reads by k-mer similarity for better compression."
+        clumpifyCheckbox.toolTip = "Disable if your machine has limited memory. Reorders reads by k-mer similarity for better compression."
         clumpifyCheckbox.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(clumpifyCheckbox)
+
+        // Compression level picker
+        compressionLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        compressionLabel.alignment = .right
+        compressionLabel.translatesAutoresizingMaskIntoConstraints = false
+        compressionLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        view.addSubview(compressionLabel)
+
+        compressionPopup.addItems(withTitles: ["Fast", "Balanced", "Maximum"])
+        compressionPopup.selectItem(at: 1) // Balanced default
+        compressionPopup.font = .systemFont(ofSize: 12)
+        compressionPopup.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(compressionPopup)
 
         // Separator 2
         let sep2 = NSBox()
@@ -166,8 +181,8 @@ public final class FASTQImportConfigSheet: NSViewController {
         view.addSubview(recipeCheckbox)
 
         // Recipe popup
-        allRecipes = RecipeRegistry.loadAllRecipes()
-        for recipe in allRecipes {
+        allV2Recipes = RecipeRegistryV2.allRecipes()
+        for recipe in allV2Recipes {
             recipePopup.addItem(withTitle: recipe.name)
         }
         recipePopup.font = .systemFont(ofSize: 12)
@@ -243,7 +258,14 @@ public final class FASTQImportConfigSheet: NSViewController {
             clumpifyCheckbox.topAnchor.constraint(equalTo: binningLabel.bottomAnchor, constant: 12),
             clumpifyCheckbox.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: margin + labelWidth + 8),
 
-            sep2.topAnchor.constraint(equalTo: clumpifyCheckbox.bottomAnchor, constant: 12),
+            // Compression row
+            compressionLabel.topAnchor.constraint(equalTo: clumpifyCheckbox.bottomAnchor, constant: 10),
+            compressionLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: margin),
+            compressionLabel.widthAnchor.constraint(equalToConstant: labelWidth),
+            compressionPopup.centerYAnchor.constraint(equalTo: compressionLabel.centerYAnchor),
+            compressionPopup.leadingAnchor.constraint(equalTo: compressionLabel.trailingAnchor, constant: 8),
+
+            sep2.topAnchor.constraint(equalTo: compressionLabel.bottomAnchor, constant: 12),
             sep2.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: margin),
             sep2.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -margin),
 
@@ -342,65 +364,33 @@ public final class FASTQImportConfigSheet: NSViewController {
 
     private func updateRecipeDescription() {
         let idx = recipePopup.indexOfSelectedItem
-        guard idx >= 0, idx < allRecipes.count else {
+        guard idx >= 0, idx < allV2Recipes.count else {
             recipeDescLabel.stringValue = ""
             return
         }
-        let recipe = allRecipes[idx]
+        let recipe = allV2Recipes[idx]
         recipeDescLabel.stringValue = recipePresentationText(for: recipe)
     }
 
-    private func recipePresentationText(for recipe: ProcessingRecipe) -> String {
+    private func recipePresentationText(for recipe: Recipe) -> String {
         var lines: [String] = []
-        let purpose = recipe.description.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !purpose.isEmpty {
+        if let purpose = recipe.description?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !purpose.isEmpty {
             lines.append(purpose)
         }
 
         let workflow = recipe.steps
-            .map { recipeStepLabel(for: $0.kind) }
-            .joined(separator: " -> ")
+            .compactMap { $0.label ?? $0.type }
+            .joined(separator: " \u{2192} ")
         lines.append("Workflow: \(workflow)")
 
-        if recipe.name == ProcessingRecipe.illuminaVSP2TargetEnrichment.name {
-            lines.append("Best for VSP2 viral target-enrichment libraries with host-background removal.")
-        } else if let mode = recipe.requiredPairingMode {
-            lines.append("Input: \(pairingRequirementLabel(mode))")
+        switch recipe.requiredInput {
+        case .paired: lines.append("Input: paired-end reads")
+        case .single: lines.append("Input: single-end reads")
+        case .any: break
         }
 
         return lines.joined(separator: "\n")
-    }
-
-    private func recipeStepLabel(for kind: FASTQDerivativeOperationKind) -> String {
-        switch kind {
-        case .deduplicate: return "deduplicate"
-        case .adapterTrim: return "adapter trim"
-        case .qualityTrim: return "quality trim"
-        case .humanReadScrub: return "remove human reads"
-        case .pairedEndMerge: return "merge pairs"
-        case .lengthFilter: return "length filter"
-        case .primerRemoval: return "primer removal"
-        case .contaminantFilter: return "contaminant filter"
-        case .interleaveReformat: return "interleave/reformat"
-        case .pairedEndRepair: return "repair pairs"
-        case .errorCorrection: return "error correction"
-        case .subsampleProportion: return "subsample proportion"
-        case .subsampleCount: return "subsample count"
-        case .searchText: return "text filter"
-        case .searchMotif: return "motif filter"
-        case .fixedTrim: return "fixed trim"
-        case .demultiplex: return "demultiplex"
-        case .sequencePresenceFilter: return "adapter presence filter"
-        case .orient: return "orientation pass"
-        }
-    }
-
-    private func pairingRequirementLabel(_ mode: IngestionMetadata.PairingMode) -> String {
-        switch mode {
-        case .singleEnd: return "single-end reads"
-        case .pairedEnd: return "paired-end reads"
-        case .interleaved: return "interleaved paired-end reads"
-        }
     }
 
     @objc private func importClicked(_ sender: Any) {
@@ -409,13 +399,18 @@ public final class FASTQImportConfigSheet: NSViewController {
         let binning = selectedBinning()
         let skipClumpify = clumpifyCheckbox.state == .off
 
-        let recipe: ProcessingRecipe?
-        if recipeCheckbox.state == .on {
-            let idx = recipePopup.indexOfSelectedItem
-            recipe = (idx >= 0 && idx < allRecipes.count) ? allRecipes[idx] : nil
-        } else {
-            recipe = nil
-        }
+        // V2 recipes are displayed in the popup but the legacy ProcessingRecipe
+        // bridge is not yet wired — pass nil for now; the V2 recipe engine
+        // will handle execution in a future change.
+        let recipe: ProcessingRecipe? = nil
+
+        let compressionLevel: CompressionLevel = {
+            switch compressionPopup.indexOfSelectedItem {
+            case 0:  return .fast
+            case 2:  return .maximum
+            default: return .balanced
+            }
+        }()
 
         let config = FASTQImportConfiguration(
             inputFiles: pairs.flatMap { pair in
@@ -429,7 +424,8 @@ public final class FASTQImportConfigSheet: NSViewController {
             skipClumpify: skipClumpify,
             deleteOriginals: false,
             postImportRecipe: recipe,
-            resolvedPlaceholders: [:]
+            resolvedPlaceholders: [:],
+            compressionLevel: compressionLevel
         )
 
         onImport?(config)

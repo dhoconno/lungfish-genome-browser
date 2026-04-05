@@ -27,6 +27,8 @@ public struct FASTQImportConfiguration: Sendable {
     public let postImportRecipe: ProcessingRecipe?
     /// Filled placeholder values for the recipe, keyed by placeholder key.
     public let resolvedPlaceholders: [String: String]
+    /// Compression level for bgzip / clumpify output.
+    public let compressionLevel: CompressionLevel?
 }
 
 /// A detected R1/R2 pair (or unpaired single file) from a batch of dropped FASTQ files.

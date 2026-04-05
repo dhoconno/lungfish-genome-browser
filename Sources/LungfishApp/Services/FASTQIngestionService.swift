@@ -322,7 +322,8 @@ public enum FASTQIngestionService {
             skipClumpify: false,
             deleteOriginals: false,
             postImportRecipe: nil,
-            resolvedPlaceholders: [:]
+            resolvedPlaceholders: [:],
+            compressionLevel: nil
         )
         await runIngestAndBundle(
             pair: pair,
