@@ -57,13 +57,21 @@ public struct StepOutput: Sendable {
     public let format: RecipeFileFormat
     /// Optional read count reported by the step (e.g. from fastp JSON stats).
     public let readCount: Int?
+    /// The native tool that was invoked to produce this output (nil for internal operations).
+    public let tool: NativeTool?
+    /// The full argument array passed to the tool.
+    public let arguments: [String]?
 
-    public init(r1: URL, r2: URL? = nil, r3: URL? = nil, format: RecipeFileFormat, readCount: Int? = nil) {
+    public init(r1: URL, r2: URL? = nil, r3: URL? = nil,
+                format: RecipeFileFormat, readCount: Int? = nil,
+                tool: NativeTool? = nil, arguments: [String]? = nil) {
         self.r1 = r1
         self.r2 = r2
         self.r3 = r3
         self.format = format
         self.readCount = readCount
+        self.tool = tool
+        self.arguments = arguments
     }
 }
 

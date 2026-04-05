@@ -310,7 +310,7 @@ public final class RecipeEngine: Sendable {
                 tool: "fastp", step: "fused-fastp(\(label))", stderr: result.stderr)
         }
 
-        return StepOutput(r1: outR1, r2: outR2, format: .pairedR1R2)
+        return StepOutput(r1: outR1, r2: outR2, format: .pairedR1R2, tool: .fastp, arguments: args)
     }
 
     /// Performs a format conversion between two compatible ``RecipeFileFormat`` values.
@@ -367,7 +367,7 @@ public final class RecipeEngine: Sendable {
                 stderr: result.stderr)
         }
 
-        return StepOutput(r1: output, format: .interleaved)
+        return StepOutput(r1: output, format: .interleaved, tool: .reformat, arguments: args)
     }
 
     /// reformat.sh: interleaved → paired R1/R2
@@ -397,7 +397,7 @@ public final class RecipeEngine: Sendable {
                 stderr: result.stderr)
         }
 
-        return StepOutput(r1: outR1, r2: outR2, format: .pairedR1R2)
+        return StepOutput(r1: outR1, r2: outR2, format: .pairedR1R2, tool: .reformat, arguments: args)
     }
 
     /// Concatenates merged.fq.gz + unmerged_R1.fq.gz + unmerged_R2.fq.gz → single.fq.gz.
