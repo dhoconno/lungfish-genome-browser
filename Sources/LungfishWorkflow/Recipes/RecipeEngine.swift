@@ -187,6 +187,13 @@ public final class RecipeEngine: Sendable {
             format: input.format
         )
 
+        // Count only non-format-conversion steps for progress reporting
+        let reportableStepCount = steps.filter {
+            if case .formatConversion = $0 { return false }
+            return true
+        }.count
+        var reportableStepIndex = 0
+
         for plannedStep in steps {
             let stepInput = StepInput(
                 r1: currentOutput.r1,
@@ -198,16 +205,26 @@ public final class RecipeEngine: Sendable {
             switch plannedStep {
             case .singleStep(let executor, let label):
                 logger.debug("Executing step: \(label)")
+                let fraction = reportableStepCount > 0
+                    ? Double(reportableStepIndex) / Double(reportableStepCount)
+                    : 0.0
+                context.progress(fraction, label)
                 currentOutput = try await executor.execute(input: stepInput, context: context)
+                reportableStepIndex += 1
 
             case .fusedFastp(let extraArgs, _, let label):
                 logger.debug("Executing fused fastp: \(label)")
+                let fraction = reportableStepCount > 0
+                    ? Double(reportableStepIndex) / Double(reportableStepCount)
+                    : 0.0
+                context.progress(fraction, label)
                 currentOutput = try await executeFusedFastp(
                     args: extraArgs,
                     input: stepInput,
                     context: context,
                     label: label
                 )
+                reportableStepIndex += 1
 
             case .formatConversion(let from, let to):
                 logger.debug("Converting format \(from.rawValue) → \(to.rawValue)")

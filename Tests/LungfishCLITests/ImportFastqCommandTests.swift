@@ -13,10 +13,28 @@ final class ImportFastqCommandTests: XCTestCase {
             "/data/fastq_dir",
             "--project", "/projects/Test.lungfish",
         ])
-        XCTAssertEqual(command.input, "/data/fastq_dir")
+        XCTAssertEqual(command.input, ["/data/fastq_dir"])
         XCTAssertEqual(command.project, "/projects/Test.lungfish")
         XCTAssertEqual(command.recipe, "none")
         XCTAssertFalse(command.dryRun)
+    }
+
+    func testParseExplicitFilePaths() throws {
+        let command = try ImportCommand.FastqSubcommand.parse([
+            "/data/sample_R1.fastq.gz",
+            "/data/sample_R2.fastq.gz",
+            "--project", "/projects/Test.lungfish",
+        ])
+        XCTAssertEqual(command.input, ["/data/sample_R1.fastq.gz", "/data/sample_R2.fastq.gz"])
+        XCTAssertEqual(command.project, "/projects/Test.lungfish")
+    }
+
+    func testParseSingleFilePath() throws {
+        let command = try ImportCommand.FastqSubcommand.parse([
+            "/data/reads.fastq.gz",
+            "--project", "/projects/Test.lungfish",
+        ])
+        XCTAssertEqual(command.input, ["/data/reads.fastq.gz"])
     }
 
     func testParseFullArguments() throws {

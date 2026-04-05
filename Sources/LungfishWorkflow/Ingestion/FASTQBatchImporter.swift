@@ -438,17 +438,44 @@ public enum FASTQBatchImporter {
                 let engine = RecipeEngine()
                 let inputFormat: RecipeFileFormat = pair.r2 != nil ? .pairedR1R2 : .single
                 let stepInput = StepInput(r1: pair.r1, r2: pair.r2, format: inputFormat)
+
+                // Track the in-progress step so we can emit stepComplete when the next step starts
+                // (or after execute() returns for the final step). Uses a class for shared mutation
+                // across the @Sendable progress closure and the post-execute cleanup block.
+                final class RecipeStepTracker: @unchecked Sendable {
+                    var currentStep: String? = nil
+                    var stepStart: Date = Date()
+                    var stepIndex: Int = 0
+                    var totalSteps: Int = 0
+                }
+                let tracker = RecipeStepTracker()
+                tracker.totalSteps = newRecipe.steps.count
+
                 let stepContext = StepContext(
                     workspace: workspace,
                     threads: config.threads,
                     sampleName: pair.sampleName,
                     runner: NativeToolRunner.shared,
-                    progress: { fraction, message in
+                    progress: { [tracker] _, message in
+                        let now = Date()
+                        // Emit stepComplete for any step that was already in progress
+                        if let prev = tracker.currentStep {
+                            log?(.stepComplete(sample: pair.sampleName, step: prev,
+                                               durationSeconds: now.timeIntervalSince(tracker.stepStart)))
+                        }
+                        tracker.currentStep = message
+                        tracker.stepStart = now
+                        tracker.stepIndex += 1
                         log?(.stepStart(sample: pair.sampleName, step: message,
-                                        stepIndex: Int(fraction * 100), totalSteps: 100))
+                                        stepIndex: tracker.stepIndex, totalSteps: tracker.totalSteps))
                     }
                 )
                 let output = try await engine.execute(recipe: newRecipe, input: stepInput, context: stepContext)
+                // Emit stepComplete for the last recipe step
+                if let lastStep = tracker.currentStep {
+                    log?(.stepComplete(sample: pair.sampleName, step: lastStep,
+                                       durationSeconds: Date().timeIntervalSince(tracker.stepStart)))
+                }
                 var currentURL = output.r1
                 // If output is merged format, concatenate r1/r2/r3 for bundle finalization
                 if output.format == .merged, let r2 = output.r2 {

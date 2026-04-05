@@ -38,8 +38,8 @@ extension ImportCommand {
             abstract: "Batch-import FASTQ files into a Lungfish project"
         )
 
-        @Argument(help: "Directory containing .fastq.gz files, or explicit file paths")
-        var input: String
+        @Argument(help: "Directory containing .fastq.gz files, or one or more FASTQ file paths")
+        var input: [String]
 
         @Option(
             name: [.customLong("project"), .customShort("p")],
@@ -102,29 +102,49 @@ extension ImportCommand {
 
         func run() async throws {
             let formatter = TerminalFormatter(useColors: globalOptions.useColors)
-            let inputURL = URL(fileURLWithPath: input)
+
+            guard !input.isEmpty else {
+                print(formatter.error("At least one input path is required."))
+                throw ExitCode.failure
+            }
 
             // MARK: Detect pairs
 
             let pairs: [SamplePair]
             let fm = FileManager.default
-            var isDirectory: ObjCBool = false
-            let exists = fm.fileExists(atPath: inputURL.path, isDirectory: &isDirectory)
 
-            if exists && isDirectory.boolValue {
-                do {
-                    pairs = try FASTQBatchImporter.detectPairsFromDirectory(inputURL)
-                } catch let batchError as BatchImportError {
-                    print(formatter.error(batchError.errorDescription ?? batchError.localizedDescription))
-                    throw ExitCode.failure
+            if input.count == 1 {
+                // Single argument: could be a directory or a single file
+                let inputURL = URL(fileURLWithPath: input[0])
+                var isDirectory: ObjCBool = false
+                let exists = fm.fileExists(atPath: inputURL.path, isDirectory: &isDirectory)
+
+                if exists && isDirectory.boolValue {
+                    do {
+                        pairs = try FASTQBatchImporter.detectPairsFromDirectory(inputURL)
+                    } catch let batchError as BatchImportError {
+                        print(formatter.error(batchError.errorDescription ?? batchError.localizedDescription))
+                        throw ExitCode.failure
+                    }
+                } else {
+                    guard exists else {
+                        print(formatter.error("Input not found: \(input[0])"))
+                        throw ExitCode.failure
+                    }
+                    pairs = FASTQBatchImporter.detectPairs(from: [inputURL])
                 }
             } else {
-                // Treat input as a single explicit file (single-end or R1)
-                guard exists else {
-                    print(formatter.error("Input not found: \(input)"))
-                    throw ExitCode.failure
+                // Multiple arguments: treat as explicit file paths
+                var fileURLs: [URL] = []
+                for path in input {
+                    let url = URL(fileURLWithPath: path)
+                    guard fm.fileExists(atPath: url.path) else {
+                        print(formatter.error("Input file not found: \(path)"))
+                        throw ExitCode.failure
+                    }
+                    fileURLs.append(url)
                 }
-                pairs = FASTQBatchImporter.detectPairs(from: [inputURL])
+                pairs = FASTQBatchImporter.detectPairs(from: fileURLs)
             }
 
             // MARK: Print detected pairs
