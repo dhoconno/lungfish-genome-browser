@@ -231,9 +231,10 @@ public actor TaxTriagePipeline {
         var tempRedirectDir: URL?
 
         if needsRedirect {
-            let safeDir = try ProjectTempDirectory.createFromContext(
+            let safeDir = try ProjectTempDirectory.create(
                 prefix: "taxtriage-",
-                contextURL: config.outputDirectory
+                contextURL: config.outputDirectory,
+                policy: .requireProjectContext
             )
             tempRedirectDir = safeDir
 

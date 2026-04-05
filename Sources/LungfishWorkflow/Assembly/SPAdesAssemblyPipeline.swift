@@ -434,9 +434,10 @@ public final class SPAdesAssemblyPipeline: @unchecked Sendable {
     /// `/input/1`, etc. The ``fileNameMap`` stores the full container path
     /// for each file (e.g. `/input/0/SRR1770413_1.fastq.gz`).
     private func createWorkspace(config: SPAdesAssemblyConfig) throws -> SPAdesWorkspace {
-        let tempDir = try ProjectTempDirectory.createFromContext(
+        let tempDir = try ProjectTempDirectory.create(
             prefix: "lungfish-spades-",
-            contextURL: config.outputDirectory
+            contextURL: config.outputDirectory,
+            policy: .requireProjectContext
         )
         let outputDir = config.outputDirectory.appendingPathComponent(config.projectName)
         try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)

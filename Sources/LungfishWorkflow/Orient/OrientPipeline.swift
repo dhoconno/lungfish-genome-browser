@@ -118,9 +118,10 @@ public final class OrientPipeline: @unchecked Sendable {
         }
 
         // Create work directory
-        let workDir = try ProjectTempDirectory.createFromContext(
+        let workDir = try ProjectTempDirectory.create(
             prefix: "lungfish-orient-",
-            contextURL: config.inputURL
+            contextURL: config.inputURL,
+            policy: .requireProjectContext
         )
 
         progress(0.05, "Starting orientation against reference...")

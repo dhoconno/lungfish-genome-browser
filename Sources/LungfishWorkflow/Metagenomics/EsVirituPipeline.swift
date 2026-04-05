@@ -394,9 +394,10 @@ public actor EsVirituPipeline {
             // copy results back later.
             let safeOutputDir: URL
             if config.outputDirectory.path.contains(" ") {
-                safeOutputDir = try ProjectTempDirectory.createFromContext(
+                safeOutputDir = try ProjectTempDirectory.create(
                     prefix: "esviritu-",
-                    contextURL: config.outputDirectory
+                    contextURL: config.outputDirectory,
+                    policy: .requireProjectContext
                 )
             } else {
                 safeOutputDir = config.outputDirectory

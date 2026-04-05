@@ -48,9 +48,10 @@ extension DemultiplexingPipeline {
         }
 
         let fm = FileManager.default
-        let workDir = try ProjectTempDirectory.createFromContext(
+        let workDir = try ProjectTempDirectory.create(
             prefix: "lungfish-scout-",
-            contextURL: inputURL
+            contextURL: inputURL,
+            policy: .requireProjectContext
         )
         defer { try? fm.removeItem(at: workDir) }
 
