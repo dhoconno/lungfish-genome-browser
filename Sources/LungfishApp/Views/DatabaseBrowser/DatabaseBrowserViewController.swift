@@ -1934,6 +1934,18 @@ public class DatabaseBrowserViewModel: ObservableObject {
             return
         }
 
+        // Confirm large batch downloads (>50 records)
+        if recordsToDownload.count > 50 {
+            let alert = NSAlert()
+            alert.messageText = "Download \(recordsToDownload.count) Records?"
+            alert.informativeText = "Downloading \(recordsToDownload.count) records will take a significant amount of time and bandwidth. Each record will be downloaded and processed individually."
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "Download All")
+            alert.addButton(withTitle: "Cancel")
+            let response = alert.runModal()
+            guard response == .alertFirstButtonReturn else { return }
+        }
+
         isDownloading = true
         downloadProgress = 0
         errorMessage = nil
@@ -3917,14 +3929,14 @@ public struct DatabaseBrowserView: View {
                 }
             }
 
-            // Warning when too many selected for download
+            // Info note when many records selected
             if viewModel.selectedRecords.count > maxDownloadLimit {
                 HStack(spacing: 4) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
-                    Text("To be respectful of NCBI servers, please select no more than \(maxDownloadLimit) records at a time.")
+                    Image(systemName: "info.circle")
+                        .foregroundColor(.secondary)
+                    Text("Downloading \(viewModel.selectedRecords.count) records may take a while. You will be asked to confirm.")
                         .font(.caption)
-                        .foregroundColor(.orange)
+                        .foregroundColor(.secondary)
                 }
                 .padding(.top, 2)
             }
@@ -4150,13 +4162,10 @@ public struct DatabaseBrowserView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(
                     viewModel.selectedRecords.isEmpty ||
-                    viewModel.selectedRecords.count > maxDownloadLimit ||
                     viewModel.isDownloading ||
                     viewModel.isSearching
                 )
-                .help(viewModel.selectedRecords.count > maxDownloadLimit
-                    ? "Select \(maxDownloadLimit) or fewer records to download"
-                    : "Download selected records")
+                .help("Download selected records")
             }
             .padding()
         }
