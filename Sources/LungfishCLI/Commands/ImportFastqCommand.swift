@@ -95,6 +95,12 @@ extension ImportCommand {
         )
         var force: Bool = false
 
+        @Flag(
+            name: .customLong("recursive"),
+            help: "Recursively scan directories for FASTQ files"
+        )
+        var recursive: Bool = false
+
         @OptionGroup var globalOptions: GlobalOptions
 
         /// Thread count sourced from the shared `--threads` / `-t` global option.
@@ -121,7 +127,11 @@ extension ImportCommand {
 
                 if exists && isDirectory.boolValue {
                     do {
-                        pairs = try FASTQBatchImporter.detectPairsFromDirectory(inputURL)
+                        if recursive {
+                            pairs = try FASTQBatchImporter.detectPairsFromDirectoryRecursive(inputURL)
+                        } else {
+                            pairs = try FASTQBatchImporter.detectPairsFromDirectory(inputURL)
+                        }
                     } catch let batchError as BatchImportError {
                         print(formatter.error(batchError.errorDescription ?? batchError.localizedDescription))
                         throw ExitCode.failure
@@ -262,12 +272,15 @@ extension ImportCommand {
                 print("")
             }
 
+            let isJSON = globalOptions.outputFormat == .json
             let result = await FASTQBatchImporter.runBatchImport(
                 pairs: pairs,
                 config: config,
                 log: { event in
-                    let json = FASTQBatchImporter.encodeLogEvent(event)
-                    print(json)
+                    if isJSON || !globalOptions.quiet {
+                        let json = FASTQBatchImporter.encodeLogEvent(event)
+                        print(json)
+                    }
                 }
             )
 

@@ -132,6 +132,23 @@ final class ImportFastqCommandTests: XCTestCase {
         XCTAssertEqual(command.compression, "fast")
     }
 
+    func testParseRecursiveFlag() throws {
+        let command = try ImportCommand.FastqSubcommand.parse([
+            "/data/sequencing_run/",
+            "--project", "/projects/Test.lungfish",
+            "--recursive",
+        ])
+        XCTAssertTrue(command.recursive)
+    }
+
+    func testParseRecursiveDefaultFalse() throws {
+        let command = try ImportCommand.FastqSubcommand.parse([
+            "/data/fastq_dir",
+            "--project", "/projects/Test.lungfish",
+        ])
+        XCTAssertFalse(command.recursive)
+    }
+
     func testParseAllFlagsCombined() throws {
         let command = try ImportCommand.FastqSubcommand.parse([
             "/data/fastq_dir",
