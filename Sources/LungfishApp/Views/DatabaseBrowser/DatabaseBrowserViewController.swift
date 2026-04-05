@@ -2541,9 +2541,9 @@ public class DatabaseBrowserViewModel: ObservableObject {
                         )
                     }
 
-                    // Use a project directory derived from the batch directory
-                    // The CLI creates bundles in <projectDir>/Imports/
-                    let projectDirectory = batchDir
+                    // Use the real project directory so CLI creates bundles
+                    // directly in <project>.lungfish/Imports/ (not inside .tmp/)
+                    let projectDirectory = projectURL ?? batchDir
 
                     let args = CLIImportRunner.buildCLIArguments(
                         r1: r1URL,
@@ -2604,7 +2604,12 @@ public class DatabaseBrowserViewModel: ObservableObject {
                     logger.info("startENADownloadTask: Created bundle at \(bundleURL.path, privacy: .public)")
                     downloadedURLs.append(bundleURL)
 
-                    // Deliver bundle immediately so it appears in Downloads/ right away
+                    // Clean up raw downloaded FASTQ files from batch staging dir
+                    for rawFile in downloadedFASTQFiles {
+                        try? FileManager.default.removeItem(at: rawFile)
+                    }
+
+                    // Deliver bundle immediately so it appears in sidebar right away
                     let deliverURL = bundleURL
                     performOnMainRunLoop {
                         DownloadCenter.shared.onBundleReady?([deliverURL])
@@ -2623,6 +2628,10 @@ public class DatabaseBrowserViewModel: ObservableObject {
                     }
                 }
             }
+
+            // Clean up the batch staging directory (raw FASTQs already removed per-record)
+            try? FileManager.default.removeItem(at: batchDir)
+            logger.info("startENADownloadTask: Cleaned up batch staging dir")
 
             // Complete — bundles were already delivered incrementally via onBundleReady
             let finalDownloadedCount = downloadedURLs.count
