@@ -8,15 +8,33 @@ import XCTest
 // MARK: - EsVirituConfigTests
 
 /// Tests for ``EsVirituConfig`` construction, validation, and argument building.
+///
+/// Fixture directories use `test-esviritu-` prefixes (not `esviritu-test-`) to avoid
+/// colliding with the debug escaped-temp scanner's production prefix list.
+/// All fixture dirs are tracked and removed in teardown.
 final class EsVirituConfigTests: XCTestCase {
+
+    // MARK: - Fixture Tracking
+
+    /// All temp directories created by fixture helpers, cleaned up in teardown.
+    private var createdTempDirs: [URL] = []
+
+    override func tearDown() {
+        for dir in createdTempDirs {
+            try? FileManager.default.removeItem(at: dir)
+        }
+        createdTempDirs.removeAll()
+        super.tearDown()
+    }
 
     // MARK: - Test Fixtures
 
     /// Creates a temporary directory to serve as a fake EsViritu database.
     private func makeFakeDatabaseDirectory() throws -> URL {
         let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("esviritu-test-db-\(UUID().uuidString)")
+            .appendingPathComponent("test-esviritu-db-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        createdTempDirs.append(tempDir)
 
         // Create a marker file so validation passes.
         try Data("fake".utf8).write(
@@ -29,8 +47,9 @@ final class EsVirituConfigTests: XCTestCase {
     /// Creates a temporary FASTQ file.
     private func makeFakeFastqFile(name: String = "test.fastq") throws -> URL {
         let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("esviritu-test-\(UUID().uuidString)")
+            .appendingPathComponent("test-esviritu-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        createdTempDirs.append(tempDir)
 
         let fastqURL = tempDir.appendingPathComponent(name)
         let content = """
@@ -46,8 +65,9 @@ final class EsVirituConfigTests: XCTestCase {
     /// Creates a temporary output directory.
     private func makeOutputDirectory() throws -> URL {
         let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("esviritu-output-\(UUID().uuidString)")
+            .appendingPathComponent("test-esviritu-output-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        createdTempDirs.append(tempDir)
         return tempDir
     }
 

@@ -753,8 +753,25 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     }
 
 #if DEBUG
+    /// Timestamp captured at app launch — the debug scanner only asserts on
+    /// directories created after this point, avoiding false positives from
+    /// test fixtures or stale temp dirs from previous sessions.
+    private let debugSessionStartDate = Date()
+
+    /// Prefixes used exclusively by test fixtures — never match these in the
+    /// escaped-temp scanner since they are test artifacts, not runtime escapes.
+    private static let testFixturePrefixes = [
+        "esviritu-test-",
+        "esviritu-test-db-",
+        "test-esviritu-",
+        "test-esviritu-db-",
+    ]
+
     /// Scans system temp for lungfish-* directories that should be in project .tmp/.
     /// Called periodically in debug builds to catch regressions.
+    ///
+    /// Only asserts on directories created during the current app session and
+    /// excludes known test fixture prefixes to prevent false positives.
     private func debugScanForEscapedTempDirs() {
         let systemTemp = FileManager.default.temporaryDirectory
         let fm = FileManager.default
@@ -763,9 +780,6 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             includingPropertiesForKeys: [.creationDateKey],
             options: [.skipsHiddenFiles]
         ) else { return }
-
-        // Only check directories created in the last hour (current session)
-        let oneHourAgo = Date().addingTimeInterval(-3600)
 
         // Every prefix used by ProjectTempDirectory.create/createFromContext across
         // the codebase. Matches both old-style "lungfish-*" and new short prefixes.
@@ -794,12 +808,17 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         for item in contents {
             let name = item.lastPathComponent
+
+            // Skip known test fixture prefixes — these are test artifacts, not runtime escapes
+            let isTestFixture = Self.testFixturePrefixes.contains { name.hasPrefix($0) }
+            guard !isTestFixture else { continue }
+
             let matchesPrefix = escapedPrefixes.contains { name.hasPrefix($0) }
             guard matchesPrefix else { continue }
 
-            // Check if it was created recently (this session)
+            // Only assert on directories created during the current app session
             let attrs = try? item.resourceValues(forKeys: [.creationDateKey])
-            guard let created = attrs?.creationDate, created > oneHourAgo else { continue }
+            guard let created = attrs?.creationDate, created > debugSessionStartDate else { continue }
 
             appDelegateLogger.warning("DEBUG: Found escaped temp dir in system temp: \(name, privacy: .public). Should be in project .tmp/")
             assertionFailure("Escaped temp dir found in system temp: \(name). Use ProjectTempDirectory.createFromContext() instead.")
