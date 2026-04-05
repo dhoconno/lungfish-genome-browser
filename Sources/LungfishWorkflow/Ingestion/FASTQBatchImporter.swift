@@ -1189,35 +1189,50 @@ public enum FASTQBatchImporter {
         let avgQual = dbl("AvgQual")
         let gc = dbl("GC(%)")
 
-        // 2. Sampled read-length histogram via seqkit head + fx2tab (~0.2s for 100k reads)
-        //    The histogram is used for the length-distribution chart only — approximate is fine.
-        //    All numeric metrics (N50, median, Q20/Q30) come from the full seqkit stats above.
-        var histogram: [Int: Int] = [:]
-        let seqkitURL = try await runner.findTool(.seqkit)
-        let histProc = Process()
-        histProc.executableURL = URL(fileURLWithPath: "/bin/sh")
-        histProc.arguments = ["-c", "'\(seqkitURL.path)' head -n 100000 '\(fastqURL.path)' 2>/dev/null | '\(seqkitURL.path)' fx2tab --length --name /dev/stdin 2>/dev/null"]
-        let histPipe = Pipe()
-        histProc.standardOutput = histPipe
-        histProc.standardError = FileHandle.nullDevice
+        // 2. Sampled distributions from first 100k reads (~1-2s).
+        //    Extract a subset via seqkit head, then run FASTQStatisticsCollector
+        //    for length histogram + quality score histogram + per-position quality.
+        //    These are used for charts only — approximate is fine.
+        //    Exact numeric metrics (N50, median, Q20/Q30) come from the full seqkit
+        //    stats pass above.
+        let sampleSize = 100_000
+        var sampledHistogram: [Int: Int] = [:]
+        var qualityScoreHistogram: [UInt8: Int] = [:]
+        var perPositionQuality: [PositionQualitySummary] = []
+
         do {
-            try histProc.run()
-            let histData = histPipe.fileHandleForReading.readDataToEndOfFile()
-            histProc.waitUntilExit()
-            if let histOutput = String(data: histData, encoding: .utf8) {
-                for line in histOutput.split(whereSeparator: \.isNewline) {
-                    let parts = line.split(separator: "\t")
-                    if parts.count >= 2, let len = Int(parts.last!) {
-                        histogram[len, default: 0] += 1
-                    }
-                }
+            let seqkitURL = try await runner.findTool(.seqkit)
+            let sampleFile = fastqURL.deletingLastPathComponent()
+                .appendingPathComponent(".stats-sample-\(UUID().uuidString).fq.gz")
+            defer { try? FileManager.default.removeItem(at: sampleFile) }
+
+            // Extract first 100k reads to temp file
+            let headResult = try await runner.runProcess(
+                executableURL: seqkitURL,
+                arguments: ["head", "-n", "\(sampleSize)", "-o", sampleFile.path, fastqURL.path],
+                timeout: 120
+            )
+            guard headResult.isSuccess else {
+                logger.warning("seqkit head failed: \(headResult.stderr) — quality plots will be empty")
+                throw NSError(domain: "stats", code: 1)
             }
+
+            // Run FASTQStatisticsCollector on the sample for distributions
+            let collector = FASTQStatisticsCollector()
+            let reader = FASTQReader(validateSequence: false)
+            for try await record in reader.records(from: sampleFile) {
+                collector.process(record)
+            }
+            let sampled = collector.finalize()
+            sampledHistogram = sampled.readLengthHistogram
+            qualityScoreHistogram = sampled.qualityScoreHistogram
+            perPositionQuality = sampled.perPositionQuality
         } catch {
-            logger.warning("Sampled histogram failed: \(error) — chart will be empty")
+            logger.warning("Sampled quality distributions failed: \(error) — charts may be empty")
         }
 
-        // 3. Use seqkit stats values directly (exact from full file scan)
-        //    Q2 = median length, N50 reported directly by seqkit stats -a
+        // 3. Build final statistics: exact metrics from seqkit, distributions from sample.
+        //    Q2 = median length, N50 reported directly by seqkit stats -a.
         let medianLen = int("Q2")
         let n50Len = int("N50")
 
@@ -1233,9 +1248,9 @@ public enum FASTQBatchImporter {
             q20Percentage: q20,
             q30Percentage: q30,
             gcContent: gc / 100.0,
-            readLengthHistogram: histogram,
-            qualityScoreHistogram: [:],
-            perPositionQuality: []
+            readLengthHistogram: sampledHistogram,
+            qualityScoreHistogram: qualityScoreHistogram,
+            perPositionQuality: perPositionQuality
         )
 
         let seqkitMeta = SeqkitStatsMetadata(
@@ -1251,7 +1266,7 @@ public enum FASTQBatchImporter {
         metadata.seqkitStats = seqkitMeta
         FASTQMetadataStore.save(metadata, for: fastqURL)
 
-        logger.info("Statistics cached: \(numSeqs) reads, N50=\(n50Len), Q30=\(String(format: "%.1f", q30))%, histogram bins=\(histogram.count)")
+        logger.info("Statistics cached: \(numSeqs) reads, N50=\(n50Len), Q30=\(String(format: "%.1f", q30))%, histogram bins=\(sampledHistogram.count), qPositions=\(perPositionQuality.count)")
     }
 
     // MARK: - Private Helpers
