@@ -277,9 +277,10 @@ public enum FASTQIngestionService {
         let title = "FASTQ Import: \(bundleName)"
 
         let cliCmd: String = {
-            var args = [pair.r1.path]
+            var args = ["lungfish-cli", "import", "fastq", pair.r1.path]
             if let r2 = pair.r2 { args.append(r2.path) }
-            return "# lungfish import fastq " + args.joined(separator: " ") + " (CLI command not yet available \u{2014} use GUI)"
+            args += ["--project", projectDirectory.path, "--format", "json"]
+            return args.joined(separator: " ")
         }()
         let opID = OperationCenter.shared.start(
             title: title,
@@ -333,13 +334,12 @@ public enum FASTQIngestionService {
         )
     }
 
-    /// Ingests using FASTQBatchImporter (shared code path with CLI).
+    /// Ingests using CLIImportRunner subprocess (shared code path with CLI).
     ///
-    /// Converts the GUI's `FASTQImportConfiguration` into a
-    /// `FASTQBatchImporter.ImportConfig` and delegates to `runBatchImport`.
-    /// Progress is bridged to `OperationCenter` via the structured log callback.
-    /// After the batch importer creates the bundle, this method computes FASTQ
-    /// statistics and records provenance (which the batch importer does not do).
+    /// Spawns `lungfish-cli import fastq` as a subprocess, parses its JSON progress
+    /// events, and bridges them to ``OperationCenter`` for the Operations Panel.
+    /// After the CLI creates the bundle, this method computes FASTQ statistics
+    /// and records provenance (which the CLI does not do).
     nonisolated private static func runIngestAndBundle(
         pair: FASTQFilePair,
         projectDirectory: URL,
@@ -363,105 +363,65 @@ public enum FASTQIngestionService {
         }
 
         do {
-            // 1. Map LungfishIO.SequencingPlatform -> LungfishWorkflow.SequencingPlatform
-            let workflowPlatform: LungfishWorkflow.SequencingPlatform
+            // 1. Map GUI platform to CLI string
+            let platformStr: String
             switch importConfig.confirmedPlatform {
-            case .illumina:       workflowPlatform = .illumina
-            case .oxfordNanopore: workflowPlatform = .ont
-            case .pacbio:         workflowPlatform = .pacbio
-            case .ultima:         workflowPlatform = .ultima
-            default:              workflowPlatform = .illumina
+            case .illumina:       platformStr = "illumina"
+            case .oxfordNanopore: platformStr = "ont"
+            case .pacbio:         platformStr = "pacbio"
+            case .ultima:         platformStr = "ultima"
+            default:              platformStr = "illumina"
             }
 
-            // 2. Resolve recipe: prefer new-format (RecipeRegistryV2) for VSP2,
-            //    fall back to old-format ProcessingRecipe for other recipes.
-            let resolvedOldRecipe = importConfig.postImportRecipe?
-                .resolved(with: importConfig.resolvedPlaceholders)
-            var newRecipe: Recipe? = nil
-            var oldRecipe: ProcessingRecipe? = nil
-            if let recipe = resolvedOldRecipe, !recipe.steps.isEmpty {
-                // Check if a new-format declarative recipe exists for this pipeline
-                if let nr = RecipeRegistryV2.allRecipes().first(where: {
-                    $0.name.lowercased().contains("vsp2") && recipe.name.lowercased().contains("vsp2")
-                }) {
-                    newRecipe = nr
-                } else {
-                    oldRecipe = recipe
-                }
-            }
-
-            // 3. Build FASTQBatchImporter.ImportConfig
-            let batchConfig = FASTQBatchImporter.ImportConfig(
-                projectDirectory: projectDirectory,
-                platform: workflowPlatform,
-                recipe: oldRecipe,
-                newRecipe: newRecipe,
-                qualityBinning: importConfig.qualityBinning,
-                optimizeStorage: !importConfig.skipClumpify,
-                threads: ProcessInfo.processInfo.activeProcessorCount,
-                forceReimport: true  // GUI always imports (conflict resolution handled by caller)
-            )
-
-            // 4. Build SamplePair — use bundleName as sample name so the batch
-            //    importer creates `Imports/<bundleName>.lungfishfastq`.
-            let samplePair = SamplePair(
-                sampleName: bundleName,
-                r1: pair.r1,
-                r2: pair.r2
-            )
-
-            // 5. Track whether the batch importer delivered a terminal event.
-            //    We use a class for shared mutation across the @Sendable log closure.
-            final class CompletionTracker: @unchecked Sendable {
-                var bundleURL: URL? = nil
-                var errorMessage: String? = nil
-            }
-            let tracker = CompletionTracker()
-
-            // 6. Run the batch importer with progress bridging to OperationCenter.
-            let batchResult = await FASTQBatchImporter.runBatchImport(
-                pairs: [samplePair],
-                config: batchConfig,
-                log: { event in
-                    switch event {
-                    case .stepStart(_, let step, let stepIndex, let totalSteps):
-                        let fraction = Double(stepIndex) / Double(max(1, totalSteps + 1))
-                        DispatchQueue.main.async {
-                            MainActor.assumeIsolated {
-                                OperationCenter.shared.update(
-                                    id: opID,
-                                    progress: fraction * 0.80,
-                                    detail: "\(bundleName): \(step)"
-                                )
-                                OperationCenter.shared.log(id: opID, level: .info, message: step)
-                            }
-                        }
-                    case .stepComplete(_, let step, let duration):
-                        DispatchQueue.main.async {
-                            MainActor.assumeIsolated {
-                                OperationCenter.shared.log(
-                                    id: opID,
-                                    level: .info,
-                                    message: "\(step) completed (\(String(format: "%.1f", duration))s)"
-                                )
-                            }
-                        }
-                    case .sampleComplete(_, let bundle, _, _, _):
-                        // Record the bundle path for post-processing
-                        let bundleURL = projectDirectory
-                            .appendingPathComponent("Imports")
-                            .appendingPathComponent(bundle)
-                        tracker.bundleURL = bundleURL
-                    case .sampleFailed(_, let error):
-                        tracker.errorMessage = error
-                    default:
-                        break
+            // 2. Resolve recipe name — check for new-format VSP2 first, fall back to old recipe name
+            let recipeName: String? = {
+                guard let recipe = importConfig.postImportRecipe, !recipe.steps.isEmpty else { return nil }
+                if recipe.name.lowercased().contains("vsp2") {
+                    if let nr = RecipeRegistryV2.allRecipes().first(where: { $0.name.lowercased().contains("vsp2") }) {
+                        return nr.id
                     }
                 }
+                return recipe.name.lowercased()
+            }()
+
+            // 3. Resolve compression level (Task 6 adds FASTQImportConfiguration.compressionLevel;
+            //    until then default to 6 which maps to "balanced")
+            let compressionLevel = 6
+
+            // 4. Build CLI arguments
+            let qualityBinning = importConfig.qualityBinning != .none
+            let optimizeStorage = !importConfig.skipClumpify
+
+            let args = CLIImportRunner.buildCLIArguments(
+                r1: pair.r1,
+                r2: pair.r2,
+                projectDirectory: projectDirectory,
+                platform: platformStr,
+                recipeName: recipeName,
+                qualityBinning: qualityBinning,
+                optimizeStorage: optimizeStorage,
+                compressionLevel: compressionLevel
             )
 
-            // 7. Handle failure
-            if let errorMsg = tracker.errorMessage {
+            // 5. Spawn CLI runner and track results via @unchecked Sendable tracker
+            //    (closures are @Sendable so we cannot capture local vars directly).
+            final class ResultTracker: @unchecked Sendable {
+                var bundleURL: URL?
+                var errorMessage: String?
+            }
+            let tracker = ResultTracker()
+
+            let runner = CLIImportRunner()
+            await runner.run(
+                arguments: args,
+                operationID: opID,
+                projectDirectory: projectDirectory,
+                onBundleCreated: { url in tracker.bundleURL = url },
+                onError: { error in tracker.errorMessage = error }
+            )
+
+            // 6. Handle failure
+            if let errorMsg = tracker.errorMessage, tracker.bundleURL == nil {
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         OperationCenter.shared.fail(id: opID, detail: errorMsg)
@@ -474,11 +434,8 @@ public enum FASTQIngestionService {
                 return
             }
 
-            // If no bundle was produced (e.g. skipped), treat as error
             guard let bundleURL = tracker.bundleURL else {
-                let msg = batchResult.failed > 0
-                    ? "Import failed"
-                    : "Import produced no output (skipped: \(batchResult.skipped))"
+                let msg = "Import produced no output bundle"
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         OperationCenter.shared.fail(id: opID, detail: msg)
@@ -491,7 +448,7 @@ public enum FASTQIngestionService {
                 return
             }
 
-            // 8. Post-processing: compute FASTQ statistics (batch importer doesn't do this)
+            // 7. Post-processing: compute FASTQ statistics (CLI doesn't do this)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     OperationCenter.shared.update(
@@ -530,15 +487,14 @@ public enum FASTQIngestionService {
                 )
             }
 
-            // 9. Record provenance
-            let resolvedRecipeName = newRecipe?.name ?? oldRecipe?.name
+            // 8. Record provenance
             var parameters: [String: ParameterValue] = [
                 "platform": .string(importConfig.confirmedPlatform.rawValue),
                 "pairingMode": .string(importConfig.pairingMode.rawValue),
                 "qualityBinning": .string(importConfig.qualityBinning.rawValue),
                 "skipClumpify": .boolean(importConfig.skipClumpify),
             ]
-            if let recipeName = resolvedRecipeName {
+            if let recipeName {
                 parameters["recipe"] = .string(recipeName)
             }
             let runID = await ProvenanceRecorder.shared.beginRun(
@@ -548,9 +504,9 @@ public enum FASTQIngestionService {
             await ProvenanceRecorder.shared.completeRun(runID, status: .completed)
             try? await ProvenanceRecorder.shared.save(runID: runID, to: bundleURL)
 
-            // 10. Complete
+            // 9. Complete
             let detail = "Imported \(bundleURL.lastPathComponent)"
-            logger.info("ingestAndBundle: Created bundle \(bundleURL.lastPathComponent) via FASTQBatchImporter")
+            logger.info("ingestAndBundle: Created bundle \(bundleURL.lastPathComponent) via CLIImportRunner")
 
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
