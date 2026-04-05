@@ -5,10 +5,10 @@ import XCTest
 
 final class FASTQProjectSimulationTests: XCTestCase {
     private func makeProject() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("FASTQProjectSimulation-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
+        let projectDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FASTQProjectSimulation-\(UUID().uuidString).lungfish", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectDir, withIntermediateDirectories: true)
+        return projectDir
     }
 
     private func makeFASTQBundle(
