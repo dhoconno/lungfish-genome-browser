@@ -971,14 +971,18 @@ public actor NCBIService: DatabaseService {
     }
 
     /// Parses NCBI SRA EFetch runinfo CSV to extract run accessions.
+    ///
+    /// Only returns values that match SRA run accession patterns (SRR/ERR/DRR + digits).
     public static func parseRunInfoCSV(_ csv: String) -> [String] {
+        let runPattern = /^[SED]RR\d+$/
         let lines = csv.components(separatedBy: .newlines)
         guard lines.count > 1 else { return [] }
         return lines.dropFirst().compactMap { line -> String? in
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             guard !trimmed.isEmpty else { return nil }
             let run = trimmed.components(separatedBy: ",").first?.trimmingCharacters(in: .whitespaces) ?? ""
-            return run.isEmpty ? nil : run
+            guard !run.isEmpty, run.wholeMatch(of: runPattern) != nil else { return nil }
+            return run
         }
     }
 

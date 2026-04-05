@@ -1195,6 +1195,7 @@ public class DatabaseBrowserViewModel: ObservableObject {
         let capturedSRAPubDateFrom: String? = isSRASearch ? sraPubDateFrom.trimmingCharacters(in: .whitespaces) : nil
         let capturedSRAPubDateTo: String? = isSRASearch ? sraPubDateTo.trimmingCharacters(in: .whitespaces) : nil
         let capturedImportedAccessions = importedAccessions
+        importedAccessions = []  // Clear after capture to prevent stale reuse on next search
         let capturedSRAResultLimit = isSRASearch ? sraResultLimit : 200
 
         // Capture services as they are actors (safe to use across isolation boundaries)
@@ -1546,8 +1547,7 @@ public class DatabaseBrowserViewModel: ObservableObject {
                             )
                             switch action {
                             case .cancel:
-                                searchResults = SearchResults(totalCount: 0, records: [], hasMore: false, nextCursor: nil)
-                                break
+                                throw CancellationError()
                             case .firstThousand:
                                 let expandedLimit = min(1_000, esearchResult.totalCount)
                                 esearchResult = try await ncbi.sraESearch(term: sraSearchTerm, retmax: expandedLimit)
