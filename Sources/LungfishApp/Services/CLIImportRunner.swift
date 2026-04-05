@@ -272,6 +272,18 @@ public actor CLIImportRunner {
 
         self.process = proc
 
+        // Update status before launching so the user sees we're past the slot wait
+        let opID = operationID
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                OperationCenter.shared.update(
+                    id: opID,
+                    progress: 0.01,
+                    detail: "Launching import pipeline\u{2026}"
+                )
+            }
+        }
+
         do {
             try proc.run()
         } catch {
@@ -279,137 +291,171 @@ public actor CLIImportRunner {
             logger.error("\(msg, privacy: .public)")
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    OperationCenter.shared.fail(id: operationID, detail: msg, errorMessage: msg)
+                    OperationCenter.shared.fail(id: opID, detail: msg, errorMessage: msg)
                 }
             }
             onError(msg)
             return
         }
 
-        // Read all stdout and parse line by line
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        proc.waitUntilExit()
+        // Stream stdout line-by-line for real-time progress updates.
+        // We use readabilityHandler on a GCD dispatch source so events
+        // reach OperationCenter as the CLI emits them, not after exit.
+        let stdoutHandle = stdoutPipe.fileHandleForReading
 
-        let output = String(data: stdoutData, encoding: .utf8) ?? ""
-        let lines = output.components(separatedBy: .newlines)
+        // Mutable state shared across the @Sendable readabilityHandler callback.
+        final class StreamState: @unchecked Sendable {
+            var stdoutBuffer = Data()
+            var stderrBuffer = Data()
+            var totalSamples = 1
+        }
+        let state = StreamState()
 
-        var totalSamples = 1  // default if importStart not received
+        // Collect stderr in background to avoid pipe deadlock
+        let stderrHandle = stderrPipe.fileHandleForReading
+        stderrHandle.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            if !chunk.isEmpty { state.stderrBuffer.append(chunk) }
+        }
 
-        for line in lines {
-            guard !line.isEmpty else { continue }
+        // Process stdout lines as they arrive
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            stdoutHandle.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                guard !chunk.isEmpty else {
+                    // EOF — process closed stdout
+                    stdoutHandle.readabilityHandler = nil
+                    continuation.resume()
+                    return
+                }
+                state.stdoutBuffer.append(chunk)
 
-            do {
-                guard let event = try Self.parseEvent(from: line) else { continue }
+                // Process complete lines
+                while let newlineRange = state.stdoutBuffer.range(of: Data("\n".utf8)) {
+                    let lineData = state.stdoutBuffer.subdata(in: state.stdoutBuffer.startIndex..<newlineRange.lowerBound)
+                    state.stdoutBuffer.removeSubrange(state.stdoutBuffer.startIndex..<newlineRange.upperBound)
 
-                let opID = operationID
-                switch event {
-                case let .importStart(sampleCount, _):
-                    totalSamples = max(sampleCount, 1)
+                    guard let lineStr = String(data: lineData, encoding: .utf8),
+                          !lineStr.isEmpty else { continue }
 
-                case let .sampleStart(sample, index, total, _, _):
-                    totalSamples = max(total, 1)
-                    let progress = Double(index) / Double(totalSamples)
-                    let currentTotal = totalSamples
-                    DispatchQueue.main.async {
-                        MainActor.assumeIsolated {
-                            OperationCenter.shared.update(
-                                id: opID,
-                                progress: progress,
-                                detail: "Importing \(sample) (\(index + 1)/\(currentTotal))"
-                            )
+                    do {
+                        guard let event = try Self.parseEvent(from: lineStr) else { continue }
+
+                        switch event {
+                        case let .importStart(sampleCount, _):
+                            state.totalSamples = max(sampleCount, 1)
+
+                        case let .sampleStart(sample, index, total, _, _):
+                            state.totalSamples = max(total, 1)
+                            let progress = Double(index) / Double(state.totalSamples)
+                            let currentTotal = state.totalSamples
+                            DispatchQueue.main.async {
+                                MainActor.assumeIsolated {
+                                    OperationCenter.shared.update(
+                                        id: opID,
+                                        progress: progress * 0.05,
+                                        detail: "Importing \(sample) (\(index + 1)/\(currentTotal))"
+                                    )
+                                }
+                            }
+
+                        case let .stepStart(sample, step, stepIndex, totalSteps):
+                            let fraction = Double(stepIndex) / Double(max(1, totalSteps + 1))
+                            DispatchQueue.main.async {
+                                MainActor.assumeIsolated {
+                                    OperationCenter.shared.update(
+                                        id: opID,
+                                        progress: fraction * 0.80,
+                                        detail: "\(sample): \(step)"
+                                    )
+                                    OperationCenter.shared.log(
+                                        id: opID,
+                                        level: .info,
+                                        message: "\(sample) — step \(stepIndex + 1)/\(totalSteps): \(step)"
+                                    )
+                                }
+                            }
+
+                        case let .stepComplete(sample, step, durationSeconds):
+                            DispatchQueue.main.async {
+                                MainActor.assumeIsolated {
+                                    OperationCenter.shared.log(
+                                        id: opID,
+                                        level: .info,
+                                        message: "\(sample) — \(step) completed (\(String(format: "%.1f", durationSeconds))s)"
+                                    )
+                                }
+                            }
+
+                        case let .sampleComplete(sample, bundle, _, _, _):
+                            let bundleURL = projectDirectory
+                                .appendingPathComponent("Imports")
+                                .appendingPathComponent(bundle)
+                            DispatchQueue.main.async {
+                                MainActor.assumeIsolated {
+                                    OperationCenter.shared.log(
+                                        id: opID,
+                                        level: .info,
+                                        message: "\(sample) — bundle created"
+                                    )
+                                }
+                            }
+                            onBundleCreated(bundleURL)
+
+                        case let .sampleSkip(sample, reason):
+                            DispatchQueue.main.async {
+                                MainActor.assumeIsolated {
+                                    OperationCenter.shared.log(
+                                        id: opID,
+                                        level: .warning,
+                                        message: "\(sample) skipped: \(reason)"
+                                    )
+                                }
+                            }
+
+                        case let .sampleFailed(sample, error):
+                            DispatchQueue.main.async {
+                                MainActor.assumeIsolated {
+                                    OperationCenter.shared.log(
+                                        id: opID,
+                                        level: .error,
+                                        message: "\(sample) failed: \(error)"
+                                    )
+                                }
+                            }
+                            onError("\(sample): \(error)")
+
+                        case let .importComplete(completed, skipped, failed, totalDurationSeconds):
+                            DispatchQueue.main.async {
+                                MainActor.assumeIsolated {
+                                    OperationCenter.shared.log(
+                                        id: opID,
+                                        level: .info,
+                                        message: "Import complete — \(completed) done, \(skipped) skipped, \(failed) failed (\(String(format: "%.1f", totalDurationSeconds))s)"
+                                    )
+                                }
+                            }
                         }
-                    }
-
-                case let .stepStart(sample, step, stepIndex, totalSteps):
-                    DispatchQueue.main.async {
-                        MainActor.assumeIsolated {
-                            OperationCenter.shared.update(
-                                id: opID,
-                                progress: -1,  // indeterminate within sample
-                                detail: "\(sample): \(step)"
-                            )
-                            OperationCenter.shared.log(
-                                id: opID,
-                                level: .info,
-                                message: "\(sample) — step \(stepIndex + 1)/\(totalSteps): \(step)"
-                            )
-                        }
-                    }
-
-                case let .stepComplete(sample, step, durationSeconds):
-                    DispatchQueue.main.async {
-                        MainActor.assumeIsolated {
-                            OperationCenter.shared.log(
-                                id: opID,
-                                level: .info,
-                                message: "\(sample) — \(step) completed (\(String(format: "%.1f", durationSeconds))s)"
-                            )
-                        }
-                    }
-
-                case let .sampleComplete(sample, bundle, _, _, _):
-                    let bundleURL = URL(fileURLWithPath: bundle)
-                    DispatchQueue.main.async {
-                        MainActor.assumeIsolated {
-                            OperationCenter.shared.log(
-                                id: opID,
-                                level: .info,
-                                message: "\(sample) — bundle created"
-                            )
-                        }
-                    }
-                    onBundleCreated(bundleURL)
-
-                case let .sampleSkip(sample, reason):
-                    DispatchQueue.main.async {
-                        MainActor.assumeIsolated {
-                            OperationCenter.shared.log(
-                                id: opID,
-                                level: .warning,
-                                message: "\(sample) skipped: \(reason)"
-                            )
-                        }
-                    }
-
-                case let .sampleFailed(sample, error):
-                    DispatchQueue.main.async {
-                        MainActor.assumeIsolated {
-                            OperationCenter.shared.log(
-                                id: opID,
-                                level: .error,
-                                message: "\(sample) failed: \(error)"
-                            )
-                        }
-                    }
-                    onError("\(sample): \(error)")
-
-                case let .importComplete(completed, skipped, failed, totalDurationSeconds):
-                    DispatchQueue.main.async {
-                        MainActor.assumeIsolated {
-                            OperationCenter.shared.log(
-                                id: opID,
-                                level: .info,
-                                message: "Import complete — \(completed) done, \(skipped) skipped, \(failed) failed (\(String(format: "%.1f", totalDurationSeconds))s)"
-                            )
-                        }
+                    } catch {
+                        logger.warning("Failed to parse CLI event: \(error.localizedDescription, privacy: .public)")
                     }
                 }
-            } catch {
-                logger.warning("Failed to parse CLI event line: \(error.localizedDescription, privacy: .public)")
             }
         }
+
+        proc.waitUntilExit()
+        stderrHandle.readabilityHandler = nil
 
         // Handle non-zero exit
         let exitStatus = proc.terminationStatus
         if exitStatus != 0 {
-            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            let stderrOutput = String(data: stderrData, encoding: .utf8) ?? "Unknown error"
+            let stderrOutput = String(data: state.stderrBuffer, encoding: .utf8) ?? "Unknown error"
             let msg = "CLI exited with status \(exitStatus)"
             logger.error("\(msg, privacy: .public): \(stderrOutput, privacy: .public)")
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     OperationCenter.shared.fail(
-                        id: operationID,
+                        id: opID,
                         detail: msg,
                         errorMessage: msg,
                         errorDetail: stderrOutput
