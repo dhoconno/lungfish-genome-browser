@@ -2095,6 +2095,9 @@ public class DatabaseBrowserViewModel: ObservableObject {
         // the sheet controller which gets deallocated on dismissal.
         onDownloadStarted?()
 
+        // Capture project URL for project-local temp allocation
+        let batchProjectURL = DocumentManager.shared.activeProject?.url
+
         // Use Task.detached to break out of MainActor context.
         // This is critical when running in a modal sheet - regular Task {}
         // inherits MainActor isolation and may not execute due to the modal
@@ -2106,7 +2109,7 @@ public class DatabaseBrowserViewModel: ObservableObject {
 
             // Create a unique batch directory once for all downloads in this batch
             // This avoids filename collisions when records have the same accession
-            let batchDir = try ProjectTempDirectory.create(prefix: "batch-", in: nil)
+            let batchDir = try ProjectTempDirectory.create(prefix: "batch-", in: batchProjectURL)
             logger.info("performBatchDownload: Created batch directory at \(batchDir.path, privacy: .public)")
 
             for (index, record) in recordsToDownload.enumerated() {
@@ -2422,12 +2425,15 @@ public class DatabaseBrowserViewModel: ObservableObject {
         let optimizeStorage = !importConfig.skipClumpify
         let confirmedPlatform = importConfig.confirmedPlatform
 
+        // Capture project URL for project-local temp allocation
+        let projectURL = DocumentManager.shared.activeProject?.url
+
         Task.detached {
             var downloadedURLs: [URL] = []
             var failedCount = 0
             var failureDetails: [String] = []
 
-            let batchDir = try ProjectTempDirectory.create(prefix: "sra-batch-", in: nil)
+            let batchDir = try ProjectTempDirectory.create(prefix: "sra-batch-", in: projectURL)
             logger.info("startENADownloadTask: Created batch directory at \(batchDir.path, privacy: .public)")
 
             for (index, record) in records.enumerated() {
@@ -2598,6 +2604,12 @@ public class DatabaseBrowserViewModel: ObservableObject {
                     logger.info("startENADownloadTask: Created bundle at \(bundleURL.path, privacy: .public)")
                     downloadedURLs.append(bundleURL)
 
+                    // Deliver bundle immediately so it appears in Downloads/ right away
+                    let deliverURL = bundleURL
+                    performOnMainRunLoop {
+                        DownloadCenter.shared.onBundleReady?([deliverURL])
+                    }
+
                 } catch {
                     logger.error("startENADownloadTask: Failed for \(record.accession, privacy: .public): \(error, privacy: .public)")
                     failedCount += 1
@@ -2612,12 +2624,12 @@ public class DatabaseBrowserViewModel: ObservableObject {
                 }
             }
 
-            // Complete — deliver bundles through DownloadCenter
-            let finalDownloadedURLs = downloadedURLs
+            // Complete — bundles were already delivered incrementally via onBundleReady
+            let finalDownloadedCount = downloadedURLs.count
             let finalFailedCount = failedCount
             let finalFailureDetails = failureDetails
             performOnMainRunLoop {
-                if finalDownloadedURLs.isEmpty && finalFailedCount > 0 {
+                if finalDownloadedCount == 0 && finalFailedCount > 0 {
                     let reasonSummary = finalFailureDetails.prefix(3).joined(separator: "; ")
                     DownloadCenter.shared.fail(
                         id: downloadCenterTaskID,
@@ -2626,24 +2638,24 @@ public class DatabaseBrowserViewModel: ObservableObject {
                             : "Completed with \(finalFailedCount) failure(s): \(reasonSummary)"
                     )
                 } else {
-                    let bundleNames = finalDownloadedURLs.map { $0.deletingPathExtension().lastPathComponent }
                     let detail: String
                     if finalFailedCount > 0 {
                         let reasonSummary = finalFailureDetails.prefix(3).joined(separator: "; ")
-                        detail = "Completed \(finalDownloadedURLs.count) download(s), \(finalFailedCount) failed. \(reasonSummary)"
+                        detail = "Completed \(finalDownloadedCount) download(s), \(finalFailedCount) failed. \(reasonSummary)"
                     } else if totalCount == 1 {
-                        detail = "FASTQ ready: \(bundleNames.first ?? "unknown")"
+                        detail = "FASTQ ready"
                     } else {
-                        detail = "Completed \(finalDownloadedURLs.count) file(s)"
+                        detail = "Completed \(finalDownloadedCount) file(s)"
                     }
+                    // Don't pass bundleURLs — they were already delivered incrementally
                     DownloadCenter.shared.complete(
                         id: downloadCenterTaskID,
                         detail: detail,
-                        bundleURLs: finalDownloadedURLs
+                        bundleURLs: []
                     )
                 }
 
-                logger.info("startENADownloadTask: Complete - \(finalDownloadedURLs.count) downloaded, \(finalFailedCount) failed")
+                logger.info("startENADownloadTask: Complete - \(finalDownloadedCount) downloaded, \(finalFailedCount) failed")
             }
         }
     }
