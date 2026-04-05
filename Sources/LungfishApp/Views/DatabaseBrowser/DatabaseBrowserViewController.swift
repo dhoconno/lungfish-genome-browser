@@ -1137,6 +1137,14 @@ public class DatabaseBrowserViewModel: ObservableObject {
         let capturedPpINSDCFilter = pathoplexusINSDCFilter
         let largeResultThreshold = self.largeResultThreshold
 
+        // Capture SRA-specific filters
+        let capturedSRAPlatform: SRAPlatformFilter? = isSRASearch ? sraPlatformFilter : nil
+        let capturedSRAStrategy: SRAStrategyFilter? = isSRASearch ? sraStrategyFilter : nil
+        let capturedSRALayout: SRALayoutFilter? = isSRASearch ? sraLayoutFilter : nil
+        let capturedSRAMinMbases: String? = isSRASearch ? sraMinMbases.trimmingCharacters(in: .whitespaces) : nil
+        let capturedSRAPubDateFrom: String? = isSRASearch ? sraPubDateFrom.trimmingCharacters(in: .whitespaces) : nil
+        let capturedSRAPubDateTo: String? = isSRASearch ? sraPubDateTo.trimmingCharacters(in: .whitespaces) : nil
+
         // Capture services as they are actors (safe to use across isolation boundaries)
         let ncbi = ncbiService
         let ena = enaService
@@ -1378,30 +1386,153 @@ public class DatabaseBrowserViewModel: ObservableObject {
                     performOnMainRunLoop { [weak self] in
                         guard let self = self else { return }
                         self.objectWillChange.send()
-                        self.searchPhase = .loadingDetails
+                        self.searchPhase = .searching
                     }
-                    // Use searchReads() for SRA run data (SRR accessions) instead of search() which is for sequences
-                    logger.info("performSearch: Calling ENA searchReads for SRA data")
-                    let readRecords = try await ena.searchReads(term: query.term, limit: query.limit, offset: query.offset)
-                    // Convert ENAReadRecord to SearchResultRecord
-                    let records = readRecords.map { record -> SearchResultRecord in
-                        SearchResultRecord(
-                            id: record.runAccession,
-                            accession: record.runAccession,
-                            title: record.experimentTitle ?? "\(record.runAccession) - \(record.libraryStrategy ?? "Unknown") \(record.libraryLayout ?? "")",
-                            organism: nil,  // ENAReadRecord doesn't have organism
-                            length: record.baseCount,
-                            date: record.firstPublic,
-                            source: .ena
+
+                    let records: [SearchResultRecord]
+
+                    // Detect multi-accession input (paste or CSV import)
+                    let parsedAccessions = SRAAccessionParser.parseAccessionList(query.term)
+                    if parsedAccessions.count >= 2 {
+                        // Batch mode: multiple accessions pasted or imported
+                        logger.info("performSearch: Batch mode with \(parsedAccessions.count) accessions")
+                        performOnMainRunLoop { [weak self] in
+                            guard let self = self else { return }
+                            self.objectWillChange.send()
+                            self.searchPhase = .loadingDetails
+                        }
+
+                        let readRecords = try await ena.searchReadsBatch(
+                            accessions: parsedAccessions,
+                            concurrency: 10,
+                            progress: { [weak self] completed, total in
+                                performOnMainRunLoop { [weak self] in
+                                    guard let self = self else { return }
+                                    self.objectWillChange.send()
+                                    self.searchPhase = .loadingAllResults(loaded: completed, total: total)
+                                }
+                            }
                         )
+                        records = readRecords.map { record in
+                            SearchResultRecord(
+                                id: record.runAccession,
+                                accession: record.runAccession,
+                                title: record.experimentTitle ?? "\(record.runAccession) - \(record.libraryStrategy ?? "Unknown") \(record.libraryLayout ?? "")",
+                                organism: nil,
+                                length: record.baseCount,
+                                date: record.firstPublic,
+                                source: .ena
+                            )
+                        }
+
+                    } else if SRAAccessionParser.isSRAAccession(query.term.trimmingCharacters(in: .whitespaces)) {
+                        // Single accession: direct ENA filereport (fast path)
+                        logger.info("performSearch: Direct ENA lookup for single accession")
+                        performOnMainRunLoop { [weak self] in
+                            guard let self = self else { return }
+                            self.objectWillChange.send()
+                            self.searchPhase = .loadingDetails
+                        }
+                        let readRecords = try await ena.searchReads(term: query.term, limit: query.limit, offset: query.offset)
+                        records = readRecords.map { record in
+                            SearchResultRecord(
+                                id: record.runAccession,
+                                accession: record.runAccession,
+                                title: record.experimentTitle ?? "\(record.runAccession) - \(record.libraryStrategy ?? "Unknown") \(record.libraryLayout ?? "")",
+                                organism: nil,
+                                length: record.baseCount,
+                                date: record.firstPublic,
+                                source: .ena
+                            )
+                        }
+
+                    } else {
+                        // Non-accession query (title, organism, bioproject, author, free text)
+                        // Two-step: NCBI ESearch → EFetch run accessions → ENA batch lookup
+                        logger.info("performSearch: Two-step NCBI ESearch → ENA for non-accession query")
+
+                        // Step 1: Build SRA search term with advanced filters
+                        var sraClauses: [String] = [query.term]
+                        if let platformValue = capturedSRAPlatform?.entrezValue {
+                            sraClauses.append("\(platformValue)[Platform]")
+                        }
+                        if let strategyValue = capturedSRAStrategy?.entrezValue {
+                            sraClauses.append("\(strategyValue)[Strategy]")
+                        }
+                        if let layoutValue = capturedSRALayout?.entrezValue {
+                            sraClauses.append("\(layoutValue)[Layout]")
+                        }
+                        if let minMb = capturedSRAMinMbases, !minMb.isEmpty, let mbVal = Int(minMb) {
+                            sraClauses.append("\(mbVal):*[Mbases]")
+                        }
+                        let sraDateFrom = capturedSRAPubDateFrom ?? ""
+                        let sraDateTo = capturedSRAPubDateTo ?? ""
+                        if !sraDateFrom.isEmpty || !sraDateTo.isEmpty {
+                            let lower = sraDateFrom.isEmpty ? "1900/01/01" : sraDateFrom
+                            let upper = sraDateTo.isEmpty ? "3000/12/31" : sraDateTo
+                            sraClauses.append("\(lower):\(upper)[Publication Date]")
+                        }
+                        let sraSearchTerm = sraClauses.joined(separator: " AND ")
+                        logger.info("performSearch: SRA ESearch term = '\(sraSearchTerm, privacy: .public)'")
+
+                        let esearchResult = try await ncbi.sraESearch(term: sraSearchTerm, retmax: min(query.limit, 200))
+                        logger.info("performSearch: ESearch returned \(esearchResult.ids.count) UIDs out of \(esearchResult.totalCount) total")
+
+                        guard !esearchResult.ids.isEmpty else {
+                            searchResults = SearchResults(totalCount: 0, records: [], hasMore: false, nextCursor: nil)
+                            break
+                        }
+
+                        try Task.checkCancellation()
+
+                        // Step 2: EFetch to get SRR accessions
+                        performOnMainRunLoop { [weak self] in
+                            guard let self = self else { return }
+                            self.objectWillChange.send()
+                            self.searchPhase = .loadingDetails
+                        }
+                        let runAccessions = try await ncbi.sraEFetchRunAccessions(uids: esearchResult.ids)
+                        logger.info("performSearch: EFetch resolved \(runAccessions.count) run accessions")
+
+                        guard !runAccessions.isEmpty else {
+                            searchResults = SearchResults(totalCount: 0, records: [], hasMore: false, nextCursor: nil)
+                            break
+                        }
+
+                        try Task.checkCancellation()
+
+                        // Step 3: Batch ENA lookup for FASTQ metadata
+                        let readRecords = try await ena.searchReadsBatch(
+                            accessions: runAccessions,
+                            concurrency: 10,
+                            progress: { [weak self] completed, total in
+                                performOnMainRunLoop { [weak self] in
+                                    guard let self = self else { return }
+                                    self.objectWillChange.send()
+                                    self.searchPhase = .loadingAllResults(loaded: completed, total: total)
+                                }
+                            }
+                        )
+                        records = readRecords.map { record in
+                            SearchResultRecord(
+                                id: record.runAccession,
+                                accession: record.runAccession,
+                                title: record.experimentTitle ?? "\(record.runAccession) - \(record.libraryStrategy ?? "Unknown") \(record.libraryLayout ?? "")",
+                                organism: nil,
+                                length: record.baseCount,
+                                date: record.firstPublic,
+                                source: .ena
+                            )
+                        }
                     }
+
                     searchResults = SearchResults(
-                        totalCount: records.count,  // ENA searchReads doesn't return total count
+                        totalCount: records.count,
                         records: records,
-                        hasMore: records.count >= query.limit,
-                        nextCursor: records.count >= query.limit ? String(query.offset + records.count) : nil
+                        hasMore: false,
+                        nextCursor: nil
                     )
-                    logger.info("performSearch: ENA searchReads returned \(records.count) SRA runs")
+                    logger.info("performSearch: ENA search returned \(records.count) results")
 
                 case .pathoplexus:
                     performOnMainRunLoop { [weak self] in
