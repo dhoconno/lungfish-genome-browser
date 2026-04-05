@@ -323,6 +323,7 @@ public enum FASTQIngestionService {
             deleteOriginals: false,
             postImportRecipe: nil,
             resolvedPlaceholders: [:],
+            recipeName: nil,
             compressionLevel: nil
         )
         await runIngestAndBundle(
@@ -413,8 +414,11 @@ public enum FASTQIngestionService {
             default:              platformStr = "illumina"
             }
 
-            // 2. Resolve recipe name — check for new-format VSP2 first, fall back to old recipe name
+            // 2. Resolve recipe name — prefer V2 recipeName, fall back to legacy postImportRecipe
             let recipeName: String? = {
+                if let name = importConfig.recipeName {
+                    return name
+                }
                 guard let recipe = importConfig.postImportRecipe, !recipe.steps.isEmpty else { return nil }
                 if recipe.name.lowercased().contains("vsp2") {
                     if let nr = RecipeRegistryV2.allRecipes().first(where: { $0.name.lowercased().contains("vsp2") }) {

@@ -399,10 +399,15 @@ public final class FASTQImportConfigSheet: NSViewController {
         let binning = selectedBinning()
         let skipClumpify = clumpifyCheckbox.state == .off
 
-        // V2 recipes are displayed in the popup but the legacy ProcessingRecipe
-        // bridge is not yet wired — pass nil for now; the V2 recipe engine
-        // will handle execution in a future change.
         let recipe: ProcessingRecipe? = nil
+
+        // V2 recipe name from the popup (if recipe checkbox is on and a recipe is selected)
+        let selectedRecipeName: String? = {
+            guard recipeCheckbox.state == .on,
+                  recipePopup.indexOfSelectedItem >= 0,
+                  recipePopup.indexOfSelectedItem < allV2Recipes.count else { return nil }
+            return allV2Recipes[recipePopup.indexOfSelectedItem].id
+        }()
 
         let compressionLevel: CompressionLevel = {
             switch compressionPopup.indexOfSelectedItem {
@@ -425,6 +430,7 @@ public final class FASTQImportConfigSheet: NSViewController {
             deleteOriginals: false,
             postImportRecipe: recipe,
             resolvedPlaceholders: [:],
+            recipeName: selectedRecipeName,
             compressionLevel: compressionLevel
         )
 

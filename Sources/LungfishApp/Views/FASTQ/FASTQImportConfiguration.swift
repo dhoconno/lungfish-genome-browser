@@ -23,10 +23,13 @@ public struct FASTQImportConfiguration: Sendable {
     public let skipClumpify: Bool
     /// Whether to delete original files after successful ingestion.
     public let deleteOriginals: Bool
-    /// Optional processing recipe to apply after ingestion.
+    /// Optional processing recipe to apply after ingestion (legacy format).
     public let postImportRecipe: ProcessingRecipe?
     /// Filled placeholder values for the recipe, keyed by placeholder key.
     public let resolvedPlaceholders: [String: String]
+    /// V2 recipe identifier (e.g. "vsp2") to pass as `--recipe` to the CLI.
+    /// Takes precedence over `postImportRecipe` when set.
+    public let recipeName: String?
     /// Compression level for bgzip / clumpify output.
     public let compressionLevel: CompressionLevel?
 }
