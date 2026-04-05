@@ -320,12 +320,20 @@ public actor CLIImportRunner {
 
         // Process stdout lines as they arrive
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            // Guard against double-resume: readabilityHandler may deliver EOF more than once
+            let resumed = OSAllocatedUnfairLock(initialState: false)
+
             stdoutHandle.readabilityHandler = { handle in
                 let chunk = handle.availableData
                 guard !chunk.isEmpty else {
                     // EOF — process closed stdout
                     stdoutHandle.readabilityHandler = nil
-                    continuation.resume()
+                    let alreadyResumed = resumed.withLock { val -> Bool in
+                        if val { return true }
+                        val = true
+                        return false
+                    }
+                    if !alreadyResumed { continuation.resume() }
                     return
                 }
                 state.stdoutBuffer.append(chunk)
