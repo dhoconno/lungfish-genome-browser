@@ -935,6 +935,53 @@ public actor NCBIService: DatabaseService {
         return try await makeRequest(url: components.url!)
     }
 
+    // MARK: - SRA Search
+
+    /// Searches the SRA database via ESearch, returning UIDs and total count.
+    public func sraESearch(term: String, retmax: Int = 200, retstart: Int = 0) async throws -> ESearchSearchResult {
+        try await esearchWithCount(database: .sra, term: term, retmax: retmax, retstart: retstart)
+    }
+
+    /// Fetches SRR run accessions from SRA UIDs via EFetch runinfo CSV.
+    public func sraEFetchRunAccessions(uids: [String]) async throws -> [String] {
+        guard !uids.isEmpty else { return [] }
+
+        var allAccessions: [String] = []
+        let chunkSize = 200
+        for chunkStart in stride(from: 0, to: uids.count, by: chunkSize) {
+            let chunkEnd = min(chunkStart + chunkSize, uids.count)
+            let chunk = Array(uids[chunkStart..<chunkEnd])
+
+            var components = URLComponents(url: baseURL.appendingPathComponent("efetch.fcgi"), resolvingAgainstBaseURL: false)!
+            components.queryItems = [
+                URLQueryItem(name: "db", value: "sra"),
+                URLQueryItem(name: "id", value: chunk.joined(separator: ",")),
+                URLQueryItem(name: "rettype", value: "runinfo"),
+                URLQueryItem(name: "retmode", value: "csv")
+            ]
+            if let apiKey = apiKey {
+                components.queryItems?.append(URLQueryItem(name: "api_key", value: apiKey))
+            }
+
+            let data = try await makeRequest(url: components.url!)
+            let csvText = String(data: data, encoding: .utf8) ?? ""
+            allAccessions.append(contentsOf: Self.parseRunInfoCSV(csvText))
+        }
+        return allAccessions
+    }
+
+    /// Parses NCBI SRA EFetch runinfo CSV to extract run accessions.
+    public static func parseRunInfoCSV(_ csv: String) -> [String] {
+        let lines = csv.components(separatedBy: .newlines)
+        guard lines.count > 1 else { return [] }
+        return lines.dropFirst().compactMap { line -> String? in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { return nil }
+            let run = trimmed.components(separatedBy: ",").first?.trimmingCharacters(in: .whitespaces) ?? ""
+            return run.isEmpty ? nil : run
+        }
+    }
+
     /// Retrieves document summaries for UIDs.
     ///
     /// - Parameters:
