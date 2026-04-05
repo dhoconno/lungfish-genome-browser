@@ -153,10 +153,11 @@ public final class ImportCenterWindowController: NSWindowController, NSToolbarDe
             )
             segmented.segmentStyle = .texturedRounded
             segmented.selectedSegment = viewModel.selectedTab.segmentIndex
-            segmented.setWidth(100, forSegment: 0)
-            segmented.setWidth(80, forSegment: 1)
-            segmented.setWidth(160, forSegment: 2)
-            segmented.setWidth(95, forSegment: 3)
+            segmented.setWidth(130, forSegment: 0)  // Sequencing Reads
+            segmented.setWidth(100, forSegment: 1)  // Alignments
+            segmented.setWidth(80, forSegment: 2)   // Variants
+            segmented.setWidth(120, forSegment: 3)  // Classification
+            segmented.setWidth(95, forSegment: 4)   // References
             item.view = segmented
             item.label = "Category"
             item.toolTip = "Switch between import categories"
