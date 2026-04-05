@@ -722,6 +722,9 @@ public actor FASTQDerivativeService {
             let trimFilename = FASTQBundle.trimPositionFilename
             let trimURL = outputBundle.appendingPathComponent(trimFilename)
             try FASTQTrimPositionFile.write(finalRecords, to: trimURL)
+            // Write preview.fastq from the trimmed output so the viewport can display it
+            let previewURL = outputBundle.appendingPathComponent("preview.fastq")
+            try await writePreviewFASTQ(from: transformedFASTQ, to: previewURL)
             payload = .trim(trimPositionFilename: trimFilename)
         } else {
             // Subset: extract read IDs (deduplicate for PE data to avoid doubled reads)
