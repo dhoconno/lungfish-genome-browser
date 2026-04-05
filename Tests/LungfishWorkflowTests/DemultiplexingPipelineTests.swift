@@ -4,8 +4,9 @@ import XCTest
 
 final class DemultiplexingPipelineTests: XCTestCase {
     private func makeTempDir() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("DemultiplexingPipelineTests-\(UUID().uuidString)", isDirectory: true)
+        let projectDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DemultiplexingPipelineTests-\(UUID().uuidString).lungfish", isDirectory: true)
+        let dir = projectDir.appendingPathComponent("workspace", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -202,7 +203,7 @@ final class DemultiplexingPipelineTests: XCTestCase {
 
     func testFixedDualLinkedAdaptersMatchBothOrientations() async throws {
         let dir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
+        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
 
         let inputFASTQ = dir.appendingPathComponent("input.fastq")
         try writeFASTQ(
@@ -250,7 +251,7 @@ final class DemultiplexingPipelineTests: XCTestCase {
 
     func testVirtualDemuxPreservesInterleavedPairingModeFromBundleMetadata() async throws {
         let (tempDir, bundleURL, fastqURL) = try makeTempBundle(named: "root")
-        defer { try? FileManager.default.removeItem(at: tempDir) }
+        defer { try? FileManager.default.removeItem(at: tempDir.deletingLastPathComponent()) }
 
         try writeFASTQ(
             sequences: [
@@ -305,7 +306,7 @@ final class DemultiplexingPipelineTests: XCTestCase {
 
     func testVirtualSymmetricDemuxCachesStatisticsFromCanonicalTrimmedSequence() async throws {
         let (tempDir, bundleURL, fastqURL) = try makeTempBundle(named: "root")
-        defer { try? FileManager.default.removeItem(at: tempDir) }
+        defer { try? FileManager.default.removeItem(at: tempDir.deletingLastPathComponent()) }
 
         let kit = BarcodeKitRegistry.ontNativeBarcoding24
         guard let barcode = kit.barcodes.first(where: { $0.id == "barcode13" }) else {
@@ -364,7 +365,7 @@ final class DemultiplexingPipelineTests: XCTestCase {
 
     func testSingleEndExplicitAssignmentsDoNotRequireBothEnds() async throws {
         let tempDir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: tempDir) }
+        defer { try? FileManager.default.removeItem(at: tempDir.deletingLastPathComponent()) }
 
         let inputFASTQ = tempDir.appendingPathComponent("input.fastq")
         let outputDir = tempDir.appendingPathComponent("demux-out", isDirectory: true)
@@ -553,7 +554,7 @@ final class DemultiplexingPipelineTests: XCTestCase {
     /// Combinatorial dual kits without sample assignments should throw.
     func testCombinatorialDualWithoutAssignmentsThrows() async throws {
         let dir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
+        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
 
         let inputFASTQ = dir.appendingPathComponent("input.fastq")
         try writeFASTQ(sequences: ["ACGTACGTACGTACGT"], to: inputFASTQ)
