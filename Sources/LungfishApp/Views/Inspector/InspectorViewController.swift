@@ -442,6 +442,7 @@ public class InspectorViewController: NSViewController {
         viewModel.documentSectionViewModel.enaReadRecord = nil
         viewModel.documentSectionViewModel.ingestionMetadata = nil
         viewModel.documentSectionViewModel.fastqDerivativeManifest = nil
+        viewModel.documentSectionViewModel.analysisManifestEntries = []
 
         // Clear sample section
         viewModel.sampleSectionViewModel.clear()
@@ -564,9 +565,14 @@ public class InspectorViewController: NSViewController {
         let derivative = notification.userInfo?["fastqDerivativeManifest"] as? FASTQDerivedBundleManifest
         viewModel.documentSectionViewModel.updateFASTQDerivativeMetadata(derivative)
 
-        // Load FASTQ sample metadata if bundle URL is provided
+        // Load FASTQ sample metadata and analysis manifest if bundle URL is provided
         if let bundleURL = notification.userInfo?["bundleURL"] as? URL {
             viewModel.fastqMetadataSectionViewModel.load(from: bundleURL)
+            let projectURL = DocumentManager.shared.activeProject?.url
+            viewModel.documentSectionViewModel.updateAnalysisManifest(
+                bundleURL: bundleURL,
+                projectURL: projectURL
+            )
         }
 
         viewModel.selectedTab = .document

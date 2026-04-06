@@ -1,0 +1,214 @@
+// AnalysesSection.swift - Analysis history display for Inspector Document tab
+// Copyright (c) 2024 Lungfish Contributors
+// SPDX-License-Identifier: MIT
+
+import SwiftUI
+import LungfishIO
+
+// MARK: - AnalysesSection
+
+/// SwiftUI section displaying analysis history for a FASTQ bundle in the Inspector.
+///
+/// Shows each analysis run with its tool icon, name, relative timestamp, summary,
+/// and key parameters. Tapping an entry invokes the optional `onNavigate` callback.
+struct AnalysesSection: View {
+    let analyses: [AnalysisManifestEntry]
+    var onNavigate: ((AnalysisManifestEntry) -> Void)?
+
+    var body: some View {
+        Section {
+            if analyses.isEmpty {
+                Text("No analyses performed yet. Use the Operations panel to run classifications, assemblies, or alignments.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 4)
+            } else {
+                ForEach(analyses) { entry in
+                    AnalysisRow(entry: entry)
+                        .contentShape(Rectangle())
+                        .onTapGesture { onNavigate?(entry) }
+                }
+            }
+        } header: {
+            HStack {
+                Text("Analyses")
+                if !analyses.isEmpty {
+                    Text("(\(analyses.count))")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - AnalysisRow
+
+/// A single row in the analyses section, showing tool icon, name, timestamp, and summary.
+private struct AnalysisRow: View {
+    let entry: AnalysisManifestEntry
+
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            // Tool icon
+            Image(systemName: iconName(for: entry.tool))
+                .font(.title3)
+                .foregroundStyle(iconColor(for: entry.tool))
+                .frame(width: 24, height: 24, alignment: .center)
+
+            VStack(alignment: .leading, spacing: 2) {
+                // Display name + timestamp
+                HStack {
+                    Text(entry.displayName)
+                        .font(.callout)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+
+                    Spacer()
+
+                    Text(isHovering ? absoluteTimestamp(entry.timestamp) : relativeTimestamp(entry.timestamp))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
+                // Summary line
+                if !entry.summary.isEmpty {
+                    Text(entry.summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                // Parameters line
+                let paramString = formattedParameters(entry.parameters)
+                if !paramString.isEmpty {
+                    Text(paramString)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+
+                // Status badge for failed analyses
+                if entry.status == .failed {
+                    Text("Failed")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Color.red, in: Capsule())
+                }
+            }
+        }
+        .padding(.vertical, 4)
+        .onHover { hovering in
+            isHovering = hovering
+        }
+    }
+
+    // MARK: - Tool Icon Mapping
+
+    private func iconName(for tool: String) -> String {
+        switch tool.lowercased() {
+        case "kraken2": return "leaf.fill"
+        case "esviritu": return "waveform.path.ecg"
+        case "taxtriage": return "list.bullet.clipboard.fill"
+        case "nao-mgs": return "chart.bar.fill"
+        case "spades", "megahit", "flye": return "puzzlepiece.extension.fill"
+        case "minimap2", "bwa-mem2", "bowtie2": return "arrow.triangle.merge"
+        default: return "gearshape.fill"
+        }
+    }
+
+    private func iconColor(for tool: String) -> Color {
+        switch tool.lowercased() {
+        case "kraken2": return .blue
+        case "esviritu": return .green
+        case "taxtriage": return .purple
+        case "nao-mgs": return .orange
+        case "spades", "megahit", "flye": return Color(red: 212.0/255, green: 123.0/255, blue: 58.0/255) // Lungfish Orange
+        case "minimap2", "bwa-mem2", "bowtie2": return .teal
+        default: return .gray
+        }
+    }
+
+    // MARK: - Timestamp Formatting
+
+    private func relativeTimestamp(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private func absoluteTimestamp(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+
+    // MARK: - Parameter Formatting
+
+    private func formattedParameters(_ params: [String: AnalysisParameterValue]) -> String {
+        guard !params.isEmpty else { return "" }
+
+        let parts: [String] = params.sorted(by: { $0.key < $1.key }).compactMap { key, value in
+            let displayValue: String
+            switch value {
+            case .bool(let v): displayValue = v ? "yes" : "no"
+            case .int(let v): displayValue = "\(v)"
+            case .double(let v): displayValue = String(format: "%.1f", v)
+            case .string(let v): displayValue = v
+            }
+            return "\(key): \(displayValue)"
+        }
+
+        return parts.joined(separator: " | ")
+    }
+}
+
+// MARK: - Preview
+
+#if DEBUG
+#Preview("Analyses Section") {
+    ScrollView {
+        AnalysesSection(analyses: [
+            AnalysisManifestEntry(
+                tool: "kraken2",
+                analysisDirectoryName: "classification-kraken2-20240601-120000",
+                displayName: "Kraken2 Classification",
+                parameters: ["confidence": .double(0.2), "database": .string("standard")],
+                summary: "1,234 reads classified (98.5%)"
+            ),
+            AnalysisManifestEntry(
+                tool: "spades",
+                timestamp: Date().addingTimeInterval(-86400),
+                analysisDirectoryName: "assembly-spades-20240531-100000",
+                displayName: "SPAdes Assembly",
+                summary: "42 contigs, N50: 15,234 bp"
+            ),
+            AnalysisManifestEntry(
+                tool: "minimap2",
+                timestamp: Date().addingTimeInterval(-172800),
+                analysisDirectoryName: "alignment-minimap2-20240530-090000",
+                displayName: "minimap2 Alignment",
+                parameters: ["preset": .string("map-ont")],
+                summary: "99.2% mapped, 1.2x coverage",
+                status: .failed
+            ),
+        ])
+        .padding()
+    }
+    .frame(width: 280, height: 400)
+}
+
+#Preview("Analyses Section - Empty") {
+    ScrollView {
+        AnalysesSection(analyses: [])
+            .padding()
+    }
+    .frame(width: 280, height: 200)
+}
+#endif

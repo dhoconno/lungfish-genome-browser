@@ -126,6 +126,28 @@ public final class DocumentSectionViewModel {
     var hasAnyContent: Bool {
         manifest != nil || fastqStatistics != nil || sraRunInfo != nil || enaReadRecord != nil || naoMgsManifest != nil || nvdManifest != nil
     }
+
+    // MARK: - Analyses History
+
+    /// Analysis manifest entries for the currently selected FASTQ bundle, sorted newest-first.
+    var analysisManifestEntries: [AnalysisManifestEntry] = []
+
+    /// Callback invoked when the user taps an analysis entry to navigate to it.
+    var navigateToAnalysis: ((AnalysisManifestEntry) -> Void)?
+
+    /// Loads the analysis manifest for the given bundle and project, pruning stale entries.
+    ///
+    /// - Parameters:
+    ///   - bundleURL: The FASTQ bundle URL, or nil to clear.
+    ///   - projectURL: The enclosing project folder URL, or nil to clear.
+    func updateAnalysisManifest(bundleURL: URL?, projectURL: URL?) {
+        guard let bundleURL, let projectURL else {
+            analysisManifestEntries = []
+            return
+        }
+        let manifest = AnalysisManifestStore.load(bundleURL: bundleURL, projectURL: projectURL)
+        analysisManifestEntries = manifest.analyses.sorted { $0.timestamp > $1.timestamp }
+    }
 }
 
 // MARK: - DocumentSection
@@ -427,6 +449,15 @@ public struct DocumentSection: View {
             if let derivative = viewModel.fastqDerivativeManifest {
                 Divider()
                 fastqDerivativeSection(derivative)
+            }
+
+            // Analysis history
+            if !viewModel.analysisManifestEntries.isEmpty || viewModel.fastqStatistics != nil {
+                Divider()
+                AnalysesSection(
+                    analyses: viewModel.analysisManifestEntries,
+                    onNavigate: { entry in viewModel.navigateToAnalysis?(entry) }
+                )
             }
         }
     }
