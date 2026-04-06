@@ -1239,7 +1239,8 @@ public class SidebarViewController: NSViewController {
             type: .batchGroup,
             icon: "tray.2",
             children: [],
-            url: info.url
+            url: info.url,
+            subtitle: AnalysesFolder.formatTimestamp(info.timestamp)
         )
 
         let fm = FileManager.default
@@ -1248,7 +1249,7 @@ public class SidebarViewController: NSViewController {
         switch info.tool {
         case "esviritu":
             if let manifest = MetagenomicsBatchResultStore.loadEsViritu(from: info.url) {
-                groupItem.subtitle = "\(manifest.header.sampleCount) samples"
+                groupItem.subtitle = "\(manifest.header.sampleCount) samples · \(AnalysesFolder.formatTimestamp(info.timestamp))"
                 for record in manifest.samples.sorted(by: {
                     $0.sampleId.localizedCaseInsensitiveCompare($1.sampleId) == .orderedAscending
                 }) {
@@ -1271,7 +1272,7 @@ public class SidebarViewController: NSViewController {
         case "kraken2":
             if let manifest = MetagenomicsBatchResultStore.loadClassification(from: info.url) {
                 let dbLabel = manifest.databaseName.isEmpty ? "" : " · \(manifest.databaseName)"
-                groupItem.subtitle = "\(manifest.header.sampleCount) samples\(dbLabel)"
+                groupItem.subtitle = "\(manifest.header.sampleCount) samples\(dbLabel) · \(AnalysesFolder.formatTimestamp(info.timestamp))"
                 for record in manifest.samples.sorted(by: {
                     $0.sampleId.localizedCaseInsensitiveCompare($1.sampleId) == .orderedAscending
                 }) {

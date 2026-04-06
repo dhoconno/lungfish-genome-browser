@@ -16,7 +16,7 @@ struct AnalysesSection: View {
     var onNavigate: ((AnalysisManifestEntry) -> Void)?
 
     var body: some View {
-        Section {
+        VStack(alignment: .leading, spacing: 4) {
             if analyses.isEmpty {
                 Text("No analyses performed yet. Use the Operations panel to run classifications, assemblies, or alignments.")
                     .font(.caption)
@@ -28,14 +28,9 @@ struct AnalysesSection: View {
                     AnalysisRow(entry: entry)
                         .contentShape(Rectangle())
                         .onTapGesture { onNavigate?(entry) }
-                }
-            }
-        } header: {
-            HStack {
-                Text("Analyses")
-                if !analyses.isEmpty {
-                    Text("(\(analyses.count))")
-                        .foregroundStyle(.secondary)
+                    if entry.id != analyses.last?.id {
+                        Divider()
+                    }
                 }
             }
         }

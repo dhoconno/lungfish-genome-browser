@@ -167,6 +167,7 @@ public struct DocumentSection: View {
     @State private var isSRAMetadataExpanded = true
     @State private var isENAMetadataExpanded = true
     @State private var isFASTQDerivativeExpanded = true
+    @State private var isAnalysesExpanded = true
     @State private var expandedMetadataGroups: Set<String> = []
     @State private var trackedManifestIdentifier: String?
 
@@ -454,10 +455,22 @@ public struct DocumentSection: View {
             // Analysis history
             if !viewModel.analysisManifestEntries.isEmpty || viewModel.fastqStatistics != nil {
                 Divider()
-                AnalysesSection(
-                    analyses: viewModel.analysisManifestEntries,
-                    onNavigate: { entry in viewModel.navigateToAnalysis?(entry) }
-                )
+                DisclosureGroup(isExpanded: $isAnalysesExpanded) {
+                    AnalysesSection(
+                        analyses: viewModel.analysisManifestEntries,
+                        onNavigate: { entry in viewModel.navigateToAnalysis?(entry) }
+                    )
+                } label: {
+                    HStack {
+                        Text("Analyses")
+                            .font(.headline)
+                        if !viewModel.analysisManifestEntries.isEmpty {
+                            Text("(\(viewModel.analysisManifestEntries.count))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
         }
     }

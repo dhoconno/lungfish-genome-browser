@@ -4566,8 +4566,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     )
 
                     // Record analysis in source bundle manifest
-                    let bundleURL = capturedConfig.inputFiles.first?.deletingLastPathComponent()
-                    if let bundleURL, bundleURL.pathExtension.lowercased() == "lungfishfastq" {
+                    if let bundleURL = Self.findSourceBundle(for: capturedConfig.inputFiles) {
                         let entry = AnalysisManifestEntry(
                             tool: "minimap2",
                             analysisDirectoryName: capturedConfig.outputDirectory.lastPathComponent,
@@ -4924,6 +4923,24 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     ///
     /// Delegates to the centralized resolver from `LungfishWorkflow`, injecting
     /// `FASTQDerivativeService` as the materializer for derived bundles.
+    /// Finds the `.lungfishfastq` bundle URL from a list of input file URLs.
+    ///
+    /// Handles two cases:
+    /// 1. The URL itself is a bundle (e.g., `SRR123.lungfishfastq`)
+    /// 2. The URL is a file inside a bundle (e.g., `SRR123.lungfishfastq/reads.fastq.gz`)
+    static func findSourceBundle(for inputFiles: [URL]) -> URL? {
+        for url in inputFiles {
+            if url.pathExtension.lowercased() == "lungfishfastq" {
+                return url
+            }
+            let parent = url.deletingLastPathComponent()
+            if parent.pathExtension.lowercased() == "lungfishfastq" {
+                return parent
+            }
+        }
+        return nil
+    }
+
     ///
     /// Called at the start of `runClassification` / `runEsViritu` / `runTaxTriage`
     /// so that dialogs appear instantly and materialization happens as the first
@@ -5104,9 +5121,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                             .sidebarController.reloadFromFilesystem()
 
                         // Record analysis in source bundle manifest
-                        let bundleURL = capturedConfig.originalInputFiles?.first?.deletingLastPathComponent()
-                            ?? capturedConfig.inputFiles.first?.deletingLastPathComponent()
-                        if let bundleURL, bundleURL.pathExtension.lowercased() == "lungfishfastq" {
+                        if let bundleURL = Self.findSourceBundle(for: capturedConfig.originalInputFiles ?? capturedConfig.inputFiles) {
                             let entry = AnalysisManifestEntry(
                                 tool: "kraken2",
                                 analysisDirectoryName: capturedConfig.outputDirectory.lastPathComponent,
@@ -5263,8 +5278,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                             .sidebarController.reloadFromFilesystem()
 
                         // Record analysis in source bundle manifest
-                        let bundleURL = capturedConfig.inputFiles.first?.deletingLastPathComponent()
-                        if let bundleURL, bundleURL.pathExtension.lowercased() == "lungfishfastq" {
+                        if let bundleURL = Self.findSourceBundle(for: capturedConfig.inputFiles) {
                             let entry = AnalysisManifestEntry(
                                 tool: "esviritu",
                                 analysisDirectoryName: capturedConfig.outputDirectory.lastPathComponent,
@@ -5551,14 +5565,13 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
                     // Record analysis in source bundle manifests
                     for entry in successfulResults {
-                        let bundleURL = entry.config.originalInputFiles?.first?.deletingLastPathComponent()
-                            ?? entry.config.inputFiles.first?.deletingLastPathComponent()
-                        if let bundleURL, bundleURL.pathExtension.lowercased() == "lungfishfastq" {
+                        let bundleURL = Self.findSourceBundle(for: entry.config.originalInputFiles ?? entry.config.inputFiles)
+                        if let bundleURL {
                             let tree = entry.result.tree
                             let manifestEntry = AnalysisManifestEntry(
                                 tool: "kraken2",
-                                analysisDirectoryName: entry.config.outputDirectory.lastPathComponent,
-                                displayName: "Kraken2 Classification",
+                                analysisDirectoryName: batchRoot.lastPathComponent,
+                                displayName: "Kraken2 Batch",
                                 parameters: entry.config.summaryParameters(),
                                 summary: "\(tree.totalReads) reads, \(tree.classifiedReads) classified",
                                 status: .completed
@@ -5811,12 +5824,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
                     // Record analysis in source bundle manifests
                     for entry in successfulResults {
-                        let bundleURL = entry.config.inputFiles.first?.deletingLastPathComponent()
-                        if let bundleURL, bundleURL.pathExtension.lowercased() == "lungfishfastq" {
+                        let bundleURL = Self.findSourceBundle(for: entry.config.inputFiles)
+                        if let bundleURL {
                             let manifestEntry = AnalysisManifestEntry(
                                 tool: "esviritu",
-                                analysisDirectoryName: entry.config.outputDirectory.lastPathComponent,
-                                displayName: "EsViritu Detection",
+                                analysisDirectoryName: batchRoot.lastPathComponent,
+                                displayName: "EsViritu Batch",
                                 parameters: entry.config.summaryParameters(),
                                 summary: "\(entry.ioResult.detections.count) viruses in \(entry.ioResult.detectedFamilyCount) families",
                                 status: .completed
@@ -5930,8 +5943,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
                         // Record analysis in source bundle manifests
                         for sample in capturedConfig.samples {
-                            let bundleURL = sample.fastq1.deletingLastPathComponent()
-                            if bundleURL.pathExtension.lowercased() == "lungfishfastq" {
+                            if let bundleURL = Self.findSourceBundle(for: [sample.fastq1] + (sample.fastq2.map { [$0] } ?? [])) {
                                 let entry = AnalysisManifestEntry(
                                     tool: "taxtriage",
                                     analysisDirectoryName: capturedConfig.outputDirectory.lastPathComponent,
