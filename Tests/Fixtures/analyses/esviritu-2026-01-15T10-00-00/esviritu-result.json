@@ -1,0 +1,21 @@
+{
+    "config": {
+        "inputFiles": ["testSample_R1.fastq.gz"],
+        "isPairedEnd": false,
+        "sampleName": "testSample",
+        "outputDirectory": "esviritu-2026-01-15T10-00-00",
+        "databasePath": "/databases/esviritu",
+        "qualityFilter": true,
+        "minReadLength": 50,
+        "threads": 4
+    },
+    "detectionPath": "testSample.detected_virus.info.tsv",
+    "assemblyPath": null,
+    "taxProfilePath": "testSample.tax_profile.tsv",
+    "coveragePath": "testSample.virus_coverage_windows.tsv",
+    "virusCount": 2,
+    "runtime": 45.3,
+    "toolVersion": "1.0.0",
+    "provenanceId": "550E8400-E29B-41D4-A716-446655440000",
+    "savedAt": "2026-01-15T10:00:00Z"
+}

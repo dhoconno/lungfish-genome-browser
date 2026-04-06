@@ -1,0 +1,13 @@
+{
+    "header": {
+        "tool": "esviritu",
+        "version": "1.0.0",
+        "sampleCount": 2,
+        "startedAt": "2026-01-15T15:00:00Z",
+        "completedAt": "2026-01-15T15:05:00Z"
+    },
+    "samples": [
+        {"sampleId": "sample1", "resultDirectory": "sample1", "status": "completed", "virusCount": 1},
+        {"sampleId": "sample2", "resultDirectory": "sample2", "status": "completed", "virusCount": 0}
+    ]
+}

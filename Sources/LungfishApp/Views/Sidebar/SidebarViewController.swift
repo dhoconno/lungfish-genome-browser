@@ -805,6 +805,10 @@ public class SidebarViewController: NSViewController {
                         // Hide in-flight imports until ingestion + stats finalize.
                         continue
                     }
+                    // Skip the Analyses/ directory — it gets its own top-level group.
+                    if childURL.lastPathComponent == AnalysesFolder.directoryName {
+                        continue
+                    }
                     // Include directories
                     let childItem = buildSidebarTree(from: childURL, isRoot: false)
                     items.append(childItem)
@@ -816,6 +820,19 @@ public class SidebarViewController: NSViewController {
                         items.append(childItem)
                     }
                 }
+            }
+
+            // Insert a top-level "Analyses" group if the project has any results.
+            let analysesChildren = collectAnalyses(in: projectURL)
+            if !analysesChildren.isEmpty {
+                let analysesGroup = SidebarItem(
+                    title: "Analyses",
+                    type: .folder,
+                    icon: "flask",
+                    children: analysesChildren,
+                    url: projectURL.appendingPathComponent(AnalysesFolder.directoryName)
+                )
+                items.insert(analysesGroup, at: 0)
             }
 
             return items
@@ -937,32 +954,9 @@ public class SidebarViewController: NSViewController {
                 item.children.append(childItem)
             }
 
-            // Scan for classification result directories (classification-XXXXXXXX/).
-            // Results may be at the bundle root OR inside derivatives/.
-            for scanDir in [url, url.appendingPathComponent("derivatives", isDirectory: true)] {
-                let classificationChildren = collectClassificationResults(in: scanDir)
-                item.children.append(contentsOf: classificationChildren)
-                let classificationBatchGroups = collectClassificationBatchResults(in: scanDir)
-                item.children.append(contentsOf: classificationBatchGroups)
-
-                // Scan for EsViritu result directories (esviritu-XXXXXXXX/).
-                let esvirituChildren = collectEsVirituResults(in: scanDir)
-                item.children.append(contentsOf: esvirituChildren)
-                let esvirituBatchGroups = collectEsVirituBatchResults(in: scanDir)
-                item.children.append(contentsOf: esvirituBatchGroups)
-
-                // Scan for TaxTriage result directories (taxtriage-XXXXXXXX/).
-                let taxTriageChildren = collectTaxTriageResults(in: scanDir)
-                item.children.append(contentsOf: taxTriageChildren)
-
-                // Scan for NAO-MGS result bundles (naomgs-XXXXXXXX/).
-                let naoMgsChildren = collectNaoMgsResults(in: scanDir)
-                item.children.append(contentsOf: naoMgsChildren)
-
-                // Scan for NVD result bundles (nvd-XXXXXXXX/).
-                let nvdChildren = collectNvdResults(in: scanDir)
-                item.children.append(contentsOf: nvdChildren)
-            }
+            // Analysis results (classification, EsViritu, TaxTriage, etc.) are now
+            // collected from the project-level Analyses/ folder rather than from
+            // inside each FASTQ bundle's derivatives/ directory.
 
             // Scan for extracted read bundles (.lungfishfastq) at the top level.
             // These are created by taxonomy extraction and don't live in derivatives/.
@@ -1201,91 +1195,86 @@ public class SidebarViewController: NSViewController {
         }
     }
 
-    /// Collects classification result directories from inside a FASTQ bundle.
+    // MARK: - Analyses/ Folder Scanning
+
+    /// Collects analysis results from the project-level `Analyses/` directory.
     ///
-    /// Scans the bundle's top-level directory for subdirectories matching
-    /// `classification-*` that contain a `classification-result.json` sidecar.
-    /// Returns a sidebar item for each discovered result, sorted by directory name.
-    ///
-    /// - Parameter bundleURL: The `.lungfishfastq` bundle URL to scan.
-    /// - Returns: Array of `SidebarItem` nodes for classification results.
-    private func collectClassificationResults(in bundleURL: URL) -> [SidebarItem] {
-        let fm = FileManager.default
-        guard let contents = try? fm.contentsOfDirectory(
-            at: bundleURL,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else { return [] }
+    /// Uses `AnalysesFolder.listAnalyses(in:)` to discover timestamped analysis
+    /// directories, filtering out any that are still in-progress (contain a
+    /// `.processing` sentinel). Returns sidebar items sorted newest-first.
+    private func collectAnalyses(in projectURL: URL) -> [SidebarItem] {
+        guard let analyses = try? AnalysesFolder.listAnalyses(in: projectURL) else { return [] }
+        return analyses.compactMap { info in
+            guard !OperationMarker.isInProgress(info.url) else { return nil }
 
-        var results: [SidebarItem] = []
+            if info.isBatch {
+                return buildBatchAnalysisItem(info: info)
+            }
 
-        for childURL in contents {
-            // Match directories named classification-XXXXXXXX
-            guard childURL.lastPathComponent.hasPrefix("classification-") else { continue }
-            guard !OperationMarker.isInProgress(childURL) else { continue }
-            var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: childURL.path, isDirectory: &isDir), isDir.boolValue else { continue }
-
-            // Require a classification-result.json sidecar (proves the run completed)
-            guard ClassificationResult.exists(in: childURL) else { continue }
-
-            // Derive a display title from the saved config's database name
-            let title = classificationResultTitle(for: childURL)
-
+            let icon = analysisIcon(for: info.tool)
+            let title = analysisDisplayTitle(for: info)
             let item = SidebarItem(
                 title: title,
-                type: .classificationResult,
-                icon: "k.circle",
+                type: analysisItemType(for: info.tool),
+                icon: icon,
                 children: [],
-                url: childURL
+                url: info.url,
+                subtitle: AnalysesFolder.formatTimestamp(info.timestamp)
             )
-            results.append(item)
-        }
-
-        return results.sorted {
-            $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+            // For single results, add a subtitle from the sidecar if available
+            if info.tool == "esviritu" {
+                item.subtitle = esvirituResultTitle(for: info.url)
+            } else if info.tool == "kraken2" {
+                item.subtitle = classificationResultTitle(for: info.url)
+            }
+            return item
         }
     }
 
-    /// Collects classification batch result groups from inside a FASTQ bundle.
-    ///
-    /// Scans for `classification-batch-*` directories and builds one virtual
-    /// batch group node per run, with one child per sample result directory.
-    private func collectClassificationBatchResults(in bundleURL: URL) -> [SidebarItem] {
-        let fm = FileManager.default
-        guard let contents = try? fm.contentsOfDirectory(
-            at: bundleURL,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else { return [] }
+    /// Builds an expandable batch group item with per-sample children.
+    private func buildBatchAnalysisItem(info: AnalysesFolder.AnalysisDirectoryInfo) -> SidebarItem? {
+        let title = analysisDisplayTitle(for: info)
+        let groupItem = SidebarItem(
+            title: title,
+            type: .batchGroup,
+            icon: "tray.2",
+            children: [],
+            url: info.url,
+            subtitle: AnalysesFolder.formatTimestamp(info.timestamp)
+        )
 
-        var groups: [SidebarItem] = []
-
-        for batchDir in contents.sorted(by: {
-            $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending
-        }) {
-            guard batchDir.lastPathComponent.hasPrefix("classification-batch-") else { continue }
-            guard !OperationMarker.isInProgress(batchDir) else { continue }
-            var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: batchDir.path, isDirectory: &isDir), isDir.boolValue else { continue }
-
-            let batchToken = String(batchDir.lastPathComponent.dropFirst("classification-batch-".count))
-            let groupItem = SidebarItem(
-                title: "Classification Batch \(batchToken)",
-                type: .batchGroup,
-                icon: "tray.2",
-                children: [],
-                url: nil
-            )
-
-            if let manifest = MetagenomicsBatchResultStore.loadClassification(from: batchDir) {
-                let dbLabel = manifest.databaseName.isEmpty ? "" : " · \(manifest.databaseName)"
-                groupItem.subtitle = "\(manifest.header.sampleCount) samples\(dbLabel)"
-
+        // Try loading the batch manifest for structured sample enumeration
+        switch info.tool {
+        case "esviritu":
+            if let manifest = MetagenomicsBatchResultStore.loadEsViritu(from: info.url) {
+                groupItem.subtitle = "\(manifest.header.sampleCount) samples · \(AnalysesFolder.formatTimestamp(info.timestamp))"
                 for record in manifest.samples.sorted(by: {
                     $0.sampleId.localizedCaseInsensitiveCompare($1.sampleId) == .orderedAscending
                 }) {
-                    let resultURL = batchDir.appendingPathComponent(record.resultDirectory)
+                    let resultURL = info.url.appendingPathComponent(record.resultDirectory)
+                    guard EsVirituResult.exists(in: resultURL) else { continue }
+                    let childItem = SidebarItem(
+                        title: record.sampleId,
+                        type: .esvirituResult,
+                        icon: "e.circle",
+                        children: [],
+                        url: resultURL,
+                        subtitle: esvirituResultTitle(for: resultURL)
+                    )
+                    groupItem.children.append(childItem)
+                }
+            } else {
+                buildBatchChildrenFromFilesystem(info: info, groupItem: groupItem, sidecarCheck: EsVirituResult.exists, itemType: .esvirituResult, icon: "e.circle")
+            }
+
+        case "kraken2":
+            if let manifest = MetagenomicsBatchResultStore.loadClassification(from: info.url) {
+                let dbLabel = manifest.databaseName.isEmpty ? "" : " · \(manifest.databaseName)"
+                groupItem.subtitle = "\(manifest.header.sampleCount) samples\(dbLabel) · \(AnalysesFolder.formatTimestamp(info.timestamp))"
+                for record in manifest.samples.sorted(by: {
+                    $0.sampleId.localizedCaseInsensitiveCompare($1.sampleId) == .orderedAscending
+                }) {
+                    let resultURL = info.url.appendingPathComponent(record.resultDirectory)
                     guard ClassificationResult.exists(in: resultURL) else { continue }
                     let childItem = SidebarItem(
                         title: record.sampleId,
@@ -1297,35 +1286,82 @@ public class SidebarViewController: NSViewController {
                     )
                     groupItem.children.append(childItem)
                 }
-            } else if let batchContents = try? fm.contentsOfDirectory(
-                at: batchDir,
-                includingPropertiesForKeys: [.isDirectoryKey],
-                options: [.skipsHiddenFiles]
-            ) {
-                for child in batchContents.sorted(by: {
-                    $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending
-                }) {
-                    var childIsDir: ObjCBool = false
-                    guard fm.fileExists(atPath: child.path, isDirectory: &childIsDir), childIsDir.boolValue else { continue }
-                    guard ClassificationResult.exists(in: child) else { continue }
-                    let childItem = SidebarItem(
-                        title: child.lastPathComponent,
-                        type: .classificationResult,
-                        icon: "k.circle",
-                        children: [],
-                        url: child,
-                        subtitle: classificationResultTitle(for: child)
-                    )
-                    groupItem.children.append(childItem)
-                }
-                groupItem.subtitle = "\(groupItem.children.count) samples"
+            } else {
+                buildBatchChildrenFromFilesystem(info: info, groupItem: groupItem, sidecarCheck: ClassificationResult.exists, itemType: .classificationResult, icon: "k.circle")
             }
 
-            guard !groupItem.children.isEmpty else { continue }
-            groups.append(groupItem)
+        default:
+            // Generic fallback: scan for subdirectories
+            buildBatchChildrenFromFilesystem(info: info, groupItem: groupItem, sidecarCheck: { _ in true }, itemType: .analysisResult, icon: analysisIcon(for: info.tool))
         }
 
-        return groups
+        guard !groupItem.children.isEmpty else { return nil }
+        return groupItem
+    }
+
+    /// Fallback: enumerate subdirectories when no batch manifest is available.
+    private func buildBatchChildrenFromFilesystem(
+        info: AnalysesFolder.AnalysisDirectoryInfo,
+        groupItem: SidebarItem,
+        sidecarCheck: (URL) -> Bool,
+        itemType: SidebarItemType,
+        icon: String
+    ) {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: info.url,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+
+        for child in contents.sorted(by: {
+            $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending
+        }) {
+            var childIsDir: ObjCBool = false
+            guard fm.fileExists(atPath: child.path, isDirectory: &childIsDir),
+                  childIsDir.boolValue else { continue }
+            guard sidecarCheck(child) else { continue }
+            let childItem = SidebarItem(
+                title: child.lastPathComponent,
+                type: itemType,
+                icon: icon,
+                children: [],
+                url: child
+            )
+            groupItem.children.append(childItem)
+        }
+        groupItem.subtitle = "\(groupItem.children.count) samples"
+    }
+
+    private func analysisIcon(for tool: String) -> String {
+        switch tool {
+        case "esviritu": return "e.circle"
+        case "kraken2": return "k.circle"
+        case "taxtriage": return "t.circle"
+        case "spades", "megahit": return "s.circle"
+        case "minimap2": return "m.circle"
+        case "naomgs": return "n.circle"
+        default: return "circle"
+        }
+    }
+
+    private func analysisDisplayTitle(for info: AnalysesFolder.AnalysisDirectoryInfo) -> String {
+        let toolName = AnalysesFolder.displayName(for: info.tool)
+        return info.isBatch ? "\(toolName) Batch" : toolName
+    }
+
+    /// Maps an analysis tool name to the correct SidebarItemType so that
+    /// the selection handler in MainSplitViewController dispatches to the
+    /// right display method.
+    private func analysisItemType(for tool: String) -> SidebarItemType {
+        switch tool {
+        case "esviritu": return .esvirituResult
+        case "kraken2": return .classificationResult
+        case "taxtriage": return .taxTriageResult
+        case "naomgs": return .naoMgsResult
+        case "nvd": return .nvdResult
+        default: return .analysisResult
+        }
     }
 
     /// Derives a human-readable title for a classification result directory.
@@ -1347,130 +1383,6 @@ public class SidebarViewController: NSViewController {
         return "Classification"
     }
 
-    /// Collects EsViritu viral detection result directories from inside a FASTQ bundle.
-    ///
-    /// Scans the bundle's top-level directory for subdirectories matching
-    /// `esviritu-*` that contain an `esviritu-result.json` sidecar.
-    ///
-    /// - Parameter bundleURL: The `.lungfishfastq` bundle URL to scan.
-    /// - Returns: Array of `SidebarItem` nodes for EsViritu results.
-    private func collectEsVirituResults(in bundleURL: URL) -> [SidebarItem] {
-        let fm = FileManager.default
-        guard let contents = try? fm.contentsOfDirectory(
-            at: bundleURL,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else { return [] }
-
-        var results: [SidebarItem] = []
-
-        for childURL in contents {
-            guard childURL.lastPathComponent.hasPrefix("esviritu-") else { continue }
-            guard !OperationMarker.isInProgress(childURL) else { continue }
-            var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: childURL.path, isDirectory: &isDir), isDir.boolValue else { continue }
-
-            // Require an esviritu-result.json sidecar
-            let sidecarURL = childURL.appendingPathComponent("esviritu-result.json")
-            guard fm.fileExists(atPath: sidecarURL.path) else { continue }
-
-            let title = esvirituResultTitle(for: childURL)
-
-            let item = SidebarItem(
-                title: title,
-                type: .esvirituResult,
-                icon: "e.circle",
-                children: [],
-                url: childURL
-            )
-            results.append(item)
-        }
-
-        return results.sorted {
-            $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
-        }
-    }
-
-    /// Collects EsViritu batch result groups from inside a FASTQ bundle.
-    ///
-    /// Scans for `esviritu-batch-*` directories and builds one virtual batch
-    /// group node per run, with one child per sample result directory.
-    private func collectEsVirituBatchResults(in bundleURL: URL) -> [SidebarItem] {
-        let fm = FileManager.default
-        guard let contents = try? fm.contentsOfDirectory(
-            at: bundleURL,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else { return [] }
-
-        var groups: [SidebarItem] = []
-
-        for batchDir in contents.sorted(by: {
-            $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending
-        }) {
-            guard batchDir.lastPathComponent.hasPrefix("esviritu-batch-") else { continue }
-            guard !OperationMarker.isInProgress(batchDir) else { continue }
-            var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: batchDir.path, isDirectory: &isDir), isDir.boolValue else { continue }
-
-            let batchToken = String(batchDir.lastPathComponent.dropFirst("esviritu-batch-".count))
-            let groupItem = SidebarItem(
-                title: "EsViritu Batch \(batchToken)",
-                type: .batchGroup,
-                icon: "tray.2",
-                children: [],
-                url: nil
-            )
-
-            if let manifest = MetagenomicsBatchResultStore.loadEsViritu(from: batchDir) {
-                groupItem.subtitle = "\(manifest.header.sampleCount) samples"
-
-                for record in manifest.samples.sorted(by: {
-                    $0.sampleId.localizedCaseInsensitiveCompare($1.sampleId) == .orderedAscending
-                }) {
-                    let resultURL = batchDir.appendingPathComponent(record.resultDirectory)
-                    guard EsVirituResult.exists(in: resultURL) else { continue }
-                    let childItem = SidebarItem(
-                        title: record.sampleId,
-                        type: .esvirituResult,
-                        icon: "e.circle",
-                        children: [],
-                        url: resultURL,
-                        subtitle: esvirituResultTitle(for: resultURL)
-                    )
-                    groupItem.children.append(childItem)
-                }
-            } else if let batchContents = try? fm.contentsOfDirectory(
-                at: batchDir,
-                includingPropertiesForKeys: [.isDirectoryKey],
-                options: [.skipsHiddenFiles]
-            ) {
-                for child in batchContents.sorted(by: {
-                    $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending
-                }) {
-                    var childIsDir: ObjCBool = false
-                    guard fm.fileExists(atPath: child.path, isDirectory: &childIsDir), childIsDir.boolValue else { continue }
-                    guard EsVirituResult.exists(in: child) else { continue }
-                    let childItem = SidebarItem(
-                        title: child.lastPathComponent,
-                        type: .esvirituResult,
-                        icon: "e.circle",
-                        children: [],
-                        url: child,
-                        subtitle: esvirituResultTitle(for: child)
-                    )
-                    groupItem.children.append(childItem)
-                }
-                groupItem.subtitle = "\(groupItem.children.count) samples"
-            }
-
-            guard !groupItem.children.isEmpty else { continue }
-            groups.append(groupItem)
-        }
-
-        return groups
-    }
-
     /// Derives a human-readable title for an EsViritu result directory.
     private func esvirituResultTitle(for directory: URL) -> String {
         let sidecarURL = directory.appendingPathComponent("esviritu-result.json")
@@ -1480,175 +1392,6 @@ public class SidebarViewController: NSViewController {
             return "Viral Detection (\(virusCount) viruses)"
         }
         return "Viral Detection"
-    }
-
-    /// Collects TaxTriage result directories from inside a FASTQ bundle.
-    private func collectTaxTriageResults(in bundleURL: URL) -> [SidebarItem] {
-        let fm = FileManager.default
-        guard let contents = try? fm.contentsOfDirectory(
-            at: bundleURL,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else { return [] }
-
-        var results: [SidebarItem] = []
-
-        for childURL in contents {
-            guard childURL.lastPathComponent.hasPrefix("taxtriage-") else { continue }
-            guard !OperationMarker.isInProgress(childURL) else { continue }
-            var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: childURL.path, isDirectory: &isDir), isDir.boolValue else { continue }
-
-            // Check for key output files (kreport or top_report)
-            let hasKreport = fm.fileExists(atPath: childURL.appendingPathComponent("kraken2").path)
-            let hasTopReport: Bool = {
-                guard let enumerator = fm.enumerator(
-                    at: childURL,
-                    includingPropertiesForKeys: nil,
-                    options: [.skipsHiddenFiles]
-                ) else { return false }
-
-                for case let candidate as URL in enumerator {
-                    let name = candidate.lastPathComponent.lowercased()
-                    if name.contains("top_report"), candidate.pathExtension.lowercased() == "tsv",
-                       !candidate.path.contains("/work/") {
-                        return true
-                    }
-                }
-                return false
-            }()
-
-            guard hasKreport || hasTopReport else { continue }
-
-            // Check if this is a multi-sample run by loading the persisted result.
-            let persistedResult = try? TaxTriageResult.load(from: childURL)
-            let sampleCount = persistedResult?.config.samples.count ?? 1
-
-            if sampleCount > 1 {
-                // Multi-sample: create a batch group node with per-sample children
-                let groupItem = SidebarItem(
-                    title: "Comprehensive Triage",
-                    type: .batchGroup,
-                    icon: "t.circle",
-                    children: [],
-                    url: childURL,
-                    subtitle: "\(sampleCount) samples"
-                )
-                // Add "All Samples" overview child
-                let allChild = SidebarItem(
-                    title: "All Samples",
-                    type: .taxTriageResult,
-                    icon: "person.3",
-                    children: [],
-                    url: childURL
-                )
-                groupItem.children.append(allChild)
-
-                // Add one child per sample
-                for sample in persistedResult!.config.samples {
-                    let sampleChild = SidebarItem(
-                        title: sample.sampleId,
-                        type: .taxTriageResult,
-                        icon: "person",
-                        children: [],
-                        url: childURL,
-                        subtitle: nil
-                    )
-                    // Store the sample ID in the item for routing
-                    sampleChild.userInfo["sampleId"] = sample.sampleId
-                    groupItem.children.append(sampleChild)
-                }
-
-                results.append(groupItem)
-            } else {
-                // Single-sample: flat item as before
-                let item = SidebarItem(
-                    title: "Comprehensive Triage",
-                    type: .taxTriageResult,
-                    icon: "t.circle",
-                    children: [],
-                    url: childURL
-                )
-                results.append(item)
-            }
-        }
-
-        // Also scan for cross-reference sidecars (taxtriage-ref-*.json)
-        // that point to TaxTriage results stored outside this bundle.
-        let crossRefs = MetagenomicsBatchResultStore.loadTaxTriageRefs(from: bundleURL)
-        for ref in crossRefs {
-            let resultDir = URL(fileURLWithPath: ref.resultDirectory)
-            // Skip if we already have this result from the direct scan above.
-            let alreadyPresent = results.contains { item in
-                item.url?.standardizedFileURL == resultDir.standardizedFileURL
-                    || item.children.contains { $0.url?.standardizedFileURL == resultDir.standardizedFileURL }
-            }
-            guard !alreadyPresent else { continue }
-            // Only add if the result directory actually exists on disk.
-            guard fm.fileExists(atPath: resultDir.path) else { continue }
-
-            let persistedResult = try? TaxTriageResult.load(from: resultDir)
-            let sampleCount = persistedResult?.config.samples.count ?? ref.batchSampleCount
-
-            if sampleCount > 1 {
-                let groupItem = SidebarItem(
-                    title: "Comprehensive Triage",
-                    type: .batchGroup,
-                    icon: "t.circle",
-                    children: [],
-                    url: resultDir,
-                    subtitle: "\(sampleCount) samples"
-                )
-                let allChild = SidebarItem(
-                    title: "All Samples",
-                    type: .taxTriageResult,
-                    icon: "person.3",
-                    children: [],
-                    url: resultDir
-                )
-                groupItem.children.append(allChild)
-
-                if let samples = persistedResult?.config.samples {
-                    for sample in samples {
-                        let child = SidebarItem(
-                            title: sample.sampleId,
-                            type: .taxTriageResult,
-                            icon: "person",
-                            children: [],
-                            url: resultDir
-                        )
-                        child.userInfo["sampleId"] = sample.sampleId
-                        groupItem.children.append(child)
-                    }
-                } else {
-                    // Minimal: just show the sample from this cross-ref
-                    let child = SidebarItem(
-                        title: ref.sampleId,
-                        type: .taxTriageResult,
-                        icon: "person",
-                        children: [],
-                        url: resultDir
-                    )
-                    child.userInfo["sampleId"] = ref.sampleId
-                    groupItem.children.append(child)
-                }
-
-                results.append(groupItem)
-            } else {
-                let item = SidebarItem(
-                    title: "Comprehensive Triage",
-                    type: .taxTriageResult,
-                    icon: "t.circle",
-                    children: [],
-                    url: resultDir
-                )
-                results.append(item)
-            }
-        }
-
-        return results.sorted {
-            ($0.url?.lastPathComponent ?? "") < ($1.url?.lastPathComponent ?? "")
-        }
     }
 
     /// Collects NAO-MGS result bundles from inside a directory.
@@ -2528,9 +2271,13 @@ extension SidebarViewController: NSOutlineViewDataSource {
             return
         }
 
-        // Filter out items that shouldn't be deleted (groups, projects)
+        // Filter out items that shouldn't be deleted (groups, projects).
+        // Batch groups WITH a URL (analysis batches in Analyses/) are deletable —
+        // trashing the batch directory removes all component sample results.
         let deletableItems = items.filter { item in
-            item.type != .group && item.type != .project && item.type != .batchGroup
+            if item.type == .group || item.type == .project { return false }
+            if item.type == .batchGroup { return item.url != nil }
+            return true
         }
 
         guard !deletableItems.isEmpty else {
@@ -2945,6 +2692,7 @@ public enum SidebarItemType {
     case taxTriageResult       // TaxTriage comprehensive triage result folder
     case naoMgsResult          // NAO-MGS surveillance result bundle
     case nvdResult             // NVD (Novel Virus Diagnostics) result bundle
+    case analysisResult        // Analysis result in Analyses/ folder
 
     var tintColor: NSColor {
         switch self {
@@ -2966,6 +2714,7 @@ public enum SidebarItemType {
         case .taxTriageResult: return .lungfishOrange
         case .naoMgsResult: return .lungfishOrange
         case .nvdResult: return .lungfishOrange
+        case .analysisResult: return .lungfishOrange
         }
     }
 
@@ -3064,7 +2813,11 @@ extension SidebarViewController: NSMenuDelegate {
         let hasFiles = items.contains { $0.type != .group && $0.type != .project && $0.type != .folder && $0.type != .referenceBundle && $0.type != .fastqBundle && $0.type != .batchGroup }
         let hasFolders = items.contains { $0.type == .folder || $0.type == .project }
         let hasGroups = items.contains { $0.type == .group }
-        let hasDeletable = items.contains { $0.type != .group && $0.type != .project && $0.type != .batchGroup }
+        let hasDeletable = items.contains { item in
+            if item.type == .group || item.type == .project { return false }
+            if item.type == .batchGroup { return item.url != nil }
+            return true
+        }
         let hasBundles = items.contains { $0.type == .referenceBundle }
         let hasFASTQBundles = items.contains { $0.type == .fastqBundle }
 

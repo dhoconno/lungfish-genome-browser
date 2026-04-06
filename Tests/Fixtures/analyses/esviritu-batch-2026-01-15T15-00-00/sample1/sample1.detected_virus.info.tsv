@@ -1,0 +1,2 @@
+virus_name	taxid	accession	num_reads	num_contigs	genome_coverage	avg_depth	ref_length
+SARS-CoV-2	2697049	NC_045512.2	800	2	0.88	18.5	29903

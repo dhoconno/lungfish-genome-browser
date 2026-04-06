@@ -465,6 +465,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         let projectName = projectURL.deletingPathExtension().lastPathComponent
         controller.window?.title = "\(projectName) \u{2014} Lungfish Genome Explorer"
 
+        // Migrate analysis results from legacy derivatives/ location to Analyses/.
+        // This is idempotent and safe to run on every project open.
+        if let count = try? AnalysesMigration.migrateProject(at: projectURL), count > 0 {
+            debugLog("openProject: Migrated \(count) analysis director\(count == 1 ? "y" : "ies") from derivatives/ to Analyses/")
+        }
+
         // Use DocumentManager to preserve project semantics and persisted metadata.
         do {
             let _ = try DocumentManager.shared.openProject(at: projectURL)
@@ -4060,10 +4066,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             return
         }
 
-        // Output goes to Assemblies/ subfolder in the project directory
+        // Output goes to project-level Analyses/ folder when a project is open.
         let outputDirectory: URL?
-        if let projectURL = sidebarController?.currentProjectURL {
-            outputDirectory = projectURL.appendingPathComponent("Assemblies", isDirectory: true)
+        if let projectURL = sidebarController?.currentProjectURL,
+           let analysisDir = try? AnalysesFolder.createAnalysisDirectory(tool: "spades", in: projectURL) {
+            outputDirectory = analysisDir
         } else if let workingURL = workingDirectoryURL {
             outputDirectory = workingURL.appendingPathComponent("Assemblies", isDirectory: true)
         } else {
@@ -4509,6 +4516,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     }
 
     private func runMinimap2Mapping(config: Minimap2Config) {
+        // Redirect output to project-level Analyses/ folder when a project is open.
+        var config = config
+        if let projectURL = mainWindowController?.mainSplitViewController?.sidebarController?.currentProjectURL {
+            if let analysisDir = try? AnalysesFolder.createAnalysisDirectory(tool: "minimap2", in: projectURL) {
+                config.outputDirectory = analysisDir
+            }
+        }
+
         let opID = OperationCenter.shared.start(
             title: "Map Reads (minimap2)",
             detail: "Mapping \(config.inputFiles.count) file(s) to \(config.referenceURL.lastPathComponent)"
@@ -4542,12 +4557,30 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                         OperationCenter.shared.log(id: opID, level: .info, message: message)
                     }}
                 }
+                nonisolated(unsafe) let capturedConfig = config
                 DispatchQueue.main.async { MainActor.assumeIsolated {
                     OperationCenter.shared.complete(
                         id: opID,
                         detail: "Mapping complete: \(result.mappedReads)/\(result.totalReads) reads mapped",
                         bundleURLs: [result.bamURL]
                     )
+
+                    // Record analysis in source bundle manifest
+                    if let bundleURL = Self.findSourceBundle(for: capturedConfig.inputFiles) {
+                        let entry = AnalysisManifestEntry(
+                            tool: "minimap2",
+                            analysisDirectoryName: capturedConfig.outputDirectory.lastPathComponent,
+                            displayName: "Minimap2 Alignment",
+                            parameters: capturedConfig.summaryParameters(),
+                            summary: "\(result.mappedReads)/\(result.totalReads) reads mapped",
+                            status: .completed
+                        )
+                        do { try AnalysisManifestStore.recordAnalysis(entry, bundleURL: bundleURL) } catch { appDelegateLogger.warning("Failed to record analysis manifest: \(error.localizedDescription, privacy: .public)") }
+                    }
+
+                    // Reload sidebar
+                    AppDelegate.shared?.mainWindowController?.mainSplitViewController?
+                        .sidebarController.reloadFromFilesystem()
                 }}
             } catch {
                 DispatchQueue.main.async { MainActor.assumeIsolated {
@@ -4890,6 +4923,24 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     ///
     /// Delegates to the centralized resolver from `LungfishWorkflow`, injecting
     /// `FASTQDerivativeService` as the materializer for derived bundles.
+    /// Finds the `.lungfishfastq` bundle URL from a list of input file URLs.
+    ///
+    /// Handles two cases:
+    /// 1. The URL itself is a bundle (e.g., `SRR123.lungfishfastq`)
+    /// 2. The URL is a file inside a bundle (e.g., `SRR123.lungfishfastq/reads.fastq.gz`)
+    static func findSourceBundle(for inputFiles: [URL]) -> URL? {
+        for url in inputFiles {
+            if url.pathExtension.lowercased() == "lungfishfastq" {
+                return url
+            }
+            let parent = url.deletingLastPathComponent()
+            if parent.pathExtension.lowercased() == "lungfishfastq" {
+                return parent
+            }
+        }
+        return nil
+    }
+
     ///
     /// Called at the start of `runClassification` / `runEsViritu` / `runTaxTriage`
     /// so that dialogs appear instantly and materialization happens as the first
@@ -4939,6 +4990,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     }
 
     private func runClassification(config: ClassificationConfig, viewerController: ViewerViewController) {
+        // Redirect output to project-level Analyses/ folder when a project is open.
+        var config = config
+        if let projectURL = mainWindowController?.mainSplitViewController?.sidebarController?.currentProjectURL {
+            if let analysisDir = try? AnalysesFolder.createAnalysisDirectory(tool: "kraken2", in: projectURL) {
+                config.outputDirectory = analysisDir
+            }
+        }
+
         let pipeline = ClassificationPipeline()
 
         // Build a descriptive title from the first input file and the goal.
@@ -5035,6 +5094,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     appDelegateLogger.warning("runClassification: Failed to save result sidecar - \(error.localizedDescription, privacy: .public)")
                 }
 
+                nonisolated(unsafe) let capturedConfig = config
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         viewerController.hideProgress()
@@ -5048,12 +5108,29 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
                         // For the extract goal, auto-present the extraction sheet
                         // after showing the taxonomy browser so the user can pick taxa.
-                        if config.goal == .extract,
+                        if capturedConfig.goal == .extract,
                            let taxonomyVC = viewerController.taxonomyViewController {
                             // Select the top species node and present the extraction sheet
                             if let topSpecies = result.tree.dominantSpecies {
                                 taxonomyVC.presentExtractionSheet(for: topSpecies, includeChildren: true)
                             }
+                        }
+
+                        // Reload sidebar so the new result bundle appears
+                        AppDelegate.shared?.mainWindowController?.mainSplitViewController?
+                            .sidebarController.reloadFromFilesystem()
+
+                        // Record analysis in source bundle manifest
+                        if let bundleURL = Self.findSourceBundle(for: capturedConfig.originalInputFiles ?? capturedConfig.inputFiles) {
+                            let entry = AnalysisManifestEntry(
+                                tool: "kraken2",
+                                analysisDirectoryName: capturedConfig.outputDirectory.lastPathComponent,
+                                displayName: "Kraken2 Classification",
+                                parameters: capturedConfig.summaryParameters(),
+                                summary: "\(readCount) reads, \(classifiedCount) classified",
+                                status: .completed
+                            )
+                            do { try AnalysisManifestStore.recordAnalysis(entry, bundleURL: bundleURL) } catch { appDelegateLogger.warning("Failed to record analysis manifest: \(error.localizedDescription, privacy: .public)") }
                         }
                     }
                 }
@@ -5095,6 +5172,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     }
 
     private func runEsViritu(config: EsVirituConfig, viewerController: ViewerViewController) {
+        // Redirect output to project-level Analyses/ folder when a project is open.
+        var config = config
+        if let projectURL = mainWindowController?.mainSplitViewController?.sidebarController?.currentProjectURL {
+            if let analysisDir = try? AnalysesFolder.createAnalysisDirectory(tool: "esviritu", in: projectURL) {
+                config.outputDirectory = analysisDir
+            }
+        }
+
         let esCliCmd = OperationCenter.buildCLICommand(subcommand: "esviritu detect", args: {
             var args = ["--input"] + config.inputFiles.map(\.path)
             args += ["--sample", config.sampleName]
@@ -5188,6 +5273,22 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                             detail: "\(capturedResult.detections.count) viruses detected in \(capturedResult.detectedFamilyCount) families"
                         )
                         viewerController.displayEsVirituResult(capturedResult, config: capturedConfig)
+                        // Reload sidebar so the new result bundle appears
+                        AppDelegate.shared?.mainWindowController?.mainSplitViewController?
+                            .sidebarController.reloadFromFilesystem()
+
+                        // Record analysis in source bundle manifest
+                        if let bundleURL = Self.findSourceBundle(for: capturedConfig.inputFiles) {
+                            let entry = AnalysisManifestEntry(
+                                tool: "esviritu",
+                                analysisDirectoryName: capturedConfig.outputDirectory.lastPathComponent,
+                                displayName: "EsViritu Detection",
+                                parameters: capturedConfig.summaryParameters(),
+                                summary: "\(capturedResult.detections.count) viruses detected in \(capturedResult.detectedFamilyCount) families",
+                                status: .completed
+                            )
+                            do { try AnalysisManifestStore.recordAnalysis(entry, bundleURL: bundleURL) } catch { appDelegateLogger.warning("Failed to record analysis manifest: \(error.localizedDescription, privacy: .public)") }
+                        }
                     }
                 }
             } catch {
@@ -5217,11 +5318,22 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     private func runClassificationBatch(configs: [ClassificationConfig], viewerController: ViewerViewController) {
         guard !configs.isEmpty else { return }
 
+        // Redirect output to project-level Analyses/ folder when a project is open.
+        var configs = configs
+        let projectURL = mainWindowController?.mainSplitViewController?.sidebarController?.currentProjectURL
+        if let projectURL, let batchDir = try? AnalysesFolder.createAnalysisDirectory(tool: "kraken2", in: projectURL, isBatch: true) {
+            for i in configs.indices {
+                let sampleSubdir = batchDir.appendingPathComponent(configs[i].outputDirectory.lastPathComponent, isDirectory: true)
+                try? FileManager.default.createDirectory(at: sampleSubdir, withIntermediateDirectories: true)
+                configs[i].outputDirectory = sampleSubdir
+            }
+        }
+
         let sampleCount = configs.count
         let firstConfig = configs[0]
         let batchRoot: URL = {
             let parent = firstConfig.outputDirectory.deletingLastPathComponent()
-            if parent.lastPathComponent.hasPrefix("classification-batch-") {
+            if parent.lastPathComponent.hasPrefix("kraken2-batch-") {
                 return parent
             }
             return parent
@@ -5450,6 +5562,23 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     }
 
                     AppDelegate.shared?.mainWindowController?.mainSplitViewController?.sidebarController.reloadFromFilesystem()
+
+                    // Record analysis in source bundle manifests
+                    for entry in successfulResults {
+                        let bundleURL = Self.findSourceBundle(for: entry.config.originalInputFiles ?? entry.config.inputFiles)
+                        if let bundleURL {
+                            let tree = entry.result.tree
+                            let manifestEntry = AnalysisManifestEntry(
+                                tool: "kraken2",
+                                analysisDirectoryName: batchRoot.lastPathComponent,
+                                displayName: "Kraken2 Batch",
+                                parameters: entry.config.summaryParameters(),
+                                summary: "\(tree.totalReads) reads, \(tree.classifiedReads) classified",
+                                status: .completed
+                            )
+                            do { try AnalysisManifestStore.recordAnalysis(manifestEntry, bundleURL: bundleURL) } catch { appDelegateLogger.warning("Failed to record analysis manifest: \(error.localizedDescription, privacy: .public)") }
+                        }
+                    }
                 }
             }
         }
@@ -5460,6 +5589,17 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     /// Runs EsViritu detection in batch mode (one run per sample).
     private func runEsVirituBatch(configs: [EsVirituConfig], viewerController: ViewerViewController) {
         guard !configs.isEmpty else { return }
+
+        // Redirect output to project-level Analyses/ folder when a project is open.
+        var configs = configs
+        let projectURL = mainWindowController?.mainSplitViewController?.sidebarController?.currentProjectURL
+        if let projectURL, let batchDir = try? AnalysesFolder.createAnalysisDirectory(tool: "esviritu", in: projectURL, isBatch: true) {
+            for i in configs.indices {
+                let sampleSubdir = batchDir.appendingPathComponent(configs[i].outputDirectory.lastPathComponent, isDirectory: true)
+                try? FileManager.default.createDirectory(at: sampleSubdir, withIntermediateDirectories: true)
+                configs[i].outputDirectory = sampleSubdir
+            }
+        }
 
         let sampleCount = configs.count
         let firstConfig = configs[0]
@@ -5681,6 +5821,22 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     }
 
                     AppDelegate.shared?.mainWindowController?.mainSplitViewController?.sidebarController.reloadFromFilesystem()
+
+                    // Record analysis in source bundle manifests
+                    for entry in successfulResults {
+                        let bundleURL = Self.findSourceBundle(for: entry.config.inputFiles)
+                        if let bundleURL {
+                            let manifestEntry = AnalysisManifestEntry(
+                                tool: "esviritu",
+                                analysisDirectoryName: batchRoot.lastPathComponent,
+                                displayName: "EsViritu Batch",
+                                parameters: entry.config.summaryParameters(),
+                                summary: "\(entry.ioResult.detections.count) viruses in \(entry.ioResult.detectedFamilyCount) families",
+                                status: .completed
+                            )
+                            do { try AnalysisManifestStore.recordAnalysis(manifestEntry, bundleURL: bundleURL) } catch { appDelegateLogger.warning("Failed to record analysis manifest: \(error.localizedDescription, privacy: .public)") }
+                        }
+                    }
                 }
             }
         }
@@ -5693,6 +5849,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     /// Registers the operation with ``OperationCenter`` and displays the
     /// ``TaxTriageResultViewController`` when complete.
     private func runTaxTriage(config: TaxTriageConfig, viewerController: ViewerViewController) {
+        // Redirect output to project-level Analyses/ folder when a project is open.
+        var config = config
+        if let projectURL = mainWindowController?.mainSplitViewController?.sidebarController?.currentProjectURL {
+            if let analysisDir = try? AnalysesFolder.createAnalysisDirectory(tool: "taxtriage", in: projectURL) {
+                config.outputDirectory = analysisDir
+            }
+        }
+
         let sampleCount = config.samples.count
         let ttCliCmd: String = {
             var args = ["--input"]
@@ -5772,6 +5936,25 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
                         // Record in batch run history log
                         BatchRunHistory.recordRun(result: capturedResult, config: capturedConfig)
+
+                        // Reload sidebar so the new result bundle appears
+                        AppDelegate.shared?.mainWindowController?.mainSplitViewController?
+                            .sidebarController.reloadFromFilesystem()
+
+                        // Record analysis in source bundle manifests
+                        for sample in capturedConfig.samples {
+                            if let bundleURL = Self.findSourceBundle(for: [sample.fastq1] + (sample.fastq2.map { [$0] } ?? [])) {
+                                let entry = AnalysisManifestEntry(
+                                    tool: "taxtriage",
+                                    analysisDirectoryName: capturedConfig.outputDirectory.lastPathComponent,
+                                    displayName: "TaxTriage Classification",
+                                    parameters: capturedConfig.summaryParameters(),
+                                    summary: capturedResult.summary,
+                                    status: .completed
+                                )
+                                do { try AnalysisManifestStore.recordAnalysis(entry, bundleURL: bundleURL) } catch { appDelegateLogger.warning("Failed to record analysis manifest: \(error.localizedDescription, privacy: .public)") }
+                            }
+                        }
                     }
                 }
             } catch {

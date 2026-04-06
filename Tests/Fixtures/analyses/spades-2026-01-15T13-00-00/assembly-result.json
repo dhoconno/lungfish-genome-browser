@@ -1,0 +1,14 @@
+{
+    "schemaVersion": 1,
+    "contigsPath": "contigs.fasta",
+    "scaffoldsPath": null,
+    "graphPath": null,
+    "logPath": "spades.log",
+    "totalContigs": 2,
+    "n50": 500,
+    "totalLength": 800,
+    "toolVersion": "3.15.5",
+    "runtime": 123.4,
+    "provenanceId": "770E8400-E29B-41D4-A716-446655440002",
+    "savedAt": "2026-01-15T13:00:00Z"
+}

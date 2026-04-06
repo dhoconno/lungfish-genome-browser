@@ -442,6 +442,7 @@ public class InspectorViewController: NSViewController {
         viewModel.documentSectionViewModel.enaReadRecord = nil
         viewModel.documentSectionViewModel.ingestionMetadata = nil
         viewModel.documentSectionViewModel.fastqDerivativeManifest = nil
+        viewModel.documentSectionViewModel.analysisManifestEntries = []
 
         // Clear sample section
         viewModel.sampleSectionViewModel.clear()
@@ -564,9 +565,34 @@ public class InspectorViewController: NSViewController {
         let derivative = notification.userInfo?["fastqDerivativeManifest"] as? FASTQDerivedBundleManifest
         viewModel.documentSectionViewModel.updateFASTQDerivativeMetadata(derivative)
 
-        // Load FASTQ sample metadata if bundle URL is provided
+        // Load FASTQ sample metadata and analysis manifest if bundle URL is provided
         if let bundleURL = notification.userInfo?["bundleURL"] as? URL {
             viewModel.fastqMetadataSectionViewModel.load(from: bundleURL)
+            let projectURL = DocumentManager.shared.activeProject?.url
+            viewModel.documentSectionViewModel.updateAnalysisManifest(
+                bundleURL: bundleURL,
+                projectURL: projectURL
+            )
+
+            // Wire navigation callback so clicking an analysis entry in the
+            // Inspector opens it in the viewer via the sidebar selection path.
+            viewModel.documentSectionViewModel.navigateToAnalysis = { [weak self] entry in
+                guard let projectURL = DocumentManager.shared.activeProject?.url else { return }
+                let analysisURL = projectURL
+                    .appendingPathComponent(AnalysesFolder.directoryName)
+                    .appendingPathComponent(entry.analysisDirectoryName)
+                guard FileManager.default.fileExists(atPath: analysisURL.path) else {
+                    // Stale entry — prune and refresh
+                    self?.viewModel.documentSectionViewModel.updateAnalysisManifest(
+                        bundleURL: bundleURL,
+                        projectURL: projectURL
+                    )
+                    return
+                }
+                // Select the analysis in the sidebar, which triggers displayContent
+                AppDelegate.shared?.mainWindowController?.mainSplitViewController?
+                    .sidebarController.selectItem(forURL: analysisURL)
+            }
         }
 
         viewModel.selectedTab = .document
@@ -1827,6 +1853,7 @@ extension SidebarItemType: CustomStringConvertible {
         case .taxTriageResult: return "Comprehensive Triage Result"
         case .naoMgsResult: return "NAO-MGS Surveillance Result"
         case .nvdResult: return "NVD Classification Result"
+        case .analysisResult: return "Analysis Result"
         }
     }
 }

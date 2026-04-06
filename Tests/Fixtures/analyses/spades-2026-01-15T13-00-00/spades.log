@@ -1,0 +1,5 @@
+Command line: spades.py --isolate -1 reads_R1.fastq.gz -o output
+System information:
+  SPAdes version: 3.15.5
+  Python version: 3.10.0
+Assembly finished.
