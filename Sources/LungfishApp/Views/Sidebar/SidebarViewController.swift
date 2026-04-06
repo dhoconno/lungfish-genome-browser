@@ -2702,9 +2702,13 @@ extension SidebarViewController: NSOutlineViewDataSource {
             return
         }
 
-        // Filter out items that shouldn't be deleted (groups, projects)
+        // Filter out items that shouldn't be deleted (groups, projects).
+        // Batch groups WITH a URL (analysis batches in Analyses/) are deletable —
+        // trashing the batch directory removes all component sample results.
         let deletableItems = items.filter { item in
-            item.type != .group && item.type != .project && item.type != .batchGroup
+            if item.type == .group || item.type == .project { return false }
+            if item.type == .batchGroup { return item.url != nil }
+            return true
         }
 
         guard !deletableItems.isEmpty else {
@@ -3240,7 +3244,11 @@ extension SidebarViewController: NSMenuDelegate {
         let hasFiles = items.contains { $0.type != .group && $0.type != .project && $0.type != .folder && $0.type != .referenceBundle && $0.type != .fastqBundle && $0.type != .batchGroup }
         let hasFolders = items.contains { $0.type == .folder || $0.type == .project }
         let hasGroups = items.contains { $0.type == .group }
-        let hasDeletable = items.contains { $0.type != .group && $0.type != .project && $0.type != .batchGroup }
+        let hasDeletable = items.contains { item in
+            if item.type == .group || item.type == .project { return false }
+            if item.type == .batchGroup { return item.url != nil }
+            return true
+        }
         let hasBundles = items.contains { $0.type == .referenceBundle }
         let hasFASTQBundles = items.contains { $0.type == .fastqBundle }
 
