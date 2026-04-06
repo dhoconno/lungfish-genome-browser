@@ -48,8 +48,9 @@ public class InspectorViewController: NSViewController {
     /// The SwiftUI hosting view
     private var hostingView: NSHostingView<InspectorView>!
 
-    /// View model for the inspector
-    private var viewModel = InspectorViewModel()
+    /// View model for the inspector.
+    /// Internal (not private) to allow @testable test access.
+    var viewModel = InspectorViewModel()
 
     /// Public access to the selection section view model for wiring enrichment data.
     public var selectionSectionViewModel: SelectionSectionViewModel {
@@ -858,6 +859,33 @@ public class InspectorViewController: NSViewController {
         viewModel.documentSectionViewModel.classifierStrippedPrefix = strippedPrefix
         viewModel.documentSectionViewModel.sampleMetadataStore = metadata
         viewModel.documentSectionViewModel.bundleAttachmentStore = attachments
+    }
+
+    /// Updates the Inspector with batch operation details for display in the Result Summary tab.
+    ///
+    /// - Parameters:
+    ///   - tool: Human-readable tool name (e.g. "Kraken2").
+    ///   - parameters: Key-value pairs from the batch manifest (database, confidence, etc.).
+    ///   - timestamp: Batch creation timestamp from the manifest header.
+    ///   - sourceSamples: Pairs of sample IDs and their resolved bundle URLs (nil when not resolvable).
+    func updateBatchOperationDetails(
+        tool: String,
+        parameters: [String: String],
+        timestamp: Date?,
+        sourceSamples: [(sampleId: String, bundleURL: URL?)]
+    ) {
+        viewModel.documentSectionViewModel.batchOperationTool = tool
+        viewModel.documentSectionViewModel.batchOperationParameters = parameters
+        viewModel.documentSectionViewModel.batchOperationTimestamp = timestamp
+        viewModel.documentSectionViewModel.batchSourceSampleURLs = sourceSamples
+    }
+
+    /// Clears batch operation details from the Inspector.
+    func clearBatchOperationDetails() {
+        viewModel.documentSectionViewModel.batchOperationTool = nil
+        viewModel.documentSectionViewModel.batchOperationParameters = [:]
+        viewModel.documentSectionViewModel.batchOperationTimestamp = nil
+        viewModel.documentSectionViewModel.batchSourceSampleURLs = []
     }
 
     // MARK: - Metadata Import
@@ -1696,6 +1724,16 @@ private struct MetagenomicsResultSummarySection: View {
                 }
             }
 
+            if let tool = viewModel.batchOperationTool {
+                BatchOperationDetailsSection(
+                    tool: tool,
+                    parameters: viewModel.batchOperationParameters,
+                    timestamp: viewModel.batchOperationTimestamp
+                )
+                Divider()
+                    .padding(.vertical, 4)
+            }
+
             Divider()
                 .padding(.vertical, 4)
 
@@ -1746,6 +1784,21 @@ private struct MetagenomicsResultSummarySection: View {
                 }
             }
             .font(.caption.weight(.semibold))
+
+            if !viewModel.batchSourceSampleURLs.isEmpty {
+                Divider()
+                    .padding(.vertical, 4)
+                SourceSamplesSection(
+                    samples: viewModel.batchSourceSampleURLs,
+                    onNavigateToBundle: { url in
+                        NotificationCenter.default.post(
+                            name: .navigateToSidebarItem,
+                            object: nil,
+                            userInfo: ["url": url]
+                        )
+                    }
+                )
+            }
         }
     }
 

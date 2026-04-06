@@ -3819,4 +3819,7 @@ public extension Notification.Name {
     static let sidebarFileDropCompleted = Notification.Name("SidebarFileDropCompleted")
     static let sidebarPreferredWidthRecommended = Notification.Name("SidebarPreferredWidthRecommended")
     static let sidebarItemsDeleted = Notification.Name("SidebarItemsDeleted")
+    /// Posted from the Inspector when the user clicks a source sample link to navigate the sidebar.
+    /// userInfo: `["url": URL]` — the bundle URL to navigate to.
+    static let navigateToSidebarItem = Notification.Name("NavigateToSidebarItem")
 }

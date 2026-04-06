@@ -148,6 +148,20 @@ public final class DocumentSectionViewModel {
         let manifest = AnalysisManifestStore.load(bundleURL: bundleURL, projectURL: projectURL)
         analysisManifestEntries = manifest.analyses.sorted { $0.timestamp > $1.timestamp }
     }
+
+    // MARK: - Batch Operation Details
+
+    /// The tool name for a batch operation (e.g. "Kraken2", "EsViritu"), or nil when not in batch context.
+    var batchOperationTool: String?
+
+    /// Key-value parameters from the batch manifest (e.g. database name, confidence threshold).
+    var batchOperationParameters: [String: String] = [:]
+
+    /// Timestamp from the batch manifest header indicating when the batch was created.
+    var batchOperationTimestamp: Date?
+
+    /// Source sample entries for the batch, each pairing a sample ID with its originating bundle URL (if resolvable).
+    var batchSourceSampleURLs: [(sampleId: String, bundleURL: URL?)] = []
 }
 
 // MARK: - DocumentSection

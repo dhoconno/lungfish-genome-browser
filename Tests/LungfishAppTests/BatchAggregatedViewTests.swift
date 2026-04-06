@@ -1469,3 +1469,207 @@ final class BatchGroupRoutingTests: XCTestCase {
         return dir
     }
 }
+
+// MARK: - BatchInspectorSectionTests
+
+/// Tests for Task 9: batch operation details and source sample links in the Inspector.
+///
+/// Covers:
+/// 1. `DocumentSectionViewModel` batch properties default values.
+/// 2. Setting `batchOperationTool` makes it non-nil.
+/// 3. `batchOperationParameters` stores key-value pairs.
+/// 4. `batchSourceSampleURLs` stores sample entries.
+/// 5. `BatchOperationDetailsSection` can be instantiated without crashing.
+/// 6. `SourceSamplesSection` can be instantiated without crashing.
+/// 7. Source bundle URL resolution from an input file path.
+/// 8. `updateBatchOperationDetails` sets all properties correctly.
+@MainActor
+final class BatchInspectorSectionTests: XCTestCase {
+
+    // MARK: - 1. Default values
+
+    /// `DocumentSectionViewModel` batch properties start at nil/empty defaults.
+    func testDocumentSectionViewModelBatchPropertiesDefaultToNilEmpty() {
+        let vm = DocumentSectionViewModel()
+
+        XCTAssertNil(vm.batchOperationTool,
+                     "batchOperationTool should default to nil")
+        XCTAssertTrue(vm.batchOperationParameters.isEmpty,
+                      "batchOperationParameters should default to empty")
+        XCTAssertNil(vm.batchOperationTimestamp,
+                     "batchOperationTimestamp should default to nil")
+        XCTAssertTrue(vm.batchSourceSampleURLs.isEmpty,
+                      "batchSourceSampleURLs should default to empty")
+    }
+
+    // MARK: - 2. Setting batchOperationTool
+
+    /// Setting `batchOperationTool` to a non-nil value persists correctly.
+    func testSettingBatchOperationToolMakesItNonNil() {
+        let vm = DocumentSectionViewModel()
+        vm.batchOperationTool = "Kraken2"
+        XCTAssertEqual(vm.batchOperationTool, "Kraken2")
+    }
+
+    // MARK: - 3. batchOperationParameters
+
+    /// `batchOperationParameters` stores and retrieves arbitrary key-value pairs.
+    func testBatchOperationParametersStoresKeyValuePairs() {
+        let vm = DocumentSectionViewModel()
+        vm.batchOperationParameters = ["Database": "standard-2024-01", "Confidence": "0.2"]
+
+        XCTAssertEqual(vm.batchOperationParameters["Database"], "standard-2024-01")
+        XCTAssertEqual(vm.batchOperationParameters["Confidence"], "0.2")
+        XCTAssertEqual(vm.batchOperationParameters.count, 2)
+    }
+
+    // MARK: - 4. batchSourceSampleURLs
+
+    /// `batchSourceSampleURLs` stores tuples with both linked and unlinked entries.
+    func testBatchSourceSampleURLsStoresSampleEntries() {
+        let vm = DocumentSectionViewModel()
+        let testURL = URL(fileURLWithPath: "/tmp/SampleA.lungfishfastq")
+        vm.batchSourceSampleURLs = [
+            (sampleId: "SampleA", bundleURL: testURL),
+            (sampleId: "SampleB", bundleURL: nil),
+        ]
+
+        XCTAssertEqual(vm.batchSourceSampleURLs.count, 2)
+        XCTAssertEqual(vm.batchSourceSampleURLs[0].sampleId, "SampleA")
+        XCTAssertEqual(vm.batchSourceSampleURLs[0].bundleURL, testURL)
+        XCTAssertEqual(vm.batchSourceSampleURLs[1].sampleId, "SampleB")
+        XCTAssertNil(vm.batchSourceSampleURLs[1].bundleURL)
+    }
+
+    // MARK: - 5. BatchOperationDetailsSection instantiation
+
+    /// `BatchOperationDetailsSection` can be instantiated with all parameters.
+    func testBatchOperationDetailsSectionCanBeInstantiated() {
+        // This test verifies the SwiftUI view initialiser doesn't crash.
+        let section = BatchOperationDetailsSection(
+            tool: "Kraken2",
+            parameters: ["Database": "standard-2024-01", "Goal": "profiling"],
+            timestamp: Date()
+        )
+        // Accessing `body` (via `_body`) would require a rendering context.
+        // The mere instantiation without crash is sufficient here.
+        _ = section
+    }
+
+    /// `BatchOperationDetailsSection` can be instantiated with empty/nil optional parameters.
+    func testBatchOperationDetailsSectionInstantiatesWithNilTimestampAndEmptyParams() {
+        let section = BatchOperationDetailsSection(tool: "EsViritu", parameters: [:], timestamp: nil)
+        _ = section
+    }
+
+    // MARK: - 6. SourceSamplesSection instantiation
+
+    /// `SourceSamplesSection` can be instantiated with a mix of linked and unlinked samples.
+    func testSourceSamplesSectionCanBeInstantiated() {
+        let section = SourceSamplesSection(
+            samples: [
+                (sampleId: "S1", bundleURL: URL(fileURLWithPath: "/tmp/S1.lungfishfastq")),
+                (sampleId: "S2", bundleURL: nil),
+            ],
+            onNavigateToBundle: { _ in }
+        )
+        _ = section
+    }
+
+    /// `SourceSamplesSection` can be instantiated with an empty sample list.
+    func testSourceSamplesSectionInstantiatesEmpty() {
+        let section = SourceSamplesSection(samples: [])
+        _ = section
+    }
+
+    // MARK: - 7. Source bundle URL resolution
+
+    /// `resolveBundleURL(fromInputFilePath:)` returns the `.lungfishfastq` ancestor when present.
+    func testSourceBundleURLResolutionFromInputFilePath() throws {
+        // Set up a real temporary .lungfishfastq directory with a file inside.
+        let tmp = FileManager.default.temporaryDirectory
+        let bundleDir = tmp.appendingPathComponent("TestSample-\(UUID().uuidString).lungfishfastq")
+        let readsFile = bundleDir.appendingPathComponent("reads.fastq.gz")
+
+        try FileManager.default.createDirectory(at: bundleDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: bundleDir) }
+        FileManager.default.createFile(atPath: readsFile.path, contents: Data())
+
+        let resolved = resolveBundleURL(fromInputFilePath: readsFile.path)
+
+        XCTAssertNotNil(resolved, "resolveBundleURL should find the .lungfishfastq bundle")
+        XCTAssertEqual(resolved?.lastPathComponent, bundleDir.lastPathComponent)
+    }
+
+    /// `resolveBundleURL(fromInputFilePath:)` returns nil when no `.lungfishfastq` ancestor exists.
+    func testSourceBundleURLResolutionReturnsNilWhenNoBundleAncestor() {
+        let path = "/tmp/some-random-file.fastq.gz"
+        let resolved = resolveBundleURL(fromInputFilePath: path)
+        XCTAssertNil(resolved, "resolveBundleURL should return nil when no .lungfishfastq ancestor exists")
+    }
+
+    // MARK: - 8. updateBatchOperationDetails
+
+    /// `InspectorViewController.updateBatchOperationDetails` sets all ViewModel properties.
+    func testUpdateBatchOperationDetailsSetsAllProperties() {
+        let vc = InspectorViewController()
+        vc.loadViewIfNeeded()
+
+        let testDate = Date(timeIntervalSince1970: 1_700_000_000)
+        let testURL = URL(fileURLWithPath: "/tmp/SampleA.lungfishfastq")
+
+        vc.updateBatchOperationDetails(
+            tool: "EsViritu",
+            parameters: ["Mode": "fast"],
+            timestamp: testDate,
+            sourceSamples: [(sampleId: "SampleA", bundleURL: testURL)]
+        )
+
+        let dsvm = vc.viewModel.documentSectionViewModel
+        XCTAssertEqual(dsvm.batchOperationTool, "EsViritu")
+        XCTAssertEqual(dsvm.batchOperationParameters["Mode"], "fast")
+        XCTAssertEqual(dsvm.batchOperationTimestamp, testDate)
+        XCTAssertEqual(dsvm.batchSourceSampleURLs.count, 1)
+        XCTAssertEqual(dsvm.batchSourceSampleURLs.first?.sampleId, "SampleA")
+        XCTAssertEqual(dsvm.batchSourceSampleURLs.first?.bundleURL, testURL)
+    }
+
+    /// `InspectorViewController.clearBatchOperationDetails` resets all batch properties.
+    func testClearBatchOperationDetailsResetsProperties() {
+        let vc = InspectorViewController()
+        vc.loadViewIfNeeded()
+
+        vc.updateBatchOperationDetails(
+            tool: "Kraken2",
+            parameters: ["Database": "standard"],
+            timestamp: Date(),
+            sourceSamples: [(sampleId: "S1", bundleURL: nil)]
+        )
+
+        vc.clearBatchOperationDetails()
+
+        let dsvm = vc.viewModel.documentSectionViewModel
+        XCTAssertNil(dsvm.batchOperationTool)
+        XCTAssertTrue(dsvm.batchOperationParameters.isEmpty)
+        XCTAssertNil(dsvm.batchOperationTimestamp)
+        XCTAssertTrue(dsvm.batchSourceSampleURLs.isEmpty)
+    }
+
+    // MARK: - Helpers
+
+    /// Mirrors the bundle resolution logic from `MainSplitViewController.resolveBundleURL(fromInputFilePath:)`.
+    /// Duplicated here so tests are self-contained and don't depend on the private method.
+    private func resolveBundleURL(fromInputFilePath path: String) -> URL? {
+        var url = URL(fileURLWithPath: path)
+        while url.pathComponents.count > 1 {
+            url = url.deletingLastPathComponent()
+            if url.pathExtension.lowercased() == "lungfishfastq" {
+                var isDir: ObjCBool = false
+                if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+                    return url
+                }
+            }
+        }
+        return nil
+    }
+}

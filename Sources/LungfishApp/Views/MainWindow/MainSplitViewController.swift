@@ -1978,6 +1978,17 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                     attachments: BundleAttachmentStore(bundleURL: batchURL)
                 )
             }
+            let params: [String: String] = [
+                "Database": "\(manifest.databaseName) \(manifest.databaseVersion)".trimmingCharacters(in: .whitespaces),
+                "Goal": manifest.goal,
+            ]
+            let sourceSamples = resolveBatchSourceSamples(manifest.samples)
+            self.inspectorController?.updateBatchOperationDetails(
+                tool: "Kraken2",
+                parameters: params,
+                timestamp: manifest.header.createdAt,
+                sourceSamples: sourceSamples
+            )
 
         } else if dirName.hasPrefix("esviritu") {
             guard let manifest = MetagenomicsBatchResultStore.loadEsViritu(from: batchURL) else {
@@ -2006,6 +2017,13 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                     attachments: BundleAttachmentStore(bundleURL: batchURL)
                 )
             }
+            let sourceSamples = resolveBatchSourceSamples(manifest.samples)
+            self.inspectorController?.updateBatchOperationDetails(
+                tool: "EsViritu",
+                parameters: [:],
+                timestamp: manifest.header.createdAt,
+                sourceSamples: sourceSamples
+            )
 
         } else if dirName.hasPrefix("taxtriage") {
             viewerController.displayTaxTriageBatch(
@@ -2021,10 +2039,58 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                     attachments: BundleAttachmentStore(bundleURL: batchURL)
                 )
             }
+            // TaxTriage does not have a summary manifest with sample records at the batch level;
+            // clear any stale batch operation details.
+            self.inspectorController?.clearBatchOperationDetails()
+            self.inspectorController?.updateBatchOperationDetails(
+                tool: "TaxTriage",
+                parameters: [:],
+                timestamp: nil,
+                sourceSamples: []
+            )
 
         } else {
             logger.warning("displayBatchGroup: Unrecognized batch prefix in '\(dirName, privacy: .public)'")
         }
+    }
+
+    /// Resolves each sample record's originating `.lungfishfastq` bundle URL by walking up
+    /// the first input file path until a `.lungfishfastq` directory is found.
+    ///
+    /// - Parameter samples: Records from a batch manifest.
+    /// - Returns: Tuples of sample ID and bundle URL (nil when the bundle cannot be located).
+    private func resolveBatchSourceSamples(
+        _ samples: [MetagenomicsBatchSampleRecord]
+    ) -> [(sampleId: String, bundleURL: URL?)] {
+        samples.map { record in
+            let bundleURL = record.inputFiles.first.flatMap { path in
+                resolveBundleURL(fromInputFilePath: path)
+            }
+            return (sampleId: record.sampleId, bundleURL: bundleURL)
+        }
+    }
+
+    /// Walks up a file path to find the enclosing `.lungfishfastq` bundle directory.
+    ///
+    /// Input files inside FASTQ bundles live at paths like:
+    /// `.../SampleA.lungfishfastq/reads.fastq.gz`
+    /// This helper climbs ancestors until it finds a directory with the `.lungfishfastq` extension.
+    ///
+    /// - Parameter path: Absolute file path to start from.
+    /// - Returns: The `.lungfishfastq` directory URL, or nil if none is found.
+    private func resolveBundleURL(fromInputFilePath path: String) -> URL? {
+        var url = URL(fileURLWithPath: path)
+        // Walk up until we hit the root or find a .lungfishfastq directory.
+        while url.pathComponents.count > 1 {
+            url = url.deletingLastPathComponent()
+            if url.pathExtension.lowercased() == "lungfishfastq" {
+                var isDir: ObjCBool = false
+                if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+                    return url
+                }
+            }
+        }
+        return nil
     }
 
     /// Displays a NAO-MGS surveillance result from its bundle directory.
