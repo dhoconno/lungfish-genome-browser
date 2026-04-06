@@ -573,6 +573,26 @@ public class InspectorViewController: NSViewController {
                 bundleURL: bundleURL,
                 projectURL: projectURL
             )
+
+            // Wire navigation callback so clicking an analysis entry in the
+            // Inspector opens it in the viewer via the sidebar selection path.
+            viewModel.documentSectionViewModel.navigateToAnalysis = { [weak self] entry in
+                guard let projectURL = DocumentManager.shared.activeProject?.url else { return }
+                let analysisURL = projectURL
+                    .appendingPathComponent(AnalysesFolder.directoryName)
+                    .appendingPathComponent(entry.analysisDirectoryName)
+                guard FileManager.default.fileExists(atPath: analysisURL.path) else {
+                    // Stale entry — prune and refresh
+                    self?.viewModel.documentSectionViewModel.updateAnalysisManifest(
+                        bundleURL: bundleURL,
+                        projectURL: projectURL
+                    )
+                    return
+                }
+                // Select the analysis in the sidebar, which triggers displayContent
+                AppDelegate.shared?.mainWindowController?.mainSplitViewController?
+                    .sidebarController.selectItem(forURL: analysisURL)
+            }
         }
 
         viewModel.selectedTab = .document

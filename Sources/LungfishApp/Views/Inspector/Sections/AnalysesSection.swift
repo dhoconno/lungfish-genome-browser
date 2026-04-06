@@ -25,9 +25,9 @@ struct AnalysesSection: View {
                     .padding(.vertical, 4)
             } else {
                 ForEach(analyses) { entry in
-                    AnalysisRow(entry: entry)
-                        .contentShape(Rectangle())
-                        .onTapGesture { onNavigate?(entry) }
+                    AnalysisRowButton(entry: entry) {
+                        onNavigate?(entry)
+                    }
                     if entry.id != analyses.last?.id {
                         Divider()
                     }
@@ -37,13 +37,42 @@ struct AnalysesSection: View {
     }
 }
 
+// MARK: - AnalysisRowButton
+
+/// Wraps an AnalysisRow with hover/click styling to make it look interactive.
+private struct AnalysisRowButton: View {
+    let entry: AnalysisManifestEntry
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        AnalysisRow(entry: entry, isHovering: isHovering)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(isHovering ? Color.accentColor.opacity(0.08) : Color.clear)
+            )
+            .contentShape(Rectangle())
+            .onTapGesture { action() }
+            .onHover { hovering in
+                isHovering = hovering
+                if hovering {
+                    NSCursor.pointingHand.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+    }
+}
+
 // MARK: - AnalysisRow
 
 /// A single row in the analyses section, showing tool icon, name, timestamp, and summary.
 private struct AnalysisRow: View {
     let entry: AnalysisManifestEntry
-
-    @State private var isHovering = false
+    var isHovering: Bool = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -98,9 +127,6 @@ private struct AnalysisRow: View {
             }
         }
         .padding(.vertical, 4)
-        .onHover { hovering in
-            isHovering = hovering
-        }
     }
 
     // MARK: - Tool Icon Mapping
