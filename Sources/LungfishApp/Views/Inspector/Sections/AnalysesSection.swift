@@ -136,18 +136,15 @@ private struct AnalysisRow: View {
         case "kraken2": return "k.circle.fill"
         case "esviritu": return "e.circle.fill"
         case "taxtriage": return "t.circle.fill"
-        case "naomgs", "nao-mgs": return "n.circle.fill"
+        case "naomgs": return "n.circle.fill"
         case "spades", "megahit", "flye": return "s.circle.fill"
         case "minimap2", "bwa-mem2", "bowtie2": return "m.circle.fill"
         default: return "gearshape.fill"
         }
     }
 
-    /// Lungfish Orange — matches sidebar analysis item tint.
-    private static let lungfishOrange = Color(red: 212.0/255, green: 123.0/255, blue: 58.0/255)
-
     private func iconColor(for tool: String) -> Color {
-        Self.lungfishOrange
+        .lungfishOrangeFallback
     }
 
     // MARK: - Timestamp Formatting

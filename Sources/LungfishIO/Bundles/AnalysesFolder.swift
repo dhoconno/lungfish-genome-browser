@@ -23,6 +23,23 @@ public enum AnalysesFolder {
         "spades", "megahit", "naomgs", "nvd",
     ]
 
+    // MARK: - Tool Metadata
+
+    /// Human-readable display name for a tool identifier.
+    public static func displayName(for tool: String) -> String {
+        switch tool {
+        case "esviritu": return "EsViritu"
+        case "kraken2": return "Kraken2"
+        case "taxtriage": return "TaxTriage"
+        case "spades": return "SPAdes"
+        case "megahit": return "MEGAHIT"
+        case "minimap2": return "Minimap2"
+        case "naomgs": return "NAO-MGS"
+        case "nvd": return "NVD"
+        default: return tool.capitalized
+        }
+    }
+
     // MARK: - Directory Management
 
     /// Returns the `Analyses/` URL for a project, creating the directory if it doesn't exist.

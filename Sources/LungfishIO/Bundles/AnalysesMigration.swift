@@ -115,7 +115,7 @@ public enum AnalysesMigration {
                         tool: tool,
                         timestamp: date,
                         analysisDirectoryName: destName,
-                        displayName: displayName(for: tool),
+                        displayName: AnalysesFolder.displayName(for: tool),
                         summary: "Migrated from derivatives/\(name)"
                     )
                     try AnalysisManifestStore.recordAnalysis(entry, bundleURL: bundleURL)
@@ -134,19 +134,10 @@ public enum AnalysesMigration {
         return totalMigrated
     }
 
-    /// Display name for a tool identifier.
-    private static func displayName(for tool: String) -> String {
-        switch tool {
-        case "esviritu": return "EsViritu Detection"
-        case "kraken2": return "Kraken2 Classification"
-        case "taxtriage": return "TaxTriage Analysis"
-        case "naomgs": return "NAO-MGS Import"
-        case "nvd": return "NVD Analysis"
-        default: return tool.capitalized
-        }
-    }
-
     /// Extract timestamp from sidecar JSON's savedAt field.
+    // ISO8601DateFormatter is internally synchronized; shared access is safe.
+    private nonisolated(unsafe) static let iso8601Formatter = ISO8601DateFormatter()
+
     private static func extractTimestamp(from analysisDir: URL) -> Date? {
         let sidecarNames = [
             "esviritu-result.json",
@@ -157,11 +148,9 @@ public enum AnalysesMigration {
             let sidecarURL = analysisDir.appendingPathComponent(name)
             guard let data = try? Data(contentsOf: sidecarURL) else { continue }
             if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let savedAtString = json["savedAt"] as? String {
-                let formatter = ISO8601DateFormatter()
-                if let date = formatter.date(from: savedAtString) {
-                    return date
-                }
+               let savedAtString = json["savedAt"] as? String,
+               let date = iso8601Formatter.date(from: savedAtString) {
+                return date
             }
         }
         return nil
