@@ -98,18 +98,30 @@ public enum AnalysesMigration {
                 }
 
                 // 6. Move directory to Analyses/{tool}-{timestamp}/
-                try fm.moveItem(at: candidateURL, to: destURL)
-                logger.info("Migration: moved \(name) -> Analyses/\(destName)")
+                // Wrapped in do/catch so one failed migration does not abort the rest.
+                do {
+                    try fm.moveItem(at: candidateURL, to: destURL)
+                    logger.info("Migration: moved \(name) -> Analyses/\(destName)")
+                } catch {
+                    logger.error("Migration: failed to move \(name) -> Analyses/\(destName): \(error.localizedDescription, privacy: .public)")
+                    continue
+                }
 
-                // 7. Record in analyses-manifest.json of the source bundle
-                let entry = AnalysisManifestEntry(
-                    tool: tool,
-                    timestamp: date,
-                    analysisDirectoryName: destName,
-                    displayName: displayName(for: tool),
-                    summary: "Migrated from derivatives/\(name)"
-                )
-                try AnalysisManifestStore.recordAnalysis(entry, bundleURL: bundleURL)
+                // 7. Record in analyses-manifest.json of the source bundle.
+                // Non-fatal: the sidebar will still discover the result in Analyses/
+                // via directory scanning even without a manifest entry.
+                do {
+                    let entry = AnalysisManifestEntry(
+                        tool: tool,
+                        timestamp: date,
+                        analysisDirectoryName: destName,
+                        displayName: displayName(for: tool),
+                        summary: "Migrated from derivatives/\(name)"
+                    )
+                    try AnalysisManifestStore.recordAnalysis(entry, bundleURL: bundleURL)
+                } catch {
+                    logger.warning("Migration: moved \(name) but failed to record manifest: \(error.localizedDescription, privacy: .public)")
+                }
 
                 totalMigrated += 1
             }

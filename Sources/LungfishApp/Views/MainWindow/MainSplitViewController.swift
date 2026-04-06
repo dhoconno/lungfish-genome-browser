@@ -1654,6 +1654,9 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                 displayNaoMgsResultFromSidebar(at: url)
             } else if dirName.hasPrefix("nvd") {
                 displayNvdResultFromSidebar(at: url)
+            } else if dirName.hasPrefix("spades") || dirName.hasPrefix("megahit") || dirName.hasPrefix("minimap2") {
+                logger.info("displayContent: Assembly/alignment viewer not yet available for '\(dirName, privacy: .public)'")
+                viewerController.clearViewport(statusMessage: "Viewer for this analysis type is not yet available.")
             } else {
                 logger.warning("displayContent: Unknown analysis type for '\(dirName, privacy: .public)'")
             }

@@ -21,8 +21,10 @@ public enum AnalysisParameterValue: Sendable, Equatable, Codable {
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer()
-        if let v = try? container.decode(Bool.self) { self = .bool(v) }
-        else if let v = try? container.decode(Int.self) { self = .int(v) }
+        // Int before Bool: JSON integer 1 would otherwise decode as Bool(true).
+        // JSON boolean true/false do NOT decode as Int, so this order is safe.
+        if let v = try? container.decode(Int.self) { self = .int(v) }
+        else if let v = try? container.decode(Bool.self) { self = .bool(v) }
         else if let v = try? container.decode(Double.self) { self = .double(v) }
         else { self = .string(try container.decode(String.self)) }
     }

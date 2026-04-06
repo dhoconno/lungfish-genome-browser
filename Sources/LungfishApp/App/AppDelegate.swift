@@ -4575,7 +4575,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                             summary: "\(result.mappedReads)/\(result.totalReads) reads mapped",
                             status: .completed
                         )
-                        try? AnalysisManifestStore.recordAnalysis(entry, bundleURL: bundleURL)
+                        do { try AnalysisManifestStore.recordAnalysis(entry, bundleURL: bundleURL) } catch { appDelegateLogger.warning("Failed to record analysis manifest: \(error.localizedDescription, privacy: .public)") }
                     }
 
                     // Reload sidebar
@@ -5130,7 +5130,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                                 summary: "\(readCount) reads, \(classifiedCount) classified",
                                 status: .completed
                             )
-                            try? AnalysisManifestStore.recordAnalysis(entry, bundleURL: bundleURL)
+                            do { try AnalysisManifestStore.recordAnalysis(entry, bundleURL: bundleURL) } catch { appDelegateLogger.warning("Failed to record analysis manifest: \(error.localizedDescription, privacy: .public)") }
                         }
                     }
                 }
@@ -5287,7 +5287,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                                 summary: "\(capturedResult.detections.count) viruses detected in \(capturedResult.detectedFamilyCount) families",
                                 status: .completed
                             )
-                            try? AnalysisManifestStore.recordAnalysis(entry, bundleURL: bundleURL)
+                            do { try AnalysisManifestStore.recordAnalysis(entry, bundleURL: bundleURL) } catch { appDelegateLogger.warning("Failed to record analysis manifest: \(error.localizedDescription, privacy: .public)") }
                         }
                     }
                 }
@@ -5576,7 +5576,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                                 summary: "\(tree.totalReads) reads, \(tree.classifiedReads) classified",
                                 status: .completed
                             )
-                            try? AnalysisManifestStore.recordAnalysis(manifestEntry, bundleURL: bundleURL)
+                            do { try AnalysisManifestStore.recordAnalysis(manifestEntry, bundleURL: bundleURL) } catch { appDelegateLogger.warning("Failed to record analysis manifest: \(error.localizedDescription, privacy: .public)") }
                         }
                     }
                 }
@@ -5834,7 +5834,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                                 summary: "\(entry.ioResult.detections.count) viruses in \(entry.ioResult.detectedFamilyCount) families",
                                 status: .completed
                             )
-                            try? AnalysisManifestStore.recordAnalysis(manifestEntry, bundleURL: bundleURL)
+                            do { try AnalysisManifestStore.recordAnalysis(manifestEntry, bundleURL: bundleURL) } catch { appDelegateLogger.warning("Failed to record analysis manifest: \(error.localizedDescription, privacy: .public)") }
                         }
                     }
                 }
@@ -5952,7 +5952,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                                     summary: capturedResult.summary,
                                     status: .completed
                                 )
-                                try? AnalysisManifestStore.recordAnalysis(entry, bundleURL: bundleURL)
+                                do { try AnalysisManifestStore.recordAnalysis(entry, bundleURL: bundleURL) } catch { appDelegateLogger.warning("Failed to record analysis manifest: \(error.localizedDescription, privacy: .public)") }
                             }
                         }
                     }

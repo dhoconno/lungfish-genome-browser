@@ -152,17 +152,25 @@ private struct AnalysisRow: View {
 
     // MARK: - Timestamp Formatting
 
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f
+    }()
+
+    private static let absoluteFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f
+    }()
+
     private func relativeTimestamp(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+        Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
 
     private func absoluteTimestamp(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        Self.absoluteFormatter.string(from: date)
     }
 
     // MARK: - Parameter Formatting
