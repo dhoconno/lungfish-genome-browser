@@ -382,4 +382,172 @@ final class FASTQOperationRoundTripTests: XCTestCase {
         XCTAssertLessThanOrEqual(records.count, 40,
             "sequencePresenceFilter(keepMatched:false) should retain at most 40 of 50 reads")
     }
+
+    // MARK: - Trim Operations
+
+    func testQualityTrimRoundTrip() async throws {
+        let tempDir = try FASTQOperationTestHelper.makeTempDir(prefix: "QualityTrim")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let root = try FASTQOperationTestHelper.makeBundle(named: "root", in: tempDir)
+        try FASTQOperationTestHelper.writeSyntheticFASTQ(
+            to: root.fastqURL,
+            readCount: 50,
+            readLength: 100,
+            idPrefix: "read"
+        )
+
+        let service = FASTQDerivativeService()
+        let derivedURL = try await service.createDerivative(
+            from: root.bundleURL,
+            request: .qualityTrim(threshold: 20, windowSize: 4, mode: .cutRight),
+            progress: nil
+        )
+
+        try await FASTQOperationTestHelper.assertPreviewValid(bundleURL: derivedURL)
+        FASTQOperationTestHelper.assertPayloadType(bundleURL: derivedURL, expected: "trim")
+        try FASTQOperationTestHelper.assertTrimPositionsValid(bundleURL: derivedURL)
+
+        let materializer = FASTQCLIMaterializer(runner: NativeToolRunner.shared)
+        let outDir = tempDir.appendingPathComponent("out-quality-trim", isDirectory: true)
+        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+        let matURL = try await materializer.materialize(
+            bundleURL: derivedURL, tempDirectory: outDir, progress: nil
+        )
+        let records = try await FASTQOperationTestHelper.loadFASTQRecords(from: matURL)
+        XCTAssertGreaterThan(records.count, 0,
+            "qualityTrim should produce at least some reads")
+        for record in records {
+            XCTAssertGreaterThan(record.sequence.count, 0,
+                "Read \(record.identifier) should have non-zero length after quality trim")
+            XCTAssertLessThanOrEqual(record.sequence.count, 100,
+                "Read \(record.identifier) should be no longer than original 100bp")
+        }
+    }
+
+    func testAdapterTrimRoundTrip() async throws {
+        let tempDir = try FASTQOperationTestHelper.makeTempDir(prefix: "AdapterTrim")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let root = try FASTQOperationTestHelper.makeBundle(named: "root", in: tempDir)
+        let adapter = "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA"
+        try FASTQOperationTestHelper.writeAdapterAppendedFASTQ(
+            to: root.fastqURL,
+            adapter: adapter,
+            totalReads: 50,
+            readsWithAdapter: 50,
+            readLength: 100
+        )
+
+        let service = FASTQDerivativeService()
+        let derivedURL = try await service.createDerivative(
+            from: root.bundleURL,
+            request: .adapterTrim(mode: .specified, sequence: adapter, sequenceR2: nil, fastaFilename: nil),
+            progress: nil
+        )
+
+        try await FASTQOperationTestHelper.assertPreviewValid(bundleURL: derivedURL)
+        FASTQOperationTestHelper.assertPayloadType(bundleURL: derivedURL, expected: "trim")
+        try FASTQOperationTestHelper.assertTrimPositionsValid(bundleURL: derivedURL)
+
+        let materializer = FASTQCLIMaterializer(runner: NativeToolRunner.shared)
+        let outDir = tempDir.appendingPathComponent("out-adapter-trim", isDirectory: true)
+        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+        let matURL = try await materializer.materialize(
+            bundleURL: derivedURL, tempDirectory: outDir, progress: nil
+        )
+        let records = try await FASTQOperationTestHelper.loadFASTQRecords(from: matURL)
+        XCTAssertGreaterThan(records.count, 0,
+            "adapterTrim should produce at least some reads")
+        // All reads had the adapter appended; at least some should be shorter after trimming
+        let shorterCount = records.filter { $0.sequence.count < 100 + adapter.count }.count
+        XCTAssertGreaterThan(shorterCount, 0,
+            "adapterTrim should shorten at least some reads by removing the appended adapter")
+    }
+
+    func testFixedTrimMaterializationRoundTrip() async throws {
+        let tempDir = try FASTQOperationTestHelper.makeTempDir(prefix: "FixedTrimMat")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let root = try FASTQOperationTestHelper.makeBundle(named: "root", in: tempDir)
+        try FASTQOperationTestHelper.writeSyntheticFASTQ(
+            to: root.fastqURL,
+            readCount: 50,
+            readLength: 100,
+            idPrefix: "read"
+        )
+
+        let service = FASTQDerivativeService()
+        let derivedURL = try await service.createDerivative(
+            from: root.bundleURL,
+            request: .fixedTrim(from5Prime: 15, from3Prime: 5),
+            progress: nil
+        )
+
+        try await FASTQOperationTestHelper.assertPreviewValid(bundleURL: derivedURL)
+        FASTQOperationTestHelper.assertPayloadType(bundleURL: derivedURL, expected: "trim")
+        try FASTQOperationTestHelper.assertTrimPositionsValid(bundleURL: derivedURL)
+
+        let materializer = FASTQCLIMaterializer(runner: NativeToolRunner.shared)
+        let outDir = tempDir.appendingPathComponent("out-fixed-trim-mat", isDirectory: true)
+        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+        let matURL = try await materializer.materialize(
+            bundleURL: derivedURL, tempDirectory: outDir, progress: nil
+        )
+        let records = try await FASTQOperationTestHelper.loadFASTQRecords(from: matURL)
+        XCTAssertEqual(records.count, 50,
+            "fixedTrim should produce exactly 50 reads")
+        for record in records {
+            XCTAssertEqual(record.sequence.count, 80,
+                "Read \(record.identifier) should be exactly 80bp after fixedTrim(from5Prime:15, from3Prime:5)")
+        }
+    }
+
+    func testPrimerRemovalRoundTrip() async throws {
+        let tempDir = try FASTQOperationTestHelper.makeTempDir(prefix: "PrimerRemoval")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let root = try FASTQOperationTestHelper.makeBundle(named: "root", in: tempDir)
+        let primer = "GTTTCCCAGTCACGACG"
+        try FASTQOperationTestHelper.writePrimerPrependedFASTQ(
+            to: root.fastqURL,
+            primer: primer,
+            totalReads: 50,
+            readsWithPrimer: 50,
+            baseReadLength: 100
+        )
+
+        let config = FASTQPrimerTrimConfiguration(
+            source: .literal,
+            mode: .fivePrime,
+            forwardSequence: primer,
+            errorRate: 0.12,
+            minimumOverlap: 12
+        )
+
+        let service = FASTQDerivativeService()
+        let derivedURL = try await service.createDerivative(
+            from: root.bundleURL,
+            request: .primerRemoval(configuration: config),
+            progress: nil
+        )
+
+        try await FASTQOperationTestHelper.assertPreviewValid(bundleURL: derivedURL)
+        FASTQOperationTestHelper.assertPayloadType(bundleURL: derivedURL, expected: "trim")
+        try FASTQOperationTestHelper.assertTrimPositionsValid(bundleURL: derivedURL)
+
+        let materializer = FASTQCLIMaterializer(runner: NativeToolRunner.shared)
+        let outDir = tempDir.appendingPathComponent("out-primer-removal", isDirectory: true)
+        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+        let matURL = try await materializer.materialize(
+            bundleURL: derivedURL, tempDirectory: outDir, progress: nil
+        )
+        let records = try await FASTQOperationTestHelper.loadFASTQRecords(from: matURL)
+        XCTAssertGreaterThan(records.count, 0,
+            "primerRemoval should produce at least some reads")
+        // All reads had the 17bp primer prepended (total length 117bp); at least some should be shorter
+        let shorterCount = records.filter { $0.sequence.count < 117 }.count
+        XCTAssertGreaterThan(shorterCount, 0,
+            "primerRemoval should shorten at least some reads by removing the prepended primer")
+    }
 }
