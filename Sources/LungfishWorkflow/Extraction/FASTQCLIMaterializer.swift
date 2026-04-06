@@ -260,16 +260,27 @@ public final class FASTQCLIMaterializer: Sendable {
                 readIDListURL: readIDListURL,
                 outputFASTQ: extractTarget
             )
-            // Apply trim in a second pass if needed
+            // Apply trim in a second pass if needed.
+            // For legacy demux trim files (e.g. #format lungfish-demux-trim-v1) that store
+            // relative 5'/3' offset amounts rather than absolute slice positions, use the
+            // legacy trim path which interprets them correctly.
             if let trimURL = trimPositionsURL, fm.fileExists(atPath: trimURL.path) {
-                let positions = try FASTQTrimPositionFile.load(from: trimURL)
                 let tempTrimmed = extractTarget.deletingLastPathComponent()
                     .appendingPathComponent("trimmed-\(UUID().uuidString).fastq")
-                try await extractTrimmedReads(
-                    fromRootFASTQ: extractTarget,
-                    positions: positions,
-                    outputFASTQ: tempTrimmed
-                )
+                if isLegacyRelativeTrimFile(trimURL) {
+                    try await applyLegacyRelativeTrim(
+                        from: extractTarget,
+                        trimPositionsURL: trimURL,
+                        outputFASTQ: tempTrimmed
+                    )
+                } else {
+                    let positions = try FASTQTrimPositionFile.load(from: trimURL)
+                    try await extractTrimmedReads(
+                        fromRootFASTQ: extractTarget,
+                        positions: positions,
+                        outputFASTQ: tempTrimmed
+                    )
+                }
                 try fm.removeItem(at: extractTarget)
                 try fm.moveItem(at: tempTrimmed, to: extractTarget)
             }
@@ -592,6 +603,88 @@ public final class FASTQCLIMaterializer: Sendable {
             return false
         }
         return String(header) == FASTQTrimPositionFile.formatHeader
+    }
+
+    /// Returns true if the file is a legacy demux-trim format that stores relative
+    /// 5'/3' trim offsets (e.g. `#format lungfish-demux-trim-v1`) rather than the
+    /// absolute slice positions of the v2 format.
+    private func isLegacyRelativeTrimFile(_ url: URL) -> Bool {
+        guard let header = try? String(contentsOf: url, encoding: .utf8)
+            .split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true)
+            .first else {
+            return false
+        }
+        return String(header).hasPrefix("#format lungfish-demux-trim-v")
+    }
+
+    /// Applies a legacy relative-offset trim file to an already-extracted FASTQ.
+    ///
+    /// The legacy format stores per-read 5' and 3' trim amounts (`trim_5p`, `trim_3p`)
+    /// rather than absolute (start, end) positions. The read ID in the trim file may
+    /// include an ` rc` suffix (cutadapt demux convention); this suffix is stripped
+    /// before lookup so it matches the extracted FASTQ header.
+    private func applyLegacyRelativeTrim(
+        from sourceFASTQ: URL,
+        trimPositionsURL: URL,
+        outputFASTQ: URL
+    ) async throws {
+        let content = try String(contentsOf: trimPositionsURL, encoding: .utf8)
+
+        // Build trim map keyed by canonical (bare) read ID.
+        // Supports 4-column (read_id, mate, trim_5p, trim_3p) and
+        // 3-column legacy (read_id, trim_5p, trim_3p) layouts.
+        var trimMap: [String: (trim5p: Int, trim3p: Int)] = [:]
+        for line in content.split(separator: "\n") {
+            if line.hasPrefix("#") || line.hasPrefix("read_id") { continue }
+            let cols = line.split(separator: "\t")
+            let readID: String
+            let t5: Int
+            let t3: Int
+            if cols.count >= 4, let mate = Int(cols[1]),
+               let a = Int(cols[2]), let b = Int(cols[3]) {
+                readID = canonicalLegacyReadID(String(cols[0]))
+                _ = mate  // mate column present but we key by bare ID for single-end
+                t5 = a
+                t3 = b
+            } else if cols.count >= 3,
+                      let a = Int(cols[1]), let b = Int(cols[2]) {
+                readID = canonicalLegacyReadID(String(cols[0]))
+                t5 = a
+                t3 = b
+            } else {
+                continue
+            }
+            trimMap[readID] = (t5, t3)
+        }
+
+        let reader = FASTQReader(validateSequence: false)
+        let writer = FASTQWriter(url: outputFASTQ)
+        try writer.open()
+        defer { try? writer.close() }
+
+        for try await record in reader.records(from: sourceFASTQ) {
+            let bareID = normalizedIdentifier(record.identifier)
+            if let trim = trimMap[bareID] {
+                let seq = record.sequence
+                let startIdx = min(trim.trim5p, seq.count)
+                let endIdx = max(startIdx, seq.count - trim.trim3p)
+                let trimmed = record.trimmed(from: startIdx, to: endIdx)
+                if trimmed.length > 0 { try writer.write(trimmed) }
+            } else {
+                try writer.write(record)
+            }
+        }
+    }
+
+    /// Strips the ` rc` suffix added by cutadapt demux convention and normalizes
+    /// the remaining identifier (strips mate suffixes and description).
+    private func canonicalLegacyReadID(_ rawValue: String) -> String {
+        var id = rawValue
+        // Strip trailing " rc" added by cutadapt to denote reverse-complemented reads
+        if id.hasSuffix(" rc") {
+            id = String(id.dropLast(3))
+        }
+        return normalizedIdentifier(id)
     }
 
     private func loadSelectedReadIDSet(from url: URL) throws -> Set<String> {
