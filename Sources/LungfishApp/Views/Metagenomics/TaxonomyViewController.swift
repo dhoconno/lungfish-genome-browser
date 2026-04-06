@@ -11,6 +11,33 @@ import os.log
 
 private let logger = Logger(subsystem: LogSubsystem.app, category: "TaxonomyViewController")
 
+// MARK: - BatchClassificationRow
+
+/// A flat row representing a single taxon from a single sample, used when
+/// aggregating multiple Kraken2 results into a batch view.
+struct BatchClassificationRow: Sendable {
+    let sample: String
+    let taxonName: String
+    let taxId: Int
+    let rank: String
+    let rankDisplayName: String
+    let readsDirect: Int
+    let readsClade: Int
+    let percentage: Double
+
+    static func fromTree(_ tree: TaxonTree, sampleId: String) -> [BatchClassificationRow] {
+        tree.allNodes().compactMap { node in
+            guard node.taxId != 1, node.rank != .unclassified else { return nil }
+            return BatchClassificationRow(
+                sample: sampleId, taxonName: node.name, taxId: node.taxId,
+                rank: node.rank.code, rankDisplayName: node.rank.displayName,
+                readsDirect: node.readsDirect, readsClade: node.readsClade,
+                percentage: node.fractionClade * 100.0
+            )
+        }
+    }
+}
+
 // MARK: - TaxonomyViewController
 
 /// A full-screen taxonomy browser combining a sunburst chart and hierarchical table.

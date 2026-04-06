@@ -11,6 +11,32 @@ import os.log
 
 private let logger = Logger(subsystem: LogSubsystem.app, category: "EsVirituResultVC")
 
+// MARK: - BatchEsVirituRow
+
+/// A flat row representing a single viral assembly from a single sample, used
+/// when aggregating multiple EsViritu results into a batch view.
+struct BatchEsVirituRow: Sendable {
+    let sample: String
+    let virusName: String
+    let family: String?
+    let assembly: String
+    let readCount: Int
+    let uniqueReads: Int
+    let rpkmf: Double
+    let coverageBreadth: Double
+    let coverageDepth: Double
+
+    static func fromAssemblies(_ assemblies: [ViralAssembly], sampleId: String) -> [BatchEsVirituRow] {
+        assemblies.map { asm in
+            BatchEsVirituRow(
+                sample: sampleId, virusName: asm.name, family: asm.family,
+                assembly: asm.assembly, readCount: asm.totalReads,
+                uniqueReads: 0, rpkmf: asm.rpkmf,
+                coverageBreadth: 0, coverageDepth: asm.meanCoverage
+            )
+        }
+    }
+}
 
 // MARK: - EsVirituResultViewController
 
