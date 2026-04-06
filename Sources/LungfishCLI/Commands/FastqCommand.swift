@@ -41,6 +41,7 @@ struct FastqCommand: AsyncParsableCommand {
             FastqDeduplicateSubcommand.self,
             FastqDemultiplexSubcommand.self,
             FastqImportONTSubcommand.self,
+            FastqMaterializeSubcommand.self,
         ]
     )
 }
@@ -48,7 +49,7 @@ struct FastqCommand: AsyncParsableCommand {
 // MARK: - Helpers
 
 /// Builds the environment variables needed for BBTools shell scripts.
-private func bbToolsEnvironment(runner: NativeToolRunner) async -> [String: String] {
+func bbToolsEnvironment(runner: NativeToolRunner) async -> [String: String] {
     var env: [String: String] = [:]
     if let toolsDir = await runner.getToolsDirectory() {
         let existingPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
@@ -64,7 +65,7 @@ private func bbToolsEnvironment(runner: NativeToolRunner) async -> [String: Stri
     return env
 }
 
-private func validateInput(_ path: String) throws -> URL {
+func validateInput(_ path: String) throws -> URL {
     guard FileManager.default.fileExists(atPath: path) else {
         throw CLIError.inputFileNotFound(path: path)
     }
