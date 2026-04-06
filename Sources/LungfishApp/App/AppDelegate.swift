@@ -465,6 +465,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         let projectName = projectURL.deletingPathExtension().lastPathComponent
         controller.window?.title = "\(projectName) \u{2014} Lungfish Genome Explorer"
 
+        // Migrate analysis results from legacy derivatives/ location to Analyses/.
+        // This is idempotent and safe to run on every project open.
+        if let count = try? AnalysesMigration.migrateProject(at: projectURL), count > 0 {
+            debugLog("openProject: Migrated \(count) analysis director\(count == 1 ? "y" : "ies") from derivatives/ to Analyses/")
+        }
+
         // Use DocumentManager to preserve project semantics and persisted metadata.
         do {
             let _ = try DocumentManager.shared.openProject(at: projectURL)
