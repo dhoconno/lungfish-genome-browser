@@ -237,6 +237,115 @@ public struct Minimap2Result: Sendable {
     public let wallClockSeconds: Double
 }
 
+// MARK: - Persistence
+
+/// The filename used for the serialized Minimap2 alignment result sidecar.
+private let alignmentResultFilename = "alignment-result.json"
+
+extension Minimap2Result {
+
+    /// Saves the alignment result metadata to a JSON file in the given directory.
+    ///
+    /// - Parameters:
+    ///   - directory: The directory to write `alignment-result.json` into.
+    ///   - toolVersion: The minimap2 version string to record.
+    /// - Throws: Encoding or file write errors.
+    public func save(to directory: URL, toolVersion: String) throws {
+        let sidecar = PersistedAlignmentResult(
+            schemaVersion: 1,
+            bamPath: bamURL.lastPathComponent,
+            baiPath: baiURL.lastPathComponent,
+            totalReads: totalReads,
+            mappedReads: mappedReads,
+            unmappedReads: unmappedReads,
+            toolVersion: toolVersion,
+            wallClockSeconds: wallClockSeconds,
+            savedAt: Date()
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(sidecar)
+
+        let fileURL = directory.appendingPathComponent(alignmentResultFilename)
+        try data.write(to: fileURL, options: .atomic)
+
+        logger.info("Saved Minimap2 alignment result to \(fileURL.path)")
+    }
+
+    /// Loads a Minimap2 alignment result from a directory containing a saved sidecar.
+    ///
+    /// - Parameter directory: The directory containing `alignment-result.json`.
+    /// - Returns: A reconstituted ``Minimap2Result``.
+    /// - Throws: ``Minimap2ResultLoadError`` or decoding errors.
+    public static func load(from directory: URL) throws -> Minimap2Result {
+        let fileURL = directory.appendingPathComponent(alignmentResultFilename)
+
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            throw Minimap2ResultLoadError.sidecarNotFound(directory)
+        }
+
+        let data = try Data(contentsOf: fileURL)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let sidecar = try decoder.decode(PersistedAlignmentResult.self, from: data)
+
+        return Minimap2Result(
+            bamURL: directory.appendingPathComponent(sidecar.bamPath),
+            baiURL: directory.appendingPathComponent(sidecar.baiPath),
+            totalReads: sidecar.totalReads,
+            mappedReads: sidecar.mappedReads,
+            unmappedReads: sidecar.unmappedReads,
+            wallClockSeconds: sidecar.wallClockSeconds
+        )
+    }
+
+    /// Whether a saved Minimap2 alignment result exists in the given directory.
+    ///
+    /// - Parameter directory: The directory to check.
+    /// - Returns: `true` if `alignment-result.json` exists.
+    public static func exists(in directory: URL) -> Bool {
+        FileManager.default.fileExists(
+            atPath: directory.appendingPathComponent(alignmentResultFilename).path
+        )
+    }
+}
+
+// MARK: - PersistedAlignmentResult
+
+/// Codable representation of a Minimap2 alignment result for JSON serialization.
+///
+/// File paths are stored as relative filenames (not absolute paths) so the
+/// sidecar remains valid if the output directory is moved.
+private struct PersistedAlignmentResult: Codable, Sendable {
+    let schemaVersion: Int
+    let bamPath: String
+    let baiPath: String
+    let totalReads: Int
+    let mappedReads: Int
+    let unmappedReads: Int
+    let toolVersion: String
+    let wallClockSeconds: Double
+    let savedAt: Date
+}
+
+// MARK: - Minimap2ResultLoadError
+
+/// Errors that can occur when loading a persisted Minimap2 alignment result.
+public enum Minimap2ResultLoadError: Error, LocalizedError, Sendable {
+
+    /// The `alignment-result.json` sidecar was not found.
+    case sidecarNotFound(URL)
+
+    public var errorDescription: String? {
+        switch self {
+        case .sidecarNotFound(let url):
+            return "No saved Minimap2 alignment result in \(url.path)"
+        }
+    }
+}
+
 // MARK: - Minimap2PipelineError
 
 /// Errors that can occur during the minimap2 read mapping pipeline.

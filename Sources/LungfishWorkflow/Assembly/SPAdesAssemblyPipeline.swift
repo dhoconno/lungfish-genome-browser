@@ -143,6 +143,124 @@ public struct SPAdesAssemblyResult: Sendable {
     public let exitCode: Int32
 }
 
+// MARK: - Persistence
+
+/// The filename used for the serialized SPAdes assembly result sidecar.
+private let assemblyResultFilename = "assembly-result.json"
+
+extension SPAdesAssemblyResult {
+
+    /// Saves the assembly result metadata to a JSON file in the given directory.
+    ///
+    /// - Parameter directory: The directory to write `assembly-result.json` into.
+    /// - Throws: Encoding or file write errors.
+    public func save(to directory: URL) throws {
+        let sidecar = PersistedAssemblyResult(
+            schemaVersion: 1,
+            contigsPath: contigsPath.lastPathComponent,
+            scaffoldsPath: scaffoldsPath?.lastPathComponent,
+            graphPath: graphPath?.lastPathComponent,
+            logPath: logPath.lastPathComponent,
+            paramsPath: paramsPath?.lastPathComponent,
+            statistics: statistics,
+            spadesVersion: spadesVersion,
+            wallTimeSeconds: wallTimeSeconds,
+            commandLine: commandLine,
+            exitCode: Int(exitCode),
+            savedAt: Date()
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(sidecar)
+
+        let fileURL = directory.appendingPathComponent(assemblyResultFilename)
+        try data.write(to: fileURL, options: .atomic)
+
+        logger.info("Saved SPAdes assembly result to \(fileURL.path)")
+    }
+
+    /// Loads an SPAdes assembly result from a directory containing a saved sidecar.
+    ///
+    /// - Parameter directory: The directory containing `assembly-result.json`.
+    /// - Returns: A reconstituted ``SPAdesAssemblyResult``.
+    /// - Throws: ``SPAdesResultLoadError`` or decoding errors.
+    public static func load(from directory: URL) throws -> SPAdesAssemblyResult {
+        let fileURL = directory.appendingPathComponent(assemblyResultFilename)
+
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            throw SPAdesResultLoadError.sidecarNotFound(directory)
+        }
+
+        let data = try Data(contentsOf: fileURL)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let sidecar = try decoder.decode(PersistedAssemblyResult.self, from: data)
+
+        return SPAdesAssemblyResult(
+            contigsPath: directory.appendingPathComponent(sidecar.contigsPath),
+            scaffoldsPath: sidecar.scaffoldsPath.map { directory.appendingPathComponent($0) },
+            graphPath: sidecar.graphPath.map { directory.appendingPathComponent($0) },
+            logPath: directory.appendingPathComponent(sidecar.logPath),
+            paramsPath: sidecar.paramsPath.map { directory.appendingPathComponent($0) },
+            statistics: sidecar.statistics,
+            spadesVersion: sidecar.spadesVersion,
+            wallTimeSeconds: sidecar.wallTimeSeconds,
+            commandLine: sidecar.commandLine,
+            exitCode: Int32(sidecar.exitCode)
+        )
+    }
+
+    /// Whether a saved SPAdes assembly result exists in the given directory.
+    ///
+    /// - Parameter directory: The directory to check.
+    /// - Returns: `true` if `assembly-result.json` exists.
+    public static func exists(in directory: URL) -> Bool {
+        FileManager.default.fileExists(
+            atPath: directory.appendingPathComponent(assemblyResultFilename).path
+        )
+    }
+}
+
+// MARK: - PersistedAssemblyResult
+
+/// Codable representation of an SPAdes assembly result for JSON serialization.
+///
+/// File paths are stored as relative filenames (not absolute paths) so the
+/// sidecar remains valid if the output directory is moved.
+private struct PersistedAssemblyResult: Codable, Sendable {
+    let schemaVersion: Int
+    let contigsPath: String
+    let scaffoldsPath: String?
+    let graphPath: String?
+    let logPath: String
+    let paramsPath: String?
+    /// Assembly quality metrics (embedded as a nested JSON object).
+    let statistics: AssemblyStatistics
+    let spadesVersion: String?
+    let wallTimeSeconds: TimeInterval
+    let commandLine: String
+    let exitCode: Int
+    let savedAt: Date
+}
+
+// MARK: - SPAdesResultLoadError
+
+/// Errors that can occur when loading a persisted SPAdes assembly result.
+public enum SPAdesResultLoadError: Error, LocalizedError, Sendable {
+
+    /// The `assembly-result.json` sidecar was not found.
+    case sidecarNotFound(URL)
+
+    public var errorDescription: String? {
+        switch self {
+        case .sidecarNotFound(let url):
+            return "No saved SPAdes assembly result in \(url.path)"
+        }
+    }
+}
+
 // MARK: - SPAdesAssemblyPipeline
 
 /// Core pipeline for running SPAdes assembly via Apple Containers.
