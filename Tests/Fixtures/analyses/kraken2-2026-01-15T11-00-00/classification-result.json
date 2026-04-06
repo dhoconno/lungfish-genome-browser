@@ -1,0 +1,23 @@
+{
+    "config": {
+        "goal": "profile",
+        "inputFiles": ["reads_R1.fastq.gz"],
+        "isPairedEnd": false,
+        "databaseName": "standard",
+        "databaseVersion": "2024-01",
+        "databasePath": "/databases/kraken2/standard",
+        "confidence": 0.0,
+        "minimumHitGroups": 2,
+        "threads": 4,
+        "memoryMapping": false,
+        "quickMode": false,
+        "outputDirectory": "kraken2-2026-01-15T11-00-00"
+    },
+    "reportPath": "reads.kreport",
+    "outputPath": "reads.kraken",
+    "brackenPath": "reads.bracken",
+    "runtime": 30.1,
+    "toolVersion": "2.1.3",
+    "provenanceId": "660E8400-E29B-41D4-A716-446655440001",
+    "savedAt": "2026-01-15T11:00:00Z"
+}

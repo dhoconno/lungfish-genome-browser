@@ -1,0 +1,12 @@
+{
+    "schemaVersion": 1,
+    "bamPath": "sample.sorted.bam",
+    "baiPath": "sample.sorted.bam.bai",
+    "totalReads": 10000,
+    "mappedReads": 9500,
+    "unmappedReads": 500,
+    "toolVersion": "2.28",
+    "runtime": 45.2,
+    "provenanceId": "880E8400-E29B-41D4-A716-446655440003",
+    "savedAt": "2026-01-15T14:00:00Z"
+}

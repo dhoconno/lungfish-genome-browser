@@ -1,0 +1,3 @@
+virus_name	taxid	accession	num_reads	num_contigs	genome_coverage	avg_depth	ref_length
+SARS-CoV-2	2697049	NC_045512.2	1500	3	0.95	25.4	29903
+Influenza A virus	11320	NC_007366.1	200	1	0.45	5.2	13588
