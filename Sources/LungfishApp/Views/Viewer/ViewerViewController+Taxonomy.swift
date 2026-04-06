@@ -456,6 +456,63 @@ extension ViewerViewController {
         taxonomyLogger.info("displayTaxonomyResult: Showing browser with \(result.tree.totalReads) reads, \(result.tree.speciesCount) species")
     }
 
+    /// Displays the taxonomy classification browser in batch mode.
+    ///
+    /// Creates a ``TaxonomyViewController``, adds it as a child filling the content area,
+    /// and calls ``TaxonomyViewController/configureBatch(batchURL:manifest:projectURL:)``
+    /// to populate it from the batch manifest. Does NOT wire extraction or BLAST callbacks
+    /// because batch mode uses the flat aggregated table, not the per-sample tree.
+    ///
+    /// - Parameters:
+    ///   - batchURL: The batch result root directory.
+    ///   - manifest: The `ClassificationBatchResultManifest` loaded from the batch directory.
+    ///   - projectURL: The containing project URL (used for display name resolution).
+    func displayTaxonomyBatch(
+        batchURL: URL,
+        manifest: ClassificationBatchResultManifest,
+        projectURL: URL
+    ) {
+        hideQuickLookPreview()
+        hideFASTQDatasetView()
+        hideVCFDatasetView()
+        hideFASTACollectionView()
+        hideTaxonomyView()
+        hideEsVirituView()
+        hideTaxTriageView()
+        hideNaoMgsView()
+        hideNvdView()
+        contentMode = .metagenomics
+
+        let controller = TaxonomyViewController()
+        addChild(controller)
+
+        annotationDrawerView?.isHidden = true
+        fastqMetadataDrawerView?.isHidden = true
+
+        let taxView = controller.view
+        taxView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(taxView)
+
+        NSLayoutConstraint.activate([
+            taxView.topAnchor.constraint(equalTo: view.topAnchor),
+            taxView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            taxView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            taxView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+
+        controller.configureBatch(batchURL: batchURL, manifest: manifest, projectURL: projectURL)
+
+        taxonomyViewController = controller
+
+        enhancedRulerView.isHidden = true
+        viewerView.isHidden = true
+        headerView.isHidden = true
+        statusBar.isHidden = true
+        geneTabBarView.isHidden = true
+
+        taxonomyLogger.info("displayTaxonomyBatch: Showing batch browser for '\(batchURL.lastPathComponent, privacy: .public)' with \(manifest.samples.count) samples")
+    }
+
     /// Removes the taxonomy classification browser and restores normal viewer components.
     public func hideTaxonomyView() {
         guard let controller = taxonomyViewController else { return }

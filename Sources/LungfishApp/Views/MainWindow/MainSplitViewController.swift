@@ -1536,7 +1536,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
         // Filter to displayable items
         let displayableItems = items.filter { item in
-            item.type != .folder && item.type != .project && item.type != .group && item.type != .batchGroup
+            item.type != .folder && item.type != .project && item.type != .group
         }
 
         // Debounce all paths (including empty) to match sidebarDidSelectItem behavior
@@ -1582,8 +1582,14 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         }
 
         // Skip non-displayable container types
-        guard item.type != .folder && item.type != .project && item.type != .group && item.type != .batchGroup else {
+        guard item.type != .folder && item.type != .project && item.type != .group else {
             logger.debug("displayContent: Skipping container item type")
+            return
+        }
+
+        // Batch group items: route directly to the batch aggregated viewer
+        if item.type == .batchGroup, let batchURL = item.url {
+            displayBatchGroup(at: batchURL)
             return
         }
 
@@ -1929,6 +1935,95 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                 metadata: metadataStore,
                 attachments: attachmentStore
             )
+        }
+    }
+
+    /// Displays a batch aggregated viewer for a `.batchGroup` sidebar item.
+    ///
+    /// Detects the tool type from the batch directory name prefix, loads the
+    /// appropriate manifest (for Kraken2 and EsViritu) or scans subdirectories
+    /// (for TaxTriage), creates the viewer VC, and wires the Inspector.
+    ///
+    /// - Parameter batchURL: The batch result directory (e.g. `kraken2-batch-2024-06-02T14-20-15/`).
+    private func displayBatchGroup(at batchURL: URL) {
+        let dirName = batchURL.lastPathComponent
+        logger.info("displayBatchGroup: Opening '\(dirName, privacy: .public)'")
+
+        let projectURL = sidebarController.currentProjectURL ?? DocumentManager.shared.activeProject?.url
+
+        if dirName.hasPrefix("kraken2") || dirName.hasPrefix("classification") {
+            guard let manifest = MetagenomicsBatchResultStore.loadClassification(from: batchURL) else {
+                logger.error("displayBatchGroup: No classification batch manifest in '\(dirName, privacy: .public)'")
+                let alert = NSAlert()
+                alert.messageText = "Failed to Load Batch Classification"
+                alert.informativeText = "Could not find a batch manifest in '\(dirName)'. The batch may be incomplete."
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                if let window = self.view.window ?? NSApp.keyWindow {
+                    alert.beginSheetModal(for: window)
+                }
+                return
+            }
+            viewerController.displayTaxonomyBatch(
+                batchURL: batchURL,
+                manifest: manifest,
+                projectURL: projectURL ?? batchURL
+            )
+            if let taxonomyVC = viewerController.taxonomyViewController {
+                self.inspectorController?.updateClassifierSampleState(
+                    pickerState: taxonomyVC.samplePickerState,
+                    entries: taxonomyVC.sampleEntries,
+                    strippedPrefix: taxonomyVC.strippedPrefix,
+                    metadata: nil,
+                    attachments: BundleAttachmentStore(bundleURL: batchURL)
+                )
+            }
+
+        } else if dirName.hasPrefix("esviritu") {
+            guard let manifest = MetagenomicsBatchResultStore.loadEsViritu(from: batchURL) else {
+                logger.error("displayBatchGroup: No EsViritu batch manifest in '\(dirName, privacy: .public)'")
+                let alert = NSAlert()
+                alert.messageText = "Failed to Load Batch EsViritu"
+                alert.informativeText = "Could not find a batch manifest in '\(dirName)'. The batch may be incomplete."
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                if let window = self.view.window ?? NSApp.keyWindow {
+                    alert.beginSheetModal(for: window)
+                }
+                return
+            }
+            viewerController.displayEsVirituBatch(
+                batchURL: batchURL,
+                manifest: manifest,
+                projectURL: projectURL ?? batchURL
+            )
+            if let esVirituVC = viewerController.esVirituViewController {
+                self.inspectorController?.updateClassifierSampleState(
+                    pickerState: esVirituVC.samplePickerState,
+                    entries: esVirituVC.sampleEntries,
+                    strippedPrefix: esVirituVC.strippedPrefix,
+                    metadata: nil,
+                    attachments: BundleAttachmentStore(bundleURL: batchURL)
+                )
+            }
+
+        } else if dirName.hasPrefix("taxtriage") {
+            viewerController.displayTaxTriageBatch(
+                batchURL: batchURL,
+                projectURL: projectURL ?? batchURL
+            )
+            if let taxTriageVC = viewerController.taxTriageViewController {
+                self.inspectorController?.updateClassifierSampleState(
+                    pickerState: taxTriageVC.samplePickerState,
+                    entries: taxTriageVC.sampleEntries,
+                    strippedPrefix: taxTriageVC.strippedPrefix,
+                    metadata: nil,
+                    attachments: BundleAttachmentStore(bundleURL: batchURL)
+                )
+            }
+
+        } else {
+            logger.warning("displayBatchGroup: Unrecognized batch prefix in '\(dirName, privacy: .public)'")
         }
     }
 

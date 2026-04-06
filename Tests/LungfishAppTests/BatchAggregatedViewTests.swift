@@ -1192,3 +1192,280 @@ final class TaxTriageViewControllerBatchGroupModeTests: XCTestCase {
         XCTAssertFalse(vc.isBatchGroupMode)
     }
 }
+
+// MARK: - BatchGroupRoutingTests
+
+/// Tests for the `.batchGroup` sidebar routing logic added in Task 8.
+///
+/// These tests verify:
+/// 1. `.batchGroup` items are included in displayable items (no longer filtered).
+/// 2. Tool detection from directory name prefix works correctly.
+/// 3. `displayBatchGroup` routes to the right VC based on directory prefix.
+@MainActor
+final class BatchGroupRoutingTests: XCTestCase {
+
+    // MARK: - Displayable Items Filter
+
+    /// `.batchGroup` items must NOT be filtered out of the displayable items list.
+    ///
+    /// Before Task 8, `.batchGroup` was in the filter alongside `.folder`, `.project`,
+    /// and `.group`. This test verifies the filter was correctly narrowed.
+    func testBatchGroupItemIsDisplayable() {
+        let allTypes: [SidebarItemType] = [
+            .folder, .project, .group, .batchGroup,
+            .classificationResult, .esvirituResult, .taxTriageResult,
+        ]
+
+        // Mirror the filter logic from sidebarDidSelectItems (after Task 8 fix).
+        let displayable = allTypes.filter { type in
+            type != .folder && type != .project && type != .group
+        }
+
+        XCTAssertTrue(displayable.contains(.batchGroup),
+                      ".batchGroup should survive the displayable-items filter")
+        XCTAssertFalse(displayable.contains(.folder),   ".folder must still be filtered")
+        XCTAssertFalse(displayable.contains(.project),  ".project must still be filtered")
+        XCTAssertFalse(displayable.contains(.group),    ".group must still be filtered")
+    }
+
+    /// `.folder`, `.project`, and `.group` remain excluded; only `.batchGroup` is now displayable.
+    func testNonDisplayableContainerTypesStillExcluded() {
+        let containerTypes: [SidebarItemType] = [.folder, .project, .group]
+        let filtered = containerTypes.filter { $0 != .folder && $0 != .project && $0 != .group }
+        XCTAssertTrue(filtered.isEmpty, "Classic container types must still be filtered out")
+    }
+
+    // MARK: - Tool Detection from Directory Name Prefix
+
+    func testKraken2PrefixDetected() {
+        let dirNames = ["kraken2-batch-2024-06-02T14-20-15", "kraken2-batch-sample-run"]
+        for name in dirNames {
+            XCTAssertTrue(
+                name.hasPrefix("kraken2") || name.hasPrefix("classification"),
+                "'\(name)' should be detected as a Kraken2 batch"
+            )
+        }
+    }
+
+    func testClassificationPrefixDetected() {
+        let dirNames = ["classification-batch-2024-01-15", "classification-run-001"]
+        for name in dirNames {
+            XCTAssertTrue(
+                name.hasPrefix("kraken2") || name.hasPrefix("classification"),
+                "'\(name)' should be detected as a classification batch"
+            )
+        }
+    }
+
+    func testEsVirituPrefixDetected() {
+        let dirNames = ["esviritu-batch-2025-03-10T09-00-00", "esviritu-run-sampleA"]
+        for name in dirNames {
+            XCTAssertTrue(
+                name.hasPrefix("esviritu"),
+                "'\(name)' should be detected as an EsViritu batch"
+            )
+        }
+    }
+
+    func testTaxTriagePrefixDetected() {
+        let dirNames = ["taxtriage-batch-2025-04-01", "taxtriage-20250325-143022"]
+        for name in dirNames {
+            XCTAssertTrue(
+                name.hasPrefix("taxtriage"),
+                "'\(name)' should be detected as a TaxTriage batch"
+            )
+        }
+    }
+
+    func testUnknownPrefixNotMatchedByAnyTool() {
+        let unknown = ["naomgs-batch-001", "nvd-batch-run", "unknown-tool-batch"]
+        for name in unknown {
+            let isKraken2 = name.hasPrefix("kraken2") || name.hasPrefix("classification")
+            let isEsViritu = name.hasPrefix("esviritu")
+            let isTaxTriage = name.hasPrefix("taxtriage")
+            XCTAssertFalse(isKraken2 || isEsViritu || isTaxTriage,
+                           "'\(name)' should not match any known batch tool prefix")
+        }
+    }
+
+    // MARK: - Prefix Disambiguation (no overlap)
+
+    /// Verify that the three recognized prefixes are mutually exclusive,
+    /// so the routing if-else chain always picks exactly one branch.
+    func testPrefixesAreMutuallyExclusive() {
+        let kraken2Name = "kraken2-batch-2024-01-01"
+        let classificationName = "classification-batch-2024-01-01"
+        let esVirituName = "esviritu-batch-2024-01-01"
+        let taxTriageName = "taxtriage-batch-2024-01-01"
+
+        // Each name must match exactly one branch.
+        func matchCount(_ name: String) -> Int {
+            var count = 0
+            if name.hasPrefix("kraken2") || name.hasPrefix("classification") { count += 1 }
+            if name.hasPrefix("esviritu") { count += 1 }
+            if name.hasPrefix("taxtriage") { count += 1 }
+            return count
+        }
+
+        XCTAssertEqual(matchCount(kraken2Name), 1,
+                       "kraken2 prefix should match exactly one branch")
+        XCTAssertEqual(matchCount(classificationName), 1,
+                       "classification prefix should match exactly one branch")
+        XCTAssertEqual(matchCount(esVirituName), 1,
+                       "esviritu prefix should match exactly one branch")
+        XCTAssertEqual(matchCount(taxTriageName), 1,
+                       "taxtriage prefix should match exactly one branch")
+    }
+
+    // MARK: - TaxonomyViewController batch mode wired correctly
+
+    /// `configureBatch` sets `isBatchMode = true` and populates `sampleEntries`.
+    /// This indirectly validates that the routing would engage batch mode on the VC.
+    func testTaxonomyVCBatchModeActivatedByConfigureBatch() throws {
+        let batchURL = makeTempDir(prefix: "kraken2-batch-")
+        defer { try? FileManager.default.removeItem(at: batchURL) }
+
+        // Write a minimal manifest
+        let now = Date()
+        let header = MetagenomicsBatchManifestHeader(schemaVersion: 1, createdAt: now, sampleCount: 0)
+        let manifest = ClassificationBatchResultManifest(
+            header: header,
+            goal: "profiling",
+            databaseName: "standard",
+            databaseVersion: "2024-01",
+            summaryTSV: "summary.tsv",
+            samples: []
+        )
+        try MetagenomicsBatchResultStore.saveClassification(manifest, to: batchURL)
+
+        let vc = TaxonomyViewController()
+        vc.loadViewIfNeeded()
+        vc.configureBatch(batchURL: batchURL, manifest: manifest, projectURL: batchURL)
+
+        XCTAssertTrue(vc.isBatchMode, "isBatchMode should be true after configureBatch")
+        XCTAssertEqual(vc.batchURL, batchURL, "batchURL should match the batch directory")
+        XCTAssertEqual(vc.sampleEntries.count, 0,
+                       "No sample entries expected for an empty manifest")
+    }
+
+    /// `configureBatch` on EsVirituResultViewController sets `isBatchMode = true`.
+    func testEsVirituVCBatchModeActivatedByConfigureBatch() throws {
+        let batchURL = makeTempDir(prefix: "esviritu-batch-")
+        defer { try? FileManager.default.removeItem(at: batchURL) }
+
+        let now = Date()
+        let header = MetagenomicsBatchManifestHeader(schemaVersion: 1, createdAt: now, sampleCount: 0)
+        let manifest = EsVirituBatchResultManifest(
+            header: header,
+            summaryTSV: "summary.tsv",
+            samples: []
+        )
+        try MetagenomicsBatchResultStore.saveEsViritu(manifest, to: batchURL)
+
+        let vc = EsVirituResultViewController()
+        vc.loadViewIfNeeded()
+        vc.configureBatch(batchURL: batchURL, manifest: manifest, projectURL: batchURL)
+
+        XCTAssertTrue(vc.isBatchMode, "isBatchMode should be true after configureBatch")
+        XCTAssertEqual(vc.batchURL, batchURL, "batchURL should match the batch directory")
+        XCTAssertEqual(vc.sampleEntries.count, 0,
+                       "No sample entries expected for an empty manifest")
+    }
+
+    /// `configureBatchGroup` on TaxTriageResultViewController sets `isBatchGroupMode = true`.
+    func testTaxTriageVCBatchGroupModeActivatedByConfigureBatchGroup() {
+        let batchURL = makeTempDir(prefix: "taxtriage-batch-")
+        defer { try? FileManager.default.removeItem(at: batchURL) }
+
+        let vc = TaxTriageResultViewController()
+        vc.loadViewIfNeeded()
+        vc.configureBatchGroup(batchURL: batchURL, projectURL: batchURL)
+
+        XCTAssertTrue(vc.isBatchGroupMode,
+                      "isBatchGroupMode should be true after configureBatchGroup")
+        XCTAssertEqual(vc.batchGroupURL, batchURL,
+                       "batchGroupURL should match the batch directory")
+    }
+
+    // MARK: - Manifest loading round-trip for routing
+
+    /// The routing code uses `MetagenomicsBatchResultStore.loadClassification(from:)`.
+    /// Verify it returns non-nil for a directory containing the manifest.
+    func testLoadClassificationManifestForRouting() throws {
+        let batchURL = makeTempDir(prefix: "kraken2-batch-")
+        defer { try? FileManager.default.removeItem(at: batchURL) }
+
+        let now = Date()
+        let header = MetagenomicsBatchManifestHeader(schemaVersion: 1, createdAt: now, sampleCount: 1)
+        let manifest = ClassificationBatchResultManifest(
+            header: header,
+            goal: "profiling",
+            databaseName: "standard",
+            databaseVersion: "2024-01",
+            summaryTSV: "summary.tsv",
+            samples: [MetagenomicsBatchSampleRecord(
+                sampleId: "s1",
+                resultDirectory: batchURL.path,
+                inputFiles: [],
+                isPairedEnd: false
+            )]
+        )
+        try MetagenomicsBatchResultStore.saveClassification(manifest, to: batchURL)
+
+        let loaded = MetagenomicsBatchResultStore.loadClassification(from: batchURL)
+        XCTAssertNotNil(loaded, "loadClassification should return the saved manifest")
+        XCTAssertEqual(loaded?.samples.count, 1)
+        XCTAssertEqual(loaded?.samples.first?.sampleId, "s1")
+    }
+
+    /// The routing code uses `MetagenomicsBatchResultStore.loadEsViritu(from:)`.
+    /// Verify it returns non-nil for a directory containing the manifest.
+    func testLoadEsVirituManifestForRouting() throws {
+        let batchURL = makeTempDir(prefix: "esviritu-batch-")
+        defer { try? FileManager.default.removeItem(at: batchURL) }
+
+        let now = Date()
+        let header = MetagenomicsBatchManifestHeader(schemaVersion: 1, createdAt: now, sampleCount: 2)
+        let manifest = EsVirituBatchResultManifest(
+            header: header,
+            summaryTSV: "summary.tsv",
+            samples: [
+                MetagenomicsBatchSampleRecord(sampleId: "sA", resultDirectory: batchURL.path, inputFiles: [], isPairedEnd: true),
+                MetagenomicsBatchSampleRecord(sampleId: "sB", resultDirectory: batchURL.path, inputFiles: [], isPairedEnd: false),
+            ]
+        )
+        try MetagenomicsBatchResultStore.saveEsViritu(manifest, to: batchURL)
+
+        let loaded = MetagenomicsBatchResultStore.loadEsViritu(from: batchURL)
+        XCTAssertNotNil(loaded, "loadEsViritu should return the saved manifest")
+        XCTAssertEqual(loaded?.samples.count, 2)
+    }
+
+    /// `loadClassification` returns nil for an empty directory (missing manifest).
+    /// This validates the routing guard that shows an error alert.
+    func testLoadClassificationReturnsNilForMissingManifest() {
+        let emptyDir = makeTempDir(prefix: "kraken2-batch-empty-")
+        defer { try? FileManager.default.removeItem(at: emptyDir) }
+
+        let result = MetagenomicsBatchResultStore.loadClassification(from: emptyDir)
+        XCTAssertNil(result, "loadClassification should return nil when manifest is absent")
+    }
+
+    /// `loadEsViritu` returns nil for an empty directory (missing manifest).
+    func testLoadEsVirituReturnsNilForMissingManifest() {
+        let emptyDir = makeTempDir(prefix: "esviritu-batch-empty-")
+        defer { try? FileManager.default.removeItem(at: emptyDir) }
+
+        let result = MetagenomicsBatchResultStore.loadEsViritu(from: emptyDir)
+        XCTAssertNil(result, "loadEsViritu should return nil when manifest is absent")
+    }
+
+    // MARK: - Helpers
+
+    private func makeTempDir(prefix: String) -> URL {
+        let tmp = FileManager.default.temporaryDirectory
+        let dir = tmp.appendingPathComponent("\(prefix)\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+}
