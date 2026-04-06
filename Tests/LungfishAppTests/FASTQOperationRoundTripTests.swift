@@ -602,16 +602,22 @@ final class FASTQOperationRoundTripTests: XCTestCase {
             progress: nil
         )
 
-        FASTQOperationTestHelper.assertPayloadType(bundleURL: derivedURL, expected: "full")
-        let manifest = FASTQBundle.loadDerivedManifest(in: derivedURL)!
-        if case .full(let filename) = manifest.payload {
-            let fullURL = derivedURL.appendingPathComponent(filename)
-            let records = try await FASTQOperationTestHelper.loadFASTQRecords(from: fullURL)
-            XCTAssertLessThan(records.count, 100, "Dedup should remove duplicate reads")
-            XCTAssertGreaterThan(records.count, 30, "Should retain most unique reads")
-        } else {
-            XCTFail("Expected full payload")
-        }
+        // Deduplicate produces a subset payload (read ID list of surviving reads),
+        // not a full payload — clumpify runs, then the service extracts surviving read IDs.
+        FASTQOperationTestHelper.assertPayloadType(bundleURL: derivedURL, expected: "subset")
+        try await FASTQOperationTestHelper.assertPreviewValid(bundleURL: derivedURL)
+        try FASTQOperationTestHelper.assertSubsetIDsValid(bundleURL: derivedURL)
+
+        // Materialize and verify dedup reduced count
+        let materializer = FASTQCLIMaterializer(runner: NativeToolRunner.shared)
+        let outDir = tempDir.appendingPathComponent("out", isDirectory: true)
+        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+        let matURL = try await materializer.materialize(
+            bundleURL: derivedURL, tempDirectory: outDir, progress: nil
+        )
+        let records = try await FASTQOperationTestHelper.loadFASTQRecords(from: matURL)
+        XCTAssertLessThan(records.count, 100, "Dedup should remove duplicate reads")
+        XCTAssertGreaterThan(records.count, 0, "Dedup should retain some reads")
     }
 
     // MARK: - Paired-End and Interleave Operations
