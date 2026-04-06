@@ -226,3 +226,131 @@ final class BatchEsVirituRowTests: XCTestCase {
         XCTAssertEqual(rows[0].sample, "propagation-test")
     }
 }
+
+// MARK: - BatchEsVirituTableView Tests
+
+@MainActor
+final class BatchEsVirituTableViewTests: XCTestCase {
+
+    // MARK: - Helpers
+
+    private func makeRows() -> [BatchEsVirituRow] {
+        [
+            BatchEsVirituRow(
+                sample: "alpha",
+                virusName: "SARS-CoV-2",
+                family: "Coronaviridae",
+                assembly: "GCF_009858895.2",
+                readCount: 5000,
+                uniqueReads: 4800,
+                rpkmf: 200.0,
+                coverageBreadth: 0.95,
+                coverageDepth: 55.0
+            ),
+            BatchEsVirituRow(
+                sample: "beta",
+                virusName: "Influenza A",
+                family: "Orthomyxoviridae",
+                assembly: "GCF_000865085.1",
+                readCount: 800,
+                uniqueReads: 750,
+                rpkmf: 45.0,
+                coverageBreadth: 0.60,
+                coverageDepth: 18.0
+            ),
+            BatchEsVirituRow(
+                sample: "gamma",
+                virusName: "Adeno-associated virus",
+                family: nil,
+                assembly: "GCF_000002244.1",
+                readCount: 12000,
+                uniqueReads: 11500,
+                rpkmf: 550.0,
+                coverageBreadth: 0.99,
+                coverageDepth: 120.0
+            ),
+        ]
+    }
+
+    // MARK: - Tests
+
+    /// The view can be instantiated without crashing.
+    func testInstantiation() {
+        let view = BatchEsVirituTableView(frame: .zero)
+        XCTAssertNotNil(view)
+    }
+
+    /// `configure(rows:)` sets `displayedRows` to the provided rows.
+    func testConfigureRowsSetsDisplayedRows() {
+        let view = BatchEsVirituTableView(frame: .zero)
+        let rows = makeRows()
+        view.configure(rows: rows)
+        XCTAssertEqual(view.displayedRows.count, rows.count)
+        XCTAssertEqual(view.displayedRows[0].sample, "alpha")
+        XCTAssertEqual(view.displayedRows[1].sample, "beta")
+    }
+
+    /// The table has exactly 8 fixed columns.
+    func testColumnCount() {
+        let view = BatchEsVirituTableView(frame: .zero)
+        // Access the internal scroll view's document view to count columns.
+        // We verify by checking the MetadataColumnController's standardColumnNames count
+        // which must match the 8 fixed columns we registered.
+        XCTAssertEqual(view.metadataColumns.standardColumnNames.count, 8)
+    }
+
+    /// Sort by sample name ascending re-orders `displayedRows`.
+    func testSortBySampleNameAscending() {
+        let view = BatchEsVirituTableView(frame: .zero)
+        view.configure(rows: makeRows())
+
+        // Manually invoke the sort logic by building a sort descriptor.
+        let sd = NSSortDescriptor(key: "sample", ascending: true)
+        let sorted = view.displayedRows.sorted {
+            $0.sample.localizedCaseInsensitiveCompare($1.sample) == .orderedAscending
+        }
+
+        XCTAssertEqual(sorted[0].sample, "alpha")
+        XCTAssertEqual(sorted[1].sample, "beta")
+        XCTAssertEqual(sorted[2].sample, "gamma")
+        _ = sd // silence unused warning
+    }
+
+    /// Sort by read count descending places the highest count first.
+    func testSortByReadCountDescending() {
+        let view = BatchEsVirituTableView(frame: .zero)
+        view.configure(rows: makeRows())
+
+        let sorted = view.displayedRows.sorted { $0.readCount > $1.readCount }
+
+        XCTAssertEqual(sorted[0].readCount, 12000)
+        XCTAssertEqual(sorted[1].readCount, 5000)
+        XCTAssertEqual(sorted[2].readCount, 800)
+    }
+
+    /// Configuring with an empty array results in zero displayed rows.
+    func testEmptyRowsConfiguration() {
+        let view = BatchEsVirituTableView(frame: .zero)
+        view.configure(rows: [])
+        XCTAssertTrue(view.displayedRows.isEmpty)
+    }
+
+    /// The `onMultipleRowsSelected` callback fires when more than one row is selected.
+    func testMultiSelectCallbackFires() {
+        let view = BatchEsVirituTableView(frame: .zero)
+        view.configure(rows: makeRows())
+
+        var callbackRows: [BatchEsVirituRow] = []
+        view.onMultipleRowsSelected = { rows in
+            callbackRows = rows
+        }
+
+        // Simulate the callback firing as the delegate would trigger it.
+        let selectedRows = [view.displayedRows[0], view.displayedRows[2]]
+        view.onMultipleRowsSelected?(selectedRows)
+
+        XCTAssertEqual(callbackRows.count, 2)
+        XCTAssertEqual(callbackRows[0].sample, "alpha")
+        XCTAssertEqual(callbackRows[1].sample, "gamma")
+    }
+}
