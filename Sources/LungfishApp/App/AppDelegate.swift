@@ -5055,6 +5055,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                                 taxonomyVC.presentExtractionSheet(for: topSpecies, includeChildren: true)
                             }
                         }
+
+                        // Reload sidebar so the new result bundle appears
+                        AppDelegate.shared?.mainWindowController?.mainSplitViewController?
+                            .sidebarController.reloadFromFilesystem()
                     }
                 }
             } catch {
@@ -5188,6 +5192,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                             detail: "\(capturedResult.detections.count) viruses detected in \(capturedResult.detectedFamilyCount) families"
                         )
                         viewerController.displayEsVirituResult(capturedResult, config: capturedConfig)
+                        // Reload sidebar so the new result bundle appears
+                        AppDelegate.shared?.mainWindowController?.mainSplitViewController?
+                            .sidebarController.reloadFromFilesystem()
                     }
                 }
             } catch {
@@ -5772,6 +5779,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
                         // Record in batch run history log
                         BatchRunHistory.recordRun(result: capturedResult, config: capturedConfig)
+
+                        // Reload sidebar so the new result bundle appears
+                        AppDelegate.shared?.mainWindowController?.mainSplitViewController?
+                            .sidebarController.reloadFromFilesystem()
                     }
                 }
             } catch {
