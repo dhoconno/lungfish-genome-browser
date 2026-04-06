@@ -133,12 +133,12 @@ private struct AnalysisRow: View {
 
     private func iconName(for tool: String) -> String {
         switch tool.lowercased() {
-        case "kraken2": return "leaf.fill"
-        case "esviritu": return "waveform.path.ecg"
-        case "taxtriage": return "list.bullet.clipboard.fill"
-        case "nao-mgs": return "chart.bar.fill"
-        case "spades", "megahit", "flye": return "puzzlepiece.extension.fill"
-        case "minimap2", "bwa-mem2", "bowtie2": return "arrow.triangle.merge"
+        case "kraken2": return "k.circle.fill"
+        case "esviritu": return "e.circle.fill"
+        case "taxtriage": return "t.circle.fill"
+        case "naomgs", "nao-mgs": return "n.circle.fill"
+        case "spades", "megahit", "flye": return "s.circle.fill"
+        case "minimap2", "bwa-mem2", "bowtie2": return "m.circle.fill"
         default: return "gearshape.fill"
         }
     }
