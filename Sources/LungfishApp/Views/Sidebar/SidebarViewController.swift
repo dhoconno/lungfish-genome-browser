@@ -1206,9 +1206,14 @@ public class SidebarViewController: NSViewController {
         guard let analyses = try? AnalysesFolder.listAnalyses(in: projectURL) else { return [] }
         return analyses.compactMap { info in
             guard !OperationMarker.isInProgress(info.url) else { return nil }
+
+            if info.isBatch {
+                return buildBatchAnalysisItem(info: info)
+            }
+
             let icon = analysisIcon(for: info.tool)
             let title = analysisDisplayTitle(for: info)
-            return SidebarItem(
+            let item = SidebarItem(
                 title: title,
                 type: .analysisResult,
                 icon: icon,
@@ -1216,7 +1221,117 @@ public class SidebarViewController: NSViewController {
                 url: info.url,
                 subtitle: AnalysesFolder.formatTimestamp(info.timestamp)
             )
+            // For single results, add a subtitle from the sidecar if available
+            if info.tool == "esviritu" {
+                item.subtitle = esvirituResultTitle(for: info.url)
+            } else if info.tool == "kraken2" {
+                item.subtitle = classificationResultTitle(for: info.url)
+            }
+            return item
         }
+    }
+
+    /// Builds an expandable batch group item with per-sample children.
+    private func buildBatchAnalysisItem(info: AnalysesFolder.AnalysisDirectoryInfo) -> SidebarItem? {
+        let title = analysisDisplayTitle(for: info)
+        let groupItem = SidebarItem(
+            title: title,
+            type: .batchGroup,
+            icon: "tray.2",
+            children: [],
+            url: info.url
+        )
+
+        let fm = FileManager.default
+
+        // Try loading the batch manifest for structured sample enumeration
+        switch info.tool {
+        case "esviritu":
+            if let manifest = MetagenomicsBatchResultStore.loadEsViritu(from: info.url) {
+                groupItem.subtitle = "\(manifest.header.sampleCount) samples"
+                for record in manifest.samples.sorted(by: {
+                    $0.sampleId.localizedCaseInsensitiveCompare($1.sampleId) == .orderedAscending
+                }) {
+                    let resultURL = info.url.appendingPathComponent(record.resultDirectory)
+                    guard EsVirituResult.exists(in: resultURL) else { continue }
+                    let childItem = SidebarItem(
+                        title: record.sampleId,
+                        type: .esvirituResult,
+                        icon: "e.circle",
+                        children: [],
+                        url: resultURL,
+                        subtitle: esvirituResultTitle(for: resultURL)
+                    )
+                    groupItem.children.append(childItem)
+                }
+            } else {
+                buildBatchChildrenFromFilesystem(info: info, groupItem: groupItem, sidecarCheck: EsVirituResult.exists, itemType: .esvirituResult, icon: "e.circle")
+            }
+
+        case "kraken2":
+            if let manifest = MetagenomicsBatchResultStore.loadClassification(from: info.url) {
+                let dbLabel = manifest.databaseName.isEmpty ? "" : " · \(manifest.databaseName)"
+                groupItem.subtitle = "\(manifest.header.sampleCount) samples\(dbLabel)"
+                for record in manifest.samples.sorted(by: {
+                    $0.sampleId.localizedCaseInsensitiveCompare($1.sampleId) == .orderedAscending
+                }) {
+                    let resultURL = info.url.appendingPathComponent(record.resultDirectory)
+                    guard ClassificationResult.exists(in: resultURL) else { continue }
+                    let childItem = SidebarItem(
+                        title: record.sampleId,
+                        type: .classificationResult,
+                        icon: "k.circle",
+                        children: [],
+                        url: resultURL,
+                        subtitle: classificationResultTitle(for: resultURL)
+                    )
+                    groupItem.children.append(childItem)
+                }
+            } else {
+                buildBatchChildrenFromFilesystem(info: info, groupItem: groupItem, sidecarCheck: ClassificationResult.exists, itemType: .classificationResult, icon: "k.circle")
+            }
+
+        default:
+            // Generic fallback: scan for subdirectories
+            buildBatchChildrenFromFilesystem(info: info, groupItem: groupItem, sidecarCheck: { _ in true }, itemType: .analysisResult, icon: analysisIcon(for: info.tool))
+        }
+
+        guard !groupItem.children.isEmpty else { return nil }
+        return groupItem
+    }
+
+    /// Fallback: enumerate subdirectories when no batch manifest is available.
+    private func buildBatchChildrenFromFilesystem(
+        info: AnalysesFolder.AnalysisDirectoryInfo,
+        groupItem: SidebarItem,
+        sidecarCheck: (URL) -> Bool,
+        itemType: SidebarItemType,
+        icon: String
+    ) {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: info.url,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+
+        for child in contents.sorted(by: {
+            $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending
+        }) {
+            var childIsDir: ObjCBool = false
+            guard fm.fileExists(atPath: child.path, isDirectory: &childIsDir),
+                  childIsDir.boolValue else { continue }
+            guard sidecarCheck(child) else { continue }
+            let childItem = SidebarItem(
+                title: child.lastPathComponent,
+                type: itemType,
+                icon: icon,
+                children: [],
+                url: child
+            )
+            groupItem.children.append(childItem)
+        }
+        groupItem.subtitle = "\(groupItem.children.count) samples"
     }
 
     private func analysisIcon(for tool: String) -> String {
