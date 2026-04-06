@@ -1215,7 +1215,7 @@ public class SidebarViewController: NSViewController {
             let title = analysisDisplayTitle(for: info)
             let item = SidebarItem(
                 title: title,
-                type: .analysisResult,
+                type: analysisItemType(for: info.tool),
                 icon: icon,
                 children: [],
                 url: info.url,
@@ -1359,6 +1359,20 @@ public class SidebarViewController: NSViewController {
         default: toolName = info.tool.capitalized
         }
         return info.isBatch ? "\(toolName) Batch" : toolName
+    }
+
+    /// Maps an analysis tool name to the correct SidebarItemType so that
+    /// the selection handler in MainSplitViewController dispatches to the
+    /// right display method.
+    private func analysisItemType(for tool: String) -> SidebarItemType {
+        switch tool {
+        case "esviritu": return .esvirituResult
+        case "kraken2": return .classificationResult
+        case "taxtriage": return .taxTriageResult
+        case "naomgs": return .naoMgsResult
+        case "nvd": return .nvdResult
+        default: return .analysisResult
+        }
     }
 
     /// Collects classification result directories from inside a FASTQ bundle.

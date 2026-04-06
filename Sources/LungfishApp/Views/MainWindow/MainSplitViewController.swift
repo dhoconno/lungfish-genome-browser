@@ -1640,6 +1640,26 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             return
         }
 
+        // Generic analysis results in Analyses/ folder — try to detect tool type
+        // from directory name and dispatch to the appropriate viewer.
+        if item.type == .analysisResult, let url = item.url {
+            let dirName = url.lastPathComponent
+            if dirName.hasPrefix("esviritu") {
+                displayEsVirituResult(at: url)
+            } else if dirName.hasPrefix("kraken2") || dirName.hasPrefix("classification") {
+                displayClassificationResult(at: url)
+            } else if dirName.hasPrefix("taxtriage") {
+                displayTaxTriageResultFromSidebar(at: url, sampleId: nil)
+            } else if dirName.hasPrefix("naomgs") {
+                displayNaoMgsResultFromSidebar(at: url)
+            } else if dirName.hasPrefix("nvd") {
+                displayNvdResultFromSidebar(at: url)
+            } else {
+                logger.warning("displayContent: Unknown analysis type for '\(dirName, privacy: .public)'")
+            }
+            return
+        }
+
         // Genomics files - check cache first
         if let url = item.url {
             displayGenomicsFile(url: url)
