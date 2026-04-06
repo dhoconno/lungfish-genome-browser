@@ -299,4 +299,87 @@ final class FASTQOperationRoundTripTests: XCTestCase {
                 "Record \(record.identifier) sequence should contain the motif '\(motif)'")
         }
     }
+
+    // MARK: - Filter Operations
+
+    func testContaminantFilterRoundTrip() async throws {
+        let tempDir = try FASTQOperationTestHelper.makeTempDir(prefix: "ContaminantFilter")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let root = try FASTQOperationTestHelper.makeBundle(named: "root", in: tempDir)
+        try FASTQOperationTestHelper.writeSyntheticFASTQ(
+            to: root.fastqURL,
+            readCount: 50,
+            readLength: 100,
+            idPrefix: "read"
+        )
+
+        let service = FASTQDerivativeService()
+        let derivedURL = try await service.createDerivative(
+            from: root.bundleURL,
+            request: .contaminantFilter(mode: .phix, referenceFasta: nil, kmerSize: 31, hammingDistance: 1),
+            progress: nil
+        )
+
+        try await FASTQOperationTestHelper.assertPreviewValid(bundleURL: derivedURL)
+        FASTQOperationTestHelper.assertPayloadType(bundleURL: derivedURL, expected: "subset")
+        try FASTQOperationTestHelper.assertSubsetIDsValid(bundleURL: derivedURL)
+
+        let materializer = FASTQCLIMaterializer(runner: NativeToolRunner.shared)
+        let outDir = tempDir.appendingPathComponent("out-contaminant-filter", isDirectory: true)
+        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+        let matURL = try await materializer.materialize(
+            bundleURL: derivedURL, tempDirectory: outDir, progress: nil
+        )
+        let records = try await FASTQOperationTestHelper.loadFASTQRecords(from: matURL)
+        // Synthetic reads won't match PhiX — expect the vast majority to be retained
+        XCTAssertGreaterThan(records.count, 40,
+            "contaminantFilter(phix) should retain >40 of 50 synthetic reads (no real PhiX contamination)")
+    }
+
+    func testSequencePresenceFilterRoundTrip() async throws {
+        let tempDir = try FASTQOperationTestHelper.makeTempDir(prefix: "SeqPresenceFilter")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let root = try FASTQOperationTestHelper.makeBundle(named: "root", in: tempDir)
+        try FASTQOperationTestHelper.writeAdapterAppendedFASTQ(
+            to: root.fastqURL,
+            adapter: "AGATCGGAAGAGC",
+            totalReads: 50,
+            readsWithAdapter: 25,
+            readLength: 100
+        )
+
+        let service = FASTQDerivativeService()
+        let derivedURL = try await service.createDerivative(
+            from: root.bundleURL,
+            request: .sequencePresenceFilter(
+                sequence: "AGATCGGAAGAGC",
+                fastaPath: nil,
+                searchEnd: .threePrime,
+                minOverlap: 8,
+                errorRate: 0.1,
+                keepMatched: false,
+                searchReverseComplement: false
+            ),
+            progress: nil
+        )
+
+        try await FASTQOperationTestHelper.assertPreviewValid(bundleURL: derivedURL)
+        FASTQOperationTestHelper.assertPayloadType(bundleURL: derivedURL, expected: "subset")
+
+        let materializer = FASTQCLIMaterializer(runner: NativeToolRunner.shared)
+        let outDir = tempDir.appendingPathComponent("out-seq-presence-filter", isDirectory: true)
+        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+        let matURL = try await materializer.materialize(
+            bundleURL: derivedURL, tempDirectory: outDir, progress: nil
+        )
+        let records = try await FASTQOperationTestHelper.loadFASTQRecords(from: matURL)
+        // keepMatched: false — adapter-containing reads removed; 25 clean reads should remain
+        // Allow a range because bbduk partial-match detection may vary slightly
+        XCTAssertGreaterThanOrEqual(records.count, 15,
+            "sequencePresenceFilter(keepMatched:false) should retain at least 15 of 50 reads")
+        XCTAssertLessThanOrEqual(records.count, 40,
+            "sequencePresenceFilter(keepMatched:false) should retain at most 40 of 50 reads")
+    }
 }
