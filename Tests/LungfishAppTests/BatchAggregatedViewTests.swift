@@ -722,3 +722,286 @@ final class TaxonomyViewControllerBatchModeTests: XCTestCase {
                       "Displayed rows should be empty when no samples are selected")
     }
 }
+
+// MARK: - EsVirituViewController Batch Mode Tests
+
+@MainActor
+final class EsVirituViewControllerBatchModeTests: XCTestCase {
+
+    // MARK: - Helpers
+
+    /// A minimal 23-column detected_virus.info.tsv data row (tab-separated).
+    /// Columns: sample_ID, Name, description, Length, Segment, Accession, Assembly,
+    ///          Asm_length, kingdom, phylum, tclass, order, family, genus, species,
+    ///          subspecies, RPKMF, read_count, covered_bases, mean_coverage,
+    ///          avg_read_identity, Pi, filtered_reads_in_sample
+    private func detectionRow(
+        sampleId: String,
+        name: String,
+        accession: String,
+        assembly: String,
+        family: String
+    ) -> String {
+        [
+            sampleId,                   // 0  sample_ID
+            name,                       // 1  Name
+            "Test virus description",   // 2  description
+            "30000",                    // 3  Length
+            "NA",                       // 4  Segment
+            accession,                  // 5  Accession
+            assembly,                   // 6  Assembly
+            "30000",                    // 7  Asm_length
+            "Viruses",                  // 8  kingdom
+            "NA",                       // 9  phylum
+            "NA",                       // 10 tclass
+            "NA",                       // 11 order
+            family,                     // 12 family
+            "NA",                       // 13 genus
+            "NA",                       // 14 species
+            "NA",                       // 15 subspecies
+            "150.0",                    // 16 RPKMF
+            "5000",                     // 17 read_count
+            "28000",                    // 18 covered_bases
+            "12.5",                     // 19 mean_coverage
+            "99.2",                     // 20 avg_read_identity
+            "0.002",                    // 21 Pi
+            "100000",                   // 22 filtered_reads_in_sample
+        ].joined(separator: "\t")
+    }
+
+    private func minimalDetectionTSV(sampleId: String) -> String {
+        let header = "sample_ID\tName\tdescription\tLength\tSegment\tAccession\tAssembly\tAsm_length\tkingdom\tphylum\ttclass\torder\tfamily\tgenus\tspecies\tsubspecies\tRPKMF\tread_count\tcovered_bases\tmean_coverage\tavg_read_identity\tPi\tfiltered_reads_in_sample"
+        let row = detectionRow(
+            sampleId: sampleId,
+            name: "SARS-CoV-2",
+            accession: "MN908947.3",
+            assembly: "GCF_009858895.2",
+            family: "Coronaviridae"
+        )
+        return header + "\n" + row + "\n"
+    }
+
+    private func twoVirusTSV(sampleId: String) -> String {
+        let header = "sample_ID\tName\tdescription\tLength\tSegment\tAccession\tAssembly\tAsm_length\tkingdom\tphylum\ttclass\torder\tfamily\tgenus\tspecies\tsubspecies\tRPKMF\tread_count\tcovered_bases\tmean_coverage\tavg_read_identity\tPi\tfiltered_reads_in_sample"
+        let row1 = detectionRow(
+            sampleId: sampleId,
+            name: "SARS-CoV-2",
+            accession: "MN908947.3",
+            assembly: "GCF_009858895.2",
+            family: "Coronaviridae"
+        )
+        let row2 = detectionRow(
+            sampleId: sampleId,
+            name: "Influenza A",
+            accession: "CY114381.1",
+            assembly: "GCF_000865085.1",
+            family: "Orthomyxoviridae"
+        )
+        return header + "\n" + row1 + "\n" + row2 + "\n"
+    }
+
+    /// Creates a temp batch directory with sample subdirectories, each containing
+    /// a `<sampleId>.detected_virus.info.tsv` file.
+    private func makeTempBatch(
+        samples: [(String, String)]
+    ) throws -> (URL, [MetagenomicsBatchSampleRecord]) {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LungfishEsVirituBatchTest-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+
+        var records: [MetagenomicsBatchSampleRecord] = []
+        for (sampleId, tsvContent) in samples {
+            let resultDir = tmp.appendingPathComponent(sampleId)
+            try FileManager.default.createDirectory(at: resultDir, withIntermediateDirectories: true)
+            let detectionURL = resultDir.appendingPathComponent("\(sampleId).detected_virus.info.tsv")
+            try tsvContent.write(to: detectionURL, atomically: true, encoding: .utf8)
+            records.append(MetagenomicsBatchSampleRecord(
+                sampleId: sampleId,
+                resultDirectory: resultDir.path,
+                inputFiles: [],
+                isPairedEnd: false
+            ))
+        }
+        return (tmp, records)
+    }
+
+    private func makeManifest(records: [MetagenomicsBatchSampleRecord]) -> EsVirituBatchResultManifest {
+        EsVirituBatchResultManifest(
+            header: MetagenomicsBatchManifestHeader(
+                schemaVersion: 1,
+                createdAt: Date(),
+                sampleCount: records.count
+            ),
+            summaryTSV: "",
+            samples: records
+        )
+    }
+
+    // MARK: - Default State Tests
+
+    /// `isBatchMode` is false before any configuration.
+    func testIsBatchModeDefaultsFalse() {
+        let vc = EsVirituResultViewController()
+        XCTAssertFalse(vc.isBatchMode)
+    }
+
+    /// `batchTableView` is hidden after `loadView()`.
+    func testBatchTableViewHiddenByDefault() {
+        let vc = EsVirituResultViewController()
+        vc.loadViewIfNeeded()
+        XCTAssertTrue(vc.testBatchTableView.isHidden, "batchTableView should be hidden by default")
+    }
+
+    /// `splitView` is visible after `loadView()` (not in batch mode).
+    func testSplitViewVisibleByDefault() {
+        let vc = EsVirituResultViewController()
+        vc.loadViewIfNeeded()
+        XCTAssertFalse(vc.splitView.isHidden, "splitView should be visible by default")
+    }
+
+    // MARK: - configureBatch Tests
+
+    /// `configureBatch` sets `isBatchMode` to true.
+    func testConfigureBatchSetsBatchMode() throws {
+        let vc = EsVirituResultViewController()
+        vc.loadViewIfNeeded()
+
+        let (batchURL, records) = try makeTempBatch(samples: [
+            ("sample1", minimalDetectionTSV(sampleId: "sample1"))
+        ])
+        defer { try? FileManager.default.removeItem(at: batchURL) }
+
+        let manifest = makeManifest(records: records)
+        vc.configureBatch(batchURL: batchURL, manifest: manifest, projectURL: batchURL)
+
+        XCTAssertTrue(vc.isBatchMode)
+    }
+
+    /// `configureBatch` populates `allBatchRows` from detection TSV files.
+    func testConfigureBatchPopulatesAllBatchRows() throws {
+        let vc = EsVirituResultViewController()
+        vc.loadViewIfNeeded()
+
+        let (batchURL, records) = try makeTempBatch(samples: [
+            ("sample1", minimalDetectionTSV(sampleId: "sample1")),
+            ("sample2", minimalDetectionTSV(sampleId: "sample2")),
+        ])
+        defer { try? FileManager.default.removeItem(at: batchURL) }
+
+        let manifest = makeManifest(records: records)
+        vc.configureBatch(batchURL: batchURL, manifest: manifest, projectURL: batchURL)
+
+        XCTAssertFalse(vc.allBatchRows.isEmpty, "allBatchRows should not be empty after configureBatch")
+        XCTAssertTrue(vc.allBatchRows.contains(where: { $0.sample == "sample1" }),
+                      "allBatchRows should contain rows for sample1")
+        XCTAssertTrue(vc.allBatchRows.contains(where: { $0.sample == "sample2" }),
+                      "allBatchRows should contain rows for sample2")
+    }
+
+    /// `configureBatch` creates the correct `EsVirituSampleEntry` per sample.
+    func testConfigureBatchCreatesSampleEntries() throws {
+        let vc = EsVirituResultViewController()
+        vc.loadViewIfNeeded()
+
+        let (batchURL, records) = try makeTempBatch(samples: [
+            ("alpha", minimalDetectionTSV(sampleId: "alpha")),
+            ("beta", twoVirusTSV(sampleId: "beta")),
+        ])
+        defer { try? FileManager.default.removeItem(at: batchURL) }
+
+        let manifest = makeManifest(records: records)
+        vc.configureBatch(batchURL: batchURL, manifest: manifest, projectURL: batchURL)
+
+        XCTAssertEqual(vc.sampleEntries.count, 2)
+        let ids = Set(vc.sampleEntries.map(\.id))
+        XCTAssertTrue(ids.contains("alpha"))
+        XCTAssertTrue(ids.contains("beta"))
+
+        // "beta" has 2 distinct assemblies, so detectedVirusCount should be 2
+        let betaEntry = vc.sampleEntries.first(where: { $0.id == "beta" })
+        XCTAssertNotNil(betaEntry)
+        XCTAssertEqual(betaEntry?.detectedVirusCount, 2)
+    }
+
+    /// `configureBatch` initialises `samplePickerState` with all sample IDs.
+    func testConfigureBatchInitializesSamplePickerState() throws {
+        let vc = EsVirituResultViewController()
+        vc.loadViewIfNeeded()
+
+        let (batchURL, records) = try makeTempBatch(samples: [
+            ("sampleX", minimalDetectionTSV(sampleId: "sampleX")),
+            ("sampleY", minimalDetectionTSV(sampleId: "sampleY")),
+        ])
+        defer { try? FileManager.default.removeItem(at: batchURL) }
+
+        let manifest = makeManifest(records: records)
+        vc.configureBatch(batchURL: batchURL, manifest: manifest, projectURL: batchURL)
+
+        XCTAssertNotNil(vc.samplePickerState)
+        XCTAssertTrue(vc.samplePickerState.selectedSamples.contains("sampleX"))
+        XCTAssertTrue(vc.samplePickerState.selectedSamples.contains("sampleY"))
+    }
+
+    /// After `configureBatch`, `splitView` is hidden and `batchTableView` is visible.
+    func testConfigureBatchSwapsViewVisibility() throws {
+        let vc = EsVirituResultViewController()
+        vc.loadViewIfNeeded()
+
+        let (batchURL, records) = try makeTempBatch(samples: [
+            ("sample1", minimalDetectionTSV(sampleId: "sample1"))
+        ])
+        defer { try? FileManager.default.removeItem(at: batchURL) }
+
+        let manifest = makeManifest(records: records)
+        vc.configureBatch(batchURL: batchURL, manifest: manifest, projectURL: batchURL)
+
+        XCTAssertTrue(vc.splitView.isHidden, "splitView should be hidden in batch mode")
+        XCTAssertFalse(vc.testBatchTableView.isHidden, "batchTableView should be visible in batch mode")
+    }
+
+    // MARK: - applyBatchSampleFilter Tests
+
+    /// `applyBatchSampleFilter` filters rows to only the selected samples.
+    func testApplyBatchSampleFilterFiltersRows() throws {
+        let vc = EsVirituResultViewController()
+        vc.loadViewIfNeeded()
+
+        let (batchURL, records) = try makeTempBatch(samples: [
+            ("sampleA", minimalDetectionTSV(sampleId: "sampleA")),
+            ("sampleB", minimalDetectionTSV(sampleId: "sampleB")),
+        ])
+        defer { try? FileManager.default.removeItem(at: batchURL) }
+
+        let manifest = makeManifest(records: records)
+        vc.configureBatch(batchURL: batchURL, manifest: manifest, projectURL: batchURL)
+
+        // Deselect sampleB
+        vc.samplePickerState.selectedSamples = Set(["sampleA"])
+        NotificationCenter.default.post(name: .metagenomicsSampleSelectionChanged, object: nil)
+
+        let displayedSamples = Set(vc.testBatchTableView.displayedRows.map(\.sample))
+        XCTAssertTrue(displayedSamples.contains("sampleA"), "sampleA rows should be visible")
+        XCTAssertFalse(displayedSamples.contains("sampleB"), "sampleB rows should be filtered out")
+    }
+
+    /// `applyBatchSampleFilter` with an empty selection produces zero displayed rows.
+    func testApplyBatchSampleFilterEmptySelectionClearsRows() throws {
+        let vc = EsVirituResultViewController()
+        vc.loadViewIfNeeded()
+
+        let (batchURL, records) = try makeTempBatch(samples: [
+            ("sampleA", minimalDetectionTSV(sampleId: "sampleA")),
+        ])
+        defer { try? FileManager.default.removeItem(at: batchURL) }
+
+        let manifest = makeManifest(records: records)
+        vc.configureBatch(batchURL: batchURL, manifest: manifest, projectURL: batchURL)
+
+        // Deselect everything
+        vc.samplePickerState.selectedSamples = Set()
+        NotificationCenter.default.post(name: .metagenomicsSampleSelectionChanged, object: nil)
+
+        XCTAssertTrue(vc.testBatchTableView.displayedRows.isEmpty,
+                      "Displayed rows should be empty when no samples are selected")
+    }
+}

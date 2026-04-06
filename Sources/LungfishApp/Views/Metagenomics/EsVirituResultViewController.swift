@@ -232,6 +232,20 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     /// for a specific viral reference. Parameters: BAM URL, reference accession.
     public var onViewBAM: ((URL, String) -> Void)?
 
+    // MARK: - Batch Mode
+
+    /// Whether this view controller is displaying an aggregated batch result.
+    var isBatchMode: Bool = false
+
+    /// All flat rows loaded from each sample's EsViritu detection file in batch mode.
+    var allBatchRows: [BatchEsVirituRow] = []
+
+    /// Flat table used in batch mode (sibling of `splitView`).
+    private(set) var batchTableView = BatchEsVirituTableView()
+
+    /// The URL of the batch result directory (set during `configureBatch`).
+    var batchURL: URL?
+
     // MARK: - Lifecycle
 
     public override func loadView() {
@@ -240,11 +254,19 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
         setupSummaryBar()
         setupSplitView()
+        setupBatchTableView()
         setupMiniBAMViewer()
         setupActionBar()
         layoutSubviews()
         wireCallbacks()
         applyLayoutPreference()
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleBatchSampleSelectionChanged),
+            name: .metagenomicsSampleSelectionChanged,
+            object: nil
+        )
     }
 
     // MARK: - Mini BAM Viewer
@@ -369,6 +391,121 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         )]
         strippedPrefix = ""
         samplePickerState = ClassifierSamplePickerState(allSamples: Set([sampleName]))
+    }
+
+    // MARK: - Batch Mode Configuration
+
+    /// Configures the view for an aggregated batch result.
+    ///
+    /// Iterates the manifest samples, loads each sample's `detected_virus.info.tsv`,
+    /// builds flat ``BatchEsVirituRow`` records, and swaps the split view for the
+    /// batch table.
+    ///
+    /// - Parameters:
+    ///   - batchURL: The batch result root directory.
+    ///   - manifest: The EsViritu batch result manifest.
+    ///   - projectURL: The containing project URL, used for display name resolution.
+    func configureBatch(
+        batchURL: URL,
+        manifest: EsVirituBatchResultManifest,
+        projectURL: URL
+    ) {
+        isBatchMode = true
+        self.batchURL = batchURL
+
+        var allRows: [BatchEsVirituRow] = []
+        var entries: [EsVirituSampleEntry] = []
+
+        for sample in manifest.samples {
+            let resultDir = URL(fileURLWithPath: sample.resultDirectory)
+
+            // The detection file is named <sampleId>.detected_virus.info.tsv
+            // Fall back to searching for any *.detected_virus.info.tsv in the directory.
+            var detectionURL: URL?
+            let primaryCandidate = resultDir.appendingPathComponent(
+                "\(sample.sampleId).detected_virus.info.tsv"
+            )
+            if FileManager.default.fileExists(atPath: primaryCandidate.path) {
+                detectionURL = primaryCandidate
+            } else {
+                // Try any .detected_virus.info.tsv in the directory
+                if let contents = try? FileManager.default.contentsOfDirectory(atPath: resultDir.path) {
+                    let match = contents.first { $0.hasSuffix(".detected_virus.info.tsv") }
+                    if let match {
+                        detectionURL = resultDir.appendingPathComponent(match)
+                    }
+                }
+            }
+
+            guard let detectionURL else {
+                logger.warning("No detection file found for sample \(sample.sampleId, privacy: .public) in \(resultDir.path, privacy: .public)")
+                continue
+            }
+
+            do {
+                let detections = try EsVirituDetectionParser.parse(url: detectionURL)
+                let assemblies = EsVirituDetectionParser.groupByAssembly(detections)
+                let rows = BatchEsVirituRow.fromAssemblies(assemblies, sampleId: sample.sampleId)
+                allRows.append(contentsOf: rows)
+
+                let displayName = FASTQDisplayNameResolver.resolveDisplayName(
+                    sampleId: sample.sampleId, projectURL: projectURL)
+                entries.append(EsVirituSampleEntry(
+                    id: sample.sampleId,
+                    displayName: displayName,
+                    detectedVirusCount: assemblies.count
+                ))
+            } catch {
+                logger.error(
+                    "Failed to parse detection file for \(sample.sampleId, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+
+        allBatchRows = allRows
+        sampleEntries = entries
+
+        let allSampleIds = Set(entries.map(\.id))
+        samplePickerState = ClassifierSamplePickerState(allSamples: allSampleIds)
+
+        // Wire batch table callbacks
+        batchTableView.metadataColumns.isMultiSampleMode = true
+        batchTableView.onRowSelected = { [weak self] _ in
+            self?.actionBar.updateInfoText("1 row selected")
+        }
+        batchTableView.onMultipleRowsSelected = { [weak self] rows in
+            self?.actionBar.updateInfoText("\(rows.count) rows selected")
+        }
+        batchTableView.onSelectionCleared = { [weak self] in
+            self?.actionBar.updateInfoText("Select a virus to view details")
+        }
+
+        // Swap visibility: hide split view, show batch table
+        splitView.isHidden = true
+        batchTableView.isHidden = false
+
+        applyBatchSampleFilter()
+
+        logger.info("EsViritu batch mode configured: \(allRows.count) rows from \(entries.count) samples")
+    }
+
+    /// Filters `allBatchRows` by the samples selected in `samplePickerState`
+    /// and reloads the batch table view.
+    func applyBatchSampleFilter() {
+        guard let state = samplePickerState else { return }
+        let selected = state.selectedSamples
+        let filtered: [BatchEsVirituRow]
+        if selected.isEmpty {
+            filtered = []
+        } else {
+            filtered = allBatchRows.filter { selected.contains($0.sample) }
+        }
+        batchTableView.configure(rows: filtered)
+    }
+
+    @objc private func handleBatchSampleSelectionChanged() {
+        guard isBatchMode else { return }
+        applyBatchSampleFilter()
     }
 
     // MARK: - Background Unique Read Computation
@@ -556,6 +693,16 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         view.addSubview(splitView)
     }
 
+    // MARK: - Setup: Batch Table View
+
+    /// Adds the batch table view as a sibling of `splitView` with identical
+    /// constraints. Hidden by default; shown when `configureBatch` is called.
+    private func setupBatchTableView() {
+        batchTableView.translatesAutoresizingMaskIntoConstraints = false
+        batchTableView.isHidden = true
+        view.addSubview(batchTableView)
+    }
+
     // MARK: - Setup: Action Bar
 
     private func setupActionBar() {
@@ -578,6 +725,12 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             actionBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             actionBar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             actionBar.heightAnchor.constraint(equalToConstant: 36),
+
+            // Batch table view (same region as splitView, hidden by default)
+            batchTableView.topAnchor.constraint(equalTo: summaryBar.bottomAnchor),
+            batchTableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            batchTableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            batchTableView.bottomAnchor.constraint(equalTo: actionBar.topAnchor),
 
             // Split view (fills remaining space)
             splitView.topAnchor.constraint(equalTo: summaryBar.bottomAnchor),
@@ -1264,6 +1417,9 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
     /// Returns the current EsViritu result for testing.
     var testResult: LungfishIO.EsVirituResult? { esVirituResult }
+
+    /// Returns the batch table view for testing.
+    var testBatchTableView: BatchEsVirituTableView { batchTableView }
 
     /// Returns the assembly currently targeted by mini-BAM updates.
     var testCurrentBAMAssemblyAccession: String? { currentBAMAssemblyAccession }
