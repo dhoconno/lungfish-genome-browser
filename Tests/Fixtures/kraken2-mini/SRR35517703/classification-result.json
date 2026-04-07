@@ -1,0 +1,28 @@
+{
+  "config" : {
+    "confidence" : 0.2,
+    "databaseName" : "Standard-16",
+    "databasePath" : "file:\/\/\/Users\/dho\/.lungfish\/databases\/kraken2\/standard-16\/",
+    "databaseVersion" : "20240904",
+    "goal" : "profile",
+    "inputFiles" : [
+      "file:\/\/\/Volumes\/nvd_remote\/TGS-air-VSP2.lungfish\/Imports\/SRR35517703.lungfishfastq\/SRR35517703.fastq.gz"
+    ],
+    "isPairedEnd" : false,
+    "memoryMapping" : false,
+    "minimumHitGroups" : 2,
+    "originalInputFiles" : [
+      "file:\/\/\/Volumes\/nvd_remote\/TGS-air-VSP2.lungfish\/Imports\/SRR35517703.lungfishfastq\/"
+    ],
+    "outputDirectory" : "file:\/\/\/Volumes\/nvd_remote\/TGS-air-VSP2.lungfish\/Analyses\/kraken2-batch-2026-04-06T20-45-49\/SRR35517703\/",
+    "quickMode" : false,
+    "sampleDisplayName" : "SRR35517703",
+    "threads" : 4
+  },
+  "outputPath" : "classification.kraken",
+  "provenanceId" : "096BA02C-4735-44A1-A9FA-BF66A1FF4DB5",
+  "reportPath" : "classification.kreport",
+  "runtime" : 65.23529195785522,
+  "savedAt" : "2026-04-07T01:55:47Z",
+  "toolVersion" : "2.17.1"
+}
