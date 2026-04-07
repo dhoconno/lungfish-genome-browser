@@ -179,6 +179,11 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     /// which operates within a single multi-sample TaxTriage result.
     var isBatchGroupMode: Bool = false
 
+    /// True when this VC is displaying a single multi-sample TaxTriage result
+    /// using the flat table + Inspector sample picker pattern.
+    /// Set automatically by `configure(result:config:)` when `sampleIds.count > 1`.
+    private(set) var isMultiSampleSingleResultMode: Bool = false
+
     /// All flat metrics loaded for the batch group, before sample filtering.
     private(set) var allBatchGroupRows: [TaxTriageMetric] = []
 
@@ -494,6 +499,16 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     public func configure(result: TaxTriageResult, config: TaxTriageConfig? = nil) {
         taxTriageResult = result
         taxTriageConfig = config ?? result.config
+
+        // Reset multi-sample flat table mode from a previous result.
+        // The single-sample organism table is restored below if not needed.
+        if isMultiSampleSingleResultMode {
+            isMultiSampleSingleResultMode = false
+            batchFlatTableView.isHidden = true
+            organismTableView.isHidden = false
+            allBatchGroupRows = []
+        }
+
         bamURL = nil
         bamIndexURL = nil
         organismToAccessions = [:]
@@ -679,6 +694,12 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             return TaxTriageSampleEntry(id: sampleId, displayName: display, organismCount: count)
         }
         samplePickerState = ClassifierSamplePickerState(allSamples: Set(sampleIds))
+
+        // When a single result contains multiple samples, switch to the flat-table
+        // + Inspector sample picker pattern instead of the segmented control.
+        if sampleIds.count > 1 {
+            enableMultiSampleFlatTableMode()
+        }
     }
 
     // MARK: - Sample Extraction
@@ -885,6 +906,8 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
                 self.organismSearchText = query
                 if self.isBatchGroupMode {
                     self.applyBatchGroupFilter()
+                } else if self.isMultiSampleSingleResultMode {
+                    self.applyMultiSampleFilter()
                 } else {
                     self.applyCurrentSampleFilter()
                 }
@@ -898,6 +921,8 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         guard samplePickerState != nil else { return }
         if isBatchGroupMode {
             applyBatchGroupFilter()
+        } else if isMultiSampleSingleResultMode {
+            applyMultiSampleFilter()
         } else {
             applyCurrentSampleFilter()
         }
@@ -1977,6 +2002,116 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             }
         }
         // Apply organism search text filter if active.
+        if !organismSearchText.isEmpty {
+            filtered = filtered.filter {
+                $0.organism.localizedCaseInsensitiveContains(organismSearchText)
+            }
+        }
+        batchFlatTableView.configure(rows: filtered)
+    }
+
+    // MARK: - Multi-Sample Single Result Mode
+
+    /// Switches a single multi-sample TaxTriage result to the flat-table + Inspector
+    /// sample picker pattern used by batch group mode.
+    ///
+    /// Called automatically from `configure(result:config:)` when `sampleIds.count > 1`.
+    /// Reuses the existing `batchFlatTableView` and `bamFilesBySample` data already
+    /// populated by `configure`. Does NOT affect `isBatchGroupMode`.
+    private func enableMultiSampleFlatTableMode() {
+        isMultiSampleSingleResultMode = true
+
+        // Hide the segmented control — it doesn't scale to large sample counts.
+        // Keep the filter row height so the organism search field remains visible.
+        sampleFilterControl.isHidden = true
+
+        // Hide the batch overview (pivot table feature, designed separately).
+        batchOverviewView.isHidden = true
+
+        // Show organism search field in the filter row.
+        // rebuildSampleFilterSegments already set height to 24/4/4 above; keep that.
+        organismSearchField.isHidden = false
+        sampleFilterHeightConstraint?.constant = 24
+        sampleFilterTopSpacingConstraint?.constant = 4
+        sampleFilterBottomSpacingConstraint?.constant = 4
+
+        // Switch right pane: hide organism table, show flat table.
+        organismTableView.isHidden = true
+        batchFlatTableView.isHidden = false
+        batchFlatTableView.metadataColumns.isMultiSampleMode = true
+
+        // Use the already-populated `metrics` array as the flat table rows.
+        allBatchGroupRows = metrics
+
+        // Wire batch flat table callbacks (same pattern as configureBatchGroup).
+        batchFlatTableView.onRowSelected = { [weak self] row in
+            guard let self else { return }
+            self.actionBar.updateInfoText("1 row selected")
+            self.hideMultiSelectionPlaceholder()
+
+            guard let sampleId = row.sample,
+                  let bamURL = self.bamFilesBySample[sampleId] else {
+                self.miniBAMController?.clear()
+                return
+            }
+
+            let bamIndexURL = resolveBamIndex(for: bamURL, allOutputFiles: self.taxTriageResult?.allOutputFiles ?? [])
+
+            if let accessions = self.accessions(for: row.organism),
+               let primaryAccession = accessions.first {
+                if self.accessionLengths[primaryAccession] == nil {
+                    self.parseBamReferenceLengths(bamURL: bamURL)
+                }
+                if let contigLength = self.accessionLengths[primaryAccession] {
+                    self.miniBAMController?.displayContig(
+                        bamURL: bamURL,
+                        contig: primaryAccession,
+                        contigLength: contigLength,
+                        indexURL: bamIndexURL,
+                        maxReads: 5000
+                    )
+                    self.miniBAMController?.view.isHidden = false
+                } else {
+                    self.miniBAMController?.clear()
+                }
+            } else {
+                self.miniBAMController?.clear()
+            }
+        }
+        batchFlatTableView.onMultipleRowsSelected = { [weak self] rows in
+            guard let self else { return }
+            self.actionBar.updateInfoText("\(rows.count) rows selected")
+            self.showMultiSelectionPlaceholder(count: rows.count)
+        }
+        batchFlatTableView.onSelectionCleared = { [weak self] in
+            guard let self else { return }
+            self.actionBar.updateInfoText("Select an organism to view details")
+            self.hideMultiSelectionPlaceholder()
+            self.miniBAMController?.clear()
+        }
+
+        summaryBar.updateBatch(sampleCount: sampleIds.count, totalOrganisms: metrics.count)
+
+        applyMultiSampleFilter()
+    }
+
+    /// Filters `allBatchGroupRows` (sourced from `metrics`) by the samples selected
+    /// in `samplePickerState` and by the organism search text, then reloads `batchFlatTableView`.
+    ///
+    /// Called from `handleInspectorSampleSelectionChanged` and `organismSearchAction`
+    /// when `isMultiSampleSingleResultMode` is true.
+    public func applyMultiSampleFilter() {
+        guard isMultiSampleSingleResultMode, let state = samplePickerState else { return }
+        let selected = state.selectedSamples
+        var filtered: [TaxTriageMetric]
+        if selected.isEmpty {
+            filtered = []
+        } else {
+            filtered = allBatchGroupRows.filter { m in
+                guard let s = m.sample else { return false }
+                return selected.contains(s)
+            }
+        }
         if !organismSearchText.isEmpty {
             filtered = filtered.filter {
                 $0.organism.localizedCaseInsensitiveContains(organismSearchText)
