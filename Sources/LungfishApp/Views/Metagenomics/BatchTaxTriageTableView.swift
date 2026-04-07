@@ -16,6 +16,7 @@ private extension NSUserInterfaceItemIdentifier {
     static let tt_organism        = NSUserInterfaceItemIdentifier("tt_organism")
     static let tt_tassScore       = NSUserInterfaceItemIdentifier("tt_tassScore")
     static let tt_reads           = NSUserInterfaceItemIdentifier("tt_reads")
+    static let tt_uniqueReads     = NSUserInterfaceItemIdentifier("tt_uniqueReads")
     static let tt_confidence      = NSUserInterfaceItemIdentifier("tt_confidence")
     static let tt_coverageBreadth = NSUserInterfaceItemIdentifier("tt_coverageBreadth")
     static let tt_coverageDepth   = NSUserInterfaceItemIdentifier("tt_coverageDepth")
@@ -60,6 +61,13 @@ final class BatchTaxTriageTableView: NSView {
 
     /// Current filter text applied to organism names.
     private var filterText: String = ""
+
+    /// Lookup dictionary for unique (deduplicated) read counts in batch group mode.
+    ///
+    /// Key format: `"<sampleId>\t<organism>"`. Values are populated from
+    /// `perSampleDeduplicatedReadCounts` by the owning view controller as background
+    /// BAM deduplication completes. Cells show "—" when the key is absent.
+    var uniqueReadsByKey: [String: Int] = [:]
 
     // MARK: - Callbacks
 
@@ -143,7 +151,7 @@ final class BatchTaxTriageTableView: NSView {
 
         metadataColumns.isMultiSampleMode = true
         metadataColumns.standardColumnNames = ["Sample", "Organism", "TASS Score",
-                                               "Reads", "Confidence",
+                                               "Reads", "Unique Reads", "Confidence",
                                                "Coverage Breadth", "Coverage Depth", "Abundance"]
         metadataColumns.install(on: tableView)
     }
@@ -155,6 +163,7 @@ final class BatchTaxTriageTableView: NSView {
             (.tt_organism,        "Organism",        220, 100, true),
             (.tt_tassScore,       "TASS Score",       90, 55,  false),
             (.tt_reads,           "Reads",            80, 50,  false),
+            (.tt_uniqueReads,     "Unique Reads",     90, 55,  false),
             (.tt_confidence,      "Confidence",       90, 55,  true),
             (.tt_coverageBreadth, "Coverage Breadth", 110, 65, false),
             (.tt_coverageDepth,   "Coverage Depth",   100, 60, false),
@@ -182,6 +191,17 @@ final class BatchTaxTriageTableView: NSView {
         self.unfilteredRows = rows
         applyFilter()
         logger.info("BatchTaxTriageTableView configured with \(rows.count) rows")
+    }
+
+    /// Reloads only the Unique Reads column cells without re-sorting or scrolling.
+    ///
+    /// Call this after updating ``uniqueReadsByKey`` to refresh the column in-place.
+    func reloadUniqueReadsColumn() {
+        guard let colIndex = tableView.column(withIdentifier: .tt_uniqueReads) as Int?,
+              colIndex >= 0 else { return }
+        let colIndexSet = IndexSet(integer: colIndex)
+        let rowIndexSet = IndexSet(integersIn: 0..<displayedRows.count)
+        tableView.reloadData(forRowIndexes: rowIndexSet, columnIndexes: colIndexSet)
     }
 
     // MARK: - Filter
@@ -216,6 +236,10 @@ final class BatchTaxTriageTableView: NSView {
                     result = a.tassScore < b.tassScore
                 case "tt_reads":
                     result = a.reads < b.reads
+                case "tt_uniqueReads":
+                    let ak = "\(a.sample ?? "")\t\(a.organism)"
+                    let bk = "\(b.sample ?? "")\t\(b.organism)"
+                    result = (uniqueReadsByKey[ak] ?? -1) < (uniqueReadsByKey[bk] ?? -1)
                 case "tt_confidence":
                     let ac = a.confidence ?? ""; let bc = b.confidence ?? ""
                     result = ac.localizedCaseInsensitiveCompare(bc) == .orderedAscending
@@ -287,6 +311,10 @@ extension BatchTaxTriageTableView: NSTableViewDataSource {
                 result = a.tassScore < b.tassScore
             case "tt_reads":
                 result = a.reads < b.reads
+            case "tt_uniqueReads":
+                let ak = "\(a.sample ?? "")\t\(a.organism)"
+                let bk = "\(b.sample ?? "")\t\(b.organism)"
+                result = (uniqueReadsByKey[ak] ?? -1) < (uniqueReadsByKey[bk] ?? -1)
             case "tt_confidence":
                 let ac = a.confidence ?? ""
                 let bc = b.confidence ?? ""
@@ -342,6 +370,15 @@ extension BatchTaxTriageTableView: NSTableViewDelegate {
 
         case .tt_reads:
             cellView.textField?.stringValue = formatTtReadCount(rowData.reads)
+            cellView.textField?.alignment = .right
+
+        case .tt_uniqueReads:
+            let key = "\(rowData.sample ?? "")\t\(rowData.organism)"
+            if let uniqueCount = uniqueReadsByKey[key] {
+                cellView.textField?.stringValue = formatTtReadCount(uniqueCount)
+            } else {
+                cellView.textField?.stringValue = "—"
+            }
             cellView.textField?.alignment = .right
 
         case .tt_confidence:

@@ -1475,8 +1475,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
                         let fetchedReads = try await provider.fetchReads(
                             chromosome: accession,
                             start: 0,
-                            end: contigLength,
-                            maxReads: 5000
+                            end: contigLength
                         )
                         if fetchedReads.isEmpty { continue }
                         fetchedAny = true
@@ -1536,6 +1535,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
 
         if !perSample.isEmpty {
             perSampleDeduplicatedReadCounts[normalized] = perSample
+            syncUniqueReadsToFlatTable()
         }
     }
 
@@ -1584,6 +1584,34 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
                 uniqueReadCount: uniqueReads
             )
         }
+    }
+
+    /// Propagates `perSampleDeduplicatedReadCounts` to `batchFlatTableView.uniqueReadsByKey`
+    /// and reloads the table so the Unique Reads column reflects the latest computed values.
+    ///
+    /// Called after each background deduplication update so the batch flat table stays current.
+    private func syncUniqueReadsToFlatTable() {
+        guard isBatchGroupMode || isMultiSampleSingleResultMode else { return }
+        var lookup: [String: Int] = [:]
+        for (normalizedOrganism, perSample) in perSampleDeduplicatedReadCounts {
+            for (sampleId, count) in perSample {
+                // Find the display organism name by matching normalisation.
+                // Prefer the raw organism name from allBatchGroupRows for accurate key construction.
+                let displayOrganism: String
+                if let match = allBatchGroupRows.first(where: {
+                    normalizedOrganismName($0.organism) == normalizedOrganism && $0.sample == sampleId
+                }) {
+                    displayOrganism = match.organism
+                } else {
+                    // Fall back to the normalized name if no exact match found.
+                    displayOrganism = normalizedOrganism
+                }
+                lookup["\(sampleId)\t\(displayOrganism)"] = count
+            }
+        }
+        batchFlatTableView.uniqueReadsByKey = lookup
+        // Reload visible rows without resetting scroll position.
+        batchFlatTableView.reloadUniqueReadsColumn()
     }
 
     private func resolveBamIndex(for bamURL: URL, allOutputFiles: [URL]) -> URL? {
@@ -1943,8 +1971,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
                         bamURL: bamURL,
                         contig: primaryAccession,
                         contigLength: contigLength,
-                        indexURL: bamIndexURL,
-                        maxReads: 5000
+                        indexURL: bamIndexURL
                     )
                     self.miniBAMController?.view.isHidden = false
                 } else {
@@ -1983,6 +2010,9 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         summaryBar.updateBatch(sampleCount: entries.count, totalOrganisms: allRows.count)
 
         applyBatchGroupFilter()
+
+        // Populate unique reads column from any already-persisted per-sample dedup counts.
+        syncUniqueReadsToFlatTable()
 
         logger.info("TaxTriage batch group configured: \(allRows.count) rows from \(entries.count) samples")
     }
@@ -2067,8 +2097,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
                         bamURL: bamURL,
                         contig: primaryAccession,
                         contigLength: contigLength,
-                        indexURL: bamIndexURL,
-                        maxReads: 5000
+                        indexURL: bamIndexURL
                     )
                     self.miniBAMController?.view.isHidden = false
                 } else {
@@ -2093,6 +2122,9 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         summaryBar.updateBatch(sampleCount: sampleIds.count, totalOrganisms: metrics.count)
 
         applyMultiSampleFilter()
+
+        // Populate unique reads column from any already-persisted per-sample dedup counts.
+        syncUniqueReadsToFlatTable()
     }
 
     /// Filters `allBatchGroupRows` (sourced from `metrics`) by the samples selected

@@ -686,8 +686,7 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
                             chromosome: contig.accession,
                             start: 0,
                             end: contig.length,
-                            excludeFlags: 0x904,
-                            maxReads: 5000
+                            excludeFlags: 0x904
                         )) ?? []
 
                         if reads.isEmpty { continue }
@@ -797,8 +796,7 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
                         chromosome: contig.accession,
                         start: 0,
                         end: contig.length,
-                        excludeFlags: 0x904,
-                        maxReads: 5000
+                        excludeFlags: 0x904
                     )) ?? []
 
                     if reads.isEmpty { continue }

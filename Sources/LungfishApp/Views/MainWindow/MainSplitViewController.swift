@@ -1978,10 +1978,28 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                     attachments: BundleAttachmentStore(bundleURL: batchURL)
                 )
             }
-            let params: [String: String] = [
+            // Build params starting from the manifest-level fields.
+            var params: [String: String] = [
                 "Database": "\(manifest.databaseName) \(manifest.databaseVersion)".trimmingCharacters(in: .whitespaces),
                 "Goal": manifest.goal,
             ]
+            // Augment with per-sample config from the first sample's result sidecar.
+            if let firstSample = manifest.samples.first {
+                let sampleResultDir = batchURL.appendingPathComponent(firstSample.resultDirectory)
+                if let sampleResult = try? ClassificationResult.load(from: sampleResultDir) {
+                    let cfg = sampleResult.config
+                    if !sampleResult.toolVersion.isEmpty {
+                        params["Tool Version"] = "Kraken2 \(sampleResult.toolVersion)"
+                    }
+                    params["Confidence"] = String(format: "%.2f", cfg.confidence)
+                    params["Min Hit Groups"] = "\(cfg.minimumHitGroups)"
+                    params["Threads"] = "\(cfg.threads)"
+                    if cfg.memoryMapping { params["Memory Mapping"] = "Yes" }
+                    if cfg.quickMode { params["Quick Mode"] = "Yes" }
+                    let runtimeStr = formatInspectorRuntime(sampleResult.runtime)
+                    if !runtimeStr.isEmpty { params["Runtime (first sample)"] = runtimeStr }
+                }
+            }
             let sourceSamples = resolveBatchSourceSamples(manifest.samples, projectURL: projectURL)
             self.inspectorController?.updateBatchOperationDetails(
                 tool: "Kraken2",
@@ -2017,10 +2035,27 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                     attachments: BundleAttachmentStore(bundleURL: batchURL)
                 )
             }
+            // Build params from the first sample's EsViritu result sidecar.
+            var esVirituParams: [String: String] = [:]
+            if let firstSample = manifest.samples.first {
+                let sampleResultDir = batchURL.appendingPathComponent(firstSample.resultDirectory)
+                if let sampleResult = try? LungfishWorkflow.EsVirituResult.load(from: sampleResultDir) {
+                    let cfg = sampleResult.config
+                    if !sampleResult.toolVersion.isEmpty {
+                        esVirituParams["Tool Version"] = "EsViritu \(sampleResult.toolVersion)"
+                    }
+                    esVirituParams["Threads"] = "\(cfg.threads)"
+                    esVirituParams["Quality Filter"] = cfg.qualityFilter ? "Yes" : "No"
+                    esVirituParams["Min Read Length"] = "\(cfg.minReadLength)"
+                    esVirituParams["Paired-End"] = cfg.isPairedEnd ? "Yes" : "No"
+                    let runtimeStr = formatInspectorRuntime(sampleResult.runtime)
+                    if !runtimeStr.isEmpty { esVirituParams["Runtime (first sample)"] = runtimeStr }
+                }
+            }
             let sourceSamples = resolveBatchSourceSamples(manifest.samples, projectURL: projectURL)
             self.inspectorController?.updateBatchOperationDetails(
                 tool: "EsViritu",
-                parameters: [:],
+                parameters: esVirituParams,
                 timestamp: manifest.header.createdAt,
                 sourceSamples: sourceSamples
             )
@@ -2039,18 +2074,75 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                     attachments: BundleAttachmentStore(bundleURL: batchURL)
                 )
             }
-            // TaxTriage does not have a summary manifest with sample records at the batch level;
-            // clear any stale batch operation details.
+
+            // Load TaxTriage result sidecar for provenance.
+            var taxTriageParams: [String: String] = [:]
+            let taxTriageTimestamp: Date? = nil  // TaxTriageResult does not store a createdAt timestamp
+            var taxTriageSamples: [(sampleId: String, bundleURL: URL?)] = []
+
+            if let ttResult = try? TaxTriageResult.load(from: batchURL) {
+                let cfg = ttResult.config
+
+                // Pipeline parameters
+                taxTriageParams["Platform"] = cfg.platform.displayName
+                taxTriageParams["Classifiers"] = cfg.classifiers.joined(separator: ", ")
+                taxTriageParams["Confidence"] = String(format: "%.2f", cfg.k2Confidence)
+                taxTriageParams["Top Hits"] = "\(cfg.topHitsCount)"
+                taxTriageParams["Rank"] = cfg.rank
+                taxTriageParams["Max CPUs"] = "\(cfg.maxCpus)"
+                taxTriageParams["Max Memory"] = cfg.maxMemory
+                if let dbPath = cfg.kraken2DatabasePath {
+                    taxTriageParams["Database Path"] = dbPath.lastPathComponent
+                }
+                let runtimeStr = formatInspectorRuntime(ttResult.runtime)
+                if !runtimeStr.isEmpty { taxTriageParams["Runtime"] = runtimeStr }
+
+                // Resolve source sample URLs from config samples and project search.
+                taxTriageSamples = cfg.samples.map { sample in
+                    let bundleURL = cfg.sourceBundleURLs?.first { url in
+                        url.deletingPathExtension().lastPathComponent
+                            .localizedCaseInsensitiveContains(sample.sampleId)
+                    } ?? projectURL.flatMap { findBundleInProject($0, matchingSampleId: sample.sampleId) }
+                    return (sampleId: sample.sampleId, bundleURL: bundleURL)
+                }
+            } else if let taxTriageVC = viewerController.taxTriageViewController {
+                // No sidecar available — use sample entries from the VC to at least resolve source URLs.
+                taxTriageSamples = taxTriageVC.sampleEntries.map { entry in
+                    let bundleURL = projectURL.flatMap { findBundleInProject($0, matchingSampleId: entry.id) }
+                    return (sampleId: entry.id, bundleURL: bundleURL)
+                }
+            }
+
             self.inspectorController?.clearBatchOperationDetails()
             self.inspectorController?.updateBatchOperationDetails(
                 tool: "TaxTriage",
-                parameters: [:],
-                timestamp: nil,
-                sourceSamples: []
+                parameters: taxTriageParams,
+                timestamp: taxTriageTimestamp,
+                sourceSamples: taxTriageSamples
             )
 
         } else {
             logger.warning("displayBatchGroup: Unrecognized batch prefix in '\(dirName, privacy: .public)'")
+        }
+    }
+
+    /// Formats a pipeline runtime duration as a human-readable string for the Inspector.
+    ///
+    /// Returns strings like "34s", "2m 14s", or "1h 3m" depending on magnitude.
+    /// Returns an empty string for zero or negative durations.
+    private func formatInspectorRuntime(_ seconds: TimeInterval) -> String {
+        guard seconds > 0 else { return "" }
+        let total = Int(seconds.rounded())
+        if total < 60 {
+            return "\(total)s"
+        } else if total < 3600 {
+            let m = total / 60
+            let s = total % 60
+            return s > 0 ? "\(m)m \(s)s" : "\(m)m"
+        } else {
+            let h = total / 3600
+            let m = (total % 3600) / 60
+            return m > 0 ? "\(h)h \(m)m" : "\(h)h"
         }
     }
 
