@@ -14,6 +14,7 @@ import AppKit
 final class DatabaseBuildPlaceholderView: NSView {
 
     private let iconView = NSImageView()
+    private let spinner = NSProgressIndicator()
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
     private let retryButton = NSButton(title: "Retry", target: nil, action: nil)
@@ -62,6 +63,11 @@ final class DatabaseBuildPlaceholderView: NSView {
         subtitleLabel.maximumNumberOfLines = 3
         subtitleLabel.lineBreakMode = .byWordWrapping
 
+        // Spinner — visible during the "building" state
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isDisplayedWhenStopped = false
+
         // Retry button — hidden in the default "building" state
         retryButton.bezelStyle = .rounded
         retryButton.isHidden = true
@@ -73,12 +79,14 @@ final class DatabaseBuildPlaceholderView: NSView {
         stackView.alignment = .centerX
         stackView.spacing = 8
         stackView.addArrangedSubview(iconView)
+        stackView.addArrangedSubview(spinner)
         stackView.addArrangedSubview(titleLabel)
         stackView.addArrangedSubview(subtitleLabel)
         stackView.addArrangedSubview(retryButton)
 
         // Custom spacing after icon and subtitle
         stackView.setCustomSpacing(16, after: iconView)
+        stackView.setCustomSpacing(12, after: spinner)
         stackView.setCustomSpacing(4, after: titleLabel)
         stackView.setCustomSpacing(16, after: subtitleLabel)
 
@@ -105,6 +113,19 @@ final class DatabaseBuildPlaceholderView: NSView {
             "Run the following command in Terminal to build the database, then re-select this result:\n\n" +
             "lungfish build-db \(cliTool) \"\(dirName)\""
         retryButton.isHidden = true
+        spinner.stopAnimation(nil)
+    }
+
+    /// Configures the view for the "building in progress" state.
+    ///
+    /// Shows a spinner and a message indicating the database is being built.
+    ///
+    /// - Parameter tool: Human-readable tool name (e.g. "TaxTriage").
+    func showBuilding(tool: String) {
+        titleLabel.stringValue = "Building \(tool) database\u{2026}"
+        subtitleLabel.stringValue = "This may take a moment. The view will load automatically when complete."
+        retryButton.isHidden = true
+        spinner.startAnimation(nil)
     }
 
     /// Switches the view to an error state with a visible Retry button.
@@ -114,6 +135,7 @@ final class DatabaseBuildPlaceholderView: NSView {
         titleLabel.stringValue = "Database build failed"
         subtitleLabel.stringValue = message
         retryButton.isHidden = false
+        spinner.stopAnimation(nil)
     }
 
     @objc private func retryTapped() {

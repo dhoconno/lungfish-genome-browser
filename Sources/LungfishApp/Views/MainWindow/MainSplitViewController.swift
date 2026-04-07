@@ -1967,33 +1967,9 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                     )
                 }
             } else {
-                // Fall through to existing manifest path.
-                guard let manifest = MetagenomicsBatchResultStore.loadClassification(from: batchURL) else {
-                    logger.error("displayBatchGroup: No classification batch manifest in '\(dirName, privacy: .public)'")
-                    let alert = NSAlert()
-                    alert.messageText = "Failed to Load Batch Classification"
-                    alert.informativeText = "Could not find a batch manifest in '\(dirName)'. The batch may be incomplete."
-                    alert.alertStyle = .warning
-                    alert.addButton(withTitle: "OK")
-                    if let window = self.view.window ?? NSApp.keyWindow {
-                        alert.beginSheetModal(for: window)
-                    }
-                    return
-                }
-                viewerController.displayTaxonomyBatch(
-                    batchURL: batchURL,
-                    manifest: manifest,
-                    projectURL: projectURL ?? batchURL
-                )
-                if let taxonomyVC = viewerController.taxonomyViewController {
-                    self.inspectorController?.updateClassifierSampleState(
-                        pickerState: taxonomyVC.samplePickerState,
-                        entries: taxonomyVC.sampleEntries,
-                        strippedPrefix: taxonomyVC.strippedPrefix,
-                        metadata: nil,
-                        attachments: BundleAttachmentStore(bundleURL: batchURL)
-                    )
-                }
+                // No SQLite DB — show placeholder and auto-build.
+                showDatabaseBuildPlaceholder(tool: "Kraken2", resultURL: batchURL)
+                return
             }
             // Build params starting from the manifest-level fields (if available).
             if let manifest = MetagenomicsBatchResultStore.loadClassification(from: batchURL) {
@@ -2046,33 +2022,9 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                     )
                 }
             } else {
-                // Fall through to existing manifest path.
-                guard let manifest = MetagenomicsBatchResultStore.loadEsViritu(from: batchURL) else {
-                    logger.error("displayBatchGroup: No EsViritu batch manifest in '\(dirName, privacy: .public)'")
-                    let alert = NSAlert()
-                    alert.messageText = "Failed to Load Batch EsViritu"
-                    alert.informativeText = "Could not find a batch manifest in '\(dirName)'. The batch may be incomplete."
-                    alert.alertStyle = .warning
-                    alert.addButton(withTitle: "OK")
-                    if let window = self.view.window ?? NSApp.keyWindow {
-                        alert.beginSheetModal(for: window)
-                    }
-                    return
-                }
-                viewerController.displayEsVirituBatch(
-                    batchURL: batchURL,
-                    manifest: manifest,
-                    projectURL: projectURL ?? batchURL
-                )
-                if let esVirituVC = viewerController.esVirituViewController {
-                    self.inspectorController?.updateClassifierSampleState(
-                        pickerState: esVirituVC.samplePickerState,
-                        entries: esVirituVC.sampleEntries,
-                        strippedPrefix: esVirituVC.strippedPrefix,
-                        metadata: nil,
-                        attachments: BundleAttachmentStore(bundleURL: batchURL)
-                    )
-                }
+                // No SQLite DB — show placeholder and auto-build.
+                showDatabaseBuildPlaceholder(tool: "EsViritu", resultURL: batchURL)
+                return
             }
             // Build params from the first sample's EsViritu result sidecar.
             var esVirituParams: [String: String] = [:]
@@ -2121,19 +2073,9 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                     )
                 }
             } else {
-                viewerController.displayTaxTriageBatch(
-                    batchURL: batchURL,
-                    projectURL: projectURL ?? batchURL
-                )
-                if let taxTriageVC = viewerController.taxTriageViewController {
-                    self.inspectorController?.updateClassifierSampleState(
-                        pickerState: taxTriageVC.samplePickerState,
-                        entries: taxTriageVC.sampleEntries,
-                        strippedPrefix: taxTriageVC.strippedPrefix,
-                        metadata: nil,
-                        attachments: BundleAttachmentStore(bundleURL: batchURL)
-                    )
-                }
+                // No SQLite DB — show placeholder and auto-build.
+                showDatabaseBuildPlaceholder(tool: "TaxTriage", resultURL: batchURL)
+                return
             }
 
             // Load TaxTriage result sidecar for provenance.
@@ -2191,12 +2133,12 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         }
     }
 
-    /// Shows a ``DatabaseBuildPlaceholderView`` in the viewport area.
+    /// Shows a ``DatabaseBuildPlaceholderView`` in the viewport area and
+    /// automatically triggers a background `lungfish build-db` subprocess.
     ///
-    /// Used when a classifier batch result directory exists but the corresponding
-    /// SQLite database has not yet been built.  The placeholder tells the user
-    /// which CLI command to run, then removes itself when the user re-selects the
-    /// item after building the database.
+    /// On success the placeholder is removed and ``displayBatchGroup(at:)`` is
+    /// called again so the newly-built SQLite database is picked up.  On failure
+    /// the placeholder switches to an error state with a Retry button.
     ///
     /// - Parameters:
     ///   - tool: Human-readable tool name (e.g. "TaxTriage").
@@ -2206,7 +2148,6 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         viewerController.clearViewport(statusMessage: "")
 
         let placeholder = DatabaseBuildPlaceholderView()
-        placeholder.configure(tool: tool, resultURL: resultURL)
 
         let contentView = viewerController.view
         contentView.addSubview(placeholder)
@@ -2222,6 +2163,130 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         logger.info(
             "showDatabaseBuildPlaceholder: Shown for tool='\(tool, privacy: .public)' result='\(dirName, privacy: .public)'"
         )
+
+        // Auto-trigger the database build.
+        triggerDatabaseBuild(tool: tool, resultURL: resultURL, placeholder: placeholder)
+    }
+
+    /// Locates the `lungfish` CLI binary, checking the app bundle, adjacent
+    /// build products, and common system paths.
+    private func findLungfishCLI() -> URL? {
+        // 1. In app bundle (release builds).
+        if let url = Bundle.main.url(forResource: "lungfish", withExtension: nil) {
+            return url
+        }
+        // 2. Adjacent to app binary (Xcode run-scheme products directory).
+        let adjacentURL = Bundle.main.bundleURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("lungfish")
+        if FileManager.default.fileExists(atPath: adjacentURL.path) {
+            return adjacentURL
+        }
+        // 3. In build products (SPM debug build).
+        let buildProductsURL = Bundle.main.bundleURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("debug")
+            .appendingPathComponent("lungfish")
+        if FileManager.default.fileExists(atPath: buildProductsURL.path) {
+            return buildProductsURL
+        }
+        // 4. Common system paths.
+        for path in ["/usr/local/bin/lungfish", "/opt/homebrew/bin/lungfish"] {
+            if FileManager.default.fileExists(atPath: path) {
+                return URL(fileURLWithPath: path)
+            }
+        }
+        return nil
+    }
+
+    /// Runs `lungfish build-db <tool> <resultDir>` as a background subprocess.
+    ///
+    /// Updates the placeholder view with progress/error states and, on success,
+    /// removes it and re-triggers ``displayBatchGroup(at:)`` so the newly-built
+    /// database is loaded.
+    private func triggerDatabaseBuild(
+        tool: String,
+        resultURL: URL,
+        placeholder: DatabaseBuildPlaceholderView
+    ) {
+        let cliTool = tool.lowercased()
+
+        guard let cliURL = findLungfishCLI() else {
+            logger.error("triggerDatabaseBuild: Lungfish CLI not found")
+            placeholder.configure(tool: tool, resultURL: resultURL)
+            placeholder.onRetry = { [weak self] in
+                placeholder.removeFromSuperview()
+                self?.showDatabaseBuildPlaceholder(tool: tool, resultURL: resultURL)
+            }
+            return
+        }
+
+        // Show the "building" spinner state.
+        placeholder.showBuilding(tool: tool)
+
+        logger.info(
+            "triggerDatabaseBuild: Launching '\(cliURL.path, privacy: .public)' build-db \(cliTool, privacy: .public) '\(resultURL.path, privacy: .public)'"
+        )
+
+        Task.detached { [weak self] in
+            let process = Process()
+            process.executableURL = cliURL
+            process.arguments = ["build-db", cliTool, resultURL.path]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+
+            do {
+                try process.run()
+                process.waitUntilExit()
+                let success = process.terminationStatus == 0
+
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        placeholder.removeFromSuperview()
+                        if success {
+                            logger.info("triggerDatabaseBuild: Build succeeded for \(cliTool, privacy: .public)")
+                            // Re-display — the DB should now exist.
+                            self.displayBatchGroup(at: resultURL)
+                        } else {
+                            let errorData = pipe.fileHandleForReading.readDataToEndOfFile()
+                            let errorMsg = String(data: errorData, encoding: .utf8)?
+                                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown error"
+                            logger.error("triggerDatabaseBuild: Build failed: \(errorMsg, privacy: .public)")
+                            placeholder.showError("Build failed: \(errorMsg)")
+                            // Re-add placeholder to show the error.
+                            let contentView = self.viewerController.view
+                            contentView.addSubview(placeholder)
+                            placeholder.translatesAutoresizingMaskIntoConstraints = false
+                            NSLayoutConstraint.activate([
+                                placeholder.topAnchor.constraint(equalTo: contentView.topAnchor),
+                                placeholder.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+                                placeholder.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+                                placeholder.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+                            ])
+                            placeholder.onRetry = { [weak self] in
+                                placeholder.removeFromSuperview()
+                                self?.showDatabaseBuildPlaceholder(tool: tool, resultURL: resultURL)
+                            }
+                        }
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        logger.error("triggerDatabaseBuild: Failed to launch: \(error.localizedDescription, privacy: .public)")
+                        placeholder.showError("Failed to launch build: \(error.localizedDescription)")
+                        placeholder.onRetry = { [weak self] in
+                            placeholder.removeFromSuperview()
+                            self?.showDatabaseBuildPlaceholder(tool: tool, resultURL: resultURL)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Formats a pipeline runtime duration as a human-readable string for the Inspector.
