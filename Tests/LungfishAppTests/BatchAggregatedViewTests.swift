@@ -422,10 +422,10 @@ final class BatchTaxTriageTableViewTests: XCTestCase {
         XCTAssertEqual(view.displayedRows[2].sample, "sample-gamma")
     }
 
-    /// The table has exactly 8 fixed columns registered via standardColumnNames.
+    /// The table has exactly 9 fixed columns registered via standardColumnNames.
     func testColumnCount() {
         let view = BatchTaxTriageTableView(frame: .zero)
-        XCTAssertEqual(view.metadataColumns.standardColumnNames.count, 8)
+        XCTAssertEqual(view.metadataColumns.standardColumnNames.count, 9)
     }
 
     /// Sort by TASS score descending places the highest score first.
