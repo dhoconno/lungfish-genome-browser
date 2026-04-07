@@ -45,11 +45,17 @@ final class BatchClassificationTableView: NSView {
 
     // MARK: - State
 
-    /// The rows currently displayed (after any sort).
+    /// The rows currently displayed (after any sort and filter).
     private(set) var displayedRows: [BatchClassificationRow] = []
 
-    /// Unsorted copy preserved so re-sort can restart from a stable baseline.
+    /// Unsorted, unfiltered copy preserved so re-sort/re-filter can restart from a stable baseline.
     private var unsortedRows: [BatchClassificationRow] = []
+
+    /// The full unfiltered set of rows as last set by ``configure(rows:)``.
+    private var unfilteredRows: [BatchClassificationRow] = []
+
+    /// Current filter text applied to taxon names.
+    private var filterText: String = ""
 
     // MARK: - Callbacks
 
@@ -69,8 +75,9 @@ final class BatchClassificationTableView: NSView {
 
     // MARK: - Child Views
 
-    private let scrollView = NSScrollView()
-    private let tableView  = NSTableView()
+    private let scrollView  = NSScrollView()
+    private let tableView   = NSTableView()
+    private var searchField: NSSearchField!
 
     // MARK: - Init
 
@@ -87,6 +94,18 @@ final class BatchClassificationTableView: NSView {
     // MARK: - Setup
 
     private func setupTableView() {
+        // Search field above the table.
+        let sf = NSSearchField()
+        sf.translatesAutoresizingMaskIntoConstraints = false
+        sf.placeholderString = "Filter taxa\u{2026}"
+        sf.font = .systemFont(ofSize: 11)
+        sf.controlSize = .small
+        sf.target = self
+        sf.action = #selector(filterChanged(_:))
+        sf.sendsSearchStringImmediately = true
+        addSubview(sf)
+        self.searchField = sf
+
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller   = true
         scrollView.hasHorizontalScroller = true
@@ -94,7 +113,11 @@ final class BatchClassificationTableView: NSView {
         addSubview(scrollView)
 
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            sf.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            sf.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            sf.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            sf.heightAnchor.constraint(equalToConstant: 24),
+            scrollView.topAnchor.constraint(equalTo: sf.bottomAnchor, constant: 4),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -143,12 +166,61 @@ final class BatchClassificationTableView: NSView {
 
     /// Replaces the displayed rows and reloads the table.
     ///
+    /// The current filter text is re-applied automatically so that existing
+    /// filter state is preserved across sample filter changes.
+    ///
     /// - Parameter rows: The new rows to display.
     func configure(rows: [BatchClassificationRow]) {
-        self.unsortedRows  = rows
-        self.displayedRows = rows
-        tableView.reloadData()
+        self.unfilteredRows = rows
+        applyFilter()
         logger.info("BatchClassificationTableView configured with \(rows.count) rows")
+    }
+
+    // MARK: - Filter
+
+    @objc private func filterChanged(_ sender: NSSearchField) {
+        filterText = sender.stringValue
+        applyFilter()
+    }
+
+    private func applyFilter() {
+        let filtered: [BatchClassificationRow]
+        if filterText.isEmpty {
+            filtered = unfilteredRows
+        } else {
+            filtered = unfilteredRows.filter {
+                $0.taxonName.localizedCaseInsensitiveContains(filterText)
+            }
+        }
+        // Re-apply current sort order on top of the filtered set.
+        if let descriptor = tableView.sortDescriptors.first, let key = descriptor.key {
+            let ascending = descriptor.ascending
+            self.unsortedRows = filtered
+            self.displayedRows = filtered.sorted { a, b in
+                let result: Bool
+                switch key {
+                case "sample":
+                    result = a.sample.localizedCaseInsensitiveCompare(b.sample) == .orderedAscending
+                case "name":
+                    result = a.taxonName.localizedCaseInsensitiveCompare(b.taxonName) == .orderedAscending
+                case "rank":
+                    result = a.rankDisplayName.localizedCaseInsensitiveCompare(b.rankDisplayName) == .orderedAscending
+                case "readsDirect":
+                    result = a.readsDirect < b.readsDirect
+                case "readsClade":
+                    result = a.readsClade < b.readsClade
+                case "percent":
+                    result = a.percentage < b.percentage
+                default:
+                    result = false
+                }
+                return ascending ? result : !result
+            }
+        } else {
+            self.unsortedRows  = filtered
+            self.displayedRows = filtered
+        }
+        tableView.reloadData()
     }
 
     // MARK: - Cell Factory

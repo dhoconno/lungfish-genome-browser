@@ -47,11 +47,17 @@ final class BatchEsVirituTableView: NSView {
 
     // MARK: - State
 
-    /// The rows currently displayed (after any sort).
+    /// The rows currently displayed (after any sort and filter).
     private(set) var displayedRows: [BatchEsVirituRow] = []
 
     /// Unsorted copy preserved so re-sort can restart from a stable baseline.
     private var unsortedRows: [BatchEsVirituRow] = []
+
+    /// The full unfiltered set of rows as last set by ``configure(rows:)``.
+    private var unfilteredRows: [BatchEsVirituRow] = []
+
+    /// Current filter text applied to virus name and family.
+    private var filterText: String = ""
 
     // MARK: - Callbacks
 
@@ -71,8 +77,9 @@ final class BatchEsVirituTableView: NSView {
 
     // MARK: - Child Views
 
-    private let scrollView = NSScrollView()
-    private let tableView  = NSTableView()
+    private let scrollView  = NSScrollView()
+    private let tableView   = NSTableView()
+    private var searchField: NSSearchField!
 
     // MARK: - Init
 
@@ -89,6 +96,18 @@ final class BatchEsVirituTableView: NSView {
     // MARK: - Setup
 
     private func setupTableView() {
+        // Search field above the table.
+        let sf = NSSearchField()
+        sf.translatesAutoresizingMaskIntoConstraints = false
+        sf.placeholderString = "Filter viruses\u{2026}"
+        sf.font = .systemFont(ofSize: 11)
+        sf.controlSize = .small
+        sf.target = self
+        sf.action = #selector(filterChanged(_:))
+        sf.sendsSearchStringImmediately = true
+        addSubview(sf)
+        self.searchField = sf
+
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller   = true
         scrollView.hasHorizontalScroller = true
@@ -96,7 +115,11 @@ final class BatchEsVirituTableView: NSView {
         addSubview(scrollView)
 
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            sf.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            sf.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            sf.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            sf.heightAnchor.constraint(equalToConstant: 24),
+            scrollView.topAnchor.constraint(equalTo: sf.bottomAnchor, constant: 4),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -147,12 +170,67 @@ final class BatchEsVirituTableView: NSView {
 
     /// Replaces the displayed rows and reloads the table.
     ///
+    /// The current filter text is re-applied automatically so that existing
+    /// filter state is preserved across sample filter changes.
+    ///
     /// - Parameter rows: The new rows to display.
     func configure(rows: [BatchEsVirituRow]) {
-        self.unsortedRows  = rows
-        self.displayedRows = rows
-        tableView.reloadData()
+        self.unfilteredRows = rows
+        applyFilter()
         logger.info("BatchEsVirituTableView configured with \(rows.count) rows")
+    }
+
+    // MARK: - Filter
+
+    @objc private func filterChanged(_ sender: NSSearchField) {
+        filterText = sender.stringValue
+        applyFilter()
+    }
+
+    private func applyFilter() {
+        let filtered: [BatchEsVirituRow]
+        if filterText.isEmpty {
+            filtered = unfilteredRows
+        } else {
+            filtered = unfilteredRows.filter {
+                $0.virusName.localizedCaseInsensitiveContains(filterText)
+                    || ($0.family?.localizedCaseInsensitiveContains(filterText) ?? false)
+            }
+        }
+        // Re-apply current sort order on top of the filtered set.
+        if let descriptor = tableView.sortDescriptors.first, let key = descriptor.key {
+            let ascending = descriptor.ascending
+            self.unsortedRows = filtered
+            self.displayedRows = filtered.sorted { a, b in
+                let result: Bool
+                switch key {
+                case "sample":
+                    result = a.sample.localizedCaseInsensitiveCompare(b.sample) == .orderedAscending
+                case "name":
+                    result = a.virusName.localizedCaseInsensitiveCompare(b.virusName) == .orderedAscending
+                case "family":
+                    let af = a.family ?? ""; let bf = b.family ?? ""
+                    result = af.localizedCaseInsensitiveCompare(bf) == .orderedAscending
+                case "assembly":
+                    result = a.assembly.localizedCaseInsensitiveCompare(b.assembly) == .orderedAscending
+                case "reads":
+                    result = a.readCount < b.readCount
+                case "uniqueReads":
+                    result = a.uniqueReads < b.uniqueReads
+                case "rpkmf":
+                    result = a.rpkmf < b.rpkmf
+                case "coverage":
+                    result = a.coverageBreadth < b.coverageBreadth
+                default:
+                    result = false
+                }
+                return ascending ? result : !result
+            }
+        } else {
+            self.unsortedRows  = filtered
+            self.displayedRows = filtered
+        }
+        tableView.reloadData()
     }
 
     // MARK: - Cell Factory

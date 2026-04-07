@@ -883,7 +883,11 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             guard let self else { return }
             MainActor.assumeIsolated {
                 self.organismSearchText = query
-                self.applyCurrentSampleFilter()
+                if self.isBatchGroupMode {
+                    self.applyBatchGroupFilter()
+                } else {
+                    self.applyCurrentSampleFilter()
+                }
             }
         }
         organismFilterWorkItem = workItem
@@ -1945,6 +1949,12 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         batchOverviewView.isHidden = true
         batchFlatTableView.isHidden = false
 
+        // Show the organism search field (filter bar row is visible even without sample segments).
+        organismSearchField.isHidden = false
+        sampleFilterHeightConstraint?.constant = 24
+        sampleFilterTopSpacingConstraint?.constant = 4
+        sampleFilterBottomSpacingConstraint?.constant = 4
+
         summaryBar.updateBatch(sampleCount: entries.count, totalOrganisms: allRows.count)
 
         applyBatchGroupFilter()
@@ -1953,17 +1963,23 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     }
 
     /// Filters `allBatchGroupRows` by the samples selected in `samplePickerState`
-    /// and reloads `batchFlatTableView`.
+    /// and by the organism search text, then reloads `batchFlatTableView`.
     public func applyBatchGroupFilter() {
         guard isBatchGroupMode, let state = samplePickerState else { return }
         let selected = state.selectedSamples
-        let filtered: [TaxTriageMetric]
+        var filtered: [TaxTriageMetric]
         if selected.isEmpty {
             filtered = []
         } else {
             filtered = allBatchGroupRows.filter { m in
                 guard let s = m.sample else { return false }
                 return selected.contains(s)
+            }
+        }
+        // Apply organism search text filter if active.
+        if !organismSearchText.isEmpty {
+            filtered = filtered.filter {
+                $0.organism.localizedCaseInsensitiveContains(organismSearchText)
             }
         }
         batchFlatTableView.configure(rows: filtered)

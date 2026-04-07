@@ -26,13 +26,22 @@ struct BatchEsVirituRow: Sendable {
     let coverageBreadth: Double
     let coverageDepth: Double
 
-    static func fromAssemblies(_ assemblies: [ViralAssembly], sampleId: String) -> [BatchEsVirituRow] {
+    static func fromAssemblies(
+        _ assemblies: [ViralAssembly],
+        sampleId: String,
+        uniqueReadsByAssembly: [String: Int] = [:]
+    ) -> [BatchEsVirituRow] {
         assemblies.map { asm in
-            BatchEsVirituRow(
+            // Compute coverage breadth from covered bases / assembly length.
+            let coveredBases = asm.contigs.reduce(0) { $0 + $1.coveredBases }
+            let coverageBreadth: Double = asm.assemblyLength > 0
+                ? Double(coveredBases) / Double(asm.assemblyLength)
+                : 0
+            return BatchEsVirituRow(
                 sample: sampleId, virusName: asm.name, family: asm.family,
                 assembly: asm.assembly, readCount: asm.totalReads,
-                uniqueReads: 0, rpkmf: asm.rpkmf,
-                coverageBreadth: 0, coverageDepth: asm.meanCoverage
+                uniqueReads: uniqueReadsByAssembly[asm.assembly] ?? 0, rpkmf: asm.rpkmf,
+                coverageBreadth: coverageBreadth, coverageDepth: asm.meanCoverage
             )
         }
     }
@@ -463,7 +472,21 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             do {
                 let detections = try EsVirituDetectionParser.parse(url: detectionURL)
                 let assemblies = EsVirituDetectionParser.groupByAssembly(detections)
-                let rows = BatchEsVirituRow.fromAssemblies(assemblies, sampleId: sample.sampleId)
+
+                // Load persisted unique read counts from the sample's result directory sidecar.
+                let cacheURL = resultDir.appendingPathComponent(Self.uniqueReadsSidecar)
+                let uniqueByAssembly: [String: Int]
+                if let data = try? Data(contentsOf: cacheURL),
+                   let cache = try? JSONDecoder().decode(UniqueReadCache.self, from: data) {
+                    uniqueByAssembly = cache.byAssembly
+                } else {
+                    uniqueByAssembly = [:]
+                }
+
+                let rows = BatchEsVirituRow.fromAssemblies(
+                    assemblies, sampleId: sample.sampleId,
+                    uniqueReadsByAssembly: uniqueByAssembly
+                )
                 allRows.append(contentsOf: rows)
 
                 // Build assembly lookup keyed by "sampleId\tassemblyAccession"
