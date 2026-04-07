@@ -125,6 +125,42 @@ public final class MiniBAMViewController: NSViewController {
     private var clipFrameObserver: NSObjectProtocol?
     private var loadTask: Task<Void, Never>?
 
+    // MARK: - Read Cache
+
+    /// Pre-computed result stored in the cache for a BAM+contig combination.
+    private struct CachedContigResult {
+        let reads: [AlignedRead]
+        let duplicateIndices: Set<Int>
+        let readCount: Int
+    }
+
+    /// Cache keyed by "bamPath|contig". Limited to `maxCachedContigs` entries.
+    /// Older entries are evicted when the limit is reached.
+    private var contigCache: [String: CachedContigResult] = [:]
+
+    /// Maximum number of BAM+contig entries held in memory.
+    private static let maxCachedContigs = 20
+
+    /// Ordered insertion keys so we can evict the oldest entry on overflow.
+    private var cacheInsertionOrder: [String] = []
+
+    /// Returns a cache key for the given BAM path and contig name.
+    private func cacheKey(bamPath: String, contig: String) -> String {
+        "\(bamPath)|\(contig)"
+    }
+
+    /// Stores a result in the cache, evicting the oldest entry if necessary.
+    private func cacheResult(_ result: CachedContigResult, key: String) {
+        if contigCache[key] != nil { return }  // already cached
+        if cacheInsertionOrder.count >= Self.maxCachedContigs,
+           let oldest = cacheInsertionOrder.first {
+            contigCache.removeValue(forKey: oldest)
+            cacheInsertionOrder.removeFirst()
+        }
+        contigCache[key] = result
+        cacheInsertionOrder.append(key)
+    }
+
     // MARK: - Lifecycle
 
     public override func loadView() {
@@ -478,6 +514,21 @@ public final class MiniBAMViewController: NSViewController {
         }
         self.indexURL = URL(fileURLWithPath: indexPath)
 
+        // Check the read cache first — avoids spawning a samtools subprocess on repeated
+        // selections of the same organism row.
+        let key = cacheKey(bamPath: bamURL.path, contig: contig)
+        if let cached = contigCache[key] {
+            allReads = cached.reads
+            allDuplicateIndices = cached.duplicateIndices
+            pcrDuplicateReadCount = cached.duplicateIndices.count
+            uniqueReadCount = max(0, cached.reads.count - pcrDuplicateReadCount)
+            applyDuplicateVisibility(rebuildReference: true)
+            scrollToTop()
+            updateZoomStatus()
+            logger.info("Cache hit: \(cached.reads.count) reads for \(contig, privacy: .public)")
+            return
+        }
+
         let provider = AlignmentDataProvider(
             alignmentPath: bamURL.path,
             indexPath: indexPath
@@ -497,15 +548,24 @@ public final class MiniBAMViewController: NSViewController {
                 guard !Task.isCancelled else { return }
                 guard self.contigName == requestedContig else { return }
 
+                let duplicates = self.detectDuplicates(in: fetchedReads)
                 self.allReads = fetchedReads
-                self.allDuplicateIndices = self.detectDuplicates(in: fetchedReads)
-                self.pcrDuplicateReadCount = self.allDuplicateIndices.count
+                self.allDuplicateIndices = duplicates
+                self.pcrDuplicateReadCount = duplicates.count
                 self.uniqueReadCount = max(0, fetchedReads.count - self.pcrDuplicateReadCount)
                 self.applyDuplicateVisibility(rebuildReference: true)
 
                 // Keep the coverage/reference tracks pinned at the top of the viewport.
                 self.scrollToTop()
                 self.updateZoomStatus()
+
+                // Store in cache for instant re-display on repeated selections.
+                let result = CachedContigResult(
+                    reads: fetchedReads,
+                    duplicateIndices: duplicates,
+                    readCount: fetchedReads.count
+                )
+                self.cacheResult(result, key: key)
 
                 logger.info("Loaded \(fetchedReads.count) reads for \(contig, privacy: .public), \(self.pcrDuplicateReadCount) potential duplicates")
             } catch {

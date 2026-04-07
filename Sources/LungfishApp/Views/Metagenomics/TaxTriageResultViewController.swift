@@ -1486,15 +1486,19 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
                 }
 
                 if fetchedAny {
-                    let boundedUnique = max(1, min(row.reads, totalUnique))
-                    self.applyUniqueReadCount(boundedUnique, for: row.organism)
+                    // Use the actual unique read count from the BAM without capping to
+                    // row.reads. The TSV read count may be a filtered/classified subset
+                    // while the BAM contains all aligned reads, so capping would produce
+                    // an artificially low (wrong) value.
+                    let trueUnique = max(1, totalUnique)
+                    self.applyUniqueReadCount(trueUnique, for: row.organism)
 
                     // Compute per-sample estimates by distributing the dedup ratio
                     // across each sample's per-organism read count.
                     self.computePerSampleUniqueReads(
                         normalized: normalized,
                         totalReads: row.reads,
-                        uniqueReads: boundedUnique
+                        uniqueReads: trueUnique
                     )
                 } else {
                     // No reads fetched from BAM (accession exists but empty).
@@ -1513,6 +1517,141 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
 
             // Persist computed counts to the sidecar so they load instantly next time.
             if !Task.isCancelled, !self.deduplicatedReadCounts.isEmpty {
+                self.persistDeduplicatedReadCounts()
+            }
+        }
+    }
+
+    /// Computes per-sample unique reads for each organism by reading each sample's BAM
+    /// directly in batch group mode, where every sample has its own BAM file.
+    ///
+    /// This avoids the estimation error introduced by proportional distribution.
+    /// Called from `configureBatchGroup` after `bamFilesBySample` is populated.
+    ///
+    /// - Parameters:
+    ///   - subdirs: The list of per-sample subdirectories scanned during `configureBatchGroup`.
+    private func scheduleBatchPerSampleUniqueReadComputation(subdirs: [URL]) {
+        deduplicatedReadCountTask?.cancel()
+        guard !bamFilesBySample.isEmpty else { return }
+
+        // Snapshot the per-sample BAM map so the task doesn't capture mutable state.
+        let bamsBySample = bamFilesBySample
+        let fm = FileManager.default
+
+        deduplicatedReadCountTask = Task { [weak self] in
+            guard let self else { return }
+
+            // Build per-sample organism→accession mappings and accession lengths
+            // without touching the shared `accessionLengths`/`organismToAccessions` dicts.
+            for subdir in subdirs {
+                if Task.isCancelled { return }
+                let sampleId = subdir.lastPathComponent
+                guard let bamURL = bamsBySample[sampleId] else { continue }
+
+                // Resolve BAM index.
+                let baiPath = bamURL.path + ".bai"
+                let csiPath = bamURL.path + ".csi"
+                let indexPath: String
+                if fm.fileExists(atPath: baiPath) {
+                    indexPath = baiPath
+                } else if fm.fileExists(atPath: csiPath) {
+                    indexPath = csiPath
+                } else {
+                    logger.debug("Batch dedup: no BAM index for sample \(sampleId, privacy: .public)")
+                    continue
+                }
+
+                // Parse per-sample GCF mapping to get organism→accession.
+                var localOrgToAccessions: [String: [String]] = [:]
+                if let listing = try? fm.contentsOfDirectory(atPath: subdir.path) {
+                    if let gcfName = listing.first(where: { $0.hasSuffix("gcfmapping.tsv") }) {
+                        let gcfURL = subdir.appendingPathComponent(gcfName)
+                        if let content = try? String(contentsOf: gcfURL, encoding: .utf8) {
+                            for line in content.components(separatedBy: .newlines) {
+                                let cols = line.components(separatedBy: "\t")
+                                guard cols.count >= 3 else { continue }
+                                let accession = cols[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                                let organism = cols[2].trimmingCharacters(in: .whitespacesAndNewlines)
+                                guard !accession.isEmpty, !organism.isEmpty else { continue }
+                                let key = self.normalizedOrganismName(organism)
+                                guard !key.isEmpty else { continue }
+                                localOrgToAccessions[key, default: []].append(accession)
+                            }
+                        }
+                    }
+                }
+
+                if localOrgToAccessions.isEmpty {
+                    logger.debug("Batch dedup: no GCF mapping for sample \(sampleId, privacy: .public)")
+                    continue
+                }
+
+                // Parse accession lengths from `samtools idxstats` for this sample's BAM.
+                var localLengths: [String: Int] = [:]
+                if let samtools = ProcessManager.shared.findExecutable(named: "samtools") {
+                    let proc = Process()
+                    proc.executableURL = samtools
+                    proc.arguments = ["idxstats", bamURL.path]
+                    let pipe = Pipe()
+                    proc.standardOutput = pipe
+                    proc.standardError = Pipe()
+                    if let _ = try? proc.run() {
+                        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                        proc.waitUntilExit()
+                        if let output = String(data: data, encoding: .utf8) {
+                            for line in output.components(separatedBy: .newlines) {
+                                let cols = line.components(separatedBy: "\t")
+                                guard cols.count >= 2 else { continue }
+                                let ref = cols[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                                guard !ref.isEmpty, ref != "*" else { continue }
+                                if let length = Int(cols[1]), length > 0 {
+                                    localLengths[ref] = length
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let provider = AlignmentDataProvider(
+                    alignmentPath: bamURL.path,
+                    indexPath: indexPath
+                )
+
+                // Compute per-organism unique reads for this sample.
+                for (normalizedOrganism, accessions) in localOrgToAccessions {
+                    if Task.isCancelled { return }
+                    var totalUnique = 0
+                    var fetchedAny = false
+
+                    for accession in accessions {
+                        if Task.isCancelled { return }
+                        guard let contigLength = localLengths[accession] else { continue }
+
+                        do {
+                            let fetchedReads = try await provider.fetchReads(
+                                chromosome: accession,
+                                start: 0,
+                                end: contigLength
+                            )
+                            if fetchedReads.isEmpty { continue }
+                            fetchedAny = true
+                            totalUnique += Self.deduplicatedReadCount(from: fetchedReads)
+                        } catch {
+                            logger.debug("Batch dedup: failed for \(normalizedOrganism, privacy: .public) (\(accession, privacy: .public)) in \(sampleId, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                        }
+                    }
+
+                    if fetchedAny {
+                        // Use the BAM-derived unique count — no capping against TSV read count.
+                        let trueUnique = max(1, totalUnique)
+                        self.perSampleDeduplicatedReadCounts[normalizedOrganism, default: [:]][sampleId] = trueUnique
+                        self.syncUniqueReadsToFlatTable()
+                    }
+                }
+            }
+
+            // Persist computed per-sample counts.
+            if !Task.isCancelled, !self.perSampleDeduplicatedReadCounts.isEmpty {
                 self.persistDeduplicatedReadCounts()
             }
         }
@@ -2013,6 +2152,10 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
 
         // Populate unique reads column from any already-persisted per-sample dedup counts.
         syncUniqueReadsToFlatTable()
+
+        // Schedule background computation of per-sample unique reads directly from each
+        // sample's BAM. This produces exact dedup counts instead of proportional estimates.
+        scheduleBatchPerSampleUniqueReadComputation(subdirs: subdirs)
 
         logger.info("TaxTriage batch group configured: \(allRows.count) rows from \(entries.count) samples")
     }
