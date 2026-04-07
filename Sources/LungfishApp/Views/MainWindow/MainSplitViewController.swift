@@ -1982,7 +1982,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                 "Database": "\(manifest.databaseName) \(manifest.databaseVersion)".trimmingCharacters(in: .whitespaces),
                 "Goal": manifest.goal,
             ]
-            let sourceSamples = resolveBatchSourceSamples(manifest.samples)
+            let sourceSamples = resolveBatchSourceSamples(manifest.samples, projectURL: projectURL)
             self.inspectorController?.updateBatchOperationDetails(
                 tool: "Kraken2",
                 parameters: params,
@@ -2017,7 +2017,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                     attachments: BundleAttachmentStore(bundleURL: batchURL)
                 )
             }
-            let sourceSamples = resolveBatchSourceSamples(manifest.samples)
+            let sourceSamples = resolveBatchSourceSamples(manifest.samples, projectURL: projectURL)
             self.inspectorController?.updateBatchOperationDetails(
                 tool: "EsViritu",
                 parameters: [:],
@@ -2054,20 +2054,75 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         }
     }
 
-    /// Resolves each sample record's originating `.lungfishfastq` bundle URL by walking up
-    /// the first input file path until a `.lungfishfastq` directory is found.
+    /// Resolves each sample record's originating `.lungfishfastq` bundle URL.
     ///
-    /// - Parameter samples: Records from a batch manifest.
+    /// First attempts to walk up the input file path to find a `.lungfishfastq` ancestor.
+    /// If that fails (e.g. when materialized temp files have been cleaned up), falls back
+    /// to searching the project directory for a bundle whose name contains the sample ID.
+    ///
+    /// - Parameters:
+    ///   - samples: Records from a batch manifest.
+    ///   - projectURL: The project root to search as a fallback (optional).
     /// - Returns: Tuples of sample ID and bundle URL (nil when the bundle cannot be located).
     private func resolveBatchSourceSamples(
-        _ samples: [MetagenomicsBatchSampleRecord]
+        _ samples: [MetagenomicsBatchSampleRecord],
+        projectURL: URL? = nil
     ) -> [(sampleId: String, bundleURL: URL?)] {
         samples.map { record in
-            let bundleURL = record.inputFiles.first.flatMap { path in
+            // Primary: walk up each input file path looking for a .lungfishfastq ancestor.
+            var bundleURL = record.inputFiles.first.flatMap { path in
                 resolveBundleURL(fromInputFilePath: path)
             }
+
+            // Fallback: search the project directory for a .lungfishfastq bundle whose
+            // filename (without extension) contains the sample ID.
+            // This handles the common case where inputFiles pointed to materialized temp files
+            // that have since been cleaned up.
+            if bundleURL == nil, let projectURL {
+                bundleURL = findBundleInProject(projectURL, matchingSampleId: record.sampleId)
+            }
+
             return (sampleId: record.sampleId, bundleURL: bundleURL)
         }
+    }
+
+    /// Searches a project directory tree for a `.lungfishfastq` bundle whose filename
+    /// (without extension) contains the given sample ID (case-insensitive).
+    ///
+    /// Only searches two levels deep to stay fast: `<project>/` and `<project>/Imports/`.
+    ///
+    /// - Parameters:
+    ///   - projectURL: The project root directory.
+    ///   - sampleId: The sample ID to match against bundle filenames.
+    /// - Returns: The first matching `.lungfishfastq` bundle URL, or nil.
+    private func findBundleInProject(_ projectURL: URL, matchingSampleId sampleId: String) -> URL? {
+        let fm = FileManager.default
+        let lowerSampleId = sampleId.lowercased()
+
+        func searchDirectory(_ dir: URL) -> URL? {
+            guard let entries = try? fm.contentsOfDirectory(
+                at: dir,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            ) else { return nil }
+
+            return entries.first { entry in
+                guard entry.pathExtension.lowercased() == "lungfishfastq" else { return false }
+                var isDir: ObjCBool = false
+                guard fm.fileExists(atPath: entry.path, isDirectory: &isDir), isDir.boolValue else { return false }
+                let bundleName = entry.deletingPathExtension().lastPathComponent.lowercased()
+                return bundleName.contains(lowerSampleId) || lowerSampleId.contains(bundleName)
+            }
+        }
+
+        // Search project root.
+        if let found = searchDirectory(projectURL) { return found }
+
+        // Search project/Imports/.
+        let importsDir = projectURL.appendingPathComponent("Imports")
+        if let found = searchDirectory(importsDir) { return found }
+
+        return nil
     }
 
     /// Walks up a file path to find the enclosing `.lungfishfastq` bundle directory.

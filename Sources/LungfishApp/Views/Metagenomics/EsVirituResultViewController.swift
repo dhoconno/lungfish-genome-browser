@@ -109,8 +109,11 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     /// Path to the BAM index (.csi/.bai), if available.
     var bamIndexURL: URL?
 
-    /// Background task computing unique reads for all assemblies.
+    /// Background task computing unique reads for all assemblies (single-sample mode).
     private var uniqueReadComputationTask: Task<Void, Never>?
+
+    /// Background task computing unique reads across all samples in batch mode.
+    private var batchUniqueReadComputationTask: Task<Void, Never>?
 
     /// Sidecar filename for persisted unique read counts.
     private static let uniqueReadsSidecar = "esviritu-unique-reads.json"
@@ -571,6 +574,9 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
         applyBatchSampleFilter()
 
+        // Schedule background computation of unique reads for any samples that lack them.
+        scheduleBatchUniqueReadComputation()
+
         logger.info("EsViritu batch mode configured: \(allRows.count) rows from \(entries.count) samples")
     }
 
@@ -591,6 +597,168 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     @objc private func handleBatchSampleSelectionChanged() {
         guard isBatchMode else { return }
         applyBatchSampleFilter()
+    }
+
+    // MARK: - Batch Unique Read Computation
+
+    /// Schedules background unique-read computation for all batch samples that have BAM
+    /// files available but whose rows still show 0 unique reads.
+    ///
+    /// Iterates each sample in `batchBAMLookup`, skips samples where ALL assemblies already
+    /// have non-zero unique reads, and launches a single `Task.detached` that processes
+    /// samples sequentially. As each sample completes, `allBatchRows` is updated and
+    /// `applyBatchSampleFilter()` is called to refresh the table.
+    private func scheduleBatchUniqueReadComputation() {
+        batchUniqueReadComputationTask?.cancel()
+
+        // Collect samples that need computation: have a BAM but lack unique-read data.
+        struct SampleWork {
+            let sampleId: String
+            let assemblies: [ViralAssembly]
+            let bamURL: URL
+            let bamIndexURL: URL
+            let resultDir: URL
+        }
+
+        var workItems: [SampleWork] = []
+
+        for (sampleId, bamURL) in batchBAMLookup {
+            guard let bamIndexURL = batchBAMIndexLookup[sampleId] else { continue }
+
+            // Collect this sample's assemblies from batchAssemblyLookup.
+            let assemblies = batchAssemblyLookup
+                .compactMap { key, value -> ViralAssembly? in
+                    guard key.hasPrefix("\(sampleId)\t") else { return nil }
+                    return value
+                }
+            guard !assemblies.isEmpty else { continue }
+
+            // Check whether all assemblies already have unique reads in allBatchRows.
+            let existingRows = allBatchRows.filter { $0.sample == sampleId }
+            let allHaveUniqueReads = existingRows.allSatisfy { $0.uniqueReads > 0 }
+            if allHaveUniqueReads { continue }
+
+            // Derive result dir from bamURL: <resultDir>/<sampleId>_temp/<bamName>
+            // so resultDir = bamURL.deletingLastPathComponent().deletingLastPathComponent()
+            let resultDir = bamURL
+                .deletingLastPathComponent()  // <sampleId>_temp/
+                .deletingLastPathComponent()  // <resultDir>/
+
+            workItems.append(SampleWork(
+                sampleId: sampleId,
+                assemblies: assemblies.sorted { $0.totalReads > $1.totalReads },
+                bamURL: bamURL,
+                bamIndexURL: bamIndexURL,
+                resultDir: resultDir
+            ))
+        }
+
+        guard !workItems.isEmpty else {
+            logger.debug("scheduleBatchUniqueReadComputation: All samples already have unique reads")
+            return
+        }
+
+        logger.info("scheduleBatchUniqueReadComputation: Starting computation for \(workItems.count) sample(s)")
+
+        batchUniqueReadComputationTask = Task { [weak self] in
+            for work in workItems {
+                if Task.isCancelled { return }
+
+                let provider = AlignmentDataProvider(
+                    alignmentPath: work.bamURL.path,
+                    indexPath: work.bamIndexURL.path
+                )
+
+                // Compute unique reads per assembly for this sample.
+                var uniqueByAssembly: [String: Int] = [:]
+
+                for assembly in work.assemblies {
+                    if Task.isCancelled { return }
+
+                    var assemblyUniqueTotal = 0
+                    var fetchedAny = false
+
+                    for contig in assembly.contigs {
+                        if Task.isCancelled { return }
+                        guard contig.length > 0 else { continue }
+
+                        let reads = (try? await provider.fetchReads(
+                            chromosome: contig.accession,
+                            start: 0,
+                            end: contig.length,
+                            excludeFlags: 0x904,
+                            maxReads: 5000
+                        )) ?? []
+
+                        if reads.isEmpty { continue }
+                        fetchedAny = true
+                        assemblyUniqueTotal += min(contig.readCount, Self.deduplicatedReadCount(from: reads))
+                    }
+
+                    if fetchedAny || assembly.contigs.count == 1 {
+                        uniqueByAssembly[assembly.assembly] = assemblyUniqueTotal
+                    }
+                }
+
+                if Task.isCancelled { return }
+                if uniqueByAssembly.isEmpty { continue }
+
+                let sampleId = work.sampleId
+                let resultDir = work.resultDir
+                let assemblyCount = uniqueByAssembly.count
+
+                logger.info("scheduleBatchUniqueReadComputation: Computed unique reads for \(sampleId, privacy: .public) — \(assemblyCount) assemblies")
+
+                // Capture a snapshot for the main-actor closure.
+                let snapshotByAssembly = uniqueByAssembly
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+
+                        // Update allBatchRows for this sample's assemblies.
+                        self.allBatchRows = self.allBatchRows.map { row in
+                            guard row.sample == sampleId,
+                                  let newCount = snapshotByAssembly[row.assembly] else {
+                                return row
+                            }
+                            return BatchEsVirituRow(
+                                sample: row.sample,
+                                virusName: row.virusName,
+                                family: row.family,
+                                assembly: row.assembly,
+                                readCount: row.readCount,
+                                uniqueReads: newCount,
+                                rpkmf: row.rpkmf,
+                                coverageBreadth: row.coverageBreadth,
+                                coverageDepth: row.coverageDepth
+                            )
+                        }
+                        self.applyBatchSampleFilter()
+
+                        // Persist the unique reads sidecar for this sample.
+                        self.persistBatchUniqueReads(
+                            uniqueByAssembly: snapshotByAssembly,
+                            toResultDir: resultDir
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /// Persists unique read counts for a single batch sample to its result directory sidecar.
+    private func persistBatchUniqueReads(uniqueByAssembly: [String: Int], toResultDir resultDir: URL) {
+        let cache = UniqueReadCache(byAssembly: uniqueByAssembly, byContig: [:])
+        let sidecarURL = resultDir.appendingPathComponent(Self.uniqueReadsSidecar)
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(cache)
+            try data.write(to: sidecarURL)
+            logger.info("Persisted batch unique reads for \(uniqueByAssembly.count) assemblies at \(resultDir.lastPathComponent, privacy: .public)")
+        } catch {
+            logger.warning("Failed to persist batch unique reads: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     // MARK: - Background Unique Read Computation

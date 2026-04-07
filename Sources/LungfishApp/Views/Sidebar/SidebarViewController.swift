@@ -303,6 +303,14 @@ public class SidebarViewController: NSViewController {
         // Load initial data
         loadSampleData()
 
+        // Observe navigation requests from the Inspector's source-sample links.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleNavigateToSidebarItem(_:)),
+            name: .navigateToSidebarItem,
+            object: nil
+        )
+
         // Set up key event monitoring for Delete key
         keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self = self,
@@ -593,6 +601,19 @@ public class SidebarViewController: NSViewController {
             return true
         }
         return false
+    }
+
+    /// Handles the `.navigateToSidebarItem` notification posted from the Inspector
+    /// when the user clicks a source-sample link.
+    ///
+    /// Extracts the `url` from the notification's `userInfo` and delegates to
+    /// `selectItem(forURL:)` which locates the matching sidebar entry and selects it.
+    @objc private func handleNavigateToSidebarItem(_ notification: Notification) {
+        guard let url = notification.userInfo?["url"] as? URL else { return }
+        let found = selectItem(forURL: url)
+        if !found {
+            logger.debug("handleNavigateToSidebarItem: No sidebar item found for \(url.lastPathComponent, privacy: .public)")
+        }
     }
 
     /// Expands all parent items of the given item to ensure it's visible.
