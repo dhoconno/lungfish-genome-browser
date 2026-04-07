@@ -54,13 +54,12 @@ extension ViewerViewController {
         annotationDrawerView?.isHidden = true
         fastqMetadataDrawerView?.isHidden = true
 
-        // Configure BEFORE adding to the view hierarchy so the correct UI state
-        // (flat table visible, segmented control hidden) is already in place when
-        // AppKit first renders the view. This eliminates the one-frame bounce that
-        // was visible when configure() hid/showed subviews after addSubview().
-        controller.configure(result: result, config: config)
-
+        // Force loadView() so all subviews exist, then configure BEFORE adding
+        // to the view hierarchy. This ensures the correct UI state (flat table
+        // visible, segmented control hidden) is already in place when AppKit
+        // first renders the view, eliminating the one-frame bounce.
         let ttView = controller.view
+        controller.configure(result: result, config: config)
         ttView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(ttView)
 
@@ -344,12 +343,10 @@ extension ViewerViewController {
         annotationDrawerView?.isHidden = true
         fastqMetadataDrawerView?.isHidden = true
 
-        // Configure BEFORE adding to the view hierarchy to avoid a one-frame
-        // bounce caused by AppKit rendering the default UI state between
-        // addSubview() and configureBatchGroup().
-        controller.configureBatchGroup(batchURL: batchURL, projectURL: projectURL)
-
+        // Force loadView() so all subviews exist, then configure BEFORE adding
+        // to the view hierarchy to avoid a one-frame bounce.
         let ttView = controller.view
+        controller.configureBatchGroup(batchURL: batchURL, projectURL: projectURL)
         ttView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(ttView)
 

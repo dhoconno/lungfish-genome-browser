@@ -90,12 +90,10 @@ extension ViewerViewController {
         annotationDrawerView?.isHidden = true
         fastqMetadataDrawerView?.isHidden = true
 
-        // Configure BEFORE adding to the view hierarchy to avoid a one-frame
-        // bounce caused by AppKit rendering the default UI state between
-        // addSubview() and configure().
-        controller.configure(result: result)
-
+        // Force loadView() so all subviews exist, then configure BEFORE adding
+        // to the view hierarchy to avoid a one-frame bounce.
         let taxView = controller.view
+        controller.configure(result: result)
         taxView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(taxView)
 
@@ -492,12 +490,10 @@ extension ViewerViewController {
         annotationDrawerView?.isHidden = true
         fastqMetadataDrawerView?.isHidden = true
 
-        // Configure BEFORE adding to the view hierarchy to avoid a one-frame
-        // bounce caused by AppKit rendering the default UI state between
-        // addSubview() and configureBatch().
-        controller.configureBatch(batchURL: batchURL, manifest: manifest, projectURL: projectURL)
-
+        // Force loadView() so all subviews exist, then configure BEFORE adding
+        // to the view hierarchy to avoid a one-frame bounce.
         let taxView = controller.view
+        controller.configureBatch(batchURL: batchURL, manifest: manifest, projectURL: projectURL)
         taxView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(taxView)
 
