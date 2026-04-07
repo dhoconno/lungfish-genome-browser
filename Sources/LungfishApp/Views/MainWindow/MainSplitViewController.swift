@@ -1648,14 +1648,16 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
         // Generic analysis results in Analyses/ folder — try to detect tool type
         // from directory name and dispatch to the appropriate viewer.
+        // Classifier batch results (taxtriage, esviritu, kraken2) route through
+        // displayBatchGroup which handles SQLite DB-first loading and auto-build.
         if item.type == .analysisResult, let url = item.url {
             let dirName = url.lastPathComponent
             if dirName.hasPrefix("esviritu") {
-                displayEsVirituResult(at: url)
+                displayBatchGroup(at: url)
             } else if dirName.hasPrefix("kraken2") || dirName.hasPrefix("classification") {
-                displayClassificationResult(at: url)
+                displayBatchGroup(at: url)
             } else if dirName.hasPrefix("taxtriage") {
-                displayTaxTriageResultFromSidebar(at: url, sampleId: nil)
+                displayBatchGroup(at: url)
             } else if dirName.hasPrefix("naomgs") {
                 displayNaoMgsResultFromSidebar(at: url)
             } else if dirName.hasPrefix("nvd") {
