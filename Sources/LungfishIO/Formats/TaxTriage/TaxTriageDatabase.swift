@@ -296,8 +296,8 @@ public final class TaxTriageDatabase: @unchecked Sendable {
             k2_reads INTEGER,
             parent_k2_reads INTEGER,
             gini_coefficient REAL,
-            mean_base_q REAL,
-            mean_map_q REAL,
+            mean_baseq REAL,
+            mean_mapq REAL,
             mapq_score REAL,
             disparity_score REAL,
             minhash_score REAL,
@@ -316,7 +316,8 @@ public final class TaxTriageDatabase: @unchecked Sendable {
             bam_path TEXT,
             bam_index_path TEXT,
             primary_accession TEXT,
-            accession_length INTEGER
+            accession_length INTEGER,
+            UNIQUE(sample, organism)
         );
 
         CREATE TABLE metadata (
@@ -346,7 +347,7 @@ public final class TaxTriageDatabase: @unchecked Sendable {
             sample, organism, tax_id, status, tass_score, reads_aligned,
             unique_reads, pct_reads, pct_aligned_reads, coverage_breadth,
             mean_coverage, mean_depth, confidence, k2_reads, parent_k2_reads,
-            gini_coefficient, mean_base_q, mean_map_q, mapq_score,
+            gini_coefficient, mean_baseq, mean_mapq, mapq_score,
             disparity_score, minhash_score, diamond_identity,
             k2_disparity_score, siblings_score, breadth_weight_score,
             hhs_percentile, is_annotated, ann_class, microbial_category,
@@ -364,6 +365,7 @@ public final class TaxTriageDatabase: @unchecked Sendable {
         defer { sqlite3_finalize(stmt) }
 
         let total = rows.count
+        let reportInterval = max(1, rows.count / 20)
 
         for (i, row) in rows.enumerated() {
             sqlite3_reset(stmt)
@@ -462,7 +464,7 @@ public final class TaxTriageDatabase: @unchecked Sendable {
                 throw TaxTriageDatabaseError.insertFailed("Row \(i) failed: \(msg)")
             }
 
-            if (i + 1) % 1000 == 0 {
+            if (i + 1) % reportInterval == 0 {
                 let fraction = 0.05 + 0.75 * Double(i + 1) / Double(total)
                 progress?(fraction, "Inserting rows \(i + 1)/\(total)...")
             }
@@ -517,6 +519,7 @@ public final class TaxTriageDatabase: @unchecked Sendable {
         let indices = [
             "CREATE INDEX idx_taxonomy_sample ON taxonomy_rows(sample)",
             "CREATE INDEX idx_taxonomy_organism ON taxonomy_rows(organism)",
+            "CREATE INDEX idx_tt_tass ON taxonomy_rows(tass_score)",
         ]
         for sql in indices {
             guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
