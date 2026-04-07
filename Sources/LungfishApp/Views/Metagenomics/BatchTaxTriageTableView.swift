@@ -146,6 +146,21 @@ final class BatchTaxTriageTableView: BatchTableView<TaxTriageMetric> {
 
     override func sampleId(for row: TaxTriageMetric) -> String? { row.sample }
 
+    // MARK: - Empty Column Hiding
+
+    override func columnHasData(_ columnId: NSUserInterfaceItemIdentifier) -> Bool {
+        switch columnId {
+        case .tt_coverageBreadth:
+            return unfilteredRows.contains { $0.coverageBreadth != nil }
+        case .tt_coverageDepth:
+            return unfilteredRows.contains { $0.coverageDepth != nil }
+        case .tt_abundance:
+            return unfilteredRows.contains { $0.abundance != nil }
+        default:
+            return true
+        }
+    }
+
     // MARK: - Public API
 
     override func configure(rows: [TaxTriageMetric]) {

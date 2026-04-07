@@ -221,6 +221,29 @@ class BatchTableView<Row>: NSView, NSTableViewDataSource, NSTableViewDelegate {
     func configure(rows: [Row]) {
         self.unfilteredRows = rows
         applyFilter()
+        hideEmptyColumns()
+    }
+
+    // MARK: - Empty Column Hiding
+
+    /// Returns `true` if the given column has at least one non-nil / non-empty data value
+    /// across all rows in ``unfilteredRows``.
+    ///
+    /// The default implementation always returns `true` (no columns hidden).
+    /// Subclasses override this to hide columns that are never populated for a given tool.
+    func columnHasData(_ columnId: NSUserInterfaceItemIdentifier) -> Bool {
+        return true
+    }
+
+    /// Hides fixed (non-metadata) columns that have no data across all rows.
+    ///
+    /// Called automatically at the end of ``configure(rows:)``. Each non-metadata column
+    /// is shown or hidden based on the result of ``columnHasData(_:)``.
+    func hideEmptyColumns() {
+        for col in tableView.tableColumns {
+            guard !MetadataColumnController.isMetadataColumn(col.identifier) else { continue }
+            col.isHidden = !columnHasData(col.identifier)
+        }
     }
 
     // MARK: - Filter
