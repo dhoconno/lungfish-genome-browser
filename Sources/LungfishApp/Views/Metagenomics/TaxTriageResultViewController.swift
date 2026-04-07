@@ -500,6 +500,12 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         taxTriageResult = result
         taxTriageConfig = config ?? result.config
 
+        // Hide the segmented control and batch overview immediately to prevent any flash
+        // of the old single-sample UI before multi-sample mode is activated. For single-
+        // sample results, `rebuildSampleFilterSegments()` will restore the correct state.
+        sampleFilterControl.isHidden = true
+        batchOverviewView.isHidden = true
+
         // Reset multi-sample flat table mode from a previous result.
         // The single-sample organism table is restored below if not needed.
         if isMultiSampleSingleResultMode {
@@ -1447,18 +1453,9 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
                 if self.deduplicatedReadCounts[normalized] != nil { continue }
 
                 guard let rowAccessions = self.accessions(for: row), !rowAccessions.isEmpty else {
-                    // No accession mapping — can't compute from BAM.
-                    // Use total reads as the unique count (conservative: assume all unique).
-                    if row.reads > 0 {
-                        self.applyUniqueReadCount(row.reads, for: row.organism)
-                        self.computePerSampleUniqueReads(
-                            normalized: normalized,
-                            totalReads: row.reads,
-                            uniqueReads: row.reads
-                        )
-                    } else {
-                        self.applyUniqueReadCount(0, for: row.organism)
-                    }
+                    // No accession mapping — can't compute unique reads from BAM.
+                    // Leave unique reads as unknown ("—") rather than showing an incorrect
+                    // value equal to total reads. The column will remain empty for this organism.
                     continue
                 }
                 var totalUnique = 0
@@ -1501,17 +1498,9 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
                         uniqueReads: trueUnique
                     )
                 } else {
-                    // No reads fetched from BAM (accession exists but empty).
-                    // Use total reads as conservative estimate.
-                    let fallback = row.reads > 0 ? row.reads : 0
-                    self.applyUniqueReadCount(fallback, for: row.organism)
-                    if row.reads > 0 {
-                        self.computePerSampleUniqueReads(
-                            normalized: normalized,
-                            totalReads: row.reads,
-                            uniqueReads: fallback
-                        )
-                    }
+                    // No reads fetched from BAM (accession exists but mapped region is empty).
+                    // Leave unique reads as unknown ("—") rather than showing total reads.
+                    // This avoids the misleading "unique reads = total reads" display.
                 }
             }
 
@@ -2083,6 +2072,33 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         let allSampleIds = Set(entries.map(\.id))
         samplePickerState = ClassifierSamplePickerState(allSamples: allSampleIds)
 
+        // Eagerly parse per-sample GCF mappings so `accessions(for:)` works when a row
+        // is selected. In batch group mode there is no single TaxTriage result driving
+        // the shared `organismToAccessions` dict, so we build it here by merging GCF
+        // mappings from each subdirectory. Later entries overwrite earlier ones for the
+        // same organism, which is acceptable (accessions are identical across samples).
+        organismToAccessions = [:]
+        for subdir in subdirs {
+            if let listing = try? FileManager.default.contentsOfDirectory(atPath: subdir.path),
+               let gcfName = listing.first(where: { $0.hasSuffix("gcfmapping.tsv") }) {
+                let gcfURL = subdir.appendingPathComponent(gcfName)
+                if let content = try? String(contentsOf: gcfURL, encoding: .utf8) {
+                    for line in content.components(separatedBy: .newlines) {
+                        let cols = line.components(separatedBy: "\t")
+                        guard cols.count >= 3 else { continue }
+                        let accession = cols[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                        let organism = cols[2].trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !accession.isEmpty, !organism.isEmpty else { continue }
+                        let key = normalizedOrganismName(organism)
+                        guard !key.isEmpty else { continue }
+                        if !organismToAccessions[key, default: []].contains(accession) {
+                            organismToAccessions[key, default: []].append(accession)
+                        }
+                    }
+                }
+            }
+        }
+
         // Wire batch flat table callbacks.
         batchFlatTableView.metadataColumns.isMultiSampleMode = true
         batchFlatTableView.onRowSelected = { [weak self] row in
@@ -2097,6 +2113,9 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
                 return
             }
 
+            // Resolve BAM index. In batch group mode there is no TaxTriageResult to
+            // supply allOutputFiles, so rely on the adjacent-file check (.bam.bai / .bam.csi)
+            // which covers the standard TaxTriage output layout.
             let bamIndexURL = resolveBamIndex(for: bamURL, allOutputFiles: [])
 
             // Look up the accession for this organism and display miniBAM.
@@ -3103,6 +3122,15 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
 
     /// Returns the batch flat table view for testing.
     var testBatchFlatTableView: BatchTaxTriageTableView { batchFlatTableView }
+
+    /// Returns the sample filter segmented control for testing.
+    var testSampleFilterControl: NSSegmentedControl { sampleFilterControl }
+
+    /// Returns per-sample deduplicated read counts for testing.
+    var testPerSampleDeduplicatedReadCounts: [String: [String: Int]] { perSampleDeduplicatedReadCounts }
+
+    /// Returns deduplicated read counts for testing.
+    var testDeduplicatedReadCounts: [String: Int] { deduplicatedReadCounts }
 }
 
 

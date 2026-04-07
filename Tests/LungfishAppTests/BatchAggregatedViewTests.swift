@@ -5,6 +5,7 @@
 import XCTest
 @testable import LungfishApp
 @testable import LungfishIO
+@testable import LungfishWorkflow
 
 // MARK: - BatchClassificationRow Tests
 
@@ -1942,5 +1943,231 @@ final class SummaryBarBatchTests: XCTestCase {
         XCTAssertNotNil(samplesCard, "summaryBar should be in batch mode after configureBatchGroup")
         XCTAssertEqual(samplesCard?.value, "2",
                        "Samples card should show the number of samples from the batch group")
+    }
+}
+
+// MARK: - TaxTriageBatchRegressionTests
+
+/// Regression tests for TaxTriage batch mode bugs fixed in feature/batch-aggregated-classifier-views:
+///   1. Unique reads = total reads when no accession mapping exists
+///   2. MiniBAMs not appearing due to missing GCF mapping in batch group mode
+///   3. Old TaxTriage interface flashing before new one loads
+@MainActor
+final class TaxTriageBatchRegressionTests: XCTestCase {
+
+    // MARK: - Helpers
+
+    /// Makes a temp batch directory with per-sample subdirectories containing only metrics files
+    /// (no BAM files). This simulates a batch group where accession/BAM data is absent.
+    private func makeBatchDirNoBAM(sampleIds: [String], reads: Int = 5000) throws -> URL {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TTBatchReg-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        for sampleId in sampleIds {
+            let dir = tmp.appendingPathComponent(sampleId)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let tsv = "sample\torganism\treads\ttass_score\tconfidence\n\(sampleId)\tEscherichia coli\t\(reads)\t0.9\thigh\n"
+            try tsv.write(to: dir.appendingPathComponent("\(sampleId).organisms.report.txt"), atomically: true, encoding: .utf8)
+        }
+        return tmp
+    }
+
+    /// Makes a minimal TaxTriageResult with two samples and real metrics files so that
+    /// `configure(result:config:)` discovers multi-sample data.
+    private func makeMultiSampleResult(sampleIds: [String], tmpDir: URL) throws -> TaxTriageResult {
+        var metricsFiles: [URL] = []
+        for sampleId in sampleIds {
+            let tsv = "sample\torganism\treads\ttass_score\tconfidence\n\(sampleId)\tEscherichia coli\t1000\t0.9\thigh\n"
+            let url = tmpDir.appendingPathComponent("\(sampleId).organisms.report.txt")
+            try tsv.write(to: url, atomically: true, encoding: .utf8)
+            metricsFiles.append(url)
+        }
+
+        let samples = sampleIds.map { sid in
+            TaxTriageSample(
+                sampleId: sid,
+                fastq1: tmpDir.appendingPathComponent("\(sid).fastq")
+            )
+        }
+        let config = TaxTriageConfig(samples: samples, outputDirectory: tmpDir)
+        return TaxTriageResult(
+            config: config,
+            runtime: 1.0,
+            exitCode: 0,
+            outputDirectory: tmpDir,
+            metricsFiles: metricsFiles
+        )
+    }
+
+    // MARK: - Bug 1: Unique Reads Not Equal to Total Reads
+
+    /// When no BAM files are present, `uniqueReadsByKey` should be empty (not equal to reads).
+    /// Regression for the fallback that set unique reads = total reads when no accession mapping.
+    func testUniqueReadsShowDashWhenNoBAM() throws {
+        let tmp = try makeBatchDirNoBAM(sampleIds: ["s1", "s2"], reads: 5000)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let vc = TaxTriageResultViewController()
+        vc.loadViewIfNeeded()
+        vc.configureBatchGroup(batchURL: tmp, projectURL: tmp)
+
+        // With no BAM files, the unique reads computation cannot run.
+        // uniqueReadsByKey must be empty (cells will show "—"), not populated
+        // with total-reads values from the fallback.
+        let tableView = vc.testBatchFlatTableView
+        XCTAssertTrue(
+            tableView.uniqueReadsByKey.isEmpty,
+            "uniqueReadsByKey must be empty when no BAM files exist; was: \(tableView.uniqueReadsByKey)"
+        )
+    }
+
+    /// `perSampleDeduplicatedReadCounts` must also be empty when no BAM is present.
+    func testUniqueReadsNotEqualToTotalReadsWhenNoBAM() throws {
+        let tmp = try makeBatchDirNoBAM(sampleIds: ["sA", "sB"], reads: 3000)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let vc = TaxTriageResultViewController()
+        vc.loadViewIfNeeded()
+        vc.configureBatchGroup(batchURL: tmp, projectURL: tmp)
+
+        // perSampleDeduplicatedReadCounts starts empty and should NOT be filled
+        // with 3000 (= total reads) due to the old fallback.
+        XCTAssertTrue(
+            vc.testPerSampleDeduplicatedReadCounts.isEmpty,
+            "perSampleDeduplicatedReadCounts should be empty when no BAM is present"
+        )
+
+        // Verify that none of the uniqueReadsByKey values equal the total reads count
+        // that would come from the erroneous fallback (3000).
+        let hasSpuriousFallback = vc.testBatchFlatTableView.uniqueReadsByKey.values.contains(3000)
+        XCTAssertFalse(hasSpuriousFallback, "No unique reads value should equal the total reads (3000) when no BAM exists")
+    }
+
+    // MARK: - Bug 2: MiniBAM GCF Mapping in Batch Group Mode
+
+    /// After `configureBatchGroup`, `organismToAccessions` (accessed via accessions) is populated
+    /// from per-sample GCF mapping files. We verify by checking that the flat table is populated
+    /// and no crash occurs when the accessions lookup runs during row selection.
+    func testBatchGroupPopulatesGCFMappingForMiniBAM() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TTBatchGCF-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        for sampleId in ["gcfSample1", "gcfSample2"] {
+            let dir = tmp.appendingPathComponent(sampleId)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+            // Metrics file
+            let tsv = "sample\torganism\treads\ttass_score\tconfidence\n\(sampleId)\tEscherichia coli\t1000\t0.9\thigh\n"
+            try tsv.write(to: dir.appendingPathComponent("\(sampleId).organisms.report.txt"), atomically: true, encoding: .utf8)
+
+            // GCF mapping file: accession <TAB> taxid <TAB> organism
+            let gcf = "NZ_CP009273.1\t562\tEscherichia coli\n"
+            try gcf.write(to: dir.appendingPathComponent("gcfmapping.tsv"), atomically: true, encoding: .utf8)
+        }
+
+        let vc = TaxTriageResultViewController()
+        vc.loadViewIfNeeded()
+        vc.configureBatchGroup(batchURL: tmp, projectURL: tmp)
+
+        // The flat table should have rows (metrics were parsed)
+        let tableView = vc.testBatchFlatTableView
+        XCTAssertGreaterThan(tableView.displayedRows.count, 0, "Flat table should have rows after configureBatchGroup with valid metrics")
+
+        // Verify that selecting a row with a known organism does not crash.
+        // We simulate row selection by invoking the callback directly.
+        guard let firstRow = tableView.displayedRows.first else {
+            XCTFail("Expected at least one displayed row")
+            return
+        }
+        // This should not crash even if accessions lookup finds a result.
+        tableView.onRowSelected?(firstRow)
+    }
+
+    /// After `configureBatchGroup` with adjacent BAI files, `resolveBamIndex` can find the index.
+    func testMiniBAMCallbackResolvesAdjacentBamIndex() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TTBatchBAI-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let sampleId = "baiSample"
+        let dir = tmp.appendingPathComponent(sampleId)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        // Metrics file
+        let tsv = "sample\torganism\treads\ttass_score\tconfidence\n\(sampleId)\tTest Org\t500\t0.8\thigh\n"
+        try tsv.write(to: dir.appendingPathComponent("\(sampleId).organisms.report.txt"), atomically: true, encoding: .utf8)
+
+        // Create a stub BAM and adjacent BAI
+        let bamURL = dir.appendingPathComponent("aligned.bam")
+        let baiURL = dir.appendingPathComponent("aligned.bam.bai")
+        try Data().write(to: bamURL)   // empty stub
+        try Data().write(to: baiURL)   // empty stub index
+
+        let vc = TaxTriageResultViewController()
+        vc.loadViewIfNeeded()
+        vc.configureBatchGroup(batchURL: tmp, projectURL: tmp)
+
+        // After configureBatchGroup, bamFilesBySample should contain our BAM.
+        // We verify indirectly: the batch flat table is populated (not the focus here,
+        // but confirms configureBatchGroup ran without issues).
+        let tableView = vc.testBatchFlatTableView
+        XCTAssertGreaterThan(tableView.displayedRows.count, 0, "Flat table should have rows")
+
+        // The BAI file exists adjacent to the BAM, so resolveBamIndex must find it.
+        // We test this via the public interface: simulate a row selection and confirm
+        // no crash occurs (which would happen if the index lookup path crashed).
+        if let firstRow = tableView.displayedRows.first {
+            tableView.onRowSelected?(firstRow)
+        }
+    }
+
+    // MARK: - Bug 3: Multi-Sample Does Not Flash Segmented Control
+
+    /// After `configure(result:config:)` with multi-sample data, `sampleFilterControl`
+    /// must be hidden immediately — not shown momentarily before `enableMultiSampleFlatTableMode`.
+    func testMultiSampleDoesNotFlashSegmentedControl() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TTMultiSampleFlash-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let result = try makeMultiSampleResult(sampleIds: ["flashA", "flashB"], tmpDir: tmp)
+
+        let vc = TaxTriageResultViewController()
+        vc.loadViewIfNeeded()
+        vc.configure(result: result)
+
+        // sampleFilterControl must be hidden after configure() when there are multiple samples.
+        XCTAssertTrue(
+            vc.testSampleFilterControl.isHidden,
+            "sampleFilterControl must be hidden after multi-sample configure() — no flash"
+        )
+    }
+
+    /// After `configure(result:config:)` with multi-sample data, the flat table is visible
+    /// and the organism table is hidden (flat table mode is active).
+    func testBatchFlatTableVisibleAfterMultiSampleConfigure() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TTMultiSampleFlat-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let result = try makeMultiSampleResult(sampleIds: ["flatA", "flatB"], tmpDir: tmp)
+
+        let vc = TaxTriageResultViewController()
+        vc.loadViewIfNeeded()
+        vc.configure(result: result)
+
+        XCTAssertFalse(
+            vc.testBatchFlatTableView.isHidden,
+            "batchFlatTableView must be visible after multi-sample configure()"
+        )
+        XCTAssertTrue(
+            vc.testOrganismTableView.isHidden,
+            "organismTableView must be hidden after multi-sample configure()"
+        )
     }
 }
