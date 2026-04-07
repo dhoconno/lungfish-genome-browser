@@ -484,6 +484,8 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         splitView.isHidden = true
         batchTableView.isHidden = false
 
+        summaryBar.updateBatch(sampleCount: entries.count, totalDetections: allRows.count)
+
         applyBatchSampleFilter()
 
         logger.info("EsViritu batch mode configured: \(allRows.count) rows from \(entries.count) samples")
@@ -1441,8 +1443,15 @@ final class EsVirituSummaryBar: GenomicSummaryCardBar {
     private var speciesCount: Int = 0
     private var topVirus: String = ""
 
+    // MARK: - Batch State
+
+    private var isBatchMode: Bool = false
+    private var batchSampleCount: Int = 0
+    private var batchTotalDetections: Int = 0
+
     /// Updates the summary bar with data from the result.
     func update(result: LungfishIO.EsVirituResult) {
+        isBatchMode = false
         totalReads = result.totalFilteredReads
         familyCount = result.detectedFamilyCount
         speciesCount = result.detectedSpeciesCount
@@ -1452,8 +1461,29 @@ final class EsVirituSummaryBar: GenomicSummaryCardBar {
         needsDisplay = true
     }
 
+    /// Updates the summary bar to show batch aggregation statistics.
+    ///
+    /// Displays: "Batch: N samples · M viral detections"
+    ///
+    /// - Parameters:
+    ///   - sampleCount: Number of samples in the batch.
+    ///   - totalDetections: Total number of viral detection rows across all samples.
+    func updateBatch(sampleCount: Int, totalDetections: Int) {
+        isBatchMode = true
+        batchSampleCount = sampleCount
+        batchTotalDetections = totalDetections
+        needsDisplay = true
+    }
+
     override var cards: [Card] {
-        [
+        if isBatchMode {
+            return [
+                Card(label: "Batch", value: "EsViritu"),
+                Card(label: "Samples", value: "\(batchSampleCount)"),
+                Card(label: "Detections", value: GenomicSummaryCardBar.formatCount(batchTotalDetections)),
+            ]
+        }
+        return [
             Card(label: "Filtered Reads", value: GenomicSummaryCardBar.formatCount(totalReads)),
             Card(label: "Families", value: "\(familyCount)"),
             Card(label: "Species", value: "\(speciesCount)"),

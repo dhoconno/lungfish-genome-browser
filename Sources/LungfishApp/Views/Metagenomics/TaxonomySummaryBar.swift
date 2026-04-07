@@ -31,12 +31,20 @@ final class TaxonomySummaryBar: GenomicSummaryCardBar {
     private var shannonDiversity: Double = 0
     private var dominantSpeciesName: String = ""
 
+    // MARK: - Batch State
+
+    private var isBatchMode: Bool = false
+    private var batchSampleCount: Int = 0
+    private var batchTotalRows: Int = 0
+    private var batchDatabaseName: String = ""
+
     // MARK: - Update
 
     /// Recomputes summary statistics from the given taxonomy tree.
     ///
     /// - Parameter tree: The parsed taxonomy tree from a classification result.
     func update(tree: TaxonTree) {
+        isBatchMode = false
         totalReads = tree.totalReads
         classifiedPercent = tree.classifiedFraction * 100
         unclassifiedPercent = tree.unclassifiedFraction * 100
@@ -52,10 +60,34 @@ final class TaxonomySummaryBar: GenomicSummaryCardBar {
         needsDisplay = true
     }
 
+    /// Updates the summary bar to show batch aggregation statistics.
+    ///
+    /// Displays: "Batch: N samples · M taxa · DatabaseName"
+    ///
+    /// - Parameters:
+    ///   - sampleCount: Number of samples in the batch.
+    ///   - totalRows: Total number of taxon rows across all samples.
+    ///   - databaseName: Name of the classification database used.
+    func updateBatch(sampleCount: Int, totalRows: Int, databaseName: String) {
+        isBatchMode = true
+        batchSampleCount = sampleCount
+        batchTotalRows = totalRows
+        batchDatabaseName = databaseName
+        needsDisplay = true
+    }
+
     // MARK: - Cards
 
     override var cards: [Card] {
-        [
+        if isBatchMode {
+            return [
+                Card(label: "Batch", value: "Kraken2"),
+                Card(label: "Samples", value: "\(batchSampleCount)"),
+                Card(label: "Taxa", value: GenomicSummaryCardBar.formatCount(batchTotalRows)),
+                Card(label: "Database", value: batchDatabaseName.isEmpty ? "\u{2014}" : batchDatabaseName),
+            ]
+        }
+        return [
             Card(label: "Total Reads", value: GenomicSummaryCardBar.formatCount(totalReads)),
             Card(
                 label: "Classified",

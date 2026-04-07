@@ -483,6 +483,12 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
         splitView.isHidden = true
         batchTableView.isHidden = false
 
+        summaryBar.updateBatch(
+            sampleCount: entries.count,
+            totalRows: allRows.count,
+            databaseName: manifest.databaseName
+        )
+
         applyBatchSampleFilter()
 
         logger.info("Batch mode configured: \(allRows.count) rows from \(entries.count) samples")

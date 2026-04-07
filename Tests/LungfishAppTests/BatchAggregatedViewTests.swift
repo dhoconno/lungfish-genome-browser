@@ -1673,3 +1673,273 @@ final class BatchInspectorSectionTests: XCTestCase {
         return nil
     }
 }
+
+// MARK: - SummaryBarBatchTests
+
+/// Tests for `updateBatch` methods added to the three classifier summary bars.
+///
+/// Verifies:
+/// 1. Each summary bar's `updateBatch` can be called without crashing.
+/// 2. The resulting `cards` reflect the batch parameters (sample count, total count, etc.).
+/// 3. The batch label card is present with the expected tool name.
+@MainActor
+final class SummaryBarBatchTests: XCTestCase {
+
+    // MARK: - TaxonomySummaryBar
+
+    /// `updateBatch` can be called without crashing.
+    func testTaxonomySummaryBarUpdateBatchDoesNotCrash() {
+        let vc = TaxonomyViewController()
+        vc.loadViewIfNeeded()
+        let bar = vc.testSummaryBar
+        bar.updateBatch(sampleCount: 3, totalRows: 120, databaseName: "standard")
+        // No assertion needed — absence of crash is the requirement.
+    }
+
+    /// After `updateBatch`, the cards contain the expected sample count.
+    func testTaxonomySummaryBarUpdateBatchShowsSampleCount() {
+        let vc = TaxonomyViewController()
+        vc.loadViewIfNeeded()
+        let bar = vc.testSummaryBar
+        bar.updateBatch(sampleCount: 5, totalRows: 200, databaseName: "standard")
+        let samplesCard = bar.cards.first(where: { $0.label == "Samples" })
+        XCTAssertNotNil(samplesCard, "Cards should include a 'Samples' card in batch mode")
+        XCTAssertEqual(samplesCard?.value, "5")
+    }
+
+    /// After `updateBatch`, the cards contain the expected taxa count.
+    func testTaxonomySummaryBarUpdateBatchShowsTaxaCount() {
+        let vc = TaxonomyViewController()
+        vc.loadViewIfNeeded()
+        let bar = vc.testSummaryBar
+        bar.updateBatch(sampleCount: 2, totalRows: 450, databaseName: "standard")
+        let taxaCard = bar.cards.first(where: { $0.label == "Taxa" })
+        XCTAssertNotNil(taxaCard, "Cards should include a 'Taxa' card in batch mode")
+        XCTAssertEqual(taxaCard?.value, "450")
+    }
+
+    /// After `updateBatch`, the database name appears in the cards.
+    func testTaxonomySummaryBarUpdateBatchShowsDatabaseName() {
+        let vc = TaxonomyViewController()
+        vc.loadViewIfNeeded()
+        let bar = vc.testSummaryBar
+        bar.updateBatch(sampleCount: 1, totalRows: 10, databaseName: "PlusPF")
+        let dbCard = bar.cards.first(where: { $0.label == "Database" })
+        XCTAssertNotNil(dbCard, "Cards should include a 'Database' card in batch mode")
+        XCTAssertEqual(dbCard?.value, "PlusPF")
+    }
+
+    /// After `updateBatch` with an empty database name, the Database card shows an em-dash.
+    func testTaxonomySummaryBarUpdateBatchEmptyDatabaseShowsEmDash() {
+        let vc = TaxonomyViewController()
+        vc.loadViewIfNeeded()
+        let bar = vc.testSummaryBar
+        bar.updateBatch(sampleCount: 1, totalRows: 5, databaseName: "")
+        let dbCard = bar.cards.first(where: { $0.label == "Database" })
+        XCTAssertEqual(dbCard?.value, "\u{2014}", "Empty database name should display as em-dash")
+    }
+
+    /// After `updateBatch`, a 'Batch' label card is present with value "Kraken2".
+    func testTaxonomySummaryBarUpdateBatchHasBatchLabelCard() {
+        let vc = TaxonomyViewController()
+        vc.loadViewIfNeeded()
+        let bar = vc.testSummaryBar
+        bar.updateBatch(sampleCount: 2, totalRows: 80, databaseName: "standard")
+        let batchCard = bar.cards.first(where: { $0.label == "Batch" })
+        XCTAssertNotNil(batchCard, "Cards should include a 'Batch' card in batch mode")
+        XCTAssertEqual(batchCard?.value, "Kraken2")
+    }
+
+    // MARK: - EsVirituSummaryBar
+
+    /// `updateBatch` can be called without crashing.
+    func testEsVirituSummaryBarUpdateBatchDoesNotCrash() {
+        let vc = EsVirituResultViewController()
+        vc.loadViewIfNeeded()
+        let bar = vc.testSummaryBar
+        bar.updateBatch(sampleCount: 4, totalDetections: 12)
+        // No assertion needed — absence of crash is the requirement.
+    }
+
+    /// After `updateBatch`, the cards contain the expected sample count.
+    func testEsVirituSummaryBarUpdateBatchShowsSampleCount() {
+        let vc = EsVirituResultViewController()
+        vc.loadViewIfNeeded()
+        let bar = vc.testSummaryBar
+        bar.updateBatch(sampleCount: 7, totalDetections: 33)
+        let samplesCard = bar.cards.first(where: { $0.label == "Samples" })
+        XCTAssertNotNil(samplesCard, "Cards should include a 'Samples' card in batch mode")
+        XCTAssertEqual(samplesCard?.value, "7")
+    }
+
+    /// After `updateBatch`, the cards contain the expected detections count.
+    func testEsVirituSummaryBarUpdateBatchShowsDetectionsCount() {
+        let vc = EsVirituResultViewController()
+        vc.loadViewIfNeeded()
+        let bar = vc.testSummaryBar
+        bar.updateBatch(sampleCount: 3, totalDetections: 27)
+        let detectCard = bar.cards.first(where: { $0.label == "Detections" })
+        XCTAssertNotNil(detectCard, "Cards should include a 'Detections' card in batch mode")
+        XCTAssertEqual(detectCard?.value, "27")
+    }
+
+    /// After `updateBatch`, a 'Batch' label card is present with value "EsViritu".
+    func testEsVirituSummaryBarUpdateBatchHasBatchLabelCard() {
+        let vc = EsVirituResultViewController()
+        vc.loadViewIfNeeded()
+        let bar = vc.testSummaryBar
+        bar.updateBatch(sampleCount: 2, totalDetections: 8)
+        let batchCard = bar.cards.first(where: { $0.label == "Batch" })
+        XCTAssertNotNil(batchCard, "Cards should include a 'Batch' card in batch mode")
+        XCTAssertEqual(batchCard?.value, "EsViritu")
+    }
+
+    // MARK: - TaxTriageSummaryBar
+
+    /// `updateBatch` can be called without crashing.
+    func testTaxTriageSummaryBarUpdateBatchDoesNotCrash() {
+        let vc = TaxTriageResultViewController()
+        vc.loadViewIfNeeded()
+        let bar = vc.testSummaryBar
+        bar.updateBatch(sampleCount: 6, totalOrganisms: 18)
+        // No assertion needed — absence of crash is the requirement.
+    }
+
+    /// After `updateBatch`, the cards contain the expected sample count.
+    func testTaxTriageSummaryBarUpdateBatchShowsSampleCount() {
+        let vc = TaxTriageResultViewController()
+        vc.loadViewIfNeeded()
+        let bar = vc.testSummaryBar
+        bar.updateBatch(sampleCount: 9, totalOrganisms: 45)
+        let samplesCard = bar.cards.first(where: { $0.label == "Samples" })
+        XCTAssertNotNil(samplesCard, "Cards should include a 'Samples' card in batch mode")
+        XCTAssertEqual(samplesCard?.value, "9")
+    }
+
+    /// After `updateBatch`, the cards contain the expected organisms count.
+    func testTaxTriageSummaryBarUpdateBatchShowsOrganismsCount() {
+        let vc = TaxTriageResultViewController()
+        vc.loadViewIfNeeded()
+        let bar = vc.testSummaryBar
+        bar.updateBatch(sampleCount: 4, totalOrganisms: 22)
+        let orgCard = bar.cards.first(where: { $0.label == "Organisms" })
+        XCTAssertNotNil(orgCard, "Cards should include an 'Organisms' card in batch mode")
+        XCTAssertEqual(orgCard?.value, "22")
+    }
+
+    /// After `updateBatch`, a 'Batch' label card is present with value "TaxTriage".
+    func testTaxTriageSummaryBarUpdateBatchHasBatchLabelCard() {
+        let vc = TaxTriageResultViewController()
+        vc.loadViewIfNeeded()
+        let bar = vc.testSummaryBar
+        bar.updateBatch(sampleCount: 3, totalOrganisms: 15)
+        let batchCard = bar.cards.first(where: { $0.label == "Batch" })
+        XCTAssertNotNil(batchCard, "Cards should include a 'Batch' card in batch mode")
+        XCTAssertEqual(batchCard?.value, "TaxTriage")
+    }
+
+    // MARK: - Round-trip: configureBatch wires summaryBar.updateBatch
+
+    /// After `TaxonomyViewController.configureBatch`, the summary bar is in batch mode
+    /// with a 'Samples' card reflecting the actual sample count.
+    func testTaxonomyConfigureBatchWiresSummaryBarUpdateBatch() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SummaryBarBatchTest-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        // Create two sample directories with minimal kreports.
+        for sampleId in ["s1", "s2"] {
+            let dir = tmp.appendingPathComponent(sampleId)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let kreport = "0.00\t0\t0\tU\t0\tunclassified\n100.00\t1000\t0\tR\t1\troot\n80.00\t800\t800\tD\t2\t  Bacteria\n"
+            try kreport.write(to: dir.appendingPathComponent("report.kreport"), atomically: true, encoding: .utf8)
+        }
+
+        let records = ["s1", "s2"].map { MetagenomicsBatchSampleRecord(sampleId: $0, resultDirectory: tmp.appendingPathComponent($0).path, inputFiles: [], isPairedEnd: false) }
+        let manifest = ClassificationBatchResultManifest(
+            header: MetagenomicsBatchManifestHeader(schemaVersion: 1, createdAt: Date(), sampleCount: 2),
+            goal: "classify",
+            databaseName: "standard",
+            databaseVersion: "2024",
+            summaryTSV: "",
+            samples: records
+        )
+
+        let vc = TaxonomyViewController()
+        vc.loadViewIfNeeded()
+        vc.configureBatch(batchURL: tmp, manifest: manifest, projectURL: tmp)
+
+        let bar = vc.testSummaryBar
+        let samplesCard = bar.cards.first(where: { $0.label == "Samples" })
+        XCTAssertNotNil(samplesCard, "summaryBar should be in batch mode after configureBatch")
+        XCTAssertEqual(samplesCard?.value, "2",
+                       "Samples card should show the number of samples from the manifest")
+    }
+
+    /// After `EsVirituResultViewController.configureBatch`, the summary bar is in batch mode
+    /// with a 'Samples' card reflecting the actual sample count.
+    func testEsVirituConfigureBatchWiresSummaryBarUpdateBatch() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SummaryBarEsVBatchTest-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let header = "sample_ID\tName\tdescription\tLength\tSegment\tAccession\tAssembly\tAsm_length\tkingdom\tphylum\ttclass\torder\tfamily\tgenus\tspecies\tsubspecies\tRPKMF\tread_count\tcovered_bases\tmean_coverage\tavg_read_identity\tPi\tfiltered_reads_in_sample"
+        let makeRow: (String) -> String = { sid in
+            [sid, "SARS-CoV-2", "desc", "30000", "NA", "MN908947.3", "GCF_009858895.2", "30000",
+             "Viruses", "NA", "NA", "NA", "Coronaviridae", "NA", "NA", "NA",
+             "150.0", "5000", "28000", "12.5", "99.2", "0.002", "100000"].joined(separator: "\t")
+        }
+
+        for sampleId in ["ev1", "ev2"] {
+            let dir = tmp.appendingPathComponent(sampleId)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let tsv = header + "\n" + makeRow(sampleId) + "\n"
+            try tsv.write(to: dir.appendingPathComponent("\(sampleId).detected_virus.info.tsv"), atomically: true, encoding: .utf8)
+        }
+
+        let records = ["ev1", "ev2"].map { MetagenomicsBatchSampleRecord(sampleId: $0, resultDirectory: tmp.appendingPathComponent($0).path, inputFiles: [], isPairedEnd: false) }
+        let manifest = EsVirituBatchResultManifest(
+            header: MetagenomicsBatchManifestHeader(schemaVersion: 1, createdAt: Date(), sampleCount: 2),
+            summaryTSV: "",
+            samples: records
+        )
+
+        let vc = EsVirituResultViewController()
+        vc.loadViewIfNeeded()
+        vc.configureBatch(batchURL: tmp, manifest: manifest, projectURL: tmp)
+
+        let bar = vc.testSummaryBar
+        let samplesCard = bar.cards.first(where: { $0.label == "Samples" })
+        XCTAssertNotNil(samplesCard, "summaryBar should be in batch mode after configureBatch")
+        XCTAssertEqual(samplesCard?.value, "2",
+                       "Samples card should show the number of samples from the manifest")
+    }
+
+    /// After `TaxTriageResultViewController.configureBatchGroup`, the summary bar is in batch mode
+    /// with a 'Samples' card reflecting the actual sample count.
+    func testTaxTriageConfigureBatchGroupWiresSummaryBarUpdateBatch() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SummaryBarTTBatchTest-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        for sampleId in ["tt1", "tt2"] {
+            let dir = tmp.appendingPathComponent(sampleId)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let tsv = "sample\torganism\treads\ttass_score\tconfidence\n\(sampleId)\tE. coli\t1000\t0.9\thigh\n"
+            try tsv.write(to: dir.appendingPathComponent("\(sampleId).organisms.report.txt"), atomically: true, encoding: .utf8)
+        }
+
+        let vc = TaxTriageResultViewController()
+        vc.loadViewIfNeeded()
+        vc.configureBatchGroup(batchURL: tmp, projectURL: tmp)
+
+        let bar = vc.testSummaryBar
+        let samplesCard = bar.cards.first(where: { $0.label == "Samples" })
+        XCTAssertNotNil(samplesCard, "summaryBar should be in batch mode after configureBatchGroup")
+        XCTAssertEqual(samplesCard?.value, "2",
+                       "Samples card should show the number of samples from the batch group")
+    }
+}

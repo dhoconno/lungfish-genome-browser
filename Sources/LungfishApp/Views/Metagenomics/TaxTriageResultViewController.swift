@@ -1880,6 +1880,8 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         blastDrawer.isHidden = true
         batchFlatTableView.isHidden = false
 
+        summaryBar.updateBatch(sampleCount: entries.count, totalOrganisms: allRows.count)
+
         applyBatchGroupFilter()
 
         logger.info("TaxTriage batch group configured: \(allRows.count) rows from \(entries.count) samples")
@@ -3345,6 +3347,12 @@ final class TaxTriageSummaryBar: GenomicSummaryCardBar {
     private var highConfidenceCount: Int = 0
     private var sampleCount: Int = 0
 
+    // MARK: - Batch State
+
+    private var isBatchMode: Bool = false
+    private var batchSampleCount: Int = 0
+    private var batchTotalOrganisms: Int = 0
+
     /// Updates the summary bar with result data.
     func update(
         organismCount: Int,
@@ -3352,6 +3360,7 @@ final class TaxTriageSummaryBar: GenomicSummaryCardBar {
         highConfidenceCount: Int,
         sampleCount: Int
     ) {
+        isBatchMode = false
         self.organismCount = organismCount
         self.runtime = runtime
         self.highConfidenceCount = highConfidenceCount
@@ -3359,7 +3368,29 @@ final class TaxTriageSummaryBar: GenomicSummaryCardBar {
         needsDisplay = true
     }
 
+    /// Updates the summary bar to show batch aggregation statistics.
+    ///
+    /// Displays: "Batch: N samples · M organisms"
+    ///
+    /// - Parameters:
+    ///   - sampleCount: Number of samples in the batch.
+    ///   - totalOrganisms: Total number of organism rows across all samples.
+    func updateBatch(sampleCount: Int, totalOrganisms: Int) {
+        isBatchMode = true
+        batchSampleCount = sampleCount
+        batchTotalOrganisms = totalOrganisms
+        needsDisplay = true
+    }
+
     override var cards: [Card] {
+        if isBatchMode {
+            return [
+                Card(label: "Batch", value: "TaxTriage"),
+                Card(label: "Samples", value: "\(batchSampleCount)"),
+                Card(label: "Organisms", value: GenomicSummaryCardBar.formatCount(batchTotalOrganisms)),
+            ]
+        }
+
         let runtimeStr: String
         if runtime >= 60 {
             runtimeStr = String(format: "%.1fm", runtime / 60)
