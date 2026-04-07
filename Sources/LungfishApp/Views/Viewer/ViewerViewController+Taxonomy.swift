@@ -90,6 +90,11 @@ extension ViewerViewController {
         annotationDrawerView?.isHidden = true
         fastqMetadataDrawerView?.isHidden = true
 
+        // Configure BEFORE adding to the view hierarchy to avoid a one-frame
+        // bounce caused by AppKit rendering the default UI state between
+        // addSubview() and configure().
+        controller.configure(result: result)
+
         let taxView = controller.view
         taxView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(taxView)
@@ -100,8 +105,6 @@ extension ViewerViewController {
             taxView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             taxView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-
-        controller.configure(result: result)
 
         // Wire the extraction confirmed callback so "Extract Sequences" actually works.
         //
@@ -489,6 +492,11 @@ extension ViewerViewController {
         annotationDrawerView?.isHidden = true
         fastqMetadataDrawerView?.isHidden = true
 
+        // Configure BEFORE adding to the view hierarchy to avoid a one-frame
+        // bounce caused by AppKit rendering the default UI state between
+        // addSubview() and configureBatch().
+        controller.configureBatch(batchURL: batchURL, manifest: manifest, projectURL: projectURL)
+
         let taxView = controller.view
         taxView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(taxView)
@@ -499,8 +507,6 @@ extension ViewerViewController {
             taxView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             taxView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-
-        controller.configureBatch(batchURL: batchURL, manifest: manifest, projectURL: projectURL)
 
         taxonomyViewController = controller
 

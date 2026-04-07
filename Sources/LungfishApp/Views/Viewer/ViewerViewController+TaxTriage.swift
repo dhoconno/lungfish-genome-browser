@@ -54,6 +54,12 @@ extension ViewerViewController {
         annotationDrawerView?.isHidden = true
         fastqMetadataDrawerView?.isHidden = true
 
+        // Configure BEFORE adding to the view hierarchy so the correct UI state
+        // (flat table visible, segmented control hidden) is already in place when
+        // AppKit first renders the view. This eliminates the one-frame bounce that
+        // was visible when configure() hid/showed subviews after addSubview().
+        controller.configure(result: result, config: config)
+
         let ttView = controller.view
         ttView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(ttView)
@@ -64,8 +70,6 @@ extension ViewerViewController {
             ttView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             ttView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-
-        controller.configure(result: result, config: config)
 
         // Wire BLAST verification callback.
         //
@@ -340,6 +344,11 @@ extension ViewerViewController {
         annotationDrawerView?.isHidden = true
         fastqMetadataDrawerView?.isHidden = true
 
+        // Configure BEFORE adding to the view hierarchy to avoid a one-frame
+        // bounce caused by AppKit rendering the default UI state between
+        // addSubview() and configureBatchGroup().
+        controller.configureBatchGroup(batchURL: batchURL, projectURL: projectURL)
+
         let ttView = controller.view
         ttView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(ttView)
@@ -350,8 +359,6 @@ extension ViewerViewController {
             ttView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             ttView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-
-        controller.configureBatchGroup(batchURL: batchURL, projectURL: projectURL)
 
         taxTriageViewController = controller
 

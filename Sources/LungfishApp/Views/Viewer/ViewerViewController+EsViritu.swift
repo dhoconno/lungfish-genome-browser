@@ -52,6 +52,11 @@ extension ViewerViewController {
         annotationDrawerView?.isHidden = true
         fastqMetadataDrawerView?.isHidden = true
 
+        // Configure BEFORE adding to the view hierarchy to avoid a one-frame
+        // bounce caused by AppKit rendering the default UI state between
+        // addSubview() and configure().
+        controller.configure(result: result, config: config)
+
         let esView = controller.view
         esView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(esView)
@@ -62,8 +67,6 @@ extension ViewerViewController {
             esView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             esView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-
-        controller.configure(result: result, config: config)
 
         // Wire BLAST verification callback.
         //
@@ -350,6 +353,11 @@ extension ViewerViewController {
         annotationDrawerView?.isHidden = true
         fastqMetadataDrawerView?.isHidden = true
 
+        // Configure BEFORE adding to the view hierarchy to avoid a one-frame
+        // bounce caused by AppKit rendering the default UI state between
+        // addSubview() and configureBatch().
+        controller.configureBatch(batchURL: batchURL, manifest: manifest, projectURL: projectURL)
+
         let esView = controller.view
         esView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(esView)
@@ -360,8 +368,6 @@ extension ViewerViewController {
             esView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             esView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-
-        controller.configureBatch(batchURL: batchURL, manifest: manifest, projectURL: projectURL)
 
         esVirituViewController = controller
 
