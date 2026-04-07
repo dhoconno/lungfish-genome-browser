@@ -538,7 +538,7 @@ final class TaxonomyViewControllerBatchModeTests: XCTestCase {
             try kreportText.write(to: kreportURL, atomically: true, encoding: .utf8)
             records.append(MetagenomicsBatchSampleRecord(
                 sampleId: sampleId,
-                resultDirectory: resultDir.path,
+                resultDirectory: sampleId,
                 inputFiles: [],
                 isPairedEnd: false
             ))
@@ -817,7 +817,7 @@ final class EsVirituViewControllerBatchModeTests: XCTestCase {
             try tsvContent.write(to: detectionURL, atomically: true, encoding: .utf8)
             records.append(MetagenomicsBatchSampleRecord(
                 sampleId: sampleId,
-                resultDirectory: resultDir.path,
+                resultDirectory: sampleId,
                 inputFiles: [],
                 isPairedEnd: false
             ))
@@ -1405,7 +1405,7 @@ final class BatchGroupRoutingTests: XCTestCase {
             summaryTSV: "summary.tsv",
             samples: [MetagenomicsBatchSampleRecord(
                 sampleId: "s1",
-                resultDirectory: batchURL.path,
+                resultDirectory: "s1",
                 inputFiles: [],
                 isPairedEnd: false
             )]
@@ -1430,8 +1430,8 @@ final class BatchGroupRoutingTests: XCTestCase {
             header: header,
             summaryTSV: "summary.tsv",
             samples: [
-                MetagenomicsBatchSampleRecord(sampleId: "sA", resultDirectory: batchURL.path, inputFiles: [], isPairedEnd: true),
-                MetagenomicsBatchSampleRecord(sampleId: "sB", resultDirectory: batchURL.path, inputFiles: [], isPairedEnd: false),
+                MetagenomicsBatchSampleRecord(sampleId: "sA", resultDirectory: "sA", inputFiles: [], isPairedEnd: true),
+                MetagenomicsBatchSampleRecord(sampleId: "sB", resultDirectory: "sB", inputFiles: [], isPairedEnd: false),
             ]
         )
         try MetagenomicsBatchResultStore.saveEsViritu(manifest, to: batchURL)
@@ -1856,7 +1856,7 @@ final class SummaryBarBatchTests: XCTestCase {
             try kreport.write(to: dir.appendingPathComponent("report.kreport"), atomically: true, encoding: .utf8)
         }
 
-        let records = ["s1", "s2"].map { MetagenomicsBatchSampleRecord(sampleId: $0, resultDirectory: tmp.appendingPathComponent($0).path, inputFiles: [], isPairedEnd: false) }
+        let records = ["s1", "s2"].map { MetagenomicsBatchSampleRecord(sampleId: $0, resultDirectory: $0, inputFiles: [], isPairedEnd: false) }
         let manifest = ClassificationBatchResultManifest(
             header: MetagenomicsBatchManifestHeader(schemaVersion: 1, createdAt: Date(), sampleCount: 2),
             goal: "classify",
@@ -1899,7 +1899,7 @@ final class SummaryBarBatchTests: XCTestCase {
             try tsv.write(to: dir.appendingPathComponent("\(sampleId).detected_virus.info.tsv"), atomically: true, encoding: .utf8)
         }
 
-        let records = ["ev1", "ev2"].map { MetagenomicsBatchSampleRecord(sampleId: $0, resultDirectory: tmp.appendingPathComponent($0).path, inputFiles: [], isPairedEnd: false) }
+        let records = ["ev1", "ev2"].map { MetagenomicsBatchSampleRecord(sampleId: $0, resultDirectory: $0, inputFiles: [], isPairedEnd: false) }
         let manifest = EsVirituBatchResultManifest(
             header: MetagenomicsBatchManifestHeader(schemaVersion: 1, createdAt: Date(), sampleCount: 2),
             summaryTSV: "",

@@ -428,9 +428,9 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
         var entries: [Kraken2SampleEntry] = []
 
         for sample in manifest.samples {
-            let resultDir = URL(fileURLWithPath: sample.resultDirectory)
-            // kreport is named <sampleId>.kreport or report.kreport inside the result dir
-            let possibleNames = ["\(sample.sampleId).kreport", "report.kreport", "kreport.txt"]
+            let resultDir = batchURL.appendingPathComponent(sample.resultDirectory)
+            // kreport may be named classification.kreport (canonical), <sampleId>.kreport, or report.kreport
+            let possibleNames = ["classification.kreport", "\(sample.sampleId).kreport", "report.kreport", "kreport.txt"]
             var kreportURL: URL?
             for name in possibleNames {
                 let candidate = resultDir.appendingPathComponent(name)

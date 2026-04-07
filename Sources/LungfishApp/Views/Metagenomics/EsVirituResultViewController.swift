@@ -417,7 +417,7 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         var entries: [EsVirituSampleEntry] = []
 
         for sample in manifest.samples {
-            let resultDir = URL(fileURLWithPath: sample.resultDirectory)
+            let resultDir = batchURL.appendingPathComponent(sample.resultDirectory)
 
             // The detection file is named <sampleId>.detected_virus.info.tsv
             // Fall back to searching for any *.detected_virus.info.tsv in the directory.
