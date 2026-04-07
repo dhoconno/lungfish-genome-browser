@@ -232,6 +232,20 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
 
     // MARK: - Custom Action Bar Buttons
 
+    /// "Recompute Unique Reads" button — only shown in batch/multi-sample mode.
+    private let recomputeUniqueReadsButton: NSButton = {
+        let btn = NSButton()
+        btn.title = "Recompute Unique Reads"
+        btn.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Recompute Unique Reads")
+        btn.bezelStyle = .accessoryBarAction
+        btn.imagePosition = .imageLeading
+        btn.controlSize = .small
+        btn.font = .systemFont(ofSize: 11)
+        btn.setContentHuggingPriority(.required, for: .horizontal)
+        btn.isHidden = true  // shown only in batch/multi-sample mode
+        return btn
+    }()
+
     private let openReportButton: NSButton = {
         let btn = NSButton()
         btn.title = "Open Report"
@@ -2595,6 +2609,9 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         }
 
         logger.info("TaxTriage batch group configured: \(allRows.count) rows from \(entries.count) samples")
+
+        // Show the Recompute Unique Reads button in batch group mode.
+        recomputeUniqueReadsButton.isHidden = false
     }
 
     /// Saves a `TaxTriageBatchManifest` to `<batchURL>/taxtriage-batch-manifest.json`.
@@ -2782,6 +2799,9 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
 
         // Populate unique reads column from any already-persisted per-sample dedup counts.
         syncUniqueReadsToFlatTable()
+
+        // Show the Recompute Unique Reads button in multi-sample single-result mode.
+        recomputeUniqueReadsButton.isHidden = false
     }
 
     /// Filters `allBatchGroupRows` (sourced from `metrics`) by the samples selected
@@ -3006,6 +3026,85 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         relatedAnalysesButton.action = #selector(relatedAnalysesTapped(_:))
         relatedAnalysesButton.isHidden = true
         actionBar.addCustomButton(relatedAnalysesButton)
+
+        // Custom button: Recompute Unique Reads (hidden until batch/multi-sample mode)
+        recomputeUniqueReadsButton.target = self
+        recomputeUniqueReadsButton.action = #selector(recomputeUniqueReadsTapped)
+        actionBar.addCustomButton(recomputeUniqueReadsButton)
+    }
+
+    // MARK: - Recompute Unique Reads
+
+    @objc private func recomputeUniqueReadsTapped() {
+        recomputeAllUniqueReads()
+    }
+
+    /// Clears all cached unique read data and restarts computation from BAM files for
+    /// all organisms across all samples. Works for both batch group mode and multi-sample
+    /// single-result mode.
+    func recomputeAllUniqueReads() {
+        // 1. Clear in-memory caches.
+        perSampleDeduplicatedReadCounts.removeAll()
+        deduplicatedReadCounts.removeAll()
+
+        // 2. Clear the flat table's unique reads display.
+        batchFlatTableView.uniqueReadsByKey.removeAll()
+        batchFlatTableView.tableView.reloadData()
+
+        // 3. Delete on-disk caches.
+        if let batchURL = batchGroupURL {
+            // Delete batch-level cache.
+            let cacheURL = batchURL.appendingPathComponent("batch-unique-reads.json")
+            try? FileManager.default.removeItem(at: cacheURL)
+            // Delete the materialized batch manifest so next open re-parses fresh.
+            let manifestURL = batchURL.appendingPathComponent(TaxTriageBatchManifest.filename)
+            try? FileManager.default.removeItem(at: manifestURL)
+        }
+        // Also clear from the per-result sidecar for single-result multi-sample mode.
+        if var result = taxTriageResult {
+            result.perSampleDeduplicatedReadCounts = nil
+            result.deduplicatedReadCounts = nil
+            try? result.save()
+        }
+
+        // 4. Cancel any existing computation.
+        deduplicatedReadCountTask?.cancel()
+
+        // 5. Restart computation for all organisms.
+        if isBatchGroupMode, let batchURL = batchGroupURL {
+            // Re-enumerate sample subdirectories (same logic as configureBatchGroup).
+            let contents = (try? FileManager.default.contentsOfDirectory(atPath: batchURL.path)) ?? []
+            let subdirs = contents
+                .sorted()
+                .map { batchURL.appendingPathComponent($0) }
+                .filter { url in
+                    var isDir: ObjCBool = false
+                    return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
+                }
+            if !subdirs.isEmpty {
+                scheduleBatchPerSampleUniqueReadComputation(subdirs: subdirs)
+            }
+        } else if isMultiSampleSingleResultMode {
+            // Multi-sample single-result: use allBatchGroupRows as the row source.
+            // Convert allBatchGroupRows to TaxTriageTableRow for the scheduler.
+            let rows = allBatchGroupRows.map { metric in
+                TaxTriageTableRow(
+                    organism: metric.organism,
+                    tassScore: metric.tassScore,
+                    reads: metric.reads,
+                    uniqueReads: nil,
+                    coverage: metric.coverageBreadth,
+                    confidence: metric.confidence,
+                    taxId: metric.taxId,
+                    rank: metric.rank,
+                    abundance: metric.abundance
+                )
+            }
+            scheduleDeduplicatedReadCountComputation(for: rows)
+        }
+
+        // 6. Update info text to indicate recompute is in progress.
+        actionBar.updateInfoText("Recomputing unique reads for all organisms\u{2026}")
     }
 
     // MARK: - Extraction Sheet

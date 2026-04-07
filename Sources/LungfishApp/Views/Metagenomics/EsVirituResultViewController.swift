@@ -127,6 +127,22 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     let actionBar = ClassifierActionBar()
     private var splitViewBottomConstraint: NSLayoutConstraint?
 
+    // MARK: - Custom Action Bar Buttons
+
+    /// "Recompute Unique Reads" button — only shown in batch mode.
+    private let recomputeUniqueReadsButton: NSButton = {
+        let btn = NSButton()
+        btn.title = "Recompute Unique Reads"
+        btn.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Recompute Unique Reads")
+        btn.bezelStyle = .accessoryBarAction
+        btn.imagePosition = .imageLeading
+        btn.controlSize = .small
+        btn.font = .systemFont(ofSize: 11)
+        btn.setContentHuggingPriority(.required, for: .horizontal)
+        btn.isHidden = true  // shown only in batch mode
+        return btn
+    }()
+
     // MARK: - Multi-Selection Placeholder
 
     private lazy var multiSelectionPlaceholder: NSView = {
@@ -643,6 +659,9 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         }
 
         logger.info("EsViritu batch mode configured: \(allRows.count) rows from \(entries.count) samples")
+
+        // Show the Recompute Unique Reads button in batch mode.
+        recomputeUniqueReadsButton.isHidden = false
     }
 
     /// Saves a `EsVirituBatchAggregatedManifest` to `<batchURL>/esviritu-batch-aggregated.json`.
@@ -1241,12 +1260,76 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             self?.showProvenancePopover(relativeTo: sender)
         }
 
+        // Custom button: Recompute Unique Reads (hidden until batch mode is active)
+        recomputeUniqueReadsButton.target = self
+        recomputeUniqueReadsButton.action = #selector(recomputeUniqueReadsTapped)
+        actionBar.addCustomButton(recomputeUniqueReadsButton)
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleLayoutSwapRequested),
             name: .metagenomicsLayoutSwapRequested,
             object: nil
         )
+    }
+
+    // MARK: - Recompute Unique Reads
+
+    @objc private func recomputeUniqueReadsTapped() {
+        recomputeAllUniqueReads()
+    }
+
+    /// Clears all cached unique read data and restarts computation from BAM files for
+    /// all assemblies across all samples in batch mode.
+    func recomputeAllUniqueReads() {
+        // 1. Zero out unique reads in allBatchRows so the table immediately shows 0
+        //    and the computation guard (allHaveUniqueReads) doesn't skip any sample.
+        allBatchRows = allBatchRows.map { row in
+            BatchEsVirituRow(
+                sample: row.sample,
+                virusName: row.virusName,
+                family: row.family,
+                assembly: row.assembly,
+                readCount: row.readCount,
+                uniqueReads: 0,
+                rpkmf: row.rpkmf,
+                coverageBreadth: row.coverageBreadth,
+                coverageDepth: row.coverageDepth
+            )
+        }
+        applyBatchSampleFilter()
+
+        // 2. Delete on-disk caches.
+        if let batchURL {
+            // Delete the materialized aggregated manifest so next open re-parses fresh.
+            let manifestURL = batchURL.appendingPathComponent(EsVirituBatchAggregatedManifest.filename)
+            try? FileManager.default.removeItem(at: manifestURL)
+
+            // Delete per-sample unique reads sidecars.
+            for sample in sampleEntries {
+                // Derive the result directory from batchBAMLookup if available,
+                // otherwise fall back to a <batchURL>/<sampleId> subdir convention.
+                let resultDir: URL
+                if let bamURL = batchBAMLookup[sample.id] {
+                    resultDir = bamURL
+                        .deletingLastPathComponent()  // <sampleId>_temp/
+                        .deletingLastPathComponent()  // <resultDir>/
+                } else {
+                    resultDir = batchURL.appendingPathComponent(sample.id)
+                }
+                let cacheURL = resultDir.appendingPathComponent(Self.uniqueReadsSidecar)
+                try? FileManager.default.removeItem(at: cacheURL)
+            }
+        }
+
+        // 3. Cancel any existing computation.
+        batchUniqueReadComputationTask?.cancel()
+
+        // 4. Restart computation for all assemblies.
+        scheduleBatchUniqueReadComputation()
+
+        // 5. Update info text to indicate recompute is in progress.
+        actionBar.updateInfoText("Recomputing unique reads for all assemblies\u{2026}")
     }
 
     // MARK: - Extraction Sheet
