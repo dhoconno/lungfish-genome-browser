@@ -52,6 +52,7 @@ struct LungfishCLI: AsyncParsableCommand {
             NaoMgsCommand.self,
             NvdCommand.self,
             MetadataCommand.self,
+            BuildDbCommand.self,
             DebugCommand.self,
         ],
         defaultSubcommand: nil
