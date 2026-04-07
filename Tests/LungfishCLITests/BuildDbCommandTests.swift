@@ -192,6 +192,92 @@ final class BuildDbCommandTests: XCTestCase {
                        "fastp FASTQ file should be removed by cleanup")
     }
 
+    // MARK: - EsViritu Tests
+
+    /// Verifies that the command parses detection TSVs, resolves BAM paths,
+    /// and produces a valid SQLite database.
+    func testBuildDbEsViritu() async throws {
+        let tmpDir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tmpDir) }
+
+        let fixtureDir = findFixtureDir("esviritu-mini")
+        let resultDir = tmpDir.appendingPathComponent("esviritu")
+        try FileManager.default.copyItem(at: fixtureDir, to: resultDir)
+
+        var cmd = try BuildDbCommand.EsVirituSubcommand.parse([resultDir.path, "-q"])
+        try await cmd.run()
+
+        let dbURL = resultDir.appendingPathComponent("esviritu.sqlite")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dbURL.path),
+                       "Database file should exist after build")
+
+        let db = try EsVirituDatabase(at: dbURL)
+        let samples = try db.fetchSamples()
+        XCTAssertEqual(samples.count, 3, "Should have 3 samples")
+
+        let allSampleIds = samples.map(\.sample).sorted()
+        XCTAssertEqual(allSampleIds, ["SRR35517702", "SRR35517703", "SRR35517705"])
+
+        let allRows = try db.fetchRows(samples: allSampleIds)
+        XCTAssertGreaterThan(allRows.count, 0, "Should have detection rows")
+
+        // Verify a specific row
+        let sarscov2Rows = allRows.filter { $0.virusName.contains("Severe acute respiratory syndrome") }
+        XCTAssertGreaterThan(sarscov2Rows.count, 0, "Should have SARS-CoV-2 detections")
+
+        if let row = sarscov2Rows.first(where: { $0.sample == "SRR35517702" }) {
+            XCTAssertEqual(row.accession, "OM695287.1")
+            XCTAssertEqual(row.readCount, 26)
+            XCTAssertNil(row.uniqueReads, "Unique reads should be nil (not computed)")
+            XCTAssertNotNil(row.rpkmf)
+            XCTAssertNotNil(row.meanCoverage)
+        }
+
+        // Verify BAM paths were resolved
+        let withBam = allRows.filter { $0.bamPath != nil }
+        XCTAssertEqual(withBam.count, allRows.count,
+                       "All rows should have BAM paths (fixtures include BAM files)")
+
+        // Verify metadata
+        let meta = try db.fetchMetadata()
+        XCTAssertEqual(meta["tool"], "esviritu")
+        XCTAssertNotNil(meta["created_at"])
+    }
+
+    /// Verifies that EsViritu cleanup removes _temp dirs and intermediate TSVs
+    /// while preserving detection TSVs.
+    func testEsVirituCleanupRemovesIntermediateFiles() async throws {
+        let tmpDir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tmpDir) }
+
+        let fixtureDir = findFixtureDir("esviritu-mini")
+        let resultDir = tmpDir.appendingPathComponent("esviritu")
+        try FileManager.default.copyItem(at: fixtureDir, to: resultDir)
+
+        let fm = FileManager.default
+
+        // Run build-db (cleanup enabled by default)
+        var cmd = try BuildDbCommand.EsVirituSubcommand.parse([resultDir.path, "-q"])
+        try await cmd.run()
+
+        // Verify _temp dirs are removed
+        let sampleDir = resultDir.appendingPathComponent("SRR35517702")
+        XCTAssertFalse(fm.fileExists(atPath: sampleDir.appendingPathComponent("SRR35517702_temp").path),
+                       "_temp/ should be removed by cleanup")
+
+        // Verify intermediate TSVs are removed
+        XCTAssertFalse(fm.fileExists(atPath: sampleDir.appendingPathComponent("SRR35517702.virus_coverage_windows.tsv").path),
+                       "virus_coverage_windows.tsv should be removed by cleanup")
+        XCTAssertFalse(fm.fileExists(atPath: sampleDir.appendingPathComponent("SRR35517702.detected_virus.assembly_summary.tsv").path),
+                       "assembly_summary.tsv should be removed by cleanup")
+
+        // Verify detection TSV and database are preserved
+        XCTAssertTrue(fm.fileExists(atPath: sampleDir.appendingPathComponent("SRR35517702.detected_virus.info.tsv").path),
+                      "detected_virus.info.tsv should be preserved")
+        XCTAssertTrue(fm.fileExists(atPath: resultDir.appendingPathComponent("esviritu.sqlite").path),
+                      "esviritu.sqlite should be preserved")
+    }
+
     /// Verifies that --no-cleanup preserves all intermediate directories.
     func testTaxTriageNoCleanupPreservesAll() async throws {
         let tmpDir = try makeTempDir()

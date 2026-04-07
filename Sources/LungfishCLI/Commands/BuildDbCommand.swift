@@ -27,6 +27,7 @@ struct BuildDbCommand: AsyncParsableCommand {
         abstract: "Build SQLite databases from classifier results",
         subcommands: [
             TaxTriageSubcommand.self,
+            EsVirituSubcommand.self,
         ]
     )
 }
@@ -438,5 +439,342 @@ extension BuildDbCommand.TaxTriageSubcommand {
             return match.accession
         }
         return nil
+    }
+}
+
+// MARK: - EsViritu Subcommand
+
+extension BuildDbCommand {
+
+    /// Build a SQLite database from EsViritu pipeline output.
+    ///
+    /// Enumerates sample subdirectories, parses each `detected_virus.info.tsv`,
+    /// resolves BAM paths, and writes an `esviritu.sqlite` database in the result
+    /// directory.
+    struct EsVirituSubcommand: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "esviritu",
+            abstract: "Build SQLite database from EsViritu results"
+        )
+
+        @Argument(help: "Path to the EsViritu result directory")
+        var resultDir: String
+
+        @Flag(name: .long, help: "Force rebuild even if database exists")
+        var force: Bool = false
+
+        @Flag(name: .customLong("no-cleanup"), help: "Skip post-build cleanup of intermediate files")
+        var noCleanup: Bool = false
+
+        @OptionGroup var globalOptions: GlobalOptions
+
+        func run() async throws {
+            let resultURL = URL(fileURLWithPath: resultDir)
+            let dbURL = resultURL.appendingPathComponent("esviritu.sqlite")
+
+            // Skip if exists (unless --force)
+            if !force && FileManager.default.fileExists(atPath: dbURL.path) {
+                if !globalOptions.quiet {
+                    print("Database already exists at \(dbURL.path). Use --force to rebuild.")
+                }
+                return
+            }
+
+            // 1. Enumerate sample subdirectories containing detection TSVs
+            let rows = try parseSampleDirectories(resultURL: resultURL)
+
+            if !globalOptions.quiet {
+                print("Parsed \(rows.count) detection rows from EsViritu results")
+            }
+
+            // 2. Build database
+            let metadata: [String: String] = [
+                "tool": "esviritu",
+                "created_at": ISO8601DateFormatter().string(from: Date()),
+                "source_dir": resultURL.path,
+            ]
+
+            _ = try EsVirituDatabase.create(at: dbURL, rows: rows, metadata: metadata) { fraction, msg in
+                if self.globalOptions.outputFormat == .json {
+                    let obj: [String: Any] = ["progress": fraction, "message": msg]
+                    if let data = try? JSONSerialization.data(withJSONObject: obj),
+                       let json = String(data: data, encoding: .utf8) {
+                        FileHandle.standardError.write(Data((json + "\n").utf8))
+                    }
+                }
+            }
+
+            if !globalOptions.quiet {
+                print("Built database at \(dbURL.path) with \(rows.count) rows")
+            }
+
+            if !noCleanup {
+                performCleanup(resultURL: resultURL)
+            }
+        }
+
+        // MARK: - Sample Directory Enumeration & Parsing
+
+        /// Enumerates sample subdirectories under `resultURL` and parses detection TSVs.
+        func parseSampleDirectories(resultURL: URL) throws -> [EsVirituDetectionRow] {
+            let fm = FileManager.default
+            let contents = try fm.contentsOfDirectory(
+                at: resultURL,
+                includingPropertiesForKeys: [.isDirectoryKey]
+            )
+
+            var allRows: [EsVirituDetectionRow] = []
+
+            for dir in contents {
+                let isDir = (try? dir.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                guard isDir else { continue }
+
+                let sampleName = dir.lastPathComponent
+                // Skip _temp directories and hidden directories
+                guard !sampleName.hasPrefix("."), !sampleName.hasSuffix("_temp") else { continue }
+
+                // Look for detected_virus.info.tsv
+                let tsvURL = dir.appendingPathComponent("\(sampleName).detected_virus.info.tsv")
+                guard fm.fileExists(atPath: tsvURL.path) else { continue }
+
+                let rows = try parseDetectionTSV(at: tsvURL, sampleName: sampleName, sampleDir: dir)
+                allRows.append(contentsOf: rows)
+            }
+
+            return allRows
+        }
+
+        /// Parses a single EsViritu `detected_virus.info.tsv` file into detection rows.
+        func parseDetectionTSV(
+            at url: URL,
+            sampleName: String,
+            sampleDir: URL
+        ) throws -> [EsVirituDetectionRow] {
+            let content = try String(contentsOf: url, encoding: .utf8)
+            let lines = content.components(separatedBy: .newlines)
+                .filter { !$0.isEmpty }
+
+            guard lines.count >= 2 else {
+                return [] // Header only or empty
+            }
+
+            // Parse header to find column indices
+            let header = lines[0].split(separator: "\t", omittingEmptySubsequences: false)
+                .map { String($0) }
+            let colIndex = buildColumnIndex(from: header)
+
+            var rows: [EsVirituDetectionRow] = []
+
+            for lineIndex in 1..<lines.count {
+                let fields = lines[lineIndex]
+                    .split(separator: "\t", omittingEmptySubsequences: false)
+                    .map { String($0) }
+
+                // Allow rows with fewer fields than header (filtered_reads_in_sample may be missing)
+                guard fields.count >= 2 else { continue }
+
+                let virusName = field(fields, colIndex["name"])
+                let accession = field(fields, colIndex["accession"])
+                guard !virusName.isEmpty, !accession.isEmpty else { continue }
+
+                let description = optionalField(fields, colIndex["description"])
+                let contigLength = parseInt(fields, colIndex["length"])
+                let segment = naAwareOptionalField(fields, colIndex["segment"])
+                let assembly = field(fields, colIndex["assembly"])
+                let assemblyLength = parseInt(fields, colIndex["asm_length"])
+                let kingdom = naAwareOptionalField(fields, colIndex["kingdom"])
+                let phylum = naAwareOptionalField(fields, colIndex["phylum"])
+                let tclass = naAwareOptionalField(fields, colIndex["tclass"])
+                let torder = naAwareOptionalField(fields, colIndex["order"])
+                let family = naAwareOptionalField(fields, colIndex["family"])
+                let genus = naAwareOptionalField(fields, colIndex["genus"])
+                let species = naAwareOptionalField(fields, colIndex["species"])
+                let subspecies = naAwareOptionalField(fields, colIndex["subspecies"])
+                let rpkmf = parseDouble(fields, colIndex["rpkmf"])
+                let readCount = parseInt(fields, colIndex["read_count"]) ?? 0
+                let coveredBases = parseInt(fields, colIndex["covered_bases"])
+                let meanCoverage = parseDouble(fields, colIndex["mean_coverage"])
+                let avgReadIdentity = parseDouble(fields, colIndex["avg_read_identity"])
+                let pi = parseDouble(fields, colIndex["pi"])
+                let filteredReadsInSample = parseInt(fields, colIndex["filtered_reads_in_sample"])
+
+                // Resolve BAM path
+                let bamRelative = "\(sampleName)_temp/\(sampleName).third.filt.sorted.bam"
+                let bamURL = sampleDir.appendingPathComponent("\(sampleName)_temp")
+                    .appendingPathComponent("\(sampleName).third.filt.sorted.bam")
+                var bamPath: String?
+                var bamIndexPath: String?
+                if FileManager.default.fileExists(atPath: bamURL.path) {
+                    bamPath = bamRelative
+                    let baiURL = URL(fileURLWithPath: bamURL.path + ".bai")
+                    let csiURL = URL(fileURLWithPath: bamURL.path + ".csi")
+                    if FileManager.default.fileExists(atPath: baiURL.path) {
+                        bamIndexPath = bamRelative + ".bai"
+                    } else if FileManager.default.fileExists(atPath: csiURL.path) {
+                        bamIndexPath = bamRelative + ".csi"
+                    }
+                }
+
+                rows.append(EsVirituDetectionRow(
+                    sample: sampleName,
+                    virusName: virusName,
+                    description: description,
+                    contigLength: contigLength,
+                    segment: segment,
+                    accession: accession,
+                    assembly: assembly,
+                    assemblyLength: assemblyLength,
+                    kingdom: kingdom,
+                    phylum: phylum,
+                    tclass: tclass,
+                    torder: torder,
+                    family: family,
+                    genus: genus,
+                    species: species,
+                    subspecies: subspecies,
+                    rpkmf: rpkmf,
+                    readCount: readCount,
+                    uniqueReads: nil, // Deferred: computed in a separate pass
+                    coveredBases: coveredBases,
+                    meanCoverage: meanCoverage,
+                    avgReadIdentity: avgReadIdentity,
+                    pi: pi,
+                    filteredReadsInSample: filteredReadsInSample,
+                    bamPath: bamPath,
+                    bamIndexPath: bamIndexPath
+                ))
+            }
+
+            return rows
+        }
+
+        // MARK: - Post-Build Cleanup
+
+        /// Removes intermediate files while preserving detection TSVs and the database.
+        ///
+        /// Removes: `*_temp/` directories, `*.virus_coverage_windows.tsv`,
+        /// `*.detected_virus.assembly_summary.tsv`.
+        /// Keeps: `*.detected_virus.info.tsv`, `esviritu.sqlite`.
+        private func performCleanup(resultURL: URL) {
+            let fm = FileManager.default
+            var freedBytes: Int64 = 0
+
+            guard let sampleDirs = try? fm.contentsOfDirectory(
+                at: resultURL,
+                includingPropertiesForKeys: [.isDirectoryKey]
+            ) else { return }
+
+            for dir in sampleDirs {
+                let isDir = (try? dir.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                guard isDir else { continue }
+
+                let name = dir.lastPathComponent
+                guard !name.hasPrefix(".") else { continue }
+
+                // Remove _temp directories (contain BAM files — no longer needed after DB build)
+                if name.hasSuffix("_temp") {
+                    if let size = directorySize(dir) {
+                        try? fm.removeItem(at: dir)
+                        freedBytes += size
+                    }
+                    continue
+                }
+
+                // Inside sample directories, remove intermediate TSVs
+                let coverageWindows = dir.appendingPathComponent("\(name).virus_coverage_windows.tsv")
+                if let size = fileSize(coverageWindows) {
+                    try? fm.removeItem(at: coverageWindows)
+                    freedBytes += size
+                }
+
+                let assemblySummary = dir.appendingPathComponent("\(name).detected_virus.assembly_summary.tsv")
+                if let size = fileSize(assemblySummary) {
+                    try? fm.removeItem(at: assemblySummary)
+                    freedBytes += size
+                }
+
+                // Remove _temp directory inside sample directory
+                let tempDir = dir.appendingPathComponent("\(name)_temp")
+                if let size = directorySize(tempDir) {
+                    try? fm.removeItem(at: tempDir)
+                    freedBytes += size
+                }
+            }
+
+            if !globalOptions.quiet {
+                print("Cleanup complete. Freed \(formatBytes(freedBytes))")
+            }
+        }
+
+        private func directorySize(_ url: URL) -> Int64? {
+            let fm = FileManager.default
+            guard fm.fileExists(atPath: url.path) else { return nil }
+            guard let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey]) else { return nil }
+            var total: Int64 = 0
+            for case let fileURL as URL in enumerator {
+                let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+                total += Int64(size)
+            }
+            return total
+        }
+
+        private func fileSize(_ url: URL) -> Int64? {
+            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            return Int64(size)
+        }
+
+        private func formatBytes(_ bytes: Int64) -> String {
+            let formatter = ByteCountFormatter()
+            formatter.countStyle = .file
+            return formatter.string(fromByteCount: bytes)
+        }
+
+        // MARK: - Column Index Builder
+
+        private func buildColumnIndex(from header: [String]) -> [String: Int] {
+            var index: [String: Int] = [:]
+            for (i, name) in header.enumerated() {
+                index[name.lowercased().trimmingCharacters(in: .whitespaces)] = i
+            }
+            return index
+        }
+
+        // MARK: - Field Accessors
+
+        private func field(_ fields: [String], _ index: Int?) -> String {
+            guard let i = index, i < fields.count else { return "" }
+            return fields[i]
+        }
+
+        private func optionalField(_ fields: [String], _ index: Int?) -> String? {
+            guard let i = index, i < fields.count else { return nil }
+            let val = fields[i]
+            return val.isEmpty ? nil : val
+        }
+
+        /// Returns nil for empty strings and "NA" values.
+        private func naAwareOptionalField(_ fields: [String], _ index: Int?) -> String? {
+            guard let i = index, i < fields.count else { return nil }
+            let val = fields[i].trimmingCharacters(in: .whitespaces)
+            if val.isEmpty || val == "NA" || val == "na" { return nil }
+            return val
+        }
+
+        private func parseDouble(_ fields: [String], _ index: Int?) -> Double? {
+            guard let i = index, i < fields.count else { return nil }
+            return Double(fields[i])
+        }
+
+        private func parseInt(_ fields: [String], _ index: Int?) -> Int? {
+            guard let i = index, i < fields.count else { return nil }
+            if let intVal = Int(fields[i]) {
+                return intVal
+            }
+            if let dblVal = Double(fields[i]) {
+                return Int(dblVal)
+            }
+            return nil
+        }
     }
 }
