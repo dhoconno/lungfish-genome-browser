@@ -2180,6 +2180,11 @@ final class TaxTriageBatchRegressionTests: XCTestCase {
             vc.testSampleFilterControl.isHidden,
             "sampleFilterControl must be hidden after multi-sample configure() — no flash"
         )
+        // batchOverviewView must also be hidden — it belongs to the single-sample path.
+        XCTAssertTrue(
+            vc.testBatchOverviewView.isHidden,
+            "batchOverviewView must be hidden after multi-sample configure() — no flash"
+        )
     }
 
     /// After `configure(result:config:)` with multi-sample data, the flat table is visible
@@ -2361,6 +2366,62 @@ final class TaxTriageBatchRegressionTests: XCTestCase {
         XCTAssertTrue(
             vc.testSampleFilterControl.isHidden,
             "sampleFilterControl must be hidden after multi-sample configure() — no viewport bounce"
+        )
+    }
+
+    // MARK: - Fix 3: Multi-Sample Unique Reads from Sidecar
+
+    /// When `configure(result:config:)` is called with a single TaxTriageResult that has
+    /// `perSampleDeduplicatedReadCounts` pre-populated (e.g., loaded from a sidecar JSON),
+    /// the flat table must immediately show the correct unique read counts without waiting
+    /// for any background BAM computation.
+    func testMultiSampleUniqueReadsLoadedFromSidecar() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TTMultiSampleUniq-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        let sampleIds = ["ms1", "ms2"]
+        var metricsFiles: [URL] = []
+        for sampleId in sampleIds {
+            let tsv = "sample\torganism\treads\ttass_score\tconfidence\n\(sampleId)\tEscherichia coli\t1000\t0.9\thigh\n"
+            let url = tmp.appendingPathComponent("\(sampleId).organisms.report.txt")
+            try tsv.write(to: url, atomically: true, encoding: .utf8)
+            metricsFiles.append(url)
+        }
+
+        let samples = sampleIds.map { sid in
+            TaxTriageSample(sampleId: sid, fastq1: tmp.appendingPathComponent("\(sid).fastq"))
+        }
+        let config = TaxTriageConfig(samples: samples, outputDirectory: tmp)
+        var result = TaxTriageResult(
+            config: config,
+            runtime: 1.0,
+            exitCode: 0,
+            outputDirectory: tmp,
+            metricsFiles: metricsFiles
+        )
+
+        // Pre-populate perSampleDeduplicatedReadCounts as if loaded from a sidecar.
+        let normalizedEcoli = OrganismNameNormalizer.normalizedKey("Escherichia coli")
+        result.perSampleDeduplicatedReadCounts = [
+            normalizedEcoli: ["ms1": 750, "ms2": 820]
+        ]
+
+        let vc = TaxTriageResultViewController()
+        vc.loadViewIfNeeded()
+        vc.configure(result: result)
+
+        let tableView = vc.testBatchFlatTableView
+        XCTAssertEqual(
+            tableView.uniqueReadsByKey["ms1\tEscherichia coli"],
+            750,
+            "ms1: unique reads must be 750 (from sidecar perSampleDeduplicatedReadCounts)"
+        )
+        XCTAssertEqual(
+            tableView.uniqueReadsByKey["ms2\tEscherichia coli"],
+            820,
+            "ms2: unique reads must be 820 (from sidecar perSampleDeduplicatedReadCounts)"
         )
     }
 
