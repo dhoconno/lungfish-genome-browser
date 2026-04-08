@@ -126,6 +126,28 @@ public struct EsVirituDetectionRow: Sendable {
     }
 }
 
+// MARK: - Coverage Window Type
+
+/// A single coverage window from the `coverage_windows` table.
+public struct EsVirituCoverageWindow: Sendable {
+    public let sample: String
+    public let accession: String
+    public let windowIndex: Int
+    public let windowStart: Int
+    public let windowEnd: Int
+    public let averageCoverage: Double
+
+    public init(sample: String, accession: String, windowIndex: Int,
+                windowStart: Int, windowEnd: Int, averageCoverage: Double) {
+        self.sample = sample
+        self.accession = accession
+        self.windowIndex = windowIndex
+        self.windowStart = windowStart
+        self.windowEnd = windowEnd
+        self.averageCoverage = averageCoverage
+    }
+}
+
 // MARK: - EsVirituDatabase
 
 /// SQLite-backed storage for EsViritu viral detection results and run metadata.
@@ -192,6 +214,7 @@ public final class EsVirituDatabase: @unchecked Sendable {
     public static func create(
         at url: URL,
         rows: [EsVirituDetectionRow],
+        coverageWindows: [EsVirituCoverageWindow] = [],
         metadata: [String: String],
         progress: (@Sendable (Double, String) -> Void)? = nil
     ) throws -> EsVirituDatabase {
@@ -221,6 +244,9 @@ public final class EsVirituDatabase: @unchecked Sendable {
             progress?(0.05, "Schema created")
 
             try bulkInsertRows(db: db, rows: rows, progress: progress)
+            progress?(0.75, "Inserting coverage windows...")
+
+            try bulkInsertCoverageWindows(db: db, windows: coverageWindows, progress: progress)
             progress?(0.80, "Inserting metadata...")
 
             try insertMetadata(db: db, metadata: metadata)
@@ -274,6 +300,17 @@ public final class EsVirituDatabase: @unchecked Sendable {
             bam_path TEXT,
             bam_index_path TEXT,
             UNIQUE(sample, accession)
+        );
+
+        CREATE TABLE coverage_windows (
+            rowid INTEGER PRIMARY KEY,
+            sample TEXT NOT NULL,
+            accession TEXT NOT NULL,
+            window_index INTEGER NOT NULL,
+            window_start INTEGER NOT NULL,
+            window_end INTEGER NOT NULL,
+            average_coverage REAL NOT NULL,
+            UNIQUE(sample, accession, window_index)
         );
 
         CREATE TABLE metadata (
@@ -440,6 +477,7 @@ public final class EsVirituDatabase: @unchecked Sendable {
             "CREATE INDEX idx_ev_virus ON detection_rows(virus_name)",
             "CREATE INDEX idx_ev_assembly ON detection_rows(assembly)",
             "CREATE INDEX idx_ev_reads ON detection_rows(read_count)",
+            "CREATE INDEX idx_cw_sample_acc ON coverage_windows(sample, accession)",
         ]
         for sql in indices {
             guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
@@ -449,7 +487,104 @@ public final class EsVirituDatabase: @unchecked Sendable {
         }
     }
 
+    // MARK: - Bulk Insert Coverage Windows
+
+    private static func bulkInsertCoverageWindows(
+        db: OpaquePointer,
+        windows: [EsVirituCoverageWindow],
+        progress: (@Sendable (Double, String) -> Void)?
+    ) throws {
+        guard !windows.isEmpty else { return }
+
+        sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil)
+
+        let insertSQL = """
+        INSERT INTO coverage_windows (
+            sample, accession, window_index, window_start, window_end, average_coverage
+        ) VALUES (?,?,?,?,?,?)
+        """
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, insertSQL, -1, &stmt, nil) == SQLITE_OK else {
+            let msg = String(cString: sqlite3_errmsg(db))
+            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+            throw EsVirituDatabaseError.insertFailed("Coverage windows prepare failed: \(msg)")
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        let total = windows.count
+        let reportInterval = max(1, total / 20)
+
+        for (i, w) in windows.enumerated() {
+            sqlite3_reset(stmt)
+            sqlite3_clear_bindings(stmt)
+
+            evBindText(stmt, 1, w.sample)
+            evBindText(stmt, 2, w.accession)
+            sqlite3_bind_int64(stmt, 3, Int64(w.windowIndex))
+            sqlite3_bind_int64(stmt, 4, Int64(w.windowStart))
+            sqlite3_bind_int64(stmt, 5, Int64(w.windowEnd))
+            sqlite3_bind_double(stmt, 6, w.averageCoverage)
+
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                let msg = String(cString: sqlite3_errmsg(db))
+                sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+                throw EsVirituDatabaseError.insertFailed("Coverage window row \(i) failed: \(msg)")
+            }
+
+            if (i + 1) % reportInterval == 0 {
+                let fraction = 0.75 + 0.05 * Double(i + 1) / Double(total)
+                progress?(fraction, "Inserting coverage windows \(i + 1)/\(total)...")
+            }
+        }
+
+        guard sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else {
+            let msg = String(cString: sqlite3_errmsg(db))
+            throw EsVirituDatabaseError.insertFailed("Coverage windows commit failed: \(msg)")
+        }
+    }
+
     // MARK: - Queries
+
+    /// Returns coverage windows for a given sample and accession, ordered by window index.
+    ///
+    /// - Parameters:
+    ///   - sample: Sample identifier.
+    ///   - accession: Viral accession identifier.
+    /// - Returns: Array of ``EsVirituCoverageWindow`` ordered by `windowIndex`.
+    public func fetchCoverageWindows(sample: String, accession: String) throws -> [EsVirituCoverageWindow] {
+        guard let db else { throw EsVirituDatabaseError.queryFailed("Database not open") }
+
+        let sql = """
+        SELECT sample, accession, window_index, window_start, window_end, average_coverage
+        FROM coverage_windows
+        WHERE sample = ? AND accession = ?
+        ORDER BY window_index
+        """
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            let msg = String(cString: sqlite3_errmsg(db))
+            throw EsVirituDatabaseError.queryFailed(msg)
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        evBindText(stmt, 1, sample)
+        evBindText(stmt, 2, accession)
+
+        var results: [EsVirituCoverageWindow] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            results.append(EsVirituCoverageWindow(
+                sample: String(cString: sqlite3_column_text(stmt, 0)),
+                accession: String(cString: sqlite3_column_text(stmt, 1)),
+                windowIndex: Int(sqlite3_column_int64(stmt, 2)),
+                windowStart: Int(sqlite3_column_int64(stmt, 3)),
+                windowEnd: Int(sqlite3_column_int64(stmt, 4)),
+                averageCoverage: sqlite3_column_double(stmt, 5)
+            ))
+        }
+        return results
+    }
 
     /// Returns detection rows for the given sample names.
     ///

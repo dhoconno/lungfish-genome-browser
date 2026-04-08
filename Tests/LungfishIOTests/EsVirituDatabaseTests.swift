@@ -115,6 +115,40 @@ final class EsVirituDatabaseTests: XCTestCase {
         XCTAssertEqual(try db.fetchSamples().count, 0)
     }
 
+    // MARK: - Coverage Windows
+
+    func testCoverageWindowsRoundTrip() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let dbURL = dir.appendingPathComponent("test.sqlite")
+
+        let rows = [makeTestRow(sample: "s1", virusName: "Virus A",
+                                accession: "NC_001", assembly: "GCA_001", readCount: 100)]
+        let windows = [
+            EsVirituCoverageWindow(sample: "s1", accession: "NC_001",
+                                   windowIndex: 0, windowStart: 0, windowEnd: 100, averageCoverage: 5.0),
+            EsVirituCoverageWindow(sample: "s1", accession: "NC_001",
+                                   windowIndex: 1, windowStart: 100, windowEnd: 200, averageCoverage: 12.5),
+        ]
+        let db = try EsVirituDatabase.create(at: dbURL, rows: rows, coverageWindows: windows, metadata: [:])
+
+        let fetched = try db.fetchCoverageWindows(sample: "s1", accession: "NC_001")
+        XCTAssertEqual(fetched.count, 2)
+        XCTAssertEqual(fetched[0].windowIndex, 0)
+        XCTAssertEqual(fetched[0].averageCoverage, 5.0, accuracy: 0.01)
+        XCTAssertEqual(fetched[1].windowStart, 100)
+    }
+
+    func testCoverageWindowsEmptyForMissingSample() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let dbURL = dir.appendingPathComponent("test.sqlite")
+
+        let db = try EsVirituDatabase.create(at: dbURL, rows: [], coverageWindows: [], metadata: [:])
+        let fetched = try db.fetchCoverageWindows(sample: "nonexistent", accession: "NC_001")
+        XCTAssertEqual(fetched.count, 0)
+    }
+
     // MARK: - Helpers
 
     private func makeTestRow(

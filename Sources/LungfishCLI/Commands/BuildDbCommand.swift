@@ -488,14 +488,44 @@ extension BuildDbCommand {
                 print("Parsed \(rows.count) detection rows from EsViritu results")
             }
 
-            // 2. Build database
+            // 2. Parse coverage windows from virus_coverage_windows.tsv files
+            var allWindows: [EsVirituCoverageWindow] = []
+            let fm = FileManager.default
+            if let sampleDirs = try? fm.contentsOfDirectory(at: resultURL, includingPropertiesForKeys: [.isDirectoryKey]) {
+                for dir in sampleDirs {
+                    let isDir = (try? dir.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                    guard isDir else { continue }
+                    let sampleName = dir.lastPathComponent
+                    guard !sampleName.hasPrefix(".") else { continue }
+
+                    let cwURL = dir.appendingPathComponent("\(sampleName).virus_coverage_windows.tsv")
+                    if fm.fileExists(atPath: cwURL.path) {
+                        if let parsed = try? EsVirituCoverageParser.parse(url: cwURL) {
+                            let dbWindows = parsed.map { w in
+                                EsVirituCoverageWindow(
+                                    sample: sampleName, accession: w.accession,
+                                    windowIndex: w.windowIndex, windowStart: w.windowStart,
+                                    windowEnd: w.windowEnd, averageCoverage: w.averageCoverage
+                                )
+                            }
+                            allWindows.append(contentsOf: dbWindows)
+                        }
+                    }
+                }
+            }
+
+            if !globalOptions.quiet {
+                print("Parsed \(allWindows.count) coverage windows from EsViritu results")
+            }
+
+            // 3. Build database
             let metadata: [String: String] = [
                 "tool": "esviritu",
                 "created_at": ISO8601DateFormatter().string(from: Date()),
                 "source_dir": resultURL.path,
             ]
 
-            _ = try EsVirituDatabase.create(at: dbURL, rows: rows, metadata: metadata) { fraction, msg in
+            _ = try EsVirituDatabase.create(at: dbURL, rows: rows, coverageWindows: allWindows, metadata: metadata) { fraction, msg in
                 if self.globalOptions.outputFormat == .json {
                     let obj: [String: Any] = ["progress": fraction, "message": msg]
                     if let data = try? JSONSerialization.data(withJSONObject: obj),
