@@ -1316,6 +1316,8 @@ extension BuildDbCommand {
             var allRows: [Kraken2ClassificationRow] = []
             var sampleMetadata: [String: String] = [:]
 
+            // First pass: batch layout — sample subdirectories containing classification.kreport
+            var foundSubdirKreports = false
             for dir in contents.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
                 let isDir = (try? dir.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
                 guard isDir else { continue }
@@ -1328,6 +1330,7 @@ extension BuildDbCommand {
                 let kreportURL = dir.appendingPathComponent("classification.kreport")
                 guard fm.fileExists(atPath: kreportURL.path) else { continue }
 
+                foundSubdirKreports = true
                 let (rows, tree) = try parseKreport(at: kreportURL, sampleId: sampleId)
                 allRows.append(contentsOf: rows)
 
@@ -1336,6 +1339,26 @@ extension BuildDbCommand {
                 sampleMetadata["classified_reads_\(sampleId)"] = "\(tree.classifiedReads)"
                 sampleMetadata["unclassified_reads_\(sampleId)"] = "\(tree.unclassifiedReads)"
             }
+
+            if foundSubdirKreports {
+                return (allRows, sampleMetadata)
+            }
+
+            // Fallback: single-sample root layout — look for any *.kreport at resultURL
+            let rootKreports = contents
+                .filter { $0.pathExtension == "kreport" }
+                .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            guard let kreportURL = rootKreports.first else {
+                return ([], [:])
+            }
+
+            // Derive sample ID from kreport filename (drop .kreport extension)
+            let sampleId = kreportURL.deletingPathExtension().lastPathComponent
+            let (rows, tree) = try parseKreport(at: kreportURL, sampleId: sampleId)
+            allRows.append(contentsOf: rows)
+            sampleMetadata["total_reads_\(sampleId)"] = "\(tree.totalReads)"
+            sampleMetadata["classified_reads_\(sampleId)"] = "\(tree.classifiedReads)"
+            sampleMetadata["unclassified_reads_\(sampleId)"] = "\(tree.unclassifiedReads)"
 
             return (allRows, sampleMetadata)
         }
