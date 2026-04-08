@@ -1282,6 +1282,7 @@ public class SidebarViewController: NSViewController {
                         url: resultURL,
                         subtitle: esvirituResultTitle(for: resultURL)
                     )
+                    childItem.userInfo["sampleId"] = record.sampleId
                     groupItem.children.append(childItem)
                 }
             } else {
@@ -1305,11 +1306,21 @@ public class SidebarViewController: NSViewController {
                         url: resultURL,
                         subtitle: classificationResultTitle(for: resultURL)
                     )
+                    childItem.userInfo["sampleId"] = record.sampleId
                     groupItem.children.append(childItem)
                 }
             } else {
                 buildBatchChildrenFromFilesystem(info: info, groupItem: groupItem, sidecarCheck: ClassificationResult.exists, itemType: .classificationResult, icon: "k.circle")
             }
+
+        case "taxtriage":
+            // TaxTriage always writes sample subdirectories. Create children for each.
+            buildBatchChildrenFromFilesystem(
+                info: info, groupItem: groupItem,
+                sidecarCheck: { _ in true },
+                itemType: .taxTriageResult,
+                icon: "t.circle"
+            )
 
         default:
             // Generic fallback: scan for subdirectories
@@ -1349,6 +1360,9 @@ public class SidebarViewController: NSViewController {
                 children: [],
                 url: child
             )
+            // Identify the child as a specific sample so the routing layer can
+            // filter the batch view to just this sample after display.
+            childItem.userInfo["sampleId"] = child.lastPathComponent
             groupItem.children.append(childItem)
         }
         groupItem.subtitle = "\(groupItem.children.count) samples"
