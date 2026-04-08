@@ -203,6 +203,7 @@ private func updateUniqueReadsInDB(
     bamPathCol: String,
     resultURL: URL,
     bamPathResolver: (URL, String, String) -> String,
+    updateAccessionLength: Bool,
     quiet: Bool
 ) {
     guard let samtoolsPath = findSamtools() else {
@@ -334,7 +335,7 @@ private func updateUniqueReadsInDB(
     }
 
     // Update accession_length column for rows that have a primary_accession
-    if !refLengths.isEmpty {
+    if updateAccessionLength && !refLengths.isEmpty {
         let lenSQL = "UPDATE \(table) SET accession_length = ? WHERE rowid = ?"
         var lenStmt: OpaquePointer?
         if sqlite3_prepare_v2(db, lenSQL, -1, &lenStmt, nil) == SQLITE_OK {
@@ -487,6 +488,7 @@ extension BuildDbCommand {
                     // TaxTriage BAM paths are relative to resultURL directly
                     resultURL.appendingPathComponent(bamRelPath).path
                 },
+                updateAccessionLength: true,
                 quiet: globalOptions.quiet
             )
 
@@ -950,6 +952,7 @@ extension BuildDbCommand {
                     // EsViritu BAM paths are now full relative paths from the result root.
                     resultURL.appendingPathComponent(bamRelPath).path
                 },
+                updateAccessionLength: false,
                 quiet: globalOptions.quiet
             )
 
