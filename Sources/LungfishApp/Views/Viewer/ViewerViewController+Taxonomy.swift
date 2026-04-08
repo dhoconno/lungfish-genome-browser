@@ -457,64 +457,6 @@ extension ViewerViewController {
         taxonomyLogger.info("displayTaxonomyResult: Showing browser with \(result.tree.totalReads) reads, \(result.tree.speciesCount) species")
     }
 
-    /// Displays the taxonomy classification browser in batch mode.
-    ///
-    /// Creates a ``TaxonomyViewController``, adds it as a child filling the content area,
-    /// and calls ``TaxonomyViewController/configureBatch(batchURL:manifest:projectURL:)``
-    /// to populate it from the batch manifest. Does NOT wire extraction or BLAST callbacks
-    /// because batch mode uses the flat aggregated table, not the per-sample tree.
-    ///
-    /// - Parameters:
-    ///   - batchURL: The batch result root directory.
-    ///   - manifest: The `ClassificationBatchResultManifest` loaded from the batch directory.
-    ///   - projectURL: The containing project URL (used for display name resolution).
-    func displayTaxonomyBatch(
-        batchURL: URL,
-        manifest: ClassificationBatchResultManifest,
-        projectURL: URL
-    ) {
-        hideQuickLookPreview()
-        hideFASTQDatasetView()
-        hideVCFDatasetView()
-        hideFASTACollectionView()
-        hideTaxonomyView()
-        hideEsVirituView()
-        hideTaxTriageView()
-        hideNaoMgsView()
-        hideNvdView()
-        contentMode = .metagenomics
-
-        let controller = TaxonomyViewController()
-        addChild(controller)
-
-        annotationDrawerView?.isHidden = true
-        fastqMetadataDrawerView?.isHidden = true
-
-        // Force loadView() so all subviews exist, then configure BEFORE adding
-        // to the view hierarchy to avoid a one-frame bounce.
-        let taxView = controller.view
-        controller.configureBatch(batchURL: batchURL, manifest: manifest, projectURL: projectURL)
-        taxView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(taxView)
-
-        NSLayoutConstraint.activate([
-            taxView.topAnchor.constraint(equalTo: view.topAnchor),
-            taxView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            taxView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            taxView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ])
-
-        taxonomyViewController = controller
-
-        enhancedRulerView.isHidden = true
-        viewerView.isHidden = true
-        headerView.isHidden = true
-        statusBar.isHidden = true
-        geneTabBarView.isHidden = true
-
-        taxonomyLogger.info("displayTaxonomyBatch: Showing batch browser for '\(batchURL.lastPathComponent, privacy: .public)' with \(manifest.samples.count) samples")
-    }
-
     /// Displays the taxonomy classification browser backed by a pre-built SQLite database.
     ///
     /// Creates a ``TaxonomyViewController``, adds it as a child filling the content area,

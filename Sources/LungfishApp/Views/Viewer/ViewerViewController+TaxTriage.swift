@@ -313,61 +313,6 @@ extension ViewerViewController {
         taxTriageLogger.info("displayTaxTriageResult: Showing browser with \(reportCount) reports, \(metricsCount) metrics files")
     }
 
-    /// Displays the TaxTriage clinical triage browser in batch group mode.
-    ///
-    /// Creates a ``TaxTriageResultViewController``, adds it as a child filling the content area,
-    /// and calls ``TaxTriageResultViewController/configureBatchGroup(batchURL:projectURL:)``
-    /// to scan subdirectories and populate the flat aggregated table.
-    ///
-    /// Does NOT wire BLAST or re-run callbacks because batch group mode uses the flat
-    /// aggregated table rather than the per-sample detail pane.
-    ///
-    /// - Parameters:
-    ///   - batchURL: The batch result root directory (parent of per-sample subdirectories).
-    ///   - projectURL: The containing project URL (used for display name resolution).
-    func displayTaxTriageBatch(batchURL: URL, projectURL: URL) {
-        hideQuickLookPreview()
-        hideFASTQDatasetView()
-        hideVCFDatasetView()
-        hideFASTACollectionView()
-        hideTaxonomyView()
-        hideEsVirituView()
-        hideTaxTriageView()
-        hideNaoMgsView()
-        hideNvdView()
-        contentMode = .metagenomics
-
-        let controller = TaxTriageResultViewController()
-        addChild(controller)
-
-        annotationDrawerView?.isHidden = true
-        fastqMetadataDrawerView?.isHidden = true
-
-        // Force loadView() so all subviews exist, then configure BEFORE adding
-        // to the view hierarchy to avoid a one-frame bounce.
-        let ttView = controller.view
-        controller.configureBatchGroup(batchURL: batchURL, projectURL: projectURL)
-        ttView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(ttView)
-
-        NSLayoutConstraint.activate([
-            ttView.topAnchor.constraint(equalTo: view.topAnchor),
-            ttView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            ttView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            ttView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ])
-
-        taxTriageViewController = controller
-
-        enhancedRulerView.isHidden = true
-        viewerView.isHidden = true
-        headerView.isHidden = true
-        statusBar.isHidden = true
-        geneTabBarView.isHidden = true
-
-        taxTriageLogger.info("displayTaxTriageBatch: Showing batch browser for '\(batchURL.lastPathComponent, privacy: .public)'")
-    }
-
     /// Displays the TaxTriage clinical triage browser backed by a pre-built SQLite database.
     ///
     /// Creates a ``TaxTriageResultViewController``, adds it as a child filling the content area,

@@ -1617,31 +1617,20 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
         // Classification results (Kraken2 kreport/kraken output)
         if item.type == .classificationResult, let url = item.url {
-            displayClassificationResult(at: url)
+            routeClassifierDisplay(url: url)
             return
         }
 
         // EsViritu viral detection results
         if item.type == .esvirituResult, let url = item.url {
-            displayEsVirituResult(at: url)
+            routeClassifierDisplay(url: url)
             return
         }
 
-        // TaxTriage results (including per-sample children of batch groups).
-        // TaxTriage directories don't use the "-batch-" naming convention, so
-        // multi-sample runs arrive here as .taxTriageResult rather than .batchGroup.
-        // Check for a SQLite database first and route through the DB-backed path.
+        // TaxTriage results — all go through the DB router now.
+        // Per-sample display will be handled via DB queries (Task 6).
         if item.type == .taxTriageResult, let url = item.url {
-            let sampleId = item.userInfo["sampleId"]
-            if sampleId == nil {
-                // Top-level result — check for SQLite DB and route through batch display.
-                let dbURL = url.appendingPathComponent("taxtriage.sqlite")
-                if FileManager.default.fileExists(atPath: dbURL.path) {
-                    displayBatchGroup(at: url)
-                    return
-                }
-            }
-            displayTaxTriageResultFromSidebar(at: url, sampleId: sampleId)
+            routeClassifierDisplay(url: url)
             return
         }
 
@@ -1659,17 +1648,16 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
         // Generic analysis results in Analyses/ folder — try to detect tool type
         // from directory name and dispatch to the appropriate viewer.
-        // Classifier batch results (taxtriage, esviritu, kraken2) route through
-        // displayBatchGroup which handles SQLite DB-first loading and auto-build.
+        // Classifier results route through the ClassifierDatabaseRouter; non-classifier
+        // results are dispatched by prefix.
         if item.type == .analysisResult, let url = item.url {
+            if ClassifierDatabaseRouter.route(for: url) != nil {
+                routeClassifierDisplay(url: url)
+                return
+            }
+            // Non-classifier analysis results
             let dirName = url.lastPathComponent
-            if dirName.hasPrefix("esviritu") {
-                displayBatchGroup(at: url)
-            } else if dirName.hasPrefix("kraken2") || dirName.hasPrefix("classification") {
-                displayBatchGroup(at: url)
-            } else if dirName.hasPrefix("taxtriage") {
-                displayBatchGroup(at: url)
-            } else if dirName.hasPrefix("naomgs") {
+            if dirName.hasPrefix("naomgs") {
                 displayNaoMgsResultFromSidebar(at: url)
             } else if dirName.hasPrefix("nvd") {
                 displayNvdResultFromSidebar(at: url)
@@ -1744,210 +1732,21 @@ extension MainSplitViewController: SidebarSelectionDelegate {
     }
 
 
-    /// Display a saved classification result from a classification directory.
+    /// Routes a classifier result directory through the ``ClassifierDatabaseRouter``.
     ///
-    /// Loads the `ClassificationResult` from the directory's sidecar JSON,
-    /// rebuilds the taxonomy tree from the kreport, and shows the taxonomy browser.
-    ///
-    /// - Parameter url: The classification result directory URL.
-    private func displayClassificationResult(at url: URL) {
-        logger.info("displayClassificationResult: Opening '\(url.lastPathComponent, privacy: .public)'")
-
-        do {
-            let result = try ClassificationResult.load(from: url)
-            viewerController.displayTaxonomyResult(result)
-
-            // Wire sample picker state to Inspector for embedded sample selector
-            if let taxonomyVC = viewerController.taxonomyViewController {
-                let knownIds = Set(taxonomyVC.sampleEntries.map(\.id))
-                let metadataStore = SampleMetadataStore.load(from: url, knownSampleIds: knownIds)
-                metadataStore?.wireAutosave(bundleURL: url)
-                let attachmentStore = BundleAttachmentStore(bundleURL: url)
-                taxonomyVC.sampleMetadataStore = metadataStore
-                self.inspectorController?.updateClassifierSampleState(
-                    pickerState: taxonomyVC.samplePickerState,
-                    entries: taxonomyVC.sampleEntries,
-                    strippedPrefix: taxonomyVC.strippedPrefix,
-                    metadata: metadataStore,
-                    attachments: attachmentStore
-                )
-            }
-
-            logger.info("displayClassificationResult: Loaded \(result.tree.totalReads) reads, \(result.tree.speciesCount) species")
-        } catch {
-            logger.error("displayClassificationResult: Failed - \(error.localizedDescription, privacy: .public)")
-            let alert = NSAlert()
-            alert.messageText = "Failed to Load Classification Result"
-            alert.informativeText = error.localizedDescription
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "OK")
-            if let window = self.view.window ?? NSApp.keyWindow {
-                alert.beginSheetModal(for: window)
-            }
-        }
-    }
-
-    /// Display a saved EsViritu result from a result directory.
-    ///
-    /// Loads the `EsVirituResult` from the directory's sidecar JSON,
-    /// parses the detection TSV files, and shows the viral detection browser.
-    ///
-    /// - Parameter url: The EsViritu result directory URL.
-    private func displayEsVirituResult(at url: URL) {
-        logger.info("displayEsVirituResult: Opening '\(url.lastPathComponent, privacy: .public)'")
-
-        do {
-            let pipelineResult = try LungfishWorkflow.EsVirituResult.load(from: url)
-
-            // Parse the TSV output files into the display model
-            let detections = (try? EsVirituDetectionParser.parse(url: pipelineResult.detectionURL)) ?? []
-            let assemblies = EsVirituDetectionParser.groupByAssembly(detections)
-            let taxProfile: [ViralTaxProfile]
-            if let tpURL = pipelineResult.taxProfileURL {
-                taxProfile = (try? EsVirituTaxProfileParser.parse(url: tpURL)) ?? []
+    /// If the directory has a pre-built SQLite database, displays via
+    /// ``displayBatchGroup(at:)``. If the directory is a classifier result but has
+    /// no database yet, shows a placeholder and triggers an auto-build. If the
+    /// directory is not a classifier result at all, logs a warning.
+    private func routeClassifierDisplay(url: URL) {
+        if let route = ClassifierDatabaseRouter.route(for: url) {
+            if route.databaseURL != nil {
+                displayBatchGroup(at: url)
             } else {
-                taxProfile = []
-            }
-            let coverageWindows: [ViralCoverageWindow]
-            if let cvURL = pipelineResult.coverageURL {
-                coverageWindows = (try? EsVirituCoverageParser.parse(url: cvURL)) ?? []
-            } else {
-                coverageWindows = []
-            }
-
-            let ioResult = LungfishIO.EsVirituResult(
-                sampleId: pipelineResult.config.sampleName,
-                detections: detections,
-                assemblies: assemblies,
-                taxProfile: taxProfile,
-                coverageWindows: coverageWindows,
-                totalFilteredReads: detections.first?.filteredReadsInSample ?? 0,
-                detectedFamilyCount: Set(detections.compactMap(\.family)).count,
-                detectedSpeciesCount: Set(detections.compactMap(\.species)).count,
-                runtime: pipelineResult.runtime,
-                toolVersion: pipelineResult.toolVersion
-            )
-
-            viewerController.displayEsVirituResult(ioResult, config: pipelineResult.config)
-
-            // Wire sample picker state to Inspector for embedded sample selector
-            if let esVirituVC = viewerController.esVirituViewController {
-                let resultURL = url
-                let knownIds = Set(esVirituVC.sampleEntries.map(\.id))
-                let metadataStore = SampleMetadataStore.load(from: resultURL, knownSampleIds: knownIds)
-                metadataStore?.wireAutosave(bundleURL: resultURL)
-                let attachmentStore = BundleAttachmentStore(bundleURL: resultURL)
-                esVirituVC.sampleMetadataStore = metadataStore
-                self.inspectorController?.updateClassifierSampleState(
-                    pickerState: esVirituVC.samplePickerState,
-                    entries: esVirituVC.sampleEntries,
-                    strippedPrefix: esVirituVC.strippedPrefix,
-                    metadata: metadataStore,
-                    attachments: attachmentStore
-                )
-            }
-
-            logger.info("displayEsVirituResult: Loaded \(detections.count) detections, \(assemblies.count) assemblies")
-        } catch {
-            logger.error("displayEsVirituResult: Failed - \(error.localizedDescription, privacy: .public)")
-            let alert = NSAlert()
-            alert.messageText = "Failed to Load EsViritu Result"
-            alert.informativeText = error.localizedDescription
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "OK")
-            if let window = self.view.window ?? NSApp.keyWindow {
-                alert.beginSheetModal(for: window)
-            }
-        }
-    }
-
-    /// Display a saved TaxTriage result from a result directory.
-    ///
-    /// - Parameters:
-    ///   - url: The result output directory.
-    ///   - sampleId: Optional sample ID to pre-select in the per-sample filter.
-    ///     `nil` shows the "All Samples" merged view.
-    private func displayTaxTriageResultFromSidebar(at url: URL, sampleId: String? = nil) {
-        logger.info("displayTaxTriageResult: Opening '\(url.lastPathComponent, privacy: .public)', sampleId=\(sampleId ?? "all", privacy: .public)")
-
-        // Prefer the persisted sidecar so view parsing matches pipeline-time discovery.
-        if let persisted = try? TaxTriageResult.load(from: url) {
-            viewerController.displayTaxTriageResult(persisted, config: persisted.config, sampleId: sampleId)
-            wireTaxTriageInspector(resultURL: url)
-            return
-        }
-
-        // Fallback: rebuild from on-disk contents when sidecar is missing/corrupt.
-        let fm = FileManager.default
-        let allFiles: [URL]
-        if let enumerator = fm.enumerator(
-            at: url,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ) {
-            allFiles = enumerator.compactMap { element -> URL? in
-                guard let fileURL = element as? URL else { return nil }
-                let isRegularFile = (try? fileURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) ?? false
-                return isRegularFile ? fileURL : nil
+                showDatabaseBuildPlaceholder(tool: route.displayName, resultURL: url)
             }
         } else {
-            allFiles = []
-        }
-
-        let reportFiles = allFiles.filter {
-            let name = $0.lastPathComponent.lowercased()
-            let ext = $0.pathExtension.lowercased()
-            return name.contains("report") && (ext == "txt" || ext == "tsv")
-        }
-
-        let metricsFiles = allFiles.filter {
-            let name = $0.lastPathComponent.lowercased()
-            let ext = $0.pathExtension.lowercased()
-            return name.contains("tass")
-                || name.contains("metrics")
-                || name.contains("confidence")
-                || (ext == "tsv" && !name.contains("trace") && !name.contains("samplesheet"))
-        }
-
-        let kronaFiles = allFiles.filter {
-            let name = $0.lastPathComponent.lowercased()
-            let ext = $0.pathExtension.lowercased()
-            let path = $0.path.lowercased()
-            return ext == "html" && (name.contains("krona") || path.contains("/krona/"))
-        }
-
-        let result = TaxTriageResult(
-            config: TaxTriageConfig(samples: [], outputDirectory: url),
-            runtime: 0,
-            exitCode: 0,
-            outputDirectory: url,
-            reportFiles: reportFiles,
-            metricsFiles: metricsFiles,
-            kronaFiles: kronaFiles,
-            logFile: nil,
-            traceFile: nil,
-            allOutputFiles: allFiles
-        )
-
-        viewerController.displayTaxTriageResult(result, config: nil, sampleId: sampleId)
-        wireTaxTriageInspector(resultURL: url)
-    }
-
-    /// Wires the TaxTriage sample picker state to the Inspector.
-    private func wireTaxTriageInspector(resultURL: URL) {
-        if let taxTriageVC = viewerController.taxTriageViewController {
-            let knownIds = Set(taxTriageVC.sampleEntries.map(\.id))
-            let metadataStore = SampleMetadataStore.load(from: resultURL, knownSampleIds: knownIds)
-            metadataStore?.wireAutosave(bundleURL: resultURL)
-            let attachmentStore = BundleAttachmentStore(bundleURL: resultURL)
-            taxTriageVC.sampleMetadataStore = metadataStore
-            self.inspectorController?.updateClassifierSampleState(
-                pickerState: taxTriageVC.samplePickerState,
-                entries: taxTriageVC.sampleEntries,
-                strippedPrefix: taxTriageVC.strippedPrefix,
-                metadata: metadataStore,
-                attachments: attachmentStore
-            )
+            logger.warning("routeClassifierDisplay: Not a classifier directory: \(url.lastPathComponent, privacy: .public)")
         }
     }
 
@@ -2716,14 +2515,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
     ///   - url: The result directory URL.
     func navigateToRelatedAnalysis(type: String, url: URL) {
         logger.info("navigateToRelatedAnalysis: type=\(type, privacy: .public), url=\(url.lastPathComponent, privacy: .public)")
-        switch type {
-        case "kraken2":
-            displayClassificationResult(at: url)
-        case "esviritu":
-            displayEsVirituResult(at: url)
-        default:
-            logger.warning("Unknown related analysis type: \(type, privacy: .public)")
-        }
+        routeClassifierDisplay(url: url)
     }
 
     /// Display genomics file - cache-first, then load via DocumentManager.

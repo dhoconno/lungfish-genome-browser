@@ -318,64 +318,6 @@ extension ViewerViewController {
         esVirituLogger.info("displayEsVirituResult: Showing browser with \(result.detections.count) detections, \(result.assemblies.count) assemblies")
     }
 
-    /// Displays the EsViritu viral detection browser in batch mode.
-    ///
-    /// Creates an ``EsVirituResultViewController``, adds it as a child filling the content area,
-    /// and calls ``EsVirituResultViewController/configureBatch(batchURL:manifest:projectURL:)``
-    /// to populate it from the batch manifest. Does NOT wire BLAST or re-run callbacks
-    /// because batch mode uses the flat aggregated table.
-    ///
-    /// - Parameters:
-    ///   - batchURL: The batch result root directory.
-    ///   - manifest: The `EsVirituBatchResultManifest` loaded from the batch directory.
-    ///   - projectURL: The containing project URL (used for display name resolution).
-    func displayEsVirituBatch(
-        batchURL: URL,
-        manifest: EsVirituBatchResultManifest,
-        projectURL: URL
-    ) {
-        hideQuickLookPreview()
-        hideFASTQDatasetView()
-        hideVCFDatasetView()
-        hideFASTACollectionView()
-        hideTaxonomyView()
-        hideEsVirituView()
-        hideTaxTriageView()
-        hideNaoMgsView()
-        hideNvdView()
-        contentMode = .metagenomics
-
-        let controller = EsVirituResultViewController()
-        addChild(controller)
-
-        annotationDrawerView?.isHidden = true
-        fastqMetadataDrawerView?.isHidden = true
-
-        // Force loadView() so all subviews exist, then configure BEFORE adding
-        // to the view hierarchy to avoid a one-frame bounce.
-        let esView = controller.view
-        controller.configureBatch(batchURL: batchURL, manifest: manifest, projectURL: projectURL)
-        esView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(esView)
-
-        NSLayoutConstraint.activate([
-            esView.topAnchor.constraint(equalTo: view.topAnchor),
-            esView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            esView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            esView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ])
-
-        esVirituViewController = controller
-
-        enhancedRulerView.isHidden = true
-        viewerView.isHidden = true
-        headerView.isHidden = true
-        statusBar.isHidden = true
-        geneTabBarView.isHidden = true
-
-        esVirituLogger.info("displayEsVirituBatch: Showing batch browser for '\(batchURL.lastPathComponent, privacy: .public)' with \(manifest.samples.count) samples")
-    }
-
     /// Displays the EsViritu viral detection browser backed by a SQLite database.
     ///
     /// Creates an ``EsVirituResultViewController``, adds it as a child filling the
