@@ -37,6 +37,29 @@ struct MarkdupCommand: AsyncParsableCommand {
         }
 
         if isDir.boolValue {
+            // If this is a NAO-MGS result directory, materialize BAMs from SQLite first
+            let naoMgsDbURL = inputURL.appendingPathComponent("hits.sqlite")
+            if fm.fileExists(atPath: naoMgsDbURL.path) {
+                if !globalOptions.quiet {
+                    print("Detected NAO-MGS result directory; materializing BAMs from SQLite...")
+                }
+                do {
+                    let materialized = try NaoMgsBamMaterializer.materializeAll(
+                        dbPath: naoMgsDbURL.path,
+                        resultURL: inputURL,
+                        samtoolsPath: samtoolsPath,
+                        force: force
+                    )
+                    if !globalOptions.quiet {
+                        print("Materialized \(materialized.count) BAM file(s)")
+                    }
+                } catch {
+                    if !globalOptions.quiet {
+                        print("Warning: NAO-MGS BAM materialization failed: \(error.localizedDescription)")
+                    }
+                }
+            }
+
             if !globalOptions.quiet {
                 print("Scanning \(inputURL.path) for BAM files...")
             }
