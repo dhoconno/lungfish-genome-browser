@@ -964,6 +964,24 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         loadingOverlay.isHidden = true
     }
 
+    /// Locates the samtools binary for on-demand NAO-MGS BAM materialization.
+    ///
+    /// `nonisolated` so it can be called from `Task.detached` contexts — the
+    /// function only performs filesystem probes, so it's safe to run off the
+    /// main actor.
+    nonisolated fileprivate static func naomgsLocateSamtools() -> String? {
+        let candidates = [
+            "/opt/homebrew/Cellar/samtools/1.23/bin/samtools",
+            "/opt/homebrew/bin/samtools",
+            "/usr/local/bin/samtools",
+            "/usr/bin/samtools",
+        ]
+        for p in candidates where FileManager.default.fileExists(atPath: p) {
+            return p
+        }
+        return nil
+    }
+
     // MARK: - Async MiniBAM Loading
 
     /// Asynchronously fetches reads and populates miniBAM cards one at a time.
@@ -986,22 +1004,47 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
                 guard let database = self.database else { return }
                 guard index < self.miniBAMControllers.count else { return }
 
-                do {
-                    let reads = try database.fetchReadsForAccession(
-                        sample: sample,
-                        taxId: taxId,
-                        accession: summary.accession,
-                        maxReads: max(1, summary.readCount)
-                    )
-                    guard !Task.isCancelled else { return }
+                // NAO-MGS now materializes BAMs to <resultURL>/bams/<sample>.bam so
+                // the viewer uses the same displayContig() code path as the other
+                // classifier tools. The result directory is the parent of the
+                // SQLite database file (hits.sqlite lives at the result root).
+                let resultURL = database.databaseURL.deletingLastPathComponent()
+                let bamURL = resultURL
+                    .appendingPathComponent("bams")
+                    .appendingPathComponent("\(sample).bam")
 
-                    self.miniBAMControllers[index].displayReads(
-                        reads: reads,
+                if FileManager.default.fileExists(atPath: bamURL.path) {
+                    self.miniBAMControllers[index].displayContig(
+                        bamURL: bamURL,
                         contig: summary.accession,
                         contigLength: max(summary.referenceLength, 1)
                     )
-                } catch {
-                    logger.error("Failed to fetch reads for \(summary.accession): \(error.localizedDescription, privacy: .public)")
+                } else {
+                    // Fallback: materialize on-demand for result directories that
+                    // predate the NAO-MGS BAM materializer feature.
+                    let capturedSummary = summary
+                    let capturedIndex = index
+                    let capturedResultURL = resultURL
+                    let capturedDbPath = database.databaseURL.path
+                    Task.detached { [weak self] in
+                        guard let self else { return }
+                        guard let samtoolsPath = Self.naomgsLocateSamtools() else { return }
+                        _ = try? NaoMgsBamMaterializer.materializeAll(
+                            dbPath: capturedDbPath,
+                            resultURL: capturedResultURL,
+                            samtoolsPath: samtoolsPath
+                        )
+                        await MainActor.run {
+                            if FileManager.default.fileExists(atPath: bamURL.path),
+                               capturedIndex < self.miniBAMControllers.count {
+                                self.miniBAMControllers[capturedIndex].displayContig(
+                                    bamURL: bamURL,
+                                    contig: capturedSummary.accession,
+                                    contigLength: max(capturedSummary.referenceLength, 1)
+                                )
+                            }
+                        }
+                    }
                 }
 
                 // Remove per-card spinner
