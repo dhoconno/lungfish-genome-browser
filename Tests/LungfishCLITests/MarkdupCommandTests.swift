@@ -1,0 +1,204 @@
+// MarkdupCommandTests.swift - Integration tests for lungfish-cli markdup
+// Copyright (c) 2026 Lungfish Contributors
+// SPDX-License-Identifier: MIT
+
+import XCTest
+@testable import LungfishCLI
+@testable import LungfishIO
+
+final class MarkdupCommandTests: XCTestCase {
+
+    // MARK: - Inline BAM fixture helper
+    // The canonical BamFixtureBuilder lives in LungfishIOTests and isn't
+    // visible here. We duplicate a minimal version locally to avoid cross-target
+    // dependencies.
+
+    private struct Reference {
+        let name: String
+        let length: Int
+    }
+
+    private struct Read {
+        let qname: String
+        let flag: Int
+        let rname: String
+        let pos: Int
+        let mapq: Int
+        let cigar: String
+        let seq: String
+        let qual: String
+    }
+
+    private func locateSamtools() -> String? {
+        let candidates = [
+            "/opt/homebrew/Cellar/samtools/1.23/bin/samtools",
+            "/opt/homebrew/bin/samtools",
+            "/usr/local/bin/samtools",
+            "/usr/bin/samtools",
+        ]
+        for p in candidates where FileManager.default.fileExists(atPath: p) {
+            return p
+        }
+        return nil
+    }
+
+    private func makeBAM(
+        at outputURL: URL,
+        references: [Reference],
+        reads: [Read],
+        samtoolsPath: String
+    ) throws {
+        let fm = FileManager.default
+        try fm.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+
+        var sam = "@HD\tVN:1.6\tSO:coordinate\n"
+        for ref in references {
+            sam += "@SQ\tSN:\(ref.name)\tLN:\(ref.length)\n"
+        }
+        for read in reads {
+            sam += "\(read.qname)\t\(read.flag)\t\(read.rname)\t\(read.pos)\t\(read.mapq)\t\(read.cigar)\t*\t0\t0\t\(read.seq)\t\(read.qual)\n"
+        }
+
+        let samURL = outputURL.deletingPathExtension().appendingPathExtension("sam")
+        try sam.write(to: samURL, atomically: true, encoding: .utf8)
+        defer { try? fm.removeItem(at: samURL) }
+
+        let sortProc = Process()
+        sortProc.executableURL = URL(fileURLWithPath: samtoolsPath)
+        sortProc.arguments = ["sort", "-o", outputURL.path, samURL.path]
+        let errPipe = Pipe()
+        sortProc.standardOutput = FileHandle.nullDevice
+        sortProc.standardError = errPipe
+        try sortProc.run()
+        _ = errPipe.fileHandleForReading.readDataToEndOfFile()
+        sortProc.waitUntilExit()
+        guard sortProc.terminationStatus == 0 else {
+            throw NSError(domain: "MarkdupCommandTests", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "samtools sort failed"])
+        }
+
+        let indexProc = Process()
+        indexProc.executableURL = URL(fileURLWithPath: samtoolsPath)
+        indexProc.arguments = ["index", outputURL.path]
+        indexProc.standardOutput = FileHandle.nullDevice
+        indexProc.standardError = FileHandle.nullDevice
+        try indexProc.run()
+        indexProc.waitUntilExit()
+    }
+
+    private func makeTempDir() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MarkdupCliTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private func makeSyntheticBam(at url: URL, samtools: String) throws {
+        let refs = [Reference(name: "chr1", length: 1000)]
+        let seq = String(repeating: "A", count: 50)
+        let qual = String(repeating: "I", count: 50)
+        let reads = (0..<5).map { i in
+            Read(
+                qname: "r\(i)", flag: 0, rname: "chr1",
+                pos: 100, mapq: 60, cigar: "50M", seq: seq, qual: qual
+            )
+        }
+        try makeBAM(at: url, references: refs, reads: reads, samtoolsPath: samtools)
+    }
+
+    // MARK: - Tests
+
+    func testCliMarkdupSingleBAM() async throws {
+        guard let samtools = locateSamtools() else {
+            XCTFail("samtools not available")
+            return
+        }
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let bamURL = dir.appendingPathComponent("test.bam")
+        try makeSyntheticBam(at: bamURL, samtools: samtools)
+
+        var cmd = try MarkdupCommand.parse([bamURL.path, "-q"])
+        try await cmd.run()
+
+        XCTAssertTrue(
+            MarkdupService.isAlreadyMarkduped(bamURL: bamURL, samtoolsPath: samtools),
+            "BAM should be marked after CLI run"
+        )
+    }
+
+    func testCliMarkdupDirectory() async throws {
+        guard let samtools = locateSamtools() else {
+            XCTFail("samtools not available")
+            return
+        }
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let bam1 = dir.appendingPathComponent("a.bam")
+        let bam2 = dir.appendingPathComponent("sub/b.bam")
+        try makeSyntheticBam(at: bam1, samtools: samtools)
+        try makeSyntheticBam(at: bam2, samtools: samtools)
+
+        var cmd = try MarkdupCommand.parse([dir.path, "-q"])
+        try await cmd.run()
+
+        XCTAssertTrue(MarkdupService.isAlreadyMarkduped(bamURL: bam1, samtoolsPath: samtools))
+        XCTAssertTrue(MarkdupService.isAlreadyMarkduped(bamURL: bam2, samtoolsPath: samtools))
+    }
+
+    func testCliMarkdupSkipsAlreadyMarked() async throws {
+        guard let samtools = locateSamtools() else {
+            XCTFail("samtools not available")
+            return
+        }
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let bamURL = dir.appendingPathComponent("test.bam")
+        try makeSyntheticBam(at: bamURL, samtools: samtools)
+
+        var cmd1 = try MarkdupCommand.parse([bamURL.path, "-q"])
+        try await cmd1.run()
+        let firstMtime = (try? FileManager.default.attributesOfItem(atPath: bamURL.path)[.modificationDate]) as? Date
+
+        try await Task.sleep(nanoseconds: 1_100_000_000)
+
+        var cmd2 = try MarkdupCommand.parse([bamURL.path, "-q"])
+        try await cmd2.run()
+        let secondMtime = (try? FileManager.default.attributesOfItem(atPath: bamURL.path)[.modificationDate]) as? Date
+
+        XCTAssertEqual(firstMtime, secondMtime, "File should not be rewritten on second run")
+    }
+
+    func testCliMarkdupForceReruns() async throws {
+        guard let samtools = locateSamtools() else {
+            XCTFail("samtools not available")
+            return
+        }
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let bamURL = dir.appendingPathComponent("test.bam")
+        try makeSyntheticBam(at: bamURL, samtools: samtools)
+
+        var cmd1 = try MarkdupCommand.parse([bamURL.path, "-q"])
+        try await cmd1.run()
+        let firstMtime = (try? FileManager.default.attributesOfItem(atPath: bamURL.path)[.modificationDate]) as? Date
+
+        try await Task.sleep(nanoseconds: 1_100_000_000)
+
+        var cmd2 = try MarkdupCommand.parse([bamURL.path, "--force", "-q"])
+        try await cmd2.run()
+        let secondMtime = (try? FileManager.default.attributesOfItem(atPath: bamURL.path)[.modificationDate]) as? Date
+
+        XCTAssertNotEqual(firstMtime, secondMtime, "File SHOULD be rewritten on forced re-run")
+    }
+
+    func testCliMarkdupErrorsOnMissingFile() async throws {
+        var cmd = try MarkdupCommand.parse(["/nonexistent/path.bam"])
+        do {
+            try await cmd.run()
+            XCTFail("Should have thrown")
+        } catch {
+            // Expected
+        }
+    }
+}
