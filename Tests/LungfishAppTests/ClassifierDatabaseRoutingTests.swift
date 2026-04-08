@@ -134,4 +134,41 @@ final class ClassifierDatabaseRoutingTests: XCTestCase {
         XCTAssertEqual(route?.tool, "kraken2")
         XCTAssertNotNil(route?.databaseURL)
     }
+
+    // MARK: - Parent walk (batch child subdirs)
+
+    func testRoute_batchChildResolvesToParentBatch() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let batchDir = dir.appendingPathComponent("esviritu-batch-2026-04-06T20-46-01")
+        let sampleDir = batchDir.appendingPathComponent("SRR35517702")
+        try FileManager.default.createDirectory(at: sampleDir, withIntermediateDirectories: true)
+        FileManager.default.createFile(
+            atPath: batchDir.appendingPathComponent("esviritu.sqlite").path,
+            contents: Data())
+
+        let route = ClassifierDatabaseRouter.route(for: sampleDir)
+        XCTAssertNotNil(route)
+        XCTAssertEqual(route?.tool, "esviritu")
+        XCTAssertEqual(route?.sampleId, "SRR35517702")
+        XCTAssertNotNil(route?.databaseURL)
+        XCTAssertEqual(route?.databaseURL?.path, batchDir.appendingPathComponent("esviritu.sqlite").path)
+        XCTAssertEqual(route?.resultURL.path, batchDir.path)
+    }
+
+    func testRoute_topLevelHasNoSampleId() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let batchDir = dir.appendingPathComponent("esviritu-batch-2026-04-06T20-46-01")
+        try FileManager.default.createDirectory(at: batchDir, withIntermediateDirectories: true)
+        FileManager.default.createFile(
+            atPath: batchDir.appendingPathComponent("esviritu.sqlite").path,
+            contents: Data())
+
+        let route = ClassifierDatabaseRouter.route(for: batchDir)
+        XCTAssertNotNil(route)
+        XCTAssertNil(route?.sampleId, "top-level route should not carry a sampleId")
+        XCTAssertEqual(route?.resultURL.path, batchDir.path)
+    }
 }
