@@ -50,6 +50,9 @@ public struct Kraken2ClassificationRow: Sendable {
     public let readsDirect: Int
     public let readsClade: Int
     public let percentage: Double
+    public let parentTaxId: Int?
+    public let depth: Int
+    public let fractionDirect: Double
 
     public init(
         sample: String,
@@ -59,7 +62,10 @@ public struct Kraken2ClassificationRow: Sendable {
         rankDisplayName: String?,
         readsDirect: Int,
         readsClade: Int,
-        percentage: Double
+        percentage: Double,
+        parentTaxId: Int? = nil,
+        depth: Int = 0,
+        fractionDirect: Double = 0.0
     ) {
         self.sample = sample
         self.taxonName = taxonName
@@ -69,6 +75,9 @@ public struct Kraken2ClassificationRow: Sendable {
         self.readsDirect = readsDirect
         self.readsClade = readsClade
         self.percentage = percentage
+        self.parentTaxId = parentTaxId
+        self.depth = depth
+        self.fractionDirect = fractionDirect
     }
 }
 
@@ -201,6 +210,9 @@ public final class Kraken2Database: @unchecked Sendable {
             reads_direct INTEGER NOT NULL,
             reads_clade INTEGER NOT NULL,
             percentage REAL NOT NULL,
+            parent_tax_id INTEGER,
+            depth INTEGER NOT NULL DEFAULT 0,
+            fraction_direct REAL NOT NULL DEFAULT 0.0,
             UNIQUE(sample, tax_id)
         );
 
@@ -229,8 +241,9 @@ public final class Kraken2Database: @unchecked Sendable {
         let insertSQL = """
         INSERT INTO classification_rows (
             sample, taxon_name, tax_id, rank, rank_display_name,
-            reads_direct, reads_clade, percentage
-        ) VALUES (?,?,?,?,?,?,?,?)
+            reads_direct, reads_clade, percentage,
+            parent_tax_id, depth, fraction_direct
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
         """
 
         var stmt: OpaquePointer?
@@ -272,6 +285,16 @@ public final class Kraken2Database: @unchecked Sendable {
             sqlite3_bind_int64(stmt, 7, Int64(row.readsClade))
             // 8: percentage (REAL NOT NULL)
             sqlite3_bind_double(stmt, 8, row.percentage)
+            // 9: parent_tax_id (INTEGER, nullable)
+            if let parentTaxId = row.parentTaxId {
+                sqlite3_bind_int64(stmt, 9, Int64(parentTaxId))
+            } else {
+                sqlite3_bind_null(stmt, 9)
+            }
+            // 10: depth (INTEGER NOT NULL)
+            sqlite3_bind_int64(stmt, 10, Int64(row.depth))
+            // 11: fraction_direct (REAL NOT NULL)
+            sqlite3_bind_double(stmt, 11, row.fractionDirect)
 
             guard sqlite3_step(stmt) == SQLITE_DONE else {
                 let msg = String(cString: sqlite3_errmsg(db))
@@ -425,6 +448,77 @@ public final class Kraken2Database: @unchecked Sendable {
         return results
     }
 
+    // MARK: - Tree Reconstruction
+
+    /// Reconstructs a ``TaxonTree`` for a single sample from DB rows.
+    ///
+    /// Builds ``TaxonNode`` instances from the stored classification rows, links
+    /// parent-child relationships via ``TaxonNode/addChild(_:)``, and returns a
+    /// complete ``TaxonTree`` suitable for sunburst rendering and hierarchical tables.
+    ///
+    /// - Parameter sample: The sample identifier to reconstruct the tree for.
+    /// - Returns: A fully linked ``TaxonTree``.
+    /// - Throws: ``Kraken2DatabaseError/queryFailed(_:)`` if no root node is found.
+    public func fetchTree(sample: String) throws -> TaxonTree {
+        let rows = try fetchRows(samples: [sample])
+        let meta = try fetchMetadata()
+
+        // Per-sample metadata takes priority, fall back to aggregated
+        let totalReads = Int(meta["total_reads_\(sample)"] ?? meta["total_reads"] ?? "0") ?? 0
+
+        // Build nodes indexed by taxId
+        var nodesByTaxId: [Int: TaxonNode] = [:]
+        for row in rows {
+            let node = TaxonNode(
+                taxId: row.taxId,
+                name: row.taxonName,
+                rank: TaxonomicRank(code: row.rank ?? "no rank"),
+                depth: row.depth,
+                readsDirect: row.readsDirect,
+                readsClade: row.readsClade,
+                fractionClade: row.percentage / 100.0,
+                fractionDirect: row.fractionDirect,
+                parentTaxId: row.parentTaxId
+            )
+            nodesByTaxId[row.taxId] = node
+        }
+
+        // Link parent-child via addChild (sets both parent ref and children array)
+        for (_, node) in nodesByTaxId {
+            if let parentId = node.parentTaxId, let parent = nodesByTaxId[parentId] {
+                parent.addChild(node)
+            }
+        }
+
+        // Sort children by readsClade descending
+        for (_, node) in nodesByTaxId {
+            node.children.sort { $0.readsClade > $1.readsClade }
+        }
+
+        // Find root (depth 0)
+        guard let root = nodesByTaxId.values.first(where: { $0.depth == 0 }) else {
+            throw Kraken2DatabaseError.queryFailed("No root node found for sample \(sample)")
+        }
+
+        // Build unclassified node from metadata
+        let unclassifiedReads = Int(
+            meta["unclassified_reads_\(sample)"] ?? meta["unclassified_reads"] ?? "0"
+        ) ?? 0
+        let unclassifiedNode: TaxonNode? = unclassifiedReads > 0 ? TaxonNode(
+            taxId: 0,
+            name: "unclassified",
+            rank: .unclassified,
+            depth: 0,
+            readsDirect: unclassifiedReads,
+            readsClade: unclassifiedReads,
+            fractionClade: totalReads > 0 ? Double(unclassifiedReads) / Double(totalReads) : 0,
+            fractionDirect: totalReads > 0 ? Double(unclassifiedReads) / Double(totalReads) : 0,
+            parentTaxId: nil
+        ) : nil
+
+        return TaxonTree(root: root, unclassifiedNode: unclassifiedNode, totalReads: totalReads)
+    }
+
     // MARK: - Private Helpers
 
     /// Reads an optional TEXT column, returning nil if the column is NULL.
@@ -436,7 +530,8 @@ public final class Kraken2Database: @unchecked Sendable {
     /// Collects all rows from a prepared SELECT * FROM classification_rows statement.
     ///
     /// Column order must match the schema: rowid(0), sample(1), taxon_name(2), tax_id(3),
-    /// rank(4), rank_display_name(5), reads_direct(6), reads_clade(7), percentage(8).
+    /// rank(4), rank_display_name(5), reads_direct(6), reads_clade(7), percentage(8),
+    /// parent_tax_id(9), depth(10), fraction_direct(11).
     private func collectRows(stmt: OpaquePointer?) -> [Kraken2ClassificationRow] {
         var rows: [Kraken2ClassificationRow] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
@@ -449,6 +544,10 @@ public final class Kraken2Database: @unchecked Sendable {
             let readsDirect     = Int(sqlite3_column_int64(stmt, 6))
             let readsClade      = Int(sqlite3_column_int64(stmt, 7))
             let percentage      = sqlite3_column_double(stmt, 8)
+            let parentTaxId: Int? = sqlite3_column_type(stmt, 9) == SQLITE_NULL
+                ? nil : Int(sqlite3_column_int64(stmt, 9))
+            let depth           = Int(sqlite3_column_int64(stmt, 10))
+            let fractionDirect  = sqlite3_column_double(stmt, 11)
 
             rows.append(Kraken2ClassificationRow(
                 sample: sample,
@@ -458,7 +557,10 @@ public final class Kraken2Database: @unchecked Sendable {
                 rankDisplayName: rankDisplayName,
                 readsDirect: readsDirect,
                 readsClade: readsClade,
-                percentage: percentage
+                percentage: percentage,
+                parentTaxId: parentTaxId,
+                depth: depth,
+                fractionDirect: fractionDirect
             ))
         }
         return rows

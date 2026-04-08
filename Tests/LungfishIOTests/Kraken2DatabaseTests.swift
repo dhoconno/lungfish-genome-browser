@@ -115,6 +115,67 @@ final class Kraken2DatabaseTests: XCTestCase {
         XCTAssertEqual(try db.fetchSamples().count, 0)
     }
 
+    func testParentTaxIdAndDepthStored() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let dbURL = dir.appendingPathComponent("test.sqlite")
+
+        let rows = [
+            makeTestRow(sample: "s1", taxonName: "root", taxId: 1, rank: "R",
+                        readsDirect: 10, readsClade: 1000, percentage: 100.0,
+                        parentTaxId: nil, depth: 0, fractionDirect: 0.01),
+            makeTestRow(sample: "s1", taxonName: "Bacteria", taxId: 2, rank: "D",
+                        readsDirect: 500, readsClade: 800, percentage: 80.0,
+                        parentTaxId: 1, depth: 1, fractionDirect: 0.5),
+        ]
+        let db = try Kraken2Database.create(at: dbURL, rows: rows, metadata: [:])
+
+        let fetched = try db.fetchRows(samples: ["s1"])
+        let bacteria = fetched.first { $0.taxId == 2 }!
+        XCTAssertEqual(bacteria.parentTaxId, 1)
+        XCTAssertEqual(bacteria.depth, 1)
+        XCTAssertEqual(bacteria.fractionDirect, 0.5, accuracy: 0.001)
+
+        let root = fetched.first { $0.taxId == 1 }!
+        XCTAssertNil(root.parentTaxId)
+        XCTAssertEqual(root.depth, 0)
+    }
+
+    func testFetchTree() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let dbURL = dir.appendingPathComponent("test.sqlite")
+
+        let rows = [
+            makeTestRow(sample: "s1", taxonName: "root", taxId: 1, rank: "R",
+                        readsDirect: 10, readsClade: 1000, percentage: 100.0,
+                        parentTaxId: nil, depth: 0, fractionDirect: 0.01),
+            makeTestRow(sample: "s1", taxonName: "Bacteria", taxId: 2, rank: "D",
+                        readsDirect: 500, readsClade: 800, percentage: 80.0,
+                        parentTaxId: 1, depth: 1, fractionDirect: 0.5),
+            makeTestRow(sample: "s1", taxonName: "Viruses", taxId: 10239, rank: "D",
+                        readsDirect: 100, readsClade: 200, percentage: 20.0,
+                        parentTaxId: 1, depth: 1, fractionDirect: 0.1),
+        ]
+        let db = try Kraken2Database.create(at: dbURL, rows: rows, metadata: [
+            "total_reads_s1": "1100",
+            "classified_reads_s1": "1000",
+            "unclassified_reads_s1": "100",
+        ])
+
+        let tree = try db.fetchTree(sample: "s1")
+        XCTAssertEqual(tree.root.taxId, 1)
+        XCTAssertEqual(tree.root.children.count, 2)
+        XCTAssertEqual(tree.totalReads, 1100)
+        XCTAssertEqual(tree.classifiedReads, 1000)
+        XCTAssertEqual(tree.unclassifiedReads, 100)
+
+        let bacteria = tree.root.children.first { $0.taxId == 2 }!
+        XCTAssertEqual(bacteria.name, "Bacteria")
+        XCTAssertEqual(bacteria.readsClade, 800)
+        XCTAssertEqual(bacteria.parent?.taxId, 1)
+    }
+
     // MARK: - Helpers
 
     private func makeTestRow(
@@ -125,7 +186,10 @@ final class Kraken2DatabaseTests: XCTestCase {
         rankDisplayName: String? = nil,
         readsDirect: Int = 50,
         readsClade: Int = 100,
-        percentage: Double = 1.0
+        percentage: Double = 1.0,
+        parentTaxId: Int? = nil,
+        depth: Int = 0,
+        fractionDirect: Double = 0.0
     ) -> Kraken2ClassificationRow {
         Kraken2ClassificationRow(
             sample: sample,
@@ -135,7 +199,10 @@ final class Kraken2DatabaseTests: XCTestCase {
             rankDisplayName: rankDisplayName,
             readsDirect: readsDirect,
             readsClade: readsClade,
-            percentage: percentage
+            percentage: percentage,
+            parentTaxId: parentTaxId,
+            depth: depth,
+            fractionDirect: fractionDirect
         )
     }
 }

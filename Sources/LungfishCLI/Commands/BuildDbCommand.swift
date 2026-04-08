@@ -823,18 +823,22 @@ extension BuildDbCommand {
             }
 
             // 1. Enumerate sample subdirectories and parse kreport files
-            let rows = try parseSampleDirectories(resultURL: resultURL)
+            let (rows, sampleMetadata) = try parseSampleDirectories(resultURL: resultURL)
 
             if !globalOptions.quiet {
                 print("Parsed \(rows.count) classification rows from Kraken2 results")
             }
 
             // 2. Build database
-            let metadata: [String: String] = [
+            var metadata: [String: String] = [
                 "tool": "kraken2",
                 "created_at": ISO8601DateFormatter().string(from: Date()),
                 "source_dir": resultURL.path,
             ]
+            // Merge per-sample tree statistics into metadata
+            for (key, value) in sampleMetadata {
+                metadata[key] = value
+            }
 
             try Kraken2Database.create(at: dbURL, rows: rows, metadata: metadata) { fraction, msg in
                 if self.globalOptions.outputFormat == .json {
@@ -858,7 +862,11 @@ extension BuildDbCommand {
         // MARK: - Sample Directory Enumeration & Parsing
 
         /// Enumerates sample subdirectories under `resultURL` and parses kreport files.
-        func parseSampleDirectories(resultURL: URL) throws -> [Kraken2ClassificationRow] {
+        ///
+        /// Returns classification rows and per-sample metadata for tree reconstruction.
+        func parseSampleDirectories(
+            resultURL: URL
+        ) throws -> (rows: [Kraken2ClassificationRow], sampleMetadata: [String: String]) {
             let fm = FileManager.default
             let contents = try fm.contentsOfDirectory(
                 at: resultURL,
@@ -866,6 +874,7 @@ extension BuildDbCommand {
             )
 
             var allRows: [Kraken2ClassificationRow] = []
+            var sampleMetadata: [String: String] = [:]
 
             for dir in contents.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
                 let isDir = (try? dir.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
@@ -879,26 +888,32 @@ extension BuildDbCommand {
                 let kreportURL = dir.appendingPathComponent("classification.kreport")
                 guard fm.fileExists(atPath: kreportURL.path) else { continue }
 
-                let rows = try parseKreport(at: kreportURL, sampleId: sampleId)
+                let (rows, tree) = try parseKreport(at: kreportURL, sampleId: sampleId)
                 allRows.append(contentsOf: rows)
+
+                // Store per-sample tree statistics
+                sampleMetadata["total_reads_\(sampleId)"] = "\(tree.totalReads)"
+                sampleMetadata["classified_reads_\(sampleId)"] = "\(tree.classifiedReads)"
+                sampleMetadata["unclassified_reads_\(sampleId)"] = "\(tree.unclassifiedReads)"
             }
 
-            return allRows
+            return (allRows, sampleMetadata)
         }
 
         /// Parses a single kreport file into classification rows.
         ///
         /// Flattens the taxonomy tree produced by `KreportParser`, excluding
-        /// the root node (taxId 1) and the unclassified pseudo-node.
+        /// only the unclassified pseudo-node. The root node (taxId 1) is included
+        /// so that ``Kraken2Database/fetchTree(sample:)`` can reconstruct the tree.
         func parseKreport(
             at kreportURL: URL,
             sampleId: String
-        ) throws -> [Kraken2ClassificationRow] {
+        ) throws -> ([Kraken2ClassificationRow], TaxonTree) {
             let tree = try KreportParser.parse(url: kreportURL)
 
-            return tree.allNodes().compactMap { node -> Kraken2ClassificationRow? in
-                // Exclude root (taxId 1) and unclassified nodes
-                guard node.taxId != 1, node.rank != .unclassified else { return nil }
+            let rows = tree.allNodes().compactMap { node -> Kraken2ClassificationRow? in
+                // Exclude unclassified nodes only; keep root for tree reconstruction
+                guard node.rank != .unclassified else { return nil }
                 return Kraken2ClassificationRow(
                     sample: sampleId,
                     taxonName: node.name,
@@ -907,9 +922,13 @@ extension BuildDbCommand {
                     rankDisplayName: node.rank.displayName,
                     readsDirect: node.readsDirect,
                     readsClade: node.readsClade,
-                    percentage: node.fractionClade * 100.0
+                    percentage: node.fractionClade * 100.0,
+                    parentTaxId: node.parent?.taxId,
+                    depth: node.depth,
+                    fractionDirect: node.fractionDirect
                 )
             }
+            return (rows, tree)
         }
 
         // MARK: - Post-Build Cleanup
