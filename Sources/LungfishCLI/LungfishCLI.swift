@@ -53,6 +53,7 @@ struct LungfishCLI: AsyncParsableCommand {
             NvdCommand.self,
             MetadataCommand.self,
             BuildDbCommand.self,
+            MarkdupCommand.self,
             DebugCommand.self,
         ],
         defaultSubcommand: nil
