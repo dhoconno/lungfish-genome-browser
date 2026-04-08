@@ -349,7 +349,7 @@ extension ViewerViewController {
         // Force loadView() so all subviews exist, then configure BEFORE adding
         // to the view hierarchy to avoid a one-frame bounce.
         let esView = controller.view
-        controller.configureFromDatabase(db)
+        controller.configureFromDatabase(db, resultURL: resultURL)
         esView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(esView)
 

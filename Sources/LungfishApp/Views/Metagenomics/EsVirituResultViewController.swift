@@ -451,8 +451,9 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     /// Sets `isBatchMode = true` so the existing sample selection and filter
     /// paths operate correctly. Populates `allBatchRows`, sample entries,
     /// and BAM lookups from the database, then shows the batch table.
-    public func configureFromDatabase(_ db: EsVirituDatabase) {
+    public func configureFromDatabase(_ db: EsVirituDatabase, resultURL: URL) {
         self.esVirituDatabase = db
+        self.batchURL = resultURL
         self.isBatchMode = true
         self.didLoadFromManifestCache = true
 
@@ -560,12 +561,28 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         }
 
         // Resolve BAM paths from DB columns.
+        // Paths stored in the DB are relative to the result directory; resolve
+        // them against `batchURL` when available, otherwise fall back to treating
+        // them as absolute paths (backward-compatible with older databases).
+        let baseURL = batchURL
         for row in dbRows {
             if let bamPath = row.bamPath, !bamPath.isEmpty {
-                batchBAMLookup[row.sample] = URL(fileURLWithPath: bamPath)
+                let resolved: URL
+                if let base = baseURL, !bamPath.hasPrefix("/") {
+                    resolved = base.appendingPathComponent(bamPath)
+                } else {
+                    resolved = URL(fileURLWithPath: bamPath)
+                }
+                batchBAMLookup[row.sample] = resolved
             }
             if let bamIndexPath = row.bamIndexPath, !bamIndexPath.isEmpty {
-                batchBAMIndexLookup[row.sample] = URL(fileURLWithPath: bamIndexPath)
+                let resolved: URL
+                if let base = baseURL, !bamIndexPath.hasPrefix("/") {
+                    resolved = base.appendingPathComponent(bamIndexPath)
+                } else {
+                    resolved = URL(fileURLWithPath: bamIndexPath)
+                }
+                batchBAMIndexLookup[row.sample] = resolved
             }
         }
 
