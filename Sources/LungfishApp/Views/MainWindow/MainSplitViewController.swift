@@ -1627,9 +1627,20 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             return
         }
 
-        // TaxTriage results (including per-sample children of batch groups)
+        // TaxTriage results (including per-sample children of batch groups).
+        // TaxTriage directories don't use the "-batch-" naming convention, so
+        // multi-sample runs arrive here as .taxTriageResult rather than .batchGroup.
+        // Check for a SQLite database first and route through the DB-backed path.
         if item.type == .taxTriageResult, let url = item.url {
             let sampleId = item.userInfo["sampleId"]
+            if sampleId == nil {
+                // Top-level result — check for SQLite DB and route through batch display.
+                let dbURL = url.appendingPathComponent("taxtriage.sqlite")
+                if FileManager.default.fileExists(atPath: dbURL.path) {
+                    displayBatchGroup(at: url)
+                    return
+                }
+            }
             displayTaxTriageResultFromSidebar(at: url, sampleId: sampleId)
             return
         }
