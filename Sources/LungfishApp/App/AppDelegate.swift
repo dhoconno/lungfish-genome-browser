@@ -5278,8 +5278,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                             id: opID,
                             detail: "\(capturedResult.detections.count) viruses detected in \(capturedResult.detectedFamilyCount) families"
                         )
-                        viewerController.displayEsVirituResult(capturedResult, config: capturedConfig)
-                        // Reload sidebar so the new result bundle appears
+                        // Reload sidebar so the new result bundle appears.
+                        // User clicks the new result to view it (batch-only display path).
                         AppDelegate.shared?.mainWindowController?.mainSplitViewController?
                             .sidebarController.reloadFromFilesystem()
 
@@ -5822,10 +5822,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                         )
                     }
 
-                    if let first = successfulResults.first {
-                        viewerController.displayEsVirituResult(first.ioResult, config: first.config)
-                    }
-
+                    // Reload sidebar so the new batch result appears.
+                    // User clicks the new result to view it (batch-only display path).
                     AppDelegate.shared?.mainWindowController?.mainSplitViewController?.sidebarController.reloadFromFilesystem()
 
                     // Record analysis in source bundle manifests
@@ -5938,8 +5936,6 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                             id: opID,
                             detail: capturedResult.summary
                         )
-                        viewerController.displayTaxTriageResult(capturedResult, config: capturedConfig)
-
                         // Write cross-reference sidecars into each source bundle so
                         // the sidebar discovers TaxTriage results under all contributors.
                         Self.writeTaxTriageCrossRefSidecars(result: capturedResult, config: capturedConfig)

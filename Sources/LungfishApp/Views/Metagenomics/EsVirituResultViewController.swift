@@ -109,9 +109,6 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     /// Path to the BAM index (.csi/.bai), if available.
     var bamIndexURL: URL?
 
-    /// Background task computing unique reads for all assemblies (single-sample mode).
-    private var uniqueReadComputationTask: Task<Void, Never>?
-
     /// Background task computing unique reads across all samples in batch mode.
     private var batchUniqueReadComputationTask: Task<Void, Never>?
 
@@ -351,93 +348,6 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             let position = round(splitView.bounds.width * 0.4)
             splitView.setPosition(position, ofDividerAt: 0)
         }
-    }
-
-    // MARK: - Public API
-
-    /// Configures the view with an EsViritu result and optional config.
-    ///
-    /// Populates the summary bar, detail pane, detection table, and action bar.
-    ///
-    /// - Parameters:
-    ///   - result: The parsed EsViritu result.
-    ///   - config: The config used for this run (for provenance and re-run).
-    public func configure(result: LungfishIO.EsVirituResult, config: EsVirituConfig? = nil) {
-        esVirituResult = result
-        esVirituConfig = config
-
-        // Build coverage lookup
-        var coverageLookup: [String: [ViralCoverageWindow]] = [:]
-        for window in result.coverageWindows {
-            coverageLookup[window.accession, default: []].append(window)
-        }
-
-        // Reset BAM-derived state for reconfiguration.
-        bamURL = nil
-        bamIndexURL = nil
-
-        // Locate the final BAM file (from --keep True)
-        if let outputDir = config?.outputDirectory {
-            let tempDir = outputDir.appendingPathComponent("\(config?.sampleName ?? "sample")_temp")
-            let bamName = "\(config?.sampleName ?? "sample").third.filt.sorted.bam"
-            let candidateBAM = tempDir.appendingPathComponent(bamName)
-            if FileManager.default.fileExists(atPath: candidateBAM.path) {
-                bamURL = candidateBAM
-                bamIndexURL = resolveBamIndex(for: candidateBAM)
-                logger.info("Found EsViritu BAM at \(candidateBAM.lastPathComponent)")
-            }
-        }
-
-        // Update summary bar
-        summaryBar.update(result: result)
-
-        // Configure detail pane with overview
-        detailPane.configureOverview(
-            result: result,
-            coverageWindows: coverageLookup,
-            bamURL: bamURL
-        )
-
-        // Clear cached unique reads from previous sample and load persisted values
-        uniqueReadComputationTask?.cancel()
-        detectionTableView.uniqueReadCountsByAssembly = [:]
-        detectionTableView.uniqueReadCountsByContig = [:]
-        if let outputDir = config?.outputDirectory {
-            loadPersistedUniqueReads(from: outputDir)
-        }
-
-        // Configure table
-        detectionTableView.coverageWindowsByAccession = coverageLookup
-        detectionTableView.result = result
-
-        // Update action bar info text
-        actionBar.updateInfoText("Select a virus to view details")
-
-        let hasBam = self.bamURL != nil
-        let hasBamIndex = self.bamIndexURL != nil
-        logger.info("Configured with \(result.detections.count) detections, \(result.assemblies.count) assemblies, \(result.detectedFamilyCount) families, BAM=\(hasBam), index=\(hasBamIndex)")
-
-        // Compute unique reads for all assemblies in the background
-        if let bamURL, let bamIndexURL {
-            scheduleUniqueReadComputation(assemblies: result.assemblies, bamURL: bamURL, bamIndexURL: bamIndexURL)
-        }
-
-        // Build single-sample picker entry from EsViritu result.
-        // Resolve human-readable display name via manifest lookup.
-        let rawSampleName = result.sampleId
-        let esProjectURL = config?.outputDirectory
-            .deletingLastPathComponent()  // derivatives/
-            .deletingLastPathComponent()  // bundle.lungfishfastq/
-            .deletingLastPathComponent()  // project/
-        let sampleName = FASTQDisplayNameResolver.resolveDisplayName(
-            sampleId: rawSampleName, projectURL: esProjectURL)
-        sampleEntries = [EsVirituSampleEntry(
-            id: rawSampleName,
-            displayName: sampleName,
-            detectedVirusCount: result.assemblies.count
-        )]
-        strippedPrefix = ""
-        samplePickerState = ClassifierSamplePickerState(allSamples: Set([sampleName]))
     }
 
     // MARK: - SQLite Database Mode
@@ -813,137 +723,17 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         }
     }
 
-    // MARK: - Background Unique Read Computation
-
-    /// Computes deduplicated read counts for all assemblies in the background.
-    ///
-    /// Iterates assemblies by descending read count (most important first),
-    /// fetches reads from the BAM for each primary contig, deduplicates by
-    /// position/strand, and updates the table incrementally.
-    private func scheduleUniqueReadComputation(assemblies: [ViralAssembly], bamURL: URL, bamIndexURL: URL) {
-        uniqueReadComputationTask?.cancel()
-
-        let sorted = assemblies.sorted { $0.totalReads > $1.totalReads }
-
-        uniqueReadComputationTask = Task { [weak self] in
-            let provider = AlignmentDataProvider(
-                alignmentPath: bamURL.path,
-                indexPath: bamIndexURL.path
-            )
-
-            for assembly in sorted {
-                if Task.isCancelled { return }
-                // Skip if already computed (e.g., from a previous user click)
-                if self?.detectionTableView.uniqueReadCountsByAssembly[assembly.assembly] != nil {
-                    continue
-                }
-
-                let isMultiSegment = assembly.contigs.count > 1
-                var fetchedAny = false
-
-                for contig in assembly.contigs {
-                    if Task.isCancelled { return }
-                    guard contig.length > 0 else { continue }
-
-                    let reads = (try? await provider.fetchReads(
-                        chromosome: contig.accession,
-                        start: 0,
-                        end: contig.length,
-                        excludeFlags: 0x904
-                    )) ?? []
-
-                    if reads.isEmpty { continue }
-                    fetchedAny = true
-                    let contigUnique = min(contig.readCount, Self.deduplicatedReadCount(from: reads))
-                    let assemblyAccession = assembly.assembly
-
-                    DispatchQueue.main.async { [weak self] in
-                        MainActor.assumeIsolated {
-                            self?.detectionTableView.setUniqueReadCount(
-                                contigUnique,
-                                forContig: contig.accession,
-                                inAssembly: assemblyAccession
-                            )
-                        }
-                    }
-                }
-
-                // For single-contig assemblies that had no reads, ensure assembly shows 0
-                if !fetchedAny && !isMultiSegment {
-                    DispatchQueue.main.async { [weak self] in
-                        MainActor.assumeIsolated {
-                            self?.detectionTableView.setUniqueReadCount(0, forAssembly: assembly.assembly)
-                        }
-                    }
-                }
-            }
-
-            // Persist computed unique reads so they load instantly on re-open
-            if !Task.isCancelled {
-                DispatchQueue.main.async { [weak self] in
-                    MainActor.assumeIsolated {
-                        self?.persistUniqueReads()
-                    }
-                }
-            }
-        }
-    }
+    // MARK: - Unique Read Helpers
 
     /// Counts unique reads by deduplicating on position-strand fingerprint.
     private static func deduplicatedReadCount(from reads: [AlignedRead]) -> Int {
         AlignedRead.deduplicatedReadCount(from: reads)
     }
 
-    /// Resolves the BAM index adjacent to the BAM file.
-    private func resolveBamIndex(for bamURL: URL) -> URL? {
-        let fm = FileManager.default
-        let csiURL = URL(fileURLWithPath: bamURL.path + ".csi")
-        if fm.fileExists(atPath: csiURL.path) { return csiURL }
-
-        let baiURL = URL(fileURLWithPath: bamURL.path + ".bai")
-        if fm.fileExists(atPath: baiURL.path) { return baiURL }
-
-        logger.warning("No BAM index found for \(bamURL.lastPathComponent, privacy: .public)")
-        return nil
-    }
-
-    // MARK: - Unique Read Persistence
-
     /// Sidecar data structure for persisted unique read counts.
     private struct UniqueReadCache: Codable {
         var byAssembly: [String: Int]
         var byContig: [String: Int]
-    }
-
-    /// Loads persisted unique read counts from the output directory sidecar.
-    private func loadPersistedUniqueReads(from outputDir: URL) {
-        let sidecarURL = outputDir.appendingPathComponent(Self.uniqueReadsSidecar)
-        guard let data = try? Data(contentsOf: sidecarURL),
-              let cache = try? JSONDecoder().decode(UniqueReadCache.self, from: data) else {
-            return
-        }
-        detectionTableView.uniqueReadCountsByAssembly = cache.byAssembly
-        detectionTableView.uniqueReadCountsByContig = cache.byContig
-        logger.info("Loaded persisted unique reads: \(cache.byAssembly.count) assemblies, \(cache.byContig.count) contigs")
-    }
-
-    /// Persists current unique read counts to the output directory sidecar.
-    private func persistUniqueReads() {
-        guard let outputDir = esVirituConfig?.outputDirectory else { return }
-        let cache = UniqueReadCache(
-            byAssembly: detectionTableView.uniqueReadCountsByAssembly,
-            byContig: detectionTableView.uniqueReadCountsByContig
-        )
-        let sidecarURL = outputDir.appendingPathComponent(Self.uniqueReadsSidecar)
-        do {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let data = try encoder.encode(cache)
-            try data.write(to: sidecarURL)
-            logger.info("Persisted unique reads for \(cache.byAssembly.count) assemblies")
-        } catch {
-            logger.warning("Failed to persist unique reads: \(error.localizedDescription, privacy: .public)")
-        }
     }
 
     // MARK: - Setup: Summary Bar
