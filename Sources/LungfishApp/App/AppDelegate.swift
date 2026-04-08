@@ -5407,11 +5407,40 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     toolVersion: result.toolVersion
                 )
 
+                // Build the SQLite database at the parent batch directory so
+                // the single-sample result opens directly into the DB-backed view.
+                // config.outputDirectory is the per-sample subdir; its parent is
+                // the batch root the sidebar shows.
+                let esvBatchRoot = config.outputDirectory.deletingLastPathComponent()
+                var dbBuildErrorDescription: String?
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        OperationCenter.shared.update(id: opID, progress: 0.95, detail: "Building EsViritu database\u{2026}")
+                        OperationCenter.shared.log(id: opID, level: .info, message: "Building esviritu.sqlite from single-sample result")
+                    }
+                }
+                do {
+                    try LungfishCLIRunner.buildClassifierDatabase(tool: "esviritu", resultURL: esvBatchRoot)
+                } catch {
+                    dbBuildErrorDescription = error.localizedDescription
+                    appDelegateLogger.warning(
+                        "runEsViritu: Failed to build esviritu.sqlite - \(error.localizedDescription, privacy: .public)"
+                    )
+                }
+
                 nonisolated(unsafe) let capturedResult = ioResult
                 nonisolated(unsafe) let capturedConfig = config
+                nonisolated(unsafe) let capturedDBBuildError = dbBuildErrorDescription
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         viewerController.hideProgress()
+                        if let dbError = capturedDBBuildError {
+                            OperationCenter.shared.log(
+                                id: opID,
+                                level: .warning,
+                                message: "Database build failed: \(dbError) — batch will rebuild lazily on open"
+                            )
+                        }
                         OperationCenter.shared.complete(
                             id: opID,
                             detail: "\(capturedResult.detections.count) viruses detected in \(capturedResult.detectedFamilyCount) families"
@@ -5662,6 +5691,29 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 appDelegateLogger.warning("runClassificationBatch: Failed to save batch manifest - \(error.localizedDescription, privacy: .public)")
             }
 
+            // Build the SQLite database from the per-sample kreports before the
+            // operation completes, so the batch can be opened immediately.
+            // Skipped when every sample failed (no data to aggregate).
+            var dbBuildErrorDescription: String?
+            let successfulCountForDB = successfulResults.count
+            if successfulCountForDB > 0 {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        OperationCenter.shared.update(id: opID, progress: 0.95, detail: "Building Kraken2 database\u{2026}")
+                        OperationCenter.shared.log(id: opID, level: .info, message: "Building kraken2.sqlite from \(successfulCountForDB) sample(s)")
+                    }
+                }
+                do {
+                    try LungfishCLIRunner.buildClassifierDatabase(tool: "kraken2", resultURL: batchRoot)
+                } catch {
+                    dbBuildErrorDescription = error.localizedDescription
+                    appDelegateLogger.warning(
+                        "runClassificationBatch: Failed to build kraken2.sqlite - \(error.localizedDescription, privacy: .public)"
+                    )
+                }
+            }
+
+            nonisolated(unsafe) let capturedDBBuildError = dbBuildErrorDescription
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     viewerController.hideProgress()
@@ -5687,6 +5739,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                             alert.beginSheetModal(for: window)
                         }
                         return
+                    }
+
+                    if let dbError = capturedDBBuildError {
+                        OperationCenter.shared.log(
+                            id: opID,
+                            level: .warning,
+                            message: "Database build failed: \(dbError) — batch will rebuild lazily on open"
+                        )
                     }
 
                     if failureCount == 0 {
@@ -5921,6 +5981,29 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 appDelegateLogger.warning("runEsVirituBatch: Failed to save batch manifest - \(error.localizedDescription, privacy: .public)")
             }
 
+            // Build the SQLite database from the per-sample outputs before the
+            // operation completes, so the batch can be opened immediately.
+            // Skipped when every sample failed (no data to aggregate).
+            var dbBuildErrorDescription: String?
+            let successfulCountForDB = successfulResults.count
+            if successfulCountForDB > 0 {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        OperationCenter.shared.update(id: opID, progress: 0.95, detail: "Building EsViritu database\u{2026}")
+                        OperationCenter.shared.log(id: opID, level: .info, message: "Building esviritu.sqlite from \(successfulCountForDB) sample(s)")
+                    }
+                }
+                do {
+                    try LungfishCLIRunner.buildClassifierDatabase(tool: "esviritu", resultURL: batchRoot)
+                } catch {
+                    dbBuildErrorDescription = error.localizedDescription
+                    appDelegateLogger.warning(
+                        "runEsVirituBatch: Failed to build esviritu.sqlite - \(error.localizedDescription, privacy: .public)"
+                    )
+                }
+            }
+
+            nonisolated(unsafe) let capturedDBBuildError = dbBuildErrorDescription
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     viewerController.hideProgress()
@@ -5946,6 +6029,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                             alert.beginSheetModal(for: window)
                         }
                         return
+                    }
+
+                    if let dbError = capturedDBBuildError {
+                        OperationCenter.shared.log(
+                            id: opID,
+                            level: .warning,
+                            message: "Database build failed: \(dbError) — batch will rebuild lazily on open"
+                        )
                     }
 
                     if failureCount == 0 {
@@ -6065,11 +6156,37 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     }
                 )
 
+                // Build the SQLite database from the Nextflow outputs before the
+                // operation completes, so the batch can be opened immediately.
+                var dbBuildErrorDescription: String?
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        OperationCenter.shared.update(id: opID, progress: 0.95, detail: "Building TaxTriage database\u{2026}")
+                        OperationCenter.shared.log(id: opID, level: .info, message: "Building taxtriage.sqlite from TaxTriage outputs")
+                    }
+                }
+                do {
+                    try LungfishCLIRunner.buildClassifierDatabase(tool: "taxtriage", resultURL: config.outputDirectory)
+                } catch {
+                    dbBuildErrorDescription = error.localizedDescription
+                    appDelegateLogger.warning(
+                        "runTaxTriage: Failed to build taxtriage.sqlite - \(error.localizedDescription, privacy: .public)"
+                    )
+                }
+
                 nonisolated(unsafe) let capturedResult = result
                 nonisolated(unsafe) let capturedConfig = config
+                nonisolated(unsafe) let capturedDBBuildError = dbBuildErrorDescription
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         viewerController.hideProgress()
+                        if let dbError = capturedDBBuildError {
+                            OperationCenter.shared.log(
+                                id: opID,
+                                level: .warning,
+                                message: "Database build failed: \(dbError) — batch will rebuild lazily on open"
+                            )
+                        }
                         OperationCenter.shared.complete(
                             id: opID,
                             detail: capturedResult.summary

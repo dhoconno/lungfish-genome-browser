@@ -2005,51 +2005,16 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         triggerDatabaseBuild(tool: tool, resultURL: resultURL, placeholder: placeholder)
     }
 
-    /// Locates the `lungfish-cli` binary, checking the app bundle, adjacent
-    /// build products, and common system paths.
-    ///
-    /// The CLI product is named `lungfish-cli` in Package.swift (not `lungfish`,
-    /// which is the GUI app binary).
-    private func findLungfishCLI() -> URL? {
-        let names = ["lungfish-cli", "lungfish"]
-        let fm = FileManager.default
-
-        for name in names {
-            // 1. In app bundle (release builds).
-            if let url = Bundle.main.url(forResource: name, withExtension: nil) {
-                return url
-            }
-            // 2. Adjacent to app binary (Xcode run-scheme products directory).
-            let adjacentURL = Bundle.main.bundleURL
-                .deletingLastPathComponent()
-                .appendingPathComponent(name)
-            if fm.fileExists(atPath: adjacentURL.path) {
-                return adjacentURL
-            }
-            // 3. In build products (SPM debug build).
-            let buildProductsURL = Bundle.main.bundleURL
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .appendingPathComponent("debug")
-                .appendingPathComponent(name)
-            if fm.fileExists(atPath: buildProductsURL.path) {
-                return buildProductsURL
-            }
-            // 4. Common system paths.
-            for path in ["/usr/local/bin/\(name)", "/opt/homebrew/bin/\(name)"] {
-                if fm.fileExists(atPath: path) {
-                    return URL(fileURLWithPath: path)
-                }
-            }
-        }
-        return nil
-    }
-
-    /// Runs `lungfish build-db <tool> <resultDir>` as a background subprocess.
+    /// Runs `lungfish-cli build-db <tool> <resultDir>` via ``LungfishCLIRunner``.
     ///
     /// Updates the placeholder view with progress/error states and, on success,
     /// removes it and re-triggers ``displayBatchGroup(at:)`` so the newly-built
     /// database is loaded.
+    ///
+    /// Most batch pipelines now build the database in-process before the user
+    /// ever reaches this placeholder (see ``runEsVirituBatch`` and
+    /// ``runClassificationBatch``). This path exists as a fallback for
+    /// legacy/imported batches that were created without an attached SQLite DB.
     private func triggerDatabaseBuild(
         tool: String,
         resultURL: URL,
@@ -2057,51 +2022,29 @@ extension MainSplitViewController: SidebarSelectionDelegate {
     ) {
         let cliTool = tool.lowercased()
 
-        guard let cliURL = findLungfishCLI() else {
-            logger.error("triggerDatabaseBuild: Lungfish CLI not found")
-            placeholder.configure(tool: tool, resultURL: resultURL)
-            placeholder.onRetry = { [weak self] in
-                placeholder.removeFromSuperview()
-                self?.showDatabaseBuildPlaceholder(tool: tool, resultURL: resultURL)
-            }
-            return
-        }
-
-        // Show the "building" spinner state.
+        // Show the "building" spinner state immediately so the user sees feedback.
         placeholder.showBuilding(tool: tool)
 
-        logger.info(
-            "triggerDatabaseBuild: Launching '\(cliURL.path, privacy: .public)' build-db \(cliTool, privacy: .public) '\(resultURL.path, privacy: .public)'"
-        )
-
         Task.detached { [weak self] in
-            let process = Process()
-            process.executableURL = cliURL
-            process.arguments = ["build-db", cliTool, resultURL.path]
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
-
             do {
-                try process.run()
-                process.waitUntilExit()
-                let success = process.terminationStatus == 0
+                try LungfishCLIRunner.buildClassifierDatabase(tool: cliTool, resultURL: resultURL)
 
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         guard let self else { return }
                         placeholder.removeFromSuperview()
-                        if success {
-                            logger.info("triggerDatabaseBuild: Build succeeded for \(cliTool, privacy: .public)")
-                            // Re-display — the DB should now exist.
-                            self.displayBatchGroup(at: resultURL)
-                        } else {
-                            let errorData = pipe.fileHandleForReading.readDataToEndOfFile()
-                            let errorMsg = String(data: errorData, encoding: .utf8)?
-                                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "Unknown error"
-                            logger.error("triggerDatabaseBuild: Build failed: \(errorMsg, privacy: .public)")
-                            placeholder.showError("Build failed: \(errorMsg)")
-                            // Re-add placeholder to show the error.
+                        // Re-display — the DB should now exist.
+                        self.displayBatchGroup(at: resultURL)
+                    }
+                }
+            } catch {
+                let errorDescription = error.localizedDescription
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        placeholder.showError("Build failed: \(errorDescription)")
+                        // Ensure the placeholder is still in the viewport hierarchy so the error is visible.
+                        if placeholder.superview == nil {
                             let contentView = self.viewerController.view
                             contentView.addSubview(placeholder)
                             placeholder.translatesAutoresizingMaskIntoConstraints = false
@@ -2111,19 +2054,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                                 placeholder.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
                                 placeholder.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
                             ])
-                            placeholder.onRetry = { [weak self] in
-                                placeholder.removeFromSuperview()
-                                self?.showDatabaseBuildPlaceholder(tool: tool, resultURL: resultURL)
-                            }
                         }
-                    }
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated {
-                        guard let self else { return }
-                        logger.error("triggerDatabaseBuild: Failed to launch: \(error.localizedDescription, privacy: .public)")
-                        placeholder.showError("Failed to launch build: \(error.localizedDescription)")
                         placeholder.onRetry = { [weak self] in
                             placeholder.removeFromSuperview()
                             self?.showDatabaseBuildPlaceholder(tool: tool, resultURL: resultURL)

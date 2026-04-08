@@ -1252,9 +1252,33 @@ public class SidebarViewController: NSViewController {
         }
     }
 
-    /// Builds an expandable batch group item with per-sample children.
+    /// Builds a batch group item for a classifier or generic tool batch.
+    ///
+    /// For the three classifier tools (Kraken2, EsViritu, TaxTriage) the batch is
+    /// a LEAF node — no per-sample children, no disclosure triangle. Sample
+    /// filtering happens inside the batch viewer via the sample picker. The batch
+    /// row uses a ``TextBadgeIcon`` pill badge (K2 / Es / TT) in Lungfish Orange.
+    ///
+    /// For generic tools (SPAdes, minimap2, etc.) this still enumerates
+    /// per-sample children for browsing.
     private func buildBatchAnalysisItem(info: AnalysesFolder.AnalysisDirectoryInfo) -> SidebarItem? {
         let title = analysisDisplayTitle(for: info)
+
+        // Classifier batches: build a leaf node with a text badge and no children.
+        if let badge = classifierBatchBadge(for: info.tool) {
+            let subtitle = classifierBatchSubtitle(for: info)
+            guard subtitle != nil else { return nil }  // skip corrupt/empty batches
+            return SidebarItem(
+                title: title,
+                type: .batchGroup,
+                customImage: TextBadgeIcon.image(text: badge, size: NSSize(width: 16, height: 16)),
+                children: [],
+                url: info.url,
+                subtitle: subtitle
+            )
+        }
+
+        // Generic tools: expandable group with per-sample children.
         let groupItem = SidebarItem(
             title: title,
             type: .batchGroup,
@@ -1263,72 +1287,80 @@ public class SidebarViewController: NSViewController {
             url: info.url,
             subtitle: AnalysesFolder.formatTimestamp(info.timestamp)
         )
+        buildBatchChildrenFromFilesystem(
+            info: info,
+            groupItem: groupItem,
+            sidecarCheck: { _ in true },
+            itemType: .analysisResult,
+            icon: analysisIcon(for: info.tool)
+        )
+        guard !groupItem.children.isEmpty else { return nil }
+        return groupItem
+    }
 
-        // Try loading the batch manifest for structured sample enumeration
+    /// The badge text for a classifier batch sidebar icon, or nil for non-classifier tools.
+    private func classifierBatchBadge(for tool: String) -> String? {
+        switch tool {
+        case "kraken2": return "K2"
+        case "esviritu": return "Es"
+        case "taxtriage": return "TT"
+        default: return nil
+        }
+    }
+
+    /// Computes the subtitle for a classifier batch sidebar row.
+    ///
+    /// Prefers the batch manifest (for accurate sample count and database name)
+    /// and falls back to a filesystem scan when no manifest is present. Returns
+    /// nil when the batch is genuinely empty so the caller can skip it.
+    private func classifierBatchSubtitle(for info: AnalysesFolder.AnalysisDirectoryInfo) -> String? {
+        let timestamp = AnalysesFolder.formatTimestamp(info.timestamp)
+
         switch info.tool {
         case "esviritu":
             if let manifest = MetagenomicsBatchResultStore.loadEsViritu(from: info.url) {
-                groupItem.subtitle = "\(manifest.header.sampleCount) samples · \(AnalysesFolder.formatTimestamp(info.timestamp))"
-                for record in manifest.samples.sorted(by: {
-                    $0.sampleId.localizedCaseInsensitiveCompare($1.sampleId) == .orderedAscending
-                }) {
-                    let resultURL = info.url.appendingPathComponent(record.resultDirectory)
-                    guard EsVirituResult.exists(in: resultURL) else { continue }
-                    let childItem = SidebarItem(
-                        title: record.sampleId,
-                        type: .esvirituResult,
-                        icon: "e.circle",
-                        children: [],
-                        url: resultURL,
-                        subtitle: esvirituResultTitle(for: resultURL)
-                    )
-                    childItem.userInfo["sampleId"] = record.sampleId
-                    groupItem.children.append(childItem)
-                }
-            } else {
-                buildBatchChildrenFromFilesystem(info: info, groupItem: groupItem, sidecarCheck: EsVirituResult.exists, itemType: .esvirituResult, icon: "e.circle")
+                return "\(manifest.header.sampleCount) samples · \(timestamp)"
             }
+            let count = countBatchSampleSubdirectories(in: info.url, sidecarCheck: EsVirituResult.exists)
+            return count > 0 ? "\(count) samples · \(timestamp)" : nil
 
         case "kraken2":
             if let manifest = MetagenomicsBatchResultStore.loadClassification(from: info.url) {
                 let dbLabel = manifest.databaseName.isEmpty ? "" : " · \(manifest.databaseName)"
-                groupItem.subtitle = "\(manifest.header.sampleCount) samples\(dbLabel) · \(AnalysesFolder.formatTimestamp(info.timestamp))"
-                for record in manifest.samples.sorted(by: {
-                    $0.sampleId.localizedCaseInsensitiveCompare($1.sampleId) == .orderedAscending
-                }) {
-                    let resultURL = info.url.appendingPathComponent(record.resultDirectory)
-                    guard ClassificationResult.exists(in: resultURL) else { continue }
-                    let childItem = SidebarItem(
-                        title: record.sampleId,
-                        type: .classificationResult,
-                        icon: "k.circle",
-                        children: [],
-                        url: resultURL,
-                        subtitle: classificationResultTitle(for: resultURL)
-                    )
-                    childItem.userInfo["sampleId"] = record.sampleId
-                    groupItem.children.append(childItem)
-                }
-            } else {
-                buildBatchChildrenFromFilesystem(info: info, groupItem: groupItem, sidecarCheck: ClassificationResult.exists, itemType: .classificationResult, icon: "k.circle")
+                return "\(manifest.header.sampleCount) samples\(dbLabel) · \(timestamp)"
             }
+            let count = countBatchSampleSubdirectories(in: info.url, sidecarCheck: ClassificationResult.exists)
+            return count > 0 ? "\(count) samples · \(timestamp)" : nil
 
         case "taxtriage":
-            // TaxTriage always writes sample subdirectories. Create children for each.
-            buildBatchChildrenFromFilesystem(
-                info: info, groupItem: groupItem,
-                sidecarCheck: { _ in true },
-                itemType: .taxTriageResult,
-                icon: "t.circle"
-            )
+            // TaxTriage writes sample subdirectories but no batch manifest.
+            let count = countBatchSampleSubdirectories(in: info.url, sidecarCheck: { _ in true })
+            return count > 0 ? "\(count) samples · \(timestamp)" : nil
 
         default:
-            // Generic fallback: scan for subdirectories
-            buildBatchChildrenFromFilesystem(info: info, groupItem: groupItem, sidecarCheck: { _ in true }, itemType: .analysisResult, icon: analysisIcon(for: info.tool))
+            return timestamp
         }
+    }
 
-        guard !groupItem.children.isEmpty else { return nil }
-        return groupItem
+    /// Counts valid sample subdirectories inside a batch directory.
+    private func countBatchSampleSubdirectories(
+        in batchURL: URL,
+        sidecarCheck: (URL) -> Bool
+    ) -> Int {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: batchURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return 0 }
+
+        return contents.reduce(0) { count, child in
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: child.path, isDirectory: &isDir), isDir.boolValue else {
+                return count
+            }
+            return sidecarCheck(child) ? count + 1 : count
+        }
     }
 
     /// Fallback: enumerate subdirectories when no batch manifest is available.

@@ -430,10 +430,16 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     ///
     /// Fetches every sample's rows (selection filtering is done by `applyBatchSampleFilter`).
     /// Groups per-contig `EsVirituDetectionRow`s by (sample, assembly) to produce
-    /// `BatchEsVirituRow`s. Also populates `batchBAMLookup` and `batchBAMIndexLookup`
-    /// from DB columns.
+    /// `BatchEsVirituRow`s, populates `batchAssemblyLookup` with fully-built
+    /// ``ViralAssembly`` values for the detail-pane wiring, and resolves
+    /// BAM paths into `batchBAMLookup` and `batchBAMIndexLookup` from DB columns.
     private func reloadFromDatabase() {
         guard let db = esVirituDatabase else { return }
+
+        // Clear stale lookups so reloads never accumulate data from prior loads.
+        batchAssemblyLookup.removeAll()
+        batchBAMLookup.removeAll()
+        batchBAMIndexLookup.removeAll()
 
         let allSampleIds = sampleEntries.map(\.id)
         let dbRows = (try? db.fetchRows(samples: allSampleIds)) ?? []
@@ -446,7 +452,7 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         }
 
         var batchRows: [BatchEsVirituRow] = []
-        for (_, group) in grouped {
+        for (key, group) in grouped {
             guard let first = group.first else { continue }
             let totalReads = group.reduce(0) { $0 + $1.readCount }
             let totalUniqueReads = group.reduce(0) { $0 + ($1.uniqueReads ?? 0) }
@@ -468,6 +474,70 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
                 coverageBreadth: breadth,
                 coverageDepth: avgDepth
             ))
+
+            // Build a ViralAssembly for the detail pane by converting each
+            // DB row into a ``ViralDetection`` contig, then aggregating them
+            // the same way ``EsVirituDetectionParser/groupByAssembly`` does
+            // for single-sample mode. Without this the detail pane stays
+            // blank when a row is clicked (``batchAssemblyLookup`` lookup
+            // misses and ``showAssemblyDetail`` is never called).
+            let contigs: [ViralDetection] = group.map { row in
+                ViralDetection(
+                    sampleId: row.sample,
+                    name: row.virusName,
+                    description: row.description ?? "",
+                    length: row.contigLength ?? 0,
+                    segment: row.segment,
+                    accession: row.accession,
+                    assembly: row.assembly,
+                    assemblyLength: row.assemblyLength ?? 0,
+                    kingdom: row.kingdom,
+                    phylum: row.phylum,
+                    tclass: row.tclass,
+                    order: row.torder,
+                    family: row.family,
+                    genus: row.genus,
+                    species: row.species,
+                    subspecies: row.subspecies,
+                    rpkmf: row.rpkmf ?? 0,
+                    readCount: row.readCount,
+                    coveredBases: row.coveredBases ?? 0,
+                    meanCoverage: row.meanCoverage ?? 0,
+                    avgReadIdentity: row.avgReadIdentity ?? 0,
+                    pi: row.pi ?? 0,
+                    filteredReadsInSample: row.filteredReadsInSample ?? 0
+                )
+            }
+
+            // Assembly-level weighted averages (matches EsVirituDetectionParser.groupByAssembly).
+            let weightedCoverage: Double
+            let weightedIdentity: Double
+            if totalReads > 0 {
+                weightedCoverage = contigs.reduce(0.0) {
+                    $0 + $1.meanCoverage * Double($1.readCount)
+                } / Double(totalReads)
+                weightedIdentity = contigs.reduce(0.0) {
+                    $0 + $1.avgReadIdentity * Double($1.readCount)
+                } / Double(totalReads)
+            } else {
+                weightedCoverage = 0
+                weightedIdentity = 0
+            }
+
+            let assembly = ViralAssembly(
+                assembly: first.assembly,
+                assemblyLength: first.assemblyLength ?? 0,
+                name: first.virusName,
+                family: first.family,
+                genus: first.genus,
+                species: first.species,
+                totalReads: totalReads,
+                rpkmf: first.rpkmf ?? 0,
+                meanCoverage: weightedCoverage,
+                avgReadIdentity: weightedIdentity,
+                contigs: contigs
+            )
+            batchAssemblyLookup[key] = assembly
         }
 
         // Resolve BAM paths from DB columns.
