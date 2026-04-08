@@ -604,6 +604,27 @@ public enum MetagenomicsImportService {
             logger.warning("Failed to cache taxon rows in manifest: \(error.localizedDescription, privacy: .public)")
         }
 
+        // Materialize BAMs from SQLite virus_hits rows so the miniBAM viewer can
+        // use the same displayContig() path as TaxTriage/EsViritu/NVD. The
+        // materializer runs samtools markdup on each generated BAM automatically.
+        progress?(0.97, "Materializing BAMs from SQLite rows\u{2026}")
+        var createdBamFiles = false
+        if let samtoolsPath = naomgsLocateSamtools() {
+            do {
+                let generated = try NaoMgsBamMaterializer.materializeAll(
+                    dbPath: hitsDBURL.path,
+                    resultURL: resultDirectory,
+                    samtoolsPath: samtoolsPath
+                )
+                createdBamFiles = !generated.isEmpty
+                logger.info("Materialized \(generated.count) BAM file(s) for NAO-MGS samples")
+            } catch {
+                logger.warning("Failed to materialize NAO-MGS BAMs: \(error.localizedDescription, privacy: .public)")
+            }
+        } else {
+            logger.warning("samtools not found; skipping NAO-MGS BAM materialization")
+        }
+
         progress?(1.0, "NAO-MGS import complete")
         return NaoMgsImportResult(
             resultDirectory: resultDirectory,
@@ -611,7 +632,7 @@ public enum MetagenomicsImportService {
             totalHitReads: result.totalHitReads,
             taxonCount: result.taxonSummaries.count,
             fetchedReferenceCount: fetchedAccessions.count,
-            createdBAM: false
+            createdBAM: createdBamFiles
         )
         } catch {
             throw MetagenomicsImportError.importAborted(
@@ -756,6 +777,20 @@ public enum MetagenomicsImportService {
             result += "\n"
         }
         return result
+    }
+
+    /// Locates the samtools binary for NAO-MGS BAM materialization.
+    private static func naomgsLocateSamtools() -> String? {
+        let candidates = [
+            "/opt/homebrew/Cellar/samtools/1.23/bin/samtools",
+            "/opt/homebrew/bin/samtools",
+            "/usr/local/bin/samtools",
+            "/usr/bin/samtools",
+        ]
+        for p in candidates where FileManager.default.fileExists(atPath: p) {
+            return p
+        }
+        return nil
     }
 }
 
