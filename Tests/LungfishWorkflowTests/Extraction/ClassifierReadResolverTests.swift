@@ -482,4 +482,70 @@ final class ClassifierReadResolverTests: XCTestCase {
             XCTFail("Expected clipboardCapExceeded, got \(error)")
         }
     }
+
+    // MARK: - extractViaKraken2
+
+    /// Path to the kraken2-mini per-sample fixture, if present.
+    private func kraken2MiniResultPath() throws -> URL {
+        let thisFile = URL(fileURLWithPath: #filePath)
+        let repoRoot = thisFile
+            .deletingLastPathComponent() // Extraction
+            .deletingLastPathComponent() // LungfishWorkflowTests
+            .deletingLastPathComponent() // Tests
+            .deletingLastPathComponent() // repo root
+        let sampleDir = repoRoot.appendingPathComponent("Tests/Fixtures/kraken2-mini/SRR35517702")
+        guard FileManager.default.fileExists(atPath: sampleDir.path) else {
+            throw XCTSkip("kraken2-mini fixture not present at \(sampleDir.path)")
+        }
+        return sampleDir
+    }
+
+    func testExtractViaKraken2_fixtureProducesFASTQ() async throws {
+        let resultPath = try kraken2MiniResultPath()
+
+        // The kraken2-mini fixture contains a classification-YYYYMMDD/ subdir
+        // with a kreport / output / sourceFASTQ layout. We read it via the
+        // normal ClassificationResult.load initializer so the test is robust
+        // to layout changes.
+        let classificationDirs: [URL] = (try? FileManager.default.contentsOfDirectory(
+            at: resultPath,
+            includingPropertiesForKeys: [.isDirectoryKey]
+        )) ?? []
+        guard let classificationDir = classificationDirs.first(where: { url in
+            guard url.lastPathComponent.hasPrefix("classification-") else { return false }
+            let values = try? url.resourceValues(forKeys: [.isDirectoryKey])
+            return values?.isDirectory == true
+        }) else {
+            throw XCTSkip("no classification-* subdir in kraken2-mini/SRR35517702")
+        }
+
+        // We need at least one tax ID that has reads assigned. Load the tree
+        // and pick the first non-zero clade count.
+        let classResult = try ClassificationResult.load(from: classificationDir)
+        let candidate = classResult.tree.allNodes().first(where: { $0.readsClade > 0 && $0.taxId != 0 })
+        guard let taxon = candidate else {
+            throw XCTSkip("kraken2-mini fixture has no taxa with classified reads")
+        }
+
+        let tempOut = FileManager.default.temporaryDirectory.appendingPathComponent("k2out-\(UUID().uuidString).fastq")
+        defer { try? FileManager.default.removeItem(at: tempOut) }
+
+        let resolver = ClassifierReadResolver()
+        let outcome = try await resolver.resolveAndExtract(
+            tool: .kraken2,
+            resultPath: classificationDir,
+            selections: [
+                ClassifierRowSelector(sampleId: nil, accessions: [], taxIds: [taxon.taxId])
+            ],
+            options: ExtractionOptions(),
+            destination: .file(tempOut)
+        )
+
+        guard case .file(let url, let n) = outcome else {
+            XCTFail("Expected .file outcome, got \(outcome)")
+            return
+        }
+        XCTAssertEqual(url.standardizedFileURL.path, tempOut.standardizedFileURL.path)
+        XCTAssertGreaterThan(n, 0, "Expected non-zero reads for taxon \(taxon.taxId)")
+    }
 }

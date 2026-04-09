@@ -205,18 +205,20 @@ public actor ClassifierReadResolver {
         resultPath: URL,
         selections: [ClassifierRowSelector]
     ) async throws -> Int {
-        // The resolver knows how to load a Kraken2 result from disk because
-        // the ClassificationResult type exposes a .load(from:) initializer.
-        // We defer the actual tree-walking until Task 2.6 where we also
-        // implement the full Kraken2 extraction path; for now, just sum
-        // `selections.taxIds.count * 0` and return zero — a correct-but-
-        // conservative lower bound. Dialog live-update will show a real
-        // number after Task 2.6 fills this in.
-        //
-        // TODO[phase2]: real Kraken2 estimate lands in Task 2.6.
-        let _ = resultPath
-        let _ = selections
-        return 0
+        let classResult: ClassificationResult
+        do {
+            classResult = try ClassificationResult.load(from: resultPath)
+        } catch {
+            return 0  // best-effort estimate; don't fail the pre-flight
+        }
+        let targetIds = Set(selections.flatMap { $0.taxIds })
+        var total = 0
+        for node in classResult.tree.allNodes() where targetIds.contains(node.taxId) {
+            // clade count already includes descendant reads; spec says
+            // includeChildren is always true for Kraken2.
+            total += node.readsClade
+        }
+        return total
     }
 
     // MARK: - Private helpers
@@ -421,6 +423,8 @@ public actor ClassifierReadResolver {
         )
     }
 
+    // MARK: - Kraken2 dispatch
+
     private func extractViaKraken2(
         selections: [ClassifierRowSelector],
         resultPath: URL,
@@ -428,7 +432,136 @@ public actor ClassifierReadResolver {
         destination: ExtractionDestination,
         progress: (@Sendable (Double, String) -> Void)?
     ) async throws -> ExtractionOutcome {
-        throw ClassifierExtractionError.notImplemented
+        // Load the Kraken2 classification result from the result path.
+        // The result path must point at a classification-* directory.
+        let classResult: ClassificationResult
+        do {
+            classResult = try ClassificationResult.load(from: resultPath)
+        } catch {
+            throw ClassifierExtractionError.kraken2OutputMissing(resultPath)
+        }
+
+        // Collect tax IDs from the (possibly multi-row) selection.
+        let allTaxIds = Set(selections.flatMap { $0.taxIds })
+        guard !allTaxIds.isEmpty else {
+            throw ClassifierExtractionError.zeroReadsExtracted
+        }
+
+        // Locate a writable temp directory under the enclosing project.
+        let projectRoot = Self.resolveProjectRoot(from: resultPath)
+        let tempDir = try ProjectTempDirectory.create(
+            prefix: "kraken2-extract-",
+            in: projectRoot
+        )
+        let cleanTempDir = tempDir  // capture for defer
+        defer { try? FileManager.default.removeItem(at: cleanTempDir) }
+
+        // Resolve the source FASTQ by walking up from the classification output
+        // directory to the enclosing FASTQ bundle (if any), falling back to
+        // config.inputFiles. Mirrors the logic in the old TaxonomyViewController
+        // at TaxonomyViewController.swift:695-712.
+        let sourceURLs: [URL] = try resolveKraken2SourceFASTQs(classResult: classResult)
+
+        // Build the pipeline config (includeChildren is ALWAYS true per spec).
+        let outputStem = tempDir.appendingPathComponent("kraken2-extract")
+        let outputFiles: [URL]
+        if sourceURLs.count == 1 {
+            outputFiles = [outputStem.appendingPathExtension("fastq")]
+        } else {
+            outputFiles = sourceURLs.enumerated().map { idx, _ in
+                tempDir.appendingPathComponent("kraken2-extract_R\(idx + 1).fastq")
+            }
+        }
+
+        let config = TaxonomyExtractionConfig(
+            taxIds: allTaxIds,
+            includeChildren: true,
+            sourceFiles: sourceURLs,
+            outputFiles: outputFiles,
+            classificationOutput: classResult.outputURL,
+            keepReadPairs: true
+        )
+
+        progress?(0.1, "Extracting reads for \(allTaxIds.count) tax ID(s)…")
+
+        let pipeline = TaxonomyExtractionPipeline()
+        let producedURLs = try await pipeline.extract(
+            config: config,
+            tree: classResult.tree,
+            progress: { fraction, message in
+                progress?(0.1 + fraction * 0.7, message)
+            }
+        )
+
+        // Concatenate R1+R2 (if paired) into a single FASTQ for destination routing.
+        let concatenated = tempDir.appendingPathComponent("kraken2-concat.fastq")
+        try concatenateFiles(producedURLs, into: concatenated)
+
+        let readCount = try await countFASTQRecords(in: concatenated)
+        if readCount == 0 {
+            throw ClassifierExtractionError.zeroReadsExtracted
+        }
+
+        // Format conversion.
+        let finalFile: URL
+        if options.format == .fasta {
+            finalFile = tempDir.appendingPathComponent("kraken2-concat.fasta")
+            try convertFASTQToFASTA(input: concatenated, output: finalFile)
+        } else {
+            finalFile = concatenated
+        }
+
+        return try await routeToDestination(
+            finalFile: finalFile,
+            tempDir: tempDir,
+            readCount: readCount,
+            tool: .kraken2,
+            destination: destination,
+            progress: progress
+        )
+    }
+
+    /// Resolves the Kraken2 source FASTQ(s) for extraction.
+    ///
+    /// Tries (in order):
+    /// 1. `config.originalInputFiles` if non-nil (preserved before
+    ///    materialization). If the resulting URL is a bundle, uses the
+    ///    `FASTQBundle.resolvePrimaryFASTQURL` resolver.
+    /// 2. Walking up from `config.outputDirectory` to find the enclosing
+    ///    `.lungfishfastq` bundle.
+    /// 3. Falls back to `config.inputFiles` directly.
+    private func resolveKraken2SourceFASTQs(
+        classResult: ClassificationResult
+    ) throws -> [URL] {
+        let fm = FileManager.default
+        let config = classResult.config
+
+        // 1. originalInputFiles
+        if let originals = config.originalInputFiles,
+           let first = originals.first,
+           fm.fileExists(atPath: first.path) {
+            if FASTQBundle.isBundleURL(first),
+               let resolved = FASTQBundle.resolvePrimaryFASTQURL(for: first) {
+                return [resolved]
+            }
+            return originals
+        }
+
+        // 2. Walk up from outputDirectory to find the enclosing bundle.
+        //    outputDirectory = bundle.lungfishfastq/derivatives/classification-xxx/
+        let derivativesDir = config.outputDirectory.deletingLastPathComponent()
+        let bundleDir = derivativesDir.deletingLastPathComponent()
+        if FASTQBundle.isBundleURL(bundleDir),
+           let resolved = FASTQBundle.resolvePrimaryFASTQURL(for: bundleDir) {
+            return [resolved]
+        }
+
+        // 3. Fall back to config.inputFiles if they exist.
+        if let first = config.inputFiles.first, fm.fileExists(atPath: first.path) {
+            return config.inputFiles
+        }
+
+        throw ClassifierExtractionError.kraken2SourceMissing
     }
 
     // MARK: - BAM → FASTQ conversion
