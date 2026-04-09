@@ -215,15 +215,94 @@ public actor ClassifierReadResolver {
         return order.map { ($0, bySample[$0] ?? []) }
     }
 
-    /// Resolves the BAM URL for a given sample. Implemented in Task 2.3 — stub
-    /// throws so callers cannot reach production code.
+    /// Resolves the per-sample BAM URL for a classifier tool.
+    ///
+    /// Each tool stores its BAM differently; this function centralizes the
+    /// knowledge. When `sampleId` is `nil` (single-sample result views) we
+    /// look for a single BAM file using the tool's default naming convention.
     private func resolveBAMURL(
         tool: ClassifierTool,
         sampleId: String?,
         resultPath: URL
     ) async throws -> URL {
-        throw ClassifierExtractionError.notImplemented
+        let fm = FileManager.default
+        let resultDir = resultPath.hasDirectoryPath
+            ? resultPath
+            : resultPath.deletingLastPathComponent()
+
+        let sample = sampleId ?? "(single)"
+
+        // Build the candidate URL list in the order we want to try them.
+        let candidates: [URL]
+        switch tool {
+        case .esviritu:
+            // EsViritu writes {sampleId}.sorted.bam next to the result DB.
+            // Historical layouts may have it in a temp subdir; we try both.
+            var urls: [URL] = []
+            if let sampleId {
+                urls.append(resultDir.appendingPathComponent("\(sampleId).sorted.bam"))
+                urls.append(resultDir.appendingPathComponent("\(sampleId)_temp/\(sampleId).sorted.bam"))
+            } else {
+                // Single-sample: any *.sorted.bam in the result dir.
+                if let enumerator = fm.enumerator(at: resultDir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]),
+                   let match = enumerator.compactMap({ $0 as? URL }).first(where: { $0.lastPathComponent.hasSuffix(".sorted.bam") }) {
+                    urls.append(match)
+                }
+            }
+            candidates = urls
+
+        case .taxtriage:
+            // TaxTriage nf-core layout: minimap2/{sampleId}.bam
+            guard let sampleId else {
+                candidates = []
+                break
+            }
+            candidates = [resultDir.appendingPathComponent("minimap2/\(sampleId).bam")]
+
+        case .naomgs:
+            // NAO-MGS: bams/{sampleId}.sorted.bam (materialized from SQLite if missing).
+            guard let sampleId else {
+                candidates = []
+                break
+            }
+            candidates = [resultDir.appendingPathComponent("bams/\(sampleId).sorted.bam")]
+
+        case .nvd:
+            // NVD: adjacent {sampleId}.bam or sorted.bam
+            guard let sampleId else {
+                candidates = []
+                break
+            }
+            candidates = [
+                resultDir.appendingPathComponent("\(sampleId).bam"),
+                resultDir.appendingPathComponent("\(sampleId).sorted.bam"),
+            ]
+
+        case .kraken2:
+            throw ClassifierExtractionError.notImplemented  // Kraken2 isn't BAM-backed.
+        }
+
+        for url in candidates {
+            if fm.fileExists(atPath: url.path) {
+                return url
+            }
+        }
+
+        throw ClassifierExtractionError.bamNotFound(sampleId: sample)
     }
+
+    // MARK: - Test hooks
+
+    #if DEBUG
+    /// Test-only wrapper exposing `resolveBAMURL` for unit testing.
+    public func testingResolveBAMURL(
+        tool: ClassifierTool,
+        sampleId: String?,
+        resultPath: URL
+    ) async throws -> URL {
+        try await resolveBAMURL(tool: tool, sampleId: sampleId, resultPath: resultPath)
+    }
+    #endif
 }
 
 // MARK: - ClassifierExtractionError

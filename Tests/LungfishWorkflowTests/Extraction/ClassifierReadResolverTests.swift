@@ -89,4 +89,123 @@ final class ClassifierReadResolverTests: XCTestCase {
         )
         XCTAssertEqual(count, 0)
     }
+
+    // MARK: - resolveBAMURL (per-tool)
+
+    /// Helper: creates a throwaway directory layout that looks like a real
+    /// classifier result for the purpose of BAM-path resolution only.
+    /// Does NOT create a functional BAM — just a file at the expected path
+    /// so `FileManager.fileExists` returns true.
+    private func makeFakeClassifierResult(
+        tool: ClassifierTool,
+        sampleId: String
+    ) throws -> (resultPath: URL, expectedBAM: URL) {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("fake-\(tool.rawValue)-\(UUID().uuidString)")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+
+        switch tool {
+        case .esviritu:
+            let bam = root.appendingPathComponent("\(sampleId).sorted.bam")
+            fm.createFile(atPath: bam.path, contents: Data([0x1F, 0x8B]))  // fake BGZF magic
+            return (resultPath: root.appendingPathComponent("esviritu.sqlite"), expectedBAM: bam)
+
+        case .taxtriage:
+            let subdir = root.appendingPathComponent("minimap2")
+            try fm.createDirectory(at: subdir, withIntermediateDirectories: true)
+            let bam = subdir.appendingPathComponent("\(sampleId).bam")
+            fm.createFile(atPath: bam.path, contents: Data([0x1F, 0x8B]))
+            return (resultPath: root.appendingPathComponent("taxtriage.sqlite"), expectedBAM: bam)
+
+        case .naomgs:
+            let subdir = root.appendingPathComponent("bams")
+            try fm.createDirectory(at: subdir, withIntermediateDirectories: true)
+            let bam = subdir.appendingPathComponent("\(sampleId).sorted.bam")
+            fm.createFile(atPath: bam.path, contents: Data([0x1F, 0x8B]))
+            return (resultPath: root.appendingPathComponent("naomgs.sqlite"), expectedBAM: bam)
+
+        case .nvd:
+            let bam = root.appendingPathComponent("\(sampleId).bam")
+            fm.createFile(atPath: bam.path, contents: Data([0x1F, 0x8B]))
+            return (resultPath: root.appendingPathComponent("nvd.sqlite"), expectedBAM: bam)
+
+        case .kraken2:
+            fatalError("kraken2 is not a BAM-backed tool")
+        }
+    }
+
+    func testResolveBAMURL_esviritu_findsSiblingSortedBAM() async throws {
+        let (resultPath, expected) = try makeFakeClassifierResult(tool: .esviritu, sampleId: "SRR123")
+        defer { try? FileManager.default.removeItem(at: resultPath.deletingLastPathComponent()) }
+
+        let resolver = ClassifierReadResolver()
+        let resolved = try await resolver.testingResolveBAMURL(
+            tool: .esviritu,
+            sampleId: "SRR123",
+            resultPath: resultPath
+        )
+        XCTAssertEqual(resolved.standardizedFileURL.path, expected.standardizedFileURL.path)
+    }
+
+    func testResolveBAMURL_taxtriage_findsMinimap2Subdir() async throws {
+        let (resultPath, expected) = try makeFakeClassifierResult(tool: .taxtriage, sampleId: "S01")
+        defer { try? FileManager.default.removeItem(at: resultPath.deletingLastPathComponent()) }
+
+        let resolver = ClassifierReadResolver()
+        let resolved = try await resolver.testingResolveBAMURL(
+            tool: .taxtriage,
+            sampleId: "S01",
+            resultPath: resultPath
+        )
+        XCTAssertEqual(resolved.standardizedFileURL.path, expected.standardizedFileURL.path)
+    }
+
+    func testResolveBAMURL_naomgs_findsBamsSubdir() async throws {
+        let (resultPath, expected) = try makeFakeClassifierResult(tool: .naomgs, sampleId: "S02")
+        defer { try? FileManager.default.removeItem(at: resultPath.deletingLastPathComponent()) }
+
+        let resolver = ClassifierReadResolver()
+        let resolved = try await resolver.testingResolveBAMURL(
+            tool: .naomgs,
+            sampleId: "S02",
+            resultPath: resultPath
+        )
+        XCTAssertEqual(resolved.standardizedFileURL.path, expected.standardizedFileURL.path)
+    }
+
+    func testResolveBAMURL_nvd_findsSiblingBAM() async throws {
+        let (resultPath, expected) = try makeFakeClassifierResult(tool: .nvd, sampleId: "SampleX")
+        defer { try? FileManager.default.removeItem(at: resultPath.deletingLastPathComponent()) }
+
+        let resolver = ClassifierReadResolver()
+        let resolved = try await resolver.testingResolveBAMURL(
+            tool: .nvd,
+            sampleId: "SampleX",
+            resultPath: resultPath
+        )
+        XCTAssertEqual(resolved.standardizedFileURL.path, expected.standardizedFileURL.path)
+    }
+
+    func testResolveBAMURL_missingBAM_throwsBamNotFound() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("missing-\(UUID().uuidString)")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+
+        let resultPath = root.appendingPathComponent("esviritu.sqlite")
+        let resolver = ClassifierReadResolver()
+
+        do {
+            _ = try await resolver.testingResolveBAMURL(
+                tool: .esviritu,
+                sampleId: "SRR999",
+                resultPath: resultPath
+            )
+            XCTFail("Expected bamNotFound error")
+        } catch ClassifierExtractionError.bamNotFound(let sampleId) {
+            XCTAssertEqual(sampleId, "SRR999")
+        } catch {
+            XCTFail("Expected bamNotFound, got \(error)")
+        }
+    }
 }
