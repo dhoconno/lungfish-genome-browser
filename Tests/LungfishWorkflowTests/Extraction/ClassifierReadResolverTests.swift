@@ -683,21 +683,40 @@ final class ClassifierReadResolverTests: XCTestCase {
     func testExtractViaKraken2_fixtureProducesFASTQ() async throws {
         let resultPath = try kraken2MiniResultPath()
 
-        // The kraken2-mini fixture contains a classification-YYYYMMDD/ subdir
-        // with a kreport / output / sourceFASTQ layout. We read it via the
-        // normal ClassificationResult.load initializer so the test is robust
-        // to layout changes.
-        let classificationDirs: [URL] = (try? FileManager.default.contentsOfDirectory(
-            at: resultPath,
-            includingPropertiesForKeys: [.isDirectoryKey]
-        )) ?? []
-        guard let classificationDir = classificationDirs.first(where: { url in
-            guard url.lastPathComponent.hasPrefix("classification-") else { return false }
-            let values = try? url.resourceValues(forKeys: [.isDirectoryKey])
-            return values?.isDirectory == true
-        }) else {
-            throw XCTSkip("no classification-* subdir in kraken2-mini/SRR35517702")
+        // Phase 2 fixture status: kraken2-mini/SRR35517702/ currently contains
+        // only `classification-result.json` and `classification.kreport`. The
+        // per-read kraken output (`classification.kraken`) and the source FASTQ
+        // are both missing, so end-to-end extraction cannot run yet. Phase 7
+        // fixture work will land a complete kraken2 fixture (kreport + per-read
+        // output + source FASTQ) and remove this skip.
+        //
+        // The compatibility check below also tolerates a future layout where
+        // the result lives in a `classification-YYYYMMDD/` subdirectory; if such
+        // a directory ever appears we use it, otherwise we try the sample dir
+        // itself. Either way the fixture is currently incomplete and we skip.
+        let fm = FileManager.default
+        let candidateDir: URL = {
+            if let subdirs = try? fm.contentsOfDirectory(
+                at: resultPath,
+                includingPropertiesForKeys: [.isDirectoryKey]
+            ),
+               let subdir = subdirs.first(where: { url in
+                   guard url.lastPathComponent.hasPrefix("classification-") else { return false }
+                   let values = try? url.resourceValues(forKeys: [.isDirectoryKey])
+                   return values?.isDirectory == true
+               }) {
+                return subdir
+            }
+            return resultPath
+        }()
+
+        // Check the per-read kraken output exists; if not, the fixture is the
+        // current incomplete one and there's nothing extractViaKraken2 can do.
+        let perReadOutput = candidateDir.appendingPathComponent("classification.kraken")
+        guard fm.fileExists(atPath: perReadOutput.path) else {
+            throw XCTSkip("kraken2-mini fixture is missing classification.kraken (per-read output); Phase 7 fixture work will land a complete fixture")
         }
+        let classificationDir = candidateDir
 
         // We need at least one tax ID that has reads assigned. Load the tree
         // and pick the first non-zero clade count.
