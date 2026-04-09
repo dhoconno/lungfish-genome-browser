@@ -53,6 +53,8 @@ public struct NaoMgsTaxonSummaryRow: Codable, Sendable {
     public let pcrDuplicateCount: Int
     public let accessionCount: Int
     public let topAccessions: [String]  // decoded from JSON
+    public let bamPath: String?
+    public let bamIndexPath: String?
 }
 
 /// Per-accession summary within a (sample, taxon) pair.
@@ -127,6 +129,46 @@ public final class NaoMgsDatabase: @unchecked Sendable {
             }
         } else {
             sqlite3_finalize(checkStmt)
+        }
+
+        // Schema migration: ensure bam_path and bam_index_path columns exist in taxon_summaries.
+        var hasBamPath = false
+        var hasBamIndexPath = false
+        let colCheck = "PRAGMA table_info(taxon_summaries)"
+        var colStmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, colCheck, -1, &colStmt, nil) == SQLITE_OK {
+            while sqlite3_step(colStmt) == SQLITE_ROW {
+                if let namePtr = sqlite3_column_text(colStmt, 1) {
+                    let colName = String(cString: namePtr)
+                    if colName == "bam_path" { hasBamPath = true }
+                    if colName == "bam_index_path" { hasBamIndexPath = true }
+                }
+            }
+            sqlite3_finalize(colStmt)
+        }
+
+        if !hasBamPath || !hasBamIndexPath {
+            sqlite3_close(db)
+            self.db = nil
+
+            var rwDB: OpaquePointer?
+            if sqlite3_open_v2(url.path, &rwDB, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK {
+                if !hasBamPath {
+                    sqlite3_exec(rwDB, "ALTER TABLE taxon_summaries ADD COLUMN bam_path TEXT", nil, nil, nil)
+                }
+                if !hasBamIndexPath {
+                    sqlite3_exec(rwDB, "ALTER TABLE taxon_summaries ADD COLUMN bam_index_path TEXT", nil, nil, nil)
+                }
+                sqlite3_close(rwDB)
+            }
+
+            let rc3 = sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil)
+            guard rc3 == SQLITE_OK else {
+                let msg = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "Unknown error"
+                sqlite3_close(db)
+                self.db = nil
+                throw NaoMgsDatabaseError.openFailed(msg)
+            }
         }
 
         // Read-side performance tuning
@@ -245,6 +287,8 @@ public final class NaoMgsDatabase: @unchecked Sendable {
             pcr_duplicate_count INTEGER NOT NULL,
             accession_count INTEGER NOT NULL,
             top_accessions_json TEXT NOT NULL,
+            bam_path TEXT,
+            bam_index_path TEXT,
             PRIMARY KEY (sample, tax_id)
         );
 
@@ -378,7 +422,8 @@ public final class NaoMgsDatabase: @unchecked Sendable {
         INSERT INTO taxon_summaries (
             sample, tax_id, name, hit_count, unique_read_count,
             avg_identity, avg_bit_score, avg_edit_distance,
-            pcr_duplicate_count, accession_count, top_accessions_json
+            pcr_duplicate_count, accession_count, top_accessions_json,
+            bam_path, bam_index_path
         )
         SELECT
             sample,
@@ -391,7 +436,9 @@ public final class NaoMgsDatabase: @unchecked Sendable {
             AVG(edit_distance),
             0,
             COUNT(DISTINCT subject_seq_id),
-            '[]'
+            '[]',
+            NULL,
+            NULL
         FROM virus_hits
         GROUP BY sample, tax_id
         """
@@ -614,6 +661,9 @@ public final class NaoMgsDatabase: @unchecked Sendable {
         }
         // Schema migration: ensure reference_lengths table exists (added post-initial release)
         sqlite3_exec(instance.db, "CREATE TABLE IF NOT EXISTS reference_lengths (accession TEXT PRIMARY KEY, length INTEGER NOT NULL)", nil, nil, nil)
+        // Schema migration: ensure BAM pointer columns exist in taxon_summaries.
+        sqlite3_exec(instance.db, "ALTER TABLE taxon_summaries ADD COLUMN bam_path TEXT", nil, nil, nil)
+        sqlite3_exec(instance.db, "ALTER TABLE taxon_summaries ADD COLUMN bam_index_path TEXT", nil, nil, nil)
         return instance
     }
 
@@ -701,11 +751,18 @@ public final class NaoMgsDatabase: @unchecked Sendable {
         }
 
         let sql: String
+        let projection = """
+        SELECT sample, tax_id, name, hit_count, unique_read_count,
+               avg_identity, avg_bit_score, avg_edit_distance,
+               pcr_duplicate_count, accession_count, top_accessions_json,
+               bam_path, bam_index_path
+        FROM taxon_summaries
+        """
         if let samples, !samples.isEmpty {
             let placeholders = samples.map { _ in "?" }.joined(separator: ",")
-            sql = "SELECT * FROM taxon_summaries WHERE sample IN (\(placeholders)) ORDER BY hit_count DESC"
+            sql = "\(projection) WHERE sample IN (\(placeholders)) ORDER BY hit_count DESC"
         } else {
-            sql = "SELECT * FROM taxon_summaries ORDER BY hit_count DESC"
+            sql = "\(projection) ORDER BY hit_count DESC"
         }
 
         var stmt: OpaquePointer?
@@ -734,6 +791,12 @@ public final class NaoMgsDatabase: @unchecked Sendable {
             let pcrDuplicateCount = Int(sqlite3_column_int64(stmt, 8))
             let accessionCount = Int(sqlite3_column_int64(stmt, 9))
             let topAccessionsJSON = String(cString: sqlite3_column_text(stmt, 10))
+            let bamPath: String? = sqlite3_column_type(stmt, 11) == SQLITE_NULL
+                ? nil
+                : String(cString: sqlite3_column_text(stmt, 11))
+            let bamIndexPath: String? = sqlite3_column_type(stmt, 12) == SQLITE_NULL
+                ? nil
+                : String(cString: sqlite3_column_text(stmt, 12))
 
             // Decode top_accessions_json
             let topAccessions: [String]
@@ -755,10 +818,50 @@ public final class NaoMgsDatabase: @unchecked Sendable {
                 avgEditDistance: avgEditDistance,
                 pcrDuplicateCount: pcrDuplicateCount,
                 accessionCount: accessionCount,
-                topAccessions: topAccessions
+                topAccessions: topAccessions,
+                bamPath: bamPath,
+                bamIndexPath: bamIndexPath
             ))
         }
         return rows
+    }
+
+    /// Updates BAM and index paths for all taxon rows in each sample.
+    ///
+    /// - Parameter bamPathsBySample: Maps sample ID -> (bam path, optional index path),
+    ///   both paths relative to the NAO-MGS result directory.
+    public func updateBamPaths(_ bamPathsBySample: [String: (bamPath: String, bamIndexPath: String?)]) throws {
+        guard let db else {
+            throw NaoMgsDatabaseError.queryFailed("Database not open")
+        }
+        guard !bamPathsBySample.isEmpty else { return }
+
+        let sql = "UPDATE taxon_summaries SET bam_path = ?, bam_index_path = ? WHERE sample = ?"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            let msg = String(cString: sqlite3_errmsg(db))
+            throw NaoMgsDatabaseError.queryFailed("Prepare BAM path update failed: \(msg)")
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil)
+        for (sample, paths) in bamPathsBySample {
+            sqlite3_reset(stmt)
+            sqlite3_clear_bindings(stmt)
+            naoBindText(stmt, 1, paths.bamPath)
+            if let bamIndexPath = paths.bamIndexPath {
+                naoBindText(stmt, 2, bamIndexPath)
+            } else {
+                sqlite3_bind_null(stmt, 2)
+            }
+            naoBindText(stmt, 3, sample)
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+                let msg = String(cString: sqlite3_errmsg(db))
+                throw NaoMgsDatabaseError.queryFailed("BAM path update failed for sample \(sample): \(msg)")
+            }
+        }
+        sqlite3_exec(db, "COMMIT", nil, nil, nil)
     }
 
     // MARK: - Accession Summary Queries

@@ -1965,6 +1965,14 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                     taxTriageVC.didLoadFromManifestCache ? .cached : .building
             }
 
+        } else if dirName.hasPrefix("naomgs") {
+            displayNaoMgsResultFromSidebar(at: batchURL)
+            self.inspectorController?.clearBatchOperationDetails()
+
+        } else if dirName.hasPrefix("nvd") {
+            displayNvdResultFromSidebar(at: batchURL)
+            self.inspectorController?.clearBatchOperationDetails()
+
         } else {
             logger.warning("displayBatchGroup: Unrecognized batch prefix in '\(dirName, privacy: .public)'")
         }

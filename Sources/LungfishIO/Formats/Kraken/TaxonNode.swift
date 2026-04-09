@@ -179,13 +179,13 @@ public final class TaxonNode: @unchecked Sendable {
 
 extension TaxonNode: Equatable {
     public static func == (lhs: TaxonNode, rhs: TaxonNode) -> Bool {
-        lhs.taxId == rhs.taxId
+        lhs === rhs
     }
 }
 
 extension TaxonNode: Hashable {
     public func hash(into hasher: inout Hasher) {
-        hasher.combine(taxId)
+        hasher.combine(ObjectIdentifier(self))
     }
 }
 

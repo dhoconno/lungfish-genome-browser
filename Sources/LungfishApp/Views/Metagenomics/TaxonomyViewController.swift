@@ -229,6 +229,11 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
     /// Prevents infinite loops when syncing between sunburst and table.
     private var suppressSelectionSync = false
 
+    private func isActionableTaxonNode(_ node: TaxonNode?) -> Bool {
+        guard let node else { return false }
+        return node.taxId > 1
+    }
+
     // MARK: - Callbacks
 
     /// Called when the user requests sequence extraction from a taxon.
@@ -278,6 +283,9 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
 
     /// The URL of the batch result directory (set during `configureFromDatabase`).
     var batchURL: URL?
+
+    /// Sample currently rendered in the hierarchical taxonomy/sunburst views in batch mode.
+    private(set) var currentBatchSampleId: String?
 
     // MARK: - Taxa Collections Drawer
 
@@ -404,6 +412,7 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
         )]
         strippedPrefix = ""
         samplePickerState = ClassifierSamplePickerState(allSamples: Set([sampleName]))
+        taxonomyTableView.currentSampleID = rawSampleName
     }
 
     // MARK: - Database-backed Batch Mode
@@ -435,6 +444,35 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
             )
         }
         samplePickerState = ClassifierSamplePickerState(allSamples: Set(sampleIds))
+        if let firstSample = sampleIds.first {
+            samplePickerState.selectedSamples = [firstSample]
+        }
+
+        // Reuse the same taxonomy context actions (extract, BLAST, NCBI links)
+        // as single-sample mode so DB-backed batch display preserves workflows.
+        taxonomyTableView.onExtractRequested = { [weak self] node in
+            self?.presentExtractionSheet(for: node, includeChildren: false)
+        }
+        taxonomyTableView.onExtractWithChildrenRequested = { [weak self] node in
+            self?.presentExtractionSheet(for: node, includeChildren: true)
+        }
+        taxonomyTableView.onNCBITaxonomyRequested = { node in
+            let url = URL(string: "https://www.ncbi.nlm.nih.gov/datasets/taxonomy/\(node.taxId)/")!
+            NSWorkspace.shared.open(url)
+        }
+        taxonomyTableView.onNCBIGenBankRequested = { node in
+            let url = URL(string: "https://www.ncbi.nlm.nih.gov/nuccore/?term=txid\(node.taxId)[Organism:exp]")!
+            NSWorkspace.shared.open(url)
+        }
+        taxonomyTableView.onNCBIPubMedRequested = { node in
+            let encodedName = node.name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? node.name
+            let url = URL(string: "https://pubmed.ncbi.nlm.nih.gov/?term=\(encodedName)")!
+            NSWorkspace.shared.open(url)
+        }
+        taxonomyTableView.onBlastRequested = { [weak self] node in
+            guard let self else { return }
+            self.showBlastConfigPopover(for: node, relativeTo: self.sunburstView)
+        }
 
         // Load ALL rows from the DB (filtering by selection happens in applyBatchSampleFilter).
         reloadFromDatabase()
@@ -451,9 +489,9 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
             self?.actionBar.updateInfoText("Select a taxon to view details")
         }
 
-        // Show batch UI, hide single-sample UI.
-        splitView.isHidden = true
-        batchTableView.isHidden = false
+        // Prefer the native hierarchical taxonomy + sunburst display in batch mode.
+        splitView.isHidden = false
+        batchTableView.isHidden = true
 
         summaryBar.updateBatch(
             sampleCount: sampleEntries.count,
@@ -490,17 +528,126 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
     }
 
     /// Filters `allBatchRows` by the samples selected in `samplePickerState`
-    /// and reloads the batch table view.
+    /// and renders one combined taxonomy tree across all selected samples.
     private func applyBatchSampleFilter() {
         guard let state = samplePickerState else { return }
-        let selected = state.selectedSamples
-        let filtered: [BatchClassificationRow]
-        if selected.isEmpty {
-            filtered = []
-        } else {
-            filtered = allBatchRows.filter { selected.contains($0.sample) }
+        let selected = state.selectedSamples.sorted()
+
+        guard let db = kraken2Database else {
+            taxonomyTableView.tree = nil
+            sunburstView.tree = nil
+            return
         }
-        batchTableView.configure(rows: filtered)
+
+        // Render all selected samples together: single sample => native tree,
+        // multi-sample => synthetic root with one top-level node per sample.
+        guard let sample = selected.first else {
+            currentBatchSampleId = nil
+            tree = nil
+            taxonomyTableView.tree = nil
+            taxonomyTableView.currentSampleID = nil
+            sunburstView.tree = nil
+            updateActionBarSelection(nil)
+            return
+        }
+
+        do {
+            let sampleTrees: [(sampleId: String, tree: TaxonTree)] = try selected.map { sid in
+                (sampleId: sid, tree: try db.fetchTree(sample: sid))
+            }
+
+            let displayTree: TaxonTree
+            if sampleTrees.count == 1, let only = sampleTrees.first {
+                currentBatchSampleId = only.sampleId
+                taxonomyTableView.currentSampleID = only.sampleId
+                displayTree = only.tree
+            } else {
+                currentBatchSampleId = sample
+                taxonomyTableView.currentSampleID = nil
+                displayTree = mergedTree(for: sampleTrees)
+            }
+
+            tree = displayTree
+            taxonomyTableView.tree = displayTree
+            sunburstView.tree = displayTree
+            sunburstView.centerNode = nil
+            sunburstView.selectedNode = nil
+            hideMultiSelectionPlaceholder()
+            splitView.isHidden = false
+            batchTableView.isHidden = true
+            breadcrumbBar.update(zoomNode: nil)
+            totalReadsForActionBar = displayTree.totalReads
+            updateActionBarSelection(nil)
+            actionBar.setExtractEnabled(true)
+        } catch {
+            logger.error("Failed to fetch Kraken2 tree for sample \(sample, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            currentBatchSampleId = nil
+            tree = nil
+            taxonomyTableView.tree = nil
+            taxonomyTableView.currentSampleID = nil
+            sunburstView.tree = nil
+            updateActionBarSelection(nil)
+        }
+    }
+
+    /// Builds a synthetic multi-sample taxonomy tree where each selected sample appears
+    /// as its own top-level node containing that sample's taxonomy hierarchy.
+    private func mergedTree(for sampleTrees: [(sampleId: String, tree: TaxonTree)]) -> TaxonTree {
+        let totalReads = sampleTrees.reduce(0) { $0 + $1.tree.totalReads }
+        let root = TaxonNode(
+            taxId: 1,
+            name: "Root",
+            rank: .root,
+            depth: 0,
+            readsDirect: 0,
+            readsClade: totalReads,
+            fractionClade: 1.0,
+            fractionDirect: 0.0,
+            parentTaxId: nil
+        )
+
+        var syntheticSampleTaxId = -1
+        for (sampleId, sampleTree) in sampleTrees {
+            let sampleReads = sampleTree.root.readsClade
+            let sampleFraction = totalReads > 0 ? Double(sampleReads) / Double(totalReads) : 0.0
+            let sampleNode = TaxonNode(
+                taxId: syntheticSampleTaxId,
+                name: sampleId,
+                rank: TaxonomicRank(code: "no rank"),
+                depth: 1,
+                readsDirect: 0,
+                readsClade: sampleReads,
+                fractionClade: sampleFraction,
+                fractionDirect: 0.0,
+                parentTaxId: 1
+            )
+            syntheticSampleTaxId -= 1
+
+            for child in sampleTree.root.children {
+                sampleNode.addChild(cloneTaxonSubtree(child))
+            }
+            root.addChild(sampleNode)
+        }
+
+        return TaxonTree(root: root, unclassifiedNode: nil, totalReads: totalReads)
+    }
+
+    private func cloneTaxonSubtree(_ node: TaxonNode) -> TaxonNode {
+        let copy = TaxonNode(
+            taxId: node.taxId,
+            name: node.name,
+            rank: node.rank,
+            depth: node.depth,
+            readsDirect: node.readsDirect,
+            readsClade: node.readsClade,
+            fractionClade: node.fractionClade,
+            fractionDirect: node.fractionDirect,
+            parentTaxId: node.parentTaxId
+        )
+        for child in node.children {
+            copy.addChild(cloneTaxonSubtree(child))
+        }
+        return copy
     }
 
     @objc private func handleBatchSampleSelectionChanged() {
@@ -514,8 +661,29 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
     ///   - node: The taxon node to extract.
     ///   - includeChildren: Default value for the "include children" toggle.
     public func presentExtractionSheet(for node: TaxonNode, includeChildren: Bool) {
-        guard let result = classificationResult, let window = view.window else {
-            logger.warning("Cannot present extraction sheet: no result or window")
+        guard let window = view.window else {
+            logger.warning("Cannot present extraction sheet: no window")
+            return
+        }
+
+        // In DB-backed batch mode classificationResult is nil. Resolve the sample-level
+        // sidecar result so extraction can still run from the current sample selection.
+        let resolvedResult: ClassificationResult?
+        if let classificationResult {
+            resolvedResult = classificationResult
+        } else if isBatchMode,
+                  let batchURL,
+                  let sampleId = currentBatchSampleId,
+                  let manifest = MetagenomicsBatchResultStore.loadClassification(from: batchURL),
+                  let sampleRecord = manifest.samples.first(where: { $0.sampleId == sampleId }) {
+            let sampleResultDir = batchURL.appendingPathComponent(sampleRecord.resultDirectory)
+            resolvedResult = try? ClassificationResult.load(from: sampleResultDir)
+        } else {
+            resolvedResult = nil
+        }
+
+        guard let result = resolvedResult else {
+            logger.warning("Cannot present extraction sheet: no classification result available")
             return
         }
 
@@ -741,7 +909,6 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
             self.sunburstView.selectedNode = node
             self.hideMultiSelectionPlaceholder()
             self.updateActionBarSelection(node)
-            self.actionBar.setExtractEnabled(true)
             self.suppressSelectionSync = false
         }
 
@@ -750,7 +917,7 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
             guard let self, !self.suppressSelectionSync else { return }
             self.suppressSelectionSync = true
             self.sunburstView.selectedNode = nil
-            self.showMultiSelectionPlaceholder(count: count)
+            self.hideMultiSelectionPlaceholder()
             self.actionBar.updateInfoText("\(count) items selected")
             self.actionBar.setBlastEnabled(false, reason: "Select a single row to use BLAST Verify")
             self.actionBar.setExtractEnabled(true)
@@ -776,7 +943,7 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
             let nodes: [TaxonNode] = selectedRows.compactMap { row in
                 self.taxonomyTableView.outlineView.item(atRow: row) as? TaxonNode
             }
-            guard let firstNode = nodes.first else { return }
+            guard let firstNode = nodes.first(where: { self.isActionableTaxonNode($0) }) else { return }
             self.presentExtractionSheet(for: firstNode, includeChildren: false)
         }
 
@@ -916,9 +1083,9 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
 
     /// Updates the unified action bar info text and BLAST button state from a taxon node.
     private func updateActionBarSelection(_ node: TaxonNode?) {
-        selectedTaxonNode = node
+        selectedTaxonNode = isActionableTaxonNode(node) ? node : nil
 
-        if let node {
+        if let node = selectedTaxonNode {
             let formatter = NumberFormatter()
             formatter.numberStyle = .decimal
             formatter.groupingSeparator = ","

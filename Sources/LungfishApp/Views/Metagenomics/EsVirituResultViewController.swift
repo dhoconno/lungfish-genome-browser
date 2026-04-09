@@ -381,6 +381,9 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             )
         }
         samplePickerState = ClassifierSamplePickerState(allSamples: Set(sampleIds))
+        if let firstSample = sampleIds.first {
+            samplePickerState.selectedSamples = [firstSample]
+        }
 
         // Load ALL rows from the DB (filtering by selection happens in applyBatchSampleFilter).
         reloadFromDatabase()
@@ -415,9 +418,9 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             self.hideMultiSelectionPlaceholder()
         }
 
-        // Show batch UI, hide single-sample UI.
-        detectionTableView.isHidden = true
-        batchTableView.isHidden = false
+        // Batch mode prefers single-sample hierarchical display when possible.
+        detectionTableView.isHidden = false
+        batchTableView.isHidden = true
 
         summaryBar.updateBatch(sampleCount: sampleEntries.count, totalDetections: allBatchRows.count)
 
@@ -613,14 +616,83 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     /// and reloads the batch table view.
     func applyBatchSampleFilter() {
         guard let state = samplePickerState else { return }
-        let selected = state.selectedSamples
-        let filtered: [BatchEsVirituRow]
-        if selected.isEmpty {
-            filtered = []
-        } else {
-            filtered = allBatchRows.filter { selected.contains($0.sample) }
+        let selected = state.selectedSamples.sorted()
+
+        guard let firstSample = selected.first else {
+            detectionTableView.result = nil
+            detectionTableView.isHidden = false
+            batchTableView.isHidden = true
+            return
         }
-        batchTableView.configure(rows: filtered)
+
+        // EsViritu display is always the native list view + detail miniBAM.
+        // If multiple samples are selected in the picker, render the first selected sample.
+        showSingleSampleBatchView(sampleId: firstSample)
+    }
+
+    /// Shows the native hierarchical EsViritu table/detail panes for a single selected sample
+    /// while still sourcing data from the batch SQLite database.
+    private func showSingleSampleBatchView(sampleId: String) {
+        let assemblies: [ViralAssembly] = batchAssemblyLookup
+            .compactMap { key, value in
+                guard key.hasPrefix("\(sampleId)\t") else { return nil }
+                return value
+            }
+            .sorted { $0.totalReads > $1.totalReads }
+
+        let detections = assemblies.flatMap(\.contigs)
+        let familyCount = Set(detections.compactMap(\.family)).count
+        let speciesCount = Set(detections.compactMap(\.species)).count
+        let totalFilteredReads = detections.map(\.filteredReadsInSample).max() ?? 0
+
+        var coverageWindowsByAccession: [String: [ViralCoverageWindow]] = [:]
+        if let db = esVirituDatabase {
+            for contig in detections {
+                if let windows = try? db.fetchCoverageWindows(sample: sampleId, accession: contig.accession), !windows.isEmpty {
+                    coverageWindowsByAccession[contig.accession] = windows.map {
+                        ViralCoverageWindow(
+                            accession: $0.accession,
+                            windowIndex: $0.windowIndex,
+                            windowStart: $0.windowStart,
+                            windowEnd: $0.windowEnd,
+                            averageCoverage: $0.averageCoverage
+                        )
+                    }
+                }
+            }
+        }
+
+        let result = EsVirituResult(
+            sampleId: sampleId,
+            detections: detections,
+            assemblies: assemblies,
+            taxProfile: [],
+            coverageWindows: coverageWindowsByAccession.values.flatMap { $0 },
+            totalFilteredReads: totalFilteredReads,
+            detectedFamilyCount: familyCount,
+            detectedSpeciesCount: speciesCount,
+            runtime: nil,
+            toolVersion: nil
+        )
+
+        var uniqueByAssembly: [String: Int] = [:]
+        for row in allBatchRows where row.sample == sampleId {
+            uniqueByAssembly[row.assembly] = row.uniqueReads
+        }
+
+        esVirituResult = result
+        detectionTableView.result = result
+        detectionTableView.coverageWindowsByAccession = coverageWindowsByAccession
+        detectionTableView.uniqueReadCountsByAssembly = uniqueByAssembly
+        bamURL = batchBAMLookup[sampleId]
+        bamIndexURL = batchBAMIndexLookup[sampleId]
+
+        detectionTableView.isHidden = false
+        batchTableView.isHidden = true
+        showOverview()
+        actionBar.updateInfoText("Select a virus to view details")
+        actionBar.setBlastEnabled(false, reason: "Select a row to use BLAST Verify")
+        actionBar.setExtractEnabled(false)
     }
 
     @objc private func handleBatchSampleSelectionChanged() {

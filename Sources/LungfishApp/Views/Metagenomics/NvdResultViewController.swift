@@ -1019,6 +1019,12 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
         mappedCol.minWidth = 60
         outlineView.addTableColumn(mappedCol)
 
+        let uniqueCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("uniqueReads"))
+        uniqueCol.title = "Unique Reads"
+        uniqueCol.width = 90
+        uniqueCol.minWidth = 60
+        outlineView.addTableColumn(uniqueCol)
+
         let rpbCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("readsPerBillion"))
         rpbCol.title = "RPB"
         rpbCol.width = 70
@@ -1048,7 +1054,7 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
         metadataColumnController.standardColumnNames = [
             "Sample", "Contig", "Length", "Classification", "Rank",
             "Accession", "Subject", "% Identity", "E-value", "Bitscore",
-            "Mapped Reads", "Reads/Billion", "Aln Length",
+            "Mapped Reads", "Unique Reads", "Reads/Billion", "Aln Length",
         ]
         metadataColumnController.install(on: outlineView)
     }
@@ -2086,6 +2092,12 @@ extension NvdResultViewController {
             textField?.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
             textField?.alphaValue = childAlpha
             textField?.alignment = .right
+        case "uniqueReads":
+            let unique = hit.uniqueReads ?? hit.mappedReads
+            textField?.stringValue = nvdFormatCount(unique)
+            textField?.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+            textField?.alphaValue = childAlpha
+            textField?.alignment = .right
         case "readsPerBillion":
             textField?.stringValue = String(format: "%.0f", hit.readsPerBillion)
             textField?.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
@@ -2238,4 +2250,3 @@ final class NvdSummaryBar: GenomicSummaryCardBar {
         ]
     }
 }
-

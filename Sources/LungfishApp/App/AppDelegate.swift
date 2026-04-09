@@ -4297,18 +4297,58 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 }
 
                 var sampleMetadataList: [NvdSampleMetadata] = []
+                var sampleAssetSources: [String: (bam: URL?, bamIndex: URL?, fasta: URL?)] = [:]
+
+                let sourceBamFiles: [URL] = (try? FileManager.default.contentsOfDirectory(
+                    at: bamDir, includingPropertiesForKeys: nil
+                )) ?? []
+                let sourceFastaFiles: [URL] = (try? FileManager.default.contentsOfDirectory(
+                    at: humanVirusDir, includingPropertiesForKeys: nil
+                )) ?? []
+
                 for sampleId in parseResult.sampleIds.sorted() {
-                    let bamRelPath = "bam/\(sampleId).filtered.bam"
+                    let bamSource = sourceBamFiles.first { url in
+                        let name = url.lastPathComponent
+                        return url.pathExtension == "bam" && name.localizedCaseInsensitiveContains(sampleId)
+                    }
+                    let bamIndexSource: URL? = {
+                        guard let bamSource else { return nil }
+                        let bai = URL(fileURLWithPath: bamSource.path + ".bai")
+                        let csi = URL(fileURLWithPath: bamSource.path + ".csi")
+                        if FileManager.default.fileExists(atPath: bai.path) { return bai }
+                        if FileManager.default.fileExists(atPath: csi.path) { return csi }
+                        let bamBai = sourceBamFiles.first { $0.lastPathComponent == bamSource.lastPathComponent + ".bai" }
+                        let bamCsi = sourceBamFiles.first { $0.lastPathComponent == bamSource.lastPathComponent + ".csi" }
+                        return bamBai ?? bamCsi
+                    }()
+
+                    let fastaSource = sourceFastaFiles.first { url in
+                        let name = url.lastPathComponent
+                        return name.hasSuffix(".human_virus.fasta") && name.localizedCaseInsensitiveContains(sampleId)
+                    }
+
+                    let canonicalBamName = "\(sampleId).bam"
+                    let bamRelPath = "bam/\(canonicalBamName)"
+                    let bamIndexRelPath: String? = {
+                        guard let bamIndexSource else { return nil }
+                        if bamIndexSource.pathExtension.lowercased() == "csi" {
+                            return "bam/\(canonicalBamName).csi"
+                        }
+                        return "bam/\(canonicalBamName).bai"
+                    }()
                     let fastaRelPath = "fasta/\(sampleId).human_virus.fasta"
+
                     let meta = NvdSampleMetadata(
                         sampleId: sampleId,
                         bamPath: bamRelPath,
+                        bamIndexPath: bamIndexRelPath,
                         fastaPath: fastaRelPath,
                         totalReads: perSampleTotalReads[sampleId] ?? 0,
                         contigCount: perSampleContigs[sampleId]?.count ?? 0,
                         hitCount: perSampleHits[sampleId] ?? 0
                     )
                     sampleMetadataList.append(meta)
+                    sampleAssetSources[sampleId] = (bam: bamSource, bamIndex: bamIndexSource, fasta: fastaSource)
                 }
 
                 let dbURL = bundleDir.appendingPathComponent("hits.sqlite")
@@ -4342,21 +4382,19 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     }
                 }
 
-                if FileManager.default.fileExists(atPath: bamDir.path) {
-                    let bamFiles = (try? FileManager.default.contentsOfDirectory(
-                        at: bamDir, includingPropertiesForKeys: nil
-                    )) ?? []
-                    for bamFile in bamFiles where bamFile.pathExtension == "bam" || bamFile.lastPathComponent.hasSuffix(".bam.bai") {
-                        let dest = bamBundleDir.appendingPathComponent(bamFile.lastPathComponent)
-                        if !FileManager.default.fileExists(atPath: dest.path) {
-                            try? FileManager.default.copyItem(at: bamFile, to: dest)
+                for sampleMeta in sampleMetadataList {
+                    let sampleId = sampleMeta.sampleId
+                    let sources = sampleAssetSources[sampleId]
+                    if let bamSource = sources?.bam {
+                        let bamDest = bundleDir.appendingPathComponent(sampleMeta.bamPath)
+                        if !FileManager.default.fileExists(atPath: bamDest.path) {
+                            try? FileManager.default.copyItem(at: bamSource, to: bamDest)
                         }
-                        // Also copy .bai index
-                        let baiFile = bamFile.appendingPathExtension("bai")
-                        let baiDest = bamBundleDir.appendingPathComponent(baiFile.lastPathComponent)
-                        if FileManager.default.fileExists(atPath: baiFile.path),
-                           !FileManager.default.fileExists(atPath: baiDest.path) {
-                            try? FileManager.default.copyItem(at: baiFile, to: baiDest)
+                    }
+                    if let bamIndexSource = sources?.bamIndex, let bamIndexRelPath = sampleMeta.bamIndexPath {
+                        let bamIndexDest = bundleDir.appendingPathComponent(bamIndexRelPath)
+                        if !FileManager.default.fileExists(atPath: bamIndexDest.path) {
+                            try? FileManager.default.copyItem(at: bamIndexSource, to: bamIndexDest)
                         }
                     }
                 }
@@ -4404,7 +4442,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
                     AppDelegate.nvdPopulateUniqueReads(
                         dbPath: dbURL.path,
-                        bamDir: bamBundleDir,
+                        bundleDir: bundleDir,
                         samtoolsPath: samtoolsPath
                     )
                 } else {
@@ -4426,14 +4464,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     }
                 }
 
-                if FileManager.default.fileExists(atPath: humanVirusDir.path) {
-                    let fastaFiles = (try? FileManager.default.contentsOfDirectory(
-                        at: humanVirusDir, includingPropertiesForKeys: nil
-                    )) ?? []
-                    for fastaFile in fastaFiles where fastaFile.lastPathComponent.hasSuffix(".human_virus.fasta") {
-                        let dest = fastaBundleDir.appendingPathComponent(fastaFile.lastPathComponent)
-                        if !FileManager.default.fileExists(atPath: dest.path) {
-                            try? FileManager.default.copyItem(at: fastaFile, to: dest)
+                for sampleMeta in sampleMetadataList {
+                    let sampleId = sampleMeta.sampleId
+                    if let fastaSource = sampleAssetSources[sampleId]?.fasta {
+                        let fastaDest = bundleDir.appendingPathComponent(sampleMeta.fastaPath)
+                        if !FileManager.default.fileExists(atPath: fastaDest.path) {
+                            try? FileManager.default.copyItem(at: fastaSource, to: fastaDest)
                         }
                     }
                 }
@@ -4472,8 +4508,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                         contigCount: meta.contigCount,
                         hitCount: meta.hitCount,
                         totalReads: meta.totalReads,
-                        bamRelativePath: "bam/\(meta.sampleId).filtered.bam",
-                        fastaRelativePath: "fasta/\(meta.sampleId).human_virus.fasta"
+                        bamRelativePath: meta.bamPath,
+                        fastaRelativePath: meta.fastaPath
                     )
                 }
 
@@ -4545,7 +4581,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
     /// Populates the `unique_reads` column in an NVD blast_hits table by running
     /// `samtools view -c -F 0x404` for each (sample, sseqid) pair.
-    nonisolated private static func nvdPopulateUniqueReads(dbPath: String, bamDir: URL, samtoolsPath: String) {
+    nonisolated private static func nvdPopulateUniqueReads(dbPath: String, bundleDir: URL, samtoolsPath: String) {
         var db: OpaquePointer?
         guard sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK else { return }
         defer { sqlite3_close(db) }
@@ -4570,6 +4606,22 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         }
         guard !rows.isEmpty else { return }
 
+        // Load BAM paths from samples table so counting uses the exact SQLite pointers.
+        var bamBySample: [String: URL] = [:]
+        let sampleSQL = "SELECT sample_id, bam_path FROM samples"
+        var sampleStmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sampleSQL, -1, &sampleStmt, nil) == SQLITE_OK {
+            while sqlite3_step(sampleStmt) == SQLITE_ROW {
+                guard let sidPtr = sqlite3_column_text(sampleStmt, 0),
+                      let bamPtr = sqlite3_column_text(sampleStmt, 1) else { continue }
+                let sampleId = String(cString: sidPtr)
+                let bamRelPath = String(cString: bamPtr)
+                bamBySample[sampleId] = bundleDir.appendingPathComponent(bamRelPath)
+            }
+        }
+        sqlite3_finalize(sampleStmt)
+        guard !bamBySample.isEmpty else { return }
+
         // Prepare UPDATE statement
         let updateSQL = "UPDATE blast_hits SET unique_reads = ? WHERE rowid = ?"
         var updateStmt: OpaquePointer?
@@ -4580,7 +4632,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil)
         var cache: [String: Int] = [:]
         for row in rows {
-            let bamURL = bamDir.appendingPathComponent("\(row.sampleId).filtered.bam")
+            guard let bamURL = bamBySample[row.sampleId] else { continue }
             guard FileManager.default.fileExists(atPath: bamURL.path) else { continue }
 
             let cacheKey = "\(bamURL.path)\t\(row.sseqid)"

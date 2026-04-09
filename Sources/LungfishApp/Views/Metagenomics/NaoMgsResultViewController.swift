@@ -690,7 +690,12 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         detailContentView.addSubview(miniBAMListView)
 
         // Fetch reads asynchronously — populates miniBAM cards one at a time
-        loadMiniBAMsAsync(accessionSummaries: accessionSummaries, sample: row.sample, taxId: row.taxId)
+        loadMiniBAMsAsync(
+            accessionSummaries: accessionSummaries,
+            sample: row.sample,
+            taxId: row.taxId,
+            bamRelativePath: row.bamPath
+        )
 
         NSLayoutConstraint.activate([
             nameLabel.topAnchor.constraint(equalTo: detailContentView.topAnchor, constant: 12),
@@ -991,7 +996,8 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     private func loadMiniBAMsAsync(
         accessionSummaries: [DBAccessionSummary],
         sample: String,
-        taxId: Int
+        taxId: Int,
+        bamRelativePath: String?
     ) {
         miniBAMLoadingTask?.cancel()
         let displayed = Array(accessionSummaries.prefix(miniBAMDisplayLimit))
@@ -1004,14 +1010,16 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
                 guard let database = self.database else { return }
                 guard index < self.miniBAMControllers.count else { return }
 
-                // NAO-MGS now materializes BAMs to <resultURL>/bams/<sample>.bam so
-                // the viewer uses the same displayContig() code path as the other
-                // classifier tools. The result directory is the parent of the
-                // SQLite database file (hits.sqlite lives at the result root).
                 let resultURL = database.databaseURL.deletingLastPathComponent()
-                let bamURL = resultURL
-                    .appendingPathComponent("bams")
-                    .appendingPathComponent("\(sample).bam")
+                // Use BAM pointers stored in SQLite for consistency with the taxonomy list.
+                let bamURL: URL = {
+                    if let bamRelativePath, !bamRelativePath.isEmpty {
+                        return resultURL.appendingPathComponent(bamRelativePath)
+                    }
+                    return resultURL
+                        .appendingPathComponent("bams")
+                        .appendingPathComponent("\(sample).bam")
+                }()
 
                 if FileManager.default.fileExists(atPath: bamURL.path) {
                     self.miniBAMControllers[index].displayContig(
@@ -2497,4 +2505,3 @@ private final class AccessionDataWrapper: NSObject, NSTableViewDataSource, NSTab
         []
     }
 }
-

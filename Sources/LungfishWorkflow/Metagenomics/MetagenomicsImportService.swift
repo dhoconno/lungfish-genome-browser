@@ -618,6 +618,26 @@ public enum MetagenomicsImportService {
                 )
                 createdBamFiles = !generated.isEmpty
                 logger.info("Materialized \(generated.count) BAM file(s) for NAO-MGS samples")
+
+                if !generated.isEmpty {
+                    var bamPathsBySample: [String: (bamPath: String, bamIndexPath: String?)] = [:]
+                    for bamURL in generated {
+                        let sample = bamURL.deletingPathExtension().lastPathComponent
+                        let bamRelative = "bams/\(bamURL.lastPathComponent)"
+                        let baiURL = URL(fileURLWithPath: bamURL.path + ".bai")
+                        let csiURL = URL(fileURLWithPath: bamURL.path + ".csi")
+                        let indexRelative: String?
+                        if FileManager.default.fileExists(atPath: baiURL.path) {
+                            indexRelative = bamRelative + ".bai"
+                        } else if FileManager.default.fileExists(atPath: csiURL.path) {
+                            indexRelative = bamRelative + ".csi"
+                        } else {
+                            indexRelative = nil
+                        }
+                        bamPathsBySample[sample] = (bamPath: bamRelative, bamIndexPath: indexRelative)
+                    }
+                    try rwDB.updateBamPaths(bamPathsBySample)
+                }
             } catch {
                 logger.warning("Failed to materialize NAO-MGS BAMs: \(error.localizedDescription, privacy: .public)")
             }
@@ -1104,4 +1124,3 @@ private func fetchNaoMgsReferences(
     progress?(0.70 + (0.28 * fraction), "Fetched \(fetched.count)/\(accessions.count) references")
     return fetched
 }
-

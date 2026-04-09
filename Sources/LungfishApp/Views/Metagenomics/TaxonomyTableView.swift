@@ -56,7 +56,7 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     public var tree: TaxonTree? {
         didSet {
             filterText = ""
-            filteredTree = nil
+            filteredNodeIDs = nil
             reloadData()
         }
     }
@@ -101,6 +101,10 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     public var onNCBIPubMedRequested: ((TaxonNode) -> Void)?
     public var onBlastRequested: ((TaxonNode) -> Void)?
 
+    /// Fallback sample ID to show in the "Sample" column when displaying a
+    /// single-sample tree (no synthetic sample grouping nodes).
+    public var currentSampleID: String?
+
     // MARK: - Search / Filter
 
     /// Current filter text. Empty string means no filter.
@@ -112,11 +116,11 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         }
     }
 
-    /// Set of node taxIds that match the current filter (or their ancestors).
-    private var filteredTree: Set<Int>?
+    /// Set of node identities that match the current filter (or their ancestors).
+    private var filteredNodeIDs: Set<ObjectIdentifier>?
 
     /// Nodes that directly match the filter (not just ancestors).
-    private var directMatches: Set<Int> = []
+    private var directMatchNodeIDs: Set<ObjectIdentifier> = []
 
     // MARK: - Sort State
 
@@ -140,6 +144,7 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     // MARK: - Column Identifiers
 
     private enum ColumnID {
+        static let sample = "sample"
         static let name = "name"
         static let rank = "rank"
         static let reads = "reads"
@@ -185,6 +190,14 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     }
 
     private func setupOutlineView() {
+        // Sample column
+        let sampleCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(ColumnID.sample))
+        sampleCol.title = "Sample"
+        sampleCol.minWidth = 90
+        sampleCol.width = 130
+        sampleCol.sortDescriptorPrototype = NSSortDescriptor(key: ColumnID.sample, ascending: true)
+        outlineView.addTableColumn(sampleCol)
+
         // Name column (flexible width)
         let nameCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(ColumnID.name))
         nameCol.title = "Taxon Name"
@@ -242,7 +255,7 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
 
         // Install metadata column controller for dynamic sample metadata columns.
         metadataColumns.standardColumnNames = [
-            "Taxon Name", "Rank", "Reads", "Direct", "%",
+            "Sample", "Taxon Name", "Rank", "Reads", "Direct", "%",
         ]
         metadataColumns.install(on: outlineView)
 
@@ -312,7 +325,7 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
             return
         }
         let total = tree.allNodes().count
-        if let filtered = filteredTree {
+        if let filtered = filteredNodeIDs {
             countLabel.stringValue = "\(filtered.count) of \(total) taxa"
         } else {
             countLabel.stringValue = "\(total) taxa"
@@ -329,46 +342,54 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         let query = filterText.trimmingCharacters(in: .whitespaces).lowercased()
 
         if query.isEmpty {
-            filteredTree = nil
-            directMatches = []
+            filteredNodeIDs = nil
+            directMatchNodeIDs = []
         } else {
             guard let tree else { return }
 
             // Find matching nodes
-            var matches = Set<Int>()
-            var ancestors = Set<Int>()
+            var matches = Set<ObjectIdentifier>()
+            var ancestors = Set<ObjectIdentifier>()
 
             for node in tree.allNodes() {
-                if node.name.lowercased().contains(query) {
-                    matches.insert(node.taxId)
+                if nodeMatchesFilter(node: node, query: query) {
+                    matches.insert(ObjectIdentifier(node))
                     // Include all ancestors so hierarchy context is preserved
                     var parent = node.parent
                     while let p = parent {
-                        ancestors.insert(p.taxId)
+                        ancestors.insert(ObjectIdentifier(p))
                         parent = p.parent
                     }
                 }
             }
 
-            directMatches = matches
-            filteredTree = matches.union(ancestors)
+            directMatchNodeIDs = matches
+            filteredNodeIDs = matches.union(ancestors)
         }
 
         outlineView.reloadData()
         updateCountLabel()
 
         // Expand all nodes that match when filtering
-        if filteredTree != nil, let root = tree?.root {
+        if filteredNodeIDs != nil, let root = tree?.root {
             expandFilteredNodes(from: root)
         }
 
         // Notify listeners (e.g., sunburst chart) of the new filter state
-        onFilterChanged?(filteredTree)
+        if let filteredNodeIDs, let tree {
+            var filteredTaxIds = Set<Int>()
+            for node in tree.allNodes() where filteredNodeIDs.contains(ObjectIdentifier(node)) {
+                filteredTaxIds.insert(node.taxId)
+            }
+            onFilterChanged?(filteredTaxIds)
+        } else {
+            onFilterChanged?(nil)
+        }
     }
 
     private func expandFilteredNodes(from node: TaxonNode) {
-        guard let filtered = filteredTree else { return }
-        if filtered.contains(node.taxId) {
+        guard let filtered = filteredNodeIDs else { return }
+        if filtered.contains(ObjectIdentifier(node)) {
             outlineView.expandItem(node)
             for child in node.children {
                 expandFilteredNodes(from: child)
@@ -450,12 +471,20 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         var children = node.children
 
         // Apply filter
-        if let filtered = filteredTree {
-            children = children.filter { filtered.contains($0.taxId) }
+        if let filtered = filteredNodeIDs {
+            children = children.filter { filtered.contains(ObjectIdentifier($0)) }
         }
 
         // Apply sort
         switch currentSortKey {
+        case ColumnID.sample:
+            children.sort {
+                let l = sampleID(for: $0)
+                let r = sampleID(for: $1)
+                return currentSortAscending
+                    ? l.localizedCaseInsensitiveCompare(r) == .orderedAscending
+                    : l.localizedCaseInsensitiveCompare(r) == .orderedDescending
+            }
         case ColumnID.name:
             children.sort { currentSortAscending
                 ? $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
@@ -566,28 +595,36 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     // MARK: - Menu Item Validation
 
     public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        let clickedNode = actionableNode(at: outlineView.clickedRow)
+
         if menuItem.action == #selector(contextBlastReads(_:)) {
             // BLAST requires exactly one selected row
-            return outlineView.clickedRow >= 0 && outlineView.selectedRowIndexes.count <= 1
+            return clickedNode != nil && outlineView.selectedRowIndexes.count <= 1
+        }
+        if menuItem.action == #selector(contextExtractReads(_:))
+            || menuItem.action == #selector(contextExtractWithChildren(_:))
+            || menuItem.action == #selector(contextOpenNCBITaxonomy(_:))
+            || menuItem.action == #selector(contextOpenNCBIGenBank(_:))
+            || menuItem.action == #selector(contextOpenNCBIPubMed(_:))
+            || menuItem.action == #selector(contextCopyName(_:))
+        {
+            return clickedNode != nil
         }
         return true
     }
 
     @objc private func contextExtractReads(_ sender: Any?) {
-        let row = outlineView.clickedRow
-        guard row >= 0, let node = outlineView.item(atRow: row) as? TaxonNode else { return }
+        guard let node = actionableNode(at: outlineView.clickedRow) else { return }
         onExtractRequested?(node)
     }
 
     @objc private func contextExtractWithChildren(_ sender: Any?) {
-        let row = outlineView.clickedRow
-        guard row >= 0, let node = outlineView.item(atRow: row) as? TaxonNode else { return }
+        guard let node = actionableNode(at: outlineView.clickedRow) else { return }
         onExtractWithChildrenRequested?(node)
     }
 
     @objc private func contextCopyName(_ sender: Any?) {
-        let row = outlineView.clickedRow
-        guard row >= 0, let node = outlineView.item(atRow: row) as? TaxonNode else { return }
+        guard let node = actionableNode(at: outlineView.clickedRow) else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(node.name, forType: .string)
     }
@@ -619,26 +656,22 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     }
 
     @objc private func contextBlastReads(_ sender: Any?) {
-        let row = outlineView.clickedRow
-        guard row >= 0, let node = outlineView.item(atRow: row) as? TaxonNode else { return }
+        guard let node = actionableNode(at: outlineView.clickedRow) else { return }
         onBlastRequested?(node)
     }
 
     @objc private func contextOpenNCBITaxonomy(_ sender: Any?) {
-        let row = outlineView.clickedRow
-        guard row >= 0, let node = outlineView.item(atRow: row) as? TaxonNode else { return }
+        guard let node = actionableNode(at: outlineView.clickedRow) else { return }
         onNCBITaxonomyRequested?(node)
     }
 
     @objc private func contextOpenNCBIGenBank(_ sender: Any?) {
-        let row = outlineView.clickedRow
-        guard row >= 0, let node = outlineView.item(atRow: row) as? TaxonNode else { return }
+        guard let node = actionableNode(at: outlineView.clickedRow) else { return }
         onNCBIGenBankRequested?(node)
     }
 
     @objc private func contextOpenNCBIPubMed(_ sender: Any?) {
-        let row = outlineView.clickedRow
-        guard row >= 0, let node = outlineView.item(atRow: row) as? TaxonNode else { return }
+        guard let node = actionableNode(at: outlineView.clickedRow) else { return }
         onNCBIPubMedRequested?(node)
     }
 
@@ -670,8 +703,8 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
 
     public func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
         guard let node = item as? TaxonNode else { return false }
-        if let filtered = filteredTree {
-            return node.children.contains { filtered.contains($0.taxId) }
+        if let filtered = filteredNodeIDs {
+            return node.children.contains { filtered.contains(ObjectIdentifier($0)) }
         }
         return !node.children.isEmpty
     }
@@ -700,6 +733,8 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         let colID = column.identifier.rawValue
 
         switch colID {
+        case ColumnID.sample:
+            return makeTextCell(text: sampleID(for: node), alignment: .left)
         case ColumnID.name:
             return makeNameCell(for: node)
         case ColumnID.rank:
@@ -763,7 +798,7 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         textField.translatesAutoresizingMaskIntoConstraints = false
 
         // Dim non-matching nodes during filter
-        if filteredTree != nil, !directMatches.contains(node.taxId) {
+        if filteredNodeIDs != nil, !directMatchNodeIDs.contains(ObjectIdentifier(node)) {
             textField.textColor = .tertiaryLabelColor
         } else {
             textField.textColor = .labelColor
@@ -873,6 +908,36 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         ])
 
         return cellView
+    }
+
+    /// Returns sample identifier for a taxonomy node in merged multi-sample trees.
+    private func sampleID(for node: TaxonNode) -> String {
+        var current: TaxonNode? = node
+        while let c = current {
+            if c.parent?.taxId == 1, c.taxId < 0 {
+                return c.name
+            }
+            current = c.parent
+        }
+        return currentSampleID ?? ""
+    }
+
+    private func actionableNode(at row: Int) -> TaxonNode? {
+        guard row >= 0, let node = outlineView.item(atRow: row) as? TaxonNode else { return nil }
+        if node.taxId <= 1 { return nil } // Root and synthetic sample grouping rows.
+        return node
+    }
+
+    /// Global filter predicate that matches any visible taxonomy column.
+    private func nodeMatchesFilter(node: TaxonNode, query: String) -> Bool {
+        let pct = String(format: "%.1f%%", node.fractionClade * 100.0).lowercased()
+        if sampleID(for: node).lowercased().contains(query) { return true }
+        if node.name.lowercased().contains(query) { return true }
+        if node.rank.displayName.lowercased().contains(query) { return true }
+        if "\(node.readsClade)".contains(query) { return true }
+        if "\(node.readsDirect)".contains(query) { return true }
+        if pct.contains(query) { return true }
+        return false
     }
 }
 

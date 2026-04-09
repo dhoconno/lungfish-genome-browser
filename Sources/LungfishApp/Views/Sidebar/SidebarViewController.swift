@@ -1304,6 +1304,8 @@ public class SidebarViewController: NSViewController {
         case "kraken2": return "K2"
         case "esviritu": return "Es"
         case "taxtriage": return "TT"
+        case "naomgs": return "Nao"
+        case "nvd": return "Nvd"
         default: return nil
         }
     }
@@ -1336,6 +1338,29 @@ public class SidebarViewController: NSViewController {
             // TaxTriage writes sample subdirectories but no batch manifest.
             let count = countBatchSampleSubdirectories(in: info.url, sidecarCheck: { _ in true })
             return count > 0 ? "\(count) samples · \(timestamp)" : nil
+
+        case "naomgs":
+            let manifestURL = info.url.appendingPathComponent("manifest.json")
+            if let data = try? Data(contentsOf: manifestURL) {
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                if let manifest = try? decoder.decode(NaoMgsManifest.self, from: data) {
+                    let count = max(1, Set(manifest.cachedTaxonRows?.map(\.sample) ?? []).count)
+                    return "\(count) samples · \(timestamp)"
+                }
+            }
+            return timestamp
+
+        case "nvd":
+            let manifestURL = info.url.appendingPathComponent("manifest.json")
+            if let data = try? Data(contentsOf: manifestURL) {
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                if let manifest = try? decoder.decode(NvdManifest.self, from: data) {
+                    return "\(manifest.sampleCount) samples · \(timestamp)"
+                }
+            }
+            return timestamp
 
         default:
             return timestamp

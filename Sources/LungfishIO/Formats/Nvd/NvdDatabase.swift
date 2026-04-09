@@ -44,6 +44,7 @@ public enum NvdDatabaseError: Error, LocalizedError, Sendable {
 public struct NvdSampleMetadata: Sendable, Codable {
     public let sampleId: String
     public let bamPath: String
+    public let bamIndexPath: String?
     public let fastaPath: String
     public let totalReads: Int
     public let contigCount: Int
@@ -52,6 +53,7 @@ public struct NvdSampleMetadata: Sendable, Codable {
     public init(
         sampleId: String,
         bamPath: String,
+        bamIndexPath: String? = nil,
         fastaPath: String,
         totalReads: Int,
         contigCount: Int,
@@ -59,6 +61,7 @@ public struct NvdSampleMetadata: Sendable, Codable {
     ) {
         self.sampleId = sampleId
         self.bamPath = bamPath
+        self.bamIndexPath = bamIndexPath
         self.fastaPath = fastaPath
         self.totalReads = totalReads
         self.contigCount = contigCount
@@ -147,6 +150,39 @@ public final class NvdDatabase: @unchecked Sendable {
                 sqlite3_close(rwDB)
             }
             // Reopen read-only
+            let rc2 = sqlite3_open_v2(url.path, &db, flags, nil)
+            guard rc2 == SQLITE_OK else {
+                let msg = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "Unknown error"
+                sqlite3_close(db)
+                db = nil
+                throw NvdDatabaseError.openFailed(msg)
+            }
+        }
+
+        // Schema migration: ensure bam_index_path column exists in samples table.
+        let sampleColCheck = "PRAGMA table_info(samples)"
+        var sampleStmt: OpaquePointer?
+        var hasBamIndexPath = false
+        if sqlite3_prepare_v2(db, sampleColCheck, -1, &sampleStmt, nil) == SQLITE_OK {
+            while sqlite3_step(sampleStmt) == SQLITE_ROW {
+                if let namePtr = sqlite3_column_text(sampleStmt, 1) {
+                    let colName = String(cString: namePtr)
+                    if colName == "bam_index_path" {
+                        hasBamIndexPath = true
+                        break
+                    }
+                }
+            }
+            sqlite3_finalize(sampleStmt)
+        }
+        if !hasBamIndexPath {
+            sqlite3_close(db)
+            db = nil
+            var rwDB: OpaquePointer?
+            if sqlite3_open_v2(url.path, &rwDB, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK {
+                sqlite3_exec(rwDB, "ALTER TABLE samples ADD COLUMN bam_index_path TEXT", nil, nil, nil)
+                sqlite3_close(rwDB)
+            }
             let rc2 = sqlite3_open_v2(url.path, &db, flags, nil)
             guard rc2 == SQLITE_OK else {
                 let msg = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "Unknown error"
@@ -279,6 +315,7 @@ public final class NvdDatabase: @unchecked Sendable {
         CREATE TABLE samples (
             sample_id TEXT PRIMARY KEY,
             bam_path TEXT NOT NULL,
+            bam_index_path TEXT,
             fasta_path TEXT NOT NULL,
             total_reads INTEGER NOT NULL,
             contig_count INTEGER NOT NULL,
@@ -389,8 +426,8 @@ public final class NvdDatabase: @unchecked Sendable {
 
         let insertSQL = """
         INSERT OR REPLACE INTO samples (
-            sample_id, bam_path, fasta_path, total_reads, contig_count, hit_count
-        ) VALUES (?,?,?,?,?,?)
+            sample_id, bam_path, bam_index_path, fasta_path, total_reads, contig_count, hit_count
+        ) VALUES (?,?,?,?,?,?,?)
         """
 
         var stmt: OpaquePointer?
@@ -408,10 +445,15 @@ public final class NvdDatabase: @unchecked Sendable {
 
             nvdBindText(stmt, 1, sample.sampleId)
             nvdBindText(stmt, 2, sample.bamPath)
-            nvdBindText(stmt, 3, sample.fastaPath)
-            sqlite3_bind_int64(stmt, 4, Int64(sample.totalReads))
-            sqlite3_bind_int64(stmt, 5, Int64(sample.contigCount))
-            sqlite3_bind_int64(stmt, 6, Int64(sample.hitCount))
+            if let bamIndexPath = sample.bamIndexPath {
+                nvdBindText(stmt, 3, bamIndexPath)
+            } else {
+                sqlite3_bind_null(stmt, 3)
+            }
+            nvdBindText(stmt, 4, sample.fastaPath)
+            sqlite3_bind_int64(stmt, 5, Int64(sample.totalReads))
+            sqlite3_bind_int64(stmt, 6, Int64(sample.contigCount))
+            sqlite3_bind_int64(stmt, 7, Int64(sample.hitCount))
 
             guard sqlite3_step(stmt) == SQLITE_DONE else {
                 let msg = String(cString: sqlite3_errmsg(db))
@@ -664,7 +706,7 @@ public final class NvdDatabase: @unchecked Sendable {
         }
 
         let sql = """
-        SELECT sample_id, bam_path, fasta_path, total_reads, contig_count, hit_count
+        SELECT sample_id, bam_path, bam_index_path, fasta_path, total_reads, contig_count, hit_count
         FROM samples
         ORDER BY sample_id
         """
@@ -680,13 +722,17 @@ public final class NvdDatabase: @unchecked Sendable {
         while sqlite3_step(stmt) == SQLITE_ROW {
             let sampleId    = String(cString: sqlite3_column_text(stmt, 0))
             let bamPath     = String(cString: sqlite3_column_text(stmt, 1))
-            let fastaPath   = String(cString: sqlite3_column_text(stmt, 2))
-            let totalReads  = Int(sqlite3_column_int64(stmt, 3))
-            let contigCount = Int(sqlite3_column_int64(stmt, 4))
-            let hitCount    = Int(sqlite3_column_int64(stmt, 5))
+            let bamIndexPath: String? = sqlite3_column_type(stmt, 2) == SQLITE_NULL
+                ? nil
+                : String(cString: sqlite3_column_text(stmt, 2))
+            let fastaPath   = String(cString: sqlite3_column_text(stmt, 3))
+            let totalReads  = Int(sqlite3_column_int64(stmt, 4))
+            let contigCount = Int(sqlite3_column_int64(stmt, 5))
+            let hitCount    = Int(sqlite3_column_int64(stmt, 6))
             results.append(NvdSampleMetadata(
                 sampleId: sampleId,
                 bamPath: bamPath,
+                bamIndexPath: bamIndexPath,
                 fastaPath: fastaPath,
                 totalReads: totalReads,
                 contigCount: contigCount,
@@ -715,6 +761,30 @@ public final class NvdDatabase: @unchecked Sendable {
 
         nvdBindText(stmt, 1, sampleId)
         if sqlite3_step(stmt) == SQLITE_ROW {
+            return String(cString: sqlite3_column_text(stmt, 0))
+        }
+        return nil
+    }
+
+    /// Returns the BAM index path for a given sample, or nil if unknown.
+    ///
+    /// - Parameter sampleId: The sample identifier.
+    /// - Returns: The stored BAM index path string, or nil.
+    public func bamIndexPath(forSample sampleId: String) throws -> String? {
+        guard let db else {
+            throw NvdDatabaseError.queryFailed("Database not open")
+        }
+
+        let sql = "SELECT bam_index_path FROM samples WHERE sample_id = ?"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            let msg = String(cString: sqlite3_errmsg(db))
+            throw NvdDatabaseError.queryFailed(msg)
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        nvdBindText(stmt, 1, sampleId)
+        if sqlite3_step(stmt) == SQLITE_ROW, sqlite3_column_type(stmt, 0) != SQLITE_NULL {
             return String(cString: sqlite3_column_text(stmt, 0))
         }
         return nil
