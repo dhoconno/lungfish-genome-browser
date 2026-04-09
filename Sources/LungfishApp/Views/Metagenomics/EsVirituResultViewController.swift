@@ -211,8 +211,8 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     /// Sample metadata for dynamic column display in the detection table.
     var sampleMetadataStore: SampleMetadataStore? {
         didSet {
-            // EsViritu is single-sample: use the first (only) sample entry's ID.
-            let sampleId = sampleEntries.first?.id
+            let selected = samplePickerState?.selectedSamples.sorted() ?? []
+            let sampleId = selected.count == 1 ? selected.first : nil
             detectionTableView.metadataColumns.update(store: sampleMetadataStore, sampleId: sampleId)
         }
     }
@@ -613,29 +613,40 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     }
 
     /// Filters `allBatchRows` by the samples selected in `samplePickerState`
-    /// and reloads the batch table view.
+    /// and renders the native table/detail panes for all selected samples.
     func applyBatchSampleFilter() {
         guard let state = samplePickerState else { return }
         let selected = state.selectedSamples.sorted()
 
-        guard let firstSample = selected.first else {
+        guard !selected.isEmpty else {
+            esVirituResult = nil
             detectionTableView.result = nil
+            detectionTableView.uniqueReadCountsByAssembly = [:]
+            detectionTableView.uniqueReadCountsByContig = [:]
+            detectionTableView.uniqueReadCountsBySampleAssembly = [:]
+            detectionTableView.uniqueReadCountsBySampleContig = [:]
+            detectionTableView.metadataColumns.isMultiSampleMode = false
+            detectionTableView.metadataColumns.update(store: sampleMetadataStore, sampleId: nil)
             detectionTableView.isHidden = false
             batchTableView.isHidden = true
+            showOverview()
+            actionBar.updateInfoText("Select a virus to view details")
+            actionBar.setBlastEnabled(false, reason: "Select a row to use BLAST Verify")
+            actionBar.setExtractEnabled(false)
             return
         }
 
-        // EsViritu display is always the native list view + detail miniBAM.
-        // If multiple samples are selected in the picker, render the first selected sample.
-        showSingleSampleBatchView(sampleId: firstSample)
+        showBatchSamplesView(sampleIds: selected)
     }
 
-    /// Shows the native hierarchical EsViritu table/detail panes for a single selected sample
-    /// while still sourcing data from the batch SQLite database.
-    private func showSingleSampleBatchView(sampleId: String) {
+    /// Shows the native hierarchical EsViritu table/detail panes for one or more selected
+    /// samples while still sourcing data from the batch SQLite database.
+    private func showBatchSamplesView(sampleIds: [String]) {
+        let selectedSet = Set(sampleIds)
         let assemblies: [ViralAssembly] = batchAssemblyLookup
             .compactMap { key, value in
-                guard key.hasPrefix("\(sampleId)\t") else { return nil }
+                guard let sampleId = key.split(separator: "\t", maxSplits: 1).first.map(String.init),
+                      selectedSet.contains(sampleId) else { return nil }
                 return value
             }
             .sorted { $0.totalReads > $1.totalReads }
@@ -648,7 +659,7 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         var coverageWindowsByAccession: [String: [ViralCoverageWindow]] = [:]
         if let db = esVirituDatabase {
             for contig in detections {
-                if let windows = try? db.fetchCoverageWindows(sample: sampleId, accession: contig.accession), !windows.isEmpty {
+                if let windows = try? db.fetchCoverageWindows(sample: contig.sampleId, accession: contig.accession), !windows.isEmpty {
                     coverageWindowsByAccession[contig.accession] = windows.map {
                         ViralCoverageWindow(
                             accession: $0.accession,
@@ -663,7 +674,7 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         }
 
         let result = EsVirituResult(
-            sampleId: sampleId,
+            sampleId: sampleIds.count == 1 ? (sampleIds.first ?? "batch") : "batch",
             detections: detections,
             assemblies: assemblies,
             taxProfile: [],
@@ -676,16 +687,37 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         )
 
         var uniqueByAssembly: [String: Int] = [:]
-        for row in allBatchRows where row.sample == sampleId {
+        var uniqueBySampleAssembly: [String: Int] = [:]
+        var uniqueBySampleContig: [String: Int] = [:]
+        for row in allBatchRows where selectedSet.contains(row.sample) {
             uniqueByAssembly[row.assembly] = row.uniqueReads
+            uniqueBySampleAssembly["\(row.sample)\t\(row.assembly)"] = row.uniqueReads
+        }
+        for detection in detections {
+            let key = "\(detection.sampleId)\t\(detection.assembly)"
+            if let unique = uniqueBySampleAssembly[key] {
+                uniqueBySampleContig["\(detection.sampleId)\t\(detection.accession)"] = unique
+            }
         }
 
         esVirituResult = result
         detectionTableView.result = result
         detectionTableView.coverageWindowsByAccession = coverageWindowsByAccession
         detectionTableView.uniqueReadCountsByAssembly = uniqueByAssembly
-        bamURL = batchBAMLookup[sampleId]
-        bamIndexURL = batchBAMIndexLookup[sampleId]
+        detectionTableView.uniqueReadCountsBySampleAssembly = uniqueBySampleAssembly
+        detectionTableView.uniqueReadCountsBySampleContig = uniqueBySampleContig
+        detectionTableView.metadataColumns.isMultiSampleMode = sampleIds.count > 1
+        detectionTableView.metadataColumns.update(
+            store: sampleMetadataStore,
+            sampleId: sampleIds.count == 1 ? sampleIds.first : nil
+        )
+
+        if let firstSample = sampleIds.first {
+            setBatchBAMContext(forSample: firstSample)
+        } else {
+            bamURL = nil
+            bamIndexURL = nil
+        }
 
         detectionTableView.isHidden = false
         batchTableView.isHidden = true
@@ -988,6 +1020,7 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             guard let self else { return }
             self.hideMultiSelectionPlaceholder()
             if let assembly {
+                self.setBatchBAMContext(forSample: assembly.contigs.first?.sampleId)
                 // Update action bar with selection info
                 self.updateActionBarForAssembly(name: assembly.name, readCount: assembly.totalReads)
                 self.actionBar.setBlastEnabled(true)
@@ -1022,6 +1055,7 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         detectionTableView.onDetectionSelected = { [weak self] detection in
             guard let self else { return }
             self.hideMultiSelectionPlaceholder()
+            self.setBatchBAMContext(forSample: detection.sampleId)
             self.updateActionBarForAssembly(name: detection.name, readCount: detection.readCount)
             self.actionBar.setBlastEnabled(true)
             self.actionBar.setExtractEnabled(true)
@@ -1036,16 +1070,32 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         // Table BLAST request -> forward to host with BAM context
         detectionTableView.onBlastRequested = { [weak self] detection, readCount, accessions in
             guard let self else { return }
-            self.onBlastVerification?(detection, readCount, accessions, self.bamURL, self.bamIndexURL)
+            let sampleBAMURL = self.batchBAMLookup[detection.sampleId] ?? self.bamURL
+            let sampleBAMIndexURL = self.batchBAMIndexLookup[detection.sampleId] ?? self.bamIndexURL
+            self.onBlastVerification?(detection, readCount, accessions, sampleBAMURL, sampleBAMIndexURL)
         }
 
-        // Table extract request -> forward to host
+        // Table extract request -> open extraction sheet from the clicked row.
         detectionTableView.onExtractReadsRequested = { [weak self] detection in
-            self?.onExtractReads?(detection)
+            guard let self else { return }
+            self.setBatchBAMContext(forSample: detection.sampleId)
+            let items = ["Contig: \(detection.accession)"]
+            let source = self.bamURL?.lastPathComponent ?? "EsViritu result"
+            let suggestedName = "\(detection.sampleId)_\(detection.accession)_extract"
+            self.presentExtractionSheet(items: items, source: source, suggestedName: suggestedName)
+            self.onExtractReads?(detection)
         }
 
         detectionTableView.onExtractAssemblyReadsRequested = { [weak self] assembly in
-            self?.onExtractAssemblyReads?(assembly)
+            guard let self else { return }
+            self.setBatchBAMContext(forSample: assembly.contigs.first?.sampleId)
+            let accessions = assembly.contigs.map(\.accession)
+            let items = accessions.map { "Assembly: \($0)" }
+            let source = self.bamURL?.lastPathComponent ?? "EsViritu result"
+            let sampleId = assembly.contigs.first?.sampleId ?? (self.esVirituResult?.sampleId ?? "sample")
+            let suggestedName = "\(sampleId)_\(assembly.assembly)_extract"
+            self.presentExtractionSheet(items: items, source: source, suggestedName: suggestedName)
+            self.onExtractAssemblyReads?(assembly)
         }
 
         // Action bar Extract FASTQ -> present extraction sheet for selected assemblies
@@ -1053,8 +1103,12 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             guard let self else { return }
             let accessions = self.detectionTableView.selectedAssemblyAccessions()
             guard !accessions.isEmpty else { return }
-
-            let sampleId = self.esVirituResult?.sampleId ?? "sample"
+            if self.isBatchMode {
+                let selectedSample = self.currentSelectedSampleIDForActions()
+                    ?? self.samplePickerState?.selectedSamples.sorted().first
+                self.setBatchBAMContext(forSample: selectedSample)
+            }
+            let sampleId = self.currentSelectedSampleIDForActions() ?? (self.esVirituResult?.sampleId ?? "sample")
             let items = accessions.map { "Assembly: \($0)" }
             let source = self.bamURL?.lastPathComponent ?? "EsViritu result"
             let suggestedName = "\(sampleId)_\(accessions.first ?? "extract")_extract"
@@ -1088,6 +1142,21 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             name: .metagenomicsLayoutSwapRequested,
             object: nil
         )
+    }
+
+    private func setBatchBAMContext(forSample sampleId: String?) {
+        guard isBatchMode else { return }
+        guard let sampleId else {
+            bamURL = nil
+            bamIndexURL = nil
+            return
+        }
+        bamURL = batchBAMLookup[sampleId]
+        bamIndexURL = batchBAMIndexLookup[sampleId]
+    }
+
+    private func currentSelectedSampleIDForActions() -> String? {
+        detectionTableView.selectedSampleIDs().first
     }
 
     // MARK: - Recompute Unique Reads

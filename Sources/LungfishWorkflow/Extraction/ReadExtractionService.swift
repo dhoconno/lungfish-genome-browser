@@ -266,24 +266,10 @@ public actor ReadExtractionService {
                 guard dedupViewResult.isSuccess else {
                     throw ExtractionError.samtoolsFailed(dedupViewResult.stderr)
                 }
-                let dedupFastqResult = try await toolRunner.run(
-                    .samtools,
-                    arguments: ["fastq", "-o", outputURL.path, dedupBAM.path],
-                    timeout: 7200
-                )
-                guard dedupFastqResult.isSuccess else {
-                    throw ExtractionError.samtoolsFailed(dedupFastqResult.stderr)
-                }
+                try await convertBAMToFASTQSingleFile(inputBAM: dedupBAM, outputFASTQ: outputURL)
             } else {
-                // Extract all reads: samtools fastq -o output.fastq bam.bam
-                let result = try await toolRunner.run(
-                    .samtools,
-                    arguments: ["fastq", "-o", outputURL.path, config.bamURL.path],
-                    timeout: 7200
-                )
-                guard result.isSuccess else {
-                    throw ExtractionError.samtoolsFailed(result.stderr)
-                }
+                // Extract all reads from source BAM.
+                try await convertBAMToFASTQSingleFile(inputBAM: config.bamURL, outputFASTQ: outputURL)
             }
         } else {
             // First extract matching regions to a temporary BAM
@@ -319,23 +305,11 @@ public actor ReadExtractionService {
             if tempBAMSize < 100 {
                 logger.warning("Region extraction produced empty BAM (\(tempBAMSize) bytes). Trying fallback: extract all reads.")
                 // Fall through to full extraction — convert all reads in the source BAM
-                let fallbackArgs = ["fastq", "-o", outputURL.path, config.bamURL.path]
-                let fallbackResult = try await toolRunner.run(.samtools, arguments: fallbackArgs, timeout: 7200)
-                guard fallbackResult.isSuccess else {
-                    throw ExtractionError.samtoolsFailed(fallbackResult.stderr)
-                }
+                try await convertBAMToFASTQSingleFile(inputBAM: config.bamURL, outputFASTQ: outputURL)
             } else {
                 progress?(0.6, "Converting BAM to FASTQ...")
 
-                // samtools fastq -o output.fastq extracted.bam
-                let fastqResult = try await toolRunner.run(
-                    .samtools,
-                    arguments: ["fastq", "-o", outputURL.path, tempBAM.path],
-                    timeout: 7200
-                )
-                guard fastqResult.isSuccess else {
-                    throw ExtractionError.samtoolsFailed(fastqResult.stderr)
-                }
+                try await convertBAMToFASTQSingleFile(inputBAM: tempBAM, outputFASTQ: outputURL)
             }
         }
 
@@ -618,6 +592,80 @@ public actor ReadExtractionService {
     }
 
     // MARK: - Private Helpers
+
+    /// Converts a BAM file into a single FASTQ by collecting all read classes.
+    ///
+    /// `samtools fastq -o` only writes READ1/READ2 and can silently drop unpaired
+    /// READ_OTHER records (common in single-end metagenomics BAMs). We route
+    /// READ_OTHER/READ1/READ2/singletons to separate temporary files and merge them.
+    private func convertBAMToFASTQSingleFile(inputBAM: URL, outputFASTQ: URL) async throws {
+        let fm = FileManager.default
+        let tempDir = try ProjectTempDirectory.createFromContext(
+            prefix: "lungfish-fastq-merge-",
+            contextURL: outputFASTQ.deletingLastPathComponent()
+        )
+        defer { try? fm.removeItem(at: tempDir) }
+
+        let otherURL = tempDir.appendingPathComponent("reads_other.fastq")
+        let r1URL = tempDir.appendingPathComponent("reads_r1.fastq")
+        let r2URL = tempDir.appendingPathComponent("reads_r2.fastq")
+        let singletonURL = tempDir.appendingPathComponent("reads_singletons.fastq")
+
+        let fastqResult = try await toolRunner.run(
+            .samtools,
+            arguments: [
+                "fastq",
+                "-0", otherURL.path,
+                "-1", r1URL.path,
+                "-2", r2URL.path,
+                "-s", singletonURL.path,
+                inputBAM.path,
+            ],
+            timeout: 7200
+        )
+        guard fastqResult.isSuccess else {
+            throw ExtractionError.samtoolsFailed(fastqResult.stderr)
+        }
+
+        if fm.fileExists(atPath: outputFASTQ.path) {
+            try fm.removeItem(at: outputFASTQ)
+        }
+        fm.createFile(atPath: outputFASTQ.path, contents: nil)
+
+        let outHandle = try FileHandle(forWritingTo: outputFASTQ)
+        defer { try? outHandle.close() }
+
+        let orderedParts = [otherURL, singletonURL, r1URL, r2URL]
+        for partURL in orderedParts {
+            guard fm.fileExists(atPath: partURL.path) else { continue }
+            let attrs = try fm.attributesOfItem(atPath: partURL.path)
+            let size = attrs[.size] as? UInt64 ?? 0
+            guard size > 0 else { continue }
+
+            let inHandle = try FileHandle(forReadingFrom: partURL)
+            defer { try? inHandle.close() }
+
+            while true {
+                let chunk = inHandle.readData(ofLength: 1 << 20)
+                if chunk.isEmpty { break }
+                outHandle.write(chunk)
+            }
+        }
+
+        let mergedSize = (try? fm.attributesOfItem(atPath: outputFASTQ.path)[.size] as? UInt64) ?? 0
+        if mergedSize == 0 {
+            logger.warning("samtools fastq sidecar outputs were empty; retrying via stdout capture")
+            let stdoutResult = try await toolRunner.run(
+                .samtools,
+                arguments: ["fastq", inputBAM.path],
+                timeout: 7200
+            )
+            guard stdoutResult.isSuccess else {
+                throw ExtractionError.samtoolsFailed(stdoutResult.stderr)
+            }
+            try stdoutResult.stdout.write(to: outputFASTQ, atomically: true, encoding: .utf8)
+        }
+    }
 
     /// Counts reads in a FASTQ file via `seqkit stats -T`.
     ///

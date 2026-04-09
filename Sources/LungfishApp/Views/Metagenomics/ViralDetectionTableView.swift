@@ -90,8 +90,14 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
     /// This is the sum of per-contig unique reads for multi-segment viruses.
     public var uniqueReadCountsByAssembly: [String: Int] = [:]
 
+    /// Unique read counts keyed by "sampleId\tassemblyAccession" for batch mode.
+    public var uniqueReadCountsBySampleAssembly: [String: Int] = [:]
+
     /// Unique (deduplicated) read counts per contig/segment, keyed by contig accession.
     public var uniqueReadCountsByContig: [String: Int] = [:]
+
+    /// Unique read counts keyed by "sampleId\tcontigAccession" for batch mode.
+    public var uniqueReadCountsBySampleContig: [String: Int] = [:]
 
     /// Updates the unique read count for an assembly and refreshes its row.
     public func setUniqueReadCount(_ count: Int, forAssembly accession: String) {
@@ -111,11 +117,18 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
 
         // Recompute assembly total from per-contig values
         let items = sortedDisplayItems
-        if let item = items.first(where: { $0.assembly.assembly == assemblyAccession }) {
+        if let item = items.first(where: { item in
+            item.assembly.assembly == assemblyAccession
+                && item.assembly.contigs.contains(where: { $0.accession == contigAccession })
+        }) {
             let assemblyTotal = item.assembly.contigs.reduce(0) { sum, contig in
-                sum + (uniqueReadCountsByContig[contig.accession] ?? 0)
+                let sampleId = contig.sampleId
+                return sum + (uniqueReadCountsBySampleContig["\(sampleId)\t\(contig.accession)"]
+                    ?? uniqueReadCountsByContig[contig.accession]
+                    ?? 0)
             }
             uniqueReadCountsByAssembly[assemblyAccession] = assemblyTotal
+            uniqueReadCountsBySampleAssembly[assemblyKey(for: item.assembly)] = assemblyTotal
 
             // Reload the assembly row and its children
             reloadItemPreservingSelection(item, reloadChildren: true)
@@ -142,6 +155,25 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
             }
         }
         return accessions
+    }
+
+    /// Returns sample IDs represented by the current selection.
+    ///
+    /// Assembly rows contribute the sample ID of their first contig.
+    /// Detection rows contribute the detection's sample ID directly.
+    public func selectedSampleIDs() -> [String] {
+        var sampleIds: [String] = []
+        for row in outlineView.selectedRowIndexes {
+            guard let item = outlineView.item(atRow: row) else { continue }
+            if let assemblyItem = item as? ViralAssemblyItem {
+                if let sampleId = assemblyItem.assembly.contigs.first?.sampleId {
+                    sampleIds.append(sampleId)
+                }
+            } else if let detectionItem = item as? ViralDetectionItem {
+                sampleIds.append(detectionItem.detection.sampleId)
+            }
+        }
+        return sampleIds
     }
 
     private func reloadItemPreservingSelection(_ item: Any, reloadChildren: Bool) {
@@ -237,6 +269,7 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
     // MARK: - Column Identifiers
 
     private enum ColumnID {
+        static let sample = "sample"
         static let name = "name"
         static let family = "family"
         static let reads = "reads"
@@ -285,6 +318,14 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
     }
 
     private func setupOutlineView() {
+        // Sample column
+        let sampleCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(ColumnID.sample))
+        sampleCol.title = "Sample"
+        sampleCol.minWidth = 90
+        sampleCol.width = 130
+        sampleCol.sortDescriptorPrototype = NSSortDescriptor(key: ColumnID.sample, ascending: true)
+        outlineView.addTableColumn(sampleCol)
+
         // Name column (flexible width)
         let nameCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(ColumnID.name))
         nameCol.title = "Virus Name"
@@ -362,7 +403,7 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
 
         // Install metadata column controller for dynamic sample metadata columns.
         metadataColumns.standardColumnNames = [
-            "Virus Name", "Family", "Reads", "Unique Reads", "RPKMF", "Coverage", "Identity", "Segment",
+            "Sample", "Virus Name", "Family", "Reads", "Unique Reads", "RPKMF", "Coverage", "Identity", "Segment",
         ]
         metadataColumns.install(on: outlineView)
 
@@ -456,6 +497,8 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         } else {
             filteredItems = assemblyItems.filter { item in
                 let assembly = item.assembly
+                let sample = sampleID(for: assembly).lowercased()
+                if sample.contains(query) { return true }
                 if assembly.name.lowercased().contains(query) { return true }
                 if assembly.family?.lowercased().contains(query) == true { return true }
                 if assembly.genus?.lowercased().contains(query) == true { return true }
@@ -510,6 +553,11 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         var items = items
 
         switch currentSortKey {
+        case ColumnID.sample:
+            items.sort { currentSortAscending
+                ? sampleID(for: $0.assembly).localizedCaseInsensitiveCompare(sampleID(for: $1.assembly)) == .orderedAscending
+                : sampleID(for: $0.assembly).localizedCaseInsensitiveCompare(sampleID(for: $1.assembly)) == .orderedDescending
+            }
         case ColumnID.name:
             items.sort { currentSortAscending
                 ? $0.assembly.name.localizedCaseInsensitiveCompare($1.assembly.name) == .orderedAscending
@@ -527,8 +575,12 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
             }
         case ColumnID.uniqueReads:
             items.sort { a, b in
-                let aVal = uniqueReadCountsByAssembly[a.assembly.assembly] ?? 0
-                let bVal = uniqueReadCountsByAssembly[b.assembly.assembly] ?? 0
+                let aVal = uniqueReadCountsBySampleAssembly[assemblyKey(for: a.assembly)]
+                    ?? uniqueReadCountsByAssembly[a.assembly.assembly]
+                    ?? 0
+                let bVal = uniqueReadCountsBySampleAssembly[assemblyKey(for: b.assembly)]
+                    ?? uniqueReadCountsByAssembly[b.assembly.assembly]
+                    ?? 0
                 return currentSortAscending ? aVal < bVal : aVal > bVal
             }
         case ColumnID.rpkmf:
@@ -950,6 +1002,8 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
 
     private func cellForAssembly(_ assembly: ViralAssembly, columnID: String) -> NSView? {
         switch columnID {
+        case ColumnID.sample:
+            return makeTextCell(text: sampleID(for: assembly), alignment: .left)
         case ColumnID.name:
             return makeNameCell(
                 name: assembly.name,
@@ -961,7 +1015,9 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         case ColumnID.reads:
             return makeNumberCell(value: assembly.totalReads)
         case ColumnID.uniqueReads:
-            if let unique = uniqueReadCountsByAssembly[assembly.assembly] {
+            if let unique = uniqueReadCountsBySampleAssembly[assemblyKey(for: assembly)]
+                ?? uniqueReadCountsByAssembly[assembly.assembly]
+            {
                 return makeNumberCell(value: unique)
             }
             return makeTextCell(text: "\u{2026}", alignment: .right)  // ellipsis while computing
@@ -994,6 +1050,8 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
 
     private func cellForDetection(_ detection: ViralDetection, columnID: String) -> NSView? {
         switch columnID {
+        case ColumnID.sample:
+            return makeTextCell(text: detection.sampleId, alignment: .left)
         case ColumnID.name:
             return makeNameCell(
                 name: disambiguatedDetectionName(detection),
@@ -1005,7 +1063,9 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         case ColumnID.reads:
             return makeNumberCell(value: detection.readCount)
         case ColumnID.uniqueReads:
-            if let unique = uniqueReadCountsByContig[detection.accession] {
+            if let unique = uniqueReadCountsBySampleContig["\(detection.sampleId)\t\(detection.accession)"]
+                ?? uniqueReadCountsByContig[detection.accession]
+            {
                 return makeNumberCell(value: unique)
             }
             return makeTextCell(text: "\u{2026}", alignment: .right)
@@ -1238,6 +1298,14 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         }
         let index = Int(hash % UInt64(PhylumPalette.slotCount - 1))
         return PhylumPalette.phylumColors[index]
+    }
+
+    private func sampleID(for assembly: ViralAssembly) -> String {
+        assembly.contigs.first?.sampleId ?? ""
+    }
+
+    private func assemblyKey(for assembly: ViralAssembly) -> String {
+        "\(sampleID(for: assembly))\t\(assembly.assembly)"
     }
 
     // MARK: - Testing Accessors
