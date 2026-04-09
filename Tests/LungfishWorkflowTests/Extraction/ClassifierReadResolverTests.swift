@@ -350,6 +350,186 @@ final class ClassifierReadResolverTests: XCTestCase {
         XCTAssertGreaterThan(outcome.readCount, 0)
     }
 
+    /// Extract sample A alone, sample B alone, and A+B together; assert
+    /// count(A+B) == count(A) + count(B). Catches concatenation bugs and the
+    /// stem-collision risk where two samples share the same sidecar prefix.
+    func testExtractViaBAM_multiSample_countEquivalence() async throws {
+        let resultPathA = try makeSarscov2ResultFixture(tool: .nvd, sampleId: "A")
+        let rootA = resultPathA.deletingLastPathComponent()
+        let resultPathB = try makeSarscov2ResultFixture(tool: .nvd, sampleId: "B")
+        let rootB = resultPathB.deletingLastPathComponent()
+        defer {
+            try? FileManager.default.removeItem(at: rootA)
+            try? FileManager.default.removeItem(at: rootB)
+        }
+
+        // Copy sample B's BAM into root A so the combined extraction can
+        // resolve both samples from the same result path.
+        try FileManager.default.copyItem(
+            at: rootB.appendingPathComponent("B.bam"),
+            to: rootA.appendingPathComponent("B.bam")
+        )
+        try FileManager.default.copyItem(
+            at: URL(fileURLWithPath: rootB.appendingPathComponent("B.bam").path + ".bai"),
+            to: URL(fileURLWithPath: rootA.appendingPathComponent("B.bam").path + ".bai")
+        )
+
+        let bamRefs = try await BAMRegionMatcher.readBAMReferences(
+            bamURL: try sarscov2FixtureBAM(),
+            runner: .shared
+        )
+        guard let region = bamRefs.first else {
+            throw XCTSkip("sarscov2 BAM header has no references")
+        }
+
+        let resolver = ClassifierReadResolver()
+
+        let outA = FileManager.default.temporaryDirectory.appendingPathComponent("a-\(UUID().uuidString).fastq")
+        let outB = FileManager.default.temporaryDirectory.appendingPathComponent("b-\(UUID().uuidString).fastq")
+        let outAB = FileManager.default.temporaryDirectory.appendingPathComponent("ab-\(UUID().uuidString).fastq")
+        defer {
+            try? FileManager.default.removeItem(at: outA)
+            try? FileManager.default.removeItem(at: outB)
+            try? FileManager.default.removeItem(at: outAB)
+        }
+
+        let outcomeA = try await resolver.resolveAndExtract(
+            tool: .nvd,
+            resultPath: resultPathA,
+            selections: [ClassifierRowSelector(sampleId: "A", accessions: [region], taxIds: [])],
+            options: ExtractionOptions(),
+            destination: .file(outA)
+        )
+        let outcomeB = try await resolver.resolveAndExtract(
+            tool: .nvd,
+            resultPath: resultPathA,
+            selections: [ClassifierRowSelector(sampleId: "B", accessions: [region], taxIds: [])],
+            options: ExtractionOptions(),
+            destination: .file(outB)
+        )
+        let outcomeAB = try await resolver.resolveAndExtract(
+            tool: .nvd,
+            resultPath: resultPathA,
+            selections: [
+                ClassifierRowSelector(sampleId: "A", accessions: [region], taxIds: []),
+                ClassifierRowSelector(sampleId: "B", accessions: [region], taxIds: []),
+            ],
+            options: ExtractionOptions(),
+            destination: .file(outAB)
+        )
+
+        XCTAssertGreaterThan(outcomeA.readCount, 0)
+        XCTAssertGreaterThan(outcomeB.readCount, 0)
+        XCTAssertEqual(
+            outcomeAB.readCount,
+            outcomeA.readCount + outcomeB.readCount,
+            "Combined A+B extract should equal the sum of per-sample counts"
+        )
+    }
+
+    /// Exercises the `options.format == .fasta` path. Verifies the output is a
+    /// well-formed FASTA (`>` header lines alternating with sequence lines).
+    /// `convertFASTQToFASTA` has ~40 lines of hand-rolled byte munging that
+    /// was previously completely untested.
+    func testExtractViaBAM_fastaFormat_producesValidFASTA() async throws {
+        let resultPath = try makeSarscov2ResultFixture(tool: .nvd, sampleId: "fa")
+        defer { try? FileManager.default.removeItem(at: resultPath.deletingLastPathComponent()) }
+
+        let bamRefs = try await BAMRegionMatcher.readBAMReferences(
+            bamURL: try sarscov2FixtureBAM(),
+            runner: .shared
+        )
+        guard let region = bamRefs.first else {
+            throw XCTSkip("sarscov2 BAM header has no references")
+        }
+
+        let tempOut = FileManager.default.temporaryDirectory
+            .appendingPathComponent("out-\(UUID().uuidString).fasta")
+        defer { try? FileManager.default.removeItem(at: tempOut) }
+
+        let resolver = ClassifierReadResolver()
+        let outcome = try await resolver.resolveAndExtract(
+            tool: .nvd,
+            resultPath: resultPath,
+            selections: [
+                ClassifierRowSelector(sampleId: "fa", accessions: [region], taxIds: [])
+            ],
+            options: ExtractionOptions(format: .fasta, includeUnmappedMates: false),
+            destination: .file(tempOut)
+        )
+
+        guard case .file(let url, let n) = outcome else {
+            XCTFail("Expected .file outcome, got \(outcome)")
+            return
+        }
+        XCTAssertGreaterThan(n, 0)
+
+        let data = try Data(contentsOf: url)
+        XCTAssertFalse(data.isEmpty, "FASTA output is empty")
+
+        // Parse as UTF-8 lines and verify FASTA structure: header lines start
+        // with '>', each header is followed by exactly one sequence line (the
+        // resolver's converter discards the `+` and quality lines from the
+        // FASTQ). Require at least one complete record.
+        let text = String(decoding: data, as: UTF8.self)
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.isEmpty }
+        XCTAssertFalse(lines.isEmpty, "FASTA has no lines")
+        XCTAssertEqual(lines.count % 2, 0, "FASTA should have an even number of header+sequence lines")
+
+        var recordCount = 0
+        for (i, line) in lines.enumerated() {
+            if i % 2 == 0 {
+                XCTAssertTrue(line.first == ">", "Expected header at line \(i), got: \(line)")
+                recordCount += 1
+            } else {
+                XCTAssertFalse(line.first == ">", "Expected sequence at line \(i), got header: \(line)")
+                XCTAssertFalse(line.isEmpty, "Empty sequence at line \(i)")
+            }
+        }
+        XCTAssertGreaterThan(recordCount, 0, "No FASTA records parsed")
+        XCTAssertEqual(recordCount, n, "FASTA record count should match outcome.readCount")
+    }
+
+    /// Exercises the `includeUnmappedMates: true` path. The sarscov2 fixture
+    /// may not contain unmapped mates, so this test primarily pins the API
+    /// surface: both flag settings should succeed and produce a non-zero
+    /// count. `false` → `0x404` (exclude unmapped + duplicates + qcfail),
+    /// `true` → `0x400` (exclude duplicates + qcfail only).
+    func testExtractViaBAM_includeUnmappedMates_succeeds() async throws {
+        let resultPath = try makeSarscov2ResultFixture(tool: .nvd, sampleId: "um")
+        defer { try? FileManager.default.removeItem(at: resultPath.deletingLastPathComponent()) }
+
+        let bamRefs = try await BAMRegionMatcher.readBAMReferences(
+            bamURL: try sarscov2FixtureBAM(),
+            runner: .shared
+        )
+        guard let region = bamRefs.first else {
+            throw XCTSkip("sarscov2 BAM header has no references")
+        }
+
+        let tempOut = FileManager.default.temporaryDirectory
+            .appendingPathComponent("um-\(UUID().uuidString).fastq")
+        defer { try? FileManager.default.removeItem(at: tempOut) }
+
+        let resolver = ClassifierReadResolver()
+        let outcome = try await resolver.resolveAndExtract(
+            tool: .nvd,
+            resultPath: resultPath,
+            selections: [
+                ClassifierRowSelector(sampleId: "um", accessions: [region], taxIds: [])
+            ],
+            options: ExtractionOptions(format: .fastq, includeUnmappedMates: true),
+            destination: .file(tempOut)
+        )
+
+        guard case .file(_, let n) = outcome else {
+            XCTFail("Expected .file outcome, got \(outcome)")
+            return
+        }
+        XCTAssertGreaterThan(n, 0, "Expected non-zero reads with includeUnmappedMates=true")
+    }
+
     // MARK: - Destination routing
 
     func testDestination_bundle_createsLungfishfastqUnderProjectRoot() async throws {

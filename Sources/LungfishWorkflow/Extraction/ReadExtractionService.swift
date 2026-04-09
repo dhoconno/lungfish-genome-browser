@@ -599,6 +599,10 @@ public actor ReadExtractionService {
     /// `samtools fastq -o` only writes READ1/READ2 and can silently drop unpaired
     /// READ_OTHER records (common in single-end metagenomics BAMs). We route
     /// READ_OTHER/READ1/READ2/singletons to separate temporary files and merge them.
+    ///
+    /// Delegates to the shared ``convertBAMToSingleFASTQ(...)`` helper so the
+    /// 4-file-split logic has exactly one implementation across
+    /// ``ReadExtractionService`` and ``ClassifierReadResolver``.
     private func convertBAMToFASTQSingleFile(inputBAM: URL, outputFASTQ: URL) async throws {
         let fm = FileManager.default
         let tempDir = try ProjectTempDirectory.createFromContext(
@@ -607,64 +611,22 @@ public actor ReadExtractionService {
         )
         defer { try? fm.removeItem(at: tempDir) }
 
-        let otherURL = tempDir.appendingPathComponent("reads_other.fastq")
-        let r1URL = tempDir.appendingPathComponent("reads_r1.fastq")
-        let r2URL = tempDir.appendingPathComponent("reads_r2.fastq")
-        let singletonURL = tempDir.appendingPathComponent("reads_singletons.fastq")
-
-        let fastqResult = try await toolRunner.run(
-            .samtools,
-            arguments: [
-                "fastq",
-                "-0", otherURL.path,
-                "-1", r1URL.path,
-                "-2", r2URL.path,
-                "-s", singletonURL.path,
-                inputBAM.path,
-            ],
-            timeout: 7200
-        )
-        guard fastqResult.isSuccess else {
-            throw ExtractionError.samtoolsFailed(fastqResult.stderr)
-        }
-
-        if fm.fileExists(atPath: outputFASTQ.path) {
-            try fm.removeItem(at: outputFASTQ)
-        }
-        fm.createFile(atPath: outputFASTQ.path, contents: nil)
-
-        let outHandle = try FileHandle(forWritingTo: outputFASTQ)
-        defer { try? outHandle.close() }
-
-        let orderedParts = [otherURL, singletonURL, r1URL, r2URL]
-        for partURL in orderedParts {
-            guard fm.fileExists(atPath: partURL.path) else { continue }
-            let attrs = try fm.attributesOfItem(atPath: partURL.path)
-            let size = attrs[.size] as? UInt64 ?? 0
-            guard size > 0 else { continue }
-
-            let inHandle = try FileHandle(forReadingFrom: partURL)
-            defer { try? inHandle.close() }
-
-            while true {
-                let chunk = inHandle.readData(ofLength: 1 << 20)
-                if chunk.isEmpty { break }
-                outHandle.write(chunk)
-            }
-        }
-
-        let mergedSize = (try? fm.attributesOfItem(atPath: outputFASTQ.path)[.size] as? UInt64) ?? 0
-        if mergedSize == 0 {
-            logger.warning("samtools fastq sidecar outputs were empty; retrying via stdout capture")
-            let stdoutResult = try await toolRunner.run(
-                .samtools,
-                arguments: ["fastq", inputBAM.path],
-                timeout: 7200
+        do {
+            try await convertBAMToSingleFASTQ(
+                inputBAM: inputBAM,
+                outputFASTQ: outputFASTQ,
+                tempDir: tempDir,
+                sidecarPrefix: "reads",
+                // Preserve samtools fastq's historical default (0x900 = exclude
+                // secondary + supplementary) for the service path. The upstream
+                // `samtools view -b -F <flagFilter>` already applied the caller's
+                // duplicate/QC filter, so this `-F` only controls the fastq step.
+                flagFilter: 0x900,
+                timeout: 7200,
+                toolRunner: toolRunner
             )
-            guard stdoutResult.isSuccess else {
-                throw ExtractionError.samtoolsFailed(stdoutResult.stderr)
-            }
-            try stdoutResult.stdout.write(to: outputFASTQ, atomically: true, encoding: .utf8)
+        } catch BAMToFASTQConversionError.samtoolsFailed(let stderr) {
+            throw ExtractionError.samtoolsFailed(stderr)
         }
     }
 
