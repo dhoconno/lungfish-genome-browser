@@ -7,17 +7,25 @@ import XCTest
 
 final class FlagFilterParameterTests: XCTestCase {
 
-    /// The parameter must exist at the API level with a default of 0x400 so
-    /// existing --by-region callers keep their current behavior.
+    /// Pins that `extractByBAMRegion` has an `Int` parameter in the second
+    /// position (between `config` and `progress`) via a compile-time typed
+    /// method-reference assignment. If someone renames, reorders, or retypes
+    /// the parameter, this file fails to build.
     ///
-    /// We compile-check this by taking the unapplied method reference: if the
-    /// signature doesn't match, this file doesn't build.
+    /// This test does NOT verify the parameter's default value — taking a
+    /// method reference erases default values. The default-argument contract
+    /// (currently `0x400`) is exercised by Phase 2's resolver tests, which
+    /// will drive the actual `samtools` argument vector through a fake
+    /// `NativeToolRunner`.
     ///
     /// Note: `ReadExtractionService` is an `actor`, so the unapplied
     /// `ReadExtractionService.extractByBAMRegion` reference resolves to the
     /// isolated-method form `(Args) async throws -> Result` rather than the
     /// curried `(Self) -> (Args) async throws -> Result` you'd get on a class.
-    func testExtractByBAMRegion_hasFlagFilterParameter_withDefault0x400() async {
+    /// That forces us to bind against an instance — the throwaway
+    /// `ReadExtractionService()` allocation below is purely a workaround for
+    /// that constraint; the test cares about the type, not the instance.
+    func testExtractByBAMRegion_hasFlagFilterIntParameterInSecondPosition() {
         // Take a typed reference to the method to assert the signature exists.
         let method: (BAMRegionExtractionConfig, Int, (@Sendable (Double, String) -> Void)?) async throws -> ExtractionResult
             = ReadExtractionService().extractByBAMRegion

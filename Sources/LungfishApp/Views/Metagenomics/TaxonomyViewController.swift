@@ -83,9 +83,7 @@ struct BatchClassificationRow: Sendable {
 /// ## Extraction
 ///
 /// When the user clicks "Extract Sequences" in the action bar or context menu,
-/// a ``TaxonomyExtractionSheet`` is presented. On confirmation the sheet fires
-/// a callback that the hosting controller can route to
-/// ``TaxonomyExtractionPipeline``.
+/// the hosting controller routes the selection to ``TaxonomyExtractionPipeline``.
 ///
 /// ## Thread Safety
 ///

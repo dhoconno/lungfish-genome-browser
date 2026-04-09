@@ -1220,8 +1220,6 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
     // MARK: - Extraction Sheet
 
-    /// Presents a ``ClassifierExtractionSheet`` for the given selected items.
-    ///
     /// Internal visibility so that ``ViewerViewController+EsViritu`` context menu
     /// callbacks can trigger extraction directly on the EsViritu VC.
     func presentExtractionSheet(items: [String], source: String, suggestedName: String) {
@@ -1230,9 +1228,6 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         _ = items; _ = source; _ = suggestedName
         return
     }
-
-    // BAM extraction pipeline now handled by ReadExtractionService.extractByBAMRegion()
-    // called inline in the presentExtractionSheet onExtract callback above.
 
     @objc private func handleLayoutSwapRequested(_ notification: Notification) {
         applyLayoutPreference()

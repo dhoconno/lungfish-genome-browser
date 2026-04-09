@@ -1546,7 +1546,6 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
 
     // MARK: - Extraction Sheet
 
-    /// Presents a ``ClassifierExtractionSheet`` for the given selected items.
     private func presentExtractionSheet(items: [String], source: String, suggestedName: String) {
         // TODO[phase5]: replaced by TaxonomyReadExtractionAction.shared.present(...)
         #warning("phase5: old extraction sheet removed; new dialog wired up in Phase 5")
