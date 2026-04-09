@@ -30,6 +30,16 @@ final class ClassifierRowSelectorTests: XCTestCase {
         XCTAssertFalse(ClassifierTool.kraken2.usesBAMDispatch)
     }
 
+    func testClassifierTool_displayNames() {
+        // Pin user-facing display strings so a silent rename (e.g. dropping the
+        // hyphen in NAO-MGS) is caught at test time, not by a user complaint.
+        XCTAssertEqual(ClassifierTool.esviritu.displayName, "EsViritu")
+        XCTAssertEqual(ClassifierTool.taxtriage.displayName, "TaxTriage")
+        XCTAssertEqual(ClassifierTool.kraken2.displayName, "Kraken2")
+        XCTAssertEqual(ClassifierTool.naomgs.displayName, "NAO-MGS")
+        XCTAssertEqual(ClassifierTool.nvd.displayName, "NVD")
+    }
+
     // MARK: - ClassifierRowSelector
 
     func testSelector_initializesFields() {
@@ -45,6 +55,16 @@ final class ClassifierRowSelectorTests: XCTestCase {
 
     func testSelector_isEmpty_whenNoAccessionsOrTaxIds() {
         let sel = ClassifierRowSelector(sampleId: nil, accessions: [], taxIds: [])
+        XCTAssertTrue(sel.isEmpty)
+    }
+
+    func testSelector_isEmpty_whenOnlySampleIdIsSet() {
+        // Pin the asymmetric semantic: a selector with sampleId but no
+        // extraction targets is treated as empty. The resolver will skip
+        // such selectors rather than interpret them as "all reads from this
+        // sample." If a future requirement changes this, the change should
+        // come with a deliberate spec update.
+        let sel = ClassifierRowSelector(sampleId: "S1", accessions: [], taxIds: [])
         XCTAssertTrue(sel.isEmpty)
     }
 
