@@ -72,7 +72,6 @@ final class ClassifierExtractionDialogViewModel {
     // MARK: - Derived state
 
     var estimatedReadCount: Int = 0
-    var estimatingUnmappedDelta: Bool = false
     var estimatedUnmappedDelta: Int = 0
     var isRunning: Bool = false
     var progressFraction: Double = 0
@@ -194,7 +193,14 @@ struct ClassifierExtractionDialog: View {
                 Divider()
                     .padding(.vertical, 2)
 
-                // Destination picker
+                // Destination picker — implemented as a manual Button +
+                // Image(systemName:) radio row rather than SwiftUI's
+                // `Picker(selection:).pickerStyle(.radioGroup)` because the
+                // latter has no clean way to disable a single tag (the
+                // clipboard row is disabled when the selection exceeds the
+                // clipboardReadCap). The manual pattern trades a bit of
+                // VoiceOver polish for per-row disable-state control; see
+                // Phase 4 review-1 minor #5.
                 HStack(alignment: .top) {
                     Text("Destination:")
                         .font(.system(size: 12))

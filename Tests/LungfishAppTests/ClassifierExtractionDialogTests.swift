@@ -96,25 +96,41 @@ final class ClassifierExtractionDialogTests: XCTestCase {
 
     // MARK: - Bundle clobber defense (Phase 2 review-2 forwarded item)
 
-    /// Verifies the ISO8601DateFormatter.shortStamp helper used by
-    /// resolveDestination's bundle disambiguation suffix produces a stable,
-    /// filename-safe format. The orchestrator's resolveDestination is private,
-    /// so we exercise the underlying timestamp helper directly.
+    /// Verifies the `ISO8601DateFormatter.shortStamp` helper used by
+    /// `resolveDestination`'s bundle disambiguation suffix produces a stable,
+    /// filename-safe format: `yyyyMMdd'T'HHmmss-XXXX` (20 chars) where XXXX is
+    /// a 4-character random base36 disambiguator.
     func testShortStamp_producesFilenameSafeFormat() {
         let stamp = ISO8601DateFormatter.shortStamp(Date())
-        XCTAssertEqual(stamp.count, 15, "Expected yyyyMMdd'T'HHmmss = 15 chars, got '\(stamp)'")
+        XCTAssertEqual(stamp.count, 20, "Expected yyyyMMdd'T'HHmmss-XXXX = 20 chars, got '\(stamp)'")
         XCTAssertTrue(stamp.contains("T"), "Stamp should contain literal 'T' separator")
-        // Format sanity: all digits except the T separator
-        let digits = stamp.replacingOccurrences(of: "T", with: "")
-        XCTAssertEqual(digits.count, 14, "Expected 14 digits after stripping 'T'")
-        XCTAssertTrue(digits.allSatisfy { $0.isNumber }, "Stamp digits must all be 0-9")
+        XCTAssertTrue(stamp.contains("-"), "Stamp should contain '-' separating timestamp and random suffix")
+        // Split into timestamp and random parts.
+        let parts = stamp.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+        XCTAssertEqual(parts.count, 2, "Expected exactly one '-' separator in '\(stamp)'")
+        let timestampPart = String(parts[0])
+        let randomPart = String(parts[1])
+        // Timestamp part: 15 chars, all digits except T separator.
+        XCTAssertEqual(timestampPart.count, 15, "Timestamp part should be 15 chars")
+        let tDigits = timestampPart.replacingOccurrences(of: "T", with: "")
+        XCTAssertEqual(tDigits.count, 14, "Expected 14 digits after stripping 'T'")
+        XCTAssertTrue(tDigits.allSatisfy { $0.isNumber }, "Timestamp digits must all be 0-9")
+        // Random part: 4 lowercase base36 characters.
+        XCTAssertEqual(randomPart.count, 4, "Random suffix must be exactly 4 chars")
+        let base36 = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789")
+        XCTAssertTrue(
+            randomPart.unicodeScalars.allSatisfy { base36.contains($0) },
+            "Random suffix '\(randomPart)' must use lowercase base36 alphabet"
+        )
         // No characters that are unsafe in filenames on macOS or POSIX systems.
         let unsafe = CharacterSet(charactersIn: "/:\\?*\"<>|")
         XCTAssertNil(stamp.rangeOfCharacter(from: unsafe), "Stamp must contain no filename-unsafe characters")
     }
 
-    /// Pinned date check: feeding a known instant must produce the expected
-    /// UTC string. Catches accidental timezone-localization regressions.
+    /// Pinned date check: feeding a known instant must produce a stamp whose
+    /// timestamp prefix matches the expected UTC string. The random suffix
+    /// is non-deterministic, so we assert prefix + suffix shape independently.
+    /// Catches accidental timezone-localization regressions.
     func testShortStamp_pinnedUTCDate() {
         // 2026-04-09T14:45:21Z
         let comps = DateComponents(
@@ -128,7 +144,96 @@ final class ClassifierExtractionDialogTests: XCTestCase {
             return
         }
         let stamp = ISO8601DateFormatter.shortStamp(date)
-        XCTAssertEqual(stamp, "20260409T144521")
+        XCTAssertTrue(stamp.hasPrefix("20260409T144521-"), "Stamp must start with pinned UTC prefix, got '\(stamp)'")
+        XCTAssertEqual(stamp.count, 20, "Expected 20-char stamp, got '\(stamp)'")
+        // Suffix (post '-') must be 4 lowercase alphanumeric chars.
+        let suffix = String(stamp.suffix(4))
+        let base36 = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789")
+        XCTAssertTrue(
+            suffix.unicodeScalars.allSatisfy { base36.contains($0) },
+            "Pinned-date suffix '\(suffix)' must be base36"
+        )
+    }
+
+    /// Same-second collision defense (Phase 4 review-1 critical #1): two
+    /// calls inside the same wall-clock second MUST produce different suffixes
+    /// so back-to-back Create-Bundle clicks don't silently overwrite each
+    /// other in `ReadExtractionService.createBundle` (which removes-then-moves
+    /// the target directory unconditionally).
+    ///
+    /// The random suffix is 4 base36 characters (36^4 ≈ 1.7M combinations),
+    /// so the probability of collision across 2 rapid calls is ~6e-7. We
+    /// run 8 successive pairs and require at least one difference; if every
+    /// pair collided the test statistically cannot pass on a non-broken impl.
+    func testShortStamp_twoRapidCalls_produceDifferentStrings() {
+        var anyDifferent = false
+        for _ in 0..<8 {
+            let s1 = ISO8601DateFormatter.shortStamp(Date())
+            let s2 = ISO8601DateFormatter.shortStamp(Date())
+            if s1 != s2 {
+                anyDifferent = true
+                break
+            }
+        }
+        XCTAssertTrue(anyDifferent, "shortStamp must produce unique output across rapid calls")
+    }
+
+    // MARK: - resolveDestination .bundle disambiguation
+
+    /// Bundle destination with the default (suggested) name MUST apply the
+    /// timestamp suffix so rapid-fire Create-Bundle clicks don't clobber.
+    func testResolveDestination_bundle_withDefaultName_appendsTimestamp() async throws {
+        let ctx = TaxonomyReadExtractionAction.Context(
+            tool: .esviritu,
+            resultPath: URL(fileURLWithPath: "/tmp/test-extract.sqlite"),
+            selections: [ClassifierRowSelector(sampleId: "S1", accessions: ["NC_001"], taxIds: [])],
+            suggestedName: "default-name"
+        )
+        let model = ClassifierExtractionDialogViewModel(
+            tool: .esviritu,
+            selectionCount: 1,
+            suggestedName: "default-name"
+        )
+        model.destination = .bundle
+        // Leave model.name == ctx.suggestedName — should get the suffix.
+        let dest = try await TaxonomyReadExtractionAction.shared.resolveDestinationForTesting(
+            model: model,
+            context: ctx
+        )
+        guard case .bundle(_, let displayName, _) = dest else {
+            XCTFail("Expected .bundle, got \(dest)")
+            return
+        }
+        XCTAssertTrue(displayName.hasPrefix("default-name-"), "Expected suggestedName prefix, got '\(displayName)'")
+        XCTAssertTrue(displayName.contains("T"), "Expected timestamp marker 'T' in '\(displayName)'")
+        XCTAssertGreaterThan(displayName.count, "default-name".count, "Suffix should lengthen the name")
+    }
+
+    /// Bundle destination with a custom name (user-edited) MUST NOT append
+    /// the timestamp suffix — we trust the user's chosen name verbatim.
+    func testResolveDestination_bundle_withCustomName_doesNotAppendTimestamp() async throws {
+        let ctx = TaxonomyReadExtractionAction.Context(
+            tool: .esviritu,
+            resultPath: URL(fileURLWithPath: "/tmp/test-extract.sqlite"),
+            selections: [ClassifierRowSelector(sampleId: "S1", accessions: ["NC_001"], taxIds: [])],
+            suggestedName: "default-name"
+        )
+        let model = ClassifierExtractionDialogViewModel(
+            tool: .esviritu,
+            selectionCount: 1,
+            suggestedName: "default-name"
+        )
+        model.destination = .bundle
+        model.name = "my-custom-name"  // User customized — should NOT get suffix.
+        let dest = try await TaxonomyReadExtractionAction.shared.resolveDestinationForTesting(
+            model: model,
+            context: ctx
+        )
+        guard case .bundle(_, let displayName, _) = dest else {
+            XCTFail("Expected .bundle, got \(dest)")
+            return
+        }
+        XCTAssertEqual(displayName, "my-custom-name", "Custom name should be used verbatim without any suffix")
     }
 
     // MARK: - CLI command reconstruction
@@ -173,6 +278,32 @@ final class ClassifierExtractionDialogTests: XCTestCase {
         XCTAssertTrue(cli.contains("--taxon 9606"), "missing --taxon 9606 in: \(cli)")
         XCTAssertTrue(cli.contains("--taxon 562"), "missing --taxon 562 in: \(cli)")
         XCTAssertFalse(cli.contains("--include-unmapped-mates"), "unexpected --include-unmapped-mates in: \(cli)")
+        // With sampleId: nil, the builder must NOT emit a --sample flag
+        // (Phase 4 review-1 test gap).
+        XCTAssertFalse(cli.contains(" --sample "), "unexpected --sample when sampleId is nil, in: \(cli)")
+    }
+
+    /// Defensive: if a selector arrives with BOTH accessions and taxIds
+    /// (not realistic today — BAM tools use accessions, Kraken2 uses taxIds —
+    /// but the builder doesn't enforce separation), all three flag groups
+    /// must appear in the emitted CLI. Pins the builder behavior against
+    /// future selector-construction bugs.
+    func testBuildCLIString_mixedAccessionsAndTaxons_emitsAll() {
+        let ctx = TaxonomyReadExtractionAction.Context(
+            tool: .nvd,
+            resultPath: URL(fileURLWithPath: "/tmp/mix"),
+            selections: [
+                ClassifierRowSelector(sampleId: "S", accessions: ["a1", "a2"], taxIds: [9606])
+            ],
+            suggestedName: "mix"
+        )
+        let options = ExtractionOptions(format: .fastq, includeUnmappedMates: false)
+        let dest: ExtractionDestination = .file(URL(fileURLWithPath: "/tmp/o.fastq"))
+        let cli = TaxonomyReadExtractionAction.buildCLIString(context: ctx, options: options, destination: dest)
+        XCTAssertTrue(cli.contains("--sample S"), "missing --sample S in: \(cli)")
+        XCTAssertTrue(cli.contains("--accession a1"), "missing --accession a1 in: \(cli)")
+        XCTAssertTrue(cli.contains("--accession a2"), "missing --accession a2 in: \(cli)")
+        XCTAssertTrue(cli.contains("--taxon 9606"), "missing --taxon 9606 in: \(cli)")
     }
 
     /// Phase 3 deviation: classifier extraction emits --read-format (not

@@ -88,16 +88,27 @@ struct DefaultPasteboard: PasteboardWriting {
 // MARK: - Filename-safe timestamp helper
 
 internal extension ISO8601DateFormatter {
-    /// Short filename-safe UTC timestamp. Produces e.g. `20260409T144521`.
+    /// Short filename-safe UTC timestamp with a random disambiguator.
+    /// Produces e.g. `20260409T144521-k7q2` (20 chars).
     ///
     /// Used by the `.bundle` destination path to disambiguate back-to-back
     /// extractions when the user left the name at the default value. See
     /// the Phase 2 review-2 forwarded bundle-clobber defense.
+    ///
+    /// The 4-char random base36 suffix is required because the timestamp
+    /// alone is second-resolution: two back-to-back Create-Bundle clicks
+    /// inside the same wall-clock second would otherwise produce identical
+    /// suffixes and the second extraction would silently clobber the first
+    /// via `ReadExtractionService.createBundle`'s removeItem + moveItem
+    /// (Phase 4 review-1 critical #1).
     static func shortStamp(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd'T'HHmmss"
         formatter.timeZone = TimeZone(identifier: "UTC")
-        return formatter.string(from: date)
+        let stamp = formatter.string(from: date)
+        let alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+        let random = String((0..<4).map { _ in alphabet.randomElement()! })
+        return "\(stamp)-\(random)"
     }
 }
 
@@ -157,6 +168,15 @@ public final class TaxonomyReadExtractionAction {
     /// Synchronous and non-throwing — all async work happens inside a detached
     /// Task. Errors surface via `NSAlert.beginSheetModal` on `hostWindow`.
     public func present(context: Context, hostWindow: NSWindow) {
+        // Re-entrancy guard (Phase 4 review-1 significant #4). AppKit only
+        // supports one sheet per window at a time, so if the host already has
+        // a sheet attached, drop this request silently. The user can retry
+        // once the current dialog closes.
+        if hostWindow.attachedSheet != nil {
+            logger.info("Dropping present() — host window already has an attached sheet")
+            return
+        }
+
         logger.info("present for tool=\(context.tool.rawValue, privacy: .public), \(context.selections.count) selections")
 
         let model = ClassifierExtractionDialogViewModel(
@@ -173,9 +193,16 @@ public final class TaxonomyReadExtractionAction {
             defer: false
         )
 
+        // Box that holds the in-flight initial-estimate task so the Cancel
+        // button can tear it down — the estimate issues up to 2N samtools
+        // spawns for BAM tools and should not outlive the dialog
+        // (Phase 4 review-1 significant #5).
+        let estimateTaskBox = TaskBox()
+
         let dialog = ClassifierExtractionDialog(
             model: model,
-            onCancel: { [weak hostWindow, weak sheetWindow] in
+            onCancel: { [weak hostWindow, weak sheetWindow, estimateTaskBox] in
+                estimateTaskBox.task?.cancel()
                 if let hostWindow, let sheetWindow, hostWindow.attachedSheet === sheetWindow {
                     hostWindow.endSheet(sheetWindow)
                 }
@@ -194,33 +221,40 @@ public final class TaxonomyReadExtractionAction {
         sheetWindow.contentViewController = NSHostingController(rootView: dialog)
         hostWindow.beginSheet(sheetWindow)
 
-        // Kick off the initial pre-flight estimate.
-        runInitialEstimate(context: context, model: model)
+        // Kick off the initial pre-flight estimate and hold its handle so the
+        // dialog's Cancel button can cancel it.
+        estimateTaskBox.task = runInitialEstimate(context: context, model: model)
     }
 
     // MARK: - Pre-flight estimation
 
+    /// Spawns the detached pre-flight estimate task and returns its handle so
+    /// the caller can cancel it when the dialog is dismissed
+    /// (Phase 4 review-1 significant #5).
+    ///
+    /// `Context` is `Sendable` (deviation #7), so the struct is captured
+    /// directly by the detached closure without a local copy.
+    @discardableResult
     private func runInitialEstimate(
         context: Context,
         model: ClassifierExtractionDialogViewModel
-    ) {
+    ) -> Task<Void, Never> {
         let resolverFactory = self.resolverFactory
-        let contextCopy = context
-        Task.detached { [weak model] in
+        return Task.detached { [weak model] in
             let resolver = resolverFactory()
             do {
                 let base = try await resolver.estimateReadCount(
-                    tool: contextCopy.tool,
-                    resultPath: contextCopy.resultPath,
-                    selections: contextCopy.selections,
+                    tool: context.tool,
+                    resultPath: context.resultPath,
+                    selections: context.selections,
                     options: ExtractionOptions(includeUnmappedMates: false)
                 )
                 let withMates: Int
-                if contextCopy.tool.usesBAMDispatch {
+                if context.tool.usesBAMDispatch {
                     withMates = try await resolver.estimateReadCount(
-                        tool: contextCopy.tool,
-                        resultPath: contextCopy.resultPath,
-                        selections: contextCopy.selections,
+                        tool: context.tool,
+                        resultPath: context.resultPath,
+                        selections: context.selections,
                         options: ExtractionOptions(includeUnmappedMates: true)
                     )
                 } else {
@@ -233,6 +267,9 @@ public final class TaxonomyReadExtractionAction {
                         model?.estimatedUnmappedDelta = delta
                     }
                 }
+            } catch is CancellationError {
+                // Dialog dismissed before the estimate finished — drop silently.
+                return
             } catch {
                 logger.error("Pre-flight estimate failed: \(error.localizedDescription, privacy: .public)")
                 DispatchQueue.main.async {
@@ -294,14 +331,15 @@ public final class TaxonomyReadExtractionAction {
                 )
                 OperationCenter.shared.log(id: opID, level: .info, message: "Extraction started: \(cli)")
 
-                let contextCopy = context
+                // `Context` is Sendable (deviation #7), so the outer variable
+                // is captured directly by the detached closure — no local copy.
                 let task = Task.detached { [weak self] in
                     let resolver = resolverFactory()
                     do {
                         let outcome = try await resolver.resolveAndExtract(
-                            tool: contextCopy.tool,
-                            resultPath: contextCopy.resultPath,
-                            selections: contextCopy.selections,
+                            tool: context.tool,
+                            resultPath: context.resultPath,
+                            selections: context.selections,
                             options: options,
                             destination: destination,
                             progress: { fraction, message in
@@ -320,7 +358,7 @@ public final class TaxonomyReadExtractionAction {
                                 self?.handleSuccess(
                                     outcome: outcome,
                                     opID: opID,
-                                    context: contextCopy,
+                                    context: context,
                                     hostWindow: hostWindow,
                                     sheetWindow: sheetWindow
                                 )
@@ -329,7 +367,11 @@ public final class TaxonomyReadExtractionAction {
                     } catch is CancellationError {
                         DispatchQueue.main.async { [weak model] in
                             MainActor.assumeIsolated {
-                                OperationCenter.shared.fail(id: opID, detail: "Cancelled by user")
+                                OperationCenter.shared.fail(
+                                    id: opID,
+                                    detail: "Cancelled by user",
+                                    errorMessage: "Cancelled by user"
+                                )
                                 model?.isRunning = false
                                 model?.errorMessage = "Cancelled"
                             }
@@ -343,7 +385,11 @@ public final class TaxonomyReadExtractionAction {
                         // `assumeIsolated` block (MEMORY.md anti-pattern).
                         DispatchQueue.main.async { [weak self, weak model] in
                             MainActor.assumeIsolated {
-                                OperationCenter.shared.fail(id: opID, detail: errorDesc)
+                                OperationCenter.shared.fail(
+                                    id: opID,
+                                    detail: errorDesc,
+                                    errorMessage: errorDesc
+                                )
                                 OperationCenter.shared.log(id: opID, level: .error, message: errorDesc)
                                 model?.isRunning = false
                                 model?.errorMessage = errorDesc
@@ -467,15 +513,17 @@ public final class TaxonomyReadExtractionAction {
             dismiss(sheetWindow: sheetWindow, host: hostWindow)
 
         case .share(let url, _):
-            // Present the sharing service picker anchored to the sheet window's
-            // content view (which is still visible — we don't dismiss until
-            // the picker closes).
-            if let contentView = sheetWindow?.contentView {
-                self.sharingServicePresenter.present(items: [url], relativeTo: contentView, preferredEdge: .maxY)
+            // Present the sharing service picker, anchored to the sheet's
+            // content view when possible, falling back to the host window's
+            // content view when the sheet has already been torn down. Logging
+            // a warning in the nil-nil case ensures we never silently no-op
+            // the user's Share click (Phase 4 review-1 significant #2).
+            let anchor: NSView? = sheetWindow?.contentView ?? hostWindow.contentView
+            if let anchor {
+                self.sharingServicePresenter.present(items: [url], relativeTo: anchor, preferredEdge: .maxY)
+            } else {
+                logger.warning("Cannot present share picker — no content view anchor available")
             }
-            // Don't dismiss the sheet here — let the caller dismiss after the
-            // picker closes. For simplicity we dismiss immediately and accept
-            // the picker may dangle briefly.
             dismiss(sheetWindow: sheetWindow, host: hostWindow)
         }
     }
@@ -547,4 +595,45 @@ public final class TaxonomyReadExtractionAction {
         case .share:     return "share"
         }
     }
+
+    // MARK: - Test-only seams
+
+    #if DEBUG
+    /// Test-only access to `resolveDestination` for exercising the bundle
+    /// disambiguator without going through the full dialog lifecycle.
+    /// Used by `ClassifierExtractionDialogTests` to pin the
+    /// "user-rename-to-collision" branch behavior.
+    func resolveDestinationForTesting(
+        model: ClassifierExtractionDialogViewModel,
+        context: Context
+    ) async throws -> ExtractionDestination {
+        // Create a throwaway host window. For the `.bundle` branch the save
+        // panel is never invoked, so this is only a structural placeholder.
+        let fakeHost = NSWindow(
+            contentRect: .zero,
+            styleMask: [],
+            backing: .buffered,
+            defer: true
+        )
+        return try await resolveDestination(
+            model: model,
+            context: context,
+            savePanel: self.savePanelPresenter,
+            hostWindow: fakeHost
+        )
+    }
+    #endif
+}
+
+// MARK: - TaskBox
+
+/// Main-actor-isolated holder for an optional in-flight `Task` handle.
+///
+/// Used by `TaxonomyReadExtractionAction.present` to hand the initial
+/// estimate's task handle to the dialog's Cancel closure so the detached
+/// pre-flight work can be torn down when the user dismisses the dialog
+/// (Phase 4 review-1 significant #5).
+@MainActor
+final class TaskBox {
+    var task: Task<Void, Never>?
 }
