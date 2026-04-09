@@ -61,3 +61,43 @@ scope for the unified classifier extraction work.
 
 Future Gate 4 runs in this feature branch should treat this test as
 expected-to-flicker; a single run showing it failing is NOT a regression.
+
+## Phase 3 Gate 4 closure (2026-04-09)
+
+Run at commit `6b3b106` (simplification-pass head).
+
+- **Build:** `swift build --build-tests` — clean.
+- **swift-testing:** 189 tests in 36 suites — all passing.
+- **XCTest:** 6343 tests, 26 skipped, 8 assertion errors across 5 unique
+  failing methods.
+  - 6343 = 6314 (Phase 2 baseline) + 29 new `ExtractReadsByClassifierCLITests` ✓
+  - 26 skipped = unchanged from Phase 2 (no new skips introduced) ✓
+
+### Floor comparison (Phase 2 → Phase 3)
+
+| # | Test | Phase 2 | Phase 3 | Status |
+|---|------|---------|---------|--------|
+| 1 | `FASTQProjectSimulationTests.testSimulatedProjectVirtualOperationsCreateConsistentChildBundles` | failing (3 assertion errors) | failing (3 assertion errors) | floor, unchanged |
+| 2 | `NativeToolRunnerTests.testValidateToolsInstallation` | failing (2 assertion errors) | failing (2 assertion errors) | floor, unchanged |
+| 3 | `TaxonNodeRegressionTests.testEquatable` | failing | failing | floor, unchanged |
+| 4 | `TaxonNodeRegressionTests.testHashable` | failing | failing | floor, unchanged |
+| 5 | `ReadExtractionServiceTests.testExtractByBAMRegionReportsProgress` | failing (load-dependent flake) | **passing** | floor flake, passed this run |
+
+Network-dependent `DatabaseServiceIntegrationTests.testSRASearch` failed
+this run with `fetchFailed("Failed to fetch run info")` — documented as
+an NCBI/SRA network flake, NOT counted as the floor per the Phase 0
+baseline note above.
+
+### Filtered suite
+
+`swift test --filter LungfishCLITests` — **363 tests, 0 failures**.
+`swift test --filter ExtractReadsByClassifierCLITests` — **29 tests, 0 failures**.
+
+### Gate 4 verdict
+
+**PASS.** Phase 3 closes cleanly. The 4 permanent floor failures are
+unchanged. The 5th (load-dependent flake) passed in this run.
+No new failures introduced by Phase 3. All 29 new
+`ExtractReadsByClassifierCLITests` pass. Build clean.
+
+**Phase 3 is closed. Phase 4 may begin.**
