@@ -193,27 +193,47 @@ public final class TaxonomyReadExtractionAction {
             defer: false
         )
 
-        // Box that holds the in-flight initial-estimate task so the Cancel
-        // button can tear it down — the estimate issues up to 2N samtools
-        // spawns for BAM tools and should not outlive the dialog
-        // (Phase 4 review-1 significant #5).
-        let estimateTaskBox = TaskBox()
+        // Box that holds both the in-flight initial-estimate task and the
+        // extraction task so the Cancel button can tear down whichever is
+        // currently running — the estimate issues up to 2N samtools spawns
+        // for BAM tools and the extraction itself runs a full samtools
+        // pipeline, neither of which should outlive the dialog (Phase 4
+        // review-1 significant #5 + Phase 4 review-2 critical #1).
+        let taskBox = TaskBox()
 
         let dialog = ClassifierExtractionDialog(
             model: model,
-            onCancel: { [weak hostWindow, weak sheetWindow, estimateTaskBox] in
-                estimateTaskBox.task?.cancel()
-                if let hostWindow, let sheetWindow, hostWindow.attachedSheet === sheetWindow {
+            onCancel: { [weak hostWindow, weak sheetWindow, weak model, taskBox] in
+                // Surface a visible "Cancelling…" state while the cancel is
+                // in flight — the extraction task's progress updates stop
+                // immediately on cancellation and the sheet will close from
+                // the CancellationError catch branch in startExtraction.
+                if let model, model.isRunning {
+                    model.progressMessage = "Cancelling..."
+                }
+                taskBox.estimateTask?.cancel()
+                taskBox.extractionTask?.cancel()
+                // If no extraction is running (user clicked Cancel before
+                // pressing Create Bundle), dismiss the sheet immediately.
+                // Otherwise wait for the extraction's catch-CancellationError
+                // branch to flip model.isRunning and dismiss the sheet from
+                // there — this keeps the dialog on screen until the detached
+                // task has actually honored the cancel, so the user doesn't
+                // see a stale bundle appear after dismissal.
+                if let model, !model.isRunning,
+                   let hostWindow, let sheetWindow,
+                   hostWindow.attachedSheet === sheetWindow {
                     hostWindow.endSheet(sheetWindow)
                 }
             },
-            onPrimary: { [weak self, weak hostWindow, weak sheetWindow] in
+            onPrimary: { [weak self, weak hostWindow, weak sheetWindow, taskBox] in
                 guard let self, let hostWindow else { return }
                 self.startExtraction(
                     context: context,
                     model: model,
                     hostWindow: hostWindow,
-                    sheetWindow: sheetWindow
+                    sheetWindow: sheetWindow,
+                    taskBox: taskBox
                 )
             }
         )
@@ -223,7 +243,7 @@ public final class TaxonomyReadExtractionAction {
 
         // Kick off the initial pre-flight estimate and hold its handle so the
         // dialog's Cancel button can cancel it.
-        estimateTaskBox.task = runInitialEstimate(context: context, model: model)
+        taskBox.estimateTask = runInitialEstimate(context: context, model: model)
     }
 
     // MARK: - Pre-flight estimation
@@ -288,7 +308,8 @@ public final class TaxonomyReadExtractionAction {
         context: Context,
         model: ClassifierExtractionDialogViewModel,
         hostWindow: NSWindow,
-        sheetWindow: NSPanel?
+        sheetWindow: NSPanel?,
+        taskBox: TaskBox
     ) {
         model.isRunning = true
         model.progressFraction = 0
@@ -365,7 +386,7 @@ public final class TaxonomyReadExtractionAction {
                             }
                         }
                     } catch is CancellationError {
-                        DispatchQueue.main.async { [weak model] in
+                        DispatchQueue.main.async { [weak model, weak hostWindow, weak sheetWindow] in
                             MainActor.assumeIsolated {
                                 OperationCenter.shared.fail(
                                     id: opID,
@@ -374,6 +395,16 @@ public final class TaxonomyReadExtractionAction {
                                 )
                                 model?.isRunning = false
                                 model?.errorMessage = "Cancelled"
+                                // Dismiss the sheet now that the detached
+                                // task has honored the cancel — the dialog's
+                                // onCancel closure deferred dismissal to this
+                                // branch so the user doesn't see a stale
+                                // bundle appear after clicking Cancel
+                                // (Phase 4 review-2 critical #1).
+                                if let hostWindow, let sheetWindow,
+                                   hostWindow.attachedSheet === sheetWindow {
+                                    hostWindow.endSheet(sheetWindow)
+                                }
                             }
                         }
                     } catch {
@@ -404,6 +435,11 @@ public final class TaxonomyReadExtractionAction {
                         }
                     }
                 }
+                // Store the task handle on the shared box so the dialog's
+                // Cancel button can cancel it (Phase 4 review-2 critical #1),
+                // and register the same cancellation with the Operations
+                // Panel row.
+                taskBox.extractionTask = task
                 OperationCenter.shared.setCancelCallback(for: opID) { task.cancel() }
             } catch {
                 model.isRunning = false
@@ -538,7 +574,22 @@ public final class TaxonomyReadExtractionAction {
 
     /// Reproduces the equivalent `lungfish extract reads --by-classifier` CLI
     /// command for the given dialog state, so the Operations Panel row is
-    /// shell-copy-pasteable. Used by `OperationCenter.start(cliCommand:)`.
+    /// shell-copy-pasteable.
+    ///
+    /// **Note on bundle names** (Phase 4 review-2 significant #3): when the
+    /// user left the bundle name at the default `suggestedName`, the
+    /// orchestrator appended a collision-safe random suffix
+    /// (`-yyyyMMddTHHmmss-XXXX`) via `ISO8601DateFormatter.shortStamp` before
+    /// passing the destination here. That suffix is then embedded in the
+    /// `--bundle-name` arg of the reconstructed command. A user who copies
+    /// the command and re-runs it later will get a bundle named with
+    /// yesterday's timestamp, because the CLI itself has no default-name
+    /// disambiguator. That's intentional: the copy-pasteable command is a
+    /// faithful record of what the GUI did, not a recipe for reproducing
+    /// the default-name behavior. If you want a recipe, pass
+    /// `--bundle-name` explicitly yourself.
+    ///
+    /// Used by `OperationCenter.start(cliCommand:)`.
     static func buildCLIString(
         context: Context,
         options: ExtractionOptions,
@@ -627,13 +678,33 @@ public final class TaxonomyReadExtractionAction {
 
 // MARK: - TaskBox
 
-/// Main-actor-isolated holder for an optional in-flight `Task` handle.
-///
-/// Used by `TaxonomyReadExtractionAction.present` to hand the initial
-/// estimate's task handle to the dialog's Cancel closure so the detached
-/// pre-flight work can be torn down when the user dismisses the dialog
-/// (Phase 4 review-1 significant #5).
-@MainActor
-final class TaskBox {
-    var task: Task<Void, Never>?
+extension TaxonomyReadExtractionAction {
+
+    /// Main-actor-isolated holder for the in-flight pre-flight estimate and
+    /// main extraction task handles.
+    ///
+    /// Used by `TaxonomyReadExtractionAction.present` to hand both task handles
+    /// to the dialog's Cancel closure so either the pre-flight work or the
+    /// full extraction can be torn down when the user dismisses the dialog.
+    ///
+    /// **Why both?** Phase 4 review-1 significant #5 only caught the estimate
+    /// case and added a single-task holder. Phase 4 review-2 critical #1
+    /// caught the larger problem: the `Task.detached` inside `startExtraction`
+    /// is ALSO detached from the dialog, so the dialog's Cancel during
+    /// `isRunning == true` needs to cancel that task too — otherwise the
+    /// extraction continues in the background and produces an orphaned bundle
+    /// via `handleSuccess`. The spec explicitly requires this at design doc
+    /// line 278: "Cancel stays enabled and routes to the underlying Task's
+    /// cancellation."
+    ///
+    /// **Lifetime**: the box is created in `present()` and captured by value
+    /// (reference) by the dialog's `onCancel` closure and the `onPrimary`
+    /// closure. When the sheet closes and the dialog view hierarchy releases
+    /// its closures, the box is released with the closures — no explicit
+    /// clear needed under ARC.
+    @MainActor
+    final class TaskBox {
+        var estimateTask: Task<Void, Never>?
+        var extractionTask: Task<Void, Never>?
+    }
 }

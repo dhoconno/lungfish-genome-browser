@@ -352,4 +352,55 @@ final class ClassifierExtractionDialogTests: XCTestCase {
         XCTAssertTrue(cli.contains("clipboard"), "expected clipboard annotation in: \(cli)")
         XCTAssertTrue(cli.contains("GUI only"), "expected GUI-only annotation in: \(cli)")
     }
+
+    // MARK: - TaskBox cancel contract (Phase 4 review-2 critical #1)
+
+    /// Pins the two-task-cancel contract that underpins the dialog's Cancel
+    /// button. The `TaskBox` must be able to hold both the pre-flight estimate
+    /// task AND the in-flight extraction task, and cancelling one must not
+    /// affect the other being cancelled independently. Both tasks must honor
+    /// cancellation so the dialog's `onCancel` closure can tear down whichever
+    /// is currently running (estimate before Create Bundle, extraction after).
+    ///
+    /// This test exercises the building block the critical #1 fix depends on;
+    /// the full integration path through `present()` + `startExtraction()` is
+    /// gated on a real `NSWindow` and `ClassifierReadResolver` so is not
+    /// directly unit-testable today. See review-2 disposition.
+    func testTaskBox_cancelBothTasks_cancelsSeparately() async {
+        let box = TaxonomyReadExtractionAction.TaskBox()
+
+        // Sentinel flags captured by the detached task bodies.
+        actor Sentinel {
+            var cancelled: Bool = false
+            func mark() { cancelled = true }
+        }
+        let s1 = Sentinel()
+        let s2 = Sentinel()
+
+        box.estimateTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000)
+            }
+            await s1.mark()
+        }
+        box.extractionTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000)
+            }
+            await s2.mark()
+        }
+
+        // Simulate the dialog's onCancel closure: cancel both handles.
+        box.estimateTask?.cancel()
+        box.extractionTask?.cancel()
+
+        // Wait for both bodies to observe the cancel and mark their sentinels.
+        await box.estimateTask?.value
+        await box.extractionTask?.value
+
+        let c1 = await s1.cancelled
+        let c2 = await s2.cancelled
+        XCTAssertTrue(c1, "estimateTask should have been cancelled")
+        XCTAssertTrue(c2, "extractionTask should have been cancelled")
+    }
 }
