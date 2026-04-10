@@ -81,11 +81,10 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     /// Called when multiple rows are selected. Parameter is the count.
     public var onMultipleNodesSelected: ((Int) -> Void)?
 
-    /// Called when the user right-clicks a row to extract sequences.
-    public var onExtractRequested: ((TaxonNode) -> Void)?
-
-    /// Called when the user right-clicks a row to extract sequences including children.
-    public var onExtractWithChildrenRequested: ((TaxonNode) -> Void)?
+    /// Fired when the user invokes "Extract Reads…" from the context menu or
+    /// the action bar. The VC reads the current selection from the table view
+    /// itself via `outlineView.selectedRowIndexes`.
+    public var onExtractReadsRequested: (() -> Void)?
 
     /// Called when the search filter changes.
     ///
@@ -526,11 +525,8 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         let menu = NSMenu()
 
         // Extraction
-        menu.addItem(withTitle: "Extract Reads for Taxon\u{2026}",
+        menu.addItem(withTitle: "Extract Reads\u{2026}",
                      action: #selector(contextExtractReads(_:)),
-                     keyEquivalent: "")
-        menu.addItem(withTitle: "Extract Reads Including Children\u{2026}",
-                     action: #selector(contextExtractWithChildren(_:)),
                      keyEquivalent: "")
 
         menu.addItem(.separator())
@@ -601,26 +597,21 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
             // BLAST requires exactly one selected row
             return clickedNode != nil && outlineView.selectedRowIndexes.count <= 1
         }
-        if menuItem.action == #selector(contextExtractReads(_:))
-            || menuItem.action == #selector(contextExtractWithChildren(_:))
-            || menuItem.action == #selector(contextOpenNCBITaxonomy(_:))
+        if menuItem.action == #selector(contextOpenNCBITaxonomy(_:))
             || menuItem.action == #selector(contextOpenNCBIGenBank(_:))
             || menuItem.action == #selector(contextOpenNCBIPubMed(_:))
             || menuItem.action == #selector(contextCopyName(_:))
         {
             return clickedNode != nil
         }
+        if menuItem.action == #selector(contextExtractReads(_:)) {
+            return !outlineView.selectedRowIndexes.isEmpty || clickedNode != nil
+        }
         return true
     }
 
     @objc private func contextExtractReads(_ sender: Any?) {
-        guard let node = actionableNode(at: outlineView.clickedRow) else { return }
-        onExtractRequested?(node)
-    }
-
-    @objc private func contextExtractWithChildren(_ sender: Any?) {
-        guard let node = actionableNode(at: outlineView.clickedRow) else { return }
-        onExtractWithChildrenRequested?(node)
+        onExtractReadsRequested?()
     }
 
     @objc private func contextCopyName(_ sender: Any?) {

@@ -241,11 +241,6 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
     ///   - includeChildren: Whether to include child taxa in the extraction.
     public var onExtractSequences: ((TaxonNode, Bool) -> Void)?
 
-    /// Called when the user confirms extraction via the extraction sheet.
-    ///
-    /// - Parameter config: The fully configured extraction config.
-    public var onExtractConfirmed: ((TaxonomyExtractionConfig) -> Void)?
-
     /// Called when the user requests batch extraction from a taxa collection.
     ///
     /// - Parameters:
@@ -356,12 +351,9 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
         sunburstView.selectedNode = nil
         taxonomyTableView.tree = result.tree
 
-        // Wire table right-click extraction
-        taxonomyTableView.onExtractRequested = { [weak self] node in
-            self?.presentExtractionSheet(for: node, includeChildren: false)
-        }
-        taxonomyTableView.onExtractWithChildrenRequested = { [weak self] node in
-            self?.presentExtractionSheet(for: node, includeChildren: true)
+        // Wire table right-click extraction -> unified extraction dialog
+        taxonomyTableView.onExtractReadsRequested = { [weak self] in
+            self?.presentUnifiedExtractionDialog()
         }
 
         // Wire table right-click NCBI links
@@ -448,11 +440,8 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
 
         // Reuse the same taxonomy context actions (extract, BLAST, NCBI links)
         // as single-sample mode so DB-backed batch display preserves workflows.
-        taxonomyTableView.onExtractRequested = { [weak self] node in
-            self?.presentExtractionSheet(for: node, includeChildren: false)
-        }
-        taxonomyTableView.onExtractWithChildrenRequested = { [weak self] node in
-            self?.presentExtractionSheet(for: node, includeChildren: true)
+        taxonomyTableView.onExtractReadsRequested = { [weak self] in
+            self?.presentUnifiedExtractionDialog()
         }
         taxonomyTableView.onNCBITaxonomyRequested = { node in
             let url = URL(string: "https://www.ncbi.nlm.nih.gov/datasets/taxonomy/\(node.taxId)/")!
@@ -653,16 +642,51 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
         applyBatchSampleFilter()
     }
 
-    /// Presents the extraction sheet for the given node.
-    ///
-    /// - Parameters:
-    ///   - node: The taxon node to extract.
-    ///   - includeChildren: Default value for the "include children" toggle.
-    public func presentExtractionSheet(for node: TaxonNode, includeChildren: Bool) {
-        // TODO[phase5]: replaced by TaxonomyReadExtractionAction.shared.present(...)
-        #warning("phase5: old extraction sheet removed; new dialog wired up in Phase 5")
-        _ = node; _ = includeChildren
-        return
+    // MARK: - Classifier extraction wiring
+
+    /// Builds Kraken2 selectors from the currently-selected taxon nodes.
+    /// Kraken2's selector carries only `taxIds`.
+    private func buildKraken2Selectors() -> [ClassifierRowSelector] {
+        let nodes: [TaxonNode] = taxonomyTableView.outlineView.selectedRowIndexes.compactMap { row in
+            taxonomyTableView.outlineView.item(atRow: row) as? TaxonNode
+        }
+        let actionable = nodes.filter { isActionableTaxonNode($0) }
+        guard !actionable.isEmpty else { return [] }
+        let taxIds = actionable.map(\.taxId)
+        return [ClassifierRowSelector(sampleId: nil, accessions: [], taxIds: taxIds)]
+    }
+
+    /// Resolves the Kraken2 result path for the unified extraction dialog.
+    /// Single-result mode uses the captured `classificationResult.config.outputDirectory`.
+    /// Batch-mode uses the per-sample directory looked up from the batch manifest.
+    private func resolveKraken2ResultPath() -> URL? {
+        if let cr = classificationResult {
+            return cr.config.outputDirectory
+        }
+        if isBatchMode,
+           let batchURL,
+           let sampleId = currentBatchSampleId,
+           let manifest = MetagenomicsBatchResultStore.loadClassification(from: batchURL),
+           let record = manifest.samples.first(where: { $0.sampleId == sampleId }) {
+            return batchURL.appendingPathComponent(record.resultDirectory)
+        }
+        return nil
+    }
+
+    /// Presents the unified classifier extraction dialog for the current selection.
+    func presentUnifiedExtractionDialog() {
+        guard let window = view.window else { return }
+        let selectors = buildKraken2Selectors()
+        guard !selectors.isEmpty else { return }
+        guard let resultPath = resolveKraken2ResultPath() else { return }
+        let firstName = taxonomyTableView.selectedNode?.name ?? "extract"
+        let ctx = TaxonomyReadExtractionAction.Context(
+            tool: .kraken2,
+            resultPath: resultPath,
+            selections: selectors,
+            suggestedName: "kraken2_\(firstName.replacingOccurrences(of: " ", with: "_"))"
+        )
+        TaxonomyReadExtractionAction.shared.present(context: ctx, hostWindow: window)
     }
 
     // MARK: - Setup: Summary Bar
@@ -859,15 +883,9 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
             self.breadcrumbBar.update(zoomNode: node)
         }
 
-        // Action bar Extract FASTQ -> present extraction sheet for selected node(s)
+        // Action bar Extract FASTQ -> route to the unified extraction dialog
         actionBar.onExtractFASTQ = { [weak self] in
-            guard let self else { return }
-            let selectedRows = self.taxonomyTableView.outlineView.selectedRowIndexes
-            let nodes: [TaxonNode] = selectedRows.compactMap { row in
-                self.taxonomyTableView.outlineView.item(atRow: row) as? TaxonNode
-            }
-            guard let firstNode = nodes.first(where: { self.isActionableTaxonNode($0) }) else { return }
-            self.presentExtractionSheet(for: firstNode, includeChildren: false)
+            self?.presentUnifiedExtractionDialog()
         }
 
         // Action bar BLAST verify -> show BLAST config for current selection
@@ -1309,20 +1327,16 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
 
     @objc private func contextExtractNode(_ sender: NSMenuItem) {
         guard let node = sender.representedObject as? TaxonNode else { return }
-        if classificationResult != nil {
-            presentExtractionSheet(for: node, includeChildren: false)
-        } else {
-            onExtractSequences?(node, false)
-        }
+        // Programmatically select this node so the unified dialog picks it up
+        // via the table-view selection.
+        taxonomyTableView.selectedNode = node
+        presentUnifiedExtractionDialog()
     }
 
     @objc private func contextExtractNodeWithChildren(_ sender: NSMenuItem) {
         guard let node = sender.representedObject as? TaxonNode else { return }
-        if classificationResult != nil {
-            presentExtractionSheet(for: node, includeChildren: true)
-        } else {
-            onExtractSequences?(node, true)
-        }
+        taxonomyTableView.selectedNode = node
+        presentUnifiedExtractionDialog()
     }
 
     @objc private func contextCopyName(_ sender: NSMenuItem) {

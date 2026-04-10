@@ -5296,14 +5296,25 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
                         viewerController.displayTaxonomyResult(result)
 
-                        // For the extract goal, auto-present the extraction sheet
-                        // after showing the taxonomy browser so the user can pick taxa.
+                        // For the extract goal, auto-present the unified
+                        // extraction dialog after showing the taxonomy browser
+                        // so the user can pick taxa. Phase 5 routes through
+                        // TaxonomyReadExtractionAction.shared.present(...).
                         if capturedConfig.goal == .extract,
-                           let taxonomyVC = viewerController.taxonomyViewController {
-                            // Select the top species node and present the extraction sheet
-                            if let topSpecies = result.tree.dominantSpecies {
-                                taxonomyVC.presentExtractionSheet(for: topSpecies, includeChildren: true)
-                            }
+                           viewerController.taxonomyViewController != nil,
+                           let topSpecies = result.tree.dominantSpecies,
+                           let window = viewerController.view.window {
+                            let ctx = TaxonomyReadExtractionAction.Context(
+                                tool: .kraken2,
+                                resultPath: capturedConfig.outputDirectory,
+                                selections: [ClassifierRowSelector(
+                                    sampleId: nil,
+                                    accessions: [],
+                                    taxIds: [topSpecies.taxId]
+                                )],
+                                suggestedName: "kraken2_\(topSpecies.name.replacingOccurrences(of: " ", with: "_"))"
+                            )
+                            TaxonomyReadExtractionAction.shared.present(context: ctx, hostWindow: window)
                         }
 
                         // Reload sidebar so the new result bundle appears

@@ -62,12 +62,9 @@ extension ViewerViewController {
     /// normal viewer components, then adds `TaxonomyViewController` as a child
     /// view controller filling the content area.
     ///
-    /// Wires the ``TaxonomyViewController/onExtractConfirmed`` callback so that
-    /// clicking "Extract Sequences" in the extraction sheet runs the
-    /// ``TaxonomyExtractionPipeline``, creates a `.lungfishfastq` bundle from the
-    /// extracted reads, and refreshes the sidebar.
-    ///
     /// Follows the exact same child-VC pattern as ``displayFASTACollection(sequences:annotations:)``.
+    /// Read extraction is now driven by ``TaxonomyReadExtractionAction.shared.present(...)``
+    /// which the VC fires from its action bar / context menu (Phase 5).
     ///
     /// - Parameter result: The classification result to display.
     public func displayTaxonomyResult(_ result: ClassificationResult) {
@@ -103,140 +100,6 @@ extension ViewerViewController {
             taxView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             taxView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-
-        // Wire the extraction confirmed callback so "Extract Sequences" actually works.
-        //
-        // Uses Task.detached because TaxonomyExtractionPipeline is an actor with
-        // potentially long-running buffered I/O. Progress and completion hop back
-        // to the main thread via scheduleTaxonomyOnMainRunLoop + MainActor.assumeIsolated
-        // per project conventions (cooperative executor is unreliable from detached tasks).
-        //
-        // The detached task does NOT capture `self` at all. All main-thread work
-        // uses free functions and NSApp.delegate, matching the pattern in
-        // ViewerViewController+Extraction.swift.
-        controller.onExtractConfirmed = { config in
-            let taxonLabel: String
-            if config.taxIds.count == 1 {
-                taxonLabel = "taxId \(config.taxIds.first!)"
-            } else {
-                taxonLabel = "\(config.taxIds.count) taxa"
-            }
-
-            // Register the operation in OperationCenter for the operations panel.
-            let extractCliCmd: String = {
-                var args = ["extract"]
-                args += ["--kraken-output", config.classificationOutput.path]
-                for taxId in config.taxIds.sorted() {
-                    args += ["--taxid", "\(taxId)"]
-                }
-                if config.includeChildren {
-                    args += ["--include-children"]
-                }
-                if !config.keepReadPairs {
-                    args += ["--no-read-pairs"]
-                }
-                for source in config.sourceFiles {
-                    args += ["--source", source.path]
-                }
-                for output in config.outputFiles {
-                    args += ["--output", output.path]
-                }
-                return OperationCenter.buildCLICommand(subcommand: "conda", args: args)
-            }()
-            let opID = OperationCenter.shared.start(
-                title: "Extract \(taxonLabel)",
-                detail: "Preparing\u{2026}",
-                operationType: .taxonomyExtraction,
-                cliCommand: extractCliCmd
-            )
-
-            // Capture the tree from the result for descendant lookup inside the
-            // detached task. ClassificationResult.tree is Sendable.
-            let tree = result.tree
-
-            let task = Task.detached {
-                do {
-                    let pipeline = TaxonomyExtractionPipeline()
-                    let outputURLs = try await pipeline.extract(
-                        config: config,
-                        tree: tree,
-                        progress: { fraction, message in
-                            DispatchQueue.main.async {
-                                MainActor.assumeIsolated {
-                                    OperationCenter.shared.update(
-                                        id: opID,
-                                        progress: fraction,
-                                        detail: message
-                                    )
-                                }
-                            }
-                        }
-                    )
-
-                    // Create a bundle from the extracted reads using ReadExtractionService.
-                    let service = ReadExtractionService()
-                    let extractionResult = ExtractionResult(
-                        fastqURLs: outputURLs,
-                        readCount: 0, // actual count tracked by service
-                        pairedEnd: config.isPairedEnd
-                    )
-                    let metadata = ExtractionMetadata(
-                        sourceDescription: config.sourceFile.deletingPathExtension().lastPathComponent,
-                        toolName: "Kraken2",
-                        parameters: [
-                            "taxIds": config.taxIds.sorted().map(String.init).joined(separator: ","),
-                            "includeChildren": "\(config.includeChildren)",
-                        ]
-                    )
-                    let parentDir = outputURLs[0].deletingLastPathComponent()
-                    let bundleURL = try await service.createBundle(
-                        from: extractionResult,
-                        sourceName: config.sourceFile.deletingPathExtension().lastPathComponent,
-                        selectionDescription: taxonLabel,
-                        metadata: metadata,
-                        in: parentDir
-                    )
-
-                    nonisolated(unsafe) let capturedBundleURL = bundleURL
-                    nonisolated(unsafe) let capturedConfig = config
-                    scheduleTaxonomyOnMainRunLoop {
-                        MainActor.assumeIsolated {
-                            writeTaxonomyExtractionProvenance(config: capturedConfig, bundleURL: capturedBundleURL)
-                            OperationCenter.shared.complete(
-                                id: opID,
-                                detail: "Extracted to \(capturedBundleURL.lastPathComponent)",
-                                bundleURLs: [capturedBundleURL]
-                            )
-                            if let appDelegate = NSApp.delegate as? AppDelegate {
-                                if let sidebar = appDelegate.mainWindowController?.mainSplitViewController?.sidebarController {
-                                    sidebar.reloadFromFilesystem()
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                        MainActor.assumeIsolated {
-                                            _ = sidebar.selectItem(forURL: capturedBundleURL)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } catch {
-                    let errorDesc = error.localizedDescription
-                    scheduleTaxonomyOnMainRunLoop {
-                        MainActor.assumeIsolated {
-                            OperationCenter.shared.fail(
-                                id: opID,
-                                detail: errorDesc
-                            )
-                            showTaxonomyExtractionErrorAlert(errorDesc)
-                        }
-                    }
-                }
-            }
-
-            // Wire cancellation so the operations panel can cancel this task.
-            OperationCenter.shared.setCancelCallback(for: opID) { task.cancel() }
-        }
-
 
         // Wire batch extraction callback for the taxa collections drawer.
         // When the user clicks "Extract" on a collection, run the batch pipeline
