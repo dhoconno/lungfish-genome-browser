@@ -2529,38 +2529,14 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             self.onBlastVerification?(organism, readCount, rowAccessions, self.bamURL, self.bamIndexURL)
         }
 
-        // Action bar Extract FASTQ -> present extraction sheet for selected organisms
+        // Action bar Extract FASTQ -> route to the unified extraction dialog.
         actionBar.onExtractFASTQ = { [weak self] in
-            guard let self else { return }
-            let rows = self.organismTableView.selectedTableRows()
-            guard !rows.isEmpty else { return }
-
-            // Resolve BAM reference accessions (not organism display names) for extraction.
-            // accessions(for:) maps organism names/taxIDs → actual BAM reference accessions
-            // via gcfmapping.tsv and merged.taxid.tsv.
-            var resolvedAccessions: [String] = []
-            var unresolvedOrganisms: [String] = []
-            for row in rows {
-                if let rowAccessions = self.accessions(for: row), !rowAccessions.isEmpty {
-                    resolvedAccessions.append(contentsOf: rowAccessions)
-                } else {
-                    unresolvedOrganisms.append(row.organism)
-                }
-            }
-            if !unresolvedOrganisms.isEmpty {
-                logger.warning("Could not resolve accessions for: \(unresolvedOrganisms.joined(separator: ", "))")
-            }
-
-            let items = rows.map { $0.organism }
-            let sampleId = self.sampleIds.first ?? "sample"
-            let source = self.bamURL?.lastPathComponent ?? "TaxTriage result"
-            let suggestedName = "\(sampleId)_\(items.first ?? "extract")_extract"
-            self.presentExtractionSheet(items: items, source: source, suggestedName: suggestedName)
+            self?.presentUnifiedExtractionDialog()
         }
 
-        // Context menu Extract FASTQ -> delegate to the same extraction logic as the action bar
+        // Context menu Extract FASTQ -> route to the same unified dialog.
         organismTableView.onExtractFASTQ = { [weak self] in
-            self?.actionBar.onExtractFASTQ?()
+            self?.presentUnifiedExtractionDialog()
         }
 
         // Action bar BLAST verify (TaxTriage triggers BLAST via table context menu)
@@ -2670,13 +2646,46 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         actionBar.updateInfoText("Recomputing unique reads for all organisms\u{2026}")
     }
 
-    // MARK: - Extraction Sheet
+    // MARK: - Classifier extraction wiring
 
-    private func presentExtractionSheet(items: [String], source: String, suggestedName: String) {
-        // TODO[phase5]: replaced by TaxonomyReadExtractionAction.shared.present(...)
-        #warning("phase5: old extraction sheet removed; new dialog wired up in Phase 5")
-        _ = items; _ = source; _ = suggestedName
-        return
+    /// Builds per-sample selectors from the current organism-table selection.
+    /// TaxTriage rows do not carry a per-row sample id (the table represents
+    /// one sample at a time via `selectedBatchSampleId` / `sampleIds.first`),
+    /// so all selected accessions are grouped under that single sample id.
+    private func buildTaxTriageSelectors() -> [ClassifierRowSelector] {
+        let rows = organismTableView.selectedTableRows()
+        guard !rows.isEmpty else { return [] }
+        var accessions: [String] = []
+        for row in rows {
+            if let resolved = self.accessions(for: row), !resolved.isEmpty {
+                accessions.append(contentsOf: resolved)
+            }
+        }
+        guard !accessions.isEmpty else { return [] }
+        let sampleId = selectedBatchSampleId ?? sampleIds.first
+        return [ClassifierRowSelector(sampleId: sampleId, accessions: accessions, taxIds: [])]
+    }
+
+    /// Presents the unified classifier extraction dialog for the current selection.
+    func presentUnifiedExtractionDialog() {
+        guard let window = view.window else { return }
+        let selectors = buildTaxTriageSelectors()
+        guard !selectors.isEmpty else { return }
+        let resultPath: URL
+        if let dbURL = taxTriageDatabase?.databaseURL {
+            resultPath = dbURL
+        } else if let cfgDir = taxTriageConfig?.outputDirectory {
+            resultPath = cfgDir
+        } else { return }
+        let firstAccession = selectors.first?.accessions.first ?? "extract"
+        let sid = selectors.first?.sampleId ?? "sample"
+        let ctx = TaxonomyReadExtractionAction.Context(
+            tool: .taxtriage,
+            resultPath: resultPath,
+            selections: selectors,
+            suggestedName: "taxtriage_\(sid)_\(firstAccession)"
+        )
+        TaxonomyReadExtractionAction.shared.present(context: ctx, hostWindow: window)
     }
 
     // MARK: - Negative Control Helpers
@@ -3507,7 +3516,7 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
         menu.addItem(NSMenuItem.separator())
 
         let extractItem = NSMenuItem(
-            title: "Extract FASTQ\u{2026}",
+            title: "Extract Reads\u{2026}",
             action: #selector(contextExtractFASTQ(_:)),
             keyEquivalent: ""
         )
