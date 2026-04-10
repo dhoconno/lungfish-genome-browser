@@ -234,3 +234,30 @@ The Phase 2 review-2 forwarded I4 fixture-teeth requirement is **resolved**. Any
 Same 4 unique failing methods as Phase 5. Zero new regressions.
 
 **Phase 6 is closed. Phase 7 may begin.**
+
+## Phase 7 Gate 4 closure (2026-04-09)
+
+Run after Phase 7 simplification pass (commit `7606639`).
+
+- **Build:** `swift build --build-tests` — clean.
+- **swift-testing:** 189 tests — all passing.
+- **XCTest:** 6406 tests, 28 skipped, 7 assertion errors across the same 4 unique Phase 5 floor methods.
+  - 6406 = 6395 (Phase 6 baseline) + 11 new Phase 7 tests ✓
+    - 3 `ClassifierExtractionMenuWiringTests`
+    - 8 `ClassifierCLIRoundTripTests`
+  - 28 skipped = 27 (Phase 6) + 1 new (Kraken2 CLI round-trip, incomplete fixture) ✓
+
+### Phase 7 coverage additions
+
+- Multi-sample concatenation: `testCLI_multiSample_byClassifier_concatenates` verifies `multi == 2× single` (199 → 398 reads).
+- Bundle regression guard: `testCLI_bundle_lands_in_project_root` now explicitly rejects `.lungfish/` and `.tmp/` path components. **This is the load-bearing test for the EsViritu bundle-in-tmp bug the entire feature was motivated by.**
+- `testCLI_includeUnmappedMates_keepsMates`: loose > strict (strict `>` delta).
+- `testCLI_kraken2_rejects_includeUnmappedMates`: parse + validate rejection.
+- `testCLI_byRegion_excludeUnmapped_filtersOutUnmapped`: CLI count matches `MarkdupService.countReads(flagFilter: 0xD04)` (the effective filter after `samtools fastq` applies its own `-F 0x900`).
+- `testAllTools_orchestratorAcceptsAllClassifierTools`: iterates all 5 classifier cases via `testingCaptureOnly`.
+
+### Floor comparison (Phase 6 → Phase 7)
+
+Same 4 unique failing methods as Phase 6. Zero new regressions.
+
+**Phase 7 is closed. Phase 8 may begin.**
