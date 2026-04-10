@@ -939,7 +939,67 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         if pct.contains(query) { return true }
         return false
     }
+
+    #if DEBUG
+    /// Test-only: the outline view's configured context menu. Exposed so
+    /// Phase 6 I1 invariant tests can inspect the menu without reaching
+    /// into a private subview.
+    public var testingContextMenu: NSMenu? {
+        outlineView.menu
+    }
+
+    /// Test-only: installs a minimal stub data source with `rowCount` rows so
+    /// `outlineView.selectedRowIndexes` can hold a non-empty selection, then
+    /// programmatically selects the given indices.
+    ///
+    /// Used by the Phase 6 I2 invariant test to exercise
+    /// `validateMenuItem(_:)` when rows are selected, without needing a full
+    /// Kraken2 classification result to back the table.
+    public func setTestingSelection(indices: [Int]) {
+        let rowCount = (indices.max() ?? -1) + 1
+        let stub = _TestingTaxonomyStubOutlineDataSource(rows: max(rowCount, 1))
+        objc_setAssociatedObject(
+            self,
+            &Self._testingStubKey,
+            stub,
+            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        )
+        outlineView.dataSource = stub
+        outlineView.reloadData()
+        outlineView.selectRowIndexes(IndexSet(indices), byExtendingSelection: false)
+    }
+
+    /// Test-only: fires `contextExtractReads(_:)` directly so I3 tests can
+    /// verify the menu-click wiring without synthesizing AppKit events.
+    public func simulateContextMenuExtractReads() {
+        contextExtractReads(nil)
+    }
+
+    private static var _testingStubKey: UInt8 = 0
+    #endif
 }
+
+#if DEBUG
+/// Minimal stub NSOutlineViewDataSource used by the Phase 6 I2 invariant
+/// test to seed a non-empty `selectedRowIndexes` without instantiating a
+/// real taxonomy tree.
+fileprivate final class _TestingTaxonomyStubOutlineDataSource: NSObject, NSOutlineViewDataSource {
+    let rows: Int
+    init(rows: Int) { self.rows = rows }
+
+    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+        item == nil ? rows : 0
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+        NSNumber(value: index)
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+        false
+    }
+}
+#endif
 
 // MARK: - TaxonomyOutlineView
 

@@ -174,7 +174,7 @@ let package = Package(
         ),
         .testTarget(
             name: "LungfishAppTests",
-            dependencies: ["LungfishApp"],
+            dependencies: ["LungfishApp", "LungfishCLI"],
             path: "Tests/LungfishAppTests"
         ),
 

@@ -1312,7 +1312,67 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
 
     /// Returns the number of currently displayed assembly items.
     var testDisplayedAssemblyCount: Int { displayItems.count }
+
+    #if DEBUG
+    /// Test-only: the outline view's configured context menu. Equivalent to
+    /// `outlineView.menu` but exposed through the view so tests don't need
+    /// to reach into a private subview.
+    public var testingContextMenu: NSMenu? {
+        outlineView.menu
+    }
+
+    /// Test-only: installs a minimal stub data source with `rowCount` rows so
+    /// `outlineView.selectedRowIndexes` can hold a non-empty selection, then
+    /// programmatically selects the given indices.
+    ///
+    /// Used by the Phase 6 I2 invariant test to exercise
+    /// `validateMenuItem(_:)` when rows are selected, without needing a full
+    /// viral detection result to back the table.
+    public func setTestingSelection(indices: [Int]) {
+        let rowCount = (indices.max() ?? -1) + 1
+        let stub = _TestingViralStubOutlineDataSource(rows: max(rowCount, 1))
+        objc_setAssociatedObject(
+            self,
+            &Self._testingStubKey,
+            stub,
+            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        )
+        outlineView.dataSource = stub
+        outlineView.reloadData()
+        outlineView.selectRowIndexes(IndexSet(indices), byExtendingSelection: false)
+    }
+
+    /// Test-only: fires `contextExtractReads(_:)` directly so I3 tests can
+    /// verify the menu-click wiring without synthesizing AppKit events.
+    public func simulateContextMenuExtractReads() {
+        contextExtractReads(nil)
+    }
+
+    private static var _testingStubKey: UInt8 = 0
+    #endif
 }
+
+#if DEBUG
+/// Minimal stub NSOutlineViewDataSource used by the Phase 6 I2 invariant
+/// test to seed a non-empty `selectedRowIndexes` without instantiating a
+/// real viral detection result.
+fileprivate final class _TestingViralStubOutlineDataSource: NSObject, NSOutlineViewDataSource {
+    let rows: Int
+    init(rows: Int) { self.rows = rows }
+
+    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+        item == nil ? rows : 0
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+        NSNumber(value: index)
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+        false
+    }
+}
+#endif
 
 // MARK: - ViralFamilyDotView
 
