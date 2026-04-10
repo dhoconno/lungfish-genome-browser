@@ -141,3 +141,69 @@ where it fired). No new failures introduced by Phase 4. All 24 new
 `ClassifierExtractionDialogTests` pass. Build clean.
 
 **Phase 4 is closed. Phase 5 may begin.**
+
+## Phase 5 Gate 4 closure (2026-04-09)
+
+Run at commit `451b557` (Gate-3 critical fix for Kraken2 layout
+mis-classification).
+
+- **Build:** `swift build --build-tests` — clean.
+- **swift-testing:** 189 tests in 36 suites — all passing.
+- **XCTest:** 6371 tests, 26 skipped, 7 assertion errors across 4 unique
+  failing methods (same 4 as Phase 4).
+  - 6371 = 6367 (Phase 4 baseline) + 4 new `ClassifierToolLayoutTests` ✓
+  - 26 skipped = unchanged from Phase 4 (no new skips introduced) ✓
+
+### Floor comparison (Phase 4 → Phase 5)
+
+| # | Test | Phase 4 | Phase 5 | Status |
+|---|------|---------|---------|--------|
+| 1 | `FASTQProjectSimulationTests.testSimulatedProjectVirtualOperationsCreateConsistentChildBundles` | failing (3 errors) | failing (3 errors) | floor, unchanged |
+| 2 | `NativeToolRunnerTests.testValidateToolsInstallation` | failing (2 errors) | failing (2 errors) | floor, unchanged |
+| 3 | `TaxonNodeRegressionTests.testEquatable` | failing | failing | floor, unchanged |
+| 4 | `TaxonNodeRegressionTests.testHashable` | failing | failing | floor, unchanged |
+| 5 | `ReadExtractionServiceTests.testExtractByBAMRegionReportsProgress` | passing (flake) | passing (flake) | floor flake, passed |
+
+The network-dependent `DatabaseServiceIntegrationTests.testSRASearch`
+passed this run.
+
+### Filtered suites
+
+- `swift test --filter ClassifierToolLayoutTests` — **4 tests, 0 failures**.
+- `swift test --filter ClassifierExtractionDialogTests` — **24 tests, 0 failures** (Phase 4 contract intact).
+- `swift test --filter ExtractReadsByClassifierCLITests` — **29 tests, 0 failures** (Phase 3 contract intact).
+- `swift test --filter TaxonomyViewControllerTests` — **20 tests, 0 failures**.
+
+### Phase 5 stub eradication
+
+`swift build --build-tests 2>&1 | grep "phase5: old extraction sheet removed"` → **0 hits**. All 5 Phase 1 stubs (EsViritu, TaxTriage, NAO-MGS, NVD, Kraken2/TaxonomyViewController) are gone. The classifier VCs all route through `TaxonomyReadExtractionAction.shared.present(...)`.
+
+### Per-classifier line counts (≤ 40 line target)
+
+| Classifier | Helpers | Wiring | Total | vs 40 |
+|------------|--------:|-------:|------:|------:|
+| EsViritu   | 16      | 12     | 28    | OK    |
+| TaxTriage  | 21      |  9     | 30    | OK    |
+| NAO-MGS    | 26      |  6     | 32    | OK    |
+| NVD        | 22      | 15     | 37    | OK    |
+| Kraken2    | 26      | 14     | 40    | OK (exactly at target) |
+
+All 5 classifiers within budget. The shared
+`NSViewController.presentClassifierExtractionDialog` extension
+(`ClassifierExtractionDialogPresenting.swift`) shrinks each VC's
+`presentUnifiedExtractionDialog` from ~15 to ~5 lines. Kraken2's
+`buildKraken2Selectors(explicit:)` override fixes the
+chart-context-menu filter regression that review-1 caught.
+
+### Gate 4 verdict
+
+**PASS.** Phase 5 closes cleanly. The 4 permanent floor failures are
+unchanged. No new failures introduced by Phase 5. All 4 new
+`ClassifierToolLayoutTests` pass, all 24 `ClassifierExtractionDialogTests`
+still pass (Phase 4 contract intact), all 29
+`ExtractReadsByClassifierCLITests` still pass (Phase 3 contract intact).
+Build clean. All 5 classifiers under the 40-line budget. Zero `phase5:`
+warnings remain. The AppDelegate auto-extract path at line 5305 is
+rewired to call `TaxonomyReadExtractionAction.shared.present(...)`.
+
+**Phase 5 is closed. Phase 6 may begin.**
