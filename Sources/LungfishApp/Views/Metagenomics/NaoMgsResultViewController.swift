@@ -1497,20 +1497,9 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     // MARK: - Callback Wiring
 
     private func wireCallbacks() {
-        // Action bar Extract FASTQ -> present extraction sheet for selected taxa
+        // Action bar Extract FASTQ -> route to the unified extraction dialog.
         actionBar.onExtractFASTQ = { [weak self] in
-            guard let self else { return }
-            let selectedIndexes = self.taxonomyTableView.selectedRowIndexes
-            let rows: [NaoMgsTaxonSummaryRow] = selectedIndexes.compactMap { index in
-                guard index < self.displayedRows.count else { return nil }
-                return self.displayedRows[index]
-            }
-            guard !rows.isEmpty else { return }
-
-            let items = rows.map { "\($0.name) (taxid:\($0.taxId))" }
-            let source = self.bundleURL?.lastPathComponent ?? "NAO-MGS result"
-            let suggestedName = "\(rows.first?.sample ?? "sample")_\(rows.first?.name ?? "extract")_extract"
-            self.presentExtractionSheet(items: items, source: source, suggestedName: suggestedName)
+            self?.presentUnifiedExtractionDialog()
         }
 
         // Action bar BLAST verify (NAO-MGS triggers BLAST via context menu)
@@ -1544,13 +1533,41 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         )
     }
 
-    // MARK: - Extraction Sheet
+    // MARK: - Classifier extraction wiring
 
-    private func presentExtractionSheet(items: [String], source: String, suggestedName: String) {
-        // TODO[phase5]: replaced by TaxonomyReadExtractionAction.shared.present(...)
-        #warning("phase5: old extraction sheet removed; new dialog wired up in Phase 5")
-        _ = items; _ = source; _ = suggestedName
-        return
+    /// Builds per-sample selectors from the current taxonomy-table selection.
+    /// NAO-MGS rows carry a `sample`, a `taxId`, and `topAccessions`. We group
+    /// by sample so the resolver can run one samtools invocation per sample.
+    private func buildNaoMgsSelectors() -> [ClassifierRowSelector] {
+        let indexes = taxonomyTableView.selectedRowIndexes
+        var bySample: [String: (accessions: [String], taxIds: [Int])] = [:]
+        for idx in indexes where idx < displayedRows.count {
+            let row = displayedRows[idx]
+            var bucket = bySample[row.sample] ?? (accessions: [], taxIds: [])
+            bucket.accessions.append(contentsOf: row.topAccessions)
+            bucket.taxIds.append(row.taxId)
+            bySample[row.sample] = bucket
+        }
+        return bySample.map { (sid, bucket) in
+            ClassifierRowSelector(sampleId: sid, accessions: bucket.accessions, taxIds: bucket.taxIds)
+        }.sorted { ($0.sampleId ?? "") < ($1.sampleId ?? "") }
+    }
+
+    /// Presents the unified classifier extraction dialog for the current selection.
+    func presentUnifiedExtractionDialog() {
+        guard let window = view.window else { return }
+        let selectors = buildNaoMgsSelectors()
+        guard !selectors.isEmpty else { return }
+        guard let resultPath = database?.databaseURL else { return }
+        let first = selectors.first
+        let suggested = "naomgs_\(first?.sampleId ?? "sample")_\(first?.taxIds.first.map(String.init) ?? "extract")"
+        let ctx = TaxonomyReadExtractionAction.Context(
+            tool: .naomgs,
+            resultPath: resultPath,
+            selections: selectors,
+            suggestedName: suggested
+        )
+        TaxonomyReadExtractionAction.shared.present(context: ctx, hostWindow: window)
     }
 
     @objc private func handleLayoutSwapRequested(_ notification: Notification) {
@@ -1726,18 +1743,6 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
             menu.addItem(copyAccessions)
         }
 
-        // Copy unique reads as FASTQ
-        if row.uniqueReadCount > 0 {
-            let copyReads = NSMenuItem(
-                title: "Copy Unique Reads as FASTQ (\(row.uniqueReadCount))",
-                action: #selector(contextCopyUniqueReadsFASTQ(_:)),
-                keyEquivalent: ""
-            )
-            copyReads.target = self
-            copyReads.representedObject = row
-            menu.addItem(copyReads)
-        }
-
         menu.addItem(NSMenuItem.separator())
 
         // View on NCBI
@@ -1758,7 +1763,7 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
 
         menu.addItem(NSMenuItem.separator())
 
-        let extractItem = NSMenuItem(title: "Extract FASTQ\u{2026}", action: #selector(contextExtractFASTQ(_:)), keyEquivalent: "")
+        let extractItem = NSMenuItem(title: "Extract Reads\u{2026}", action: #selector(contextExtractFASTQ(_:)), keyEquivalent: "")
         extractItem.target = self
         menu.addItem(extractItem)
     }
@@ -1825,41 +1830,6 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         NSPasteboard.general.setString(accessions.joined(separator: "\n"), forType: .string)
     }
 
-    @objc private func contextCopyUniqueReadsFASTQ(_ sender: NSMenuItem) {
-        guard let row = sender.representedObject as? NaoMgsTaxonSummaryRow,
-              let database else { return }
-        do {
-            // Fetch deduplicated reads (same logic as BLAST verification)
-            let hits = try database.fetchVirusHitsForBLAST(
-                sample: row.sample,
-                taxId: row.taxId,
-                maxReads: row.uniqueReadCount
-            )
-            guard !hits.isEmpty else { return }
-
-            // Format as FASTQ if quality data is available, otherwise FASTA
-            var lines: [String] = []
-            let hasFASTQ = hits.contains { !$0.readQuality.isEmpty && $0.readQuality != "*" }
-            for hit in hits {
-                if hasFASTQ {
-                    lines.append("@\(hit.seqId)")
-                    lines.append(hit.readSequence)
-                    lines.append("+")
-                    lines.append(hit.readQuality.isEmpty ? String(repeating: "I", count: hit.readSequence.count) : hit.readQuality)
-                } else {
-                    lines.append(">\(hit.seqId)")
-                    lines.append(hit.readSequence)
-                }
-            }
-
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
-            logger.info("Copied \(hits.count) unique reads as \(hasFASTQ ? "FASTQ" : "FASTA") for taxId \(row.taxId)")
-        } catch {
-            logger.error("Failed to fetch reads for copy: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
     @objc func contextCopyAccession(_ sender: NSMenuItem) {
         guard let accession = sender.representedObject as? String else { return }
         NSPasteboard.general.clearContents()
@@ -1908,8 +1878,7 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     }
 
     @objc private func contextExtractFASTQ(_ sender: Any?) {
-        // Delegate to the same extraction logic as the action bar button
-        actionBar.onExtractFASTQ?()
+        presentUnifiedExtractionDialog()
     }
 
     // MARK: - NSSplitViewDelegate
