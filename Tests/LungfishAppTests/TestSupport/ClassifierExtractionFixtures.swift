@@ -135,6 +135,65 @@ enum ClassifierExtractionFixtures {
         }
     }
 
+    /// Builds a multi-sample fixture by cloning the same sarscov2 markers BAM
+    /// under N different sample names inside one result directory.
+    ///
+    /// Used by CLI round-trip tests that exercise the multi-sample concatenation
+    /// path (multiple `--sample` flags on the command line).
+    ///
+    /// - Parameters:
+    ///   - tool: The classifier tool whose directory layout to mimic. Must use
+    ///     BAM dispatch (i.e. NOT Kraken2); we `preconditionFailure` otherwise.
+    ///   - sampleIds: The sample names to create.
+    /// - Returns: A tuple `(resultPath, projectRoot)` the same as `buildFixture`.
+    /// - Throws: `XCTSkip` if the sarscov2 markers fixture BAM is missing.
+    static func buildMultiSampleFixture(
+        tool: ClassifierTool,
+        sampleIds: [String]
+    ) throws -> (resultPath: URL, projectRoot: URL) {
+        precondition(tool.usesBAMDispatch, "Multi-sample fixtures only supported for BAM-backed tools")
+        let fm = FileManager.default
+
+        guard fm.fileExists(atPath: sarscov2BAM.path),
+              fm.fileExists(atPath: sarscov2BAMIndex.path) else {
+            throw XCTSkip("sarscov2 markers fixture BAM missing at \(sarscov2BAM.path)")
+        }
+
+        let projectRoot = fm.temporaryDirectory.appendingPathComponent("clfx-multi-\(tool.rawValue)-\(UUID().uuidString)")
+        let marker = projectRoot.appendingPathComponent(".lungfish")
+        try fm.createDirectory(at: marker, withIntermediateDirectories: true)
+        let resultDir = projectRoot.appendingPathComponent("analyses/\(tool.rawValue)-multi")
+        try fm.createDirectory(at: resultDir, withIntermediateDirectories: true)
+
+        for sid in sampleIds {
+            switch tool {
+            case .esviritu:
+                let bam = resultDir.appendingPathComponent("\(sid).sorted.bam")
+                try fm.copyItem(at: sarscov2BAM, to: bam)
+                try fm.copyItem(at: sarscov2BAMIndex, to: bam.appendingPathExtension("bai"))
+            case .taxtriage:
+                let subdir = resultDir.appendingPathComponent("minimap2")
+                try fm.createDirectory(at: subdir, withIntermediateDirectories: true)
+                let bam = subdir.appendingPathComponent("\(sid).bam")
+                try fm.copyItem(at: sarscov2BAM, to: bam)
+                try fm.copyItem(at: sarscov2BAMIndex, to: bam.appendingPathExtension("bai"))
+            case .naomgs:
+                let subdir = resultDir.appendingPathComponent("bams")
+                try fm.createDirectory(at: subdir, withIntermediateDirectories: true)
+                let bam = subdir.appendingPathComponent("\(sid).sorted.bam")
+                try fm.copyItem(at: sarscov2BAM, to: bam)
+                try fm.copyItem(at: sarscov2BAMIndex, to: bam.appendingPathExtension("bai"))
+            case .nvd:
+                let bam = resultDir.appendingPathComponent("\(sid).bam")
+                try fm.copyItem(at: sarscov2BAM, to: bam)
+                try fm.copyItem(at: sarscov2BAMIndex, to: bam.appendingPathExtension("bai"))
+            case .kraken2:
+                preconditionFailure("unreachable — kraken2 does not use BAM dispatch")
+            }
+        }
+        return (resultPath: resultDir.appendingPathComponent("fake.sqlite"), projectRoot: projectRoot)
+    }
+
     /// Reads the first reference name from the sarscov2 markers BAM header.
     /// Used by BAM-backed classifier tests as the "selected accession".
     static func sarscov2FirstReference() async throws -> String {
