@@ -2117,6 +2117,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         batchFlatTableView.onRowSelected = { [weak self] row in
             guard let self else { return }
             self.actionBar.updateInfoText("1 row selected")
+            self.actionBar.setExtractEnabled(true)
             self.hideMultiSelectionPlaceholder()
             self.selectedBatchSampleId = row.sample
             self.selectedBatchOrganismName = row.organism
@@ -2309,6 +2310,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         batchFlatTableView.onRowSelected = { [weak self] row in
             guard let self else { return }
             self.actionBar.updateInfoText("1 row selected")
+            self.actionBar.setExtractEnabled(true)
             self.hideMultiSelectionPlaceholder()
             self.selectedBatchSampleId = row.sample
             self.selectedBatchOrganismName = row.organism
