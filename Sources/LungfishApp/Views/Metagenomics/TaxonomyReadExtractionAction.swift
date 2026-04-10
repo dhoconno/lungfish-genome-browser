@@ -337,14 +337,20 @@ public final class TaxonomyReadExtractionAction {
         // from the dialog's primary button on the main actor), so this Task
         // is safe per MEMORY.md (the rule blocks Task { @MainActor in } only
         // when spawned from GCD background queues).
-        Task { @MainActor [weak self] in
+        // Store the outer task handle so Cancel can abort the destination-
+        // resolution phase (including a save panel that hasn't appeared yet).
+        taskBox.extractionTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
+                // Present the save panel on the sheet window (not the host)
+                // because the host already has the extraction dialog attached
+                // as a sheet, and AppKit only supports one sheet per window.
+                let panelHost = sheetWindow ?? hostWindow
                 let destination = try await self.resolveDestination(
                     model: model,
                     context: context,
                     savePanel: self.savePanelPresenter,
-                    hostWindow: hostWindow
+                    hostWindow: panelHost
                 )
 
                 // Build extraction options.
