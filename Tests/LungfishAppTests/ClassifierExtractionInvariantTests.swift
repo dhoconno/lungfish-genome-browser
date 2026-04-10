@@ -146,5 +146,177 @@ final class ClassifierExtractionInvariantTests: XCTestCase {
         XCTAssertEqual(fired, 1, "Kraken2 menu click must fire onExtractReadsRequested exactly once")
     }
 
-    // I4, I5, I6, I7 are added in Task 6.3 and 6.4.
+    // MARK: - I4: Count-sequence agreement
+
+    /// Helper: runs the resolver for a given tool + fixture + destination and
+    /// asserts the outcome's readCount equals the MarkdupService count for
+    /// the same BAM + region + flag filter.
+    private func assertI4(
+        tool: ClassifierTool,
+        destinationBuilder: (URL) -> ExtractionDestination,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async throws {
+        guard tool.usesBAMDispatch else { return }  // I4 scoped to BAM-backed tools
+
+        let sampleId = "I4"
+        let (resultPath, projectRoot) = try ClassifierExtractionFixtures.buildFixture(tool: tool, sampleId: sampleId)
+        defer { try? FileManager.default.removeItem(at: projectRoot) }
+
+        let selections = try await ClassifierExtractionFixtures.defaultSelection(
+            for: tool, sampleId: sampleId
+        )
+        let region = selections.first?.accessions.first ?? ""
+
+        // Ground truth: what does MarkdupService.countReads say for this region?
+        let resolver = ClassifierReadResolver()
+        let bamURL = try await resolver.testingResolveBAMURL(
+            tool: tool,
+            sampleId: sampleId,
+            resultPath: resultPath
+        )
+        let samtoolsPath = await ClassifierExtractionFixtures.resolveSamtoolsPath()
+        let unique = try MarkdupService.countReads(
+            bamURL: bamURL,
+            accession: region.isEmpty ? nil : region,
+            flagFilter: 0x404,
+            samtoolsPath: samtoolsPath
+        )
+
+        let destination = destinationBuilder(projectRoot)
+        let outcome = try await resolver.resolveAndExtract(
+            tool: tool,
+            resultPath: resultPath,
+            selections: selections,
+            options: ExtractionOptions(format: .fastq, includeUnmappedMates: false),
+            destination: destination,
+            progress: nil
+        )
+
+        XCTAssertEqual(
+            outcome.readCount,
+            unique,
+            "I4 violation for \(tool.displayName) / \(String(describing: destination)): MarkdupService.countReads=\(unique), resolver.readCount=\(outcome.readCount)",
+            file: file,
+            line: line
+        )
+
+        // Markers-fixture teeth: the 0x404-filtered count must be strictly
+        // less than the raw total (203 on the markers BAM, 199 with the
+        // mask), so any regression that drops the flag mask between the
+        // resolver and MarkdupService will fail this assertion too. The
+        // original sarscov2 BAM had 0 secondary/duplicate/supplementary
+        // records, so filtered == raw and the test had no teeth; the
+        // markers BAM augments it with 3 synthetic flag-marked reads.
+        let rawTotal = try MarkdupService.countReads(
+            bamURL: bamURL,
+            accession: region.isEmpty ? nil : region,
+            flagFilter: 0x000,
+            samtoolsPath: samtoolsPath
+        )
+        XCTAssertLessThan(
+            outcome.readCount,
+            rawTotal,
+            "I4 fixture has no teeth: filtered count (\(outcome.readCount)) should be < raw count (\(rawTotal)) on the markers BAM",
+            file: file,
+            line: line
+        )
+    }
+
+    func testI4_esviritu_allDestinations() async throws {
+        let metadata = ExtractionMetadata(sourceDescription: "x", toolName: "EsViritu")
+        try await assertI4(tool: .esviritu) { _ in
+            .file(FileManager.default.temporaryDirectory.appendingPathComponent("i4-\(UUID().uuidString).fastq"))
+        }
+        try await assertI4(tool: .esviritu) { projectRoot in
+            .bundle(projectRoot: projectRoot, displayName: "i4", metadata: metadata)
+        }
+        try await assertI4(tool: .esviritu) { _ in
+            .clipboard(format: .fastq, cap: 100_000)
+        }
+        try await assertI4(tool: .esviritu) { projectRoot in
+            .share(tempDirectory: projectRoot)
+        }
+    }
+
+    func testI4_taxtriage_allDestinations() async throws {
+        let metadata = ExtractionMetadata(sourceDescription: "x", toolName: "TaxTriage")
+        try await assertI4(tool: .taxtriage) { _ in
+            .file(FileManager.default.temporaryDirectory.appendingPathComponent("i4-\(UUID().uuidString).fastq"))
+        }
+        try await assertI4(tool: .taxtriage) { projectRoot in
+            .bundle(projectRoot: projectRoot, displayName: "i4", metadata: metadata)
+        }
+        try await assertI4(tool: .taxtriage) { _ in
+            .clipboard(format: .fastq, cap: 100_000)
+        }
+    }
+
+    func testI4_naomgs_allDestinations() async throws {
+        let metadata = ExtractionMetadata(sourceDescription: "x", toolName: "NAO-MGS")
+        try await assertI4(tool: .naomgs) { _ in
+            .file(FileManager.default.temporaryDirectory.appendingPathComponent("i4-\(UUID().uuidString).fastq"))
+        }
+        try await assertI4(tool: .naomgs) { projectRoot in
+            .bundle(projectRoot: projectRoot, displayName: "i4", metadata: metadata)
+        }
+    }
+
+    func testI4_nvd_allDestinations() async throws {
+        let metadata = ExtractionMetadata(sourceDescription: "x", toolName: "NVD")
+        try await assertI4(tool: .nvd) { _ in
+            .file(FileManager.default.temporaryDirectory.appendingPathComponent("i4-\(UUID().uuidString).fastq"))
+        }
+        try await assertI4(tool: .nvd) { projectRoot in
+            .bundle(projectRoot: projectRoot, displayName: "i4", metadata: metadata)
+        }
+    }
+
+    // MARK: - I5: Samtools flag dispatch
+
+    func testI5_excludeFlags_includeUnmappedMatesFalse_is0x404() {
+        let opts = ExtractionOptions(format: .fastq, includeUnmappedMates: false)
+        XCTAssertEqual(opts.samtoolsExcludeFlags, 0x404)
+    }
+
+    func testI5_excludeFlags_includeUnmappedMatesTrue_is0x400() {
+        let opts = ExtractionOptions(format: .fastq, includeUnmappedMates: true)
+        XCTAssertEqual(opts.samtoolsExcludeFlags, 0x400)
+    }
+
+    /// Parameterized over all 4 BAM-backed tools: verify the resolver actually
+    /// dispatches the right flag for both include-unmapped-mates values.
+    func testI5_allBAMBackedTools_dispatchCorrectFlag() async throws {
+        for tool in ClassifierTool.allCases where tool.usesBAMDispatch {
+            let sampleId = "I5"
+            let (resultPath, projectRoot) = try ClassifierExtractionFixtures.buildFixture(tool: tool, sampleId: sampleId)
+            defer { try? FileManager.default.removeItem(at: projectRoot) }
+            let selections = try await ClassifierExtractionFixtures.defaultSelection(
+                for: tool, sampleId: sampleId
+            )
+
+            let resolver = ClassifierReadResolver()
+            // Strict: 0x404 → excludes unmapped + duplicates → lowest count.
+            let countStrict = try await resolver.estimateReadCount(
+                tool: tool,
+                resultPath: resultPath,
+                selections: selections,
+                options: ExtractionOptions(format: .fastq, includeUnmappedMates: false)
+            )
+            // Loose: 0x400 → keeps unmapped mates, still excludes duplicates.
+            let countLoose = try await resolver.estimateReadCount(
+                tool: tool,
+                resultPath: resultPath,
+                selections: selections,
+                options: ExtractionOptions(format: .fastq, includeUnmappedMates: true)
+            )
+            XCTAssertLessThanOrEqual(
+                countStrict,
+                countLoose,
+                "I5 violation for \(tool.displayName): 0x404 count (\(countStrict)) must be <= 0x400 count (\(countLoose))"
+            )
+        }
+    }
+
+    // I6, I7 are added in Task 6.4.
 }
