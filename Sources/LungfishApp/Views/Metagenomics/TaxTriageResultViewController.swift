@@ -2540,6 +2540,11 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             self?.presentUnifiedExtractionDialog()
         }
 
+        // Batch flat table context menu -> same unified dialog.
+        batchFlatTableView.onExtractReadsRequested = { [weak self] in
+            self?.presentUnifiedExtractionDialog()
+        }
+
         // Action bar BLAST verify (TaxTriage triggers BLAST via table context menu)
         actionBar.onBlastVerify = { [weak self] in
             // TaxTriage BLAST is triggered via the table context menu per-organism;

@@ -37,6 +37,43 @@ private extension NSUserInterfaceItemIdentifier {
 @MainActor
 final class BatchTaxTriageTableView: BatchTableView<TaxTriageMetric> {
 
+    // MARK: - Callbacks
+
+    /// Fired when the user invokes "Extract Reads…" from the context menu.
+    /// The VC reads the current selection from the table view itself.
+    var onExtractReadsRequested: (() -> Void)?
+
+    // MARK: - Context Menu
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        installContextMenu()
+    }
+
+    private func installContextMenu() {
+        guard tableView.menu == nil else { return }
+        let menu = NSMenu()
+        let extractItem = NSMenuItem(
+            title: "Extract Reads\u{2026}",
+            action: #selector(contextExtractReads(_:)),
+            keyEquivalent: ""
+        )
+        extractItem.target = self
+        menu.addItem(extractItem)
+        tableView.menu = menu
+    }
+
+    @objc private func contextExtractReads(_ sender: Any?) {
+        onExtractReadsRequested?()
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(contextExtractReads(_:)) {
+            return !tableView.selectedRowIndexes.isEmpty
+        }
+        return true
+    }
+
     // MARK: - Extra State
 
     /// Lookup dictionary for BAM-derived total read counts in batch modes.
