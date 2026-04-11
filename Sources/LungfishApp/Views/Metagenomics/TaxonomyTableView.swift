@@ -776,7 +776,7 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
 
     // MARK: - Column Header Filter Menus
 
-    public func tableView(_ tableView: NSTableView, didClick tableColumn: NSTableColumn) {
+    public func outlineView(_ outlineView: NSOutlineView, didClick tableColumn: NSTableColumn) {
         showColumnHeaderFilterMenu(for: tableColumn)
     }
 
