@@ -496,43 +496,10 @@ public final class AlignmentDataProvider: @unchecked Sendable {
 
     /// Finds the samtools binary from standard locations.
     private func findSamtools() throws -> String {
-        // 1. Check app bundle Resources/Tools
-        if let bundlePath = Bundle.main.resourceURL?
-            .appendingPathComponent("Tools/samtools").path,
-           FileManager.default.isExecutableFile(atPath: bundlePath) {
-            return bundlePath
+        guard let samtoolsPath = SamtoolsLocator.locate() else {
+            throw AlignmentFetchError.samtoolsNotFound
         }
-
-        // 2. Check adjacent Tools directory (development/testing)
-        let execDir = Bundle.main.executableURL?.deletingLastPathComponent()
-        if let devPath = execDir?.appendingPathComponent("Tools/samtools").path,
-           FileManager.default.isExecutableFile(atPath: devPath) {
-            return devPath
-        }
-
-        // 3. Check common system paths
-        let systemPaths = [
-            "/usr/local/bin/samtools",
-            "/opt/homebrew/bin/samtools",
-            "/usr/bin/samtools"
-        ]
-        for path in systemPaths {
-            if FileManager.default.isExecutableFile(atPath: path) {
-                return path
-            }
-        }
-
-        // 4. Search PATH from environment
-        if let pathEnv = ProcessInfo.processInfo.environment["PATH"] {
-            for dir in pathEnv.split(separator: ":") {
-                let candidate = String(dir) + "/samtools"
-                if FileManager.default.isExecutableFile(atPath: candidate) {
-                    return candidate
-                }
-            }
-        }
-
-        throw AlignmentFetchError.samtoolsNotFound
+        return samtoolsPath
     }
 }
 

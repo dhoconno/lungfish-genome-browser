@@ -334,12 +334,24 @@ public actor ClassifierReadResolver {
             candidates = urls
 
         case .naomgs:
-            // NAO-MGS: bams/{sampleId}.sorted.bam (materialized from SQLite if missing).
+            // NAO-MGS: prefer the BAM pointer stored in hits.sqlite, then fall back
+            // to legacy filename conventions for pre-pointer imports.
             guard let sampleId else {
                 candidates = []
                 break
             }
-            candidates = [resultDir.appendingPathComponent("bams/\(sampleId).sorted.bam")]
+            var urls: [URL] = []
+            let dbURL = resultDir.appendingPathComponent("hits.sqlite")
+            if fm.fileExists(atPath: dbURL.path),
+               let database = try? NaoMgsDatabase(at: dbURL),
+               let bamRelative = try? database.fetchTaxonSummaryRows(samples: [sampleId])
+                    .compactMap(\.bamPath)
+                    .first(where: { !$0.isEmpty }) {
+                urls.append(resultDir.appendingPathComponent(bamRelative))
+            }
+            urls.append(resultDir.appendingPathComponent("bams/\(sampleId).bam"))
+            urls.append(resultDir.appendingPathComponent("bams/\(sampleId).sorted.bam"))
+            candidates = urls
 
         case .nvd:
             // NVD: adjacent {sampleId}.bam or sorted.bam

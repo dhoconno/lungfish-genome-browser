@@ -23,6 +23,10 @@ public enum AnalysesFolder {
         "spades", "megahit", "naomgs", "nvd",
     ]
 
+    /// Tools whose imported results use `{tool}-{sampleName}` naming
+    /// instead of the standard `{tool}-{timestamp}` convention.
+    private static let importedResultTools: Set<String> = ["naomgs", "nvd"]
+
     // MARK: - Tool Metadata
 
     /// Human-readable display name for a tool identifier.
@@ -168,6 +172,17 @@ public enum AnalysesFolder {
                 if let date = parseTimestamp(timestampPart) {
                     return AnalysisDirectoryInfo(url: url, tool: tool, timestamp: date, isBatch: false)
                 }
+            }
+        }
+
+        // Fallback for imported results that use {tool}-{sampleName} naming
+        // (e.g. naomgs-MU-CASPER-2026-03-31-a-..., nvd-SampleName).
+        // Uses the directory's filesystem creation date as the timestamp.
+        for tool in importedResultTools {
+            let prefix = "\(tool)-"
+            if name.hasPrefix(prefix), !String(name.dropFirst(prefix.count)).isEmpty {
+                let date = (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? Date()
+                return AnalysisDirectoryInfo(url: url, tool: tool, timestamp: date, isBatch: false)
             }
         }
 

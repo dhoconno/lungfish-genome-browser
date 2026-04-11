@@ -310,6 +310,10 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         selectedSamples = Set(sampleNames)
         samplePickerState = ClassifierSamplePickerState(allSamples: selectedSamples)
 
+        // Observe sample selection changes reactively, so filtering works
+        // from both the popover picker and the Inspector-embedded picker.
+        startObservingSampleSelection()
+
         // Update summary bar
         summaryBar.update(database: database, manifest: manifest, selectedSamples: Array(selectedSamples))
 
@@ -459,6 +463,37 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
             sampleFilterButton.title = "All Samples"
         } else {
             sampleFilterButton.title = "\(selected) of \(total) Samples"
+        }
+    }
+
+    /// Reactively observes `samplePickerState.selectedSamples` using
+    /// `withObservationTracking`. When the set changes (from the popover
+    /// picker, Inspector picker, or programmatic update), the taxonomy
+    /// table is reloaded with the new sample filter.
+    private func startObservingSampleSelection() {
+        guard let pickerState = samplePickerState else { return }
+        withObservationTracking {
+            _ = pickerState.selectedSamples
+        } onChange: { [weak self] in
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let newSelection = self.samplePickerState.selectedSamples
+                guard newSelection != self.selectedSamples else {
+                    // No actual change — just re-register for next change
+                    self.startObservingSampleSelection()
+                    return
+                }
+                self.selectedSamples = newSelection
+                self.updateSampleFilterButtonTitle()
+                self.updateSampleColumnVisibility()
+                self.updateMetadataColumnsForCurrentSamples()
+                self.reloadTaxonomyTable()
+                if let database = self.database, let manifest = self.manifest {
+                    self.summaryBar.update(database: database, manifest: manifest, selectedSamples: Array(newSelection))
+                }
+                // Re-register for the next change
+                self.startObservingSampleSelection()
+            }
         }
     }
 
@@ -975,16 +1010,7 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     /// function only performs filesystem probes, so it's safe to run off the
     /// main actor.
     nonisolated fileprivate static func naomgsLocateSamtools() -> String? {
-        let candidates = [
-            "/opt/homebrew/Cellar/samtools/1.23/bin/samtools",
-            "/opt/homebrew/bin/samtools",
-            "/usr/local/bin/samtools",
-            "/usr/bin/samtools",
-        ]
-        for p in candidates where FileManager.default.fileExists(atPath: p) {
-            return p
-        }
-        return nil
+        SamtoolsLocator.locate()
     }
 
     // MARK: - Async MiniBAM Loading

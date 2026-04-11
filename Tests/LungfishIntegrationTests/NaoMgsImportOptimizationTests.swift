@@ -27,10 +27,10 @@ struct NaoMgsImportOptimizationTests {
             counter.append(lineCount)
         }
 
-        #expect(hits.count == 35, "Fixture has 35 data rows")
+        #expect(hits.count == 34, "Fixture has 35 data rows, 1 has NA sequence and is filtered")
         #expect(!counter.values.isEmpty, "lineProgress should have been called at least once")
-        // Final reported count should be >= 35 (header + 35 data lines = 36 total lines)
-        #expect(counter.values.last! >= 35)
+        // Final reported count should be >= 34 (header + 35 data lines = 36 total lines, 1 NA filtered)
+        #expect(counter.values.last! >= 34)
     }
 
     @Test
@@ -40,7 +40,7 @@ struct NaoMgsImportOptimizationTests {
 
         // Existing signature still works with no callback
         let hits = try await parser.parseVirusHits(at: url)
-        #expect(hits.count == 35)
+        #expect(hits.count == 34)
     }
 
     // MARK: - Top-5 Accession Filtering
@@ -164,6 +164,46 @@ struct NaoMgsImportOptimizationTests {
         #expect(!samples.isEmpty)
         let summaryRows = try db.fetchTaxonSummaryRows(samples: nil)
         #expect(!summaryRows.isEmpty)
+
+        // Verify paired-end reads survive the full import pipeline (BAM materialization)
+        let bamsDir = bundle.appendingPathComponent("bams")
+        let bamFiles = try FileManager.default.contentsOfDirectory(at: bamsDir, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "bam" }
+        #expect(!bamFiles.isEmpty, "Import should produce BAM files")
+
+        // Use samtools to count paired-end records in the BAMs
+        if let samtoolsPath = SamtoolsLocator.locate() {
+            var totalRecords = 0
+            var pairedRecords = 0
+            for bam in bamFiles {
+                // Count all records
+                let allProc = Process()
+                allProc.executableURL = URL(fileURLWithPath: samtoolsPath)
+                allProc.arguments = ["view", "-c", bam.path]
+                let allPipe = Pipe()
+                allProc.standardOutput = allPipe
+                try allProc.run()
+                allProc.waitUntilExit()
+                let allStr = String(data: allPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                totalRecords += Int(allStr ?? "0") ?? 0
+
+                // Count paired records (flag 0x1)
+                let pairProc = Process()
+                pairProc.executableURL = URL(fileURLWithPath: samtoolsPath)
+                pairProc.arguments = ["view", "-c", "-f", "1", bam.path]
+                let pairPipe = Pipe()
+                pairProc.standardOutput = pairPipe
+                try pairProc.run()
+                pairProc.waitUntilExit()
+                let pairStr = String(data: pairPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                pairedRecords += Int(pairStr ?? "0") ?? 0
+            }
+
+            // Fixture has 33 paired reads (both R1+R2), 1 R1-only, and 1 R2-only.
+            // BAMs: 33×2=66 paired + 1 R1-only + 1 R2-only = 68 total, 66 paired.
+            #expect(totalRecords == 68, "Expected 68 BAM records (33 pairs + 2 singles), got \(totalRecords)")
+            #expect(pairedRecords == 66, "Expected 66 paired-end BAM records (33 pairs × 2), got \(pairedRecords)")
+        }
     }
 
     @Test
@@ -309,6 +349,279 @@ struct NaoMgsImportOptimizationTests {
         for line in lines {
             #expect(!line.trimmingCharacters(in: .whitespaces).isEmpty, "No blank lines")
         }
+    }
+
+    // MARK: - Accession Summaries and Virus Hits Purge
+
+    @Test
+    func importPopulatesAccessionSummariesAndPurgesVirusHits() async throws {
+        let workspace = makeTemporaryDirectory(prefix: "naomgs-purge-test-")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let tsvContent = """
+        sample\tseq_id\taligner_taxid_lca\tquery_seq\tquery_seq_rev\tquery_qual\tquery_qual_rev\tprim_align_genome_id_all\tprim_align_ref_start\tprim_align_ref_start_rev\tprim_align_edit_distance\tprim_align_edit_distance_rev\tquery_len\tquery_len_rev\tprim_align_query_rc\tprim_align_query_rc_rev\tprim_align_pair_status\tprim_align_best_alignment_score\tprim_align_best_alignment_score_rev\tprim_align_fragment_length\tprim_align_cigar
+        SAMPLE_X\tread1\t100\tACGTACGTAC\tTGCATGCATG\tIIIIIIIIII\tJJJJJJJJJJ\tACC_A\t0\t20\t0\t0\t10\t10\tFalse\tTrue\tCP\t100\t99\t200\t10M
+        SAMPLE_X\tread2\t100\tACGTACGTAC\tTGCATGCATG\tIIIIIIIIII\tJJJJJJJJJJ\tACC_A\t50\t70\t1\t1\t10\t10\tTrue\tFalse\tCP\t95\t94\t200\t10M
+        SAMPLE_X\tread3\t100\tGGCCTTAAGG\tCCTTAAGGCC\tIIIIIIIIII\tJJJJJJJJJJ\tACC_B\t0\t10\t0\t0\t10\t10\tFalse\tTrue\tCP\t110\t109\t200\t10M
+        SAMPLE_X\tread4\t200\tTTAAGGCCTT\tAAGGCCTTAA\tIIIIIIIIII\tJJJJJJJJJJ\tACC_C\t10\t30\t2\t2\t10\t10\tFalse\tTrue\tUP\t80\t79\t150\t10M
+        """
+        let sourceFile = workspace.appendingPathComponent("virus_hits_final.tsv")
+        try tsvContent.write(to: sourceFile, atomically: true, encoding: .utf8)
+
+        let outputDirectory = workspace.appendingPathComponent("analyses", isDirectory: true)
+        let result = try await MetagenomicsImportService.importNaoMgs(
+            inputURL: sourceFile,
+            outputDirectory: outputDirectory,
+            sampleName: "PURGE_TEST",
+            fetchReferences: false
+        )
+
+        let bundle = result.resultDirectory
+        let dbURL = bundle.appendingPathComponent("hits.sqlite")
+        #expect(FileManager.default.fileExists(atPath: dbURL.path))
+
+        let db = try NaoMgsDatabase(at: dbURL)
+
+        // 1. Accession summaries should be pre-computed
+        let accSummaries = try db.fetchAccessionSummaries(sample: "SAMPLE_X", taxId: 100)
+        #expect(accSummaries.count == 2, "Taxon 100 has 2 accessions: ACC_A (2 reads), ACC_B (1 read)")
+
+        let accA = try #require(accSummaries.first(where: { $0.accession == "ACC_A" }))
+        #expect(accA.readCount == 2)
+        #expect(accA.coveredBasePairs == 40, "Coverage should include both mate intervals (0-10, 20-30, 50-60, 70-80)")
+
+        let accB = try #require(accSummaries.first(where: { $0.accession == "ACC_B" }))
+        #expect(accB.readCount == 1)
+
+        // 2. totalHitCount should work (uses taxon_summaries)
+        let totalHits = try db.totalHitCount()
+        #expect(totalHits == 4)
+
+        // 3. fetchSamples should work (uses taxon_summaries)
+        let samples = try db.fetchSamples()
+        #expect(samples.count == 1)
+        #expect(samples[0].sample == "SAMPLE_X")
+        #expect(samples[0].hitCount == 4)
+
+        // 4. If BAMs were created, virus_hits should be purged
+        let bamsDir = bundle.appendingPathComponent("bams")
+        if FileManager.default.fileExists(atPath: bamsDir.path) {
+            #expect(result.createdBAM, "createdBAM flag should be true when BAMs exist")
+
+            // virus_hits should be empty after purge
+            let reads = try db.fetchReadsForAccession(
+                sample: "SAMPLE_X", taxId: 100, accession: "ACC_A"
+            )
+            #expect(reads.isEmpty, "virus_hits should be purged after BAM materialization")
+        }
+    }
+
+    @Test
+    func importWithFixtureCreatesAccessionSummaries() async throws {
+        let workspace = makeTemporaryDirectory(prefix: "naomgs-accsummary-fixture-")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let url = TestFixtures.naomgs.virusHitsTsvGz
+        let outputDirectory = workspace.appendingPathComponent("analyses", isDirectory: true)
+
+        let result = try await MetagenomicsImportService.importNaoMgs(
+            inputURL: url,
+            outputDirectory: outputDirectory,
+            sampleName: "ACC_SUMMARY_TEST",
+            fetchReferences: false
+        )
+
+        let db = try NaoMgsDatabase(at: result.resultDirectory.appendingPathComponent("hits.sqlite"))
+
+        // The fixture has 7 samples and 4 taxa — there should be accession summaries
+        let samples = try db.fetchSamples()
+        #expect(!samples.isEmpty)
+
+        // Pick the first sample and first taxon to verify accession summaries exist
+        let taxonRows = try db.fetchTaxonSummaryRows(samples: [samples[0].sample])
+        #expect(!taxonRows.isEmpty)
+
+        let summaries = try db.fetchAccessionSummaries(
+            sample: taxonRows[0].sample,
+            taxId: taxonRows[0].taxId
+        )
+        #expect(!summaries.isEmpty, "Accession summaries should be populated for fixture data")
+        for s in summaries {
+            #expect(s.readCount > 0)
+            #expect(s.referenceLength > 0)
+            #expect(s.coveredBasePairs > 0)
+            #expect(s.coverageFraction > 0)
+        }
+    }
+
+    // MARK: - Multi-File Import (NAO-MGS 3.2 per-lane TSVs)
+
+    @Test
+    func importDirectoryOfPerLaneTSVsCreatesValidBundle() async throws {
+        let workspace = makeTemporaryDirectory(prefix: "naomgs-multifile-")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let header = "sample\tseq_id\taligner_taxid_lca\tquery_seq\tquery_qual\tprim_align_genome_id_all\tprim_align_ref_start\tprim_align_edit_distance\tquery_len\tprim_align_query_rc\tprim_align_pair_status"
+
+        // Create two per-lane TSV files (simulating NAO-MGS 3.2 output)
+        let lane1 = """
+        \(header)
+        SAMPLE_A_L001\tread1\t111\tACGTACGT\tIIIIIIII\tACC001\t10\t0\t8\tFalse\tCP
+        SAMPLE_A_L001\tread2\t111\tACGTACGA\tIIIIIIII\tACC001\t20\t1\t8\tFalse\tCP
+        SAMPLE_A_L001\tread3\t222\tACGTACGG\tIIIIIIII\tACC002\t30\t0\t8\tTrue\tCP
+        """
+        let lane2 = """
+        \(header)
+        SAMPLE_A_L002\tread4\t111\tACGTACGC\tIIIIIIII\tACC001\t40\t0\t8\tFalse\tUP
+        SAMPLE_A_L002\tread5\t333\tACGTACGT\tIIIIIIII\tACC003\t50\t2\t8\tFalse\tUP
+        """
+
+        let inputDir = workspace.appendingPathComponent("naomgs-output", isDirectory: true)
+        try FileManager.default.createDirectory(at: inputDir, withIntermediateDirectories: true)
+        try lane1.write(to: inputDir.appendingPathComponent("run.sample_L001_virus_hits.tsv"), atomically: true, encoding: .utf8)
+        try lane2.write(to: inputDir.appendingPathComponent("run.sample_L002_virus_hits.tsv"), atomically: true, encoding: .utf8)
+
+        let outputDirectory = workspace.appendingPathComponent("analyses", isDirectory: true)
+        let result = try await MetagenomicsImportService.importNaoMgs(
+            inputURL: inputDir,
+            outputDirectory: outputDirectory,
+            sampleName: "MULTIFILE_TEST",
+            fetchReferences: false
+        )
+
+        // All 5 rows from both files should be imported
+        #expect(result.totalHitReads == 5)
+
+        // Should have 3 distinct taxa: 111, 222, 333
+        #expect(result.taxonCount == 3)
+
+        // Verify SQLite database
+        let db = try NaoMgsDatabase(at: result.resultDirectory.appendingPathComponent("hits.sqlite"))
+        #expect(try db.totalHitCount(samples: nil) == 5)
+
+        // Sample names are normalized (lane suffix stripped)
+        let samples = try db.fetchSamples()
+        #expect(samples.count == 2, "Two lanes should produce two samples (SAMPLE_A_L001 → SAMPLE_A, etc.)")
+
+        let summaryRows = try db.fetchTaxonSummaryRows(samples: nil)
+        #expect(!summaryRows.isEmpty)
+    }
+
+    // MARK: - R2-Only Row Handling
+
+    @Test
+    func importR2OnlyRowProducesBamRecord() async throws {
+        let workspace = makeTemporaryDirectory(prefix: "naomgs-r2only-")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        // Row where R1 is NA (only R2 has data)
+        let tsvContent = """
+        sample\tseq_id\taligner_taxid_lca\tquery_seq\tquery_seq_rev\tquery_qual\tquery_qual_rev\tprim_align_genome_id_all\tprim_align_ref_start\tprim_align_ref_start_rev\tprim_align_edit_distance\tprim_align_edit_distance_rev\tquery_len\tquery_len_rev\tprim_align_query_rc\tprim_align_query_rc_rev\tprim_align_pair_status\tprim_align_best_alignment_score\tprim_align_best_alignment_score_rev\tprim_align_fragment_length
+        SAMPLE_R2\tread_r2only\t999\tNA\tGGCCTTAAGG\tNA\tIIIIIIIIII\tACC_X\tNA\t100\tNA\t1\tNA\t10\tNA\tFalse\tUP\tNA\t95\t0
+        SAMPLE_R2\tread_both\t999\tACGTACGT\tTTGGCCTT\tIIIIIIII\tJJJJJJJJ\tACC_X\t50\t80\t0\t0\t8\t8\tFalse\tTrue\tCP\t100\t99\t200
+        SAMPLE_R2\tread_r1only\t999\tAAAACCCC\tNA\tFFFFFFFF\tNA\tACC_X\t200\tNA\t0\tNA\t8\tNA\tFalse\tNA\tUP\t90\tNA\t0
+        """
+        let sourceFile = workspace.appendingPathComponent("virus_hits_final.tsv")
+        try tsvContent.write(to: sourceFile, atomically: true, encoding: .utf8)
+
+        let outputDirectory = workspace.appendingPathComponent("analyses", isDirectory: true)
+        let result = try await MetagenomicsImportService.importNaoMgs(
+            inputURL: sourceFile,
+            outputDirectory: outputDirectory,
+            sampleName: "R2ONLY_TEST",
+            fetchReferences: false
+        )
+
+        // All 3 rows should be imported (including the R2-only row)
+        #expect(result.totalHitReads == 3)
+
+        // Verify taxon summaries
+        let db = try NaoMgsDatabase(at: result.resultDirectory.appendingPathComponent("hits.sqlite"))
+        let summaries = try db.fetchTaxonSummaryRows(samples: nil)
+        #expect(summaries.count == 1, "Single taxon (999)")
+        #expect(summaries[0].hitCount == 3)
+
+        // Verify BAMs: 1 paired read (2 SAM records) + 2 singles = 4 total
+        if let samtoolsPath = SamtoolsLocator.locate() {
+            let bamsDir = result.resultDirectory.appendingPathComponent("bams")
+            let bamFiles = try FileManager.default.contentsOfDirectory(at: bamsDir, includingPropertiesForKeys: nil)
+                .filter { $0.pathExtension == "bam" }
+            #expect(!bamFiles.isEmpty)
+
+            var totalRecords = 0
+            for bam in bamFiles {
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: samtoolsPath)
+                proc.arguments = ["view", "-c", bam.path]
+                let pipe = Pipe()
+                proc.standardOutput = pipe
+                try proc.run()
+                proc.waitUntilExit()
+                let str = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                totalRecords += Int(str ?? "0") ?? 0
+            }
+
+            // 1 paired (2 records) + 1 R1-only (1 record) + 1 R2-only (1 record) = 4
+            #expect(totalRecords == 4, "Expected 4 BAM records (1 pair + 2 singles), got \(totalRecords)")
+        }
+    }
+
+    // MARK: - Streaming Accumulator Correctness
+
+    @Test
+    func streamingAccumulatorsMatchExpectedSummaryValues() async throws {
+        let workspace = makeTemporaryDirectory(prefix: "naomgs-accumulator-")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        // Controlled data: 2 taxa, known duplicates
+        let tsvContent = """
+        sample\tseq_id\taligner_taxid_lca\tquery_seq\tquery_qual\tprim_align_genome_id_all\tprim_align_ref_start\tprim_align_edit_distance\tquery_len\tprim_align_query_rc\tprim_align_pair_status
+        SAMPLE_A\tread1\t100\tACGTACGT\tIIIIIIII\tACC_A\t10\t0\t8\tFalse\tUP
+        SAMPLE_A\tread2\t100\tACGTACGT\tIIIIIIII\tACC_A\t10\t0\t8\tFalse\tUP
+        SAMPLE_A\tread3\t100\tACGTACGA\tIIIIIIII\tACC_B\t30\t1\t8\tTrue\tUP
+        SAMPLE_A\tread4\t200\tGGCCTTAA\tIIIIIIII\tACC_C\t50\t2\t8\tFalse\tUP
+        """
+        let sourceFile = workspace.appendingPathComponent("virus_hits_final.tsv")
+        try tsvContent.write(to: sourceFile, atomically: true, encoding: .utf8)
+
+        let outputDirectory = workspace.appendingPathComponent("analyses", isDirectory: true)
+        let result = try await MetagenomicsImportService.importNaoMgs(
+            inputURL: sourceFile,
+            outputDirectory: outputDirectory,
+            sampleName: "ACCUM_TEST",
+            fetchReferences: false
+        )
+
+        #expect(result.totalHitReads == 4)
+        #expect(result.taxonCount == 2)
+
+        let db = try NaoMgsDatabase(at: result.resultDirectory.appendingPathComponent("hits.sqlite"))
+        let rows = try db.fetchTaxonSummaryRows(samples: nil)
+
+        // Taxon 100: 3 hits, 2 unique (read1 and read2 are duplicates — same accession+position+strand+length)
+        let taxon100 = try #require(rows.first(where: { $0.taxId == 100 }))
+        #expect(taxon100.hitCount == 3)
+        #expect(taxon100.uniqueReadCount == 2, "read1 and read2 are PCR duplicates (same alignment signature)")
+        #expect(taxon100.pcrDuplicateCount == 1)
+        #expect(taxon100.accessionCount == 2, "Two accessions: ACC_A and ACC_B")
+
+        // Taxon 200: 1 hit, 1 unique
+        let taxon200 = try #require(rows.first(where: { $0.taxId == 200 }))
+        #expect(taxon200.hitCount == 1)
+        #expect(taxon200.uniqueReadCount == 1)
+        #expect(taxon200.pcrDuplicateCount == 0)
+        #expect(taxon200.accessionCount == 1)
+
+        // Verify accession summaries for taxon 100
+        let accSummaries = try db.fetchAccessionSummaries(sample: "SAMPLE_A", taxId: 100)
+        #expect(accSummaries.count == 2)
+        let accA = try #require(accSummaries.first(where: { $0.accession == "ACC_A" }))
+        #expect(accA.readCount == 2, "ACC_A has 2 total reads")
+        #expect(accA.uniqueReadCount == 1, "Both reads are duplicates")
+        let accB = try #require(accSummaries.first(where: { $0.accession == "ACC_B" }))
+        #expect(accB.readCount == 1)
+        #expect(accB.uniqueReadCount == 1)
     }
 
     // MARK: - Error Handling

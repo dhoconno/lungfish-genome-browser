@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import SQLite3
 import Testing
 import LungfishIO
 
@@ -296,5 +297,189 @@ struct NaoMgsDatabaseTests {
         )
 
         #expect(reads.count == 1, "Should respect maxReads limit of 1")
+    }
+
+    // MARK: - Accession Summary Coverage Pre-Computation
+
+    @Test
+    func accessionSummariesHaveCoverageValues() throws {
+        let hits = makeSyntheticHits()
+        let url = temporaryDatabaseURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let db = try NaoMgsDatabase.create(at: url, hits: hits)
+        let summaries = try db.fetchAccessionSummaries(sample: "sample_A", taxId: 2697049)
+
+        #expect(summaries.count == 3)
+        for summary in summaries {
+            #expect(summary.referenceLength > 0, "Reference length should be positive")
+            #expect(summary.coveredBasePairs > 0, "Covered base pairs should be positive for hits with known positions")
+            #expect(summary.coverageFraction > 0, "Coverage fraction should be positive")
+            #expect(summary.coverageFraction <= 1.0, "Coverage fraction should not exceed 1.0")
+        }
+
+        // NC_009334.1 has 3 reads at positions 0, 200, 400 with length 150 each.
+        // Covered: 0..150 + 200..350 + 400..550 = 450 bp covered.
+        let acc3 = summaries.first { $0.accession == "NC_009334.1" }!
+        #expect(acc3.coveredBasePairs == 450, "3 non-overlapping reads of 150bp = 450bp covered")
+    }
+
+    @Test
+    func accessionSummariesHandleOverlappingReads() throws {
+        // Create hits with overlapping positions to test interval merging
+        var hits: [NaoMgsVirusHit] = []
+        for i in 0..<3 {
+            hits.append(NaoMgsVirusHit(
+                sample: "overlap_sample",
+                seqId: "read_\(i)",
+                taxId: 100,
+                bestAlignmentScore: 100.0,
+                cigar: "100M",
+                queryStart: 0,
+                queryEnd: 100,
+                refStart: i * 50,  // 0, 50, 100 — overlapping by 50bp each
+                refEnd: i * 50 + 100,
+                readSequence: String(repeating: "A", count: 100),
+                readQuality: String(repeating: "I", count: 100),
+                subjectSeqId: "REF_001",
+                subjectTitle: "Overlap Virus",
+                bitScore: 200.0,
+                eValue: 1e-40,
+                percentIdentity: 99.0,
+                editDistance: 1,
+                fragmentLength: 200,
+                isReverseComplement: false,
+                pairStatus: "CP",
+                queryLength: 100
+            ))
+        }
+
+        let url = temporaryDatabaseURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let db = try NaoMgsDatabase.create(at: url, hits: hits)
+        let summaries = try db.fetchAccessionSummaries(sample: "overlap_sample", taxId: 100)
+
+        #expect(summaries.count == 1)
+        // Reads at 0..100, 50..150, 100..200 — merged interval 0..200 = 200bp
+        #expect(summaries[0].coveredBasePairs == 200, "Overlapping reads should be merged: 0-200 = 200bp")
+    }
+
+    // MARK: - Virus Hits Purge
+
+    @Test
+    func deleteVirusHitsAndVacuumPurgesRows() throws {
+        let hits = makeSyntheticHits()
+        let url = temporaryDatabaseURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        _ = try NaoMgsDatabase.create(at: url, hits: hits)
+
+        // Open read-write and purge
+        let rwDB = try NaoMgsDatabase.openReadWrite(at: url)
+        try rwDB.deleteVirusHitsAndVacuum()
+
+        // Re-open read-only and verify
+        let db = try NaoMgsDatabase(at: url)
+
+        // totalHitCount uses taxon_summaries, should still report 24
+        let count = try db.totalHitCount()
+        #expect(count == 24, "totalHitCount should still report 24 (from taxon_summaries)")
+
+        // fetchSamples uses taxon_summaries, should still work
+        let samples = try db.fetchSamples()
+        #expect(samples.count == 2, "fetchSamples should still return 2 samples")
+        #expect(samples[0].hitCount == 12)
+
+        // fetchAccessionSummaries uses accession_summaries, should still work
+        let summaries = try db.fetchAccessionSummaries(sample: "sample_A", taxId: 2697049)
+        #expect(summaries.count == 3, "Accession summaries should survive purge")
+
+        // fetchReadsForAccession queries virus_hits directly, should return empty
+        let reads = try db.fetchReadsForAccession(
+            sample: "sample_A", taxId: 2697049, accession: "NC_009334.1"
+        )
+        #expect(reads.isEmpty, "Reads should be empty after virus_hits purge")
+
+        // Taxon summary rows should still work
+        let taxonRows = try db.fetchTaxonSummaryRows()
+        #expect(taxonRows.count == 4, "Taxon summary rows should survive purge")
+    }
+
+    @Test
+    func databaseShrinksSizeAfterPurge() throws {
+        // Use larger hits (1000 reads with realistic sequences) so the purge
+        // produces a measurable size reduction.
+        var hits: [NaoMgsVirusHit] = []
+        for i in 0..<1000 {
+            hits.append(NaoMgsVirusHit(
+                sample: "bulk_sample",
+                seqId: "read_\(i)",
+                taxId: 12345,
+                bestAlignmentScore: 100.0,
+                cigar: "150M",
+                queryStart: 0,
+                queryEnd: 150,
+                refStart: i * 10,
+                refEnd: i * 10 + 150,
+                readSequence: String(repeating: "ACGTACGT", count: 19),  // 152 chars
+                readQuality: String(repeating: "IIIIIII!", count: 19),
+                subjectSeqId: "ACC_\(i % 5)",
+                subjectTitle: "Test Virus \(i % 5)",
+                bitScore: 200.0,
+                eValue: 1e-40,
+                percentIdentity: 98.0,
+                editDistance: 3,
+                fragmentLength: 300,
+                isReverseComplement: i % 2 == 0,
+                pairStatus: "CP",
+                queryLength: 150
+            ))
+        }
+
+        let url = temporaryDatabaseURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        _ = try NaoMgsDatabase.create(at: url, hits: hits)
+
+        let sizeBefore = try FileManager.default.attributesOfItem(atPath: url.path)[.size] as! UInt64
+
+        // Open, purge, then close the connection so VACUUM commits to disk
+        do {
+            let rwDB = try NaoMgsDatabase.openReadWrite(at: url)
+            try rwDB.deleteVirusHitsAndVacuum()
+            // rwDB deinit closes the connection
+        }
+
+        let sizeAfter = try FileManager.default.attributesOfItem(atPath: url.path)[.size] as! UInt64
+        #expect(sizeAfter < sizeBefore, "Database should shrink after purge (was \(sizeBefore), now \(sizeAfter))")
+    }
+
+    // MARK: - Schema Migration
+
+    @Test
+    func openOldDatabaseTriggersAccessionSummaryMigration() throws {
+        // Create a database, then remove accession_summaries to simulate an old schema
+        let hits = makeSyntheticHits()
+        let url = temporaryDatabaseURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        _ = try NaoMgsDatabase.create(at: url, hits: hits)
+
+        // Drop accession_summaries to simulate pre-migration database
+        do {
+            var db: OpaquePointer?
+            let rc = sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil)
+            #expect(rc == SQLITE_OK)
+            sqlite3_exec(db, "DROP TABLE accession_summaries", nil, nil, nil)
+            sqlite3_close(db)
+        }
+
+        // Re-open — migration should recreate and populate accession_summaries
+        let db = try NaoMgsDatabase(at: url)
+        let summaries = try db.fetchAccessionSummaries(sample: "sample_A", taxId: 2697049)
+        #expect(summaries.count == 3, "Migration should recreate accession_summaries from virus_hits")
+        #expect(summaries[0].readCount > 0, "Migrated summaries should have read counts")
+        #expect(summaries[0].coveredBasePairs > 0, "Migrated summaries should have coverage")
     }
 }

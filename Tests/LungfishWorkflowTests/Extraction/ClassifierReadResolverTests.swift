@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import XCTest
+import SQLite3
 @testable import LungfishWorkflow
 
 final class ClassifierReadResolverTests: XCTestCase {
@@ -118,11 +119,68 @@ final class ClassifierReadResolverTests: XCTestCase {
             return (resultPath: root.appendingPathComponent("taxtriage.sqlite"), expectedBAM: bam)
 
         case .naomgs:
+            let dbURL = root.appendingPathComponent("naomgs.sqlite")
+            var db: OpaquePointer?
+            guard sqlite3_open_v2(
+                dbURL.path,
+                &db,
+                SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
+                nil
+            ) == SQLITE_OK else {
+                XCTFail("Failed to create NAO-MGS test database")
+                throw NSError(domain: "ClassifierReadResolverTests", code: 1)
+            }
+            defer { sqlite3_close(db) }
+
+            sqlite3_exec(
+                db,
+                """
+                CREATE TABLE taxon_summaries (
+                    sample TEXT NOT NULL,
+                    tax_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    hit_count INTEGER NOT NULL,
+                    unique_read_count INTEGER NOT NULL,
+                    avg_identity REAL NOT NULL,
+                    avg_bit_score REAL NOT NULL,
+                    avg_edit_distance REAL NOT NULL,
+                    pcr_duplicate_count INTEGER NOT NULL,
+                    accession_count INTEGER NOT NULL,
+                    top_accessions_json TEXT NOT NULL,
+                    bam_path TEXT,
+                    bam_index_path TEXT,
+                    PRIMARY KEY (sample, tax_id)
+                );
+                """,
+                nil,
+                nil,
+                nil
+            )
+
             let subdir = root.appendingPathComponent("bams")
             try fm.createDirectory(at: subdir, withIntermediateDirectories: true)
-            let bam = subdir.appendingPathComponent("\(sampleId).sorted.bam")
+            let bam = subdir.appendingPathComponent("\(sampleId).bam")
             fm.createFile(atPath: bam.path, contents: Data([0x1F, 0x8B]))
-            return (resultPath: root.appendingPathComponent("naomgs.sqlite"), expectedBAM: bam)
+            sqlite3_exec(
+                db,
+                """
+                INSERT INTO taxon_summaries (
+                    sample, tax_id, name, hit_count, unique_read_count,
+                    avg_identity, avg_bit_score, avg_edit_distance,
+                    pcr_duplicate_count, accession_count, top_accessions_json,
+                    bam_path, bam_index_path
+                ) VALUES (
+                    '\(sampleId)', 123, 'Test virus', 1, 1,
+                    99.0, 100.0, 0.0,
+                    0, 1, '["ACC001"]',
+                    'bams/\(sampleId).bam', 'bams/\(sampleId).bam.bai'
+                );
+                """,
+                nil,
+                nil,
+                nil
+            )
+            return (resultPath: dbURL, expectedBAM: bam)
 
         case .nvd:
             let bam = root.appendingPathComponent("\(sampleId).bam")

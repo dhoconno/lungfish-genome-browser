@@ -1054,7 +1054,7 @@ public class SidebarViewController: NSViewController {
 
             // Scan for NAO-MGS result bundles at this directory level.
             // Unlike classification/esviritu/taxtriage results which live inside
-            // FASTQ bundles, NAO-MGS bundles are standalone in Imports/.
+            // FASTQ bundles, NAO-MGS bundles are standalone (in Analyses/ or legacy Imports/).
             let naoMgsItems = collectNaoMgsResults(in: url)
             item.children.append(contentsOf: naoMgsItems)
 

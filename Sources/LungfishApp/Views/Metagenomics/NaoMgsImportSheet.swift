@@ -11,7 +11,7 @@ import LungfishIO
 /// metagenomic surveillance workflow.
 ///
 /// The dialog lets the user browse to a results directory (or a single
-/// `virus_hits_final.tsv.gz` file), previews what was found, and then
+/// `virus_hits_final.tsv.gz` file), validates the header, and then
 /// triggers import into the current project.
 ///
 /// ## Layout
@@ -25,10 +25,10 @@ import LungfishIO
 /// | Results Location                                    |
 /// | [  /path/to/results/              ] [Browse...]     |
 /// +----------------------------------------------------+
-/// | Preview                                             |
-/// |   Virus hits:     1,234                             |
-/// |   Distinct taxa:  42                                |
+/// | Validation                                          |
+/// |   Valid NAO-MGS results                             |
 /// |   Source file:     virus_hits_final.tsv.gz           |
+/// |   8 per-lane files                                  |
 /// +----------------------------------------------------+
 /// | Options                                             |
 /// |   Min % identity: [---|----90--------]  90%         |
@@ -44,6 +44,13 @@ import LungfishIO
 /// - Dataset name top-right
 /// - 520x480 frame
 /// - "Run" button (never "Import", "Go", etc.)
+///
+/// ## Performance
+///
+/// Validation reads only the first line (header) of the TSV file.
+/// For gzip-compressed files a short-lived `gzip -dc` process reads a
+/// single 8 KB chunk and is immediately terminated, so even multi-GB
+/// compressed files validate in under a second with negligible RAM.
 struct NaoMgsImportSheet: View {
 
     /// The FASTQ bundle URL that triggered this import (for context display).
@@ -58,13 +65,12 @@ struct NaoMgsImportSheet: View {
     // MARK: - State
 
     @State private var selectedPath: URL? = nil
-    @State private var isScanning: Bool = false
-    @State private var linesScanned: Int = 0
+    @State private var isValidating: Bool = false
     @State private var scanError: String? = nil
 
-    // Preview data from scanning
-    @State private var hitCount: Int? = nil
-    @State private var taxonCount: Int? = nil
+    // Lightweight validation results (no full parse)
+    @State private var headerValid: Bool = false
+    @State private var fileCount: Int = 0
     @State private var sourceFileName: String? = nil
 
     // MARK: - Computed Properties
@@ -81,7 +87,7 @@ struct NaoMgsImportSheet: View {
 
     /// Whether the Run button should be enabled.
     private var canRun: Bool {
-        selectedPath != nil && !isScanning && hitCount != nil
+        selectedPath != nil && !isValidating && headerValid
     }
 
     // MARK: - Body
@@ -100,7 +106,7 @@ struct NaoMgsImportSheet: View {
 
                     Divider()
 
-                    // Preview
+                    // Validation status
                     previewSection
                 }
                 .padding(.horizontal, 20)
@@ -177,27 +183,21 @@ struct NaoMgsImportSheet: View {
         }
     }
 
-    // MARK: - Preview
+    // MARK: - Preview / Validation
 
     private var previewSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Preview")
+            Text("Validation")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
 
-            if isScanning {
+            if isValidating {
                 HStack(spacing: 8) {
                     ProgressView()
                         .controlSize(.small)
-                    if linesScanned > 0 {
-                        Text("Scanning\u{2026} \(formatNumber(linesScanned)) lines")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text("Scanning results\u{2026}")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                    }
+                    Text("Validating\u{2026}")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
                 }
             } else if let error = scanError {
                 HStack(alignment: .top, spacing: 6) {
@@ -214,16 +214,27 @@ struct NaoMgsImportSheet: View {
                     RoundedRectangle(cornerRadius: 6)
                         .fill(Color.yellow.opacity(0.1))
                 )
-            } else if let hits = hitCount, let taxa = taxonCount {
+            } else if headerValid {
                 VStack(alignment: .leading, spacing: 4) {
-                    previewRow(label: "Virus hits", value: formatNumber(hits))
-                    previewRow(label: "Distinct taxa", value: String(taxa))
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                            .font(.system(size: 12))
+                        Text("Valid NAO-MGS results")
+                            .font(.system(size: 12, weight: .medium))
+                    }
                     if let source = sourceFileName {
                         previewRow(label: "Source file", value: source)
                     }
+                    if fileCount > 1 {
+                        previewRow(
+                            label: "Files found",
+                            value: "\(fileCount) per-lane files"
+                        )
+                    }
                 }
             } else {
-                Text("Select a results directory to preview.")
+                Text("Select a results directory to validate.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -285,78 +296,91 @@ struct NaoMgsImportSheet: View {
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             selectedPath = url
-            scanResults(at: url)
+            validateResults(at: url)
         }
     }
 
-    /// Scans the selected path for NAO-MGS results and populates preview data.
-    private func scanResults(at url: URL) {
-        isScanning = true
+    /// Validates the selected path by reading only the TSV header line.
+    ///
+    /// For a single file, reads the first line and checks for required columns.
+    /// For a directory, scans for `*virus_hits*.tsv*` files, validates the
+    /// header of the first match, and reports the total count.
+    private func validateResults(at url: URL) {
+        isValidating = true
         scanError = nil
-        hitCount = nil
-        taxonCount = nil
+        headerValid = false
+        fileCount = 0
         sourceFileName = nil
-        linesScanned = 0
 
         Task {
             do {
                 let parser = NaoMgsResultParser()
+                let fm = FileManager.default
 
                 var isDir: ObjCBool = false
-                FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+                fm.fileExists(atPath: url.path, isDirectory: &isDir)
 
-                let result: NaoMgsResult
                 if isDir.boolValue {
-                    result = try await parser.loadResults(from: url) { count in
-                        Task { @MainActor in
-                            self.linesScanned = count
-                        }
+                    // Directory: scan for virus_hits TSV files
+                    let matchingFiles = findVirusHitsFiles(in: url)
+
+                    guard let firstFile = matchingFiles.first else {
+                        throw NaoMgsError.missingResultFiles(url)
+                    }
+
+                    _ = try await parser.validateHeader(at: firstFile)
+
+                    await MainActor.run {
+                        headerValid = true
+                        fileCount = matchingFiles.count
+                        sourceFileName = firstFile.lastPathComponent
+                        isValidating = false
                     }
                 } else {
-                    let hits = try await parser.parseVirusHits(at: url) { count in
-                        Task { @MainActor in
-                            self.linesScanned = count
-                        }
-                    }
-                    let summaries = parser.aggregateByTaxon(hits)
-                    result = NaoMgsResult(
-                        virusHits: hits,
-                        taxonSummaries: summaries,
-                        totalHitReads: hits.count,
-                        sampleName: hits.first?.sample ?? url.deletingPathExtension()
-                            .deletingPathExtension().lastPathComponent,
-                        sourceDirectory: url.deletingLastPathComponent(),
-                        virusHitsFile: url
-                    )
-                }
+                    // Single file: validate header directly
+                    _ = try await parser.validateHeader(at: url)
 
-                await MainActor.run {
-                    hitCount = result.totalHitReads
-                    taxonCount = result.taxonSummaries.count
-                    sourceFileName = result.virusHitsFile.lastPathComponent
-                    isScanning = false
+                    await MainActor.run {
+                        headerValid = true
+                        fileCount = 1
+                        sourceFileName = url.lastPathComponent
+                        isValidating = false
+                    }
                 }
             } catch {
                 await MainActor.run {
                     scanError = error.localizedDescription
-                    isScanning = false
+                    isValidating = false
                 }
             }
         }
+    }
+
+    /// Scans a directory for NAO-MGS virus-hits TSV files.
+    ///
+    /// Matches both the standard `virus_hits_final.tsv.gz` name and
+    /// per-lane patterns like `*_virus_hits.tsv.gz`.
+    private func findVirusHitsFiles(in directory: URL) -> [URL] {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ) else {
+            return []
+        }
+
+        return contents
+            .filter { url in
+                let name = url.lastPathComponent.lowercased()
+                return name.contains("virus_hits")
+                    && (name.hasSuffix(".tsv") || name.hasSuffix(".tsv.gz"))
+            }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
     /// Triggers the import callback with the current configuration.
     private func performImport() {
         guard let url = selectedPath else { return }
         onImport?(url)
-    }
-
-    // MARK: - Formatting
-
-    /// Formats an integer with thousands separators.
-    private func formatNumber(_ value: Int) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        return formatter.string(from: NSNumber(value: value)) ?? String(value)
     }
 }

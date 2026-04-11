@@ -350,7 +350,7 @@ public final class NaoMgsResultParser: @unchecked Sendable {
     /// Supports both the original NAO-MGS column names (v1.x with `taxid`,
     /// `sseqid`, `cigar`, etc.) and the current format (v2.x with
     /// `aligner_taxid_lca`, `prim_align_genome_id_all`, etc.).
-    private struct ColumnMap {
+    internal struct ColumnMap {
         let sample: Int
         let seqId: Int
         let taxId: Int
@@ -369,10 +369,17 @@ public final class NaoMgsResultParser: @unchecked Sendable {
         let percentIdentity: Int?
         // v2 columns
         let queryLen: Int?
+        let queryLenRev: Int?
         let queryRC: Int?
+        let queryRCRev: Int?
         let editDistance: Int?
+        let editDistanceRev: Int?
         let fragmentLength: Int?
         let pairStatus: Int?
+        let refStartRev: Int?
+        let readSequenceRev: Int?
+        let readQualityRev: Int?
+        let bestAlignmentScoreRev: Int?
 
         init(headers: [String]) throws {
             var map: [String: Int] = [:]
@@ -433,14 +440,123 @@ public final class NaoMgsResultParser: @unchecked Sendable {
 
             // v2-specific columns
             self.queryLen = map["query_len"]
+            self.queryLenRev = map["query_len_rev"]
             self.queryRC = map["prim_align_query_rc"]
+            self.queryRCRev = map["prim_align_query_rc_rev"]
             self.editDistance = map["prim_align_edit_distance"]
+            self.editDistanceRev = map["prim_align_edit_distance_rev"]
             self.fragmentLength = map["prim_align_fragment_length"]
             self.pairStatus = map["prim_align_pair_status"]
+            self.refStartRev = map["prim_align_ref_start_rev"]
+            self.readSequenceRev = map["query_seq_rev"]
+            self.readQualityRev = map["query_qual_rev"]
+            self.bestAlignmentScoreRev = map["prim_align_best_alignment_score_rev"]
         }
     }
 
     public init() {}
+
+    // MARK: - Header Validation
+
+    /// Validates the header of a NAO-MGS TSV file without parsing any data rows.
+    ///
+    /// Reads only the first non-empty line from the file, splits it as
+    /// tab-separated headers, and attempts to build a ``ColumnMap``.  If the
+    /// required columns (`seq_id`, `sample`, and a taxonomy column) are present
+    /// the method returns `true`; otherwise it throws ``NaoMgsError/invalidHeader(_:)``.
+    ///
+    /// For gzip-compressed files the method spawns a short-lived `gzip -dc`
+    /// process and reads only the first line before terminating the pipe, so
+    /// memory usage is negligible regardless of file size.
+    ///
+    /// - Parameter url: Path to a `.tsv` or `.tsv.gz` virus-hits file.
+    /// - Returns: `true` when the header contains all required columns.
+    /// - Throws: ``NaoMgsError/fileNotFound(_:)`` or ``NaoMgsError/invalidHeader(_:)``.
+    public func validateHeader(at url: URL) async throws -> Bool {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw NaoMgsError.fileNotFound(url)
+        }
+
+        let headerLine: String
+
+        if url.isGzipCompressed {
+            // Use gzip -dc piped through a single read so we never decompress
+            // more than a few kilobytes, even for multi-GB files.
+            headerLine = try await readFirstLineGzip(at: url)
+        } else {
+            // Plain text -- read only the first non-empty line via URL.lines.
+            guard let line = try await url.lines.first(where: {
+                !$0.trimmingCharacters(in: .whitespaces).isEmpty
+            }) else {
+                throw NaoMgsError.invalidHeader("File is empty")
+            }
+            headerLine = line
+        }
+
+        let headers = headerLine.split(separator: "\t", omittingEmptySubsequences: false)
+            .map { String($0) }
+        _ = try ColumnMap(headers: headers)
+        return true
+    }
+
+    /// Reads only the first line from a gzip-compressed file using `gzip -dc`.
+    ///
+    /// The process is terminated immediately after the first newline is read,
+    /// so memory and CPU usage are minimal regardless of the compressed file size.
+    private func readFirstLineGzip(at url: URL) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/gzip")
+                process.arguments = ["-dc", url.path]
+
+                let pipe = Pipe()
+                process.standardOutput = pipe
+                process.standardError = FileHandle.nullDevice
+
+                do {
+                    try process.run()
+                } catch {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                let handle = pipe.fileHandleForReading
+                var buffer = Data()
+                let chunkSize = 8192
+
+                // Read until we find a newline
+                while true {
+                    let chunk = handle.readData(ofLength: chunkSize)
+                    if chunk.isEmpty { break }
+                    buffer.append(chunk)
+                    if buffer.contains(UInt8(ascii: "\n")) { break }
+                }
+
+                process.terminate()
+                try? handle.close()
+
+                guard let raw = String(data: buffer, encoding: .utf8) else {
+                    continuation.resume(
+                        throwing: NaoMgsError.invalidHeader("Could not decode header as UTF-8")
+                    )
+                    return
+                }
+
+                let firstLine = raw.components(separatedBy: .newlines)
+                    .first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
+                    ?? ""
+
+                if firstLine.isEmpty {
+                    continuation.resume(
+                        throwing: NaoMgsError.invalidHeader("File is empty or header line is blank")
+                    )
+                } else {
+                    continuation.resume(returning: firstLine)
+                }
+            }
+        }
+    }
 
     // MARK: - Parsing
 
@@ -508,29 +624,34 @@ public final class NaoMgsResultParser: @unchecked Sendable {
             }
 
             // For v2 format, synthesize a CIGAR from query_len if no explicit cigar column
-            var cigar = stringField(fields, map.cigar)
+            var cigar = naoStringField(fields, map.cigar)
             if cigar.isEmpty {
-                let queryLen = intField(fields, map.queryLen)
+                let queryLen = naoIntField(fields, map.queryLen)
                 if queryLen > 0 {
                     cigar = "\(queryLen)M"  // Simple full-length match
                 }
             }
 
             // For v2 format, derive alignment score from available fields
-            let alignScore = doubleField(fields, map.bestAlignmentScore)
+            let alignScore = naoDoubleField(fields, map.bestAlignmentScore)
             // Use alignment score as proxy for bit score if no explicit bitscore column
-            let bitScore = doubleField(fields, map.bitScore)
+            let bitScore = naoDoubleField(fields, map.bitScore)
             let effectiveBitScore = bitScore > 0 ? bitScore : alignScore
 
             // Parse v2 fields
-            let editDist = intField(fields, map.editDistance)
-            let fragLen = intField(fields, map.fragmentLength)
-            let rcStr = stringField(fields, map.queryRC).lowercased()
+            let editDist = naoIntField(fields, map.editDistance)
+            let fragLen = naoIntField(fields, map.fragmentLength)
+            let rcStr = naoStringField(fields, map.queryRC).lowercased()
             let isRC = rcStr == "true" || rcStr == "1"
-            let pairStat = stringField(fields, map.pairStatus)
-            let qLen = intField(fields, map.queryLen)
+            let pairStat = naoStringField(fields, map.pairStatus)
+            let qLen = naoIntField(fields, map.queryLen)
 
-            let readSeq = stringField(fields, map.readSequence)
+            let readSeq = naoStringField(fields, map.readSequence)
+
+            // Skip rows with no alignment data — NAO-MGS outputs "NA" for
+            // reads that didn't pass alignment filters.
+            if readSeq.isEmpty || readSeq == "NA" { continue }
+            if cigar.isEmpty { continue }
 
             let hit = NaoMgsVirusHit(
                 sample: fields[map.sample],
@@ -538,19 +659,19 @@ public final class NaoMgsResultParser: @unchecked Sendable {
                 taxId: taxId,
                 bestAlignmentScore: alignScore,
                 cigar: cigar,
-                queryStart: intField(fields, map.queryStart),
-                queryEnd: intField(fields, map.queryEnd),
-                refStart: intField(fields, map.refStart),
-                refEnd: intField(fields, map.refEnd),
+                queryStart: naoIntField(fields, map.queryStart),
+                queryEnd: naoIntField(fields, map.queryEnd),
+                refStart: naoIntField(fields, map.refStart),
+                refEnd: naoIntField(fields, map.refEnd),
                 readSequence: readSeq,
-                readQuality: stringField(fields, map.readQuality),
-                subjectSeqId: stringField(fields, map.subjectSeqId),
-                subjectTitle: stringField(fields, map.subjectTitle),
+                readQuality: naoStringField(fields, map.readQuality),
+                subjectSeqId: naoStringField(fields, map.subjectSeqId),
+                subjectTitle: naoStringField(fields, map.subjectTitle),
                 bitScore: effectiveBitScore,
-                eValue: doubleField(fields, map.eValue),
+                eValue: naoDoubleField(fields, map.eValue),
                 percentIdentity: {
                     // v1 format has explicit pident column; v2 derives from edit distance
-                    let pident = doubleField(fields, map.percentIdentity)
+                    let pident = naoDoubleField(fields, map.percentIdentity)
                     if pident > 0 { return pident }
                     // Derive identity from edit distance: identity = (1 - editDist/queryLen) * 100
                     let effectiveLen = qLen > 0 ? qLen : readSeq.count
@@ -701,23 +822,24 @@ public final class NaoMgsResultParser: @unchecked Sendable {
         }
     }
 
-    // MARK: - Field Helpers
+}
 
-    /// Safely extracts a string field from the row, returning empty string if missing.
-    private func stringField(_ fields: [String], _ index: Int?) -> String {
-        guard let idx = index, idx < fields.count else { return "" }
-        return fields[idx]
-    }
+// MARK: - Field Helpers (module-internal, used by NaoMgsDatabase.createStreaming)
 
-    /// Safely extracts an integer field, returning 0 if missing or unparseable.
-    private func intField(_ fields: [String], _ index: Int?) -> Int {
-        guard let idx = index, idx < fields.count else { return 0 }
-        return Int(fields[idx]) ?? 0
-    }
+/// Safely extracts a string field from the row, returning empty string if missing.
+func naoStringField(_ fields: [String], _ index: Int?) -> String {
+    guard let idx = index, idx < fields.count else { return "" }
+    return fields[idx]
+}
 
-    /// Safely extracts a double field, returning 0.0 if missing or unparseable.
-    private func doubleField(_ fields: [String], _ index: Int?) -> Double {
-        guard let idx = index, idx < fields.count else { return 0.0 }
-        return Double(fields[idx]) ?? 0.0
-    }
+/// Safely extracts an integer field, returning 0 if missing or unparseable.
+func naoIntField(_ fields: [String], _ index: Int?) -> Int {
+    guard let idx = index, idx < fields.count else { return 0 }
+    return Int(fields[idx]) ?? 0
+}
+
+/// Safely extracts a double field, returning 0.0 if missing or unparseable.
+func naoDoubleField(_ fields: [String], _ index: Int?) -> Double {
+    guard let idx = index, idx < fields.count else { return 0.0 }
+    return Double(fields[idx]) ?? 0.0
 }

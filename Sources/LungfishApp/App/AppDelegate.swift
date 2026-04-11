@@ -1489,16 +1489,27 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             return
         }
 
-        let importsDir = projectURL.appendingPathComponent("Imports", isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: importsDir, withIntermediateDirectories: true)
-        } catch {
-            showAlert(title: "Import Failed", message: "Could not prepare Imports folder: \(error.localizedDescription)")
-            return
+        // NAO-MGS results go to Analyses/ (they are analysis results, not raw imports)
+        let outputDir: URL
+        if kind == .naomgs {
+            do {
+                outputDir = try AnalysesFolder.url(for: projectURL)
+            } catch {
+                showAlert(title: "Import Failed", message: "Could not prepare Analyses folder: \(error.localizedDescription)")
+                return
+            }
+        } else {
+            outputDir = projectURL.appendingPathComponent("Imports", isDirectory: true)
+            do {
+                try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+            } catch {
+                showAlert(title: "Import Failed", message: "Could not prepare Imports folder: \(error.localizedDescription)")
+                return
+            }
         }
 
         let importSubcommand = (kind == .naomgs) ? "nao-mgs" : kind.rawValue
-        var cliArgs = [importSubcommand, url.path, "--output-dir", importsDir.path]
+        var cliArgs = [importSubcommand, url.path, "--output-dir", outputDir.path]
         if let preferredName,
            !preferredName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             cliArgs.append(contentsOf: ["--name", preferredName])
@@ -1523,7 +1534,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 let result = try await MetagenomicsImportHelperClient.importViaCLI(
                     kind: kind,
                     inputURL: url,
-                    outputDirectory: importsDir,
+                    outputDirectory: outputDir,
                     preferredName: preferredName,
                     naoMgsOptions: naoMgsOptions
                 ) { progress, message in

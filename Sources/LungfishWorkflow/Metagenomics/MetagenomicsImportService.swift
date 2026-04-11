@@ -426,37 +426,18 @@ public enum MetagenomicsImportService {
         }
 
         try ensureDirectoryExists(outputDirectory)
-        let parser = NaoMgsResultParser()
 
-        progress?(0.05, "Parsing NAO-MGS virus hits...")
-        let loaded = try await parser.loadResults(from: inputURL, sampleName: sampleName)
+        // Resolve TSV file(s) — supports single monolithic file or folder of per-lane TSVs
+        let virusHitsFiles = try resolveVirusHitsTSVs(inputURL: inputURL)
 
-        let identityFloor = max(0, min(100, minIdentity))
-        let filteredHits: [NaoMgsVirusHit]
-        if identityFloor > 0 {
-            filteredHits = loaded.virusHits.filter { $0.percentIdentity >= identityFloor }
-        } else {
-            filteredHits = loaded.virusHits
-        }
-
-        let normalizedSampleName = normalizeSampleName(
-            explicitName: sampleName,
-            fallback: loaded.sampleName
+        // Use a temporary sample name for directory creation; will be updated after streaming.
+        let preliminarySampleName = normalizeSampleName(
+            explicitName: sampleName ?? preferredName,
+            fallback: inputURL.deletingPathExtension().deletingPathExtension().lastPathComponent
         )
-        let summaries = parser.aggregateByTaxon(filteredHits)
-
-        let result = NaoMgsResult(
-            virusHits: filteredHits,
-            taxonSummaries: summaries,
-            totalHitReads: filteredHits.count,
-            sampleName: normalizedSampleName,
-            sourceDirectory: loaded.sourceDirectory,
-            virusHitsFile: loaded.virusHitsFile
-        )
-
         let baseName = normalizedBaseName(
-            preferredName: preferredName ?? normalizedSampleName,
-            fallback: normalizedSampleName
+            preferredName: preferredName ?? preliminarySampleName,
+            fallback: preliminarySampleName
         )
         let resultDirectory = makeUniqueResultDirectory(
             prefix: MetagenomicsImportKind.naomgs.directoryPrefix,
@@ -468,41 +449,49 @@ public enum MetagenomicsImportService {
         defer { OperationMarker.clearInProgress(resultDirectory) }
 
         do {
-        progress?(0.15, "Creating NAO-MGS database\u{2026}")
+
+        // Stream from TSV directly into SQLite — O(1) memory per row.
+        progress?(0.05, "Streaming NAO-MGS virus hits into database\u{2026}")
         let hitsDBURL = resultDirectory.appendingPathComponent("hits.sqlite")
-        try NaoMgsDatabase.create(at: hitsDBURL, hits: filteredHits) { dbProgress, dbMessage in
-            progress?(0.15 + dbProgress * 0.40, dbMessage)
+        let streamResult = try await NaoMgsDatabase.createStreaming(
+            at: hitsDBURL,
+            from: virusHitsFiles,
+            sampleNameOverride: sampleName,
+            minIdentity: minIdentity
+        ) { dbProgress, dbMessage in
+            // Map streaming progress (0..1) into the 5-70% range
+            progress?(0.05 + dbProgress * 0.65, dbMessage)
         }
 
+        let normalizedSampleName = normalizeSampleName(
+            explicitName: sampleName,
+            fallback: streamResult.sampleName
+        )
+
         // Open a single read-write connection for all post-creation operations.
-        // Multiple connections cause SQLite locking errors on large imports.
         let rwDB = try NaoMgsDatabase.openReadWrite(at: hitsDBURL)
 
         // Resolve taxon names from local NCBI Taxonomy database.
-        progress?(0.56, "Resolving taxon names\u{2026}")
+        progress?(0.70, "Resolving taxon names\u{2026}")
         do {
             let unresolvedIds = try rwDB.taxonIdsNeedingNames()
             if !unresolvedIds.isEmpty {
-                // Try to find installed NCBI Taxonomy database
                 let registry = MetagenomicsDatabaseRegistry.shared
                 var taxonomyPath: URL?
 
-                // Check if taxonomy DB is already installed
                 if let installed = try await registry.installedDatabase(tool: .ncbiTaxonomy),
                    let path = installed.path {
                     taxonomyPath = path
                 } else {
-                    // Auto-download taxonomy DB on first use
                     logger.info("NCBI Taxonomy database not installed \u{2014} downloading automatically")
-                    progress?(0.56, "Downloading NCBI Taxonomy database\u{2026}")
+                    progress?(0.70, "Downloading NCBI Taxonomy database\u{2026}")
                     do {
                         let installedURL = try await registry.downloadDatabase(
                             name: "NCBI Taxonomy"
                         ) { dlProgress, dlMessage in
-                            progress?(0.56 + dlProgress * 0.08, dlMessage)
+                            progress?(0.70 + dlProgress * 0.05, dlMessage)
                         }
                         taxonomyPath = installedURL
-                        logger.info("NCBI Taxonomy database installed at \(installedURL.path, privacy: .public)")
                     } catch {
                         logger.warning("Failed to download NCBI Taxonomy database: \(error.localizedDescription, privacy: .public)")
                     }
@@ -518,7 +507,6 @@ public enum MetagenomicsImportService {
                 }
             }
         } catch {
-            // Best-effort: if name resolution fails, placeholder names remain.
             logger.warning("Taxon name resolution failed: \(error.localizedDescription, privacy: .public)")
         }
 
@@ -526,13 +514,16 @@ public enum MetagenomicsImportService {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
+        // Get top taxon info from the database (not from in-memory array)
+        let topTaxonInfo = try? rwDB.topTaxon()
+
         var manifest = NaoMgsManifest(
             sampleName: normalizedSampleName,
-            sourceFilePath: loaded.virusHitsFile.path,
-            hitCount: result.totalHitReads,
-            taxonCount: result.taxonSummaries.count,
-            topTaxon: result.taxonSummaries.first?.name,
-            topTaxonId: result.taxonSummaries.first?.taxId
+            sourceFilePath: virusHitsFiles[0].path,
+            hitCount: streamResult.hitCount,
+            taxonCount: streamResult.taxonCount,
+            topTaxon: topTaxonInfo?.name,
+            topTaxonId: topTaxonInfo?.taxId
         )
         try writeNaoMgsManifest(manifest, to: resultDirectory, encoder: encoder)
 
@@ -542,11 +533,9 @@ public enum MetagenomicsImportService {
         if fetchReferences {
             let referencesDirectory = resultDirectory.appendingPathComponent("references", isDirectory: true)
             try ensureDirectoryExists(referencesDirectory)
-            progress?(0.70, "Fetching reference FASTA files...")
-            // Fetch exactly the accessions that will be shown as miniBAM panels:
-            // top 5 by unique read count per (sample, taxId) pair. Derived from
-            // in-memory hits to avoid reopening the database (SQLite locking issues).
-            let accessions = selectMiniBAMAccessions(hits: result.virusHits, maxPerRow: 5)
+            progress?(0.76, "Fetching reference FASTA files...")
+            // Get top accessions from the database (not from in-memory array)
+            let accessions = (try? rwDB.allMiniBAMAccessions()) ?? []
             fetchedAccessions = await fetchNaoMgsReferences(
                 accessions: accessions,
                 into: referencesDirectory,
@@ -610,47 +599,57 @@ public enum MetagenomicsImportService {
         progress?(0.97, "Materializing BAMs from SQLite rows\u{2026}")
         var createdBamFiles = false
         if let samtoolsPath = naomgsLocateSamtools() {
-            do {
-                let generated = try NaoMgsBamMaterializer.materializeAll(
-                    dbPath: hitsDBURL.path,
-                    resultURL: resultDirectory,
-                    samtoolsPath: samtoolsPath
-                )
-                createdBamFiles = !generated.isEmpty
-                logger.info("Materialized \(generated.count) BAM file(s) for NAO-MGS samples")
+            // materializeAll now continues on per-sample errors and never throws
+            // for individual sample failures — it returns all successfully generated BAMs.
+            let generated = try NaoMgsBamMaterializer.materializeAll(
+                dbPath: hitsDBURL.path,
+                resultURL: resultDirectory,
+                samtoolsPath: samtoolsPath
+            )
+            createdBamFiles = !generated.isEmpty
+            logger.info("Materialized \(generated.count) BAM file(s) for NAO-MGS samples")
 
-                if !generated.isEmpty {
-                    var bamPathsBySample: [String: (bamPath: String, bamIndexPath: String?)] = [:]
-                    for bamURL in generated {
-                        let sample = bamURL.deletingPathExtension().lastPathComponent
-                        let bamRelative = "bams/\(bamURL.lastPathComponent)"
-                        let baiURL = URL(fileURLWithPath: bamURL.path + ".bai")
-                        let csiURL = URL(fileURLWithPath: bamURL.path + ".csi")
-                        let indexRelative: String?
-                        if FileManager.default.fileExists(atPath: baiURL.path) {
-                            indexRelative = bamRelative + ".bai"
-                        } else if FileManager.default.fileExists(atPath: csiURL.path) {
-                            indexRelative = bamRelative + ".csi"
-                        } else {
-                            indexRelative = nil
-                        }
-                        bamPathsBySample[sample] = (bamPath: bamRelative, bamIndexPath: indexRelative)
+            if !generated.isEmpty {
+                var bamPathsBySample: [String: (bamPath: String, bamIndexPath: String?)] = [:]
+                for bamURL in generated {
+                    let sample = bamURL.deletingPathExtension().lastPathComponent
+                    let bamRelative = "bams/\(bamURL.lastPathComponent)"
+                    let baiURL = URL(fileURLWithPath: bamURL.path + ".bai")
+                    let csiURL = URL(fileURLWithPath: bamURL.path + ".csi")
+                    let indexRelative: String?
+                    if FileManager.default.fileExists(atPath: baiURL.path) {
+                        indexRelative = bamRelative + ".bai"
+                    } else if FileManager.default.fileExists(atPath: csiURL.path) {
+                        indexRelative = bamRelative + ".csi"
+                    } else {
+                        indexRelative = nil
                     }
-                    try rwDB.updateBamPaths(bamPathsBySample)
+                    bamPathsBySample[sample] = (bamPath: bamRelative, bamIndexPath: indexRelative)
                 }
-            } catch {
-                logger.warning("Failed to materialize NAO-MGS BAMs: \(error.localizedDescription, privacy: .public)")
+                try rwDB.updateBamPaths(bamPathsBySample)
             }
         } else {
             logger.warning("samtools not found; skipping NAO-MGS BAM materialization")
+        }
+
+        // Purge virus_hits rows now that BAMs are materialized and accession
+        // summaries are pre-computed. This shrinks the database dramatically
+        // (read sequences + quality strings are the bulk of the data).
+        if createdBamFiles {
+            progress?(0.98, "Shrinking database\u{2026}")
+            do {
+                try rwDB.deleteVirusHitsAndVacuum()
+            } catch {
+                logger.warning("Failed to purge virus_hits: \(error.localizedDescription, privacy: .public)")
+            }
         }
 
         progress?(1.0, "NAO-MGS import complete")
         return NaoMgsImportResult(
             resultDirectory: resultDirectory,
             sampleName: normalizedSampleName,
-            totalHitReads: result.totalHitReads,
-            taxonCount: result.taxonSummaries.count,
+            totalHitReads: streamResult.hitCount,
+            taxonCount: streamResult.taxonCount,
             fetchedReferenceCount: fetchedAccessions.count,
             createdBAM: createdBamFiles
         )
@@ -801,16 +800,52 @@ public enum MetagenomicsImportService {
 
     /// Locates the samtools binary for NAO-MGS BAM materialization.
     private static func naomgsLocateSamtools() -> String? {
-        let candidates = [
-            "/opt/homebrew/Cellar/samtools/1.23/bin/samtools",
-            "/opt/homebrew/bin/samtools",
-            "/usr/local/bin/samtools",
-            "/usr/bin/samtools",
-        ]
-        for p in candidates where FileManager.default.fileExists(atPath: p) {
-            return p
+        SamtoolsLocator.locate()
+    }
+
+    /// Resolves one or more virus_hits TSV files from a user-provided input URL.
+    ///
+    /// Supports:
+    /// - Single file (e.g. `virus_hits_final.tsv.gz`)
+    /// - Directory with monolithic `virus_hits_final.tsv(.gz)` (NAO-MGS ≤3.1)
+    /// - Directory with per-lane `*_virus_hits.tsv.gz` files (NAO-MGS 3.2+)
+    ///
+    /// - Returns: Non-empty array of TSV file URLs, sorted by name.
+    private static func resolveVirusHitsTSVs(inputURL: URL) throws -> [URL] {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: inputURL.path, isDirectory: &isDir) else {
+            throw MetagenomicsImportError.inputNotFound(inputURL)
         }
-        return nil
+
+        // Single file — use directly
+        if !isDir.boolValue {
+            return [inputURL]
+        }
+
+        // Directory: try monolithic file first (v3.0/3.1 convention)
+        let monolithicCandidates = [
+            inputURL.appendingPathComponent("virus_hits_final.tsv.gz"),
+            inputURL.appendingPathComponent("virus_hits_final.tsv"),
+        ]
+        if let found = monolithicCandidates.first(where: { fm.fileExists(atPath: $0.path) }) {
+            return [found]
+        }
+
+        // Directory: scan for per-lane TSVs (v3.2 convention)
+        if let contents = try? fm.contentsOfDirectory(at: inputURL, includingPropertiesForKeys: nil) {
+            let tsvFiles = contents.filter { url in
+                let name = url.lastPathComponent.lowercased()
+                return name.contains("virus_hits")
+                    && (name.hasSuffix(".tsv") || name.hasSuffix(".tsv.gz"))
+            }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+
+            if !tsvFiles.isEmpty {
+                return tsvFiles
+            }
+        }
+
+        throw MetagenomicsImportError.inputNotFound(inputURL)
     }
 }
 
