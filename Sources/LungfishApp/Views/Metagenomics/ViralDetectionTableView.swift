@@ -245,6 +245,21 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
     /// Cached root items in their current sorted order.
     private var sortedDisplayItems: [ViralAssemblyItem] = []
 
+    // MARK: - Per-Column Filters
+
+    /// Per-column filters applied via column header click menus.
+    private var columnFilters: [String: ColumnFilter] = [:]
+
+    /// Original column titles for filter indicator management.
+    private var originalColumnTitles: [String: String] = [:]
+
+    /// Column type hints — true = numeric, false = text.
+    private let columnTypes: [String: Bool] = [
+        "sample": false, "name": false, "family": false,
+        "reads": true, "uniqueReads": true, "rpkmf": true,
+        "coverage": true, "identity": true, "segment": false,
+    ]
+
     /// Shared formatter for integer read counts.
     private static let countFormatter: NumberFormatter = {
         let formatter = NumberFormatter()
@@ -547,9 +562,13 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         sortedDisplayItems = sortItems(displayItems)
     }
 
-    /// Returns a sorted copy of `items` using the current sort criteria.
+    /// Returns a filtered and sorted copy of `items` using the current criteria.
     private func sortItems(_ items: [ViralAssemblyItem]) -> [ViralAssemblyItem] {
+        // Apply per-column filters
         var items = items
+        if !columnFilters.filter({ $0.value.isActive }).isEmpty {
+            items = items.filter { assemblyMatchesColumnFilters($0.assembly) }
+        }
 
         switch currentSortKey {
         case ColumnID.sample:
@@ -932,6 +951,212 @@ public final class ViralDetectionTableView: NSView, NSOutlineViewDataSource, NSO
         currentSortAscending = descriptor.ascending
         refreshSortedItems()
         outlineView.reloadData()
+    }
+
+    // MARK: - Column Header Filter Menus
+
+    public func outlineView(_ outlineView: NSOutlineView, didClick tableColumn: NSTableColumn) {
+        showColumnHeaderFilterMenu(for: tableColumn)
+    }
+
+    private func showColumnHeaderFilterMenu(for tableColumn: NSTableColumn) {
+        guard let headerView = outlineView.headerView,
+              let colIndex = outlineView.tableColumns.firstIndex(of: tableColumn) else { return }
+
+        let columnId = tableColumn.identifier.rawValue
+        let displayName = tableColumn.title.isEmpty ? "Column" : tableColumn.title
+        let isNumeric = columnTypes[columnId] ?? false
+
+        let menu = NSMenu()
+
+        let sortAscItem = NSMenuItem(title: "Sort Ascending", action: #selector(esvSortAsc(_:)), keyEquivalent: "")
+        sortAscItem.target = self
+        sortAscItem.representedObject = tableColumn
+        menu.addItem(sortAscItem)
+
+        let sortDescItem = NSMenuItem(title: "Sort Descending", action: #selector(esvSortDesc(_:)), keyEquivalent: "")
+        sortDescItem.target = self
+        sortDescItem.representedObject = tableColumn
+        menu.addItem(sortDescItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        if isNumeric {
+            for (label, op) in [
+                ("Filter \(displayName) \u{2265}\u{2026}", FilterOperator.greaterOrEqual),
+                ("Filter \(displayName) \u{2264}\u{2026}", FilterOperator.lessOrEqual),
+                ("Filter \(displayName) =\u{2026}", FilterOperator.equal),
+                ("Filter \(displayName) Between\u{2026}", FilterOperator.between),
+            ] {
+                let item = NSMenuItem(title: label, action: #selector(esvPromptFilter(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = ["columnId": columnId, "op": op] as [String: Any]
+                menu.addItem(item)
+            }
+        } else {
+            for (label, op) in [
+                ("Filter \(displayName) Contains\u{2026}", FilterOperator.contains),
+                ("Filter \(displayName) Equals\u{2026}", FilterOperator.equal),
+                ("Filter \(displayName) Starts With\u{2026}", FilterOperator.startsWith),
+            ] {
+                let item = NSMenuItem(title: label, action: #selector(esvPromptFilter(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = ["columnId": columnId, "op": op] as [String: Any]
+                menu.addItem(item)
+            }
+        }
+
+        if columnFilters[columnId]?.isActive == true {
+            menu.addItem(NSMenuItem.separator())
+            let clearItem = NSMenuItem(title: "Clear \(displayName) Filter", action: #selector(esvClearFilter(_:)), keyEquivalent: "")
+            clearItem.target = self
+            clearItem.representedObject = columnId
+            menu.addItem(clearItem)
+        }
+
+        if !columnFilters.filter({ $0.value.isActive }).isEmpty {
+            let clearAllItem = NSMenuItem(title: "Clear All Filters", action: #selector(esvClearAllFilters(_:)), keyEquivalent: "")
+            clearAllItem.target = self
+            menu.addItem(clearAllItem)
+        }
+
+        let rect = headerView.headerRect(ofColumn: colIndex)
+        menu.popUp(positioning: nil, at: NSPoint(x: rect.minX + 8, y: rect.minY - 2), in: headerView)
+    }
+
+    @objc private func esvPromptFilter(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? [String: Any],
+              let columnId = payload["columnId"] as? String,
+              let op = payload["op"] as? FilterOperator,
+              let window = window else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Column Filter"
+        let displayName = outlineView.tableColumns
+            .first { $0.identifier.rawValue == columnId }?.title ?? columnId
+        alert.informativeText = "Enter a value for \(displayName) (\(op.rawValue))."
+        alert.addButton(withTitle: "Apply")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = op == .between ? "min value" : "filter value"
+
+        if op == .between {
+            let stack = NSStackView(frame: NSRect(x: 0, y: 0, width: 240, height: 52))
+            stack.orientation = .vertical
+            stack.spacing = 4
+            let field2 = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+            field2.placeholderString = "max value"
+            stack.addArrangedSubview(field)
+            stack.addArrangedSubview(field2)
+            alert.accessoryView = stack
+        } else {
+            alert.accessoryView = field
+        }
+
+        if let existing = columnFilters[columnId] {
+            field.stringValue = existing.value
+        }
+
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { return }
+
+            var value2: String? = nil
+            if op == .between, let stack = alert.accessoryView as? NSStackView,
+               let field2 = stack.arrangedSubviews.last as? NSTextField {
+                value2 = field2.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+
+            self.columnFilters[columnId] = ColumnFilter(columnId: columnId, op: op, value: value, value2: value2)
+            self.refreshSortedItems()
+            ColumnFilter.updateColumnTitleIndicators(columns: self.outlineView.tableColumns, filters: self.columnFilters, originalTitles: &self.originalColumnTitles)
+            self.outlineView.reloadData()
+        }
+    }
+
+    @objc private func esvSortAsc(_ sender: NSMenuItem) {
+        guard let column = sender.representedObject as? NSTableColumn,
+              let proto = column.sortDescriptorPrototype, let key = proto.key else { return }
+        currentSortKey = key
+        currentSortAscending = true
+        refreshSortedItems()
+        outlineView.reloadData()
+    }
+
+    @objc private func esvSortDesc(_ sender: NSMenuItem) {
+        guard let column = sender.representedObject as? NSTableColumn,
+              let proto = column.sortDescriptorPrototype, let key = proto.key else { return }
+        currentSortKey = key
+        currentSortAscending = false
+        refreshSortedItems()
+        outlineView.reloadData()
+    }
+
+    @objc private func esvClearFilter(_ sender: NSMenuItem) {
+        guard let columnId = sender.representedObject as? String else { return }
+        columnFilters.removeValue(forKey: columnId)
+        refreshSortedItems()
+        ColumnFilter.updateColumnTitleIndicators(columns: outlineView.tableColumns, filters: columnFilters, originalTitles: &originalColumnTitles)
+        outlineView.reloadData()
+    }
+
+    @objc private func esvClearAllFilters(_ sender: Any?) {
+        columnFilters.removeAll()
+        refreshSortedItems()
+        ColumnFilter.updateColumnTitleIndicators(columns: outlineView.tableColumns, filters: columnFilters, originalTitles: &originalColumnTitles)
+        outlineView.reloadData()
+    }
+
+    /// Tests whether an assembly item passes all active column filters.
+    private func assemblyMatchesColumnFilters(_ assembly: ViralAssembly) -> Bool {
+        for (_, filter) in columnFilters where filter.isActive {
+            switch filter.columnId {
+            case ColumnID.sample:
+                if !filter.matchesString(sampleID(for: assembly)) { return false }
+            case ColumnID.name:
+                if !filter.matchesString(assembly.name) { return false }
+            case ColumnID.family:
+                if !filter.matchesString(assembly.family ?? "") { return false }
+            case ColumnID.reads:
+                if !filter.matchesNumeric(Double(assembly.totalReads)) { return false }
+            case ColumnID.uniqueReads:
+                let unique = uniqueReadCountsByAssembly[assembly.assembly]
+                    ?? uniqueReadCountsBySampleAssembly["\(assembly.contigs.first?.sampleId ?? "")\t\(assembly.assembly)"]
+                    ?? 0
+                if !filter.matchesNumeric(Double(unique)) { return false }
+            case ColumnID.rpkmf:
+                if !filter.matchesNumeric(assembly.rpkmf) { return false }
+            case ColumnID.coverage:
+                let coveredBases = assembly.contigs.reduce(0) { $0 + $1.coveredBases }
+                let breadth = assembly.assemblyLength > 0 ? Double(coveredBases) / Double(assembly.assemblyLength) : 0
+                if !filter.matchesNumeric(breadth * 100.0) { return false }
+            case ColumnID.identity:
+                if !filter.matchesNumeric(assembly.avgReadIdentity * 100.0) { return false }
+            case ColumnID.segment:
+                let segments = Set(assembly.contigs.compactMap(\.segment)).count
+                let segStr = segments > 0 ? String(segments) : ""
+                if !filter.matchesString(segStr) { return false }
+            default:
+                // Metadata columns
+                if filter.columnId.hasPrefix("metadata_"),
+                   let store = metadataColumns.store {
+                    let metaCol = String(filter.columnId.dropFirst("metadata_".count))
+                    let sid = assembly.contigs.first?.sampleId ?? ""
+                    if let value = store.records[sid]?[metaCol] {
+                        if let num = Double(value) {
+                            if !filter.matchesNumeric(num) { return false }
+                        } else {
+                            if !filter.matchesString(value) { return false }
+                        }
+                    } else {
+                        return false
+                    }
+                }
+            }
+        }
+        return true
     }
 
     // MARK: - NSOutlineViewDelegate
