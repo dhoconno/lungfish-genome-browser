@@ -92,6 +92,18 @@ class BatchTableView<Row>: NSView, NSTableViewDataSource, NSTableViewDelegate {
     /// Return `nil` if the row has no associated sample. The default returns `nil`.
     func sampleId(for row: Row) -> String? { nil }
 
+    /// Returns a string value for a column, used by per-column filtering.
+    ///
+    /// Subclasses should override to return the appropriate value for each column.
+    /// The default returns the cell content text from ``cellContent(for:row:)``.
+    func columnValue(for columnId: String, row: Row) -> String {
+        cellContent(for: NSUserInterfaceItemIdentifier(columnId), row: row).text
+    }
+
+    /// Column type hints — true = numeric, false = text.
+    /// Subclasses should override to declare which columns are numeric.
+    var columnTypeHints: [String: Bool] { [:] }
+
     // MARK: - State
 
     /// The rows currently displayed (after any filter and sort).
@@ -102,6 +114,9 @@ class BatchTableView<Row>: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     /// The full unfiltered set of rows as last provided by ``configure(rows:)``.
     var unfilteredRows: [Row] = []
+
+    /// Per-column filters applied via column header click menus.
+    private(set) var columnFilters: [String: ColumnFilter] = [:]
 
     /// Current filter text applied to rows.
     private var filterText: String = ""
@@ -254,12 +269,34 @@ class BatchTableView<Row>: NSView, NSTableViewDataSource, NSTableViewDelegate {
     }
 
     private func applyFilter() {
-        let filtered: [Row]
+        var filtered: [Row]
         if filterText.isEmpty {
             filtered = unfilteredRows
         } else {
             filtered = unfilteredRows.filter { rowMatchesFilter($0, filterText: filterText) }
         }
+
+        // Apply per-column filters
+        for (columnId, filter) in columnFilters where filter.isActive {
+            filtered = filtered.filter { row in
+                let value = columnValue(for: columnId, row: row)
+                // Try numeric match first for numeric columns
+                if columnTypeHints[columnId] == true, let num = Double(value) {
+                    return filter.matchesNumeric(num)
+                }
+                // Also try metadata columns
+                if columnId.hasPrefix("metadata_"), let sid = sampleId(for: row),
+                   let store = metadataColumns.store,
+                   let metaValue = store.records[sid]?[String(columnId.dropFirst("metadata_".count))] {
+                    if let num = Double(metaValue) {
+                        return filter.matchesNumeric(num)
+                    }
+                    return filter.matchesString(metaValue)
+                }
+                return filter.matchesString(value)
+            }
+        }
+
         // Re-apply current sort order on top of the filtered set.
         if let descriptor = tableView.sortDescriptors.first, let key = descriptor.key {
             let ascending = descriptor.ascending
@@ -310,6 +347,151 @@ class BatchTableView<Row>: NSView, NSTableViewDataSource, NSTableViewDelegate {
         let ascending = descriptor.ascending
         displayedRows = unsortedRows.sorted { compareRows($0, $1, by: key, ascending: ascending) }
         tableView.reloadData()
+    }
+
+    func tableView(_ tableView: NSTableView, didClick tableColumn: NSTableColumn) {
+        showColumnHeaderFilterMenu(for: tableColumn)
+    }
+
+    // MARK: - Column Header Filter Menus
+
+    private func showColumnHeaderFilterMenu(for tableColumn: NSTableColumn) {
+        guard let headerView = tableView.headerView,
+              let colIndex = tableView.tableColumns.firstIndex(of: tableColumn) else { return }
+
+        let columnId = tableColumn.identifier.rawValue
+        let displayName = tableColumn.title.isEmpty ? "Column" : tableColumn.title
+        let isNumeric = columnTypeHints[columnId] ?? false
+
+        let menu = NSMenu()
+
+        let sortAscItem = NSMenuItem(title: "Sort Ascending", action: #selector(batchSortColumnAsc(_:)), keyEquivalent: "")
+        sortAscItem.target = self
+        sortAscItem.representedObject = tableColumn
+        menu.addItem(sortAscItem)
+
+        let sortDescItem = NSMenuItem(title: "Sort Descending", action: #selector(batchSortColumnDesc(_:)), keyEquivalent: "")
+        sortDescItem.target = self
+        sortDescItem.representedObject = tableColumn
+        menu.addItem(sortDescItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        if isNumeric {
+            for (label, op) in [
+                ("Filter \(displayName) \u{2265}\u{2026}", FilterOperator.greaterOrEqual),
+                ("Filter \(displayName) \u{2264}\u{2026}", FilterOperator.lessOrEqual),
+                ("Filter \(displayName) =\u{2026}", FilterOperator.equal),
+                ("Filter \(displayName) Between\u{2026}", FilterOperator.between),
+            ] {
+                let item = NSMenuItem(title: label, action: #selector(batchPromptColumnFilter(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = ["columnId": columnId, "op": op] as [String: Any]
+                menu.addItem(item)
+            }
+        } else {
+            for (label, op) in [
+                ("Filter \(displayName) Contains\u{2026}", FilterOperator.contains),
+                ("Filter \(displayName) Equals\u{2026}", FilterOperator.equal),
+                ("Filter \(displayName) Starts With\u{2026}", FilterOperator.startsWith),
+            ] {
+                let item = NSMenuItem(title: label, action: #selector(batchPromptColumnFilter(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = ["columnId": columnId, "op": op] as [String: Any]
+                menu.addItem(item)
+            }
+        }
+
+        if columnFilters[columnId]?.isActive == true {
+            menu.addItem(NSMenuItem.separator())
+            let clearItem = NSMenuItem(title: "Clear \(displayName) Filter", action: #selector(batchClearColumnFilter(_:)), keyEquivalent: "")
+            clearItem.target = self
+            clearItem.representedObject = columnId
+            menu.addItem(clearItem)
+        }
+
+        if !columnFilters.filter({ $0.value.isActive }).isEmpty {
+            let clearAllItem = NSMenuItem(title: "Clear All Filters", action: #selector(batchClearAllColumnFilters(_:)), keyEquivalent: "")
+            clearAllItem.target = self
+            menu.addItem(clearAllItem)
+        }
+
+        let rect = headerView.headerRect(ofColumn: colIndex)
+        let anchorPoint = NSPoint(x: rect.minX + 8, y: rect.minY - 2)
+        menu.popUp(positioning: nil, at: anchorPoint, in: headerView)
+    }
+
+    @objc private func batchPromptColumnFilter(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? [String: Any],
+              let columnId = payload["columnId"] as? String,
+              let op = payload["op"] as? FilterOperator,
+              let window = window else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Column Filter"
+        let displayName = tableView.tableColumns
+            .first { $0.identifier.rawValue == columnId }?.title ?? columnId
+        alert.informativeText = "Enter a value for \(displayName) (\(op.rawValue))."
+        alert.addButton(withTitle: "Apply")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = op == .between ? "min value" : "filter value"
+
+        if op == .between {
+            let stack = NSStackView(frame: NSRect(x: 0, y: 0, width: 240, height: 52))
+            stack.orientation = .vertical
+            stack.spacing = 4
+            let field2 = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+            field2.placeholderString = "max value"
+            stack.addArrangedSubview(field)
+            stack.addArrangedSubview(field2)
+            alert.accessoryView = stack
+        } else {
+            alert.accessoryView = field
+        }
+
+        if let existing = columnFilters[columnId] {
+            field.stringValue = existing.value
+        }
+
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { return }
+
+            var value2: String? = nil
+            if op == .between, let stack = alert.accessoryView as? NSStackView,
+               let field2 = stack.arrangedSubviews.last as? NSTextField {
+                value2 = field2.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+
+            self.columnFilters[columnId] = ColumnFilter(columnId: columnId, op: op, value: value, value2: value2)
+            self.applyFilter()
+        }
+    }
+
+    @objc private func batchSortColumnAsc(_ sender: NSMenuItem) {
+        guard let column = sender.representedObject as? NSTableColumn,
+              let proto = column.sortDescriptorPrototype else { return }
+        tableView.sortDescriptors = [NSSortDescriptor(key: proto.key, ascending: true, selector: proto.selector)]
+    }
+
+    @objc private func batchSortColumnDesc(_ sender: NSMenuItem) {
+        guard let column = sender.representedObject as? NSTableColumn,
+              let proto = column.sortDescriptorPrototype else { return }
+        tableView.sortDescriptors = [NSSortDescriptor(key: proto.key, ascending: false, selector: proto.selector)]
+    }
+
+    @objc private func batchClearColumnFilter(_ sender: NSMenuItem) {
+        guard let columnId = sender.representedObject as? String else { return }
+        columnFilters.removeValue(forKey: columnId)
+        applyFilter()
+    }
+
+    @objc private func batchClearAllColumnFilters(_ sender: Any?) {
+        columnFilters.removeAll()
+        applyFilter()
     }
 
     // MARK: - NSTableViewDelegate

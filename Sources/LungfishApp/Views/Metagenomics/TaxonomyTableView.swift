@@ -127,6 +127,21 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     private var currentSortKey: String = ColumnID.reads
     private var currentSortAscending: Bool = false
 
+    // MARK: - Per-Column Filters
+
+    /// Per-column filters applied via column header click menus.
+    private var columnFilters: [String: ColumnFilter] = [:]
+
+    /// Column type hints — true = numeric, false = text.
+    private let columnTypes: [String: Bool] = [
+        ColumnID.sample: false,
+        ColumnID.name: false,
+        ColumnID.rank: false,
+        ColumnID.reads: true,
+        ColumnID.clade: true,
+        ColumnID.percent: true,
+    ]
+
     // MARK: - Suppression Flag
 
     /// When true, programmatic selection changes don't fire the delegate callback.
@@ -465,13 +480,52 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
 
     // MARK: - Sorting
 
+    /// Tests whether a TaxonNode passes a column filter.
+    private func nodeMatchesColumnFilter(_ filter: ColumnFilter, node: TaxonNode) -> Bool {
+        guard filter.isActive else { return true }
+        switch filter.columnId {
+        case ColumnID.sample:
+            return filter.matchesString(sampleID(for: node))
+        case ColumnID.name:
+            return filter.matchesString(node.name)
+        case ColumnID.rank:
+            return filter.matchesString(node.rank.displayName)
+        case ColumnID.reads:
+            return filter.matchesNumeric(Double(node.readsClade))
+        case ColumnID.clade:
+            return filter.matchesNumeric(Double(node.readsDirect))
+        case ColumnID.percent:
+            return filter.matchesNumeric(node.fractionClade * 100.0)
+        default:
+            // Metadata columns
+            if filter.columnId.hasPrefix("metadata_"),
+               let store = metadataColumns.store {
+                let metaCol = String(filter.columnId.dropFirst("metadata_".count))
+                let sid = sampleID(for: node)
+                if let value = store.records[sid]?[metaCol] {
+                    if let num = Double(value) {
+                        return filter.matchesNumeric(num)
+                    }
+                    return filter.matchesString(value)
+                }
+                return false
+            }
+            return true
+        }
+    }
+
     /// Returns children of a node sorted by the current sort criteria.
     func sortedChildren(of node: TaxonNode) -> [TaxonNode] {
         var children = node.children
 
-        // Apply filter
+        // Apply text search filter
         if let filtered = filteredNodeIDs {
             children = children.filter { filtered.contains(ObjectIdentifier($0)) }
+        }
+
+        // Apply per-column filters
+        for (_, filter) in columnFilters where filter.isActive {
+            children = children.filter { nodeMatchesColumnFilter(filter, node: $0) }
         }
 
         // Apply sort
@@ -717,6 +771,159 @@ public class TaxonomyTableView: NSView, NSOutlineViewDataSource, NSOutlineViewDe
               let key = descriptor.key else { return }
         currentSortKey = key
         currentSortAscending = descriptor.ascending
+        outlineView.reloadData()
+    }
+
+    // MARK: - Column Header Filter Menus
+
+    public func tableView(_ tableView: NSTableView, didClick tableColumn: NSTableColumn) {
+        showColumnHeaderFilterMenu(for: tableColumn)
+    }
+
+    private func showColumnHeaderFilterMenu(for tableColumn: NSTableColumn) {
+        guard let headerView = outlineView.headerView,
+              let colIndex = outlineView.tableColumns.firstIndex(of: tableColumn) else { return }
+
+        let columnId = tableColumn.identifier.rawValue
+        let displayName = tableColumn.title.isEmpty ? "Column" : tableColumn.title
+        let isNumeric = columnTypes[columnId] ?? false
+
+        let menu = NSMenu()
+
+        // Sort options
+        let sortAscItem = NSMenuItem(title: "Sort Ascending", action: #selector(sortColumnAsc(_:)), keyEquivalent: "")
+        sortAscItem.target = self
+        sortAscItem.representedObject = tableColumn
+        menu.addItem(sortAscItem)
+
+        let sortDescItem = NSMenuItem(title: "Sort Descending", action: #selector(sortColumnDesc(_:)), keyEquivalent: "")
+        sortDescItem.target = self
+        sortDescItem.representedObject = tableColumn
+        menu.addItem(sortDescItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // Filter options (type-appropriate)
+        if isNumeric {
+            for (label, op) in [
+                ("Filter \(displayName) \u{2265}\u{2026}", FilterOperator.greaterOrEqual),
+                ("Filter \(displayName) \u{2264}\u{2026}", FilterOperator.lessOrEqual),
+                ("Filter \(displayName) =\u{2026}", FilterOperator.equal),
+                ("Filter \(displayName) Between\u{2026}", FilterOperator.between),
+            ] {
+                let item = NSMenuItem(title: label, action: #selector(promptColumnFilter(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = ["columnId": columnId, "op": op] as [String: Any]
+                menu.addItem(item)
+            }
+        } else {
+            for (label, op) in [
+                ("Filter \(displayName) Contains\u{2026}", FilterOperator.contains),
+                ("Filter \(displayName) Equals\u{2026}", FilterOperator.equal),
+                ("Filter \(displayName) Starts With\u{2026}", FilterOperator.startsWith),
+            ] {
+                let item = NSMenuItem(title: label, action: #selector(promptColumnFilter(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = ["columnId": columnId, "op": op] as [String: Any]
+                menu.addItem(item)
+            }
+        }
+
+        if columnFilters[columnId]?.isActive == true {
+            menu.addItem(NSMenuItem.separator())
+            let clearItem = NSMenuItem(title: "Clear \(displayName) Filter", action: #selector(clearColumnFilter(_:)), keyEquivalent: "")
+            clearItem.target = self
+            clearItem.representedObject = columnId
+            menu.addItem(clearItem)
+        }
+
+        if !columnFilters.filter({ $0.value.isActive }).isEmpty {
+            let clearAllItem = NSMenuItem(title: "Clear All Filters", action: #selector(clearAllColumnFilters(_:)), keyEquivalent: "")
+            clearAllItem.target = self
+            menu.addItem(clearAllItem)
+        }
+
+        let rect = headerView.headerRect(ofColumn: colIndex)
+        let anchorPoint = NSPoint(x: rect.minX + 8, y: rect.minY - 2)
+        menu.popUp(positioning: nil, at: anchorPoint, in: headerView)
+    }
+
+    @objc private func promptColumnFilter(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? [String: Any],
+              let columnId = payload["columnId"] as? String,
+              let op = payload["op"] as? FilterOperator,
+              let window = window else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Column Filter"
+        let displayName = outlineView.tableColumns
+            .first { $0.identifier.rawValue == columnId }?.title ?? columnId
+        alert.informativeText = "Enter a value for \(displayName) (\(op.rawValue))."
+        alert.addButton(withTitle: "Apply")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = op == .between ? "min value" : "filter value"
+
+        if op == .between {
+            let stack = NSStackView(frame: NSRect(x: 0, y: 0, width: 240, height: 52))
+            stack.orientation = .vertical
+            stack.spacing = 4
+            let field2 = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+            field2.placeholderString = "max value"
+            stack.addArrangedSubview(field)
+            stack.addArrangedSubview(field2)
+            alert.accessoryView = stack
+        } else {
+            alert.accessoryView = field
+        }
+
+        if let existing = columnFilters[columnId] {
+            field.stringValue = existing.value
+        }
+
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { return }
+
+            var value2: String? = nil
+            if op == .between, let stack = alert.accessoryView as? NSStackView,
+               let field2 = stack.arrangedSubviews.last as? NSTextField {
+                value2 = field2.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+
+            self.columnFilters[columnId] = ColumnFilter(columnId: columnId, op: op, value: value, value2: value2)
+            self.outlineView.reloadData()
+        }
+    }
+
+    @objc private func sortColumnAsc(_ sender: NSMenuItem) {
+        guard let column = sender.representedObject as? NSTableColumn,
+              let proto = column.sortDescriptorPrototype,
+              let key = proto.key else { return }
+        currentSortKey = key
+        currentSortAscending = true
+        outlineView.reloadData()
+    }
+
+    @objc private func sortColumnDesc(_ sender: NSMenuItem) {
+        guard let column = sender.representedObject as? NSTableColumn,
+              let proto = column.sortDescriptorPrototype,
+              let key = proto.key else { return }
+        currentSortKey = key
+        currentSortAscending = false
+        outlineView.reloadData()
+    }
+
+    @objc private func clearColumnFilter(_ sender: NSMenuItem) {
+        guard let columnId = sender.representedObject as? String else { return }
+        columnFilters.removeValue(forKey: columnId)
+        outlineView.reloadData()
+    }
+
+    @objc private func clearAllColumnFilters(_ sender: Any?) {
+        columnFilters.removeAll()
         outlineView.reloadData()
     }
 

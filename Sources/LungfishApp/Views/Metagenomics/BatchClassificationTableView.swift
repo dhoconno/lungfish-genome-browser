@@ -43,6 +43,13 @@ final class BatchClassificationTableView: BatchTableView<BatchClassificationRow>
 
     override var searchPlaceholder: String { "Filter taxa\u{2026}" }
 
+    override var columnTypeHints: [String: Bool] {
+        [
+            "sample": false, "name": false, "rank": false,
+            "readsDirect": true, "readsClade": true, "percent": true,
+        ]
+    }
+
     override func cellContent(
         for column: NSUserInterfaceItemIdentifier,
         row: BatchClassificationRow
