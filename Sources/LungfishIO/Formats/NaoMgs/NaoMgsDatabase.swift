@@ -1461,6 +1461,35 @@ public final class NaoMgsDatabase: @unchecked Sendable {
         return nil
     }
 
+    /// Updates `accession_summaries.reference_length` and `coverage_fraction`
+    /// from the `reference_lengths` table. Call after storing FASTA-derived
+    /// reference lengths so the accession display uses real genome lengths
+    /// instead of alignment extents.
+    public func refreshAccessionSummaryReferenceLengths() throws {
+        guard let db else { throw NaoMgsDatabaseError.queryFailed("Database not open") }
+
+        let sql = """
+        UPDATE accession_summaries
+        SET reference_length = (
+                SELECT rl.length FROM reference_lengths rl
+                WHERE rl.accession = accession_summaries.accession
+            ),
+            coverage_fraction = CASE
+                WHEN (SELECT rl.length FROM reference_lengths rl
+                      WHERE rl.accession = accession_summaries.accession) > 0
+                THEN MIN(1.0, CAST(covered_base_pairs AS REAL)
+                     / (SELECT rl.length FROM reference_lengths rl
+                        WHERE rl.accession = accession_summaries.accession))
+                ELSE coverage_fraction
+            END
+        WHERE accession IN (SELECT accession FROM reference_lengths)
+        """
+        guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
+            let msg = String(cString: sqlite3_errmsg(db))
+            throw NaoMgsDatabaseError.queryFailed("Failed to refresh accession summary reference lengths: \(msg)")
+        }
+    }
+
     // MARK: - Read-Write Access
 
     /// Opens an existing NAO-MGS database for reading and writing.

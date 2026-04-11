@@ -578,6 +578,7 @@ public enum MetagenomicsImportService {
             }
             if !refLengths.isEmpty {
                 try rwDB.updateReferenceLengths(refLengths)
+                try rwDB.refreshAccessionSummaryReferenceLengths()
                 logger.info("Stored \(refLengths.count) reference lengths from downloaded FASTAs")
             }
         }
