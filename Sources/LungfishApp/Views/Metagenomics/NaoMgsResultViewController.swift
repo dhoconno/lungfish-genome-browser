@@ -104,10 +104,7 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     private let taxonomyTableView = NSTableView()
     private let taxonomyFilterBar = NSStackView()
     private let sampleFilterButton = NSButton(title: "All Samples", target: nil, action: nil)
-    private let taxonFilterField = NSSearchField()
-    private let hitsFilterField = NSTextField()
-    private let uniqueReadsFilterField = NSTextField()
-    private let refsFilterField = NSTextField()
+    private let filterRowView = TaxonomyFilterRowView()
     private let detailScrollView = NSScrollView()
     private let detailContentView = FlippedNaoMgsContentView()
     let actionBar = ClassifierActionBar()
@@ -167,7 +164,7 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     private let loadingLabel = NSTextField(labelWithString: "Loading…")
 
     /// Debounce work item for filter field changes.
-    private var filterDebounceWorkItem: DispatchWorkItem?
+    // filterDebounceWorkItem removed — debouncing handled by TaxonomyFilterRowView
 
     /// Task for asynchronously loading miniBAM reads.
     private var miniBAMLoadingTask: Task<Void, Never>?
@@ -211,7 +208,7 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     }
 
     /// Controller for dynamic sample metadata columns (from imported CSV/TSV).
-    private let metadataColumnController = MetadataColumnController()
+    let metadataColumnController = MetadataColumnController()
 
     // MARK: - Selection Sync
 
@@ -360,23 +357,11 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         do {
             var rows = try database.fetchTaxonSummaryRows(samples: Array(selectedSamples))
 
-            // Apply in-memory filters
-            let taxonFilter = taxonFilterField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !taxonFilter.isEmpty {
-                rows = rows.filter {
-                    ($0.name.isEmpty ? "Taxid \($0.taxId)" : $0.name)
-                        .localizedCaseInsensitiveContains(taxonFilter)
+            // Apply per-column filters from the filter row
+            for (columnId, filter) in filterRowView.activeFilters {
+                rows = rows.filter { row in
+                    applyColumnFilter(filter, to: row)
                 }
-            }
-
-            if let minHits = parseMinFilter(hitsFilterField.stringValue) {
-                rows = rows.filter { $0.hitCount >= minHits }
-            }
-            if let minUnique = parseMinFilter(uniqueReadsFilterField.stringValue) {
-                rows = rows.filter { $0.uniqueReadCount >= minUnique }
-            }
-            if let minRefs = parseMinFilter(refsFilterField.stringValue) {
-                rows = rows.filter { $0.accessionCount >= minRefs }
             }
 
             // Apply sort
@@ -1410,7 +1395,7 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         taxonomyFilterBar.spacing = 6
         container.addSubview(taxonomyFilterBar)
 
-        // Sample filter button (replaces old search field)
+        // Sample filter button
         sampleFilterButton.translatesAutoresizingMaskIntoConstraints = false
         sampleFilterButton.bezelStyle = .push
         sampleFilterButton.controlSize = .small
@@ -1419,16 +1404,12 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         sampleFilterButton.action = #selector(sampleFilterButtonClicked(_:))
         sampleFilterButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
 
-        configureFilterField(taxonFilterField, placeholder: "Taxon", width: 180, numeric: false)
-        configureFilterField(hitsFilterField, placeholder: "Min Hits", width: 70, numeric: true)
-        configureFilterField(uniqueReadsFilterField, placeholder: "Min Unique", width: 82, numeric: true)
-        configureFilterField(refsFilterField, placeholder: "Min Refs", width: 70, numeric: true)
-
         taxonomyFilterBar.addArrangedSubview(sampleFilterButton)
-        taxonomyFilterBar.addArrangedSubview(taxonFilterField)
-        taxonomyFilterBar.addArrangedSubview(hitsFilterField)
-        taxonomyFilterBar.addArrangedSubview(uniqueReadsFilterField)
-        taxonomyFilterBar.addArrangedSubview(refsFilterField)
+
+        // Per-column filter row (sits between header and table content)
+        filterRowView.translatesAutoresizingMaskIntoConstraints = false
+        filterRowView.delegate = self
+        container.addSubview(filterRowView)
 
         taxonomyTableScrollView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(taxonomyTableScrollView)
@@ -1438,30 +1419,24 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
             taxonomyFilterBar.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 6),
             taxonomyFilterBar.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -6),
 
-            taxonomyTableScrollView.topAnchor.constraint(equalTo: taxonomyFilterBar.bottomAnchor, constant: 6),
+            filterRowView.topAnchor.constraint(equalTo: taxonomyFilterBar.bottomAnchor, constant: 4),
+            filterRowView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            filterRowView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            filterRowView.heightAnchor.constraint(equalToConstant: TaxonomyFilterRowView.rowHeight),
+
+            taxonomyTableScrollView.topAnchor.constraint(equalTo: filterRowView.bottomAnchor),
             taxonomyTableScrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             taxonomyTableScrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             taxonomyTableScrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
-    }
 
-    private func configureFilterField(
-        _ field: NSTextField,
-        placeholder: String,
-        width: CGFloat,
-        numeric: Bool
-    ) {
-        field.translatesAutoresizingMaskIntoConstraints = false
-        field.placeholderString = placeholder
-        field.font = .systemFont(ofSize: 11)
-        field.controlSize = .small
-        field.delegate = self
-        field.target = self
-        field.action = #selector(taxonomyFilterChanged(_:))
-        if numeric {
-            field.alignment = .right
-        }
-        field.widthAnchor.constraint(equalToConstant: width).isActive = true
+        // Install filter row on the table and set column types
+        filterRowView.install(on: taxonomyTableView)
+        filterRowView.setColumnType("sample", isNumeric: false)
+        filterRowView.setColumnType("name", isNumeric: false)
+        filterRowView.setColumnType("hits", isNumeric: true)
+        filterRowView.setColumnType("unique", isNumeric: true)
+        filterRowView.setColumnType("refs", isNumeric: true)
     }
 
     @objc private func taxonomyFilterChanged(_ sender: Any?) {
@@ -2035,22 +2010,6 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         }
     }
 
-    // MARK: - Filter Helpers
-
-    private func parseMinFilter(_ rawValue: String) -> Int? {
-        let trimmed = rawValue
-            .replacingOccurrences(of: ",", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let lower = trimmed.lowercased()
-        if lower.hasSuffix("k"), let value = Double(lower.dropLast()) {
-            return Int(value * 1_000)
-        }
-        if lower.hasSuffix("m"), let value = Double(lower.dropLast()) {
-            return Int(value * 1_000_000)
-        }
-        return Int(lower)
-    }
 }
 
 // MARK: - FlippedNaoMgsContentView
@@ -2219,17 +2178,55 @@ extension NaoMgsResultViewController: NSMenuDelegate {
 
 extension NaoMgsResultViewController: NSTextFieldDelegate {
     public func controlTextDidChange(_ obj: Notification) {
-        // Debounce filter changes to avoid excessive database queries on every keystroke.
-        filterDebounceWorkItem?.cancel()
-        let workItem = DispatchWorkItem { [weak self] in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    self?.reloadTaxonomyTable()
+        // The filter row handles its own debouncing via TaxonomyFilterRowDelegate.
+        // This delegate method fires for the filter row's text fields but the
+        // actual reload is triggered by filterRowDidChangeFilters below.
+    }
+}
+
+// MARK: - TaxonomyFilterRowDelegate
+
+extension NaoMgsResultViewController: TaxonomyFilterRowDelegate {
+    func filterRowDidChangeFilters(_ filterRow: TaxonomyFilterRowView) {
+        reloadTaxonomyTable()
+    }
+}
+
+// MARK: - Column Filter Application
+
+extension NaoMgsResultViewController {
+    /// Applies a single column filter to a taxonomy row.
+    func applyColumnFilter(_ filter: ColumnFilter, to row: NaoMgsTaxonSummaryRow) -> Bool {
+        guard filter.isActive else { return true }
+
+        switch filter.columnId {
+        case "sample":
+            return filter.matchesString(row.sample)
+        case "name":
+            let displayName = row.name.isEmpty ? "Taxid \(row.taxId)" : row.name
+            return filter.matchesString(displayName)
+        case "hits":
+            return filter.matchesNumeric(Double(row.hitCount))
+        case "unique":
+            return filter.matchesNumeric(Double(row.uniqueReadCount))
+        case "refs":
+            return filter.matchesNumeric(Double(row.accessionCount))
+        default:
+            // Metadata columns: look up value from metadata store
+            if filter.columnId.hasPrefix("metadata_") {
+                let metaColName = String(filter.columnId.dropFirst("metadata_".count))
+                if let metaStore = metadataColumnController.store,
+                   let value = metaStore.records[row.sample]?[metaColName] {
+                    // Try numeric first, fall back to string
+                    if let numValue = Double(value) {
+                        return filter.matchesNumeric(numValue)
+                    }
+                    return filter.matchesString(value)
                 }
+                return false  // No metadata value → doesn't match
             }
+            return true
         }
-        filterDebounceWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: workItem)
     }
 }
 
