@@ -104,7 +104,11 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     private let taxonomyTableView = NSTableView()
     private let taxonomyFilterBar = NSStackView()
     private let sampleFilterButton = NSButton(title: "All Samples", target: nil, action: nil)
-    private let filterRowView = TaxonomyFilterRowView()
+
+    /// Per-column filters applied via column header click menus.
+    private var columnFilters: [String: ColumnFilter] = [:]
+    /// Column type hints — true = numeric, false = text.
+    private var columnTypes: [String: Bool] = [:]
     private let detailScrollView = NSScrollView()
     private let detailContentView = FlippedNaoMgsContentView()
     let actionBar = ClassifierActionBar()
@@ -357,8 +361,8 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         do {
             var rows = try database.fetchTaxonSummaryRows(samples: Array(selectedSamples))
 
-            // Apply per-column filters from the filter row
-            for (columnId, filter) in filterRowView.activeFilters {
+            // Apply per-column filters (set via column header click menus)
+            for (_, filter) in columnFilters where filter.isActive {
                 rows = rows.filter { row in
                     applyColumnFilter(filter, to: row)
                 }
@@ -1406,11 +1410,6 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
 
         taxonomyFilterBar.addArrangedSubview(sampleFilterButton)
 
-        // Per-column filter row (sits between header and table content)
-        filterRowView.translatesAutoresizingMaskIntoConstraints = false
-        filterRowView.delegate = self
-        container.addSubview(filterRowView)
-
         taxonomyTableScrollView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(taxonomyTableScrollView)
 
@@ -1419,24 +1418,17 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
             taxonomyFilterBar.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 6),
             taxonomyFilterBar.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -6),
 
-            filterRowView.topAnchor.constraint(equalTo: taxonomyFilterBar.bottomAnchor, constant: 4),
-            filterRowView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            filterRowView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            filterRowView.heightAnchor.constraint(equalToConstant: TaxonomyFilterRowView.rowHeight),
-
-            taxonomyTableScrollView.topAnchor.constraint(equalTo: filterRowView.bottomAnchor),
+            taxonomyTableScrollView.topAnchor.constraint(equalTo: taxonomyFilterBar.bottomAnchor, constant: 6),
             taxonomyTableScrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             taxonomyTableScrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             taxonomyTableScrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
 
-        // Install filter row on the table and set column types
-        filterRowView.install(on: taxonomyTableView)
-        filterRowView.setColumnType("sample", isNumeric: false)
-        filterRowView.setColumnType("name", isNumeric: false)
-        filterRowView.setColumnType("hits", isNumeric: true)
-        filterRowView.setColumnType("unique", isNumeric: true)
-        filterRowView.setColumnType("refs", isNumeric: true)
+        // Set column types for filter menus
+        columnTypes = [
+            "sample": false, "name": false,
+            "hits": true, "unique": true, "refs": true,
+        ]
     }
 
     @objc private func taxonomyFilterChanged(_ sender: Any?) {
@@ -2074,6 +2066,11 @@ extension NaoMgsResultViewController: NSTableViewDataSource {
 
 extension NaoMgsResultViewController: NSTableViewDelegate {
 
+    public func tableView(_ tableView: NSTableView, didClick tableColumn: NSTableColumn) {
+        showColumnHeaderFilterMenu(for: tableColumn)
+    }
+
+
     public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard row < displayedRows.count, let tableColumn else { return nil }
 
@@ -2184,10 +2181,156 @@ extension NaoMgsResultViewController: NSTextFieldDelegate {
     }
 }
 
-// MARK: - TaxonomyFilterRowDelegate
+// MARK: - Column Header Filter Menus
 
-extension NaoMgsResultViewController: TaxonomyFilterRowDelegate {
-    func filterRowDidChangeFilters(_ filterRow: TaxonomyFilterRowView) {
+extension NaoMgsResultViewController {
+
+    /// Called by NSTableViewDelegate when a column header is clicked.
+    /// Shows a context menu with type-appropriate filter options.
+    func showColumnHeaderFilterMenu(for tableColumn: NSTableColumn) {
+        guard let headerView = taxonomyTableView.headerView,
+              let colIndex = taxonomyTableView.tableColumns.firstIndex(of: tableColumn) else { return }
+
+        let columnId = tableColumn.identifier.rawValue
+        let displayName = tableColumn.title.isEmpty ? "Column" : tableColumn.title
+        let isNumeric = columnTypes[columnId] ?? false
+
+        let menu = NSMenu()
+
+        // Sort options
+        let sortAscItem = NSMenuItem(title: "Sort Ascending", action: #selector(sortColumnAscending(_:)), keyEquivalent: "")
+        sortAscItem.target = self
+        sortAscItem.representedObject = tableColumn
+        menu.addItem(sortAscItem)
+
+        let sortDescItem = NSMenuItem(title: "Sort Descending", action: #selector(sortColumnDescending(_:)), keyEquivalent: "")
+        sortDescItem.target = self
+        sortDescItem.representedObject = tableColumn
+        menu.addItem(sortDescItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // Filter options
+        if isNumeric {
+            for (label, op) in [
+                ("Filter \(displayName) \u{2265}\u{2026}", FilterOperator.greaterOrEqual),
+                ("Filter \(displayName) \u{2264}\u{2026}", FilterOperator.lessOrEqual),
+                ("Filter \(displayName) =\u{2026}", FilterOperator.equal),
+                ("Filter \(displayName) Between\u{2026}", FilterOperator.between),
+            ] {
+                let item = NSMenuItem(title: label, action: #selector(promptColumnFilter(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = ["columnId": columnId, "op": op] as [String: Any]
+                menu.addItem(item)
+            }
+        } else {
+            for (label, op) in [
+                ("Filter \(displayName) Contains\u{2026}", FilterOperator.contains),
+                ("Filter \(displayName) Equals\u{2026}", FilterOperator.equal),
+                ("Filter \(displayName) Starts With\u{2026}", FilterOperator.startsWith),
+            ] {
+                let item = NSMenuItem(title: label, action: #selector(promptColumnFilter(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = ["columnId": columnId, "op": op] as [String: Any]
+                menu.addItem(item)
+            }
+        }
+
+        // Clear filter for this column (if active)
+        if columnFilters[columnId]?.isActive == true {
+            menu.addItem(NSMenuItem.separator())
+            let clearItem = NSMenuItem(title: "Clear \(displayName) Filter", action: #selector(clearColumnFilter(_:)), keyEquivalent: "")
+            clearItem.target = self
+            clearItem.representedObject = columnId
+            menu.addItem(clearItem)
+        }
+
+        // Clear all filters (if any are active)
+        if !columnFilters.isEmpty {
+            let clearAllItem = NSMenuItem(title: "Clear All Filters", action: #selector(clearAllColumnFilters(_:)), keyEquivalent: "")
+            clearAllItem.target = self
+            menu.addItem(clearAllItem)
+        }
+
+        let rect = headerView.headerRect(ofColumn: colIndex)
+        let anchorPoint = NSPoint(x: rect.minX + 8, y: rect.minY - 2)
+        menu.popUp(positioning: nil, at: anchorPoint, in: headerView)
+    }
+
+    @objc private func promptColumnFilter(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? [String: Any],
+              let columnId = payload["columnId"] as? String,
+              let op = payload["op"] as? FilterOperator,
+              let window = view.window else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Column Filter"
+        let displayName = taxonomyTableView.tableColumns
+            .first { $0.identifier.rawValue == columnId }?.title ?? columnId
+        alert.informativeText = "Enter a value for \(displayName) (\(op.rawValue))."
+        alert.addButton(withTitle: "Apply")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = op == .between ? "min value" : "filter value"
+
+        if op == .between {
+            let stack = NSStackView(frame: NSRect(x: 0, y: 0, width: 240, height: 52))
+            stack.orientation = .vertical
+            stack.spacing = 4
+            let field2 = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+            field2.placeholderString = "max value"
+            field2.tag = 2
+            stack.addArrangedSubview(field)
+            stack.addArrangedSubview(field2)
+            alert.accessoryView = stack
+        } else {
+            alert.accessoryView = field
+        }
+
+        // Restore current value if filter exists
+        if let existing = columnFilters[columnId] {
+            field.stringValue = existing.value
+        }
+
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { return }
+
+            var value2: String? = nil
+            if op == .between, let stack = alert.accessoryView as? NSStackView,
+               let field2 = stack.arrangedSubviews.last as? NSTextField {
+                value2 = field2.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+
+            self.columnFilters[columnId] = ColumnFilter(columnId: columnId, op: op, value: value, value2: value2)
+            self.reloadTaxonomyTable()
+        }
+    }
+
+    @objc private func sortColumnAscending(_ sender: NSMenuItem) {
+        guard let column = sender.representedObject as? NSTableColumn,
+              let proto = column.sortDescriptorPrototype else { return }
+        taxonomyTableView.sortDescriptors = [NSSortDescriptor(key: proto.key, ascending: true, selector: proto.selector)]
+        reloadTaxonomyTable()
+    }
+
+    @objc private func sortColumnDescending(_ sender: NSMenuItem) {
+        guard let column = sender.representedObject as? NSTableColumn,
+              let proto = column.sortDescriptorPrototype else { return }
+        taxonomyTableView.sortDescriptors = [NSSortDescriptor(key: proto.key, ascending: false, selector: proto.selector)]
+        reloadTaxonomyTable()
+    }
+
+    @objc private func clearColumnFilter(_ sender: NSMenuItem) {
+        guard let columnId = sender.representedObject as? String else { return }
+        columnFilters.removeValue(forKey: columnId)
+        reloadTaxonomyTable()
+    }
+
+    @objc private func clearAllColumnFilters(_ sender: Any?) {
+        columnFilters.removeAll()
         reloadTaxonomyTable()
     }
 }
