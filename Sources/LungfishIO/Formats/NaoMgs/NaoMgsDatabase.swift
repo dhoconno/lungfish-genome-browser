@@ -710,6 +710,9 @@ public final class NaoMgsDatabase: @unchecked Sendable {
             progress?(0.90, "Writing accession summaries...")
             try bulkInsertAccessionSummaries(db: db, accumulators: accumulators)
 
+            progress?(0.93, "Storing reference lengths...")
+            try bulkInsertReferenceLengths(db: db, accumulators: accumulators)
+
             progress?(0.95, "Finalizing...")
 
             // Get distinct taxon count (not sample×taxon pairs) for user-facing display
@@ -863,6 +866,52 @@ public final class NaoMgsDatabase: @unchecked Sendable {
             }
         }
         sqlite3_exec(db, "COMMIT", nil, nil, nil)
+    }
+
+    /// Stores alignment-derived reference lengths as fallback values.
+    ///
+    /// Uses the maximum alignment extent (ref_start + query_length) seen for
+    /// each accession across all samples and taxa. These serve as fallback
+    /// `@SQ LN:` values in generated BAMs when actual reference FASTAs
+    /// are not available.
+    ///
+    /// Uses `INSERT OR IGNORE` so that actual reference lengths (from
+    /// downloaded FASTAs) are never overwritten by alignment extents.
+    private static func bulkInsertReferenceLengths(
+        db: OpaquePointer,
+        accumulators: [String: [Int: TaxonAccumulator]]
+    ) throws {
+        // Merge max extents across all (sample, taxId) pairs for each accession
+        var globalExtents: [String: Int] = [:]
+        for (_, taxonMap) in accumulators {
+            for (_, acc) in taxonMap {
+                for (accession, extent) in acc.accessionMaxExtent {
+                    globalExtents[accession] = max(globalExtents[accession] ?? 0, extent)
+                }
+            }
+        }
+
+        guard !globalExtents.isEmpty else { return }
+
+        let sql = "INSERT OR IGNORE INTO reference_lengths (accession, length) VALUES (?, ?)"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            let msg = String(cString: sqlite3_errmsg(db))
+            throw NaoMgsDatabaseError.createFailed("Reference length insert prepare failed: \(msg)")
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil)
+        for (accession, extent) in globalExtents {
+            sqlite3_reset(stmt)
+            sqlite3_clear_bindings(stmt)
+            naoBindText(stmt, 1, accession)
+            sqlite3_bind_int64(stmt, 2, Int64(extent))
+            sqlite3_step(stmt)
+        }
+        sqlite3_exec(db, "COMMIT", nil, nil, nil)
+
+        logger.info("Stored \(globalExtents.count) fallback reference lengths from alignment extents")
     }
 
     // MARK: - Schema
