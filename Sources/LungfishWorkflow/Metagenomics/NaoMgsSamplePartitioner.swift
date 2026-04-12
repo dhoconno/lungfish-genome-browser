@@ -19,8 +19,7 @@ enum NaoMgsSamplePartitioner {
             return NaoMgsPartitionResult(sampleFiles: [:], totalRows: 0)
         }
 
-        let fm = FileManager.default
-        try fm.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
 
         var headerLine: String?
         var sampleColumnIndex: Int?
@@ -39,10 +38,8 @@ enum NaoMgsSamplePartitioner {
                 return existing
             }
 
-            let url = outputDirectory.appendingPathComponent("\(sample).tsv")
-            if !fm.fileExists(atPath: url.path) {
-                fm.createFile(atPath: url.path, contents: nil)
-            }
+            let url = outputDirectory.appendingPathComponent(safePartitionFileName(for: sample))
+            try Data().write(to: url, options: .atomic)
 
             let handle = try FileHandle(forWritingTo: url)
             if let headerLine {
@@ -103,12 +100,18 @@ enum NaoMgsSamplePartitioner {
 }
 
 private enum NaoMgsSamplePartitionerError: LocalizedError {
+    case decodeFailed(URL)
+    case gzipFailed(URL, Int32)
     case inconsistentHeader(URL)
     case malformedRow(URL)
     case missingSampleColumn(URL)
 
     var errorDescription: String? {
         switch self {
+        case .decodeFailed(let url):
+            return "NAO-MGS TSV is not valid UTF-8: \(url.lastPathComponent)"
+        case .gzipFailed(let url, let status):
+            return "Failed to decompress NAO-MGS gzip input \(url.lastPathComponent) (exit \(status))"
         case .inconsistentHeader(let url):
             return "NAO-MGS TSV headers do not match across inputs: \(url.lastPathComponent)"
         case .malformedRow(let url):
@@ -117,6 +120,31 @@ private enum NaoMgsSamplePartitionerError: LocalizedError {
             return "NAO-MGS header is missing the sample column in \(url.lastPathComponent)"
         }
     }
+}
+
+private func safePartitionFileName(for sample: String) -> String {
+    let sanitized = String(sample.unicodeScalars.map { scalar in
+        switch scalar {
+        case "a"..."z", "A"..."Z", "0"..."9", "-", "_", ".":
+            Character(scalar)
+        default:
+            "_"
+        }
+    })
+    .replacingOccurrences(of: "_+", with: "_", options: .regularExpression)
+    .trimmingCharacters(in: CharacterSet(charactersIn: "._-"))
+
+    let baseName = sanitized.isEmpty ? "sample" : sanitized
+    return "\(baseName)-\(deterministicSampleHash(sample)).tsv"
+}
+
+private func deterministicSampleHash(_ sample: String) -> String {
+    var hash: UInt64 = 14695981039346656037
+    for byte in sample.utf8 {
+        hash ^= UInt64(byte)
+        hash &*= 1099511628211
+    }
+    return String(format: "%016llx", hash)
 }
 
 private func streamNaoMgsLines(
@@ -140,13 +168,7 @@ private func streamNaoMgsLines(
         readHandle = try FileHandle(forReadingFrom: url)
     }
 
-    defer {
-        if url.pathExtension.lowercased() == "gz" {
-            gzipProcess?.waitUntilExit()
-        } else {
-            try? readHandle.close()
-        }
-    }
+    defer { try? readHandle.close() }
 
     let chunkSize = 4_194_304
     var partial = Data()
@@ -170,16 +192,27 @@ private func streamNaoMgsLines(
         }
 
         let completeRange = partial[partial.startIndex...lastNewline]
-        if let text = String(data: Data(completeRange), encoding: .utf8) {
-            try processChunkText(text)
+        guard let text = String(data: Data(completeRange), encoding: .utf8) else {
+            throw NaoMgsSamplePartitionerError.decodeFailed(url)
         }
+        try processChunkText(text)
 
         let nextIndex = partial.index(after: lastNewline)
         partial = nextIndex < partial.endIndex ? Data(partial[nextIndex...]) : Data()
     }
 
-    if !partial.isEmpty, let text = String(data: partial, encoding: .utf8) {
+    if !partial.isEmpty {
+        guard let text = String(data: partial, encoding: .utf8) else {
+            throw NaoMgsSamplePartitionerError.decodeFailed(url)
+        }
         let line = text.hasSuffix("\r") ? String(text.dropLast()) : text
         try process(lineNumber, line)
+    }
+
+    if let gzipProcess {
+        gzipProcess.waitUntilExit()
+        guard gzipProcess.terminationReason == .exit, gzipProcess.terminationStatus == 0 else {
+            throw NaoMgsSamplePartitionerError.gzipFailed(url, gzipProcess.terminationStatus)
+        }
     }
 }

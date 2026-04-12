@@ -739,6 +739,68 @@ struct NaoMgsImportOptimizationTests {
         #expect(String(sampleBLines[0]) == header.trimmingCharacters(in: .newlines))
         #expect(String(sampleBLines[1]) == "SAMPLE_B_S2_L001\tread3\t222\tTGCA\tIIII\tACC2\t30\t1\t4\tTrue\tUP")
     }
+
+    @Test
+    func partitionerSanitizesFilenamesAndTruncatesExistingOutputsOnRerun() async throws {
+        let workspace = makeTemporaryDirectory(prefix: "naomgs-partition-rerun-")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let input = workspace.appendingPathComponent("virus_hits_final.tsv")
+        let outputDir = workspace.appendingPathComponent("partitioned", isDirectory: true)
+        let header = "sample\tseq_id\taligner_taxid_lca\tquery_seq\tquery_qual\tprim_align_genome_id_all\tprim_align_ref_start\tprim_align_edit_distance\tquery_len\tprim_align_query_rc\tprim_align_pair_status"
+
+        try """
+        \(header)
+        SAMPLE/WEIRD:NAME_S1_L001\tread1\t111\tACGT\tIIII\tACC1\t10\t0\t4\tFalse\tCP
+        """.write(to: input, atomically: true, encoding: .utf8)
+
+        let first = try NaoMgsSamplePartitioner.partition(
+            inputURLs: [input],
+            outputDirectory: outputDir
+        )
+
+        let logicalSample = "SAMPLE/WEIRD:NAME"
+        let firstURL = try #require(first.sampleFiles[logicalSample])
+        #expect(firstURL.lastPathComponent != "\(logicalSample).tsv")
+        #expect(!firstURL.lastPathComponent.contains("/"))
+        #expect(!firstURL.lastPathComponent.contains(":"))
+
+        try """
+        \(header)
+        SAMPLE/WEIRD:NAME_S1_L001\tread2\t111\tTGCA\tIIII\tACC1\t20\t0\t4\tFalse\tCP
+        """.write(to: input, atomically: true, encoding: .utf8)
+
+        let second = try NaoMgsSamplePartitioner.partition(
+            inputURLs: [input],
+            outputDirectory: outputDir
+        )
+
+        let secondURL = try #require(second.sampleFiles[logicalSample])
+        #expect(firstURL == secondURL, "Filename should be deterministic across reruns")
+
+        let rerunContent = try String(contentsOf: secondURL)
+        #expect(rerunContent.contains("read2"))
+        #expect(!rerunContent.contains("read1"), "Rerun should not leave stale tail data in existing partition files")
+    }
+
+    @Test
+    func partitionerThrowsOnCorruptedGzipInput() async throws {
+        let workspace = makeTemporaryDirectory(prefix: "naomgs-partition-corrupt-")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let source = workspace.appendingPathComponent("virus_hits_final.tsv.gz")
+        try Data([0x1f, 0x8b, 0x08, 0x00, 0xff, 0xff, 0x00, 0x00, 0x62, 0x61, 0x64])
+            .write(to: source)
+
+        let outputDir = workspace.appendingPathComponent("partitioned", isDirectory: true)
+
+        #expect(throws: Error.self) {
+            _ = try NaoMgsSamplePartitioner.partition(
+                inputURLs: [source],
+                outputDirectory: outputDir
+            )
+        }
+    }
 }
 
 private func makeTemporaryDirectory(prefix: String) -> URL {
