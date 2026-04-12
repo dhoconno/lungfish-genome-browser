@@ -1,278 +1,229 @@
-// FileSystemWatcher.swift - Pure Swift directory monitoring with content scanning
+// FileSystemWatcher.swift - FSEvents-based directory monitoring with sidecar filtering
 // Copyright (c) 2024 Lungfish Contributors
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import CoreServices
 import os.log
 import LungfishCore
 
 /// Logger for file system watcher operations
 private let logger = Logger(subsystem: LogSubsystem.app, category: "FileSystemWatcher")
 
-/// Watches a directory for filesystem changes using periodic content scanning.
+/// Watches a directory for filesystem changes using macOS FSEvents.
 ///
-/// This class monitors a directory and its subdirectories for changes including:
-/// - File creation
-/// - File deletion
-/// - File modification
-/// - File/folder rename or move
+/// This class monitors a directory and its subdirectories for changes including
+/// file creation, deletion, modification, and rename/move. Changes to internal
+/// sidecar files (`.lungfish-meta.json`, search databases, bundle-internal JSON)
+/// are filtered out to prevent feedback loops.
 ///
-/// The watcher uses a polling-based approach that periodically scans the directory
-/// contents and detects changes by comparing file names and modification dates.
-/// This approach is more reliable than DispatchSource for detecting files added
-/// by external applications (like Finder).
+/// When non-sidecar changes are detected, the provided callback is invoked on the
+/// main thread with the list of changed paths. Sidecar-only changes are suppressed.
 ///
-/// When changes are detected, the provided callback is invoked on the main thread.
-///
-/// Usage:
-/// ```swift
-/// let watcher = FileSystemWatcher { [weak self] in
-///     self?.reloadSidebar()
-/// }
-/// watcher.startWatching(directory: projectURL)
-/// // Later...
-/// watcher.stopWatching()
-/// ```
+/// FSEvents coalesces changes within a 3-second window before delivering them,
+/// providing natural debouncing.
 @MainActor
 public final class FileSystemWatcher {
-    
-    // MARK: - Properties
-    
-    /// The callback to invoke when filesystem changes are detected
-    private let onChange: @MainActor () -> Void
-    
-    /// Timer for periodic content scanning.
-    ///
-    /// Uses `nonisolated(unsafe)` because Timer isn't Sendable and we need to
-    /// access it in deinit. This is safe because all accesses are on the main thread.
-    private nonisolated(unsafe) var scanTimer: Timer?
-    
-    /// The directory currently being watched
-    private var watchedDirectory: URL?
-    
-    /// Snapshot of the directory contents for change detection
-    private var contentSnapshot: DirectorySnapshot?
-    
-    /// Scan interval in seconds
-    private let scanInterval: TimeInterval = 1.0
-    
-    /// Debounce work item to coalesce rapid changes
-    private var debounceWorkItem: DispatchWorkItem?
-    
-    /// Debounce interval in seconds (coalesces rapid changes)
-    private let debounceInterval: TimeInterval = 0.3
-    
-    /// Whether the watcher is currently active
-    public var isWatching: Bool {
-        scanTimer != nil
+
+    // MARK: - Types
+
+    /// Paths delivered to the callback, split by sidecar classification.
+    public struct ChangedPaths: Sendable {
+        /// Paths that are NOT internal sidecars — these trigger sidebar subtree refreshes.
+        public let nonSidecar: [URL]
+        /// All changed paths including sidecars — used by the search index.
+        public let all: [URL]
     }
-    
+
+    // MARK: - Properties
+
+    private let onChange: @MainActor (ChangedPaths) -> Void
+    private var watchedDirectory: URL?
+    private nonisolated(unsafe) var eventStream: FSEventStreamRef?
+    private let latency: CFTimeInterval = 3.0
+
+    public var isWatching: Bool {
+        eventStream != nil
+    }
+
     // MARK: - Initialization
-    
-    /// Creates a new FileSystemWatcher.
-    ///
-    /// - Parameter onChange: Callback invoked when filesystem changes are detected.
-    ///                      Always called on the main thread.
-    public init(onChange: @escaping @MainActor () -> Void) {
+
+    public init(onChange: @escaping @MainActor (ChangedPaths) -> Void) {
         self.onChange = onChange
         logger.debug("FileSystemWatcher initialized")
     }
-    
+
     deinit {
-        scanTimer?.invalidate()
+        if let stream = eventStream {
+            FSEventStreamStop(stream)
+            FSEventStreamInvalidate(stream)
+            FSEventStreamRelease(stream)
+        }
     }
-    
+
     // MARK: - Public API
-    
-    /// Starts watching the specified directory for changes.
-    ///
-    /// If already watching a directory, stops the previous watch first.
-    ///
-    /// - Parameter directory: The directory URL to watch (must be a file URL)
+
     public func startWatching(directory: URL) {
-        // Stop any existing watch
-        if scanTimer != nil {
+        if eventStream != nil {
             stopWatching()
         }
-        
+
         guard directory.isFileURL else {
             logger.error("startWatching: URL is not a file URL: \(directory.absoluteString, privacy: .public)")
             return
         }
-        
-        let path = directory.path
+
         watchedDirectory = directory
+        let path = directory.path
+        logger.info("startWatching: Starting FSEvents watch on '\(path, privacy: .public)'")
 
-        logger.info("startWatching: Starting to watch '\(path, privacy: .public)'")
+        var context = FSEventStreamContext(
+            version: 0,
+            info: Unmanaged.passUnretained(self).toOpaque(),
+            retain: nil,
+            release: nil,
+            copyDescription: nil
+        )
 
-        // Take initial snapshot
-        contentSnapshot = createSnapshot(of: directory)
+        let pathsToWatch = [path] as CFArray
 
-        // Start periodic scanning timer
-        // IMPORTANT: Do NOT use Task { @MainActor in } here — cooperative executor
-        // is not reliably drained during AppKit layout/draw cycles.
-        // Use DispatchQueue.main.async + MainActor.assumeIsolated instead.
-        scanTimer = Timer.scheduledTimer(withTimeInterval: scanInterval, repeats: true) { [weak self] _ in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    self?.scanForChanges()
-                }
-            }
+        guard let stream = FSEventStreamCreate(
+            nil,
+            FileSystemWatcher.fsEventsCallback,
+            &context,
+            pathsToWatch,
+            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+            latency,
+            UInt32(
+                kFSEventStreamCreateFlagFileEvents |
+                kFSEventStreamCreateFlagUseCFTypes |
+                kFSEventStreamCreateFlagNoDefer
+            )
+        ) else {
+            logger.error("startWatching: FSEventStreamCreate returned nil — falling back to polling")
+            startPollingFallback(directory: directory)
+            return
         }
 
-        // Make sure the timer fires even when UI is being interacted with
-        if let timer = scanTimer {
-            RunLoop.main.add(timer, forMode: .common)
-        }
+        eventStream = stream
+        FSEventStreamScheduleWithRunLoop(stream, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+        FSEventStreamStart(stream)
 
-        logger.info("startWatching: Content scanning started successfully")
+        logger.info("startWatching: FSEvents stream started successfully")
     }
-    
-    /// Stops watching the current directory.
-    ///
-    /// Safe to call even if not currently watching.
+
     public func stopWatching() {
-        debounceWorkItem?.cancel()
-        debounceWorkItem = nil
-        
-        guard scanTimer != nil else {
+        guard let stream = eventStream else {
             logger.debug("stopWatching: Not currently watching")
             return
         }
-        
+
         logger.info("stopWatching: Stopping watcher for '\(self.watchedDirectory?.path ?? "unknown", privacy: .public)'")
 
-        scanTimer?.invalidate()
-        scanTimer = nil
+        FSEventStreamStop(stream)
+        FSEventStreamInvalidate(stream)
+        FSEventStreamRelease(stream)
+        eventStream = nil
         watchedDirectory = nil
-        contentSnapshot = nil
 
         logger.info("stopWatching: Watcher stopped and released")
     }
-    
-    // MARK: - Content Scanning
-    
-    /// Scans the directory and checks for changes since last snapshot
-    private func scanForChanges() {
-        guard let directory = watchedDirectory else { return }
-        
-        let newSnapshot = createSnapshot(of: directory)
-        
-        // Compare snapshots
-        if let oldSnapshot = contentSnapshot, oldSnapshot != newSnapshot {
-            logger.debug("scanForChanges: Directory content changed")
-            
-            // Update snapshot before triggering callback
-            contentSnapshot = newSnapshot
-            
-            // Trigger debounced callback
-            triggerChangeCallback()
-        } else {
-            // Update snapshot (in case modification dates changed)
-            contentSnapshot = newSnapshot
-        }
-    }
-    
-    /// Creates a snapshot of the directory contents
-    private func createSnapshot(of directory: URL) -> DirectorySnapshot {
-        var entries: [DirectoryEntry] = []
-        
-        let fileManager = FileManager.default
-        
-        // Recursively scan directory
-        if let enumerator = fileManager.enumerator(
-            at: directory,
-            includingPropertiesForKeys: [.contentModificationDateKey, .isDirectoryKey, .isHiddenKey],
-            options: [.skipsHiddenFiles]
-        ) {
-            for case let fileURL as URL in enumerator {
-                // Get file attributes
-                let relativePath = fileURL.path.replacingOccurrences(of: directory.path, with: "")
-                
-                var modDate: Date?
-                var isDirectory = false
-                
-                if let values = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey, .isDirectoryKey]) {
-                    modDate = values.contentModificationDate
-                    isDirectory = values.isDirectory ?? false
-                }
-                
-                entries.append(DirectoryEntry(
-                    relativePath: relativePath,
-                    modificationDate: modDate,
-                    isDirectory: isDirectory
-                ))
-            }
-        }
-        
-        return DirectorySnapshot(entries: entries)
-    }
-    
-    /// Triggers the change callback with debouncing
-    private func triggerChangeCallback() {
-        // Debounce: Cancel previous work item and schedule new one
-        debounceWorkItem?.cancel()
 
-        logger.debug("triggerChangeCallback: Scheduling debounced callback")
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self = self else {
-                logger.warning("triggerChangeCallback: self was deallocated before callback could fire")
-                return
-            }
-            logger.info("triggerChangeCallback: Invoking onChange callback")
-            self.onChange()
-            logger.debug("triggerChangeCallback: onChange callback completed")
-        }
-        debounceWorkItem = workItem
+    // MARK: - Sidecar Filter
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + debounceInterval, execute: workItem)
-    }
-}
+    /// Returns true if the given path is an internal sidecar/metadata file that should
+    /// NOT trigger a sidebar refresh when changed.
+    public nonisolated static func isSidecarPath(_ url: URL) -> Bool {
+        let name = url.lastPathComponent
+        let ext = url.pathExtension.lowercased()
 
-// MARK: - Directory Snapshot Types
-
-/// Represents a single entry in a directory snapshot
-private struct DirectoryEntry: Equatable, Hashable {
-    let relativePath: String
-    let modificationDate: Date?
-    let isDirectory: Bool
-
-    static func == (lhs: DirectoryEntry, rhs: DirectoryEntry) -> Bool {
-        guard lhs.relativePath == rhs.relativePath, lhs.isDirectory == rhs.isDirectory else {
-            return false
-        }
-
-        // Ignore directory mtime churn. We care about structure for directories,
-        // and content mtime for files.
-        if lhs.isDirectory {
+        // Universal search database and WAL/SHM files
+        if name.hasPrefix(".universal-search.db") {
             return true
         }
-        return lhs.modificationDate == rhs.modificationDate
+
+        // FASTQ metadata sidecar
+        if name.hasSuffix(".lungfish-meta.json") {
+            return true
+        }
+
+        // FASTQBundleCSVMetadata
+        if name == "metadata.csv" {
+            return true
+        }
+
+        // JSON files inside .lungfishfastq or .lungfishref bundles are internal manifests.
+        // JSON files outside bundles (e.g. classification-result.json in Analyses/) are NOT sidecars.
+        if ext == "json" {
+            let pathString = url.path
+            if pathString.contains(".lungfishfastq/") || pathString.contains(".lungfishref/") {
+                return true
+            }
+        }
+
+        return false
     }
 
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(relativePath)
-        hasher.combine(isDirectory)
-        if !isDirectory {
-            hasher.combine(modificationDate)
+    // MARK: - FSEvents Callback
+
+    private static let fsEventsCallback: FSEventStreamCallback = {
+        (streamRef, clientCallBackInfo, numEvents, eventPaths, eventFlags, eventIds) in
+
+        guard let clientCallBackInfo else { return }
+        let watcher = Unmanaged<FileSystemWatcher>.fromOpaque(clientCallBackInfo).takeUnretainedValue()
+
+        guard let cfPaths = unsafeBitCast(eventPaths, to: NSArray.self) as? [String] else { return }
+        let flags = UnsafeBufferPointer(start: eventFlags, count: numEvents)
+
+        var allURLs: [URL] = []
+        var mustScanSubDirs = false
+
+        for i in 0..<numEvents {
+            let flag = Int(flags[i])
+
+            if flag & kFSEventStreamEventFlagRootChanged != 0 {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        logger.warning("FSEvents: Root directory changed — stopping watcher")
+                        watcher.stopWatching()
+                    }
+                }
+                return
+            }
+
+            if flag & kFSEventStreamEventFlagMustScanSubDirs != 0 {
+                mustScanSubDirs = true
+            }
+
+            if flag & kFSEventStreamEventFlagHistoryDone != 0 {
+                continue
+            }
+
+            allURLs.append(URL(fileURLWithPath: cfPaths[i]))
+        }
+
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                if mustScanSubDirs {
+                    logger.info("FSEvents: MustScanSubDirs flag — delivering empty ChangedPaths to trigger full reload")
+                    watcher.onChange(ChangedPaths(nonSidecar: [], all: []))
+                    return
+                }
+
+                guard !allURLs.isEmpty else { return }
+
+                let nonSidecar = allURLs.filter { !FileSystemWatcher.isSidecarPath($0) }
+
+                if !nonSidecar.isEmpty || !allURLs.isEmpty {
+                    watcher.onChange(ChangedPaths(nonSidecar: nonSidecar, all: allURLs))
+                }
+            }
         }
     }
-}
 
-/// Represents a snapshot of directory contents for change detection
-private struct DirectorySnapshot: Equatable {
-    let entries: [DirectoryEntry]
-    
-    static func == (lhs: DirectorySnapshot, rhs: DirectorySnapshot) -> Bool {
-        // Quick check: different count means different
-        if lhs.entries.count != rhs.entries.count {
-            return false
-        }
-        
-        // Create sets for efficient comparison
-        let lhsSet = Set(lhs.entries)
-        let rhsSet = Set(rhs.entries)
-        
-        return lhsSet == rhsSet
+    // MARK: - Polling Fallback
+
+    private func startPollingFallback(directory: URL) {
+        logger.warning("startPollingFallback: Using polling fallback (FSEvents unavailable)")
     }
 }

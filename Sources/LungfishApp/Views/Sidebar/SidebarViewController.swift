@@ -664,7 +664,7 @@ public class SidebarViewController: NSViewController {
         scheduleUniversalSearchRebuild(immediate: true)
 
         // Start watching for changes
-        fileSystemWatcher = FileSystemWatcher { [weak self] in
+        fileSystemWatcher = FileSystemWatcher { [weak self] _ in
             self?.reloadFromFilesystem()
         }
         fileSystemWatcher?.startWatching(directory: url)

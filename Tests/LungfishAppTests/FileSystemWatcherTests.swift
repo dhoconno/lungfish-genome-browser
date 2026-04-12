@@ -32,12 +32,10 @@ struct FileSystemWatcherTests {
         let tempDir = try createTempDirectory()
         defer { removeTempDirectory(tempDir) }
 
-        let expectation = Expectation()
         var callbackInvoked = false
 
-        let watcher = FileSystemWatcher {
+        let watcher = FileSystemWatcher { _ in
             callbackInvoked = true
-            expectation.fulfill()
         }
 
         watcher.startWatching(directory: tempDir)
@@ -49,7 +47,7 @@ struct FileSystemWatcherTests {
 
         // Wait for callback (with timeout)
         // FSEvents has latency + debounce, so we need to wait
-        try await Task.sleep(for: .seconds(2))
+        try await Task.sleep(for: .seconds(5))
 
         #expect(callbackInvoked == true, "Callback should be invoked when file is created")
 
@@ -68,10 +66,10 @@ struct FileSystemWatcherTests {
         try "Hello, World!".write(to: testFile, atomically: true, encoding: .utf8)
 
         // Wait a moment for the filesystem to settle
-        try await Task.sleep(for: .milliseconds(500))
+        try await Task.sleep(for: .seconds(1))
 
         var callbackCount = 0
-        let watcher = FileSystemWatcher {
+        let watcher = FileSystemWatcher { _ in
             callbackCount += 1
         }
 
@@ -81,7 +79,7 @@ struct FileSystemWatcherTests {
         try FileManager.default.removeItem(at: testFile)
 
         // Wait for callback
-        try await Task.sleep(for: .seconds(2))
+        try await Task.sleep(for: .seconds(5))
 
         #expect(callbackCount >= 1, "Callback should be invoked when file is deleted")
 
@@ -99,10 +97,10 @@ struct FileSystemWatcherTests {
         try "Hello, World!".write(to: originalFile, atomically: true, encoding: .utf8)
 
         // Wait a moment for the filesystem to settle
-        try await Task.sleep(for: .milliseconds(500))
+        try await Task.sleep(for: .seconds(1))
 
         var callbackCount = 0
-        let watcher = FileSystemWatcher {
+        let watcher = FileSystemWatcher { _ in
             callbackCount += 1
         }
 
@@ -113,7 +111,7 @@ struct FileSystemWatcherTests {
         try FileManager.default.moveItem(at: originalFile, to: renamedFile)
 
         // Wait for callback
-        try await Task.sleep(for: .seconds(2))
+        try await Task.sleep(for: .seconds(5))
 
         #expect(callbackCount >= 1, "Callback should be invoked when file is renamed")
 
@@ -131,10 +129,10 @@ struct FileSystemWatcherTests {
         try FileManager.default.createDirectory(at: nestedDir, withIntermediateDirectories: true)
 
         // Wait a moment for the filesystem to settle
-        try await Task.sleep(for: .milliseconds(500))
+        try await Task.sleep(for: .seconds(1))
 
         var callbackInvoked = false
-        let watcher = FileSystemWatcher {
+        let watcher = FileSystemWatcher { _ in
             callbackInvoked = true
         }
 
@@ -145,7 +143,7 @@ struct FileSystemWatcherTests {
         try "Nested content".write(to: nestedFile, atomically: true, encoding: .utf8)
 
         // Wait for callback
-        try await Task.sleep(for: .seconds(2))
+        try await Task.sleep(for: .seconds(5))
 
         #expect(callbackInvoked == true, "Callback should be invoked for changes in nested directories")
 
@@ -159,7 +157,7 @@ struct FileSystemWatcherTests {
         defer { removeTempDirectory(tempDir) }
 
         var callbackCount = 0
-        let watcher = FileSystemWatcher {
+        let watcher = FileSystemWatcher { _ in
             callbackCount += 1
         }
 
@@ -174,7 +172,7 @@ struct FileSystemWatcherTests {
         try "Hello, World!".write(to: testFile, atomically: true, encoding: .utf8)
 
         // Wait to ensure no callback is triggered
-        try await Task.sleep(for: .seconds(2))
+        try await Task.sleep(for: .seconds(5))
 
         #expect(callbackCount == 0, "Callback should not be invoked after stopWatching()")
     }
@@ -189,7 +187,7 @@ struct FileSystemWatcherTests {
         var visibleCallbackCount = 0
 
         // First test: only hidden file - should not trigger callback
-        let watcher1 = FileSystemWatcher {
+        let watcher1 = FileSystemWatcher { _ in
             hiddenOnlyCallbackCount += 1
         }
         watcher1.startWatching(directory: tempDir)
@@ -199,14 +197,14 @@ struct FileSystemWatcherTests {
         try "Hidden content".write(to: hiddenFile, atomically: true, encoding: .utf8)
 
         // Wait for potential callback
-        try await Task.sleep(for: .seconds(2))
+        try await Task.sleep(for: .seconds(5))
         watcher1.stopWatching()
 
         // Note: FSEvents may still report directory-level changes, so we can't
         // guarantee zero callbacks. The key test is that visible files DO trigger.
 
         // Second test: visible file - SHOULD trigger callback
-        let watcher2 = FileSystemWatcher {
+        let watcher2 = FileSystemWatcher { _ in
             visibleCallbackCount += 1
         }
         watcher2.startWatching(directory: tempDir)
@@ -214,7 +212,7 @@ struct FileSystemWatcherTests {
         let visibleFile = tempDir.appendingPathComponent("visible.txt")
         try "Visible content".write(to: visibleFile, atomically: true, encoding: .utf8)
 
-        try await Task.sleep(for: .seconds(2))
+        try await Task.sleep(for: .seconds(5))
         watcher2.stopWatching()
 
         // Visible file changes MUST trigger callback
@@ -231,7 +229,7 @@ struct FileSystemWatcherTests {
         defer { removeTempDirectory(tempDir) }
 
         var callbackCount = 0
-        let watcher = FileSystemWatcher {
+        let watcher = FileSystemWatcher { _ in
             callbackCount += 1
         }
 
@@ -244,7 +242,7 @@ struct FileSystemWatcherTests {
         }
 
         // Wait for debounced callback
-        try await Task.sleep(for: .seconds(2))
+        try await Task.sleep(for: .seconds(5))
 
         // Due to debouncing, we should get fewer callbacks than file operations
         // Ideally just 1 callback after all the rapid changes
@@ -265,7 +263,7 @@ struct FileSystemWatcherTests {
         }
 
         var callbackCount = 0
-        let watcher = FileSystemWatcher {
+        let watcher = FileSystemWatcher { _ in
             callbackCount += 1
         }
 
@@ -286,26 +284,59 @@ struct FileSystemWatcherTests {
         try "Content 2".write(to: file2, atomically: true, encoding: .utf8)
 
         // Wait for callback
-        try await Task.sleep(for: .seconds(2))
+        try await Task.sleep(for: .seconds(5))
 
         // Should only get callback from second directory
         #expect(callbackCount >= 1, "Should get callback from second directory")
 
         watcher.stopWatching()
     }
-}
 
-// MARK: - Test Helpers
+    // MARK: - Sidecar Filter Tests
 
-/// Simple expectation helper for async testing
-private class Expectation {
-    private var fulfilled = false
-
-    func fulfill() {
-        fulfilled = true
+    @Test("isSidecarPath identifies lungfish-meta.json files")
+    func sidecarFilterIdentifiesMetaJSON() {
+        let metaURL = URL(fileURLWithPath: "/project/Downloads/SRR123.fastq.gz.lungfish-meta.json")
+        #expect(FileSystemWatcher.isSidecarPath(metaURL) == true)
     }
 
-    func isFulfilled() -> Bool {
-        return fulfilled
+    @Test("isSidecarPath identifies universal search database files")
+    func sidecarFilterIdentifiesSearchDB() {
+        let dbURL = URL(fileURLWithPath: "/project/.universal-search.db")
+        let walURL = URL(fileURLWithPath: "/project/.universal-search.db-wal")
+        let shmURL = URL(fileURLWithPath: "/project/.universal-search.db-shm")
+        #expect(FileSystemWatcher.isSidecarPath(dbURL) == true)
+        #expect(FileSystemWatcher.isSidecarPath(walURL) == true)
+        #expect(FileSystemWatcher.isSidecarPath(shmURL) == true)
+    }
+
+    @Test("isSidecarPath identifies metadata.csv")
+    func sidecarFilterIdentifiesMetadataCSV() {
+        let csvURL = URL(fileURLWithPath: "/project/Downloads/SRR123.lungfishfastq/metadata.csv")
+        #expect(FileSystemWatcher.isSidecarPath(csvURL) == true)
+    }
+
+    @Test("isSidecarPath identifies JSON inside bundles")
+    func sidecarFilterIdentifiesJSONInBundles() {
+        let manifestURL = URL(fileURLWithPath: "/project/Downloads/SRR123.lungfishfastq/derived.manifest.json")
+        let readManifestURL = URL(fileURLWithPath: "/project/Downloads/SRR123.lungfishfastq/read-manifest.json")
+        #expect(FileSystemWatcher.isSidecarPath(manifestURL) == true)
+        #expect(FileSystemWatcher.isSidecarPath(readManifestURL) == true)
+    }
+
+    @Test("isSidecarPath allows non-sidecar files through")
+    func sidecarFilterAllowsNormalFiles() {
+        let fastqURL = URL(fileURLWithPath: "/project/Downloads/SRR123.fastq.gz")
+        let bamURL = URL(fileURLWithPath: "/project/Alignments/sample.bam")
+        let bundleURL = URL(fileURLWithPath: "/project/Downloads/SRR123.lungfishfastq")
+        #expect(FileSystemWatcher.isSidecarPath(fastqURL) == false)
+        #expect(FileSystemWatcher.isSidecarPath(bamURL) == false)
+        #expect(FileSystemWatcher.isSidecarPath(bundleURL) == false)
+    }
+
+    @Test("isSidecarPath allows top-level JSON files outside bundles")
+    func sidecarFilterAllowsTopLevelJSON() {
+        let resultJSON = URL(fileURLWithPath: "/project/Analyses/classification-2026-04/classification-result.json")
+        #expect(FileSystemWatcher.isSidecarPath(resultJSON) == false)
     }
 }
