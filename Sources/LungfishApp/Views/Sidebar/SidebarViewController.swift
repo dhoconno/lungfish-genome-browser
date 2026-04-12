@@ -461,6 +461,22 @@ public class SidebarViewController: NSViewController {
         }
     }
 
+    /// Sends changed paths to the universal search service for targeted re-indexing.
+    ///
+    /// Unlike `scheduleUniversalSearchRebuild()` which does a full rebuild,
+    /// this only updates index entries for the specific files that changed.
+    private func updateSearchIndex(changedPaths: [URL]) {
+        guard let projectURL else { return }
+        // TODO: Implement in Task 4 — uncomment when UniversalProjectSearchService.update exists
+        // Task {
+        //     await universalSearchService.update(
+        //         projectURL: projectURL,
+        //         changedPaths: changedPaths
+        //     )
+        // }
+        _ = projectURL // silence unused warning
+    }
+
     /// Clears universal-search state for a project.
     private func clearUniversalSearchState(for projectURL: URL?) {
         universalSearchTask?.cancel()
@@ -664,8 +680,18 @@ public class SidebarViewController: NSViewController {
         scheduleUniversalSearchRebuild(immediate: true)
 
         // Start watching for changes
-        fileSystemWatcher = FileSystemWatcher { [weak self] _ in
-            self?.reloadFromFilesystem()
+        fileSystemWatcher = FileSystemWatcher { [weak self] changedPaths in
+            guard let self else { return }
+            if changedPaths.nonSidecar.isEmpty && !changedPaths.all.isEmpty {
+                // Sidecar-only changes — just update the search index
+                self.updateSearchIndex(changedPaths: changedPaths.all)
+            } else if changedPaths.nonSidecar.isEmpty && changedPaths.all.isEmpty {
+                // kFSEventStreamEventFlagMustScanSubDirs — full reload
+                self.reloadFromFilesystem()
+            } else {
+                // Non-sidecar changes detected — incremental sidebar update
+                self.updateSidebar(changedPaths: changedPaths)
+            }
         }
         fileSystemWatcher?.startWatching(directory: url)
 
@@ -777,6 +803,177 @@ public class SidebarViewController: NSViewController {
         let itemCount = rootItems.reduce(0) { $0 + countItems(in: $1) }
         logger.info("reloadFromFilesystem: Sidebar updated with \(itemCount) items")
         scheduleUniversalSearchRebuild()
+    }
+
+    /// Incrementally updates the sidebar for specific changed paths.
+    ///
+    /// Instead of rebuilding the entire sidebar tree, this method:
+    /// 1. Maps changed paths to their top-level parent items in the sidebar
+    /// 2. Re-scans only the affected directories
+    /// 3. Diffs old vs new children and applies NSOutlineView insert/remove/reload
+    ///
+    /// For changes that affect the root level (e.g. new top-level file), falls back
+    /// to a full reload.
+    ///
+    /// - Parameter changedPaths: The FSEvents `ChangedPaths` with both filtered and unfiltered paths.
+    private func updateSidebar(changedPaths: FileSystemWatcher.ChangedPaths) {
+        guard let projectURL else { return }
+
+        logger.debug("updateSidebar: Processing \(changedPaths.nonSidecar.count) non-sidecar changed paths")
+
+        // Also forward ALL paths (including sidecars) to the search index
+        updateSearchIndex(changedPaths: changedPaths.all)
+
+        let nonSidecar = changedPaths.nonSidecar
+        guard !nonSidecar.isEmpty else { return }
+
+        // Map each changed path to its top-level sidebar parent.
+        let projectPath = projectURL.standardizedFileURL.path
+        var affectedTopLevelNames: Set<String> = []
+        var affectsRoot = false
+
+        for url in nonSidecar {
+            let filePath = url.standardizedFileURL.path
+            guard filePath.hasPrefix(projectPath) else { continue }
+
+            let relativePath = String(filePath.dropFirst(projectPath.count))
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+
+            let components = relativePath.split(separator: "/", maxSplits: 1)
+            if components.isEmpty {
+                affectsRoot = true
+            } else {
+                affectedTopLevelNames.insert(String(components[0]))
+            }
+        }
+
+        // If the root level itself changed or the Analyses folder is affected, fall back to full reload.
+        if affectsRoot || affectedTopLevelNames.contains(AnalysesFolder.directoryName) {
+            logger.info("updateSidebar: Root-level or Analyses change — falling back to full reload")
+            reloadFromFilesystem()
+            return
+        }
+
+        logger.info("updateSidebar: Incremental update for \(affectedTopLevelNames.count) top-level items")
+
+        for topLevelName in affectedTopLevelNames {
+            let topLevelURL = projectURL.appendingPathComponent(topLevelName)
+
+            guard let existingItemIndex = rootItems.firstIndex(where: {
+                $0.url?.standardizedFileURL.path == topLevelURL.standardizedFileURL.path
+            }) else {
+                logger.debug("updateSidebar: New top-level item '\(topLevelName)' — full reload")
+                reloadFromFilesystem()
+                return
+            }
+
+            let existingItem = rootItems[existingItemIndex]
+            let rebuiltItem = buildSidebarTree(from: topLevelURL, isRoot: false)
+
+            applySubtreeDiff(
+                existingItem: existingItem,
+                rebuiltItem: rebuiltItem,
+                parent: nil,
+                indexInParent: existingItemIndex
+            )
+        }
+    }
+
+    /// Applies a diff between an existing sidebar item's children and a rebuilt version,
+    /// using surgical NSOutlineView operations instead of reloadData().
+    private func applySubtreeDiff(
+        existingItem: SidebarItem,
+        rebuiltItem: SidebarItem,
+        parent: SidebarItem?,
+        indexInParent: Int
+    ) {
+        // Update title and subtitle if changed
+        var itemNeedsReload = false
+        if existingItem.title != rebuiltItem.title {
+            existingItem.title = rebuiltItem.title
+            itemNeedsReload = true
+        }
+        if existingItem.subtitle != rebuiltItem.subtitle {
+            existingItem.subtitle = rebuiltItem.subtitle
+            itemNeedsReload = true
+        }
+
+        if itemNeedsReload {
+            outlineView.reloadItem(existingItem, reloadChildren: false)
+        }
+
+        // Build maps for diffing children by URL
+        let existingByURL: [String: (index: Int, item: SidebarItem)] = {
+            var map: [String: (Int, SidebarItem)] = [:]
+            for (i, child) in existingItem.children.enumerated() {
+                if let path = child.url?.standardizedFileURL.path {
+                    map[path] = (i, child)
+                }
+            }
+            return map
+        }()
+
+        let rebuiltByURL: [String: (index: Int, item: SidebarItem)] = {
+            var map: [String: (Int, SidebarItem)] = [:]
+            for (i, child) in rebuiltItem.children.enumerated() {
+                if let path = child.url?.standardizedFileURL.path {
+                    map[path] = (i, child)
+                }
+            }
+            return map
+        }()
+
+        let existingURLs = Set(existingByURL.keys)
+        let rebuiltURLs = Set(rebuiltByURL.keys)
+
+        let deletedURLs = existingURLs.subtracting(rebuiltURLs)
+        let insertedURLs = rebuiltURLs.subtracting(existingURLs)
+        let commonURLs = existingURLs.intersection(rebuiltURLs)
+
+        // Apply deletions (in reverse index order to avoid shifting)
+        let deletionIndices = deletedURLs
+            .compactMap { existingByURL[$0]?.index }
+            .sorted(by: >)
+        for index in deletionIndices {
+            existingItem.children.remove(at: index)
+            outlineView.removeItems(
+                at: IndexSet(integer: index),
+                inParent: existingItem,
+                withAnimation: .slideUp
+            )
+        }
+
+        // Apply insertions (in order of rebuilt indices)
+        let insertions = insertedURLs
+            .compactMap { url -> (Int, SidebarItem)? in
+                guard let (index, item) = rebuiltByURL[url] else { return nil }
+                return (index, item)
+            }
+            .sorted { $0.0 < $1.0 }
+        for (targetIndex, newItem) in insertions {
+            let insertIndex = min(targetIndex, existingItem.children.count)
+            existingItem.children.insert(newItem, at: insertIndex)
+            outlineView.insertItems(
+                at: IndexSet(integer: insertIndex),
+                inParent: existingItem,
+                withAnimation: .slideDown
+            )
+        }
+
+        // Recurse into common items for subtitle/children updates
+        for url in commonURLs {
+            guard let (_, existingChild) = existingByURL[url],
+                  let (_, rebuiltChild) = rebuiltByURL[url] else { continue }
+            guard let currentIndex = existingItem.children.firstIndex(where: {
+                $0.url?.standardizedFileURL.path == url
+            }) else { continue }
+            applySubtreeDiff(
+                existingItem: existingChild,
+                rebuiltItem: rebuiltChild,
+                parent: existingItem,
+                indexInParent: currentIndex
+            )
+        }
     }
 
     /// Builds a SidebarItem tree from a filesystem directory.
