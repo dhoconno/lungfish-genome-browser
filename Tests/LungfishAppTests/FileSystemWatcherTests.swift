@@ -322,6 +322,10 @@ struct FileSystemWatcherTests {
         let readManifestURL = URL(fileURLWithPath: "/project/Downloads/SRR123.lungfishfastq/read-manifest.json")
         #expect(FileSystemWatcher.isSidecarPath(manifestURL) == true)
         #expect(FileSystemWatcher.isSidecarPath(readManifestURL) == true)
+
+        // .lungfishref bundles too
+        let refJSON = URL(fileURLWithPath: "/project/Reference Sequences/hg38.lungfishref/manifest.json")
+        #expect(FileSystemWatcher.isSidecarPath(refJSON) == true)
     }
 
     @Test("isSidecarPath allows non-sidecar files through")

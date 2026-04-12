@@ -100,7 +100,7 @@ public final class FileSystemWatcher {
                 kFSEventStreamCreateFlagNoDefer
             )
         ) else {
-            logger.error("startWatching: FSEventStreamCreate returned nil — falling back to polling")
+            logger.error("startWatching: FSEventStreamCreate returned nil — watcher will be inactive")
             startPollingFallback(directory: directory)
             return
         }
@@ -214,9 +214,10 @@ public final class FileSystemWatcher {
 
                 let nonSidecar = allURLs.filter { !FileSystemWatcher.isSidecarPath($0) }
 
-                if !nonSidecar.isEmpty || !allURLs.isEmpty {
-                    watcher.onChange(ChangedPaths(nonSidecar: nonSidecar, all: allURLs))
-                }
+                // Always deliver — the sidebar consumer decides what to do:
+                // - nonSidecar non-empty → incremental sidebar update + search index
+                // - nonSidecar empty (sidecar-only) → search index update only
+                watcher.onChange(ChangedPaths(nonSidecar: nonSidecar, all: allURLs))
             }
         }
     }
@@ -224,6 +225,6 @@ public final class FileSystemWatcher {
     // MARK: - Polling Fallback
 
     private func startPollingFallback(directory: URL) {
-        logger.warning("startPollingFallback: Using polling fallback (FSEvents unavailable)")
+        logger.error("startPollingFallback: FSEvents unavailable — no filesystem monitoring active for '\(directory.path, privacy: .public)'")
     }
 }
