@@ -150,7 +150,7 @@ public enum FASTQMetadataStore {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             let metadata = try decoder.decode(PersistedFASTQMetadata.self, from: data)
-            logger.info("Loaded FASTQ metadata from \(url.lastPathComponent)")
+            logger.debug("Loaded FASTQ metadata from \(url.lastPathComponent)")
             return metadata
         } catch {
             logger.warning("Failed to load FASTQ metadata: \(error)")

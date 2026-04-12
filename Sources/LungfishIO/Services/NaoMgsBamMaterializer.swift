@@ -90,7 +90,9 @@ public enum NaoMgsBamMaterializer {
 
     private static func fetchSamples(db: OpaquePointer?) throws -> [String] {
         var stmt: OpaquePointer?
-        let sql = "SELECT DISTINCT sample FROM virus_hits ORDER BY sample"
+        // Use taxon_summaries (small, pre-computed) instead of virus_hits (millions of rows).
+        // Falls back to virus_hits if taxon_summaries is empty (legacy databases).
+        let sql = "SELECT DISTINCT sample FROM taxon_summaries ORDER BY sample"
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             throw NSError(domain: "NaoMgsBamMaterializer", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: "Could not prepare sample query"])
@@ -102,6 +104,21 @@ public enum NaoMgsBamMaterializer {
                 samples.append(String(cString: ptr))
             }
         }
+
+        // Fallback to virus_hits if taxon_summaries is empty
+        if samples.isEmpty {
+            var fallbackStmt: OpaquePointer?
+            let fallbackSQL = "SELECT DISTINCT sample FROM virus_hits ORDER BY sample"
+            if sqlite3_prepare_v2(db, fallbackSQL, -1, &fallbackStmt, nil) == SQLITE_OK {
+                defer { sqlite3_finalize(fallbackStmt) }
+                while sqlite3_step(fallbackStmt) == SQLITE_ROW {
+                    if let ptr = sqlite3_column_text(fallbackStmt, 0) {
+                        samples.append(String(cString: ptr))
+                    }
+                }
+            }
+        }
+
         return samples
     }
 
@@ -187,23 +204,41 @@ public enum NaoMgsBamMaterializer {
         bamURL: URL,
         samtoolsPath: String
     ) throws {
-        // 1. Collect accessions used by this sample to build @SQ header lines
+        // 1. Collect accessions used by this sample to build @SQ header lines.
+        //    Uses pre-computed accession_summaries (fast) instead of scanning virus_hits.
         var usedAccessions: Set<String> = []
         var accStmt: OpaquePointer?
-        let accSQL = "SELECT DISTINCT subject_seq_id FROM virus_hits WHERE sample = ?"
-        guard sqlite3_prepare_v2(db, accSQL, -1, &accStmt, nil) == SQLITE_OK else {
-            throw NSError(domain: "NaoMgsBamMaterializer", code: 3,
-                          userInfo: [NSLocalizedDescriptionKey: "Could not prepare accession query"])
-        }
-        sample.withCString { cStr in
-            sqlite3_bind_text(accStmt, 1, cStr, -1, SQLITE_TRANSIENT_DESTRUCTOR)
-        }
-        while sqlite3_step(accStmt) == SQLITE_ROW {
-            if let ptr = sqlite3_column_text(accStmt, 0) {
-                usedAccessions.insert(String(cString: ptr))
+        let accSQL = "SELECT DISTINCT accession FROM accession_summaries WHERE sample = ?"
+        if sqlite3_prepare_v2(db, accSQL, -1, &accStmt, nil) == SQLITE_OK {
+            sample.withCString { cStr in
+                sqlite3_bind_text(accStmt, 1, cStr, -1, SQLITE_TRANSIENT_DESTRUCTOR)
             }
+            while sqlite3_step(accStmt) == SQLITE_ROW {
+                if let ptr = sqlite3_column_text(accStmt, 0) {
+                    usedAccessions.insert(String(cString: ptr))
+                }
+            }
+            sqlite3_finalize(accStmt)
         }
-        sqlite3_finalize(accStmt)
+
+        // Fallback to virus_hits if accession_summaries is empty (legacy databases)
+        if usedAccessions.isEmpty {
+            var fallbackStmt: OpaquePointer?
+            let fallbackSQL = "SELECT DISTINCT subject_seq_id FROM virus_hits WHERE sample = ?"
+            guard sqlite3_prepare_v2(db, fallbackSQL, -1, &fallbackStmt, nil) == SQLITE_OK else {
+                throw NSError(domain: "NaoMgsBamMaterializer", code: 3,
+                              userInfo: [NSLocalizedDescriptionKey: "Could not prepare accession query"])
+            }
+            sample.withCString { cStr in
+                sqlite3_bind_text(fallbackStmt, 1, cStr, -1, SQLITE_TRANSIENT_DESTRUCTOR)
+            }
+            while sqlite3_step(fallbackStmt) == SQLITE_ROW {
+                if let ptr = sqlite3_column_text(fallbackStmt, 0) {
+                    usedAccessions.insert(String(cString: ptr))
+                }
+            }
+            sqlite3_finalize(fallbackStmt)
+        }
 
         guard !usedAccessions.isEmpty else {
             logger.warning("No virus_hits for sample \(sample, privacy: .public); skipping BAM generation")
