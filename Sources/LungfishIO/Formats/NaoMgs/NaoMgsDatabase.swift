@@ -349,7 +349,7 @@ public final class NaoMgsDatabase: @unchecked Sendable {
 
     /// In-memory accumulator for computing taxon and accession summaries during
     /// streaming import. Avoids expensive post-insert SQL aggregation queries.
-    private struct TaxonAccumulator {
+    private final class TaxonAccumulator {
         var hitCount: Int = 0
         var identitySum: Double = 0
         var bitScoreSum: Double = 0
@@ -677,8 +677,14 @@ public final class NaoMgsDatabase: @unchecked Sendable {
 
                     insertedCount += 1
 
-                    // --- Update streaming accumulators ---
-                    var acc = accumulators[sampleName, default: [:]][taxId, default: TaxonAccumulator()]
+                    // --- Update streaming accumulators (class = mutate in-place) ---
+                    let acc: TaxonAccumulator
+                    if let existing = accumulators[sampleName]?[taxId] {
+                        acc = existing
+                    } else {
+                        acc = TaxonAccumulator()
+                        accumulators[sampleName, default: [:]][taxId] = acc
+                    }
                     acc.hitCount += 1
                     acc.identitySum += percentIdentity
                     acc.bitScoreSum += effectiveBitScore
@@ -716,11 +722,8 @@ public final class NaoMgsDatabase: @unchecked Sendable {
                         acc.accessionMaxExtent[subjectSeqId] = max(acc.accessionMaxExtent[subjectSeqId] ?? 0, r2End)
                     }
 
-                    accumulators[sampleName, default: [:]][taxId] = acc
-
                     if insertedCount % batchSize == 0 {
                         sqlite3_exec(db, "COMMIT", nil, nil, nil)
-                        sqlite3_wal_checkpoint_v2(db, nil, SQLITE_CHECKPOINT_TRUNCATE, nil, nil)
                         sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil)
                         let fraction = 0.02 + 0.63 * Double(fileIndex) / Double(totalFiles)
                             + 0.63 / Double(totalFiles)

@@ -125,9 +125,9 @@ struct NaoMgsImportSheet: View {
 
     private var headerSection: some View {
         HStack(spacing: 10) {
-            Image(systemName: "globe.americas")
-                .font(.system(size: 20))
-                .foregroundStyle(Color.accentColor)
+            Image(nsImage: TextBadgeIcon.image(text: "NM", size: NSSize(width: 24, height: 24)))
+                .resizable()
+                .frame(width: 24, height: 24)
             VStack(alignment: .leading, spacing: 2) {
                 Text("NAO-MGS Import")
                     .font(.headline)

@@ -6,7 +6,7 @@ import AppKit
 
 /// Renders a small rounded-rectangle badge with centered text.
 ///
-/// Used for classifier sidebar icons ("Nao", "Nvd") where single-letter
+/// Used for classifier sidebar icons ("NM", "NVD", "ES") where single-letter
 /// SF Symbols are unavailable or ambiguous.
 enum TextBadgeIcon {
 
@@ -21,7 +21,7 @@ enum TextBadgeIcon {
     /// Renders a badge icon with the given text.
     ///
     /// - Parameters:
-    ///   - text: The badge label (e.g. "Nao", "Nvd"). Keep to 2-4 characters.
+    ///   - text: The badge label (e.g. "NM", "NVD"). Keep to 2-4 characters.
     ///   - size: The image size in points.
     ///   - fillColor: Background fill color. Defaults to Lungfish Orange.
     ///   - textColor: Text color. Defaults to white.

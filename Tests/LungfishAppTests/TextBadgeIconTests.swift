@@ -10,14 +10,14 @@ struct TextBadgeIconTests {
 
     @Test
     func rendersBadgeWithCorrectSize() {
-        let image = TextBadgeIcon.image(text: "Nvd", size: NSSize(width: 16, height: 16))
+        let image = TextBadgeIcon.image(text: "NVD", size: NSSize(width: 16, height: 16))
         #expect(image.size.width == 16)
         #expect(image.size.height == 16)
     }
 
     @Test
     func rendersBadgeForNao() {
-        let image = TextBadgeIcon.image(text: "Nao", size: NSSize(width: 16, height: 16))
+        let image = TextBadgeIcon.image(text: "NM", size: NSSize(width: 16, height: 16))
         #expect(image.size.width == 16)
         #expect(image.size.height == 16)
     }
@@ -26,7 +26,7 @@ struct TextBadgeIconTests {
     func rendersBadgeAtDifferentSizes() {
         for dimension in [12, 16, 20, 24] {
             let size = NSSize(width: dimension, height: dimension)
-            let image = TextBadgeIcon.image(text: "Nvd", size: size)
+            let image = TextBadgeIcon.image(text: "NVD", size: size)
             #expect(image.size.width == CGFloat(dimension))
             #expect(image.size.height == CGFloat(dimension))
         }
@@ -35,7 +35,7 @@ struct TextBadgeIconTests {
     @Test
     func rendersWithCustomColor() {
         let image = TextBadgeIcon.image(
-            text: "Nvd",
+            text: "NVD",
             size: NSSize(width: 16, height: 16),
             fillColor: .systemBlue
         )

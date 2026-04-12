@@ -20,10 +20,11 @@ import Foundation
 /// We only keep rows where `name_class` is `"scientific name"`, giving
 /// one canonical name per taxon ID.
 ///
-/// ## Memory Usage
+/// ## Performance
 ///
-/// The full `names.dmp` (~250 MB, ~4M lines) loads into a dictionary
-/// of ~2.5M entries using approximately 200 MB of RAM.
+/// When resolving a specific set of tax IDs, use ``resolveFromFile(_:taxIds:)``
+/// which streams the 250 MB file and only keeps matching entries (~1000×
+/// fewer allocations than loading the full dictionary).
 public final class TaxonomyNameResolver: @unchecked Sendable {
     private var names: [Int: String] = [:]
 
@@ -36,8 +37,6 @@ public final class TaxonomyNameResolver: @unchecked Sendable {
         guard FileManager.default.fileExists(atPath: namesURL.path) else {
             throw TaxonomyResolverError.fileNotFound(namesURL)
         }
-        // Parse names.dmp -- pipe-delimited, tab-padded
-        // Format: taxid\t|\tname\t|\tunique_name\t|\tname_class\t|
         let data = try Data(contentsOf: namesURL)
         guard let text = String(data: data, encoding: .utf8) else {
             throw TaxonomyResolverError.parseError("Invalid UTF-8")
@@ -64,6 +63,82 @@ public final class TaxonomyNameResolver: @unchecked Sendable {
                 result[id] = name
             }
         }
+        return result
+    }
+
+    /// Streaming targeted resolve: scans `names.dmp` once, keeping only entries
+    /// matching the requested tax IDs. Avoids loading the full 250 MB / 2.5M-entry
+    /// dictionary when only a few hundred IDs are needed.
+    public static func resolveFromFile(
+        _ taxonomyDirectory: URL,
+        taxIds: [Int]
+    ) throws -> [Int: String] {
+        let namesURL = taxonomyDirectory.appendingPathComponent("names.dmp")
+        guard FileManager.default.fileExists(atPath: namesURL.path) else {
+            throw TaxonomyResolverError.fileNotFound(namesURL)
+        }
+
+        let needed = Set(taxIds)
+        if needed.isEmpty { return [:] }
+        var result: [Int: String] = [:]
+        result.reserveCapacity(needed.count)
+
+        let handle = try FileHandle(forReadingFrom: namesURL)
+        defer { try? handle.close() }
+
+        let chunkSize = 4_194_304  // 4 MB
+        var partial = Data()
+
+        while true {
+            let chunk = handle.readData(ofLength: chunkSize)
+            if chunk.isEmpty { break }
+
+            partial.append(chunk)
+            guard let lastNewline = partial.lastIndex(of: UInt8(ascii: "\n")) else {
+                continue
+            }
+
+            let completeRange = partial[partial.startIndex...lastNewline]
+            if let text = String(data: Data(completeRange), encoding: .utf8) {
+                for line in text.split(separator: "\n") {
+                    // Quick reject: skip lines not ending with "scientific name\t|"
+                    // The pipe-delimited format means scientific name lines contain that string.
+                    guard line.hasSuffix("scientific name\t|") else { continue }
+
+                    let fields = line.split(separator: "|")
+                    guard fields.count >= 4 else { continue }
+
+                    let taxIdStr = fields[0].drop(while: { $0 == " " || $0 == "\t" })
+                        .prefix(while: { $0 != " " && $0 != "\t" })
+                    guard let taxId = Int(taxIdStr), needed.contains(taxId) else { continue }
+
+                    let name = fields[1].trimmingCharacters(in: .whitespaces)
+                    result[taxId] = name
+
+                    if result.count == needed.count { break }
+                }
+            }
+
+            if result.count == needed.count { break }
+
+            let nextIndex = partial.index(after: lastNewline)
+            partial = nextIndex < partial.endIndex ? Data(partial[nextIndex...]) : Data()
+        }
+
+        // Process remaining partial line
+        if result.count < needed.count, !partial.isEmpty,
+           let text = String(data: partial, encoding: .utf8) {
+            for line in text.split(separator: "\n") {
+                guard line.hasSuffix("scientific name\t|") else { continue }
+                let fields = line.split(separator: "|")
+                guard fields.count >= 4 else { continue }
+                let taxIdStr = fields[0].drop(while: { $0 == " " || $0 == "\t" })
+                    .prefix(while: { $0 != " " && $0 != "\t" })
+                guard let taxId = Int(taxIdStr), needed.contains(taxId) else { continue }
+                result[taxId] = fields[1].trimmingCharacters(in: .whitespaces)
+            }
+        }
+
         return result
     }
 }

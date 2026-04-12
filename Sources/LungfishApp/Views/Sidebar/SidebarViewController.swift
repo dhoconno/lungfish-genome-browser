@@ -1429,14 +1429,27 @@ public class SidebarViewController: NSViewController {
 
             let icon = analysisIcon(for: info.tool)
             let title = analysisDisplayTitle(for: info)
-            let item = SidebarItem(
-                title: title,
-                type: analysisItemType(for: info.tool),
-                icon: icon,
-                children: [],
-                url: info.url,
-                subtitle: AnalysesFolder.formatTimestamp(info.timestamp)
-            )
+            let badge = classifierBatchBadge(for: info.tool)
+            let item: SidebarItem
+            if let badge {
+                item = SidebarItem(
+                    title: title,
+                    type: analysisItemType(for: info.tool),
+                    customImage: TextBadgeIcon.image(text: badge, size: NSSize(width: 16, height: 16)),
+                    children: [],
+                    url: info.url,
+                    subtitle: AnalysesFolder.formatTimestamp(info.timestamp)
+                )
+            } else {
+                item = SidebarItem(
+                    title: title,
+                    type: analysisItemType(for: info.tool),
+                    icon: icon,
+                    children: [],
+                    url: info.url,
+                    subtitle: AnalysesFolder.formatTimestamp(info.timestamp)
+                )
+            }
             // For single results, add a subtitle from the sidecar if available
             if info.tool == "esviritu" {
                 item.subtitle = esvirituResultTitle(for: info.url)
@@ -1497,10 +1510,10 @@ public class SidebarViewController: NSViewController {
     private func classifierBatchBadge(for tool: String) -> String? {
         switch tool {
         case "kraken2": return "K2"
-        case "esviritu": return "Es"
+        case "esviritu": return "ES"
         case "taxtriage": return "TT"
-        case "naomgs": return "Nao"
-        case "nvd": return "Nvd"
+        case "naomgs": return "NM"
+        case "nvd": return "NVD"
         default: return nil
         }
     }
@@ -1714,7 +1727,7 @@ public class SidebarViewController: NSViewController {
             let item = SidebarItem(
                 title: title,
                 type: .naoMgsResult,
-                customImage: TextBadgeIcon.image(text: "Nao", size: NSSize(width: 16, height: 16)),
+                customImage: TextBadgeIcon.image(text: "NM", size: NSSize(width: 16, height: 16)),
                 children: [],
                 url: childURL
             )
@@ -1775,7 +1788,7 @@ public class SidebarViewController: NSViewController {
             let item = SidebarItem(
                 title: title,
                 type: .nvdResult,
-                customImage: TextBadgeIcon.image(text: "Nvd", size: NSSize(width: 16, height: 16)),
+                customImage: TextBadgeIcon.image(text: "NVD", size: NSSize(width: 16, height: 16)),
                 children: [],
                 url: childURL
             )

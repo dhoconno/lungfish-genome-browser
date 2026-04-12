@@ -99,6 +99,15 @@ public struct NaoMgsImportResult: Sendable {
     }
 }
 
+/// Intermediate result from importing a single pre-partitioned sample into staging.
+private struct NaoMgsSingleSampleStageResult {
+    let sampleName: String
+    let hitCount: Int
+    let taxonCount: Int
+    let createdBAM: Bool
+    let stageInput: NaoMgsStageDatabaseInput
+}
+
 /// Errors thrown while importing classifier outputs.
 public enum MetagenomicsImportError: Error, LocalizedError, Sendable {
     case inputNotFound(URL)
@@ -450,28 +459,79 @@ public enum MetagenomicsImportService {
 
         do {
 
-        // Stream from TSV directly into SQLite — O(1) memory per row.
-        progress?(0.05, "Streaming NAO-MGS virus hits into database\u{2026}")
-        let hitsDBURL = resultDirectory.appendingPathComponent("hits.sqlite")
-        let streamResult = try await NaoMgsDatabase.createStreaming(
-            at: hitsDBURL,
-            from: virusHitsFiles,
-            sampleNameOverride: sampleName,
-            minIdentity: minIdentity
-        ) { dbProgress, dbMessage in
-            // Map streaming progress (0..1) into the 5-70% range
-            progress?(0.05 + dbProgress * 0.65, dbMessage)
+        // ── Phase 1: Partition input TSVs by normalized sample ──────────
+        progress?(0.02, "Partitioning input by sample\u{2026}")
+        let stagingRoot = resultDirectory.appendingPathComponent(".naomgs-import-staging", isDirectory: true)
+        let partitionDir = stagingRoot.appendingPathComponent("partitioned", isDirectory: true)
+        let stageImportsDir = stagingRoot.appendingPathComponent("imports", isDirectory: true)
+
+        let partition = try NaoMgsSamplePartitioner.partition(
+            inputURLs: virusHitsFiles,
+            outputDirectory: partitionDir
+        )
+
+        // ── Phase 2: Per-sample stage import (streaming DB + BAMs) ──────
+        var stageInputs: [NaoMgsStageDatabaseInput] = []
+        var totalHitCount = 0
+        var totalTaxonCount = 0
+        var firstSampleName: String?
+        let sortedSamples = partition.sampleFiles.keys.sorted()
+        let sampleCount = sortedSamples.count
+
+        for (index, sample) in sortedSamples.enumerated() {
+            try Task.checkCancellation()
+            let sampleFraction = Double(index) / Double(max(1, sampleCount))
+            progress?(0.05 + sampleFraction * 0.55, "Importing sample \(index + 1)/\(sampleCount): \(sample)\u{2026}")
+
+            let sampleTSV = partition.sampleFiles[sample]!
+            let stageResult = try await importNaoMgsSingleSampleStage(
+                inputURL: sampleTSV,
+                stagingDirectory: stageImportsDir,
+                sampleName: sample,
+                minIdentity: minIdentity
+            )
+            totalHitCount += stageResult.hitCount
+            totalTaxonCount += stageResult.taxonCount
+            // Skip samples where all rows were filtered out (e.g. by minIdentity).
+            if stageResult.hitCount > 0 {
+                stageInputs.append(stageResult.stageInput)
+            }
+            if firstSampleName == nil { firstSampleName = stageResult.sampleName }
         }
 
         let normalizedSampleName = normalizeSampleName(
             explicitName: sampleName,
-            fallback: streamResult.sampleName
+            fallback: firstSampleName ?? preliminarySampleName
         )
 
-        // Open a single read-write connection for all post-creation operations.
+        // ── Phase 3: Merge staged databases into final hits.sqlite ──────
+        progress?(0.62, "Merging sample databases\u{2026}")
+        let hitsDBURL = resultDirectory.appendingPathComponent("hits.sqlite")
+        try NaoMgsDatabase.createMergedSummaryDatabase(at: hitsDBURL, from: stageInputs)
+
+        // Copy per-sample BAMs into the final bundle's bams/ directory.
+        let finalBamsDir = resultDirectory.appendingPathComponent("bams", isDirectory: true)
+        try ensureDirectoryExists(finalBamsDir)
+        for stageInput in stageInputs {
+            let stageBamsDir = stageInput.databaseURL.deletingLastPathComponent()
+                .appendingPathComponent("bams", isDirectory: true)
+            if fm.fileExists(atPath: stageBamsDir.path),
+               let bamFiles = try? fm.contentsOfDirectory(at: stageBamsDir, includingPropertiesForKeys: nil) {
+                for src in bamFiles {
+                    let dst = finalBamsDir.appendingPathComponent(src.lastPathComponent)
+                    try? fm.removeItem(at: dst)
+                    try fm.copyItem(at: src, to: dst)
+                }
+            }
+        }
+
         let rwDB = try NaoMgsDatabase.openReadWrite(at: hitsDBURL)
 
-        // Resolve taxon names from local NCBI Taxonomy database.
+        // Compute global distinct taxon count from the merged database.
+        let mergedTaxonCount = (try? rwDB.fetchTaxonSummaryRows(samples: nil))
+            .map { rows in Set(rows.map(\.taxId)).count } ?? totalTaxonCount
+
+        // ── Phase 4: Resolve taxon names from local NCBI Taxonomy ───────
         progress?(0.70, "Resolving taxon names\u{2026}")
         do {
             let unresolvedIds = try rwDB.taxonIdsNeedingNames()
@@ -498,8 +558,9 @@ public enum MetagenomicsImportService {
                 }
 
                 if let taxonomyPath {
-                    let resolver = try TaxonomyNameResolver(taxonomyDirectory: taxonomyPath)
-                    let resolvedNames = resolver.resolve(taxIds: unresolvedIds)
+                    let resolvedNames = try TaxonomyNameResolver.resolveFromFile(
+                        taxonomyPath, taxIds: unresolvedIds
+                    )
                     if !resolvedNames.isEmpty {
                         try rwDB.updateTaxonNames(resolvedNames)
                     }
@@ -514,14 +575,13 @@ public enum MetagenomicsImportService {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
-        // Get top taxon info from the database (not from in-memory array)
         let topTaxonInfo = try? rwDB.topTaxon()
 
         var manifest = NaoMgsManifest(
             sampleName: normalizedSampleName,
             sourceFilePath: virusHitsFiles[0].path,
-            hitCount: streamResult.hitCount,
-            taxonCount: streamResult.taxonCount,
+            hitCount: totalHitCount,
+            taxonCount: mergedTaxonCount,
             topTaxon: topTaxonInfo?.name,
             topTaxonId: topTaxonInfo?.taxId
         )
@@ -529,12 +589,12 @@ public enum MetagenomicsImportService {
 
         try Task.checkCancellation()
 
+        // ── Phase 5: Fetch references once from merged data ─────────────
         var fetchedAccessions: [String] = []
         if fetchReferences {
             let referencesDirectory = resultDirectory.appendingPathComponent("references", isDirectory: true)
             try ensureDirectoryExists(referencesDirectory)
             progress?(0.76, "Fetching reference FASTA files...")
-            // Get top accessions from the database (not from in-memory array)
             let accessions = (try? rwDB.allMiniBAMAccessions()) ?? []
             fetchedAccessions = await fetchNaoMgsReferences(
                 accessions: accessions,
@@ -546,8 +606,6 @@ public enum MetagenomicsImportService {
 
             try Task.checkCancellation()
 
-            // Extract reference lengths by indexing downloaded FASTA files with samtools faidx.
-            // Each .fai index contains sequence name and length — parsed via FASTAIndex.
             var refLengths: [String: Int] = [:]
             let runner = NativeToolRunner.shared
             if let files = try? FileManager.default.contentsOfDirectory(
@@ -571,7 +629,6 @@ public enum MetagenomicsImportService {
                             }
                         }
                     } catch {
-                        // Best-effort: skip accessions where indexing fails
                         logger.warning("Failed to index \(accession).fasta: \(error.localizedDescription, privacy: .public)")
                     }
                 }
@@ -584,7 +641,6 @@ public enum MetagenomicsImportService {
         }
 
         // Cache taxon summary rows in the manifest for instant display.
-        // Uses the same rwDB connection — avoids opening another handle.
         do {
             let cachedRows = try rwDB.fetchTaxonSummaryRows(samples: nil)
             manifest.cachedTaxonRows = cachedRows
@@ -594,23 +650,62 @@ public enum MetagenomicsImportService {
             logger.warning("Failed to cache taxon rows in manifest: \(error.localizedDescription, privacy: .public)")
         }
 
-        // Materialize BAMs from SQLite virus_hits rows so the miniBAM viewer can
-        // use the same displayContig() path as TaxTriage/EsViritu/NVD. The
-        // materializer runs samtools markdup on each generated BAM automatically.
-        progress?(0.97, "Materializing BAMs from SQLite rows\u{2026}")
-        var createdBamFiles = false
+        // ── Phase 6: Clean up staging artifacts ─────────────────────────
+        try? fm.removeItem(at: stagingRoot)
+
+        progress?(1.0, "NAO-MGS import complete")
+        return NaoMgsImportResult(
+            resultDirectory: resultDirectory,
+            sampleName: normalizedSampleName,
+            totalHitReads: totalHitCount,
+            taxonCount: mergedTaxonCount,
+            fetchedReferenceCount: fetchedAccessions.count,
+            createdBAM: !stageInputs.isEmpty
+        )
+        } catch {
+            // Clean up staging on failure too.
+            let stagingRoot = resultDirectory.appendingPathComponent(".naomgs-import-staging")
+            try? fm.removeItem(at: stagingRoot)
+            throw MetagenomicsImportError.importAborted(
+                resultDirectory: resultDirectory,
+                underlying: error
+            )
+        }
+    }
+
+    /// Imports a single pre-partitioned sample TSV into a staging directory.
+    /// Produces a per-sample SQLite database and BAM files without fetching references.
+    private static func importNaoMgsSingleSampleStage(
+        inputURL: URL,
+        stagingDirectory: URL,
+        sampleName: String,
+        minIdentity: Double = 0
+    ) async throws -> NaoMgsSingleSampleStageResult {
+        let fm = FileManager.default
+        let stageDir = stagingDirectory.appendingPathComponent(sampleName, isDirectory: true)
+        try ensureDirectoryExists(stageDir)
+
+        let hitsDBURL = stageDir.appendingPathComponent("hits.sqlite")
+        let streamResult = try await NaoMgsDatabase.createStreaming(
+            at: hitsDBURL,
+            from: [inputURL],
+            sampleNameOverride: sampleName,
+            minIdentity: minIdentity
+        )
+
+        // Materialize BAMs for this sample.
+        var createdBAM = false
         if let samtoolsPath = naomgsLocateSamtools() {
-            // materializeAll now continues on per-sample errors and never throws
-            // for individual sample failures — it returns all successfully generated BAMs.
             let generated = try NaoMgsBamMaterializer.materializeAll(
                 dbPath: hitsDBURL.path,
-                resultURL: resultDirectory,
+                resultURL: stageDir,
                 samtoolsPath: samtoolsPath
             )
-            createdBamFiles = !generated.isEmpty
-            logger.info("Materialized \(generated.count) BAM file(s) for NAO-MGS samples")
+            createdBAM = !generated.isEmpty
 
             if !generated.isEmpty {
+                // Record BAM paths in the stage database so the merge can read them.
+                let rwDB = try NaoMgsDatabase.openReadWrite(at: hitsDBURL)
                 var bamPathsBySample: [String: (bamPath: String, bamIndexPath: String?)] = [:]
                 for bamURL in generated {
                     let sample = bamURL.deletingPathExtension().lastPathComponent
@@ -618,9 +713,9 @@ public enum MetagenomicsImportService {
                     let baiURL = URL(fileURLWithPath: bamURL.path + ".bai")
                     let csiURL = URL(fileURLWithPath: bamURL.path + ".csi")
                     let indexRelative: String?
-                    if FileManager.default.fileExists(atPath: baiURL.path) {
+                    if fm.fileExists(atPath: baiURL.path) {
                         indexRelative = bamRelative + ".bai"
-                    } else if FileManager.default.fileExists(atPath: csiURL.path) {
+                    } else if fm.fileExists(atPath: csiURL.path) {
                         indexRelative = bamRelative + ".csi"
                     } else {
                         indexRelative = nil
@@ -628,38 +723,38 @@ public enum MetagenomicsImportService {
                     bamPathsBySample[sample] = (bamPath: bamRelative, bamIndexPath: indexRelative)
                 }
                 try rwDB.updateBamPaths(bamPathsBySample)
+
+                // Purge virus_hits now that BAMs are materialized.
+                try? rwDB.deleteVirusHitsAndVacuum()
             }
+        }
+
+        // Build the stage input descriptor for the merge phase.
+        let bamRelative = "bams/\(sampleName).bam"
+        let bamFullPath = stageDir.appendingPathComponent(bamRelative)
+        let baiFullPath = URL(fileURLWithPath: bamFullPath.path + ".bai")
+        let csiFullPath = URL(fileURLWithPath: bamFullPath.path + ".csi")
+        let indexRelative: String?
+        if fm.fileExists(atPath: baiFullPath.path) {
+            indexRelative = "bams/\(sampleName).bam.bai"
+        } else if fm.fileExists(atPath: csiFullPath.path) {
+            indexRelative = "bams/\(sampleName).bam.csi"
         } else {
-            logger.warning("samtools not found; skipping NAO-MGS BAM materialization")
+            indexRelative = nil
         }
 
-        // Purge virus_hits rows now that BAMs are materialized and accession
-        // summaries are pre-computed. This shrinks the database dramatically
-        // (read sequences + quality strings are the bulk of the data).
-        if createdBamFiles {
-            progress?(0.98, "Shrinking database\u{2026}")
-            do {
-                try rwDB.deleteVirusHitsAndVacuum()
-            } catch {
-                logger.warning("Failed to purge virus_hits: \(error.localizedDescription, privacy: .public)")
-            }
-        }
-
-        progress?(1.0, "NAO-MGS import complete")
-        return NaoMgsImportResult(
-            resultDirectory: resultDirectory,
-            sampleName: normalizedSampleName,
-            totalHitReads: streamResult.hitCount,
+        return NaoMgsSingleSampleStageResult(
+            sampleName: streamResult.sampleName,
+            hitCount: streamResult.hitCount,
             taxonCount: streamResult.taxonCount,
-            fetchedReferenceCount: fetchedAccessions.count,
-            createdBAM: createdBamFiles
-        )
-        } catch {
-            throw MetagenomicsImportError.importAborted(
-                resultDirectory: resultDirectory,
-                underlying: error
+            createdBAM: createdBAM,
+            stageInput: NaoMgsStageDatabaseInput(
+                sample: sampleName,
+                databaseURL: hitsDBURL,
+                bamRelativePath: bamRelative,
+                bamIndexRelativePath: indexRelative
             )
-        }
+        )
     }
 
     /// Selects the top N accessions per taxon by hit count, deduplicated across taxa.

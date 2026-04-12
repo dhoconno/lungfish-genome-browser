@@ -78,10 +78,32 @@ final class NaoMgsBamMaterializerTests: XCTestCase {
             best_alignment_score_rev REAL
         );
         CREATE TABLE reference_lengths (accession TEXT PRIMARY KEY, length INTEGER NOT NULL);
+        CREATE TABLE taxon_summaries (
+            sample TEXT NOT NULL,
+            tax_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            hit_count INTEGER NOT NULL,
+            unique_read_count INTEGER NOT NULL,
+            avg_identity REAL NOT NULL,
+            avg_bit_score REAL NOT NULL,
+            avg_edit_distance REAL NOT NULL,
+            pcr_duplicate_count INTEGER NOT NULL,
+            accession_count INTEGER NOT NULL,
+            top_accessions_json TEXT NOT NULL,
+            bam_path TEXT,
+            bam_index_path TEXT,
+            PRIMARY KEY (sample, tax_id)
+        );
         """
         sqlite3_exec(db, schema, nil, nil, nil)
 
         sqlite3_exec(db, "INSERT INTO reference_lengths VALUES ('NC_001', 1000)", nil, nil, nil)
+        sqlite3_exec(db, """
+            INSERT INTO taxon_summaries VALUES (
+                '\(sample)', 1, 'Test virus', \(duplicateCount), \(duplicateCount),
+                99.0, 100.0, 0.0, 0, 1, '[]', NULL, NULL
+            )
+            """, nil, nil, nil)
 
         // Insert `duplicateCount` rows at identical position (will become duplicates after markdup)
         let seq = String(repeating: "A", count: 50)

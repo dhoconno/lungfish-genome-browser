@@ -237,7 +237,7 @@ final class ImportCenterViewModel {
             title: "NAO-MGS Results",
             description: "Import NAO metagenomic surveillance results. Parses virus_hits_final.tsv.gz or _virus_hits.tsv.gz files for taxonomic visualization.",
             sfSymbol: "n.circle",
-            customImage: TextBadgeIcon.image(text: "Nao", size: NSSize(width: 28, height: 28)),
+            customImage: TextBadgeIcon.image(text: "NM", size: NSSize(width: 28, height: 28)),
             fileHint: "virus_hits_final.tsv.gz or _virus_hits.tsv.gz",
             tab: .classificationResults,
             importKind: .wizardSheet(action: .naoMgs)
@@ -264,6 +264,7 @@ final class ImportCenterViewModel {
             title: "EsViritu Results",
             description: "Import EsViritu viral detection results for rapid virome characterization and visualization.",
             sfSymbol: "e.circle",
+            customImage: TextBadgeIcon.image(text: "ES", size: NSSize(width: 28, height: 28)),
             fileHint: "EsViritu output directory",
             tab: .classificationResults,
             importKind: .filePanel(
@@ -295,7 +296,7 @@ final class ImportCenterViewModel {
             title: "NVD Results",
             description: "Import Novel Virus Diagnostics (NVD) classification results. Parses blast_concatenated.csv with BLAST hit rankings and mapped reads.",
             sfSymbol: "microscope",
-            customImage: TextBadgeIcon.image(text: "Nvd", size: NSSize(width: 28, height: 28)),
+            customImage: TextBadgeIcon.image(text: "NVD", size: NSSize(width: 28, height: 28)),
             fileHint: "*_blast_concatenated.csv",
             tab: .classificationResults,
             importKind: .wizardSheet(action: .nvd)

@@ -933,6 +933,61 @@ struct NaoMgsImportOptimizationTests {
             )
         }
     }
+
+    // MARK: - Staged Import Pipeline (Task 4)
+
+    @Test
+    func importNaoMgsDirectoryWithSplitSampleFilesProducesSingleMergedBundle() async throws {
+        let workspace = makeTemporaryDirectory(prefix: "naomgs-directory-import-")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let inputDir = workspace.appendingPathComponent("input", isDirectory: true)
+        try FileManager.default.createDirectory(at: inputDir, withIntermediateDirectories: true)
+
+        let header = "sample\tseq_id\taligner_taxid_lca\tquery_seq\tquery_qual\tprim_align_genome_id_all\tprim_align_ref_start\tprim_align_edit_distance\tquery_len\tprim_align_query_rc\tprim_align_pair_status\n"
+        try (header + "SAMPLE_A_S1_L001\tread1\t111\tACGTACGT\tIIIIIIII\tACC1\t10\t0\t8\tFalse\tCP\n")
+            .write(to: inputDir.appendingPathComponent("lane1_virus_hits.tsv"), atomically: true, encoding: .utf8)
+        try (header + "SAMPLE_A_S1_L002\tread2\t111\tACGTACGA\tIIIIIIII\tACC1\t20\t1\t8\tFalse\tCP\nSAMPLE_B_S2_L001\tread3\t222\tTGCAACGT\tIIIIIIII\tACC2\t30\t1\t8\tTrue\tUP\n")
+            .write(to: inputDir.appendingPathComponent("lane2_virus_hits.tsv"), atomically: true, encoding: .utf8)
+
+        let outputDir = workspace.appendingPathComponent("imports", isDirectory: true)
+        let result = try await MetagenomicsImportService.importNaoMgs(
+            inputURL: inputDir,
+            outputDirectory: outputDir,
+            fetchReferences: false
+        )
+
+        let db = try NaoMgsDatabase(at: result.resultDirectory.appendingPathComponent("hits.sqlite"))
+        let rows = try db.fetchTaxonSummaryRows(samples: nil)
+        #expect(rows.count == 2, "Expected 2 taxon rows (one per sample×taxon), got \(rows.count)")
+
+        let sampleARow = rows.first { $0.sample == "SAMPLE_A" && $0.taxId == 111 }
+        #expect(sampleARow != nil, "SAMPLE_A taxon 111 should exist")
+        #expect(sampleARow?.hitCount == 2, "SAMPLE_A should have 2 hits coalesced from lane1+lane2")
+
+        let sampleBRow = rows.first { $0.sample == "SAMPLE_B" && $0.taxId == 222 }
+        #expect(sampleBRow != nil, "SAMPLE_B taxon 222 should exist")
+        #expect(sampleBRow?.hitCount == 1, "SAMPLE_B should have 1 hit")
+    }
+
+    // MARK: - Post-Merge Cleanup (Task 5)
+
+    @Test
+    func importNaoMgsRemovesStagingDirectoryOnSuccess() async throws {
+        let workspace = makeTemporaryDirectory(prefix: "naomgs-cleanup-")
+        defer { try? FileManager.default.removeItem(at: workspace) }
+
+        let outputDir = workspace.appendingPathComponent("imports", isDirectory: true)
+        let result = try await MetagenomicsImportService.importNaoMgs(
+            inputURL: TestFixtures.naomgs.virusHitsTsvGz,
+            outputDirectory: outputDir,
+            fetchReferences: false
+        )
+
+        let staging = result.resultDirectory.appendingPathComponent(".naomgs-import-staging")
+        #expect(!FileManager.default.fileExists(atPath: staging.path),
+            "Staging directory should be removed after successful import")
+    }
 }
 
 private func createSyntheticNaoMgsStageDatabase(

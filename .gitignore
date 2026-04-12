@@ -67,3 +67,7 @@ Sources/LungfishWorkflow/Resources/Databases/**/*.db.*
 
 # Benchmark outputs (large temporary files)
 benchmarks/
+
+# Large profiling/test fixtures (regenerate locally from source data)
+Tests/Fixtures/naomgs/profile_400k.tsv.gz
+Tests/Fixtures/naomgs/MU-CASPER-*.tsv.gz

@@ -119,7 +119,7 @@ struct NvdImportSheet: View {
 
     private var headerSection: some View {
         HStack(spacing: 10) {
-            Image(nsImage: TextBadgeIcon.image(text: "Nvd", size: NSSize(width: 24, height: 24)))
+            Image(nsImage: TextBadgeIcon.image(text: "NVD", size: NSSize(width: 24, height: 24)))
                 .resizable()
                 .frame(width: 24, height: 24)
             VStack(alignment: .leading, spacing: 2) {
