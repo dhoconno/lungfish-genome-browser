@@ -32,6 +32,11 @@ public enum MetagenomicsImportKind: String, CaseIterable, Codable, Sendable {
             return "nvd-"
         }
     }
+
+    /// The canonical tool identifier used in `AnalysesFolder.knownTools`.
+    public var toolIdentifier: String {
+        rawValue
+    }
 }
 
 /// Result metadata for an imported Kraken2 classification directory.
@@ -173,6 +178,7 @@ public enum MetagenomicsImportService {
 
         progress?(0.05, "Preparing output directory...")
         try ensureDirectoryExists(resultDirectory)
+        writeAnalysisMetadataIfNeeded(tool: MetagenomicsImportKind.kraken2.toolIdentifier, to: resultDirectory)
         OperationMarker.markInProgress(resultDirectory, detail: "Importing Kraken2 results\u{2026}")
         defer { OperationMarker.clearInProgress(resultDirectory) }
 
@@ -263,6 +269,7 @@ public enum MetagenomicsImportService {
             in: outputDirectory
         )
         try ensureDirectoryExists(resultDirectory)
+        writeAnalysisMetadataIfNeeded(tool: MetagenomicsImportKind.esviritu.toolIdentifier, to: resultDirectory)
         OperationMarker.markInProgress(resultDirectory, detail: "Importing EsViritu results\u{2026}")
         defer { OperationMarker.clearInProgress(resultDirectory) }
         progress?(0.05, "Copying EsViritu files...")
@@ -358,6 +365,7 @@ public enum MetagenomicsImportService {
             in: outputDirectory
         )
         try ensureDirectoryExists(resultDirectory)
+        writeAnalysisMetadataIfNeeded(tool: MetagenomicsImportKind.taxtriage.toolIdentifier, to: resultDirectory)
         OperationMarker.markInProgress(resultDirectory, detail: "Importing TaxTriage results\u{2026}")
         defer { OperationMarker.clearInProgress(resultDirectory) }
         progress?(0.05, "Copying TaxTriage files...")
@@ -454,6 +462,7 @@ public enum MetagenomicsImportService {
             in: outputDirectory
         )
         try ensureDirectoryExists(resultDirectory)
+        writeAnalysisMetadataIfNeeded(tool: MetagenomicsImportKind.naomgs.toolIdentifier, to: resultDirectory)
         OperationMarker.markInProgress(resultDirectory, detail: "Importing NAO-MGS results\u{2026}")
         defer { OperationMarker.clearInProgress(resultDirectory) }
 
@@ -963,6 +972,13 @@ private func ensureDirectoryExists(_ directory: URL) throws {
             error.localizedDescription
         )
     }
+}
+
+/// Writes `analysis-metadata.json` into a result directory so that it remains
+/// identifiable by ``AnalysesFolder`` even after the user renames it.
+private func writeAnalysisMetadataIfNeeded(tool: String, to directory: URL) {
+    let metadata = AnalysesFolder.AnalysisMetadata(tool: tool, isBatch: false)
+    try? AnalysesFolder.writeAnalysisMetadata(metadata, to: directory)
 }
 
 private func copyFile(_ source: URL, to destination: URL) throws {

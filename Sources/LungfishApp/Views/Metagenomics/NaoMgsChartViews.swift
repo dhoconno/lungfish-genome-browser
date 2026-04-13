@@ -602,14 +602,14 @@ private struct MetricCard: View {
 /// the top taxa by hit count and a quick-stats section.
 struct NaoMgsOverviewView: View {
 
-    /// All taxon summaries sorted by hit count.
+    /// All taxon summaries sorted by hit count (deduplicated across samples).
     let taxonSummaries: [NaoMgsTaxonSummary]
 
     /// Total hit reads.
     let totalHitReads: Int
 
-    /// Sample name.
-    let sampleName: String
+    /// Sample names included in this view.
+    let sampleNames: [String]
 
     /// Called when a taxon row is clicked to select it in the table.
     var onTaxonSelected: ((Int) -> Void)?
@@ -643,7 +643,11 @@ struct NaoMgsOverviewView: View {
                 HStack(spacing: 16) {
                     MetricCard(label: "Total Hits", value: naoMgsFormatReadCount(totalHitReads))
                     MetricCard(label: "Unique Taxa", value: "\(taxonSummaries.count)")
-                    MetricCard(label: "Sample", value: sampleName)
+                    if sampleNames.count == 1 {
+                        MetricCard(label: "Sample", value: sampleNames[0])
+                    } else if sampleNames.count > 1 {
+                        MetricCard(label: "Samples", value: "\(sampleNames.count)")
+                    }
                 }
 
                 // Top taxa bar chart

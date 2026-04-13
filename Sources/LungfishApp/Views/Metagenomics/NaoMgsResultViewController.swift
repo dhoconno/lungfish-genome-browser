@@ -329,12 +329,9 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         naoMgsTotalHits = totalHits
         actionBar.updateInfoText("Select a taxon to view details")
 
-        // Auto-select top taxon so miniBAM panels are visible immediately.
-        if displayedRows.isEmpty {
-            showOverview()
-        } else {
-            selectRowByIndex(0)
-        }
+        // Show overview on initial load — don't auto-select the top taxon,
+        // because loading its BAM files can be very slow for large datasets.
+        showOverview()
 
         // Force the split view to re-apply its 40/60 position now that we have content.
         applySplitPositionIfNeeded(force: true)
@@ -432,11 +429,13 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
             return
         }
 
-        // Fall back to first row
+        // Previously-selected row is no longer visible after filtering/sorting.
+        // Clear the selection rather than auto-selecting row 0, which can
+        // trigger expensive BAM loading for large datasets.
         suppressSelectionSync = true
-        taxonomyTableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        taxonomyTableView.deselectAll(nil)
         suppressSelectionSync = false
-        showTaxonDetail(displayedRows[0])
+        showOverview()
     }
 
     // MARK: - Sample Column Visibility
@@ -615,39 +614,47 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     // MARK: - Overview Content
 
     private func buildOverviewContent() {
-        let titleLabel = NSTextField(labelWithString: "NAO-MGS Results Overview")
-        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        detailContentView.addSubview(titleLabel)
-
-        let subtitleLabel = NSTextField(labelWithString: "Select a taxon in the table to view alignments and statistics.")
-        subtitleLabel.font = .systemFont(ofSize: 11)
-        subtitleLabel.textColor = .secondaryLabelColor
-        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        detailContentView.addSubview(subtitleLabel)
-
-        // Build a lightweight summary for the overview
-        let sampleName = manifest?.sampleName ?? "Unknown"
         let totalHits = (try? database?.totalHitCount(samples: Array(selectedSamples))) ?? 0
 
-        // Build NaoMgsTaxonSummary array from displayed rows for the overview chart
-        let summaries = displayedRows.map { row in
-            NaoMgsTaxonSummary(
-                taxId: row.taxId,
-                name: row.name,
-                hitCount: row.hitCount,
-                avgIdentity: row.avgIdentity,
-                avgBitScore: row.avgBitScore,
-                avgEditDistance: row.avgEditDistance,
-                accessions: row.topAccessions,
-                pcrDuplicateCount: row.pcrDuplicateCount
-            )
+        // Aggregate per-sample rows into unique taxa by summing hit counts.
+        var taxonAgg: [Int: (name: String, hitCount: Int, avgIdentity: Double, avgBitScore: Double, avgEditDistance: Double, accessions: [String], pcrDuplicateCount: Int, weightSum: Int)] = [:]
+        for row in displayedRows {
+            if var existing = taxonAgg[row.taxId] {
+                let w = existing.weightSum
+                let newW = w + row.hitCount
+                existing.hitCount += row.hitCount
+                existing.avgIdentity = (existing.avgIdentity * Double(w) + row.avgIdentity * Double(row.hitCount)) / Double(max(newW, 1))
+                existing.avgBitScore = (existing.avgBitScore * Double(w) + row.avgBitScore * Double(row.hitCount)) / Double(max(newW, 1))
+                existing.avgEditDistance = (existing.avgEditDistance * Double(w) + row.avgEditDistance * Double(row.hitCount)) / Double(max(newW, 1))
+                existing.accessions = Array(Set(existing.accessions + row.topAccessions))
+                existing.pcrDuplicateCount += row.pcrDuplicateCount
+                existing.weightSum = newW
+                taxonAgg[row.taxId] = existing
+            } else {
+                taxonAgg[row.taxId] = (row.name, row.hitCount, row.avgIdentity, row.avgBitScore, row.avgEditDistance, row.topAccessions, row.pcrDuplicateCount, row.hitCount)
+            }
         }
+        let summaries = taxonAgg
+            .sorted { $0.value.hitCount > $1.value.hitCount }
+            .map { (taxId, agg) in
+                NaoMgsTaxonSummary(
+                    taxId: taxId,
+                    name: agg.name,
+                    hitCount: agg.hitCount,
+                    avgIdentity: agg.avgIdentity,
+                    avgBitScore: agg.avgBitScore,
+                    avgEditDistance: agg.avgEditDistance,
+                    accessions: agg.accessions,
+                    pcrDuplicateCount: agg.pcrDuplicateCount
+                )
+            }
+
+        let sampleNames = Array(selectedSamples).sorted()
 
         let statsView = NaoMgsOverviewView(
             taxonSummaries: summaries,
             totalHitReads: totalHits,
-            sampleName: sampleName,
+            sampleNames: sampleNames,
             onTaxonSelected: { [weak self] taxId in
                 self?.selectTaxonById(taxId)
             }
@@ -657,15 +664,7 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         detailContentView.addSubview(hostingView)
 
         NSLayoutConstraint.activate([
-            titleLabel.topAnchor.constraint(equalTo: detailContentView.topAnchor, constant: 16),
-            titleLabel.leadingAnchor.constraint(equalTo: detailContentView.leadingAnchor, constant: 16),
-            titleLabel.trailingAnchor.constraint(equalTo: detailContentView.trailingAnchor, constant: -16),
-
-            subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
-            subtitleLabel.leadingAnchor.constraint(equalTo: detailContentView.leadingAnchor, constant: 16),
-            subtitleLabel.trailingAnchor.constraint(equalTo: detailContentView.trailingAnchor, constant: -16),
-
-            hostingView.topAnchor.constraint(equalTo: subtitleLabel.bottomAnchor, constant: 8),
+            hostingView.topAnchor.constraint(equalTo: detailContentView.topAnchor),
             hostingView.leadingAnchor.constraint(equalTo: detailContentView.leadingAnchor),
             hostingView.trailingAnchor.constraint(equalTo: detailContentView.trailingAnchor),
         ])

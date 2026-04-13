@@ -17,6 +17,9 @@ public enum AnalysesFolder {
     /// The directory name within the project directory.
     public static let directoryName = "Analyses"
 
+    /// Filename for the analysis metadata sidecar written at directory creation time.
+    public static let metadataFilename = "analysis-metadata.json"
+
     /// The set of recognised tool names used to parse directory entries.
     public static let knownTools: Set<String> = [
         "esviritu", "kraken2", "taxtriage", "minimap2",
@@ -26,6 +29,49 @@ public enum AnalysesFolder {
     /// Tools whose imported results use `{tool}-{sampleName}` naming
     /// instead of the standard `{tool}-{timestamp}` convention.
     private static let importedResultTools: Set<String> = ["naomgs", "nvd"]
+
+    // MARK: - Analysis Metadata
+
+    /// Metadata persisted as `analysis-metadata.json` inside each analysis directory.
+    ///
+    /// Written at creation time by ``createAnalysisDirectory(tool:in:isBatch:date:)``
+    /// and read back by ``listAnalyses(in:)`` to identify the analysis type even
+    /// after the user renames the directory.
+    public struct AnalysisMetadata: Codable, Sendable {
+        /// The tool identifier (e.g. `"kraken2"`, `"naomgs"`).
+        public let tool: String
+        /// Whether this was a batch run.
+        public let isBatch: Bool
+        /// When the analysis directory was created (ISO 8601).
+        public let created: Date
+
+        public init(tool: String, isBatch: Bool, created: Date = Date()) {
+            self.tool = tool
+            self.isBatch = isBatch
+            self.created = created
+        }
+    }
+
+    /// Reads the `analysis-metadata.json` sidecar from an analysis directory.
+    ///
+    /// Returns `nil` if the file is missing or cannot be decoded (e.g. legacy
+    /// directories created before this sidecar was introduced).
+    public static func readAnalysisMetadata(from directoryURL: URL) -> AnalysisMetadata? {
+        let metadataURL = directoryURL.appendingPathComponent(metadataFilename)
+        guard let data = try? Data(contentsOf: metadataURL) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(AnalysisMetadata.self, from: data)
+    }
+
+    /// Writes an `analysis-metadata.json` sidecar into an analysis directory.
+    public static func writeAnalysisMetadata(_ metadata: AnalysisMetadata, to directoryURL: URL) throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(metadata)
+        try data.write(to: directoryURL.appendingPathComponent(metadataFilename), options: .atomic)
+    }
 
     // MARK: - Tool Metadata
 
@@ -82,6 +128,11 @@ public enum AnalysesFolder {
         let name = isBatch ? "\(tool)-batch-\(timestamp)" : "\(tool)-\(timestamp)"
         let analysisURL = analysesDir.appendingPathComponent(name, isDirectory: true)
         try FileManager.default.createDirectory(at: analysisURL, withIntermediateDirectories: true)
+
+        // Write analysis-metadata.json so the directory is identifiable even if renamed.
+        let metadata = AnalysisMetadata(tool: tool, isBatch: isBatch, created: date)
+        try writeAnalysisMetadata(metadata, to: analysisURL)
+
         logger.info("Created analysis directory: \(name)")
         return analysisURL
     }
@@ -150,10 +201,26 @@ public enum AnalysesFolder {
 
     // MARK: - Private Helpers
 
-    /// Parses a directory name of the form `{tool}-batch-{timestamp}` or
-    /// `{tool}-{timestamp}`, checking that the tool is in `knownTools`.
+    /// Identifies an analysis directory by its metadata sidecar, directory name,
+    /// or (as a last resort) its content.
+    ///
+    /// Resolution order:
+    /// 1. `analysis-metadata.json` — authoritative, survives renames.
+    /// 2. Directory name prefix — `{tool}[-batch]-{timestamp}` pattern.
+    /// 3. Imported-result prefix — `{tool}-{sampleName}` for naomgs/nvd.
+    /// 4. Content probing — signature sidecar files (legacy fallback).
     private static func parseDirectoryName(_ name: String, url: URL) -> AnalysisDirectoryInfo? {
-        // Try batch pattern first: {tool}-batch-{timestamp}
+        // 1. Authoritative: read analysis-metadata.json written at creation time.
+        if let metadata = readAnalysisMetadata(from: url) {
+            return AnalysisDirectoryInfo(
+                url: url,
+                tool: metadata.tool,
+                timestamp: metadata.created,
+                isBatch: metadata.isBatch
+            )
+        }
+
+        // 2. Try batch pattern first: {tool}-batch-{timestamp}
         for tool in knownTools {
             let batchPrefix = "\(tool)-batch-"
             if name.hasPrefix(batchPrefix) {
@@ -184,6 +251,62 @@ public enum AnalysesFolder {
                 let date = (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? Date()
                 return AnalysisDirectoryInfo(url: url, tool: tool, timestamp: date, isBatch: false)
             }
+        }
+
+        // Content-based detection: the directory was renamed by the user.
+        // Probe for signature sidecar files to infer the tool type.
+        if let tool = probeToolType(in: url) {
+            let date = (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? Date()
+            return AnalysisDirectoryInfo(url: url, tool: tool, timestamp: date, isBatch: false)
+        }
+
+        return nil
+    }
+
+    /// Probes the contents of a directory to infer the analysis tool type.
+    ///
+    /// This enables discovery of analysis directories that the user has renamed
+    /// to something that no longer carries a recognised tool prefix.  Checked
+    /// only after all prefix-based patterns fail.
+    private static func probeToolType(in url: URL) -> String? {
+        let fm = FileManager.default
+        let manifest = url.appendingPathComponent("manifest.json")
+        let hitsSqlite = url.appendingPathComponent("hits.sqlite")
+        let classificationResult = url.appendingPathComponent("classification-result.json")
+
+        // Kraken2: has classification-result.json
+        if fm.fileExists(atPath: classificationResult.path) {
+            return "kraken2"
+        }
+
+        // NAO-MGS vs NVD: both have manifest.json + hits.sqlite.
+        // Distinguish by manifest content: NVD has "experiment", NAO-MGS has "taxonCount".
+        if fm.fileExists(atPath: manifest.path), fm.fileExists(atPath: hitsSqlite.path) {
+            if let data = fm.contents(atPath: manifest.path),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                if json["experiment"] != nil {
+                    return "nvd"
+                }
+                if json["taxonCount"] != nil || json["hitCount"] != nil {
+                    return "naomgs"
+                }
+            }
+            // Ambiguous manifest — default to naomgs (more common).
+            return "naomgs"
+        }
+
+        // EsViritu: look for detected_virus.info.tsv or the EsViritu database pattern
+        if let contents = try? fm.contentsOfDirectory(atPath: url.path) {
+            for file in contents {
+                if file.hasSuffix(".detected_virus.info.tsv") || file == "detected_virus.info.tsv" {
+                    return "esviritu"
+                }
+            }
+        }
+
+        // TaxTriage: has hits.sqlite but no manifest.json (manifest is optional for taxtriage)
+        if fm.fileExists(atPath: hitsSqlite.path) {
+            return "taxtriage"
         }
 
         return nil

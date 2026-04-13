@@ -43,11 +43,24 @@ final class AnalysesFolderTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
     }
 
+    func testCreateAnalysisDirectoryWritesMetadata() throws {
+        let date = Date(timeIntervalSince1970: 1775398200)
+        let url = try AnalysesFolder.createAnalysisDirectory(
+            tool: "naomgs", in: tempDir, date: date
+        )
+        let metadata = AnalysesFolder.readAnalysisMetadata(from: url)
+        XCTAssertNotNil(metadata)
+        XCTAssertEqual(metadata?.tool, "naomgs")
+        XCTAssertEqual(metadata?.isBatch, false)
+    }
+
     func testCreateAnalysisDirectoryIsBatchAware() throws {
         let url = try AnalysesFolder.createAnalysisDirectory(
             tool: "kraken2", in: tempDir, isBatch: true
         )
         XCTAssertTrue(url.lastPathComponent.hasPrefix("kraken2-batch-"))
+        let metadata = AnalysesFolder.readAnalysisMetadata(from: url)
+        XCTAssertEqual(metadata?.isBatch, true)
     }
 
     func testListAnalysesFindsAllTypes() throws {
@@ -108,5 +121,157 @@ final class AnalysesFolderTests: XCTestCase {
         )
         XCTAssertFalse(formatted.contains(":"))
         XCTAssertTrue(formatted.contains("T"))
+    }
+
+    // MARK: - Metadata-Based Detection (Renamed Directories)
+
+    func testListAnalysesDetectsRenamedDirectoryByMetadata() throws {
+        let analysesDir = try AnalysesFolder.url(for: tempDir)
+        // Create a directory with createAnalysisDirectory (writes metadata),
+        // then rename it to something unrecognisable by prefix.
+        let original = try AnalysesFolder.createAnalysisDirectory(
+            tool: "naomgs", in: tempDir
+        )
+        let renamed = analysesDir.appendingPathComponent("MU-CASPER-2026-03-31")
+        try FileManager.default.moveItem(at: original, to: renamed)
+
+        let analyses = try AnalysesFolder.listAnalyses(in: tempDir)
+        XCTAssertEqual(analyses.count, 1)
+        XCTAssertEqual(analyses.first?.tool, "naomgs")
+    }
+
+    func testListAnalysesMetadataTakesPriorityOverContentProbe() throws {
+        let analysesDir = try AnalysesFolder.url(for: tempDir)
+        let dir = analysesDir.appendingPathComponent("Renamed-Analysis")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // Write metadata saying it's kraken2
+        try AnalysesFolder.writeAnalysisMetadata(
+            .init(tool: "kraken2", isBatch: false),
+            to: dir
+        )
+        // Also add NAO-MGS content signatures — metadata should win
+        try "{\"taxonCount\": 100}".write(
+            to: dir.appendingPathComponent("manifest.json"),
+            atomically: true, encoding: .utf8)
+        try Data().write(to: dir.appendingPathComponent("hits.sqlite"))
+
+        let analyses = try AnalysesFolder.listAnalyses(in: tempDir)
+        XCTAssertEqual(analyses.count, 1)
+        XCTAssertEqual(analyses.first?.tool, "kraken2")
+    }
+
+    func testReadWriteAnalysisMetadataRoundtrip() throws {
+        let dir = tempDir.appendingPathComponent("test-roundtrip")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let original = AnalysesFolder.AnalysisMetadata(
+            tool: "spades", isBatch: true, created: Date(timeIntervalSince1970: 1775398200)
+        )
+        try AnalysesFolder.writeAnalysisMetadata(original, to: dir)
+        let loaded = AnalysesFolder.readAnalysisMetadata(from: dir)
+        XCTAssertNotNil(loaded)
+        XCTAssertEqual(loaded?.tool, "spades")
+        XCTAssertEqual(loaded?.isBatch, true)
+        XCTAssertEqual(loaded?.created.timeIntervalSince1970 ?? 0, 1775398200, accuracy: 1)
+    }
+
+    func testReadAnalysisMetadataReturnsNilWhenMissing() {
+        let result = AnalysesFolder.readAnalysisMetadata(from: tempDir)
+        XCTAssertNil(result)
+    }
+
+    // MARK: - Content-Based Detection (Renamed Directories, Legacy Fallback)
+
+    func testListAnalysesDetectsRenamedKraken2ByContent() throws {
+        let analysesDir = try AnalysesFolder.url(for: tempDir)
+        let renamed = analysesDir.appendingPathComponent("My-Custom-Name")
+        try FileManager.default.createDirectory(at: renamed, withIntermediateDirectories: true)
+        // Kraken2 signature: classification-result.json
+        try "{}".write(to: renamed.appendingPathComponent("classification-result.json"),
+                       atomically: true, encoding: .utf8)
+
+        let analyses = try AnalysesFolder.listAnalyses(in: tempDir)
+        XCTAssertEqual(analyses.count, 1)
+        XCTAssertEqual(analyses.first?.tool, "kraken2")
+    }
+
+    func testListAnalysesDetectsRenamedNaoMgsByContent() throws {
+        let analysesDir = try AnalysesFolder.url(for: tempDir)
+        let renamed = analysesDir.appendingPathComponent("MU-CASPER-2026-03-31")
+        try FileManager.default.createDirectory(at: renamed, withIntermediateDirectories: true)
+        // NAO-MGS signature: manifest.json (with taxonCount) + hits.sqlite
+        try "{\"taxonCount\": 100}".write(
+            to: renamed.appendingPathComponent("manifest.json"),
+            atomically: true, encoding: .utf8)
+        try Data().write(to: renamed.appendingPathComponent("hits.sqlite"))
+
+        let analyses = try AnalysesFolder.listAnalyses(in: tempDir)
+        XCTAssertEqual(analyses.count, 1)
+        XCTAssertEqual(analyses.first?.tool, "naomgs")
+    }
+
+    func testListAnalysesDetectsRenamedNvdByContent() throws {
+        let analysesDir = try AnalysesFolder.url(for: tempDir)
+        let renamed = analysesDir.appendingPathComponent("Some-NVD-Results")
+        try FileManager.default.createDirectory(at: renamed, withIntermediateDirectories: true)
+        // NVD signature: manifest.json (with experiment) + hits.sqlite
+        try "{\"experiment\": \"test\"}".write(
+            to: renamed.appendingPathComponent("manifest.json"),
+            atomically: true, encoding: .utf8)
+        try Data().write(to: renamed.appendingPathComponent("hits.sqlite"))
+
+        let analyses = try AnalysesFolder.listAnalyses(in: tempDir)
+        XCTAssertEqual(analyses.count, 1)
+        XCTAssertEqual(analyses.first?.tool, "nvd")
+    }
+
+    func testListAnalysesDetectsRenamedEsVirituByContent() throws {
+        let analysesDir = try AnalysesFolder.url(for: tempDir)
+        let renamed = analysesDir.appendingPathComponent("Virus-Scan-Results")
+        try FileManager.default.createDirectory(at: renamed, withIntermediateDirectories: true)
+        // EsViritu signature: *.detected_virus.info.tsv
+        try "".write(to: renamed.appendingPathComponent("sample.detected_virus.info.tsv"),
+                     atomically: true, encoding: .utf8)
+
+        let analyses = try AnalysesFolder.listAnalyses(in: tempDir)
+        XCTAssertEqual(analyses.count, 1)
+        XCTAssertEqual(analyses.first?.tool, "esviritu")
+    }
+
+    func testListAnalysesDetectsRenamedTaxTriageByContent() throws {
+        let analysesDir = try AnalysesFolder.url(for: tempDir)
+        let renamed = analysesDir.appendingPathComponent("Triage-Output")
+        try FileManager.default.createDirectory(at: renamed, withIntermediateDirectories: true)
+        // TaxTriage signature: hits.sqlite alone (no manifest.json)
+        try Data().write(to: renamed.appendingPathComponent("hits.sqlite"))
+
+        let analyses = try AnalysesFolder.listAnalyses(in: tempDir)
+        XCTAssertEqual(analyses.count, 1)
+        XCTAssertEqual(analyses.first?.tool, "taxtriage")
+    }
+
+    func testListAnalysesStillIgnoresEmptyRenamedDirectories() throws {
+        let analysesDir = try AnalysesFolder.url(for: tempDir)
+        // Empty directory with no tool-prefix and no signature files
+        try FileManager.default.createDirectory(
+            at: analysesDir.appendingPathComponent("random-renamed-thing"),
+            withIntermediateDirectories: true
+        )
+        let analyses = try AnalysesFolder.listAnalyses(in: tempDir)
+        XCTAssertEqual(analyses.count, 0)
+    }
+
+    func testListAnalysesPrefersToolPrefixOverContentProbe() throws {
+        let analysesDir = try AnalysesFolder.url(for: tempDir)
+        // Directory has a valid kraken2 prefix AND naomgs content — prefix should win
+        let dir = analysesDir.appendingPathComponent("kraken2-2026-01-15T10-00-00")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try "{\"taxonCount\": 100}".write(
+            to: dir.appendingPathComponent("manifest.json"),
+            atomically: true, encoding: .utf8)
+        try Data().write(to: dir.appendingPathComponent("hits.sqlite"))
+
+        let analyses = try AnalysesFolder.listAnalyses(in: tempDir)
+        XCTAssertEqual(analyses.count, 1)
+        XCTAssertEqual(analyses.first?.tool, "kraken2")
     }
 }

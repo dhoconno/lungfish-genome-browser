@@ -1298,9 +1298,9 @@ public class SidebarViewController: NSViewController {
     /// from the generic directory scanner because they are already represented
     /// by dedicated batch group or result nodes via collectors.
     ///
-    /// Detects TaxTriage (`taxtriage-*`), classification (`classification-*`,
-    /// `classification-batch-*`), and EsViritu (`esviritu-*`) result directories
-    /// by checking for their characteristic sidecar files.
+    /// Uses prefix-based checks first for speed, then falls back to
+    /// ``AnalysesFolder.listAnalyses`` content-based probing so that
+    /// user-renamed directories are also recognised.
     private func isMetagenomicsResultDirectory(_ url: URL) -> Bool {
         let name = url.lastPathComponent
         let fm = FileManager.default
@@ -1309,7 +1309,6 @@ public class SidebarViewController: NSViewController {
         if name.hasPrefix("taxtriage-") {
             let sidecar = url.appendingPathComponent("taxtriage-result.json")
             if fm.fileExists(atPath: sidecar.path) { return true }
-            // Also check for kreport or top_report (incomplete runs without sidecar)
             let hasKraken = fm.fileExists(atPath: url.appendingPathComponent("kraken2").path)
             if hasKraken { return true }
         }
@@ -1336,6 +1335,22 @@ public class SidebarViewController: NSViewController {
         if name.hasPrefix("nvd-") {
             let sidecar = url.appendingPathComponent("manifest.json")
             if fm.fileExists(atPath: sidecar.path) { return true }
+        }
+
+        // Authoritative metadata sidecar: analysis-metadata.json is written at
+        // directory creation time and survives renames.
+        if fm.fileExists(atPath: url.appendingPathComponent(AnalysesFolder.metadataFilename).path) {
+            return true
+        }
+
+        // Content-based fallback: detect renamed analysis directories by their
+        // signature files (e.g. manifest.json + hits.sqlite for NAO-MGS).
+        // Only directories inside the Analyses/ folder reach this check, so
+        // the probe cost is bounded.
+        if url.deletingLastPathComponent().lastPathComponent == AnalysesFolder.directoryName {
+            if fm.fileExists(atPath: url.appendingPathComponent("classification-result.json").path) { return true }
+            if fm.fileExists(atPath: url.appendingPathComponent("manifest.json").path),
+               fm.fileExists(atPath: url.appendingPathComponent("hits.sqlite").path) { return true }
         }
 
         return false
@@ -1646,8 +1661,7 @@ public class SidebarViewController: NSViewController {
     }
 
     private func analysisDisplayTitle(for info: AnalysesFolder.AnalysisDirectoryInfo) -> String {
-        let toolName = AnalysesFolder.displayName(for: info.tool)
-        return info.isBatch ? "\(toolName) Batch" : toolName
+        info.url.lastPathComponent
     }
 
     /// Maps an analysis tool name to the correct SidebarItemType so that
