@@ -1745,10 +1745,14 @@ public class SidebarViewController: NSViewController {
         var results: [SidebarItem] = []
 
         for childURL in contents {
-            guard childURL.lastPathComponent.hasPrefix("naomgs-") else { continue }
             guard !OperationMarker.isInProgress(childURL) else { continue }
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: childURL.path, isDirectory: &isDir), isDir.boolValue else { continue }
+
+            // Match by naomgs- prefix or by analysis-metadata.json declaring tool=naomgs
+            let hasPrefix = childURL.lastPathComponent.hasPrefix("naomgs-")
+            let hasMetadata = AnalysesFolder.readAnalysisMetadata(from: childURL)?.tool == "naomgs"
+            guard hasPrefix || hasMetadata else { continue }
 
             // Require a manifest.json sidecar
             let manifestURL = childURL.appendingPathComponent("manifest.json")
@@ -1806,10 +1810,14 @@ public class SidebarViewController: NSViewController {
         var results: [SidebarItem] = []
 
         for childURL in contents {
-            guard childURL.lastPathComponent.hasPrefix("nvd-") else { continue }
             guard !OperationMarker.isInProgress(childURL) else { continue }
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: childURL.path, isDirectory: &isDir), isDir.boolValue else { continue }
+
+            // Match by nvd- prefix or by analysis-metadata.json declaring tool=nvd
+            let hasPrefix = childURL.lastPathComponent.hasPrefix("nvd-")
+            let hasMetadata = AnalysesFolder.readAnalysisMetadata(from: childURL)?.tool == "nvd"
+            guard hasPrefix || hasMetadata else { continue }
 
             // Require a manifest.json sidecar
             let manifestURL = childURL.appendingPathComponent("manifest.json")

@@ -1823,42 +1823,142 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
 
     /// Executes BLAST verification for a given selection. Shared by both the
     /// action bar button (via popover) and the context menu.
+    ///
+    /// Tries `virus_hits` first (available in single-sample databases). When
+    /// the table is empty (merged/batch databases), falls back to extracting
+    /// reads from the sample's BAM file via `samtools view`.
     private func executeBlastVerification(_ selection: BlastMenuSelection) {
         guard let database else { return }
 
         let row = selection.row
         let sample = row.sample
 
+        // Try virus_hits table first (populated in single-sample imports).
+        let hits: [NaoMgsVirusHit]
         do {
-            let hits = try database.fetchVirusHitsForBLAST(
+            hits = try database.fetchVirusHitsForBLAST(
                 sample: sample,
                 taxId: row.taxId,
                 maxReads: selection.readCount
             )
-            guard !hits.isEmpty else {
-                logger.warning("No reads found for BLAST: taxId=\(row.taxId), sample=\(sample)")
-                return
-            }
-
-            let summary = NaoMgsTaxonSummary(
-                taxId: row.taxId,
-                name: row.name,
-                hitCount: row.hitCount,
-                avgIdentity: row.avgIdentity,
-                avgBitScore: row.avgBitScore,
-                avgEditDistance: row.avgEditDistance,
-                accessions: row.topAccessions
-            )
-
-            let selectedHits = NaoMgsDataConverter.selectBlastReads(
-                hits: hits,
-                count: selection.readCount
-            )
-
-            onBlastVerification?(summary, selection.readCount, selectedHits)
         } catch {
             logger.error("Failed to fetch BLAST reads: \(error.localizedDescription, privacy: .public)")
+            return
         }
+
+        if !hits.isEmpty {
+            deliverBlastHits(hits, selection: selection)
+            return
+        }
+
+        // Fallback: extract reads from BAM via samtools view.
+        let accessions = row.topAccessions
+        guard !accessions.isEmpty else {
+            logger.warning("No accessions for BLAST fallback: taxId=\(row.taxId), sample=\(sample)")
+            return
+        }
+
+        let resultDir = database.databaseURL.deletingLastPathComponent()
+        let bamURL: URL = {
+            if let bamRelative = row.bamPath, !bamRelative.isEmpty {
+                return resultDir.appendingPathComponent(bamRelative)
+            }
+            return resultDir.appendingPathComponent("bams/\(sample).bam")
+        }()
+
+        guard FileManager.default.fileExists(atPath: bamURL.path) else {
+            logger.warning("BAM not found for BLAST fallback: \(bamURL.path, privacy: .public)")
+            return
+        }
+
+        logger.info("BLAST fallback: extracting reads from BAM for taxId=\(row.taxId), sample=\(sample)")
+
+        Task.detached { [weak self] in
+            do {
+                let toolRunner = NativeToolRunner.shared
+                // samtools view -F 0x404 (skip unmapped + duplicates) to get aligned reads
+                var args = ["view", "-F", "0x404", bamURL.path]
+                args.append(contentsOf: accessions)
+                let result = try await toolRunner.run(.samtools, arguments: args, timeout: 120)
+
+                guard result.isSuccess else {
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated {
+                            logger.error("samtools view failed for BLAST: \(result.stderr, privacy: .public)")
+                        }
+                    }
+                    return
+                }
+
+                // Parse SAM output: tab-separated, col 0=QNAME, col 9=SEQ
+                let lines = result.stdout.split(separator: "\n", omittingEmptySubsequences: true)
+                var seen = Set<String>()
+                var bamHits: [NaoMgsVirusHit] = []
+
+                for line in lines {
+                    let cols = line.split(separator: "\t", maxSplits: 10)
+                    guard cols.count >= 10 else { continue }
+                    let readName = String(cols[0])
+                    let seq = String(cols[9])
+                    guard seq != "*", !seq.isEmpty else { continue }
+                    // Deduplicate by read name (paired reads produce two lines)
+                    guard seen.insert(readName).inserted else { continue }
+
+                    bamHits.append(NaoMgsVirusHit(
+                        sample: sample, seqId: readName, taxId: row.taxId,
+                        bestAlignmentScore: 0, cigar: String(cols[5]),
+                        queryStart: 0, queryEnd: seq.count,
+                        refStart: (Int(String(cols[3])) ?? 1) - 1,
+                        refEnd: (Int(String(cols[3])) ?? 1) - 1 + seq.count,
+                        readSequence: seq, readQuality: String(cols[10]),
+                        subjectSeqId: String(cols[2]), subjectTitle: "",
+                        bitScore: 0, eValue: 0, percentIdentity: 0, editDistance: 0,
+                        fragmentLength: 0, isReverseComplement: false,
+                        pairStatus: "", queryLength: seq.count
+                    ))
+
+                    if bamHits.count >= selection.readCount { break }
+                }
+
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard !bamHits.isEmpty else {
+                            logger.warning("No reads extracted from BAM for BLAST: taxId=\(row.taxId), sample=\(sample)")
+                            return
+                        }
+                        logger.info("BLAST fallback: extracted \(bamHits.count) reads from BAM")
+                        self?.deliverBlastHits(bamHits, selection: selection)
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        logger.error("BLAST BAM extraction failed: \(error.localizedDescription, privacy: .public)")
+                    }
+                }
+            }
+        }
+    }
+
+    /// Delivers BLAST hits to the verification callback.
+    private func deliverBlastHits(_ hits: [NaoMgsVirusHit], selection: BlastMenuSelection) {
+        let row = selection.row
+        let summary = NaoMgsTaxonSummary(
+            taxId: row.taxId,
+            name: row.name,
+            hitCount: row.hitCount,
+            avgIdentity: row.avgIdentity,
+            avgBitScore: row.avgBitScore,
+            avgEditDistance: row.avgEditDistance,
+            accessions: row.topAccessions
+        )
+
+        let selectedHits = NaoMgsDataConverter.selectBlastReads(
+            hits: hits,
+            count: selection.readCount
+        )
+
+        onBlastVerification?(summary, selection.readCount, selectedHits)
     }
 
     @objc private func contextBlastVerify(_ sender: NSMenuItem) {
