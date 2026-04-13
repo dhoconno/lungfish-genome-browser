@@ -2311,4 +2311,42 @@ public final class NaoMgsDatabase: @unchecked Sendable {
         }
         return results
     }
+
+    // MARK: - Read Name Queries
+
+    /// Returns the distinct set of read names (seq_id) for a given sample and taxon.
+    ///
+    /// This is used by the extraction pipeline to filter BAM reads: after
+    /// `samtools view` extracts all reads from the accession regions, only reads
+    /// whose names appear in this set actually belong to the selected taxon.
+    /// Without this filter, reads from other taxa that share the same reference
+    /// accessions would be incorrectly included.
+    ///
+    /// - Parameters:
+    ///   - sample: The sample name.
+    ///   - taxId: The taxonomy ID.
+    /// - Returns: A set of read names (seq_id values) belonging to this taxon.
+    public func fetchReadNames(sample: String, taxId: Int) throws -> Set<String> {
+        guard let db else { throw NaoMgsDatabaseError.queryFailed("Database not open") }
+
+        let sql = """
+            SELECT DISTINCT seq_id
+            FROM virus_hits
+            WHERE sample = ? AND tax_id = ?
+            """
+
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw NaoMgsDatabaseError.queryFailed(String(cString: sqlite3_errmsg(db)))
+        }
+        naoBindText(stmt, 1, sample)
+        sqlite3_bind_int(stmt, 2, Int32(taxId))
+
+        var names = Set<String>()
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            names.insert(String(cString: sqlite3_column_text(stmt, 0)))
+        }
+        return names
+    }
 }

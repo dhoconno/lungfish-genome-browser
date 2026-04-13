@@ -1649,19 +1649,20 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         // Generic analysis results in Analyses/ folder — try to detect tool type
         // from directory name and dispatch to the appropriate viewer.
         // Classifier results route through the ClassifierDatabaseRouter; non-classifier
-        // results are dispatched by prefix.
+        // results are dispatched by prefix or analysis-metadata.json.
         if item.type == .analysisResult, let url = item.url {
             if ClassifierDatabaseRouter.route(for: url) != nil {
                 routeClassifierDisplay(url: url)
                 return
             }
-            // Non-classifier analysis results
+            // Determine tool: check metadata first (works for renamed dirs), then prefix.
             let dirName = url.lastPathComponent
-            if dirName.hasPrefix("naomgs") {
+            let toolId = AnalysesFolder.readAnalysisMetadata(from: url)?.tool ?? dirName
+            if toolId.hasPrefix("naomgs") {
                 displayNaoMgsResultFromSidebar(at: url)
-            } else if dirName.hasPrefix("nvd") {
+            } else if toolId.hasPrefix("nvd") {
                 displayNvdResultFromSidebar(at: url)
-            } else if dirName.hasPrefix("spades") || dirName.hasPrefix("megahit") || dirName.hasPrefix("minimap2") {
+            } else if toolId.hasPrefix("spades") || toolId.hasPrefix("megahit") || toolId.hasPrefix("minimap2") {
                 logger.info("displayContent: Assembly/alignment viewer not yet available for '\(dirName, privacy: .public)'")
                 viewerController.clearViewport(statusMessage: "Viewer for this analysis type is not yet available.")
             } else {
@@ -1981,11 +1982,11 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                     taxTriageVC.didLoadFromManifestCache ? .cached : .building
             }
 
-        } else if dirName.hasPrefix("naomgs") {
+        } else if dirName.hasPrefix("naomgs") || AnalysesFolder.readAnalysisMetadata(from: batchURL)?.tool == "naomgs" {
             displayNaoMgsResultFromSidebar(at: batchURL)
             self.inspectorController?.clearBatchOperationDetails()
 
-        } else if dirName.hasPrefix("nvd") {
+        } else if dirName.hasPrefix("nvd") || AnalysesFolder.readAnalysisMetadata(from: batchURL)?.tool == "nvd" {
             displayNvdResultFromSidebar(at: batchURL)
             self.inspectorController?.clearBatchOperationDetails()
 

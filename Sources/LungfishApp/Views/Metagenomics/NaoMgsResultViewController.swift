@@ -1497,10 +1497,10 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
             self?.presentUnifiedExtractionDialog()
         }
 
-        // Action bar BLAST verify (NAO-MGS triggers BLAST via context menu)
+        // Action bar BLAST verify -> show BLAST config popover for selected row
         actionBar.onBlastVerify = { [weak self] in
-            // NAO-MGS BLAST is triggered via the table context menu per-taxon;
-            // the action bar button is intentionally a no-op placeholder
+            guard let self, let row = self.selectedRow else { return }
+            self.showBlastConfigPopover(for: row, relativeTo: self.actionBar.blastButton)
         }
 
         // Action bar export
@@ -1533,18 +1533,35 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     /// Builds per-sample selectors from the current taxonomy-table selection.
     /// NAO-MGS rows carry a `sample`, a `taxId`, and `topAccessions`. We group
     /// by sample so the resolver can run one samtools invocation per sample.
+    ///
+    /// Each selector includes a `readNameAllowlist` queried from the SQLite
+    /// database so that the extraction pipeline only keeps reads that actually
+    /// belong to the selected taxon — accession-region filtering alone is too
+    /// broad because multiple taxa can share the same reference accessions in
+    /// the miniBAM.
     private func buildNaoMgsSelectors() -> [ClassifierRowSelector] {
         let indexes = taxonomyTableView.selectedRowIndexes
-        var bySample: [String: (accessions: [String], taxIds: [Int])] = [:]
+        var bySample: [String: (accessions: [String], taxIds: [Int], readNames: Set<String>)] = [:]
         for idx in indexes where idx < displayedRows.count {
             let row = displayedRows[idx]
-            var bucket = bySample[row.sample] ?? (accessions: [], taxIds: [])
+            var bucket = bySample[row.sample] ?? (accessions: [], taxIds: [], readNames: [])
             bucket.accessions.append(contentsOf: row.topAccessions)
             bucket.taxIds.append(row.taxId)
+            // Query the database for the read names belonging to this specific taxon.
+            if let db = database {
+                if let names = try? db.fetchReadNames(sample: row.sample, taxId: row.taxId) {
+                    bucket.readNames.formUnion(names)
+                }
+            }
             bySample[row.sample] = bucket
         }
         return bySample.map { (sid, bucket) in
-            ClassifierRowSelector(sampleId: sid, accessions: bucket.accessions, taxIds: bucket.taxIds)
+            ClassifierRowSelector(
+                sampleId: sid,
+                accessions: bucket.accessions,
+                taxIds: bucket.taxIds,
+                readNameAllowlist: bucket.readNames.isEmpty ? nil : bucket.readNames
+            )
         }.sorted { ($0.sampleId ?? "") < ($1.sampleId ?? "") }
     }
 
@@ -1760,6 +1777,42 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         menu.addItem(extractItem)
     }
 
+    // MARK: - BLAST Configuration Popover
+
+    /// Shows a BLAST configuration popover anchored to the given view.
+    ///
+    /// The popover lets the user choose how many reads to submit, then
+    /// triggers the same BLAST verification flow as the context menu.
+    ///
+    /// - Parameters:
+    ///   - row: The taxon row to verify.
+    ///   - sender: The view or button to anchor the popover to.
+    private func showBlastConfigPopover(for row: NaoMgsTaxonSummaryRow, relativeTo sender: Any) {
+        guard database != nil, onBlastVerification != nil else { return }
+        let uniqueCount = row.uniqueReadCount
+        guard uniqueCount > 0 else { return }
+
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentSize = NSSize(width: 280, height: 160)
+
+        let configView = BlastConfigPopoverView(
+            taxonName: row.name.isEmpty ? "Taxid \(row.taxId)" : row.name,
+            readsClade: uniqueCount
+        ) { [weak self, weak popover] readCount in
+            popover?.performClose(nil)
+            let selection = BlastMenuSelection(row: row, readCount: readCount)
+            // Reuse the same BLAST execution path as the context menu.
+            self?.executeBlastVerification(selection)
+        }
+
+        popover.contentViewController = NSHostingController(rootView: configView)
+
+        if let button = sender as? NSView {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .maxY)
+        }
+    }
+
     // MARK: - Context Menu Actions
 
     /// Selection data passed through the BLAST context menu item's representedObject.
@@ -1768,15 +1821,15 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         let readCount: Int
     }
 
-    @objc private func contextBlastVerify(_ sender: NSMenuItem) {
-        guard let selection = sender.representedObject as? BlastMenuSelection,
-              let database else { return }
+    /// Executes BLAST verification for a given selection. Shared by both the
+    /// action bar button (via popover) and the context menu.
+    private func executeBlastVerification(_ selection: BlastMenuSelection) {
+        guard let database else { return }
 
         let row = selection.row
         let sample = row.sample
 
         do {
-            // Fetch deduplicated virus hits from the database for BLAST
             let hits = try database.fetchVirusHitsForBLAST(
                 sample: sample,
                 taxId: row.taxId,
@@ -1787,7 +1840,6 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
                 return
             }
 
-            // Build a NaoMgsTaxonSummary from the row data for the callback
             let summary = NaoMgsTaxonSummary(
                 taxId: row.taxId,
                 name: row.name,
@@ -1798,7 +1850,6 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
                 accessions: row.topAccessions
             )
 
-            // Select reads using the coverage-stratified strategy
             let selectedHits = NaoMgsDataConverter.selectBlastReads(
                 hits: hits,
                 count: selection.readCount
@@ -1808,6 +1859,11 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
         } catch {
             logger.error("Failed to fetch BLAST reads: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    @objc private func contextBlastVerify(_ sender: NSMenuItem) {
+        guard let selection = sender.representedObject as? BlastMenuSelection else { return }
+        executeBlastVerification(selection)
     }
 
     @objc private func contextCopyTaxonId(_ sender: NSMenuItem) {

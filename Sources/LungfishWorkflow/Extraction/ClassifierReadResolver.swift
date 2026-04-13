@@ -417,6 +417,16 @@ public actor ClassifierReadResolver {
             let regions = group.flatMap { $0.accessions }
             guard !regions.isEmpty else { continue }
 
+            // Merge read-name allowlists across all selectors in this sample group.
+            // When present, only reads whose QNAME appears in the allowlist are kept.
+            // This prevents NAO-MGS extractions from returning reads belonging to
+            // other taxa that happen to share the same reference accessions.
+            let mergedAllowlist: Set<String>? = {
+                let lists = group.compactMap(\.readNameAllowlist)
+                guard !lists.isEmpty else { return nil }
+                return lists.reduce(into: Set<String>()) { $0.formUnion($1) }
+            }()
+
             let bamURL = try await resolveBAMURL(
                 tool: tool,
                 sampleId: sampleId,
@@ -424,7 +434,16 @@ public actor ClassifierReadResolver {
             )
 
             let perSampleBAM = tempDir.appendingPathComponent("\(stem)_regions.bam")
-            var viewArgs = ["view", "-b", "-F", String(options.samtoolsExcludeFlags), "-o", perSampleBAM.path, bamURL.path]
+            var viewArgs = ["view", "-b", "-F", String(options.samtoolsExcludeFlags)]
+
+            // Write read-name allowlist to a file for `samtools view -N`.
+            if let allowlist = mergedAllowlist, !allowlist.isEmpty {
+                let nameListFile = tempDir.appendingPathComponent("\(stem)_readnames.txt")
+                try allowlist.sorted().joined(separator: "\n").write(to: nameListFile, atomically: true, encoding: .utf8)
+                viewArgs.append(contentsOf: ["-N", nameListFile.path])
+            }
+
+            viewArgs.append(contentsOf: ["-o", perSampleBAM.path, bamURL.path])
             viewArgs.append(contentsOf: regions)
 
             let viewResult = try await toolRunner.run(.samtools, arguments: viewArgs, timeout: 3600)

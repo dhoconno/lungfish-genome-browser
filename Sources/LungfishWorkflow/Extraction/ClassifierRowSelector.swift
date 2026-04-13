@@ -71,6 +71,12 @@ public enum ClassifierTool: String, Sendable, CaseIterable, Hashable, Codable {
 /// - ``taxIds`` — NCBI taxonomy IDs. Only used for Kraken2; the resolver wraps
 ///   these into a `TaxonomyExtractionConfig` and delegates to
 ///   `TaxonomyExtractionPipeline`. Ignored for BAM-backed tools.
+/// - ``readNameAllowlist`` — Optional set of read names to filter BAM output.
+///   When non-nil, only reads whose name appears in this set are kept after
+///   `samtools view`. Used by NAO-MGS where multiple taxa share the same
+///   reference accessions in the miniBAM. Without this filter, selecting
+///   a taxon with 2 reads on a reference shared by other taxa would return
+///   all reads mapped to that reference, not just the 2.
 ///
 /// ## Thread safety
 ///
@@ -87,20 +93,31 @@ public struct ClassifierRowSelector: Sendable, Hashable {
     /// NCBI taxonomy IDs (Kraken2 only).
     public var taxIds: [Int]
 
+    /// Optional allowlist of read names for post-extraction filtering.
+    ///
+    /// When set, only reads whose name (`QNAME` in SAM) appears in this set
+    /// are included in the extraction output. This is necessary for NAO-MGS
+    /// where multiple taxa share the same reference accessions in the miniBAM
+    /// file, and accession-region filtering alone is too broad.
+    public var readNameAllowlist: Set<String>?
+
     /// Creates a row selector.
     ///
     /// - Parameters:
     ///   - sampleId: Sample identifier (nil for single-sample).
     ///   - accessions: Region names for BAM-backed tools.
     ///   - taxIds: Tax IDs for Kraken2.
+    ///   - readNameAllowlist: Optional set of read names to filter output.
     public init(
         sampleId: String? = nil,
         accessions: [String] = [],
-        taxIds: [Int] = []
+        taxIds: [Int] = [],
+        readNameAllowlist: Set<String>? = nil
     ) {
         self.sampleId = sampleId
         self.accessions = accessions
         self.taxIds = taxIds
+        self.readNameAllowlist = readNameAllowlist
     }
 
     /// Whether this selector carries any extraction targets at all.
