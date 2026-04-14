@@ -61,8 +61,13 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-system.git", from: "1.3.0"),
         // Swift Async Algorithms for async sequence processing
         .package(url: "https://github.com/apple/swift-async-algorithms.git", from: "1.0.0"),
+        // Pin transitive plugin providers to releases that are clean under Swift 6.2.
+        .package(url: "https://github.com/grpc/grpc-swift.git", exact: "1.27.5"),
+        .package(url: "https://github.com/apple/swift-protobuf.git", exact: "1.35.0"),
         // Apple Containerization for running Linux containers on macOS 26+
-        .package(url: "https://github.com/apple/containerization.git", from: "0.1.0"),
+        // TODO: Re-test AppleContainerRuntime against containerization 0.30.x+
+        // and relax this requirement only after the API migration is complete.
+        .package(url: "https://github.com/apple/containerization.git", exact: "0.24.5"),
     ],
     targets: [
         // MARK: - LungfishCore
@@ -167,6 +172,7 @@ let package = Package(
             ],
             path: "Sources/LungfishApp",
             resources: [
+                .process("Resources/Assets.xcassets"),
                 .copy("Resources/Help"),
                 .copy("Resources/HelpBook/Lungfish.help"),
                 .copy("Resources/Images"),
