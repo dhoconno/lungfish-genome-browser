@@ -859,18 +859,11 @@ public enum FASTQIngestionService {
         completion: @escaping @MainActor (Result<Int, Error>) -> Void
     ) async {
         do {
-            // Find the CLI executable (same bundle as the app)
-            let cliURL: URL = {
-                // Production: auxiliary executable in app bundle
-                if let bundledCLI = Bundle.main.url(forAuxiliaryExecutable: "lungfish") {
-                    return bundledCLI
-                }
-                // Development: look next to the app executable
-                let buildDir = Bundle.main.executableURL!.deletingLastPathComponent()
-                return buildDir.appendingPathComponent("lungfish")
-            }()
+            guard let cliURL = CLIImportRunner.cliBinaryPath() else {
+                throw BatchImportError.projectNotFound(Bundle.main.bundleURL)
+            }
 
-            guard FileManager.default.fileExists(atPath: cliURL.path) else {
+            guard FileManager.default.isExecutableFile(atPath: cliURL.path) else {
                 throw BatchImportError.projectNotFound(cliURL)
             }
 

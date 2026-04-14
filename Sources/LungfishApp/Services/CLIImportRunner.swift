@@ -40,43 +40,58 @@ public actor CLIImportRunner {
     ///
     /// Search order:
     /// 1. `<AppBundle>/Contents/MacOS/lungfish-cli` (release)
-    /// 2. `.build/debug/lungfish-cli` (development)
+    /// 2. `.build/arm64-apple-macosx/debug/lungfish-cli` (development)
     /// 3. PATH lookup via `/usr/bin/which`
     public static func cliBinaryPath() -> URL? {
-        // 1. Inside app bundle
-        if let bundlePath = Bundle.main.executableURL?.deletingLastPathComponent()
-            .appendingPathComponent("lungfish-cli") {
-            if FileManager.default.isExecutableFile(atPath: bundlePath.path) {
-                return bundlePath
+        resolveCLIPath(
+            mainExecutableURL: Bundle.main.executableURL,
+            sourceFilePath: #filePath,
+            pathLookup: {
+                pathLookupForCLI()
+            }
+        )
+    }
+
+    static func resolveCLIPath(
+        mainExecutableURL: URL?,
+        sourceFilePath: String,
+        pathLookup: () -> URL?
+    ) -> URL? {
+        if let mainExecutableURL {
+            let executableDirectory = mainExecutableURL.deletingLastPathComponent()
+            let bundledCLI = executableDirectory.appendingPathComponent("lungfish-cli")
+            if FileManager.default.isExecutableFile(atPath: bundledCLI.path) {
+                return bundledCLI
             }
         }
 
-        // 2. Development: same directory as main executable (swift build puts
-        //    both Lungfish and lungfish-cli in .build/debug/)
-        if let mainExec = Bundle.main.executableURL {
-            let debugDir = mainExec.deletingLastPathComponent()
-            let devPath = debugDir.appendingPathComponent("lungfish-cli")
-            if FileManager.default.isExecutableFile(atPath: devPath.path) {
-                return devPath
-            }
-        }
-
-        // 2b. Development: project source root via #filePath (works when
-        //     running from Xcode where CWD and bundle paths don't help)
-        let sourceFile = URL(fileURLWithPath: #filePath)
-        // #filePath = Sources/LungfishApp/Services/CLIImportRunner.swift
-        // Project root = 4 directories up
+        let sourceFile = URL(fileURLWithPath: sourceFilePath)
         let projectRoot = sourceFile
             .deletingLastPathComponent()  // Services/
             .deletingLastPathComponent()  // LungfishApp/
             .deletingLastPathComponent()  // Sources/
             .deletingLastPathComponent()  // project root
-        let srcDevPath = projectRoot.appendingPathComponent(".build/debug/lungfish-cli")
-        if FileManager.default.isExecutableFile(atPath: srcDevPath.path) {
-            return srcDevPath
+
+        let developmentCandidates = [
+            ".build/arm64-apple-macosx/debug/lungfish-cli",
+            ".build/debug/lungfish-cli",
+        ]
+
+        for relativePath in developmentCandidates {
+            let candidate = projectRoot.appendingPathComponent(relativePath)
+            if FileManager.default.isExecutableFile(atPath: candidate.path) {
+                return candidate
+            }
         }
 
-        // 3. PATH lookup via which
+        if let pathCLI = pathLookup(), FileManager.default.isExecutableFile(atPath: pathCLI.path) {
+            return pathCLI
+        }
+
+        return nil
+    }
+
+    private static func pathLookupForCLI() -> URL? {
         let whichProcess = Process()
         whichProcess.executableURL = URL(fileURLWithPath: "/usr/bin/which")
         whichProcess.arguments = ["lungfish-cli"]

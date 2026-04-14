@@ -11,6 +11,17 @@ import LungfishWorkflow
 // Disambiguate the two SequencingPlatform types that exist in LungfishIO and LungfishWorkflow.
 private typealias WorkflowPlatform = LungfishWorkflow.SequencingPlatform
 
+protocol ManagedDatabaseProvisioning: Sendable {
+    func requiredDatabaseManifest(for id: String) async -> BundledDatabase?
+    func isDatabaseInstalled(_ id: String) async -> Bool
+    func installManagedDatabase(
+        _ id: String,
+        progress: (@Sendable (Double, String) -> Void)?
+    ) async throws -> URL
+}
+
+extension DatabaseRegistry: ManagedDatabaseProvisioning {}
+
 // MARK: - FASTQ Import Subcommand
 
 extension ImportCommand {
@@ -265,6 +276,17 @@ extension ImportCommand {
                 forceReimport: force
             )
 
+            if !dryRun {
+                try await Self.installRequiredManagedDatabases(
+                    requiredIDs: Self.requiredManagedDatabaseIDs(
+                        legacyRecipe: oldRecipe,
+                        newRecipe: newRecipe
+                    ),
+                    formatter: formatter,
+                    isQuiet: globalOptions.quiet
+                )
+            }
+
             // MARK: Run import
 
             if !globalOptions.quiet {
@@ -306,6 +328,65 @@ extension ImportCommand {
             }
         }
 
+        static func requiredManagedDatabaseIDs(
+            legacyRecipe: ProcessingRecipe?,
+            newRecipe: Recipe?
+        ) -> [String] {
+            var ids = Set<String>()
+
+            for step in legacyRecipe?.steps ?? [] where step.kind == .humanReadScrub {
+                let databaseID = step.humanScrubDatabaseID ?? HumanScrubberDatabaseInstaller.databaseID
+                ids.insert(DatabaseRegistry.canonicalDatabaseID(for: databaseID))
+            }
+
+            for step in newRecipe?.steps ?? [] {
+                guard Self.newRecipeStepRequiresHumanScrubber(step) else { continue }
+                let configuredID = step.params?["database"]?.stringValue ?? HumanScrubberDatabaseInstaller.databaseID
+                ids.insert(DatabaseRegistry.canonicalDatabaseID(for: configuredID))
+            }
+
+            return ids.sorted()
+        }
+
+        static func installRequiredManagedDatabases(
+            requiredIDs: [String],
+            formatter: TerminalFormatter,
+            isQuiet: Bool,
+            databaseRegistry: any ManagedDatabaseProvisioning = DatabaseRegistry.shared,
+            emit: @escaping @Sendable (String) -> Void = { print($0) }
+        ) async throws {
+            guard !requiredIDs.isEmpty else { return }
+
+            for databaseID in requiredIDs {
+                let manifest = await databaseRegistry.requiredDatabaseManifest(for: databaseID)
+                let displayName = manifest?.displayName ?? databaseID
+                if await databaseRegistry.isDatabaseInstalled(databaseID) {
+                    if !isQuiet {
+                        emit(formatter.info("Using installed \(displayName)."))
+                    }
+                    continue
+                }
+
+                if !isQuiet {
+                    emit(formatter.info("Installing required database: \(displayName)…"))
+                }
+
+                do {
+                    _ = try await databaseRegistry.installManagedDatabase(databaseID) { progress, message in
+                        guard !isQuiet else { return }
+                        let percent = Int(progress * 100)
+                        emit(formatter.info("[\(percent)%] \(message)"))
+                    }
+                } catch let error as HumanScrubberDatabaseError {
+                    emit(formatter.error(error.localizedDescription))
+                    throw ExitCode.failure
+                } catch {
+                    emit(formatter.error("Failed to install \(displayName): \(error.localizedDescription)"))
+                    throw ExitCode.failure
+                }
+            }
+        }
+
         // MARK: - Platform auto-detection
 
         /// Reads the first FASTQ header from the first pair's R1 file and attempts
@@ -344,6 +425,10 @@ extension ImportCommand {
             }
 
             return WorkflowPlatform.detect(fromFASTQHeader: header)
+        }
+        private static func newRecipeStepRequiresHumanScrubber(_ step: RecipeStep) -> Bool {
+            let type = step.type.lowercased()
+            return type == "human-read-scrub" || type == "human-scrub" || type == "sra-human-scrubber"
         }
     }
 }

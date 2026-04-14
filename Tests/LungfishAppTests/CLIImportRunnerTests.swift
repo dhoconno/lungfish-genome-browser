@@ -183,4 +183,58 @@ final class CLIImportRunnerTests: XCTestCase {
         XCTAssertTrue(args.contains("--compression"))
         XCTAssertTrue(args.contains("fast"))
     }
+
+    func testResolveCLIPathPrefersBundledSiblingExecutable() throws {
+        let tempDir = try makeTemporaryDirectory()
+        let executableDir = tempDir.appendingPathComponent("Lungfish.app/Contents/MacOS", isDirectory: true)
+        try FileManager.default.createDirectory(at: executableDir, withIntermediateDirectories: true)
+
+        let mainExecutable = executableDir.appendingPathComponent("Lungfish")
+        FileManager.default.createFile(atPath: mainExecutable.path, contents: Data())
+
+        let bundledCLI = executableDir.appendingPathComponent("lungfish-cli")
+        FileManager.default.createFile(atPath: bundledCLI.path, contents: Data())
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bundledCLI.path)
+
+        let resolved = CLIImportRunner.resolveCLIPath(
+            mainExecutableURL: mainExecutable,
+            sourceFilePath: "/tmp/ignored.swift",
+            pathLookup: { nil }
+        )
+
+        XCTAssertEqual(resolved, bundledCLI)
+    }
+
+    func testResolveCLIPathFallsBackToSourceRootDebugBinary() throws {
+        let tempDir = try makeTemporaryDirectory()
+        let sourceRoot = tempDir.appendingPathComponent("repo", isDirectory: true)
+        let debugDir = sourceRoot.appendingPathComponent(".build/arm64-apple-macosx/debug", isDirectory: true)
+        try FileManager.default.createDirectory(at: debugDir, withIntermediateDirectories: true)
+
+        let debugCLI = debugDir.appendingPathComponent("lungfish-cli")
+        FileManager.default.createFile(atPath: debugCLI.path, contents: Data())
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: debugCLI.path)
+
+        let fakeSourceFile = sourceRoot
+            .appendingPathComponent("Sources/LungfishApp/Services/CLIImportRunner.swift")
+            .path
+
+        let resolved = CLIImportRunner.resolveCLIPath(
+            mainExecutableURL: nil,
+            sourceFilePath: fakeSourceFile,
+            pathLookup: { nil }
+        )
+
+        XCTAssertEqual(resolved, debugCLI)
+    }
+
+    private func makeTemporaryDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: url)
+        }
+        return url
+    }
 }

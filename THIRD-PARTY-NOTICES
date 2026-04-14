@@ -323,6 +323,60 @@ Source code: https://github.com/adoptium/temurin-build
 
 
 ================================================================================
+micromamba 2.0.5-0
+https://github.com/mamba-org/mamba
+================================================================================
+
+BSD 3-Clause License
+
+Copyright 2019 QuantStack and the Mamba contributors.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the license notice, conditions,
+and disclaimer are preserved in source distributions and in documentation
+or other materials accompanying binary distributions.
+
+Neither the name of the copyright holder nor the names of contributors may
+be used to endorse or promote derived products without prior written
+permission.
+
+Source license text: https://github.com/mamba-org/mamba/blob/main/LICENSE
+
+
+================================================================================
+NCBI SRA Human Scrubber 2.2.1
+https://github.com/ncbi/sra-human-scrubber
+================================================================================
+
+NCBI Public Domain Notice
+
+This software is described by NCBI as a United States Government Work written
+by government employees as part of their official duties. In the United States,
+NCBI states that it is not subject to copyright and is freely available for use
+and reproduction, subject to the notice and disclaimer in the upstream LICENSE.
+
+The upstream repository also notes that bundled third-party exceptions may
+apply to specific files and points readers to the referenced upstream notices.
+
+Source notice: https://github.com/ncbi/sra-human-scrubber/blob/master/LICENSE
+
+
+================================================================================
+NCBI SRA Tools 3.4.0
+https://github.com/ncbi/sra-tools
+================================================================================
+
+NCBI Public Domain Notice
+
+NCBI describes SRA Tools as a United States Government Work, not subject to
+copyright in the United States, with the usual government-work disclaimer of
+warranty and fitness. The upstream LICENSE also calls out third-party code
+exceptions that must be reviewed separately where applicable.
+
+Source notice: https://github.com/ncbi/sra-tools/blob/master/LICENSE
+
+
+================================================================================
 Swift Package Dependencies
 ================================================================================
 

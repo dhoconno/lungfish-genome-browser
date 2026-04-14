@@ -126,6 +126,13 @@ public enum FASTQBatchImporter {
         public let errors: [(sample: String, error: String)]
     }
 
+    static func resolveHumanScrubberDatabasePath(
+        databaseID: String,
+        registry: DatabaseRegistry = .shared
+    ) async throws -> URL {
+        try await registry.requiredDatabasePath(for: databaseID)
+    }
+
     // MARK: - Pair Detection
 
     /// Scans `directory` for `.fastq.gz`/`.fq.gz` files and groups them into pairs.
@@ -419,7 +426,8 @@ public enum FASTQBatchImporter {
     public static func runBatchImport(
         pairs: [SamplePair],
         config: ImportConfig,
-        log: (@Sendable (ImportLogEvent) -> Void)? = nil
+        log: (@Sendable (ImportLogEvent) -> Void)? = nil,
+        databaseRegistry: DatabaseRegistry = .shared
     ) async -> ImportResult {
         let startTime = Date()
         let recipeName = config.recipe?.name
@@ -448,7 +456,8 @@ public enum FASTQBatchImporter {
                 config: config,
                 sampleIndex: index,
                 totalSamples: pairs.count,
-                log: log
+                log: log,
+                databaseRegistry: databaseRegistry
             )
             // Drain autorelease pool for any Objective-C bridge objects created during processing
             autoreleasepool { }
@@ -491,7 +500,8 @@ public enum FASTQBatchImporter {
         config: ImportConfig,
         sampleIndex: Int,
         totalSamples: Int,
-        log: (@Sendable (ImportLogEvent) -> Void)?
+        log: (@Sendable (ImportLogEvent) -> Void)?,
+        databaseRegistry: DatabaseRegistry
     ) async -> Result<URL, Error> {
         let sampleStart = Date()
         log?(.sampleStart(
@@ -591,7 +601,8 @@ public enum FASTQBatchImporter {
                     workspace: workspace,
                     pair: pair,
                     config: config,
-                    log: log
+                    log: log,
+                    databaseRegistry: databaseRegistry
                 )
                 // After VSP2 recipe, output is interleaved (PE merge step produces mixed reads)
                 isPairedAfterRecipe = true
@@ -752,7 +763,8 @@ public enum FASTQBatchImporter {
         workspace: URL,
         pair: SamplePair,
         config: ImportConfig,
-        log: (@Sendable (ImportLogEvent) -> Void)?
+        log: (@Sendable (ImportLogEvent) -> Void)?,
+        databaseRegistry: DatabaseRegistry
     ) async throws -> URL {
         let runner = NativeToolRunner.shared
 
@@ -969,13 +981,12 @@ public enum FASTQBatchImporter {
                 }
 
             case .humanReadScrub:
-                let dbID = step.humanScrubDatabaseID ?? "human-scrubber"
+                let dbID = step.humanScrubDatabaseID ?? HumanScrubberDatabaseInstaller.databaseID
                 let removeReads = step.humanScrubRemoveReads ?? false
-                guard let dbPath = await DatabaseRegistry.shared.effectiveDatabasePath(for: dbID) else {
-                    throw BatchImportError.unknownRecipe(
-                        "Human scrub database '\(dbID)' not found. " +
-                        "Place it in ~/Library/Application Support/Lungfish/databases/\(dbID)/")
-                }
+                let dbPath = try await resolveHumanScrubberDatabasePath(
+                    databaseID: dbID,
+                    registry: databaseRegistry
+                )
                 let scrubSh = try await runner.findTool(.scrubSh)
                 let scriptsDir = scrubSh.deletingLastPathComponent()
 

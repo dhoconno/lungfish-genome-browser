@@ -10,6 +10,7 @@
 # - bcftools (MIT license) - VCF/BCF manipulation
 # - htslib (MIT license) - bgzip, tabix
 # - UCSC tools (MIT license) - bedToBigBed, bedGraphToBigWig
+# - micromamba (BSD-3-Clause) - conda package manager for bundled environments
 #
 # Usage:
 #   ./Scripts/bundle-native-tools.sh [--output-dir <dir>] [--arch <arch>]
@@ -49,6 +50,7 @@ SAMTOOLS_VERSION=$(get_tool_version "samtools")
 BCFTOOLS_VERSION=$(get_tool_version "bcftools")
 HTSLIB_VERSION=$(get_tool_version "htslib")
 UCSC_TOOLS_VERSION=$(get_tool_version "ucsc-tools")
+MICROMAMBA_VERSION=$(get_tool_version "micromamba")
 BUILD_DIR="$PROJECT_ROOT/.build/tools"
 DEFAULT_OUTPUT_DIR="$PROJECT_ROOT/Sources/LungfishWorkflow/Resources/Tools"
 
@@ -291,6 +293,37 @@ download_ucsc_tools() {
     log_success "UCSC tools downloaded for $arch."
 }
 
+# Download micromamba for a specific architecture.
+download_micromamba_arch() {
+    local arch=$1
+    local build_arch=$2
+
+    local micromamba_dir="$BUILD_DIR/$arch"
+    local micromamba_path="$micromamba_dir/micromamba"
+    local micromamba_url
+
+    mkdir -p "$micromamba_dir"
+
+    case "$build_arch" in
+        arm64)
+            micromamba_url="https://github.com/mamba-org/micromamba-releases/releases/download/$MICROMAMBA_VERSION/micromamba-osx-arm64"
+            ;;
+        x86_64)
+            micromamba_url="https://github.com/mamba-org/micromamba-releases/releases/download/$MICROMAMBA_VERSION/micromamba-osx-64"
+            ;;
+        *)
+            log_error "Unsupported micromamba architecture: $build_arch"
+            exit 1
+            ;;
+    esac
+
+    log_info "Downloading micromamba for $build_arch..."
+    curl -L -o "$micromamba_path" "$micromamba_url"
+    chmod +x "$micromamba_path"
+
+    log_success "micromamba downloaded for $build_arch."
+}
+
 # Create universal binary using lipo
 create_universal() {
     local name=$1
@@ -345,6 +378,11 @@ copy_tools() {
             "$BUILD_DIR/x86_64/install/bin/tabix" \
             "$OUTPUT_DIR/tabix"
 
+        create_universal "micromamba" \
+            "$BUILD_DIR/arm64/micromamba" \
+            "$BUILD_DIR/x86_64/micromamba" \
+            "$OUTPUT_DIR/micromamba"
+
         # UCSC tools are x86_64 only, will run via Rosetta
         cp "$BUILD_DIR/x86_64/ucsc/bedToBigBed" "$OUTPUT_DIR/bedToBigBed"
         cp "$BUILD_DIR/x86_64/ucsc/bedGraphToBigWig" "$OUTPUT_DIR/bedGraphToBigWig"
@@ -355,6 +393,7 @@ copy_tools() {
         cp "$BUILD_DIR/$arch/install/bin/bcftools" "$OUTPUT_DIR/"
         cp "$BUILD_DIR/$arch/install/bin/bgzip" "$OUTPUT_DIR/"
         cp "$BUILD_DIR/$arch/install/bin/tabix" "$OUTPUT_DIR/"
+        cp "$BUILD_DIR/$arch/micromamba" "$OUTPUT_DIR/"
 
         # UCSC tools are always x86_64 (downloaded from UCSC)
         # They work on arm64 via Rosetta 2
@@ -378,7 +417,8 @@ Lungfish Bundled Bioinformatics Tools
 ======================================
 
 This directory contains pre-built bioinformatics tools bundled with Lungfish.
-All tools are open source and distributed under MIT-compatible licenses.
+Bundled tools are distributed under their own licenses; see THIRD-PARTY-NOTICES
+and the license URLs below for the exact redistribution terms.
 
 Versions:
 HEADER
@@ -457,6 +497,17 @@ main() {
 
     # Download UCSC tools (x86_64 only, works via Rosetta)
     download_ucsc_tools x86_64
+
+    # Download pinned micromamba for the requested architectures.
+    if [ "$TARGET_ARCH" = "universal" ]; then
+        download_micromamba_arch arm64 arm64
+        download_micromamba_arch x86_64 x86_64
+    elif [ "$TARGET_ARCH" = "arm64" ] || [ "$TARGET_ARCH" = "x86_64" ]; then
+        download_micromamba_arch "$TARGET_ARCH" "$TARGET_ARCH"
+    else
+        log_error "Unsupported target architecture for micromamba: $TARGET_ARCH"
+        exit 1
+    fi
 
     # Copy tools to output
     copy_tools "$TARGET_ARCH"

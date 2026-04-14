@@ -65,6 +65,7 @@
 				F1E2D3C4B5A6978877665551 /* Sources */,
 				F1E2D3C4B5A6978877665552 /* Frameworks */,
 				F1E2D3C4B5A6978877665553 /* Resources */,
+				F1E2D3C4B5A6978877665567 /* Embed lungfish-cli */,
 				F1E2D3C4B5A6978877665566 /* Index Help Book */,
 			);
 			buildRules = (
@@ -127,6 +128,30 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		F1E2D3C4B5A6978877665567 /* Embed lungfish-cli */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/Package.swift",
+				"$(SRCROOT)/Sources/LungfishCLI",
+				"$(SRCROOT)/Sources/LungfishCore",
+				"$(SRCROOT)/Sources/LungfishIO",
+				"$(SRCROOT)/Sources/LungfishWorkflow",
+			);
+			name = "Embed lungfish-cli";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_FOLDER_PATH)/lungfish-cli",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\nCONFIGURATION_LOWER=$(printf '%s' \"$CONFIGURATION\" | tr '[:upper:]' '[:lower:]')\nSCRATCH_PATH=\"${SRCROOT}/.build/xcode-cli\"\nCLI_OUTPUT_DIR=\"${SCRATCH_PATH}/arm64-apple-macosx/${CONFIGURATION_LOWER}\"\nCLI_SOURCE=\"${CLI_OUTPUT_DIR}/lungfish-cli\"\nCLI_DEST=\"${TARGET_BUILD_DIR}/${EXECUTABLE_FOLDER_PATH}/lungfish-cli\"\n/usr/bin/xcrun swift build \\\n  --package-path \"${SRCROOT}\" \\\n  --product lungfish-cli \\\n  --configuration \"${CONFIGURATION_LOWER}\" \\\n  --arch arm64 \\\n  --scratch-path \"${SCRATCH_PATH}\"\n/usr/bin/install -d \"$(dirname \"${CLI_DEST}\")\"\n/usr/bin/install -m 755 \"${CLI_SOURCE}\" \"${CLI_DEST}\"\n";
+		};
 		F1E2D3C4B5A6978877665566 /* Index Help Book */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;

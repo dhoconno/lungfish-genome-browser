@@ -476,7 +476,15 @@ public enum FASTQDerivativeError: Error, LocalizedError {
 public actor FASTQDerivativeService {
     public static let shared = FASTQDerivativeService()
 
+    static func resolveHumanScrubberDatabasePath(
+        databaseID: String,
+        registry: DatabaseRegistry = .shared
+    ) async throws -> URL {
+        try await registry.requiredDatabasePath(for: databaseID)
+    }
+
     private let runner = NativeToolRunner.shared
+    private let databaseRegistry: DatabaseRegistry
 
     /// Number of threads to pass to multithreaded tools (fastp, seqkit, etc.).
     /// Uses all available cores for maximum throughput.
@@ -485,7 +493,9 @@ public actor FASTQDerivativeService {
     /// Cached BBTools environment dictionary — stable across the actor's lifetime.
     private var cachedBBToolsEnv: [String: String]?
 
-    public init() {}
+    public init(databaseRegistry: DatabaseRegistry = .shared) {
+        self.databaseRegistry = databaseRegistry
+    }
 
     /// Materializes a derived FASTQ bundle to a standalone FASTQ file.
     ///
@@ -2688,7 +2698,7 @@ public actor FASTQDerivativeService {
 
             case .humanReadScrub:
                 progress?(fraction, "Removing human reads (\(index + 1)/\(steps.count))…")
-                let dbID = step.humanScrubDatabaseID ?? "human-scrubber"
+                let dbID = step.humanScrubDatabaseID ?? HumanScrubberDatabaseInstaller.databaseID
                 let removeReads = step.humanScrubRemoveReads ?? false
                 commandLine = "scrub.sh -d \(dbID) -s\(removeReads ? " -x" : "")"
                 let maskedSpots = try await runHumanReadScrub(
@@ -2800,11 +2810,7 @@ public actor FASTQDerivativeService {
         isInterleaved: Bool,
         removeReads: Bool
     ) async throws -> Int? {
-        guard let dbPath = await DatabaseRegistry.shared.effectiveDatabasePath(for: databaseID) else {
-            throw FASTQDerivativeError.invalidOperation(
-                "Human read scrub database '\(databaseID)' not found. " +
-                "Place the database file in ~/Library/Application Support/Lungfish/databases/\(databaseID)/")
-        }
+        let dbPath = try await humanScrubberDatabasePath(databaseID)
 
         let scrubSh = try await runner.findTool(.scrubSh)
         let threads = ProcessInfo.processInfo.activeProcessorCount
@@ -2869,6 +2875,13 @@ public actor FASTQDerivativeService {
             }
             .first
         return maskedSpots
+    }
+
+    private func humanScrubberDatabasePath(_ databaseID: String) async throws -> URL {
+        try await Self.resolveHumanScrubberDatabasePath(
+            databaseID: databaseID,
+            registry: databaseRegistry
+        )
     }
 
     // MARK: - Fastp Trim Operations

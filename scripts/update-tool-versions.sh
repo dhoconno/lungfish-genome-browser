@@ -119,6 +119,46 @@ parse_github_repo() {
     echo "$url" | sed -n 's|https://github.com/\([^/]*\)/\([^/]*\).*|\1/\2|p'
 }
 
+# Resolve the latest version used by update/apply logic for a tool.
+get_tool_update_version() {
+    local tool_name="$1"
+    local current_version="$2"
+    local source_url="$3"
+
+    case "$tool_name" in
+        ucsc-tools)
+            echo ""
+            ;;
+        micromamba)
+            echo "$current_version"
+            ;;
+        openjdk)
+            local temurin_tag
+            temurin_tag=$(github_api "https://api.github.com/repos/adoptium/temurin21-binaries/releases/latest" 2>/dev/null \
+                | jq -r '.tag_name // empty')
+            if [ -n "$temurin_tag" ]; then
+                echo "$temurin_tag" | sed 's/^jdk-//; s/+.*//'
+            fi
+            ;;
+        cutadapt)
+            github_api "https://api.github.com/repos/marcelm/cutadapt/releases/latest" 2>/dev/null \
+                | jq -r '.tag_name // empty' | sed 's/^v//'
+            ;;
+        bbtools)
+            echo ""
+            ;;
+        *)
+            local repo_path owner repo
+            repo_path=$(parse_github_repo "$source_url")
+            if [ -n "$repo_path" ]; then
+                owner=$(echo "$repo_path" | cut -d'/' -f1)
+                repo=$(echo "$repo_path" | cut -d'/' -f2)
+                get_latest_github_version "$owner" "$repo"
+            fi
+            ;;
+    esac
+}
+
 # Compare version strings (returns: "newer", "same", "older", or "unknown")
 compare_versions() {
     local current="$1"
@@ -195,6 +235,10 @@ check_updates() {
                 # UCSC tools don't use GitHub Releases; skip auto-check
                 latest_version=""
                 ;;
+            micromamba)
+                # Micromamba is intentionally pinned and bundled from a release asset.
+                latest_version="$current_version"
+                ;;
             openjdk)
                 # Temurin releases are in adoptium/temurin21-binaries, tags like "jdk-21.0.10+1"
                 local temurin_tag
@@ -223,6 +267,18 @@ check_updates() {
                 fi
                 ;;
         esac
+
+        if [ "$tool_name" = "micromamba" ]; then
+            status_text="pinned"
+            if ! $JSON_OUTPUT; then
+                printf "%-30s %-12s %-12s ${BLUE}%s${NC}\n" "$display_name" "$current_version" "$latest_version" "$status_text"
+            fi
+            json_results=$(echo "$json_results" | jq --arg name "$tool_name" --arg cur "$current_version" \
+                --arg lat "$latest_version" \
+                '. + [{"name": $name, "current": $cur, "latest": $lat, "status": "pinned"}]')
+            sleep 0.5
+            continue
+        fi
 
         if [ -z "$latest_version" ]; then
             status_text="skip (no GitHub releases)"
@@ -311,15 +367,13 @@ apply_updates() {
         source_url=$(echo "$info" | cut -d'|' -f2)
         display_name=$(echo "$info" | cut -d'|' -f3)
 
-        local repo_path
-        repo_path=$(parse_github_repo "$source_url")
-        [ -z "$repo_path" ] && continue
+        if [ "$tool_name" = "micromamba" ]; then
+            echo -e "  ${BLUE}$display_name${NC}: pinned at $current_version"
+            continue
+        fi
 
-        local owner repo
-        owner=$(echo "$repo_path" | cut -d'/' -f1)
-        repo=$(echo "$repo_path" | cut -d'/' -f2)
         local latest_version
-        latest_version=$(get_latest_github_version "$owner" "$repo")
+        latest_version=$(get_tool_update_version "$tool_name" "$current_version" "$source_url")
 
         [ -z "$latest_version" ] && continue
 
@@ -387,7 +441,8 @@ Lungfish Bundled Bioinformatics Tools
 ======================================
 
 This directory contains pre-built bioinformatics tools bundled with Lungfish.
-All tools are open source and distributed under MIT-compatible licenses.
+Bundled tools are distributed under their own licenses; see THIRD-PARTY-NOTICES
+and the license URLs below for the exact redistribution terms.
 
 Versions:
 HEADER
@@ -431,13 +486,13 @@ update_third_party_notices() {
         version=$(jq -r ".tools[$i].version" "$MANIFEST")
         display_name=$(jq -r ".tools[$i].displayName" "$MANIFEST")
 
-        # Update lines like "SAMtools 1.22.1" to "SAMtools 1.23"
-        # Match display name followed by a version-like string
-        if command -v gsed &>/dev/null; then
-            gsed -i "s/^$display_name [0-9][0-9.]*/$display_name $version/" "$THIRD_PARTY_NOTICES"
-        else
-            sed -i '' "s/^$display_name [0-9][0-9.]*/$display_name $version/" "$THIRD_PARTY_NOTICES"
-        fi
+        # Update the version token on the matching header line while preserving
+        # any existing qualifiers like "v" or "(BBMap)".
+        DISPLAY_NAME="$display_name" VERSION="$version" perl -0pi -e '
+            my $name = quotemeta($ENV{DISPLAY_NAME});
+            my $ver = $ENV{VERSION};
+            s/^($name(?:[^\n\d]*?)(?:v)?)[0-9][0-9.]*/$1$ver/mg;
+        ' "$THIRD_PARTY_NOTICES"
     done
 
     echo -e "  ${GREEN}Updated THIRD-PARTY-NOTICES version numbers${NC}"

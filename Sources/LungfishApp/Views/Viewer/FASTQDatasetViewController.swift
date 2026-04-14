@@ -7,6 +7,38 @@ import LungfishIO
 import LungfishWorkflow
 import UniformTypeIdentifiers
 
+@MainActor
+protocol FASTQOperationAlertPresenting {
+    func present(_ alert: NSAlert, on window: NSWindow?) async -> NSApplication.ModalResponse
+}
+
+@MainActor
+struct DefaultFASTQOperationAlertPresenter: FASTQOperationAlertPresenting {
+    func present(_ alert: NSAlert, on window: NSWindow?) async -> NSApplication.ModalResponse {
+        guard let window else {
+            return .alertSecondButtonReturn
+        }
+
+        return await withCheckedContinuation { continuation in
+            alert.beginSheetModal(for: window) { response in
+                continuation.resume(returning: response)
+            }
+        }
+    }
+}
+
+protocol HumanScrubberDatabaseInstalling: Sendable {
+    func install(databaseID: String, progress: (@Sendable (Double, String) -> Void)?) async throws
+}
+
+actor DefaultHumanScrubberDatabaseInstaller: HumanScrubberDatabaseInstalling {
+    static let shared = DefaultHumanScrubberDatabaseInstaller()
+
+    func install(databaseID: String, progress: (@Sendable (Double, String) -> Void)?) async throws {
+        _ = try await DatabaseRegistry.shared.installManagedDatabase(databaseID, progress: progress)
+    }
+}
+
 /// Parsed FASTQ read record for the read preview table.
 private struct FASTQReadPreviewRecord {
     let index: Int
@@ -248,7 +280,7 @@ public final class FASTQDatasetViewController: NSViewController {
             case .naoMgsImport:
                 return "Import results from the NAO metagenomic surveillance pipeline (securebio/nao-mgs-workflow). Parses virus hit tables and displays alignment data."
             case .humanReadScrub:
-                return "Remove human-derived reads using NCBI's sra-human-scrubber. Required before SRA submission and recommended for clinical/surveillance samples."
+                return "Remove human-derived reads using NCBI's human-scrubber database. Required before SRA submission and recommended for clinical/surveillance samples."
             }
         }
 
@@ -335,6 +367,9 @@ public final class FASTQDatasetViewController: NSViewController {
 
     public var onStatisticsUpdated: ((FASTQDatasetStatistics) -> Void)?
     public var onRunOperation: ((FASTQDerivativeRequest) async throws -> Void)?
+    public var onInstallHumanScrubberDatabase: (() async throws -> Void)?
+    var alertPresenter: FASTQOperationAlertPresenting = DefaultFASTQOperationAlertPresenter()
+    var humanScrubberInstaller: HumanScrubberDatabaseInstalling = DefaultHumanScrubberDatabaseInstaller.shared
 
     /// Callback to open/focus the Demux tab in the metadata drawer.
     public var onOpenDemuxDrawer: (() -> Void)?
@@ -1290,7 +1325,7 @@ public final class FASTQDatasetViewController: NSViewController {
             parameterBar.addArrangedSubview(label)
 
         case .humanReadScrub:
-            let label = NSTextField(labelWithString: "Remove human-derived reads using NCBI sra-human-scrubber. Required before SRA submission.")
+            let label = NSTextField(labelWithString: "Remove human-derived reads using NCBI human-scrubber database. Required before SRA submission.")
             label.font = .systemFont(ofSize: 11)
             label.textColor = .secondaryLabelColor
             parameterBar.addArrangedSubview(label)
@@ -2014,10 +2049,15 @@ public final class FASTQDatasetViewController: NSViewController {
         setStatus("Running: \(description(for: request))")
 
         let startTime = Date()
+        let installHumanScrubberDatabase = onInstallHumanScrubberDatabase
 
-        operationTask = Task { [weak self, onRunOperation] in
+        operationTask = Task { [weak self, onRunOperation, installHumanScrubberDatabase] in
             do {
-                try await onRunOperation(request)
+                try await self?.performFASTQOperation(
+                    request,
+                    onRunOperation: onRunOperation,
+                    installDatabase: installHumanScrubberDatabase
+                )
                 guard let self else { return }
                 let elapsed = Int(Date().timeIntervalSince(startTime))
                 self.operationTask = nil
@@ -2033,6 +2073,14 @@ public final class FASTQDatasetViewController: NSViewController {
                 self.cancelButton.isHidden = true
                 self.progressIndicator.stopAnimation(nil)
                 self.setStatus("Cancelled (\(elapsed)s)")
+            } catch let error as HumanScrubberDatabaseError {
+                guard let self else { return }
+                self.operationTask = nil
+                self.updateRunButtonState()
+                self.cancelButton.isHidden = true
+                self.progressIndicator.stopAnimation(nil)
+                self.setStatus(error.localizedDescription, isError: true)
+                self.showErrorBanner(error.localizedDescription)
             } catch {
                 guard let self else { return }
                 let elapsed = Int(Date().timeIntervalSince(startTime))
@@ -2045,6 +2093,94 @@ public final class FASTQDatasetViewController: NSViewController {
                 (NSApp.delegate as? AppDelegate)?.showOperationsPanel(nil)
             }
         }
+    }
+
+    private func performFASTQOperation(
+        _ request: FASTQDerivativeRequest,
+        onRunOperation: @escaping (FASTQDerivativeRequest) async throws -> Void,
+        installDatabase: (() async throws -> Void)? = nil
+    ) async throws {
+        var attemptedInstall = false
+
+        while true {
+            do {
+                try await onRunOperation(request)
+                return
+            } catch let error as HumanScrubberDatabaseError {
+                guard error.isInstallRequired,
+                      !attemptedInstall else {
+                    throw error
+                }
+                _ = try await handleHumanScrubberDatabaseRequirement(
+                    error,
+                    request: request,
+                    onRunOperation: onRunOperation,
+                    installDatabase: installDatabase
+                )
+                attemptedInstall = true
+                return
+            }
+        }
+    }
+
+    func handleHumanScrubberDatabaseRequirement(
+        _ requirement: HumanScrubberDatabaseError,
+        request: FASTQDerivativeRequest,
+        onRunOperation: @escaping (FASTQDerivativeRequest) async throws -> Void,
+        installDatabase: (() async throws -> Void)? = nil
+    ) async throws -> Bool {
+        guard case .installRequired(let databaseID, let displayName) = requirement else {
+            throw requirement
+        }
+        let canonicalDatabaseID = DatabaseRegistry.canonicalDatabaseID(for: databaseID)
+
+        let response = await promptToInstallHumanScrubberDatabase(displayName: displayName)
+        guard response == .alertFirstButtonReturn else {
+            throw HumanScrubberDatabaseError.installationCancelled(
+                databaseID: databaseID,
+                displayName: displayName
+            )
+        }
+
+        setStatus("Installing \(displayName)…")
+        do {
+            if let installDatabase {
+                try await installDatabase()
+            } else {
+                try await humanScrubberInstaller.install(
+                    databaseID: canonicalDatabaseID,
+                    progress: { [weak self] _, message in
+                        DispatchQueue.main.async {
+                            MainActor.assumeIsolated {
+                                self?.setStatus(message)
+                            }
+                        }
+                    }
+                )
+            }
+        } catch let error as HumanScrubberDatabaseError {
+            throw error
+        } catch {
+            throw HumanScrubberDatabaseError.installationFailed(
+                databaseID: databaseID,
+                displayName: displayName,
+                reason: error.localizedDescription
+            )
+        }
+
+        setStatus("Installed \(displayName). Retrying…")
+        try await onRunOperation(request)
+        return true
+    }
+
+    private func promptToInstallHumanScrubberDatabase(displayName: String) async -> NSApplication.ModalResponse {
+        let alert = NSAlert()
+        alert.messageText = "Human Read Scrubber Database Required"
+        alert.informativeText = "This operation needs \(displayName) before it can run. The download is about 1 GB and will be stored in managed database storage."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Install")
+        alert.addButton(withTitle: "Cancel")
+        return await alertPresenter.present(alert, on: view.window)
     }
 
 
@@ -2302,7 +2438,7 @@ public final class FASTQDatasetViewController: NSViewController {
             return nil
 
         case .humanReadScrub:
-            return .humanReadScrub(databaseID: "sra-human-scrubber", removeReads: true)
+            return .humanReadScrub(databaseID: HumanScrubberDatabaseInstaller.databaseID, removeReads: true)
 
         case .subsampleProportion:
             guard let value = Double(fieldOneInput.stringValue), value > 0, value <= 1 else {

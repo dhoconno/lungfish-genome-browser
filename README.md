@@ -147,6 +147,9 @@ Lungfish bundles the following open-source tools, invoked as subprocesses:
 | [pigz](https://github.com/madler/pigz) | 2.8 | zlib | Mark Adler |
 | [BBTools](https://sourceforge.net/projects/bbmap/) (clumpify.sh) | 39.13 | BBMap License | JGI |
 | [OpenJDK](https://github.com/adoptium/temurin-build) (Eclipse Temurin JRE) | 21.0.10 | GPL-2.0 w/ Classpath Exception | Adoptium |
+| [micromamba](https://github.com/mamba-org/mamba) | 2.0.5-0 | BSD-3-Clause | QuantStack and mamba contributors |
+| [NCBI SRA Human Scrubber](https://github.com/ncbi/sra-human-scrubber) | 2.2.1 | Public Domain notice | NCBI |
+| [NCBI SRA Tools](https://github.com/ncbi/sra-tools) | 3.4.0 | Public Domain notice | NCBI |
 
 Tool versions are defined in [`tool-versions.json`](Sources/LungfishWorkflow/Resources/Tools/tool-versions.json) and can be updated with:
 
@@ -159,7 +162,7 @@ scripts/update-tool-versions.sh --update   # Update manifest and rebuild
 
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
 
-Embedded third-party tools are distributed under their own licenses. All are compatible with MIT through subprocess invocation (mere aggregation). See [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES) for full license texts.
+Embedded third-party tools are distributed under their own licenses. Lungfish remains MIT-licensed, but bundled tools include a mix of permissive licenses, NCBI public-domain notices, and GPL-2.0-with-Classpath-Exception for the bundled Temurin JRE. See [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES) for bundled-tool notices, and preserve the bundled `jre/legal/` directory when redistributing app artifacts that include Temurin.
 
 VSEARCH is dual-licensed BSD-2-Clause/GPL-3.0; Lungfish elects BSD-2-Clause.
 

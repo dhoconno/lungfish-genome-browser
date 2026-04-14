@@ -7,6 +7,52 @@ import AppKit
 @testable import LungfishApp
 @testable import LungfishCore
 @testable import LungfishIO
+@testable import LungfishWorkflow
+
+@MainActor
+private final class StubFASTQOperationAlertPresenter: FASTQOperationAlertPresenting {
+    var response: NSApplication.ModalResponse = .alertSecondButtonReturn
+    private(set) var messageText: String?
+
+    func present(_ alert: NSAlert, on window: NSWindow?) async -> NSApplication.ModalResponse {
+        messageText = alert.messageText
+        return response
+    }
+}
+
+private actor StubHumanScrubberInstaller: HumanScrubberDatabaseInstalling {
+    enum Mode {
+        case succeed
+        case fail(String)
+    }
+
+    var mode: Mode = .succeed
+    private(set) var installCallCount = 0
+    private(set) var installedDatabaseIDs: [String] = []
+
+    func install(databaseID: String, progress: (@Sendable (Double, String) -> Void)?) async throws {
+        installCallCount += 1
+        installedDatabaseIDs.append(databaseID)
+        switch mode {
+        case .succeed:
+            progress?(1.0, "Installed")
+        case .fail(let reason):
+            throw HumanScrubberDatabaseError.installationFailed(
+                databaseID: databaseID,
+                displayName: "Human Read Scrubber Database",
+                reason: reason
+            )
+        }
+    }
+
+    func currentInstallCallCount() -> Int {
+        installCallCount
+    }
+
+    func lastInstalledDatabaseID() -> String? {
+        installedDatabaseIDs.last
+    }
+}
 
 final class FASTQDashboardTests: XCTestCase {
 
@@ -338,6 +384,118 @@ final class FASTQDashboardTests: XCTestCase {
         return results
     }
 
+    @MainActor
+    func testHumanScrubberInstallPromptRetriesOperationAfterInstall() async throws {
+        let controller = FASTQDatasetViewController()
+        _ = controller.view
+
+        let alertPresenter = StubFASTQOperationAlertPresenter()
+        alertPresenter.response = .alertFirstButtonReturn
+        let installer = StubHumanScrubberInstaller()
+        controller.alertPresenter = alertPresenter
+        controller.humanScrubberInstaller = installer
+
+        var runCount = 0
+        let recovered = try await controller.handleHumanScrubberDatabaseRequirement(
+            .installRequired(databaseID: "human-scrubber", displayName: "Human Read Scrubber Database"),
+            request: .humanReadScrub(databaseID: "human-scrubber", removeReads: true),
+            onRunOperation: { _ in
+                runCount += 1
+            }
+        )
+
+        XCTAssertTrue(recovered)
+        let installCallCount = await installer.currentInstallCallCount()
+        XCTAssertEqual(installCallCount, 1)
+        XCTAssertEqual(runCount, 1)
+        XCTAssertEqual(alertPresenter.messageText, "Human Read Scrubber Database Required")
+    }
+
+    @MainActor
+    func testHumanScrubberInstallPromptCancelLeavesOperationBlocked() async throws {
+        let controller = FASTQDatasetViewController()
+        _ = controller.view
+
+        let alertPresenter = StubFASTQOperationAlertPresenter()
+        alertPresenter.response = .alertSecondButtonReturn
+        let installer = StubHumanScrubberInstaller()
+        controller.alertPresenter = alertPresenter
+        controller.humanScrubberInstaller = installer
+
+        var runCount = 0
+        do {
+            _ = try await controller.handleHumanScrubberDatabaseRequirement(
+                .installRequired(databaseID: "human-scrubber", displayName: "Human Read Scrubber Database"),
+                request: .humanReadScrub(databaseID: "human-scrubber", removeReads: true),
+                onRunOperation: { _ in
+                    runCount += 1
+                }
+            )
+            XCTFail("Expected cancellation to keep the operation blocked")
+        } catch let error as HumanScrubberDatabaseError {
+            switch error {
+            case .installationCancelled(let databaseID, let displayName):
+                XCTAssertEqual(databaseID, "human-scrubber")
+                XCTAssertEqual(displayName, "Human Read Scrubber Database")
+            default:
+                XCTFail("Expected installationCancelled, got \(error)")
+            }
+        }
+        let installCallCount = await installer.currentInstallCallCount()
+        XCTAssertEqual(installCallCount, 0)
+        XCTAssertEqual(runCount, 0)
+    }
+
+    @MainActor
+    func testHumanScrubberInstallPromptCanonicalizesLegacyDatabaseID() async throws {
+        let controller = FASTQDatasetViewController()
+        _ = controller.view
+
+        let alertPresenter = StubFASTQOperationAlertPresenter()
+        alertPresenter.response = .alertFirstButtonReturn
+        let installer = StubHumanScrubberInstaller()
+        controller.alertPresenter = alertPresenter
+        controller.humanScrubberInstaller = installer
+
+        _ = try await controller.handleHumanScrubberDatabaseRequirement(
+            .installRequired(databaseID: "sra-human-scrubber", displayName: "Human Read Scrubber Database"),
+            request: .humanReadScrub(databaseID: "sra-human-scrubber", removeReads: true),
+            onRunOperation: { _ in }
+        )
+
+        let installCallCount = await installer.currentInstallCallCount()
+        let lastInstalledDatabaseID = await installer.lastInstalledDatabaseID()
+        XCTAssertEqual(installCallCount, 1)
+        XCTAssertEqual(lastInstalledDatabaseID, "human-scrubber")
+    }
+
+    func testFASTQDerivativeServiceReportsInstallRequiredWhenHumanScrubberDatabaseMissing() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FASTQDashboardTests-derivative-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let registry = DatabaseRegistry(
+            bundledDatabasesRoot: try makeHumanScrubberBundledRoot(in: tempDir),
+            userDatabasesRoot: tempDir.appendingPathComponent("managed-databases")
+        )
+
+        do {
+            _ = try await FASTQDerivativeService.resolveHumanScrubberDatabasePath(
+                databaseID: "human-scrubber",
+                registry: registry
+            )
+            XCTFail("Expected install-required error")
+        } catch let error as HumanScrubberDatabaseError {
+            guard case .installRequired(let databaseID, let displayName) = error else {
+                XCTFail("Unexpected error: \(error)")
+                return
+            }
+            XCTAssertEqual(databaseID, "human-scrubber")
+            XCTAssertEqual(displayName, "Human Read Scrubber Database")
+        }
+    }
+
     // MARK: - Notification Names
 
     func testFASTQDatasetLoadedNotificationExists() {
@@ -550,5 +708,28 @@ final class FASTQDashboardTests: XCTestCase {
         XCTAssertEqual(cached?.computedStatistics?.readCount, 9730)
         XCTAssertEqual(cached?.computedStatistics?.baseCount, 1_469_730)
         XCTAssertEqual(cached?.computedStatistics?.meanReadLength, 150.0)
+    }
+
+    private func makeHumanScrubberBundledRoot(in tempDir: URL) throws -> URL {
+        let root = tempDir.appendingPathComponent("bundled-databases", isDirectory: true)
+        let dbDir = root.appendingPathComponent("human-scrubber", isDirectory: true)
+        try FileManager.default.createDirectory(at: dbDir, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(
+            at: try humanScrubberManifestURL(),
+            to: dbDir.appendingPathComponent("manifest.json")
+        )
+        return root
+    }
+
+    private func humanScrubberManifestURL() throws -> URL {
+        let candidate = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/LungfishWorkflow/Resources/Databases/human-scrubber/manifest.json")
+        if FileManager.default.fileExists(atPath: candidate.path) {
+            return candidate
+        }
+        throw XCTSkip("Bundled human-scrubber manifest not found at \(candidate.path)")
     }
 }

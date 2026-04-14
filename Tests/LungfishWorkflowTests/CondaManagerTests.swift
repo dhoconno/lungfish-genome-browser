@@ -114,6 +114,67 @@ final class CondaManagerTests: XCTestCase {
         XCTAssertEqual(PluginPack.builtIn.count, 13, "Should have exactly 13 built-in packs")
     }
 
+    func testToolVersionsManifestIncludesMicromamba() throws {
+        let manifestURL = Self.toolVersionsManifestURL()
+        let data = try Data(contentsOf: manifestURL)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let tools = json?["tools"] as? [[String: Any]]
+
+        XCTAssertTrue(tools?.contains(where: { $0["name"] as? String == "micromamba" }) == true)
+    }
+
+    func testMicromambaBundledResourceIsResolvable() throws {
+        let micromambaURL = Self.micromambaBundledResourceURL()
+        let fileManager = FileManager.default
+
+        XCTAssertTrue(fileManager.fileExists(atPath: micromambaURL.path))
+        XCTAssertTrue(fileManager.isExecutableFile(atPath: micromambaURL.path))
+    }
+
+    private static func toolVersionsManifestURL() -> URL {
+        if let bundleURL = Bundle.module.resourceURL?
+            .appendingPathComponent("Tools")
+            .appendingPathComponent("tool-versions.json"),
+           FileManager.default.fileExists(atPath: bundleURL.path)
+        {
+            return bundleURL
+        }
+
+        var candidate = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        for _ in 0..<10 {
+            let manifestURL = candidate
+                .appendingPathComponent("Sources/LungfishWorkflow/Resources/Tools/tool-versions.json")
+            if FileManager.default.fileExists(atPath: manifestURL.path) {
+                return manifestURL
+            }
+            candidate = candidate.deletingLastPathComponent()
+        }
+
+        fatalError("Cannot locate Sources/LungfishWorkflow/Resources/Tools/tool-versions.json")
+    }
+
+    private static func micromambaBundledResourceURL() -> URL {
+        if let bundleURL = Bundle.module.resourceURL?
+            .appendingPathComponent("Tools")
+            .appendingPathComponent("micromamba"),
+           FileManager.default.fileExists(atPath: bundleURL.path)
+        {
+            return bundleURL
+        }
+
+        var candidate = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        for _ in 0..<10 {
+            let resourceURL = candidate
+                .appendingPathComponent("Sources/LungfishWorkflow/Resources/Tools/micromamba")
+            if FileManager.default.fileExists(atPath: resourceURL.path) {
+                return resourceURL
+            }
+            candidate = candidate.deletingLastPathComponent()
+        }
+
+        fatalError("Cannot locate Sources/LungfishWorkflow/Resources/Tools/micromamba")
+    }
+
     func testBuiltInPacksHaveUniqueIDs() {
         let ids = PluginPack.builtIn.map(\.id)
         XCTAssertEqual(ids.count, Set(ids).count, "Pack IDs should be unique")
@@ -340,6 +401,69 @@ final class CondaManagerTests: XCTestCase {
         XCTAssertEqual(error.errorDescription, "Tool 'kraken2' timed out after 60 seconds")
     }
 
+    func testMicromambaNotFoundErrorDescription() {
+        XCTAssertEqual(
+            CondaError.micromambaNotFound.errorDescription,
+            "Micromamba binary not found in the bundled resources."
+        )
+    }
+
+    func testEnsureMicromambaCopiesBundledBinaryWhenMissing() async throws {
+        let sandbox = try makeMicromambaSandbox()
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        let bundledMicromamba = try makeFakeMicromamba(
+            at: sandbox.appendingPathComponent("bundled-micromamba"),
+            version: "2.0.5-0"
+        )
+        let manager = CondaManager(
+            rootPrefix: sandbox.appendingPathComponent("conda"),
+            bundledMicromambaProvider: { bundledMicromamba },
+            bundledMicromambaVersionProvider: { "2.0.5-0" }
+        )
+
+        let installedPath = try await manager.ensureMicromamba()
+        let expectedPath = await manager.micromambaPath
+        let installedContents = try String(contentsOf: installedPath, encoding: .utf8)
+        let installedVersion = try await readMicromambaVersion(at: installedPath)
+        let permissions = try FileManager.default.attributesOfItem(atPath: installedPath.path)[.posixPermissions] as? NSNumber
+
+        XCTAssertEqual(installedPath, expectedPath)
+        XCTAssertEqual(installedVersion, "2.0.5-0")
+        XCTAssertTrue(installedContents.contains("2.0.5-0"))
+        XCTAssertEqual(permissions?.intValue, 0o755)
+    }
+
+    func testEnsureMicromambaReplacesInstalledBinaryWhenBundledVersionChanges() async throws {
+        let sandbox = try makeMicromambaSandbox()
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        let rootPrefix = sandbox.appendingPathComponent("conda")
+        let bundledMicromamba = try makeFakeMicromamba(
+            at: sandbox.appendingPathComponent("bundled-micromamba"),
+            version: "2.0.5-0"
+        )
+        let installedMicromamba = try makeFakeMicromamba(
+            at: rootPrefix.appendingPathComponent("bin/micromamba"),
+            version: "2.0.4"
+        )
+        let oldContents = try String(contentsOf: installedMicromamba, encoding: .utf8)
+
+        let manager = CondaManager(
+            rootPrefix: rootPrefix,
+            bundledMicromambaProvider: { bundledMicromamba },
+            bundledMicromambaVersionProvider: { "2.0.5-0" }
+        )
+
+        let installedPath = try await manager.ensureMicromamba()
+        let newContents = try String(contentsOf: installedPath, encoding: .utf8)
+        let installedVersion = try await readMicromambaVersion(at: installedPath)
+
+        XCTAssertEqual(installedVersion, "2.0.5-0")
+        XCTAssertNotEqual(newContents, oldContents)
+        XCTAssertTrue(newContents.contains("2.0.5-0"))
+    }
+
     // MARK: - Integration Tests (require network)
 
     func testListEnvironments() async throws {
@@ -553,5 +677,44 @@ final class CondaManagerTests: XCTestCase {
                 continuation.resume(throwing: error)
             }
         }
+    }
+
+    private func makeMicromambaSandbox() throws -> URL {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+
+    @discardableResult
+    private func makeFakeMicromamba(at url: URL, version: String) throws -> URL {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let script = """
+        #!/bin/sh
+        if [ "$1" = "--version" ]; then
+            echo "\(version)"
+            exit 0
+        fi
+        echo "unexpected args: $@" >&2
+        exit 1
+        """
+        try script.write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        return url
+    }
+
+    private func readMicromambaVersion(at url: URL) async throws -> String {
+        let process = Process()
+        process.executableURL = url
+        process.arguments = ["--version"]
+
+        let output = Pipe()
+        process.standardOutput = output
+
+        try process.run()
+        process.waitUntilExit()
+
+        let data = try output.fileHandleForReading.readToEnd() ?? Data()
+        return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

@@ -5,6 +5,62 @@
 import ArgumentParser
 import XCTest
 @testable import LungfishCLI
+@testable import LungfishIO
+@testable import LungfishWorkflow
+
+private actor StubManagedDatabaseRegistry: ManagedDatabaseProvisioning {
+    var installedIDs: Set<String> = []
+    var installCalls: [String] = []
+
+    func requiredDatabaseManifest(for id: String) async -> BundledDatabase? {
+        BundledDatabase(
+            id: id,
+            displayName: "Human Read Scrubber Database",
+            tool: "sra-human-scrubber",
+            version: "20250916v2",
+            filename: "human_filter.db.20250916v2",
+            releaseDate: "2025-09-16",
+            description: "Stub manifest",
+            sourceUrl: "https://github.com/ncbi/sra-human-scrubber",
+            releasesUrl: "https://github.com/ncbi/sra-human-scrubber/releases"
+        )
+    }
+
+    func isDatabaseInstalled(_ id: String) async -> Bool {
+        installedIDs.contains(id)
+    }
+
+    func installManagedDatabase(
+        _ id: String,
+        progress: (@Sendable (Double, String) -> Void)?
+    ) async throws -> URL {
+        installCalls.append(id)
+        installedIDs.insert(id)
+        progress?(1.0, "Installed")
+        return URL(fileURLWithPath: "/tmp/\(id)")
+    }
+
+    func currentInstallCalls() -> [String] {
+        installCalls
+    }
+}
+
+private final class StubLineSink: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lines: [String] = []
+
+    func append(_ line: String) {
+        lock.lock()
+        lines.append(line)
+        lock.unlock()
+    }
+
+    func currentLines() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return lines
+    }
+}
 
 final class ImportFastqCommandTests: XCTestCase {
 
@@ -172,5 +228,43 @@ final class ImportFastqCommandTests: XCTestCase {
         XCTAssertEqual(command.logDir, "/tmp/logs")
         XCTAssertTrue(command.force)
         XCTAssertTrue(command.dryRun)
+    }
+
+    func testRequiredManagedDatabaseIDsIncludesHumanScrubberForLegacyRecipe() throws {
+        let recipe = ProcessingRecipe(
+            name: "Human scrub",
+            steps: [
+                FASTQDerivativeOperation(
+                    kind: .humanReadScrub,
+                    createdAt: .distantPast,
+                    humanScrubDatabaseID: "sra-human-scrubber"
+                ),
+            ]
+        )
+
+        let ids = ImportCommand.FastqSubcommand.requiredManagedDatabaseIDs(
+            legacyRecipe: recipe,
+            newRecipe: nil
+        )
+
+        XCTAssertEqual(ids, ["human-scrubber"])
+    }
+
+    func testInstallRequiredManagedDatabasesInstallsMissingHumanScrubber() async throws {
+        let registry = StubManagedDatabaseRegistry()
+        let sink = StubLineSink()
+
+        try await ImportCommand.FastqSubcommand.installRequiredManagedDatabases(
+            requiredIDs: ["human-scrubber"],
+            formatter: TerminalFormatter(useColors: false),
+            isQuiet: false,
+            databaseRegistry: registry,
+            emit: { line in sink.append(line) }
+        )
+
+        let installCalls = await registry.currentInstallCalls()
+        let emitted = sink.currentLines()
+        XCTAssertEqual(installCalls, ["human-scrubber"])
+        XCTAssertTrue(emitted.contains(where: { $0.contains("Installing required database") }))
     }
 }

@@ -28,7 +28,7 @@ public enum CondaError: Error, LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .micromambaNotFound:
-            return "Micromamba binary not found. It will be downloaded automatically."
+            return "Micromamba binary not found in the bundled resources."
         case .micromambaDownloadFailed(let msg):
             return "Failed to download micromamba: \(msg)"
         case .environmentCreationFailed(let msg):
@@ -390,7 +390,7 @@ public struct PluginPack: Sendable, Codable, Identifiable {
 /// Manages micromamba environments and bioconda package installation.
 ///
 /// Provides the core infrastructure for the plugin system:
-/// - Downloads and manages the micromamba binary
+/// - Installs and manages the bundled micromamba binary
 /// - Creates per-tool conda environments
 /// - Installs/uninstalls packages from bioconda and conda-forge
 /// - Discovers tool executables in conda environments
@@ -415,6 +415,9 @@ public struct PluginPack: Sendable, Codable, Identifiable {
 /// ```
 public actor CondaManager {
 
+    typealias BundledMicromambaProvider = @Sendable () -> URL?
+    typealias BundledMicromambaVersionProvider = @Sendable () -> String?
+
     /// Shared singleton instance.
     public static let shared = CondaManager()
 
@@ -429,8 +432,8 @@ public actor CondaManager {
     /// Default channels for bioconda packages.
     public let defaultChannels: [String] = ["bioconda", "conda-forge"]
 
-    /// Download URL for micromamba (macOS arm64).
-    private let micromambaDownloadURL = "https://github.com/mamba-org/micromamba-releases/releases/latest/download/micromamba-osx-arm64"
+    private let bundledMicromambaProvider: BundledMicromambaProvider
+    private let bundledMicromambaVersionProvider: BundledMicromambaVersionProvider
 
     private init() {
         // Use ~/.lungfish/conda instead of ~/Library/Application Support/Lungfish/conda
@@ -439,6 +442,18 @@ public actor CondaManager {
         // samtools, bcftools, and other tools that use internal shell pipes to fail.
         let home = FileManager.default.homeDirectoryForCurrentUser
         self.rootPrefix = home.appendingPathComponent(".lungfish/conda")
+        self.bundledMicromambaProvider = Self.defaultBundledMicromambaURL
+        self.bundledMicromambaVersionProvider = Self.defaultBundledMicromambaVersion
+    }
+
+    init(
+        rootPrefix: URL,
+        bundledMicromambaProvider: @escaping BundledMicromambaProvider,
+        bundledMicromambaVersionProvider: @escaping BundledMicromambaVersionProvider
+    ) {
+        self.rootPrefix = rootPrefix
+        self.bundledMicromambaProvider = bundledMicromambaProvider
+        self.bundledMicromambaVersionProvider = bundledMicromambaVersionProvider
     }
 
     /// Migrates ~/.lungfish/conda from a symlink to a real directory.
@@ -486,7 +501,7 @@ public actor CondaManager {
 
     // MARK: - Micromamba Bootstrap
 
-    /// Ensures micromamba is available, downloading it if necessary.
+    /// Ensures micromamba is available by copying the bundled binary if needed.
     ///
     /// - Parameter progress: Optional progress callback (0.0 to 1.0).
     /// - Returns: URL to the micromamba binary.
@@ -499,46 +514,132 @@ public actor CondaManager {
         // directory. Spaces in conda prefix paths break bioinformatics tools.
         migrateSymlinkToRealDirectory()
 
-        let binDir = rootPrefix.appendingPathComponent("bin")
-
-        if FileManager.default.fileExists(atPath: micromambaPath.path) {
-            logger.info("Micromamba already available at \(self.micromambaPath.path, privacy: .public)")
-            return micromambaPath
+        guard let bundledMicromambaPath = bundledMicromambaProvider(),
+              FileManager.default.fileExists(atPath: bundledMicromambaPath.path) else {
+            throw CondaError.micromambaNotFound
         }
 
-        logger.info("Downloading micromamba...")
-        progress?(0.0, "Downloading micromamba\u{2026}")
+        let binDir = rootPrefix.appendingPathComponent("bin")
+        let bundledVersion = try await resolveMicromambaVersion(
+            at: bundledMicromambaPath,
+            fallbackVersion: bundledMicromambaVersionProvider()
+        )
 
         try FileManager.default.createDirectory(at: binDir, withIntermediateDirectories: true)
 
-        // Download micromamba binary
-        let (tempURL, response) = try await URLSession.shared.download(
-            from: URL(string: micromambaDownloadURL)!
-        )
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
-            throw CondaError.micromambaDownloadFailed("HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+        if FileManager.default.fileExists(atPath: micromambaPath.path) {
+            do {
+                let installedVersion = try await resolveMicromambaVersion(at: micromambaPath)
+                if installedVersion == bundledVersion {
+                    try ensureMicromambaExecutable(at: micromambaPath)
+                    logger.info("Micromamba already available at \(self.micromambaPath.path, privacy: .public)")
+                    return micromambaPath
+                }
+                logger.info("Replacing micromamba \(installedVersion, privacy: .public) with bundled \(bundledVersion, privacy: .public)")
+                progress?(0.0, "Updating micromamba\u{2026}")
+            } catch {
+                logger.info("Replacing unreadable micromamba at \(self.micromambaPath.path, privacy: .public)")
+                progress?(0.0, "Updating micromamba\u{2026}")
+            }
+        } else {
+            logger.info("Installing bundled micromamba...")
+            progress?(0.0, "Installing micromamba\u{2026}")
         }
 
-        // Move to final location
         if FileManager.default.fileExists(atPath: micromambaPath.path) {
             try FileManager.default.removeItem(at: micromambaPath)
         }
-        try FileManager.default.moveItem(at: tempURL, to: micromambaPath)
+        try FileManager.default.copyItem(at: bundledMicromambaPath, to: micromambaPath)
 
-        // Make executable
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o755],
-            ofItemAtPath: micromambaPath.path
-        )
+        try ensureMicromambaExecutable(at: micromambaPath)
 
-        // Verify it works
         let version = try await runMicromamba(["--version"])
         logger.info("Micromamba \(version.trimmingCharacters(in: .whitespacesAndNewlines), privacy: .public) installed successfully")
         progress?(1.0, "Micromamba ready")
 
         return micromambaPath
+    }
+
+    private static func defaultBundledMicromambaURL() -> URL? {
+        let candidates: [URL?] = [
+            Bundle.module.url(forResource: "micromamba", withExtension: nil, subdirectory: "Tools"),
+            Bundle.module.resourceURL?.appendingPathComponent("Tools/micromamba"),
+            Bundle.module.bundleURL.appendingPathComponent("Tools/micromamba")
+        ]
+
+        for candidate in candidates.compactMap({ $0 }) {
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+        }
+
+        return nil
+    }
+
+    private static func defaultBundledMicromambaVersion() -> String? {
+        NativeToolRunner.bundledVersions["micromamba"]
+    }
+
+    private func ensureMicromambaExecutable(at path: URL) throws {
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: path.path
+        )
+    }
+
+    private func resolveMicromambaVersion(
+        at path: URL,
+        fallbackVersion: String? = nil
+    ) async throws -> String {
+        do {
+            let version = try await runMicromambaVersion(at: path)
+            return version.trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            if let fallbackVersion, !fallbackVersion.isEmpty {
+                return fallbackVersion
+            }
+            throw error
+        }
+    }
+
+    private func runMicromambaVersion(at path: URL) async throws -> String {
+        try ensureMicromambaExecutable(at: path)
+
+        return try await withCheckedThrowingContinuation { continuation in
+            let process = Process()
+            process.executableURL = path
+            process.arguments = ["--version"]
+
+            let stdoutPipe = Pipe()
+            let stderrPipe = Pipe()
+            process.standardOutput = stdoutPipe
+            process.standardError = stderrPipe
+
+            process.terminationHandler = { terminatedProcess in
+                let stdoutData = try? stdoutPipe.fileHandleForReading.readToEnd() ?? Data()
+                let stderrData = try? stderrPipe.fileHandleForReading.readToEnd() ?? Data()
+                let stdout = String(decoding: stdoutData ?? Data(), as: UTF8.self)
+                let stderr = String(decoding: stderrData ?? Data(), as: UTF8.self)
+
+                if terminatedProcess.terminationStatus == 0 {
+                    continuation.resume(returning: stdout)
+                } else {
+                    continuation.resume(
+                        throwing: CondaError.executionFailed(
+                            tool: "micromamba",
+                            exitCode: terminatedProcess.terminationStatus,
+                            stderr: stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+                        )
+                    )
+                }
+            }
+
+            do {
+                try process.run()
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
     }
 
     // MARK: - Environment Management
