@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema",
+  "title": "Lungfish screenshot recipe",
+  "type": "object",
+  "required": ["id", "chapter", "caption", "app_state", "steps", "crop", "post"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "chapter": { "type": "string" },
+    "caption": { "type": "string" },
+    "viewport_class": {
+      "enum": ["sequence", "alignment", "variant", "assembly", "taxonomy", "none"]
+    },
+    "app_state": {
+      "type": "object",
+      "required": ["fixture", "window_size"],
+      "properties": {
+        "fixture": { "type": "string" },
+        "open_files": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "window_size": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "appearance": { "enum": ["light", "dark"] }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["action"],
+        "properties": {
+          "action": {
+            "enum": ["open_application", "wait_ready", "open_file", "resize_window", "scroll_to"]
+          }
+        }
+      }
+    },
+    "crop": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["viewport", "window", "region"] },
+        "region": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "minItems": 4,
+          "maxItems": 4
+        }
+      }
+    },
+    "annotations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": { "enum": ["callout", "bracket", "arrow", "box"] }
+        }
+      }
+    },
+    "post": {
+      "type": "object",
+      "properties": {
+        "retina": { "type": "boolean" },
+        "format": { "enum": ["png"] }
+      }
+    }
+  }
+}
