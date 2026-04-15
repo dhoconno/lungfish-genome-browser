@@ -42,3 +42,10 @@ test("palette flags non-palette hex in prose and SVG", async () => {
   // #00FF00 inside backticks (inlineCode) is not a style reference — must NOT flag
   assert.doesNotMatch(reasons, /#00FF00/);
 });
+
+test("typography flags non-brand fonts in HTML", async () => {
+  const messages = await lint("bad-typography.md");
+  const reasons = messages.map((m) => m.reason).join("\n");
+  assert.match(reasons, /Helvetica Neue/);
+  assert.match(reasons, /Times New Roman/);
+});
