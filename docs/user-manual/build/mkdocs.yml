@@ -1,0 +1,34 @@
+site_name: Lungfish User Manual
+docs_dir: ../
+site_dir: site/
+theme:
+  name: material
+  custom_dir: theme/
+  font:
+    text: Inter
+    code: IBM Plex Mono
+  palette:
+    - scheme: default
+      primary: custom
+      accent: custom
+  features:
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+
+extra_css:
+  - build/theme/extra.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Style guide: STYLE.md
