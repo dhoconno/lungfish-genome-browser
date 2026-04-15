@@ -1,0 +1,19 @@
+{
+  "name": "lungfish-manual-shot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Computer Use screenshot runner for the Lungfish user manual.",
+  "bin": {
+    "shot": "./runner.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.mjs"
+  },
+  "dependencies": {
+    "ajv": "8.17.1",
+    "ajv-formats": "3.0.1",
+    "sharp": "0.33.5",
+    "yaml": "2.5.0"
+  }
+}
