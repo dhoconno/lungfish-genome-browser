@@ -378,7 +378,7 @@ optional "see also" cross-references, optional chapter reference.
 - [ ] **Step 3: Write placeholder features.yaml**
 
 ```yaml
-# features.yaml — Lungfish feature inventory
+# features.yaml, Lungfish feature inventory.
 # Ownership: Code Cartographer only.
 # Schema:
 #   <feature_id>:
@@ -2059,25 +2059,25 @@ Note: this phase is not fully automatable. It delivers binary artifacts. Tasks d
 # Canonical style-name contract between Markdown → Lua filter → InDesign.
 # Add a new entry only when both sides implement it.
 paragraph_styles:
-  H1: "Body H1 — Space Grotesk Bold 36pt"
-  H2: "Body H2 — Space Grotesk Medium 26pt"
-  H3: "Body H3 — Space Grotesk Medium 20pt"
-  Body: "Body — Inter Regular 12pt"
-  Caption: "Caption — Inter SemiBold 10pt"
-  Callout: "Callout — Inter Regular 12pt on Peach"
-  Code: "Code — IBM Plex Mono 10pt"
-  Glossary_Term: "Glossary Term — Inter SemiBold 12pt"
+  H1: "Body H1, Space Grotesk Bold 36pt"
+  H2: "Body H2, Space Grotesk Medium 26pt"
+  H3: "Body H3, Space Grotesk Medium 20pt"
+  Body: "Body, Inter Regular 12pt"
+  Caption: "Caption, Inter SemiBold 10pt"
+  Callout: "Callout, Inter Regular 12pt on Peach"
+  Code: "Code, IBM Plex Mono 10pt"
+  Glossary_Term: "Glossary Term, Inter SemiBold 12pt"
 
 character_styles:
-  InlineCode: "Inline Code — IBM Plex Mono 11pt"
-  UILabel: "UI Label — IBM Plex Mono 11pt Deep Ink"
-  Emphasis: "Emphasis — Inter Italic"
-  Strong: "Strong — Inter Bold"
+  InlineCode: "Inline Code, IBM Plex Mono 11pt"
+  UILabel: "UI Label, IBM Plex Mono 11pt Deep Ink"
+  Emphasis: "Emphasis, Inter Italic"
+  Strong: "Strong, Inter Bold"
 
 object_styles:
-  ScreenshotFrame: "Screenshot Frame — Cream background, Creamsicle 2px border"
-  CreamsicleBar: "Creamsicle Bar — 4px Creamsicle rule below H1"
-  CalloutBox: "Callout Box — Peach fill, Deep Ink text"
+  ScreenshotFrame: "Screenshot Frame, Cream background, Creamsicle 2px border"
+  CreamsicleBar: "Creamsicle Bar, 4px Creamsicle rule below H1"
+  CalloutBox: "Callout Box, Peach fill, Deep Ink text"
 ```
 
 - [ ] **Step 2: Write styles/README.md**
@@ -2099,7 +2099,7 @@ The Lua filter in `build/scripts/icml-filter.lua` emits ICML referencing paragra
 
 - Rename a style in InDesign without updating `style-map.yaml`.
 - Commit only the .indd without the matching .idml.
-- Add inline formatting overrides in a story — use styles.
+- Add inline formatting overrides in a story. Use styles.
 ```
 
 - [ ] **Step 3: Commit**
@@ -3664,10 +3664,10 @@ crop:
 annotations:
   - type: callout
     target: [420, 220]
-    text: "REF — reference base"
+    text: "REF: reference base"
   - type: callout
     target: [510, 220]
-    text: "ALT — sample base"
+    text: "ALT: sample base"
   - type: bracket
     region: [600, 200, 120, 40]
 post:
