@@ -430,7 +430,7 @@ public actor CondaManager {
     }
 
     /// Default channels for bioconda packages.
-    public let defaultChannels: [String] = ["bioconda", "conda-forge"]
+    public let defaultChannels: [String] = ["conda-forge", "bioconda"]
 
     private let bundledMicromambaProvider: BundledMicromambaProvider
     private let bundledMicromambaVersionProvider: BundledMicromambaVersionProvider
@@ -1114,6 +1114,8 @@ public actor CondaManager {
             enabled = true
             useMicromamba = true
             cacheDir = '\(rootPrefix.appendingPathComponent("envs").path)'
+            channels = ['conda-forge', 'bioconda']
+            createOptions = '--override-channels'
         }
 
         env {

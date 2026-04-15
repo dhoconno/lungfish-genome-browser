@@ -176,7 +176,7 @@ public actor TaxTriagePipeline {
         progress?(0.0, "Checking prerequisites...")
         try profileAdjustedConfig.validate()
 
-        let launchEnvironment = buildLaunchEnvironment()
+        let launchEnvironment = await buildLaunchEnvironment()
         if profileAdjustedConfig.profile == "docker" {
             try await ensureDockerDaemonReady(
                 progress: progress,
@@ -316,7 +316,11 @@ public actor TaxTriagePipeline {
         progress?(0.10, "Starting TaxTriage pipeline...")
 
         // Phase 3: Build and execute Nextflow command (0.10 -- 0.90)
-        let arguments = buildNextflowArguments(config: effectiveConfig)
+        let runtimeConfigURL = try await writeNextflowRuntimeConfig(in: effectiveConfig.outputDirectory)
+        let arguments = buildNextflowLaunchArguments(
+            config: effectiveConfig,
+            runtimeConfigURL: runtimeConfigURL
+        )
         let logFile = config.outputDirectory.appendingPathComponent("nextflow.log")
 
         // Prepare environment
@@ -630,6 +634,13 @@ public actor TaxTriagePipeline {
         return args
     }
 
+    func buildNextflowLaunchArguments(
+        config: TaxTriageConfig,
+        runtimeConfigURL: URL
+    ) -> [String] {
+        ["-c", runtimeConfigURL.path] + buildNextflowArguments(config: config)
+    }
+
     // MARK: - Output Collection
 
     /// Discovers and categorizes output files after pipeline completion.
@@ -782,12 +793,22 @@ public actor TaxTriagePipeline {
         return nil
     }
 
-    private func buildLaunchEnvironment() -> [String: String] {
+    func buildLaunchEnvironment() async -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         environment["NXF_ANSI_LOG"] = "false"
 
+        let condaConfig = await CondaManager.shared.nextflowCondaConfig()
+        for (key, value) in condaConfig {
+            environment[key] = value
+        }
+
         // Ensure Docker CLI paths are available even in restricted launch envs.
-        let dockerPaths = ["/usr/local/bin", "/opt/homebrew/bin"]
+        let condaRoot = CondaManager.shared.rootPrefix
+        let dockerPaths = [
+            condaRoot.appendingPathComponent("bin").path,
+            "/usr/local/bin",
+            "/opt/homebrew/bin",
+        ]
         let existingPaths = (environment["PATH"] ?? "")
             .split(separator: ":")
             .map(String.init)
@@ -802,6 +823,13 @@ public actor TaxTriagePipeline {
             .appendingPathComponent(".nextflow")
         environment["NXF_HOME"] = nxfHome.path
         return environment
+    }
+
+    private func writeNextflowRuntimeConfig(in directory: URL) async throws -> URL {
+        let configURL = directory.appendingPathComponent("lungfish.nextflow.config")
+        let configString = await CondaManager.shared.nextflowCondaConfigString()
+        try configString.write(to: configURL, atomically: true, encoding: .utf8)
+        return configURL
     }
 
     private func ensureDockerDaemonReady(

@@ -77,7 +77,7 @@ final class AboutWindowController: NSWindowController {
 
         // Version
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.1"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "7"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "8"
         let versionLabel = NSTextField(labelWithString: "Version \(version) (\(build))")
         versionLabel.translatesAutoresizingMaskIntoConstraints = false
         versionLabel.font = .systemFont(ofSize: 11)

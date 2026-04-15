@@ -775,6 +775,47 @@ final class TaxTriagePipelineTests: XCTestCase {
         XCTAssertTrue(args.contains("-with-trace"))
     }
 
+    func testBuildNextflowLaunchArgumentsPrependRuntimeConfigOverride() async {
+        let pipeline = TaxTriagePipeline()
+
+        let sample = TaxTriageSample(
+            sampleId: "Test",
+            fastq1: URL(fileURLWithPath: "/data/reads.fq.gz"),
+            platform: .illumina
+        )
+        let config = TaxTriageConfig(
+            samples: [sample],
+            outputDirectory: URL(fileURLWithPath: "/output")
+        )
+        let runtimeConfigURL = URL(fileURLWithPath: "/tmp/lungfish-taxtriage.config")
+
+        let args = await pipeline.buildNextflowLaunchArguments(
+            config: config,
+            runtimeConfigURL: runtimeConfigURL
+        )
+
+        XCTAssertEqual(args.prefix(4), ["-c", runtimeConfigURL.path, "run", "jhuapl-bio/taxtriage"])
+    }
+
+    func testBuildLaunchEnvironmentIncludesMambaRootPrefix() async {
+        let pipeline = TaxTriagePipeline()
+        let environment = await pipeline.buildLaunchEnvironment()
+        let condaRoot = await CondaManager.shared.rootPrefix
+
+        XCTAssertEqual(environment["MAMBA_ROOT_PREFIX"], condaRoot.path)
+        XCTAssertEqual(environment["NXF_CONDA_ENABLED"], "true")
+        XCTAssertEqual(
+            environment["NXF_CONDA_CACHEDIR"],
+            condaRoot.appendingPathComponent("envs").path
+        )
+        XCTAssertEqual(environment["NXF_HOME"], FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".nextflow").path)
+        XCTAssertTrue(
+            environment["PATH"]?.contains("/opt/homebrew/bin") == true,
+            "PATH should retain Docker-friendly system locations"
+        )
+    }
+
     // MARK: - Multi-Sample Batch Tests (Phase 1)
 
     func testConfigSourceBundleURLsDefaultNil() {
