@@ -78,3 +78,10 @@ test("frontmatter flags SHOT marker mismatches", async () => {
   assert.match(reasons, /declared-but-unused/);
   assert.match(reasons, /undeclared-orphan/);
 });
+
+test("data-viz flags red-amber-green and non-palette colors in vega-lite", async () => {
+  const messages = await lint("bad-data-viz.md");
+  const reasons = messages.map((m) => m.reason).join("\n");
+  assert.match(reasons, /red-amber-green/);
+  assert.match(reasons, /non-palette colour in chart/);
+});
