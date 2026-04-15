@@ -11,4 +11,43 @@
 #     notes: <free text>
 
 version: 0
-features: {}
+features:
+  import.vcf:
+    title: Import VCF
+    entry_points:
+      - "File > Open (filter: VCF)"
+      - "Import Center > Variants"
+      - "CLI: lungfish import vcf"
+    inputs: [vcf, vcf.gz]
+    outputs: [variant-browser-dataset]
+    viewport_class: variant
+    sources:
+      - Sources/LungfishIO/Formats/VCF/VCFReader.swift
+      - Sources/LungfishIO/Formats/VCF/VCFReferenceInference.swift
+      - Sources/LungfishApp/App/VCFImportHelper.swift
+      - Sources/LungfishApp/App/VCFAutoIngestor.swift
+      - Sources/LungfishCLI/Commands/ImportCommand.swift
+    notes: >-
+      Accepts plain text VCF and bgzipped VCF with accompanying tabix index.
+      Inference picks a compatible reference by chromosome set, applying
+      RefSeq, UCSC, and Ensembl alias mappings so that a VCF carrying
+      MT192765.1 or NC_045512.2 or chrCOV19 resolves to the same reference
+      when present in the project.
+  viewport.variant-browser:
+    title: Variant browser viewport
+    entry_points:
+      - "Open a VCF dataset from the sidebar"
+    inputs: [variant-browser-dataset]
+    outputs: []
+    viewport_class: variant
+    sources:
+      - Sources/LungfishApp/Views/Viewer/VCFDatasetViewController.swift
+      - Sources/LungfishApp/Views/Viewer/VariantTrackRenderer.swift
+      - Sources/LungfishApp/Views/Viewer/VariantSection.swift
+      - Sources/LungfishApp/Views/Viewer/VariantTrack.swift
+      - Sources/LungfishCore/Database/VariantDatabase.swift
+    notes: >-
+      Presents variants as a sortable table with CHROM, POS, ID, REF, ALT,
+      QUAL, FILTER, GT, and AF columns. Selecting a row centers the genome
+      context pane on that coordinate. The Inspector surfaces the full INFO
+      and FORMAT payload for the selected record.
