@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 const CREAMSICLE = "#EE8B4F";
 const DEEP_INK = "#1F1A17";
 
-export async function compose({ imagePath, annotations }) {
+export async function compose({ imagePath, annotations = [] }) {
   const img = sharp(await readFile(imagePath));
   const { width, height } = await img.metadata();
   const svg = buildSVG({ width, height, annotations });
