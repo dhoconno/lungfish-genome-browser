@@ -1,0 +1,15 @@
+id: example
+chapter: 99-test/example
+caption: "Example caption."
+viewport_class: variant
+app_state:
+  fixture: docs/user-manual/fixtures/sarscov2-clinical
+  window_size: [1600, 1000]
+  appearance: light
+steps:
+  - action: open_application
+crop:
+  mode: viewport
+post:
+  retina: true
+  format: png
