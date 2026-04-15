@@ -58,3 +58,9 @@ test("voice flags marketing patterns and sentence-terminal '!'", async () => {
   }
   assert.match(reasons, /sentence-terminal '!'/);
 });
+
+test("primer-before-procedure flags Procedure appearing before primer", async () => {
+  const messages = await lint("bad-primer-order.md");
+  const reasons = messages.map((m) => m.reason).join("\n");
+  assert.match(reasons, /'## Procedure' before any primer section/);
+});
