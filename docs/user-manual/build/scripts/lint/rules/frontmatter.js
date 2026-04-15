@@ -11,6 +11,16 @@ const SHOT_RE = /<!--\s*SHOT:\s*([a-z0-9][a-z0-9-]*)\s*-->/g;
 
 export default function frontmatter() {
   return (tree, file) => {
+    // Skip non-chapter files (e.g., index.md, STYLE.md, ARCHITECTURE.md,
+    // and agent personas under .claude/agents/). Chapter-specific frontmatter
+    // is only required for files under docs/user-manual/chapters/. Test
+    // fixtures under build/scripts/lint/fixtures/ are always processed so
+    // the rule's own behavior can be exercised.
+    const path = file.path ?? "";
+    const isChapter = path.includes("/chapters/");
+    const isFixture = path.includes("/lint/fixtures/");
+    if (!isChapter && !isFixture) return;
+
     let fm = null;
     visit(tree, "yaml", (node) => { fm = node; });
     if (!fm) {

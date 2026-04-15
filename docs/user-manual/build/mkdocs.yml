@@ -1,6 +1,11 @@
 site_name: Lungfish User Manual
 docs_dir: ../
-site_dir: site/
+# site_dir lives outside docs_dir: MkDocs forbids site_dir inside docs_dir
+# (would recursively copy the build into itself). Resolved relative to the
+# mkdocs.yml config file.
+site_dir: ../../../.docs-site/user-manual/
+exclude_docs: |
+  build/
 theme:
   name: material
   custom_dir: theme/
