@@ -1,33 +1,49 @@
-# STYLE — Lungfish User Manual
+# STYLE, Lungfish User Manual
 
 Derived from `lungfish_brand_style_guide.md` (memory). The linter in
 `build/scripts/lint/` enforces every mechanical rule here.
 
+## Prose rules
+
+Two hard rules apply to every chapter and every agent-facing doc under
+`docs/user-manual/` and `.claude/agents/`.
+
+First: **no em dashes.** Never write `—` in chapter or doc prose. Use a period
+and start a new sentence. When the em dash introduced a list or a noun-phrase
+elaboration, a colon is usually right. Hyphens inside compound adjectives
+(`read-only`, `five-color`) are fine.
+
+Second: **bullet lists are capped.** At most five items per list, at most two
+lists per H2 section. Longer enumerations become prose or a Markdown table. If
+a genuine five-item enumeration is genuinely parallel, it may stay as a list;
+if it exceeds five, restructure.
+
+Lint: `em-dash.js` (error), `bullet-cap.js` (warning, so genuine exceptions
+can ship with a review note).
+
 ## Written identity
 
-- The product is **Lungfish** — title case, one word.
-- Never: LUNGFISH, LungFish, Lung Fish, lungfish.
-- Kit names: **Lungfish Air Kit**, **Lungfish Wastewater Kit**.
-- Device: **InBio Apollo Sampler**. Consumable: **Cassette** (capitalised
-  site-facing, lowercase in prose).
-- Lint: `written-identity.js`.
+The product is **Lungfish** in title case, one word. Never LUNGFISH, LungFish,
+Lung Fish, or lowercase lungfish. Kit names are **Lungfish Air Kit** and
+**Lungfish Wastewater Kit**. The device is the **InBio Apollo Sampler**. The
+consumable is the **Cassette**: capitalised site-facing, lowercase in prose.
+Lint: `written-identity.js`.
 
 ## Palette
 
-Five colors, nothing else, in prose hex references and embedded SVG fills:
+Five colors, nothing else, in prose hex references and embedded SVG fills.
 
 | Name | Hex | Use |
 |---|---|---|
 | Lungfish Creamsicle | `#EE8B4F` | Primary accent, headings, CTAs |
 | Peach | `#F6B088` | Secondary warm tint |
-| Deep Ink | `#1F1A17` | Primary text — never pure black |
-| Cream | `#FAF4EA` | Page backgrounds — never pure white |
+| Deep Ink | `#1F1A17` | Primary text. Never pure black. |
+| Cream | `#FAF4EA` | Page backgrounds. Never pure white. |
 | Warm Grey | `#8A847A` | Captions, metadata |
 
-- Never red-amber-green in data viz; encode severity with Deep Ink weight
-  + annotation.
-- Never Creamsicle on Peach, never Creamsicle body text.
-- Lint: `palette.js`, `data-viz.js`.
+Never use red-amber-green in data viz: encode severity with Deep Ink weight
+and annotation. Never place Creamsicle on Peach, and never use Creamsicle for
+body text. Lint: `palette.js`, `data-viz.js`.
 
 ## Typography
 
@@ -45,50 +61,45 @@ must use only these faces. Lint: `typography.js`.
 
 ## Voice
 
-Six qualities: **Purposeful · Precise and scientific · Trustworthy and calm ·
-Actionable · Thoughtful · Inclusive and empowering.** Never hyped, never cold.
+Six qualities describe the Lungfish voice: Purposeful, Precise and scientific,
+Trustworthy and calm, Actionable, Thoughtful, Inclusive and empowering. Never
+hyped, never cold.
 
-Banned patterns (lint flags):
-
-- `revolutionary`, `breakthrough`, `powerful`, `cutting-edge`, `AI-powered`,
-  `game-changing`, `unleash`, `leverages`, `next-generation` (the last is
-  permitted *only* when literally referring to NGS, inside a primer)
-- `!` at sentence end in body prose (permitted in quoted CLI output)
-- Superlative chains (`most advanced, most accurate, most…`).
-
-Lint: `voice.js`.
+Banned patterns the linter flags include `revolutionary`, `breakthrough`,
+`powerful`, `cutting-edge`, `AI-powered`, `game-changing`, `unleash`, and
+`leverages`. `next-generation` is permitted only when literally referring to
+NGS inside a primer. `!` at the end of a body sentence is banned (permitted in
+quoted CLI output). Superlative chains such as "most advanced, most accurate,
+most…" are banned. Lint: `voice.js`.
 
 ## Chapter structure
 
-Every chapter:
-
-1. Opens with `## What it is` or `## Why this matters` before any `## Procedure`
-   section.
-2. Has YAML frontmatter validated by `frontmatter.js`.
-3. Has one `<!-- SHOT: id -->` marker per entry in `shots[]` and vice versa.
-4. Resolves every `prereqs[]`, `glossary_refs[]`, `fixtures_refs[]`,
-   `features_refs[]` to an existing target.
-
-Lint: `frontmatter.js`, `primer-before-procedure.js`.
+Every chapter opens with a primer heading (`## What it is` or `## Why this
+matters`) before any `## Procedure` section. Every chapter has YAML
+frontmatter validated by `frontmatter.js`. Every `<!-- SHOT: id -->` marker in
+the body has a matching entry in the frontmatter `shots[]` list and vice
+versa. Every `prereqs[]`, `glossary_refs[]`, `fixtures_refs[]`, and
+`features_refs[]` entry resolves to an existing target. Lint:
+`frontmatter.js`, `primer-before-procedure.js`.
 
 ## Fixture references
 
 When a chapter uses a fixture, it cites the fixture's `README.md` citation
-block via `{{ fixtures_refs[] | cite }}`. Chapters do not reproduce licenses or
-accessions inline.
+block via `{{ fixtures_refs[] | cite }}`. Chapters do not reproduce licenses
+or accessions inline.
 
 ## Audience tiers
 
-Every chapter declares one: `bench-scientist | analyst | power-user`. No
-chapter may mention a concept the audience tier has not been primed for.
+Every chapter declares one tier: `bench-scientist`, `analyst`, or
+`power-user`. No chapter may mention a concept the audience tier has not been
+primed for.
 
 ## Screenshots
 
-- Cream backgrounds (light appearance) unless the chapter is specifically about
-  dark-mode features.
-- Dark-mode screenshots sit on a Deep Ink containment panel.
-- Annotation callouts and brackets: Creamsicle, 2px stroke.
-- SVG overlays composited post-capture, not drawn in the app.
+Screenshots sit on Cream backgrounds (light appearance) unless the chapter is
+specifically about dark-mode features. Dark-mode screenshots sit on a Deep Ink
+containment panel. Annotation callouts and brackets use Creamsicle at 2px
+stroke. SVG overlays are composited post-capture, not drawn in the app.
 
 ## Frontmatter schema
 
