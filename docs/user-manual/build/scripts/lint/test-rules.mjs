@@ -33,3 +33,12 @@ test("written-identity flags every wrong spelling", async () => {
   assert.match(reasons, /Lung Fish/);
   assert.match(reasons, /lowercase 'lungfish'/);
 });
+
+test("palette flags non-palette hex in prose and SVG", async () => {
+  const messages = await lint("bad-palette.md");
+  const reasons = messages.map((m) => m.reason).join("\n");
+  assert.match(reasons, /#FF0000/);
+  assert.match(reasons, /#336699/);
+  // #00FF00 inside backticks (inlineCode) is not a style reference — must NOT flag
+  assert.doesNotMatch(reasons, /#00FF00/);
+});
