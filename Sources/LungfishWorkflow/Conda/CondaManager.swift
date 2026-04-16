@@ -472,6 +472,26 @@ public actor CondaManager {
         }
     }
 
+    /// Reinstalls packages into an environment by removing the existing one first.
+    public func reinstall(
+        packages: [String],
+        environment: String,
+        channels: [String]? = nil,
+        progress: (@Sendable (Double, String) -> Void)? = nil
+    ) async throws {
+        let envPath = environmentURL(named: environment)
+        if FileManager.default.fileExists(atPath: envPath.path) {
+            try FileManager.default.removeItem(at: envPath)
+        }
+
+        try await install(
+            packages: packages,
+            environment: environment,
+            channels: channels,
+            progress: progress
+        )
+    }
+
     /// Uninstalls packages from an environment.
     public func uninstall(
         packages: [String],
