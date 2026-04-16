@@ -46,6 +46,18 @@ struct ReleaseBuildConfigurationTests {
         #expect(script.contains("default: arm64"))
     }
 
+    @Test("Native tool bundler applies prefix maps to scrub builder paths")
+    func nativeToolBundlerAppliesPrefixMapsToScrubBuilderPaths() throws {
+        let script = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent("scripts/bundle-native-tools.sh"),
+            encoding: .utf8
+        )
+
+        #expect(script.contains("ffile-prefix-map"))
+        #expect(script.contains("fdebug-prefix-map"))
+    }
+
     @Test("Release tools sanitizer preserves wrappers and strips resource executables")
     func releaseToolsSanitizerPreservesWrappersAndStripsResourceExecutables() throws {
         let repositoryRoot = Self.repositoryRoot()
@@ -87,6 +99,40 @@ struct ReleaseBuildConfigurationTests {
         #expect(FileManager.default.isExecutableFile(atPath: configURL.path) == false)
     }
 
+    @Test("Release tools sanitizer removes BBTools build-only helper scripts")
+    func releaseToolsSanitizerRemovesBBToolsBuildOnlyHelperScripts() throws {
+        let repositoryRoot = Self.repositoryRoot()
+        let sanitizerURL = repositoryRoot.appendingPathComponent("scripts/sanitize-bundled-tools.sh")
+        #expect(FileManager.default.fileExists(atPath: sanitizerURL.path))
+
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let bbtoolsDir = tempRoot.appendingPathComponent("Tools/bbtools", isDirectory: true)
+        try FileManager.default.createDirectory(at: bbtoolsDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let buildEnvSetupURL = bbtoolsDir.appendingPathComponent("build_env_setup.sh")
+        try "export PREFIX=/Users/dho/miniforge3\n".write(
+            to: buildEnvSetupURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        try Self.makeExecutable(buildEnvSetupURL)
+
+        let condaBuildURL = bbtoolsDir.appendingPathComponent("conda_build.sh")
+        try "source /opt/mambaforge/work/build_env_setup.sh\n".write(
+            to: condaBuildURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        try Self.makeExecutable(condaBuildURL)
+
+        try Self.runScript(sanitizerURL, arguments: [tempRoot.appendingPathComponent("Tools").path])
+
+        #expect(FileManager.default.fileExists(atPath: buildEnvSetupURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: condaBuildURL.path) == false)
+    }
+
     @Test("Xcode Release build runs tools sanitizer")
     func xcodeReleaseBuildRunsToolsSanitizer() throws {
         let project = try String(
@@ -100,6 +146,7 @@ struct ReleaseBuildConfigurationTests {
         #expect(project.contains(#"if [ \"$CONFIGURATION\" = \"Release\" ]"#))
         #expect(project.contains("INSTALLATION_BUILD_PRODUCTS_LOCATION"))
         #expect(project.contains("UninstalledProducts/macosx"))
+        #expect(project.contains("EXECUTABLE_FOLDER_PATH"))
         #expect(
             project.contains(
                 """
@@ -143,6 +190,30 @@ struct ReleaseBuildConfigurationTests {
         #expect(script.contains("scrub.sh"))
     }
 
+    @Test("Release smoke test validates bundled Java launcher")
+    func releaseSmokeTestValidatesBundledJavaLauncher() throws {
+        let script = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent("scripts/smoke-test-release-tools.sh"),
+            encoding: .utf8
+        )
+
+        #expect(script.contains("jre/bin/java"))
+        #expect(script.contains("allow-jit"))
+    }
+
+    @Test("Release smoke test resolves ripgrep from PATH instead of /usr/bin")
+    func releaseSmokeTestResolvesRipgrepFromPath() throws {
+        let script = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent("scripts/smoke-test-release-tools.sh"),
+            encoding: .utf8
+        )
+
+        #expect(script.contains("command -v rg"))
+        #expect(script.contains("/usr/bin/rg") == false)
+    }
+
     @Test("Notarized DMG release script archives signs notarizes and staples")
     func notarizedDMGReleaseScriptArchivesSignsNotarizesAndStaples() throws {
         let script = try String(
@@ -161,6 +232,70 @@ struct ReleaseBuildConfigurationTests {
         #expect(script.contains("release-metadata.txt"))
     }
 
+    @Test("Notarized DMG release script builds CLI with prefix maps")
+    func notarizedDMGReleaseScriptBuildsCLIWithPrefixMaps() throws {
+        let script = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent("scripts/release/build-notarized-dmg.sh"),
+            encoding: .utf8
+        )
+
+        #expect(script.contains("-debug-prefix-map"))
+        #expect(script.contains("-file-compilation-dir"))
+        #expect(script.contains("ffile-prefix-map"))
+    }
+
+    @Test("Notarized DMG release script sanitizes embedded CLI before signing")
+    func notarizedDMGReleaseScriptSanitizesEmbeddedCLIBeforeSigning() throws {
+        let script = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent("scripts/release/build-notarized-dmg.sh"),
+            encoding: .utf8
+        )
+
+        let sanitizeMarker = #"scripts/sanitize-bundled-tools.sh "$APP_PATH/Contents/MacOS""#
+
+        #expect(script.contains(sanitizeMarker))
+        let lines = script.split(separator: "\n", omittingEmptySubsequences: false)
+        guard let sanitizeIndex = lines.firstIndex(where: { $0.contains(sanitizeMarker) }),
+              let codesignIndex = lines.enumerated().first(where: { index, line in
+                  index > sanitizeIndex
+                      && line.contains(#"/usr/bin/codesign --force --sign "$SIGNING_IDENTITY""#)
+              })?.offset
+        else {
+            Issue.record("expected CLI sanitizer to run before CLI codesign")
+            return
+        }
+
+        #expect(sanitizeIndex < codesignIndex)
+    }
+
+    @Test("Notarized DMG release script signs JRE launchers with explicit entitlements")
+    func notarizedDMGReleaseScriptSignsJRELaunchersWithEntitlements() throws {
+        let script = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent("scripts/release/build-notarized-dmg.sh"),
+            encoding: .utf8
+        )
+
+        #expect(script.contains("jre-launcher.entitlements"))
+        #expect(script.contains("jre/bin/java"))
+        #expect(script.contains("jre/bin/keytool"))
+        #expect(script.contains("jre/lib/jspawnhelper"))
+    }
+
+    @Test("JRE launcher entitlements allow bundled JVM execution under hardened runtime")
+    func jreLauncherEntitlementsAllowBundledJVMExecutionUnderHardenedRuntime() throws {
+        let entitlements = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent("scripts/release/jre-launcher.entitlements"),
+            encoding: .utf8
+        )
+
+        #expect(entitlements.contains("com.apple.security.cs.allow-jit"))
+        #expect(entitlements.contains("com.apple.security.cs.allow-unsigned-executable-memory"))
+    }
+
     @Test("Release agent is tracked in repo")
     func releaseAgentIsTrackedInRepo() throws {
         let agent = try String(
@@ -174,6 +309,104 @@ struct ReleaseBuildConfigurationTests {
         #expect(agent.contains("scripts/smoke-test-release-tools.sh"))
         #expect(agent.contains("notarytool"))
         #expect(agent.contains(".dmg"))
+    }
+
+    @Test("Production runtime resource lookups avoid SwiftPM Bundle.module accessors")
+    func productionRuntimeResourceLookupsAvoidSwiftPMBundleModuleAccessors() throws {
+        let repositoryRoot = Self.repositoryRoot()
+        let runtimeSources = [
+            "Sources/LungfishWorkflow/Native/NativeToolRunner.swift",
+            "Sources/LungfishWorkflow/Databases/DatabaseRegistry.swift",
+            "Sources/LungfishWorkflow/Conda/CondaManager.swift",
+            "Sources/LungfishWorkflow/Engines/AppleContainerRuntime.swift",
+            "Sources/LungfishWorkflow/Metagenomics/NaoMgsSamplePartitioner.swift",
+            "Sources/LungfishWorkflow/Recipes/RecipeRegistry.swift",
+            "Sources/LungfishApp/Views/Help/HelpWindowController.swift",
+            "Sources/LungfishApp/Views/Welcome/WelcomeWindowController.swift",
+            "Sources/LungfishApp/App/AppIcon.swift",
+            "Sources/LungfishApp/App/AboutWindowController.swift",
+        ]
+
+        for relativePath in runtimeSources {
+            let source = try String(
+                contentsOf: repositoryRoot.appendingPathComponent(relativePath),
+                encoding: .utf8
+            )
+            #expect(source.contains("Bundle.module") == false, "\(relativePath) still references Bundle.module")
+        }
+    }
+
+    @Test("Release GUI runtime avoids compile-time source path fallbacks")
+    func releaseGUIRuntimeAvoidsCompileTimeSourcePathFallbacks() throws {
+        let source = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent("Sources/LungfishApp/Services/CLIImportRunner.swift"),
+            encoding: .utf8
+        )
+
+        #expect(source.contains("#filePath") == false)
+    }
+
+    @Test("Release tools sanitizer scrubs builder paths from bundled executables")
+    func releaseToolsSanitizerScrubsBuilderPathsFromBundledExecutables() throws {
+        let repositoryRoot = Self.repositoryRoot()
+        let sanitizerURL = repositoryRoot.appendingPathComponent("scripts/sanitize-bundled-tools.sh")
+        #expect(FileManager.default.fileExists(atPath: sanitizerURL.path))
+
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let toolsRoot = tempRoot.appendingPathComponent("Tools", isDirectory: true)
+        try FileManager.default.createDirectory(at: toolsRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let vendoredBinaryURL = toolsRoot.appendingPathComponent("prefetch")
+        try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/ls"), to: vendoredBinaryURL)
+        let embeddedPaths = [
+            "prefix\0/Users/dho/Documents/lungfish-genome-browser/.build/xcode-cli-release/checkouts/test\0",
+            "prefix\0/Users/dho/Documents/ncbi-vdb/libs/vfs/resolver.c\0",
+        ].joined()
+        let handle = try FileHandle(forWritingTo: vendoredBinaryURL)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(embeddedPaths.utf8))
+        try handle.close()
+        try Self.makeExecutable(vendoredBinaryURL)
+
+        try Self.runScript(sanitizerURL, arguments: [toolsRoot.path])
+
+        let sanitized = String(decoding: try Data(contentsOf: vendoredBinaryURL), as: UTF8.self)
+        #expect(sanitized.contains("/Users/dho") == false)
+        #expect(sanitized.contains(".build/xcode-cli-release") == false)
+    }
+
+    @Test("Release tools sanitizer scrubs builder paths from standalone executables")
+    func releaseToolsSanitizerScrubsBuilderPathsFromStandaloneExecutables() throws {
+        let repositoryRoot = Self.repositoryRoot()
+        let sanitizerURL = repositoryRoot.appendingPathComponent("scripts/sanitize-bundled-tools.sh")
+        #expect(FileManager.default.fileExists(atPath: sanitizerURL.path))
+
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let cliBinaryURL = tempRoot.appendingPathComponent("lungfish-cli")
+        try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/ls"), to: cliBinaryURL)
+        let embeddedPaths = [
+            "prefix\0\(repositoryRoot.path)/.build/xcode-cli-release/arm64-apple-macosx/release/LungfishCLI.build/Main.swift.o\0",
+            "prefix\0/workspace/.build/xcode-cli-release/checkouts/swift-nio/Sources/CNIOAtomics/src\0",
+        ].joined()
+        let handle = try FileHandle(forWritingTo: cliBinaryURL)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(embeddedPaths.utf8))
+        try handle.close()
+        try Self.makeExecutable(cliBinaryURL)
+
+        try Self.runScript(sanitizerURL, arguments: [cliBinaryURL.path])
+
+        let sanitized = String(decoding: try Data(contentsOf: cliBinaryURL), as: UTF8.self)
+        #expect(sanitized.contains(repositoryRoot.path) == false)
+        #expect(sanitized.contains("/Users/dho") == false)
+        #expect(sanitized.contains(".build/xcode-cli-release") == false)
     }
 
     private static func repositoryRoot() -> URL {

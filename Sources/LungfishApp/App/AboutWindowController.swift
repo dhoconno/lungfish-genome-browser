@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import LungfishCore
 import LungfishWorkflow
 
 /// A custom About window following macOS HIG conventions.
@@ -51,7 +52,7 @@ final class AboutWindowController: NSWindowController {
         let iconView = NSImageView()
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.imageScaling = .scaleProportionallyUpOrDown
-        if let logoURL = Bundle.module.url(forResource: "about-logo", withExtension: "png", subdirectory: "Images"),
+        if let logoURL = RuntimeResourceLocator.path("Images/about-logo.png", in: .app),
            let logo = NSImage(contentsOf: logoURL) {
             iconView.image = logo
         } else {
@@ -77,7 +78,7 @@ final class AboutWindowController: NSWindowController {
 
         // Version
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.1"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "8"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "11"
         let versionLabel = NSTextField(labelWithString: "Version \(version) (\(build))")
         versionLabel.translatesAutoresizingMaskIntoConstraints = false
         versionLabel.font = .systemFont(ofSize: 11)

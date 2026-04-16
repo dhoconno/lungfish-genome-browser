@@ -256,7 +256,7 @@ struct WelcomeView: View {
     }
 
     private static func loadLogo() -> NSImage {
-        if let url = Bundle.module.url(forResource: "about-logo", withExtension: "png", subdirectory: "Images"),
+        if let url = RuntimeResourceLocator.path("Images/about-logo.png", in: .app),
            let image = NSImage(contentsOf: url) {
             return image
         }

@@ -45,7 +45,7 @@ enum LungfishCLIRunner {
     ///   * Plain SPM debug binary (`.build/debug/Lungfish`) — CLI found in the
     ///     same directory as the GUI binary.
     ///   * Xcode debug `.app` (`DerivedData/.../Debug/Lungfish.app`) — CLI
-    ///     found via `#filePath`-anchored walk to `<source>/.build/debug/lungfish-cli`.
+    ///     found by walking from the current workspace to `<repo>/.build/debug/lungfish-cli`.
     ///   * Release `.app` with bundled CLI — found adjacent to the main executable
     ///     inside `Lungfish.app/Contents/MacOS/`.
     ///   * System install — found via `which lungfish-cli` (`/usr/local/bin`, Homebrew, etc.).

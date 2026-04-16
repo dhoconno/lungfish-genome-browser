@@ -223,16 +223,7 @@ final class HelpViewController: NSViewController {
     }
 
     private func loadMarkdownFile(_ name: String) -> String? {
-        // Try SPM bundle first
-        if let url = Bundle.module.url(forResource: name, withExtension: "md", subdirectory: "Help") {
-            return try? String(contentsOf: url, encoding: .utf8)
-        }
-        // Try main bundle as fallback
-        if let url = Bundle.main.url(forResource: name, withExtension: "md", subdirectory: "Help") {
-            return try? String(contentsOf: url, encoding: .utf8)
-        }
-        // Try flat resource lookup
-        if let url = Bundle.module.url(forResource: name, withExtension: "md") {
+        if let url = RuntimeResourceLocator.path("Help/\(name).md", in: .app) {
             return try? String(contentsOf: url, encoding: .utf8)
         }
         logger.warning("Help file not found: \(name, privacy: .public).md")

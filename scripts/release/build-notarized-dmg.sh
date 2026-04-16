@@ -119,6 +119,19 @@ mkdir -p "$RELEASE_DIR"
 
 cd "$PROJECT_ROOT"
 
+SWIFT_BUILD_PREFIX_MAP_ARGS=(
+    -Xswiftc -debug-prefix-map
+    -Xswiftc "$SCRATCH_PATH=/swiftpm-build"
+    -Xswiftc -debug-prefix-map
+    -Xswiftc "$PROJECT_ROOT=/workspace"
+    -Xswiftc -file-compilation-dir
+    -Xswiftc /workspace
+    -Xcc "-ffile-prefix-map=$SCRATCH_PATH=/swiftpm-build"
+    -Xcc "-fdebug-prefix-map=$SCRATCH_PATH=/swiftpm-build"
+    -Xcc "-ffile-prefix-map=$PROJECT_ROOT=/workspace"
+    -Xcc "-fdebug-prefix-map=$PROJECT_ROOT=/workspace"
+)
+
 xcodebuild -project Lungfish.xcodeproj \
     -scheme Lungfish \
     -configuration Release \
@@ -141,10 +154,13 @@ fi
     --product lungfish-cli \
     --configuration release \
     --arch arm64 \
-    --scratch-path "$SCRATCH_PATH"
+    --scratch-path "$SCRATCH_PATH" \
+    "${SWIFT_BUILD_PREFIX_MAP_ARGS[@]}"
 
 CLI_SOURCE="${SCRATCH_PATH}/arm64-apple-macosx/release/lungfish-cli"
 CLI_DEST="${APP_PATH}/Contents/MacOS/lungfish-cli"
+WORKFLOW_TOOLS_DIR="${APP_PATH}/Contents/Resources/LungfishGenomeBrowser_LungfishWorkflow.bundle/Contents/Resources/Tools"
+JRE_ENTITLEMENTS="${PROJECT_ROOT}/scripts/release/jre-launcher.entitlements"
 
 if [ ! -f "$CLI_SOURCE" ]; then
     echo "built CLI not found: $CLI_SOURCE" >&2
@@ -152,6 +168,7 @@ if [ ! -f "$CLI_SOURCE" ]; then
 fi
 
 /usr/bin/install -m 755 "$CLI_SOURCE" "$CLI_DEST"
+/bin/bash scripts/sanitize-bundled-tools.sh "$APP_PATH/Contents/MacOS" "$WORKFLOW_TOOLS_DIR"
 
 /usr/bin/codesign --force --sign "$SIGNING_IDENTITY" \
     --options runtime \
@@ -160,14 +177,47 @@ fi
     --generate-entitlement-der \
     "$CLI_DEST"
 
+sign_jre_launcher() {
+    local candidate="$1"
+
+    if [ ! -f "$candidate" ]; then
+        return
+    fi
+
+    /usr/bin/codesign --force --sign "$SIGNING_IDENTITY" \
+        --options runtime \
+        --timestamp \
+        --entitlements "$JRE_ENTITLEMENTS" \
+        --generate-entitlement-der \
+        "$candidate"
+}
+
+is_jre_launcher_candidate() {
+    case "$1" in
+        "$WORKFLOW_TOOLS_DIR/jre/bin/java"|\
+        "$WORKFLOW_TOOLS_DIR/jre/bin/keytool"|\
+        "$WORKFLOW_TOOLS_DIR/jre/lib/jspawnhelper")
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+sign_jre_launcher "$WORKFLOW_TOOLS_DIR/jre/bin/java"
+sign_jre_launcher "$WORKFLOW_TOOLS_DIR/jre/bin/keytool"
+sign_jre_launcher "$WORKFLOW_TOOLS_DIR/jre/lib/jspawnhelper"
+
 # Sign every Mach-O file bundled under Resources/Tools individually.
 # `codesign --deep` is deprecated and does not recurse into resource bundles,
 # so notarization fails with "not signed with a valid Developer ID certificate"
 # on each bundled bioinformatics tool. We must sign inside-out.
-WORKFLOW_TOOLS_DIR="${APP_PATH}/Contents/Resources/LungfishGenomeBrowser_LungfishWorkflow.bundle/Contents/Resources/Tools"
-
 if [ -d "$WORKFLOW_TOOLS_DIR" ]; then
     while IFS= read -r -d '' candidate; do
+        if is_jre_launcher_candidate "$candidate"; then
+            continue
+        fi
         if /usr/bin/file -b "$candidate" | grep -q '^Mach-O'; then
             /usr/bin/codesign --force --sign "$SIGNING_IDENTITY" \
                 --options runtime \

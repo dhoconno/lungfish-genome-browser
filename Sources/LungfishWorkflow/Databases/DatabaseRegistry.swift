@@ -444,22 +444,7 @@ public actor DatabaseRegistry {
     private func databasesRoot() -> URL? {
         if let cached = bundledDatabasesRoot { return cached }
 
-        // Try the same discovery chain as NativeToolRunner uses for Tools/
-        let candidates: [URL?] = [
-            // SwiftPM module bundle (when run via `swift run` or in tests)
-            Bundle.module.resourceURL?.appendingPathComponent("Databases"),
-            // macOS app bundle
-            Bundle.main.resourceURL?.appendingPathComponent("Databases"),
-            // Executable-adjacent resources (CLI)
-            {
-                let exe = Bundle.main.executableURL
-                return exe?.deletingLastPathComponent()
-                    .appendingPathComponent("../Resources/Databases")
-                    .standardized
-            }(),
-        ]
-
-        for candidate in candidates.compactMap({ $0 }) {
+        if let candidate = RuntimeResourceLocator.path("Databases", in: .workflow) {
             var isDir: ObjCBool = false
             if FileManager.default.fileExists(atPath: candidate.path, isDirectory: &isDir), isDir.boolValue {
                 bundledDatabasesRoot = candidate

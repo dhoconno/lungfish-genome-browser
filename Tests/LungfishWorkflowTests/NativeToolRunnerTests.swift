@@ -436,4 +436,51 @@ final class NativeToolRunnerTests: XCTestCase {
             XCTAssertTrue(result.stderr.contains("LINE_\(i)"), "Full capture should include LINE_\(i)")
         }
     }
+
+    func testBBToolsArgumentsWithProjectPathsContainingSpacesBecomeSpaceFree() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory
+            .appendingPathComponent("NativeToolRunner Space Test \(UUID().uuidString)", isDirectory: true)
+        let toolsDir = root.appendingPathComponent("Tools", isDirectory: true)
+        let bbtoolsDir = toolsDir.appendingPathComponent("bbtools", isDirectory: true)
+        let projectDir = root.appendingPathComponent("My Genome Project.lungfish", isDirectory: true)
+        let inputURL = projectDir.appendingPathComponent("reads 1.fastq.gz")
+        let outputURL = projectDir.appendingPathComponent("result output.fastq.gz")
+        defer { try? fm.removeItem(at: root) }
+
+        try fm.createDirectory(at: bbtoolsDir, withIntermediateDirectories: true)
+        try fm.createDirectory(at: projectDir, withIntermediateDirectories: true)
+        try Data().write(to: inputURL)
+
+        let scriptURL = bbtoolsDir.appendingPathComponent("clumpify.sh")
+        let script = """
+        #!/bin/bash
+        set -euo pipefail
+        for token in $@; do
+            printf '%s\\n' "$token"
+        done
+        """
+        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+        let runner = NativeToolRunner(toolsDirectory: toolsDir)
+        let result = try await runner.run(
+            .clumpify,
+            arguments: [
+                "in=\(inputURL.path)",
+                "out=\(outputURL.path)",
+            ]
+        )
+
+        XCTAssertEqual(result.exitCode, 0, "Fake clumpify should succeed; stderr: \(result.stderr)")
+        let tokens = result.stdout
+            .split(separator: "\n")
+            .map(String.init)
+            .filter { !$0.isEmpty }
+
+        XCTAssertEqual(tokens.count, 2, "BBTools wrapper should receive exactly two intact arguments: \(tokens)")
+        XCTAssertTrue(tokens.allSatisfy { $0.contains("=") }, "Arguments should not be split into bare path fragments: \(tokens)")
+        XCTAssertTrue(tokens.allSatisfy { !$0.contains(" ") }, "Rewritten BBTools arguments should be space-free: \(tokens)")
+        XCTAssertFalse(tokens.joined(separator: "\n").contains(projectDir.path), "Safe BBTools paths should not live under the spaced project directory: \(tokens)")
+    }
 }

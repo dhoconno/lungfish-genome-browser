@@ -146,7 +146,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"$CONFIGURATION\" = \"Release\" ]; then\n  sanitize_tools_dir() {\n    if [ -d \"$1\" ]; then\n      /bin/bash \"${SRCROOT}/scripts/sanitize-bundled-tools.sh\" \"$1\"\n    fi\n  }\n\n  sanitize_tools_dir \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/LungfishGenomeBrowser_LungfishWorkflow.bundle/Contents/Resources/Tools\"\n  sanitize_tools_dir \"${INSTALLATION_BUILD_PRODUCTS_LOCATION}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/LungfishGenomeBrowser_LungfishWorkflow.bundle/Contents/Resources/Tools\"\n\n  if [ -n \"${TARGET_TEMP_DIR:-}\" ]; then\n    INTERMEDIATE_BUILD_ROOT=$(cd \"${TARGET_TEMP_DIR}/../../..\" && pwd)\n    sanitize_tools_dir \"${INTERMEDIATE_BUILD_ROOT}/UninstalledProducts/macosx/LungfishGenomeBrowser_LungfishWorkflow.bundle/Contents/Resources/Tools\"\n  fi\nfi\n";
+			shellScript = "if [ \"$CONFIGURATION\" = \"Release\" ]; then\n  sanitize_path() {\n    if [ -e \"$1\" ]; then\n      /bin/bash \"${SRCROOT}/scripts/sanitize-bundled-tools.sh\" \"$1\"\n    fi\n  }\n\n  sanitize_path \"${TARGET_BUILD_DIR}/${EXECUTABLE_FOLDER_PATH}\"\n  sanitize_path \"${INSTALLATION_BUILD_PRODUCTS_LOCATION}/${EXECUTABLE_FOLDER_PATH}\"\n  sanitize_path \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/LungfishGenomeBrowser_LungfishWorkflow.bundle/Contents/Resources/Tools\"\n  sanitize_path \"${INSTALLATION_BUILD_PRODUCTS_LOCATION}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/LungfishGenomeBrowser_LungfishWorkflow.bundle/Contents/Resources/Tools\"\n\n  if [ -n \"${TARGET_TEMP_DIR:-}\" ]; then\n    INTERMEDIATE_BUILD_ROOT=$(cd \"${TARGET_TEMP_DIR}/../../..\" && pwd)\n    sanitize_path \"${INTERMEDIATE_BUILD_ROOT}/UninstalledProducts/macosx/${EXECUTABLE_FOLDER_PATH}\"\n    sanitize_path \"${INTERMEDIATE_BUILD_ROOT}/UninstalledProducts/macosx/LungfishGenomeBrowser_LungfishWorkflow.bundle/Contents/Resources/Tools\"\n  fi\nfi\n";
 		};
 		F1E2D3C4B5A6978877665567 /* Embed lungfish-cli */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -211,7 +211,7 @@
 				ARCHS = arm64;
 				"CODE_SIGN_ENTITLEMENTS[sdk=*]" = "lungfish-cli.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = 29G3WN2GSA;
 				EXCLUDED_ARCHS = x86_64;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -240,7 +240,7 @@
 				ARCHS = arm64;
 				"CODE_SIGN_ENTITLEMENTS[sdk=*]" = "lungfish-cli.entitlements";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = 29G3WN2GSA;
 				ENABLE_HARDENED_RUNTIME = YES;
 				EXCLUDED_ARCHS = x86_64;

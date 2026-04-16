@@ -561,19 +561,7 @@ public actor CondaManager {
     }
 
     private static func defaultBundledMicromambaURL() -> URL? {
-        let candidates: [URL?] = [
-            Bundle.module.url(forResource: "micromamba", withExtension: nil, subdirectory: "Tools"),
-            Bundle.module.resourceURL?.appendingPathComponent("Tools/micromamba"),
-            Bundle.module.bundleURL.appendingPathComponent("Tools/micromamba")
-        ]
-
-        for candidate in candidates.compactMap({ $0 }) {
-            if FileManager.default.fileExists(atPath: candidate.path) {
-                return candidate
-            }
-        }
-
-        return nil
+        RuntimeResourceLocator.path("Tools/micromamba", in: .workflow)
     }
 
     private static func defaultBundledMicromambaVersion() -> String? {
