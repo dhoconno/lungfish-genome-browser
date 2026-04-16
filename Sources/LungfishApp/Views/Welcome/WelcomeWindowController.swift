@@ -7,6 +7,7 @@
 import AppKit
 import SwiftUI
 import LungfishCore
+import LungfishWorkflow
 import os.log
 
 /// Logger for welcome window
@@ -130,19 +131,58 @@ public struct RecentProject: Codable, Identifiable, Equatable {
 final class WelcomeViewModel: ObservableObject {
     @Published var selectedAction: WelcomeAction?
     @Published var isLoading = false
+    @Published var isInstallingRequiredSetup = false
+    @Published private(set) var requiredSetupStatus: PluginPackStatus?
+    @Published private(set) var optionalPackStatuses: [PluginPackStatus] = []
+    @Published var setupErrorMessage: String?
+    @Published var showingSetupDetails = false
 
     let recentProjects = RecentProjectsManager.shared
+    private let statusProvider: any PluginPackStatusProviding
 
     var onCreateProject: ((URL) -> Void)?
     var onOpenProject: ((URL) -> Void)?
-    var onOpenFiles: (() -> Void)?
+    var onOpenOptionalPack: ((String) -> Void)?
     var onDismiss: (() -> Void)?
+
+    init(statusProvider: any PluginPackStatusProviding = PluginPackStatusService.shared) {
+        self.statusProvider = statusProvider
+    }
+
+    var canLaunch: Bool {
+        requiredSetupStatus?.state == .ready && !isInstallingRequiredSetup
+    }
+
+    func refreshSetup() async {
+        let statuses = await statusProvider.visibleStatuses()
+        requiredSetupStatus = statuses.first(where: { $0.pack.isRequiredBeforeLaunch })
+        optionalPackStatuses = statuses.filter { !$0.pack.isRequiredBeforeLaunch }
+    }
+
+    func installRequiredSetup() {
+        guard let pack = requiredSetupStatus?.pack else { return }
+        isInstallingRequiredSetup = true
+        setupErrorMessage = nil
+
+        Task {
+            defer { isInstallingRequiredSetup = false }
+            do {
+                try await statusProvider.install(
+                    pack: pack,
+                    reinstall: requiredSetupStatus?.state == .ready,
+                    progress: nil
+                )
+                await refreshSetup()
+            } catch {
+                setupErrorMessage = error.localizedDescription
+            }
+        }
+    }
 }
 
-enum WelcomeAction: String, Identifiable {
+enum WelcomeAction: String, Identifiable, CaseIterable {
     case createProject = "Create Project"
     case openProject = "Open Project"
-    case openFiles = "Open Files"
 
     var id: String { rawValue }
 
@@ -150,15 +190,13 @@ enum WelcomeAction: String, Identifiable {
         switch self {
         case .createProject: return "folder.badge.plus"
         case .openProject: return "folder"
-        case .openFiles: return "doc.on.doc"
         }
     }
 
     var description: String {
         switch self {
-        case .createProject: return "Create a new project folder to organize your sequences and downloads"
+        case .createProject: return "Create a new project folder to organize your work"
         case .openProject: return "Open an existing Lungfish project"
-        case .openFiles: return "Open sequence files without creating a project"
         }
     }
 }
@@ -188,12 +226,12 @@ struct WelcomeView: View {
                 }
                 .padding(.bottom, 32)
 
-                // Action buttons
                 VStack(alignment: .leading, spacing: 12) {
-                    ForEach([WelcomeAction.createProject, .openProject, .openFiles]) { action in
+                    ForEach(WelcomeAction.allCases) { action in
                         ActionButton(
                             action: action,
                             isHovered: hoveredAction == action,
+                            isEnabled: viewModel.canLaunch,
                             onTap: { performAction(action) }
                         )
                         .onHover { isHovered in
@@ -202,14 +240,33 @@ struct WelcomeView: View {
                     }
                 }
 
+                if let requiredStatus = viewModel.requiredSetupStatus {
+                    RequiredSetupCard(
+                        status: requiredStatus,
+                        isInstalling: viewModel.isInstallingRequiredSetup,
+                        showingDetails: $viewModel.showingSetupDetails,
+                        onInstall: { viewModel.installRequiredSetup() }
+                    )
+                    .padding(.top, 20)
+                }
+
+                if !viewModel.optionalPackStatuses.isEmpty {
+                    OptionalToolsCard(
+                        statuses: viewModel.optionalPackStatuses,
+                        onOpenPack: { viewModel.onOpenOptionalPack?($0) }
+                    )
+                    .padding(.top, 14)
+                }
+
                 Spacer()
 
                 // Version info
                 Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.1")")
                     .font(.caption)
                     .foregroundColor(.secondary.opacity(0.6))
+                    .padding(.top, 16)
             }
-            .frame(width: 280)
+            .frame(width: 340)
             .padding(24)
             .background(Color(nsColor: .windowBackgroundColor))
 
@@ -220,6 +277,13 @@ struct WelcomeView: View {
                 Text("Recent Projects")
                     .font(.headline)
                     .padding(.bottom, 12)
+
+                if !viewModel.canLaunch {
+                    Text("Finish required setup before opening a recent project.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .padding(.bottom, 12)
+                }
 
                 if viewModel.recentProjects.recentProjects.isEmpty {
                     VStack(spacing: 12) {
@@ -240,7 +304,10 @@ struct WelcomeView: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 4) {
                             ForEach(viewModel.recentProjects.recentProjects) { project in
-                                RecentProjectRow(project: project) {
+                                RecentProjectRow(
+                                    project: project,
+                                    isEnabled: viewModel.canLaunch
+                                ) {
                                     viewModel.onOpenProject?(project.url)
                                 }
                             }
@@ -252,7 +319,20 @@ struct WelcomeView: View {
             .padding(24)
             .background(Color(nsColor: .controlBackgroundColor))
         }
-        .frame(width: 650, height: 400)
+        .frame(width: 760, height: 520)
+        .alert(
+            "Setup Error",
+            isPresented: Binding(
+                get: { viewModel.setupErrorMessage != nil },
+                set: { if !$0 { viewModel.setupErrorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {
+                viewModel.setupErrorMessage = nil
+            }
+        } message: {
+            Text(viewModel.setupErrorMessage ?? "")
+        }
     }
 
     private static func loadLogo() -> NSImage {
@@ -264,6 +344,8 @@ struct WelcomeView: View {
     }
 
     private func performAction(_ action: WelcomeAction) {
+        guard viewModel.canLaunch else { return }
+
         switch action {
         case .createProject:
             Task { @MainActor in
@@ -273,8 +355,6 @@ struct WelcomeView: View {
             Task { @MainActor in
                 await showOpenProjectPanel()
             }
-        case .openFiles:
-            viewModel.onOpenFiles?()
         }
     }
 
@@ -319,6 +399,7 @@ struct WelcomeView: View {
 struct ActionButton: View {
     let action: WelcomeAction
     let isHovered: Bool
+    let isEnabled: Bool
     let onTap: () -> Void
 
     var body: some View {
@@ -350,6 +431,125 @@ struct ActionButton: View {
             )
         }
         .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1.0 : 0.5)
+    }
+}
+
+// MARK: - Setup Cards
+
+private struct RequiredSetupCard: View {
+    let status: PluginPackStatus
+    let isInstalling: Bool
+    @Binding var showingDetails: Bool
+    let onInstall: () -> Void
+
+    private var isReady: Bool {
+        status.state == .ready
+    }
+
+    private var statusColor: Color {
+        isReady ? .green : .red
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 8) {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 10, height: 10)
+
+                Text("Needed Before You Begin")
+                    .font(.headline)
+
+                Spacer()
+
+                if isInstalling {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            Text("Lungfish needs a few tools installed before you can create or open a project.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+
+            Button(isReady ? "Reinstall" : "Install") {
+                onInstall()
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(isInstalling)
+
+            Button(showingDetails ? "Hide Setup Details" : "Show Setup Details") {
+                showingDetails.toggle()
+            }
+            .buttonStyle(.plain)
+            .font(.caption)
+            .foregroundColor(.accentColor)
+
+            if showingDetails {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(status.toolStatuses) { toolStatus in
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(toolStatus.isReady ? Color.green : Color.red)
+                                .frame(width: 8, height: 8)
+                            Text(toolStatus.requirement.displayName)
+                                .font(.caption)
+                            Spacer()
+                            Text(toolStatus.isReady ? "Ready" : "Needs install")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                .padding(.top, 2)
+            }
+        }
+        .padding(14)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+private struct OptionalToolsCard: View {
+    let statuses: [PluginPackStatus]
+    let onOpenPack: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Optional Tools")
+                .font(.headline)
+
+            ForEach(statuses) { status in
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(status.state == .ready ? Color.green : Color.red)
+                        .frame(width: 8, height: 8)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(status.pack.name)
+                            .font(.subheadline)
+                        Text(status.pack.description)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
+                    }
+
+                    Spacer()
+
+                    Button("Open") {
+                        onOpenPack(status.pack.id)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+        }
+        .padding(14)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -357,6 +557,7 @@ struct ActionButton: View {
 
 struct RecentProjectRow: View {
     let project: RecentProject
+    let isEnabled: Bool
     let onTap: () -> Void
 
     @State private var isHovered = false
@@ -395,6 +596,8 @@ struct RecentProjectRow: View {
             )
         }
         .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1.0 : 0.5)
         .onHover { hovering in
             isHovered = hovering
         }
@@ -410,7 +613,7 @@ public final class WelcomeWindowController: NSWindowController {
 
     /// Completion handler called when user makes a selection
     public var onProjectSelected: ((URL) -> Void)?
-    public var onOpenFilesSelected: (() -> Void)?
+    public var onOptionalPackSelected: ((String) -> Void)?
 
     public init() {
         let window = NSWindow(
@@ -447,15 +650,18 @@ public final class WelcomeWindowController: NSWindowController {
             self?.openProject(at: url)
         }
 
-        viewModel.onOpenFiles = { [weak self] in
-            logger.info("User chose to open files without project")
-            self?.window?.close()
-            self?.onOpenFilesSelected?()
+        viewModel.onOpenOptionalPack = { [weak self] packID in
+            logger.info("Opening optional tool pack: \(packID, privacy: .public)")
+            self?.onOptionalPackSelected?(packID)
         }
 
         let welcomeView = WelcomeView(viewModel: viewModel)
         let hostingView = NSHostingView(rootView: welcomeView)
         window?.contentView = hostingView
+
+        Task {
+            await viewModel.refreshSetup()
+        }
     }
 
     private func createProject(at url: URL) {

@@ -445,12 +445,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             self?.showMainWindowWithProject(projectURL)
         }
 
-        welcomeWindowController?.onOpenFilesSelected = { [weak self] in
-            self?.showMainWindowWithoutProject()
-            // Trigger the open dialog after a brief delay to ensure window is ready
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                self?.openDocument(nil)
-            }
+        welcomeWindowController?.onOptionalPackSelected = { packID in
+            PluginManagerWindowController.show(packID: packID)
         }
 
         welcomeWindowController?.show()
