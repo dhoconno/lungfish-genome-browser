@@ -308,7 +308,7 @@ public final class FASTQIngestionPipeline: @unchecked Sendable {
         var symlinksToCleanup: [URL] = []
 
         let safeInput = try Self.bbToolsSafePath(for: inputFile, fm: fm, cleanup: &symlinksToCleanup)
-        let safeOutput = Self.bbToolsSafeOutputPath(for: outputFile, in: config.outputDirectory)
+        let safeOutput = try Self.bbToolsSafeOutputPath(for: outputFile, cleanup: &symlinksToCleanup)
 
         // Allocate ~60% of physical memory to Java heap, capped at 31g (JVM compressed oops limit).
         // Minimum 4g to handle large FASTQ files (BBTools default is only 2g).
@@ -365,7 +365,12 @@ public final class FASTQIngestionPipeline: @unchecked Sendable {
         // Move temp output to the real path if we used a space-free name.
         if safeOutput != outputFile, fm.fileExists(atPath: safeOutput.path) {
             try? fm.removeItem(at: outputFile)
-            try fm.moveItem(at: safeOutput, to: outputFile)
+            do {
+                try fm.moveItem(at: safeOutput, to: outputFile)
+            } catch {
+                try fm.copyItem(at: safeOutput, to: outputFile)
+                try? fm.removeItem(at: safeOutput)
+            }
         }
 
         guard result.isSuccess else {
@@ -396,12 +401,12 @@ public final class FASTQIngestionPipeline: @unchecked Sendable {
         cleanup: inout [URL]
     ) throws -> URL {
         guard url.path.contains(" ") else { return url }
-        let safeName = url.lastPathComponent.replacingOccurrences(of: " ", with: "_")
-        let linkDir = try ProjectTempDirectory.createFromContext(
+        let linkDir = try ProjectTempDirectory.create(
             prefix: "lungfish-bbtools-",
-            contextURL: url
+            contextURL: url,
+            policy: .systemOnly
         )
-        let linkURL = linkDir.appendingPathComponent(safeName)
+        let linkURL = linkDir.appendingPathComponent(bbToolsShellSafeLeafName(for: url))
         try fm.createSymbolicLink(at: linkURL, withDestinationURL: url)
         cleanup.append(linkDir)
         return linkURL
@@ -410,11 +415,29 @@ public final class FASTQIngestionPipeline: @unchecked Sendable {
     /// Returns a space-free output path for BBTools.
     ///
     /// For output files, symlinks don't reliably work (tools may delete and
-    /// recreate). Instead use a temp name in the same directory and rename after.
-    private static func bbToolsSafeOutputPath(for url: URL, in directory: URL) -> URL {
+    /// recreate). Use a temp name in system temp and then move/copy into place.
+    private static func bbToolsSafeOutputPath(
+        for url: URL,
+        cleanup: inout [URL]
+    ) throws -> URL {
         guard url.path.contains(" ") else { return url }
-        let safeName = url.lastPathComponent.replacingOccurrences(of: " ", with: "_")
-        return directory.appendingPathComponent(safeName)
+        let outputDir = try ProjectTempDirectory.create(
+            prefix: "lungfish-bbtools-",
+            contextURL: url,
+            policy: .systemOnly
+        )
+        cleanup.append(outputDir)
+        return outputDir.appendingPathComponent(bbToolsShellSafeLeafName(for: url))
+    }
+
+    private static func bbToolsShellSafeLeafName(for url: URL) -> String {
+        let suffix: String
+        if url.pathExtension.isEmpty {
+            suffix = ""
+        } else {
+            suffix = ".\(url.pathExtension)"
+        }
+        return "bbtools-\(UUID().uuidString.lowercased())\(suffix)"
     }
 
     /// Compresses a FASTQ file with pigz (parallel gzip) or bgzip.

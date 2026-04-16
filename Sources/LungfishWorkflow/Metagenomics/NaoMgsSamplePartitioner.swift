@@ -158,29 +158,12 @@ private func safePartitionFileName(for sample: String) -> String {
 /// Returns the URL for pigz (parallel gzip) if available, otherwise falls back to /usr/bin/gzip.
 /// Cached after first resolution.
 private let naoMgsDecompressorURL: URL = {
-    // Check well-known locations for pigz bundled with the app.
-    let candidates = [
-        Bundle.main.resourceURL?.appendingPathComponent("Tools/pigz"),
-        Bundle.module.resourceURL?.appendingPathComponent("Tools/pigz"),
-        Bundle.module.bundleURL.appendingPathComponent("Tools/pigz"),
-    ].compactMap { $0 }
+    if let bundledPigz = RuntimeResourceLocator.path("Tools/pigz", in: .workflow),
+       FileManager.default.isExecutableFile(atPath: bundledPigz.path)
+    {
+        return bundledPigz
+    }
 
-    for candidate in candidates {
-        if FileManager.default.isExecutableFile(atPath: candidate.path) {
-            return candidate
-        }
-    }
-    // Fallback: check the executable's sibling bundle (SPM layout).
-    let execDir = URL(fileURLWithPath: CommandLine.arguments[0])
-        .resolvingSymlinksInPath().deletingLastPathComponent()
-    if let contents = try? FileManager.default.contentsOfDirectory(atPath: execDir.path) {
-        for item in contents where item.hasSuffix(".bundle") && item.contains("LungfishWorkflow") {
-            let pigzURL = execDir.appendingPathComponent(item).appendingPathComponent("Tools/pigz")
-            if FileManager.default.isExecutableFile(atPath: pigzURL.path) {
-                return pigzURL
-            }
-        }
-    }
     return URL(fileURLWithPath: "/usr/bin/gzip")
 }()
 

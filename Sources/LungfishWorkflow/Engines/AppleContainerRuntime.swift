@@ -747,36 +747,7 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
             return path
         }
 
-        // Check SPM Bundle resources first (works for both debug and release builds)
-        if let bundleKernel = Bundle.module.url(forResource: "vmlinux", withExtension: nil, subdirectory: "Containerization") {
-            if FileManager.default.fileExists(atPath: bundleKernel.path) {
-                return bundleKernel
-            }
-        }
-
-        // SPM flat bundle structure - check directly in bundle path
-        let bundlePath = Bundle.module.bundlePath
-        let flatBundleKernel = URL(fileURLWithPath: bundlePath)
-            .appendingPathComponent("Containerization")
-            .appendingPathComponent("vmlinux")
-        if FileManager.default.fileExists(atPath: flatBundleKernel.path) {
-            return flatBundleKernel
-        }
-
-        // Look for bundled kernel in Resources/Containerization
-        // Check relative to the executable
-        let executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
-        let resourcesDir = executableURL
-            .deletingLastPathComponent()
-            .appendingPathComponent("LungfishGenomeBrowser_LungfishWorkflow.bundle")
-            .appendingPathComponent("Containerization")
-
-        let bundledKernel = resourcesDir.appendingPathComponent("vmlinux")
-        if FileManager.default.fileExists(atPath: bundledKernel.path) {
-            return bundledKernel
-        }
-
-        return nil
+        return RuntimeResourceLocator.path("Containerization/vmlinux", in: .workflow)
     }
 
     /// Loads the bundled initfs tarball into the image store if not already present.
@@ -798,41 +769,7 @@ public actor AppleContainerRuntime: ContainerRuntimeProtocol {
             // Image not found, need to create it
         }
 
-        // Find the bundled initfs tarball
-        // Check SPM Bundle resources first
-        var initfsTarball: URL?
-
-        if let bundleInitfs = Bundle.module.url(forResource: "init.rootfs.tar", withExtension: "gz", subdirectory: "Containerization") {
-            if FileManager.default.fileExists(atPath: bundleInitfs.path) {
-                initfsTarball = bundleInitfs
-            }
-        }
-
-        // SPM flat bundle structure - check directly in bundle path
-        if initfsTarball == nil {
-            let bundlePath = Bundle.module.bundlePath
-            let flatBundleInitfs = URL(fileURLWithPath: bundlePath)
-                .appendingPathComponent("Containerization")
-                .appendingPathComponent("init.rootfs.tar.gz")
-            if FileManager.default.fileExists(atPath: flatBundleInitfs.path) {
-                initfsTarball = flatBundleInitfs
-            }
-        }
-
-        if initfsTarball == nil {
-            let executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
-            let resourcesDir = executableURL
-                .deletingLastPathComponent()
-                .appendingPathComponent("LungfishGenomeBrowser_LungfishWorkflow.bundle")
-                .appendingPathComponent("Containerization")
-
-            let execInitfs = resourcesDir.appendingPathComponent("init.rootfs.tar.gz")
-            if FileManager.default.fileExists(atPath: execInitfs.path) {
-                initfsTarball = execInitfs
-            }
-        }
-
-        guard let initfsTarball = initfsTarball else {
+        guard let initfsTarball = RuntimeResourceLocator.path("Containerization/init.rootfs.tar.gz", in: .workflow) else {
             logger.warning("Bundled initfs not found in any search location")
             return
         }

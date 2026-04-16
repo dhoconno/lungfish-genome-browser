@@ -430,7 +430,7 @@ public actor CondaManager {
     }
 
     /// Default channels for bioconda packages.
-    public let defaultChannels: [String] = ["bioconda", "conda-forge"]
+    public let defaultChannels: [String] = ["conda-forge", "bioconda"]
 
     private let bundledMicromambaProvider: BundledMicromambaProvider
     private let bundledMicromambaVersionProvider: BundledMicromambaVersionProvider
@@ -561,19 +561,7 @@ public actor CondaManager {
     }
 
     private static func defaultBundledMicromambaURL() -> URL? {
-        let candidates: [URL?] = [
-            Bundle.module.url(forResource: "micromamba", withExtension: nil, subdirectory: "Tools"),
-            Bundle.module.resourceURL?.appendingPathComponent("Tools/micromamba"),
-            Bundle.module.bundleURL.appendingPathComponent("Tools/micromamba")
-        ]
-
-        for candidate in candidates.compactMap({ $0 }) {
-            if FileManager.default.fileExists(atPath: candidate.path) {
-                return candidate
-            }
-        }
-
-        return nil
+        RuntimeResourceLocator.path("Tools/micromamba", in: .workflow)
     }
 
     private static func defaultBundledMicromambaVersion() -> String? {
@@ -1114,6 +1102,8 @@ public actor CondaManager {
             enabled = true
             useMicromamba = true
             cacheDir = '\(rootPrefix.appendingPathComponent("envs").path)'
+            channels = ['conda-forge', 'bioconda']
+            createOptions = '--override-channels'
         }
 
         env {

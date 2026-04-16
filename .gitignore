@@ -32,7 +32,7 @@ DerivedData/
 *.o
 *.a
 *.dylib
-build/
+/build/
 
 # Test data (local only)
 test-data/
@@ -54,6 +54,12 @@ coverage/
 
 # Claude/AI session files
 .claude/
+# But track agent personas
+!.claude/
+!.claude/agents/
+!.claude/agents/*.md
+# But ignore settings
+.claude/settings.json
 
 # Large reference databases (>100 MB; cannot be stored in git)
 # Download from the source URLs in manifest.json and place in the same directory.
@@ -70,6 +76,13 @@ benchmarks/
 # Large profiling/test fixtures (regenerate locally from source data)
 Tests/Fixtures/naomgs/profile_400k.tsv.gz
 Tests/Fixtures/naomgs/MU-CASPER-*.tsv.gz
+
+# User manual build outputs
+docs/user-manual/build/site/
+docs/user-manual/build/indesign/stories/
+docs/user-manual/build/scripts/lint/node_modules/
+docs/user-manual/build/scripts/shot/node_modules/
+docs/user-manual/fixtures/**/cache/
 
 # Superpowers brainstorm session artifacts (local scratch)
 .superpowers/

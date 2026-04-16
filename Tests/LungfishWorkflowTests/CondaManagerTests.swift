@@ -349,8 +349,7 @@ final class CondaManagerTests: XCTestCase {
         let manager = CondaManager.shared
         let channels = await manager.defaultChannels
 
-        XCTAssertTrue(channels.contains("bioconda"))
-        XCTAssertTrue(channels.contains("conda-forge"))
+        XCTAssertEqual(channels, ["conda-forge", "bioconda"])
     }
 
     func testNextflowCondaConfig() async {
@@ -370,6 +369,9 @@ final class CondaManagerTests: XCTestCase {
         XCTAssertTrue(configStr.contains("enabled = true"))
         XCTAssertTrue(configStr.contains("useMicromamba = true"))
         XCTAssertTrue(configStr.contains("cacheDir"))
+        XCTAssertTrue(configStr.contains("channels = ['conda-forge', 'bioconda']"))
+        XCTAssertTrue(configStr.contains("createOptions = '--override-channels'"))
+        XCTAssertTrue(configStr.contains("MAMBA_ROOT_PREFIX"))
     }
 
     // MARK: - CondaError Tests

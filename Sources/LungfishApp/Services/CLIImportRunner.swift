@@ -45,7 +45,10 @@ public actor CLIImportRunner {
     public static func cliBinaryPath() -> URL? {
         resolveCLIPath(
             mainExecutableURL: Bundle.main.executableURL,
-            sourceFilePath: #filePath,
+            currentWorkingDirectoryURL: URL(
+                fileURLWithPath: FileManager.default.currentDirectoryPath,
+                isDirectory: true
+            ),
             pathLookup: {
                 pathLookupForCLI()
             }
@@ -54,7 +57,7 @@ public actor CLIImportRunner {
 
     static func resolveCLIPath(
         mainExecutableURL: URL?,
-        sourceFilePath: String,
+        currentWorkingDirectoryURL: URL?,
         pathLookup: () -> URL?
     ) -> URL? {
         if let mainExecutableURL {
@@ -65,22 +68,20 @@ public actor CLIImportRunner {
             }
         }
 
-        let sourceFile = URL(fileURLWithPath: sourceFilePath)
-        let projectRoot = sourceFile
-            .deletingLastPathComponent()  // Services/
-            .deletingLastPathComponent()  // LungfishApp/
-            .deletingLastPathComponent()  // Sources/
-            .deletingLastPathComponent()  // project root
-
         let developmentCandidates = [
             ".build/arm64-apple-macosx/debug/lungfish-cli",
             ".build/debug/lungfish-cli",
         ]
 
-        for relativePath in developmentCandidates {
-            let candidate = projectRoot.appendingPathComponent(relativePath)
-            if FileManager.default.isExecutableFile(atPath: candidate.path) {
-                return candidate
+        for projectRoot in developmentProjectRoots(
+            mainExecutableURL: mainExecutableURL,
+            currentWorkingDirectoryURL: currentWorkingDirectoryURL
+        ) {
+            for relativePath in developmentCandidates {
+                let candidate = projectRoot.appendingPathComponent(relativePath)
+                if FileManager.default.isExecutableFile(atPath: candidate.path) {
+                    return candidate
+                }
             }
         }
 
@@ -89,6 +90,45 @@ public actor CLIImportRunner {
         }
 
         return nil
+    }
+
+    private static func developmentProjectRoots(
+        mainExecutableURL: URL?,
+        currentWorkingDirectoryURL: URL?
+    ) -> [URL] {
+        let fileManager = FileManager.default
+        let anchors = [
+            currentWorkingDirectoryURL,
+            mainExecutableURL?.deletingLastPathComponent(),
+            Bundle.main.bundleURL,
+        ].compactMap { $0?.resolvingSymlinksInPath().standardizedFileURL }
+
+        var roots: [URL] = []
+        var seen = Set<String>()
+
+        func appendPackageRoot(from start: URL) {
+            var current = start
+            for _ in 0..<12 {
+                let packageSwift = current.appendingPathComponent("Package.swift")
+                if fileManager.fileExists(atPath: packageSwift.path) {
+                    if seen.insert(current.path).inserted {
+                        roots.append(current)
+                    }
+                    return
+                }
+
+                let parent = current.deletingLastPathComponent()
+                if parent.path == current.path {
+                    return
+                }
+                current = parent
+            }
+        }
+
+        for anchor in anchors {
+            appendPackageRoot(from: anchor)
+        }
+        return roots
     }
 
     private static func pathLookupForCLI() -> URL? {

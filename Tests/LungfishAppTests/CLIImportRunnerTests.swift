@@ -198,30 +198,32 @@ final class CLIImportRunnerTests: XCTestCase {
 
         let resolved = CLIImportRunner.resolveCLIPath(
             mainExecutableURL: mainExecutable,
-            sourceFilePath: "/tmp/ignored.swift",
+            currentWorkingDirectoryURL: nil,
             pathLookup: { nil }
         )
 
         XCTAssertEqual(resolved, bundledCLI)
     }
 
-    func testResolveCLIPathFallsBackToSourceRootDebugBinary() throws {
+    func testResolveCLIPathFallsBackToWorkspaceDebugBinary() throws {
         let tempDir = try makeTemporaryDirectory()
         let sourceRoot = tempDir.appendingPathComponent("repo", isDirectory: true)
         let debugDir = sourceRoot.appendingPathComponent(".build/arm64-apple-macosx/debug", isDirectory: true)
+        let workingDirectory = sourceRoot.appendingPathComponent("Sources/LungfishApp/Services", isDirectory: true)
         try FileManager.default.createDirectory(at: debugDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
+        FileManager.default.createFile(
+            atPath: sourceRoot.appendingPathComponent("Package.swift").path,
+            contents: Data("// swift-tools-version: 6.2\n".utf8)
+        )
 
         let debugCLI = debugDir.appendingPathComponent("lungfish-cli")
         FileManager.default.createFile(atPath: debugCLI.path, contents: Data())
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: debugCLI.path)
 
-        let fakeSourceFile = sourceRoot
-            .appendingPathComponent("Sources/LungfishApp/Services/CLIImportRunner.swift")
-            .path
-
         let resolved = CLIImportRunner.resolveCLIPath(
             mainExecutableURL: nil,
-            sourceFilePath: fakeSourceFile,
+            currentWorkingDirectoryURL: workingDirectory,
             pathLookup: { nil }
         )
 

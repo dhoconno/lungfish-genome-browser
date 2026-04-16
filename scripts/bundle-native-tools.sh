@@ -26,7 +26,7 @@
 #   - curl, tar, make
 #   - Rosetta 2 is only needed when explicitly requesting x86_64 or universal outputs
 
-set -e
+set -euo pipefail
 
 # Configuration - read from tool-versions.json (single source of truth)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -53,6 +53,7 @@ UCSC_TOOLS_VERSION=$(get_tool_version "ucsc-tools")
 MICROMAMBA_VERSION=$(get_tool_version "micromamba")
 BUILD_DIR="$PROJECT_ROOT/.build/tools"
 DEFAULT_OUTPUT_DIR="$PROJECT_ROOT/Sources/LungfishWorkflow/Resources/Tools"
+INSTALL_PREFIX="/opt/lungfish-tools"
 
 # Parse arguments
 OUTPUT_DIR="$DEFAULT_OUTPUT_DIR"
@@ -105,6 +106,23 @@ log_warning() {
 
 log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+}
+
+staging_root_for_arch() {
+    printf '%s\n' "$BUILD_DIR/$1/stage"
+}
+
+staged_install_prefix_for_arch() {
+    printf '%s%s\n' "$(staging_root_for_arch "$1")" "$INSTALL_PREFIX"
+}
+
+compiler_path_sanitizer_flags() {
+    printf '%s' "-ffile-prefix-map=$PROJECT_ROOT=/workspace -fdebug-prefix-map=$PROJECT_ROOT=/workspace -ffile-prefix-map=$BUILD_DIR=/lungfish-build -fdebug-prefix-map=$BUILD_DIR=/lungfish-build"
+}
+
+compiler_cflags_for_arch() {
+    local arch="$1"
+    printf '%s' "-O2 -arch $arch $(compiler_path_sanitizer_flags)"
 }
 
 # Check requirements
@@ -175,18 +193,21 @@ build_htslib() {
     cd "$build_dir"
 
     # Configure for architecture (--disable-shared ensures samtools/bcftools link statically)
+    local cflags
+    cflags=$(compiler_cflags_for_arch "$arch")
+
     if [ "$arch" = "arm64" ]; then
-        ./configure --prefix="$BUILD_DIR/$arch/install" \
+        ./configure --prefix="$INSTALL_PREFIX" \
             CC="clang -arch arm64" \
-            CFLAGS="-O2 -arch arm64" \
+            CFLAGS="$cflags" \
             --disable-libcurl \
             --disable-gcs \
             --disable-s3 \
             --disable-shared
     else
-        ./configure --prefix="$BUILD_DIR/$arch/install" \
+        ./configure --prefix="$INSTALL_PREFIX" \
             CC="clang -arch x86_64" \
-            CFLAGS="-O2 -arch x86_64" \
+            CFLAGS="$cflags" \
             --disable-libcurl \
             --disable-gcs \
             --disable-s3 \
@@ -194,7 +215,7 @@ build_htslib() {
     fi
 
     make -j$(sysctl -n hw.ncpu)
-    make install
+    make install DESTDIR="$(staging_root_for_arch "$arch")"
 
     log_success "htslib built for $arch."
 }
@@ -214,22 +235,25 @@ build_samtools() {
     cd "$build_dir"
 
     # Configure with htslib source dir (builds htslib internally, links statically)
+    local cflags
+    cflags=$(compiler_cflags_for_arch "$arch")
+
     if [ "$arch" = "arm64" ]; then
-        ./configure --prefix="$BUILD_DIR/$arch/install" \
+        ./configure --prefix="$INSTALL_PREFIX" \
             CC="clang -arch arm64" \
-            CFLAGS="-O2 -arch arm64" \
+            CFLAGS="$cflags" \
             --with-htslib="$BUILD_DIR/$arch/htslib-$HTSLIB_VERSION" \
             --without-curses
     else
-        ./configure --prefix="$BUILD_DIR/$arch/install" \
+        ./configure --prefix="$INSTALL_PREFIX" \
             CC="clang -arch x86_64" \
-            CFLAGS="-O2 -arch x86_64" \
+            CFLAGS="$cflags" \
             --with-htslib="$BUILD_DIR/$arch/htslib-$HTSLIB_VERSION" \
             --without-curses
     fi
 
     make -j$(sysctl -n hw.ncpu)
-    make install
+    make install DESTDIR="$(staging_root_for_arch "$arch")"
 
     log_success "samtools built for $arch."
 }
@@ -249,22 +273,25 @@ build_bcftools() {
     cd "$build_dir"
 
     # Configure with htslib source dir (builds htslib internally, links statically)
+    local cflags
+    cflags=$(compiler_cflags_for_arch "$arch")
+
     if [ "$arch" = "arm64" ]; then
-        ./configure --prefix="$BUILD_DIR/$arch/install" \
+        ./configure --prefix="$INSTALL_PREFIX" \
             CC="clang -arch arm64" \
-            CFLAGS="-O2 -arch arm64" \
+            CFLAGS="$cflags" \
             --with-htslib="$BUILD_DIR/$arch/htslib-$HTSLIB_VERSION" \
             --disable-perl-filters
     else
-        ./configure --prefix="$BUILD_DIR/$arch/install" \
+        ./configure --prefix="$INSTALL_PREFIX" \
             CC="clang -arch x86_64" \
-            CFLAGS="-O2 -arch x86_64" \
+            CFLAGS="$cflags" \
             --with-htslib="$BUILD_DIR/$arch/htslib-$HTSLIB_VERSION" \
             --disable-perl-filters
     fi
 
     make -j$(sysctl -n hw.ncpu)
-    make install
+    make install DESTDIR="$(staging_root_for_arch "$arch")"
 
     log_success "bcftools built for $arch."
 }
@@ -359,23 +386,23 @@ copy_tools() {
     if [ "$arch" = "universal" ]; then
         # Create universal binaries
         create_universal "samtools" \
-            "$BUILD_DIR/arm64/install/bin/samtools" \
-            "$BUILD_DIR/x86_64/install/bin/samtools" \
+            "$(staged_install_prefix_for_arch arm64)/bin/samtools" \
+            "$(staged_install_prefix_for_arch x86_64)/bin/samtools" \
             "$OUTPUT_DIR/samtools"
 
         create_universal "bcftools" \
-            "$BUILD_DIR/arm64/install/bin/bcftools" \
-            "$BUILD_DIR/x86_64/install/bin/bcftools" \
+            "$(staged_install_prefix_for_arch arm64)/bin/bcftools" \
+            "$(staged_install_prefix_for_arch x86_64)/bin/bcftools" \
             "$OUTPUT_DIR/bcftools"
 
         create_universal "bgzip" \
-            "$BUILD_DIR/arm64/install/bin/bgzip" \
-            "$BUILD_DIR/x86_64/install/bin/bgzip" \
+            "$(staged_install_prefix_for_arch arm64)/bin/bgzip" \
+            "$(staged_install_prefix_for_arch x86_64)/bin/bgzip" \
             "$OUTPUT_DIR/bgzip"
 
         create_universal "tabix" \
-            "$BUILD_DIR/arm64/install/bin/tabix" \
-            "$BUILD_DIR/x86_64/install/bin/tabix" \
+            "$(staged_install_prefix_for_arch arm64)/bin/tabix" \
+            "$(staged_install_prefix_for_arch x86_64)/bin/tabix" \
             "$OUTPUT_DIR/tabix"
 
         create_universal "micromamba" \
@@ -389,10 +416,10 @@ copy_tools() {
         chmod +x "$OUTPUT_DIR/bedToBigBed" "$OUTPUT_DIR/bedGraphToBigWig"
     else
         # Single architecture - copy compiled tools
-        cp "$BUILD_DIR/$arch/install/bin/samtools" "$OUTPUT_DIR/"
-        cp "$BUILD_DIR/$arch/install/bin/bcftools" "$OUTPUT_DIR/"
-        cp "$BUILD_DIR/$arch/install/bin/bgzip" "$OUTPUT_DIR/"
-        cp "$BUILD_DIR/$arch/install/bin/tabix" "$OUTPUT_DIR/"
+        cp "$(staged_install_prefix_for_arch "$arch")/bin/samtools" "$OUTPUT_DIR/"
+        cp "$(staged_install_prefix_for_arch "$arch")/bin/bcftools" "$OUTPUT_DIR/"
+        cp "$(staged_install_prefix_for_arch "$arch")/bin/bgzip" "$OUTPUT_DIR/"
+        cp "$(staged_install_prefix_for_arch "$arch")/bin/tabix" "$OUTPUT_DIR/"
         cp "$BUILD_DIR/$arch/micromamba" "$OUTPUT_DIR/"
 
         # UCSC tools are always x86_64 (downloaded from UCSC)

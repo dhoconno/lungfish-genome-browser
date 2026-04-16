@@ -3,18 +3,14 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import LungfishCore
 
-// MARK: - Recipe bundle accessor
+// MARK: - Recipe resource accessor
 
-/// Exposes the `LungfishWorkflow` module bundle so that test code can load
-/// bundled recipes via `@testable import LungfishWorkflow`.
-///
-/// In production this is `Bundle.module` (the synthesised SPM resource bundle).
-/// Tests use `RecipeBundleAccessor.bundle` rather than `Bundle.module` so that
-/// they reference the correct bundle even when `Bundle.module` in the test
-/// target resolves to the test runner bundle.
 public enum RecipeBundleAccessor {
-    public static let bundle: Bundle = .module
+    public static func recipesDirectoryURL() -> URL? {
+        RuntimeResourceLocator.path("Recipes", in: .workflow)
+    }
 }
 
 // MARK: - AnyCodableValue

@@ -21,17 +21,9 @@ public enum RecipeRegistryV2 {
 
     // MARK: - Built-in recipes
 
-    /// Load built-in recipes from the `LungfishWorkflow` module bundle.
-    ///
-    /// Recipe JSON files are stored under `Resources/Recipes/` in the
-    /// `LungfishWorkflow` Swift package target.  `RecipeBundleAccessor.bundle`
-    /// exposes `Bundle.module` from that target, ensuring the correct bundle is
-    /// used even when called from a test target.
+    /// Load built-in recipes from bundled workflow resources.
     public static func builtinRecipes() -> [Recipe] {
-        guard let recipesDir = RecipeBundleAccessor.bundle.url(
-            forResource: "Recipes",
-            withExtension: nil
-        ) else {
+        guard let recipesDir = RecipeBundleAccessor.recipesDirectoryURL() else {
             logger.error("RecipeRegistryV2: Recipes directory not found in LungfishWorkflow bundle")
             return []
         }

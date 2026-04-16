@@ -49,11 +49,28 @@ while [ "$#" -gt 0 ]; do
 done
 
 TOOLS_DIR="$APP_PATH/Contents/Resources/LungfishGenomeBrowser_LungfishWorkflow.bundle/Contents/Resources/Tools"
+JAVA_HOME_DIR="$TOOLS_DIR/jre"
+JAVA_BIN="$TOOLS_DIR/jre/bin/java"
+KEYTOOL_BIN="$TOOLS_DIR/jre/bin/keytool"
+JSPAWNHELPER_BIN="$TOOLS_DIR/jre/lib/jspawnhelper"
+RG_BIN="$(command -v rg || true)"
 
 if [ ! -d "$TOOLS_DIR" ]; then
     echo "tools directory not found: $TOOLS_DIR" >&2
     exit 66
 fi
+
+if [ -z "$RG_BIN" ]; then
+    echo "missing required command: rg" >&2
+    exit 69
+fi
+
+for path in "$JAVA_BIN" "$KEYTOOL_BIN" "$JSPAWNHELPER_BIN"; do
+    if [ ! -f "$path" ]; then
+        echo "missing required bundled JRE executable: $path" >&2
+        exit 66
+    fi
+done
 
 find_scrubber_db() {
     if [ -n "$SCRUBBER_DB" ] && [ -f "$SCRUBBER_DB" ]; then
@@ -120,13 +137,61 @@ run_test() {
     fi
 }
 
-run_test reformat \
+run_bbtools_test() {
+    local name="$1"
+    shift
+
+    run_test "$name" \
+        env \
+        "PATH=$JAVA_HOME_DIR/bin:$PATH" \
+        "JAVA_HOME=$JAVA_HOME_DIR" \
+        "BBMAP_JAVA=$JAVA_BIN" \
+        "$@"
+}
+
+run_portability_scan() {
+    local leak_patterns=(
+        "/Users/dho"
+        ".build/xcode-cli-release"
+    )
+
+    local pattern
+    for pattern in "${leak_patterns[@]}"; do
+        if "$RG_BIN" -a -n --fixed-strings "$pattern" "$APP_PATH" >"$TMP_DIR/portability-scan.stderr" 2>&1; then
+            printf 'FAIL portability leak=%s\n' "$pattern" >&2
+            sed -n '1,120p' "$TMP_DIR/portability-scan.stderr" >&2 || true
+            exit 1
+        fi
+    done
+
+    printf 'PASS portability\n'
+}
+
+run_java_entitlement_scan() {
+    local candidate
+    for candidate in "$JAVA_BIN" "$KEYTOOL_BIN" "$JSPAWNHELPER_BIN"; do
+        if ! /usr/bin/codesign -d --entitlements :- "$candidate" 2>&1 | /usr/bin/grep -q "allow-jit"; then
+            printf 'FAIL java-entitlements missing allow-jit for %s\n' "$candidate" >&2
+            /usr/bin/codesign -d --entitlements :- "$candidate" 2>&1 | sed -n '1,120p' >&2 || true
+            exit 1
+        fi
+    done
+
+    printf 'PASS java-entitlements\n'
+}
+
+run_portability_scan
+run_java_entitlement_scan
+
+run_test java "$JAVA_BIN" -version
+
+run_bbtools_test reformat \
     "$TOOLS_DIR/bbtools/reformat.sh" \
     in="$TMP_DIR/single.fq" \
     out="$TMP_DIR/reformat.fq" \
     ow=t
 
-run_test bbduk \
+run_bbtools_test bbduk \
     "$TOOLS_DIR/bbtools/bbduk.sh" \
     in="$TMP_DIR/single.fq" \
     out="$TMP_DIR/bbduk-out.fq" \
@@ -136,14 +201,14 @@ run_test bbduk \
     hdist=0 \
     ow=t
 
-run_test clumpify \
+run_bbtools_test clumpify \
     "$TOOLS_DIR/bbtools/clumpify.sh" \
     in="$TMP_DIR/single.fq" \
     out="$TMP_DIR/clumpify.fq" \
     ow=t \
     groups=1
 
-run_test bbmerge \
+run_bbtools_test bbmerge \
     "$TOOLS_DIR/bbtools/bbmerge.sh" \
     in1="$TMP_DIR/r1.fq" \
     in2="$TMP_DIR/r2.fq" \
@@ -152,7 +217,7 @@ run_test bbmerge \
     outu2="$TMP_DIR/bbmerge-u2.fq" \
     ow=t
 
-run_test repair \
+run_bbtools_test repair \
     "$TOOLS_DIR/bbtools/repair.sh" \
     in1="$TMP_DIR/r1.fq" \
     in2="$TMP_DIR/r2.fq" \
@@ -161,7 +226,7 @@ run_test repair \
     outs="$TMP_DIR/repair-singles.fq" \
     ow=t
 
-run_test tadpole \
+run_bbtools_test tadpole \
     "$TOOLS_DIR/bbtools/tadpole.sh" \
     in="$TMP_DIR/single.fq" \
     out="$TMP_DIR/tadpole.fa" \
@@ -182,4 +247,3 @@ if SCRUBBER_DB=$(find_scrubber_db); then
 else
     printf 'SKIP scrub (no installed human_filter.db found)\n'
 fi
-

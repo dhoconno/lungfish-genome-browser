@@ -205,7 +205,7 @@ struct WelcomeView: View {
                 Spacer()
 
                 // Version info
-                Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0")")
+                Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.1")")
                     .font(.caption)
                     .foregroundColor(.secondary.opacity(0.6))
             }
@@ -256,7 +256,7 @@ struct WelcomeView: View {
     }
 
     private static func loadLogo() -> NSImage {
-        if let url = Bundle.module.url(forResource: "about-logo", withExtension: "png", subdirectory: "Images"),
+        if let url = RuntimeResourceLocator.path("Images/about-logo.png", in: .app),
            let image = NSImage(contentsOf: url) {
             return image
         }

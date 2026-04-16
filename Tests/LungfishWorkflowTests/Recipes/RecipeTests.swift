@@ -31,8 +31,8 @@ struct RecipeTests {
         #expect(recipe.description == nil)
         #expect(recipe.author == nil)
         #expect(recipe.tags == [])
-        #expect(recipe.platforms == [.illumina])
-        #expect(recipe.requiredInput == .single)
+        #expect(recipe.platforms == [SequencingPlatform.illumina])
+        #expect(recipe.requiredInput == Recipe.InputRequirement.single)
         #expect(recipe.qualityBinning == nil)
         #expect(recipe.steps.isEmpty)
     }
@@ -78,9 +78,9 @@ struct RecipeTests {
         #expect(recipe.description == "A complete recipe for testing.")
         #expect(recipe.author == "Test Author")
         #expect(recipe.tags == ["test", "illumina"])
-        #expect(recipe.platforms == [.illumina, .ont])
-        #expect(recipe.requiredInput == .paired)
-        #expect(recipe.qualityBinning == .illumina4)
+        #expect(recipe.platforms == [SequencingPlatform.illumina, SequencingPlatform.ont])
+        #expect(recipe.requiredInput == Recipe.InputRequirement.paired)
+        #expect(recipe.qualityBinning == QualityBinningScheme.illumina4)
         #expect(recipe.steps.count == 2)
 
         let trimStep = recipe.steps[0]
@@ -141,29 +141,23 @@ struct RecipeTests {
     // MARK: - testLoadBundledVSP2Recipe
 
     @Test func testLoadBundledVSP2Recipe() throws {
-        // RecipeBundleAccessor.bundle is Bundle.module as seen from the
-        // LungfishWorkflow production module — the SPM-synthesised bundle that
-        // contains the bundled recipe JSON files.  Using it here avoids the
-        // ambiguity where Bundle.module in the test target resolves to the
-        // LungfishWorkflowTests runner bundle instead.
-        let url = RecipeBundleAccessor.bundle.url(
-            forResource: "vsp2.recipe",
-            withExtension: "json",
-            subdirectory: "Recipes"
+        let resolvedURL = try #require(
+            RecipeBundleAccessor.recipesDirectoryURL()?
+                .appendingPathComponent("vsp2.recipe.json"),
+            "vsp2.recipe.json not found in workflow resources"
         )
-        let resolvedURL = try #require(url, "vsp2.recipe.json not found in LungfishWorkflow bundle")
 
         let data = try Data(contentsOf: resolvedURL)
         let recipe = try JSONDecoder().decode(Recipe.self, from: data)
 
         #expect(recipe.id == "vsp2-target-enrichment")
         #expect(recipe.name == "VSP2 Target Enrichment")
-        #expect(recipe.platforms == [.illumina])
-        #expect(recipe.requiredInput == .paired)
-        #expect(recipe.qualityBinning == .illumina4)
+        #expect(recipe.platforms == [SequencingPlatform.illumina])
+        #expect(recipe.requiredInput == Recipe.InputRequirement.paired)
+        #expect(recipe.qualityBinning == QualityBinningScheme.illumina4)
         #expect(recipe.steps.count == 5)
 
-        let stepTypes = recipe.steps.map(\.type)
+        let stepTypes = recipe.steps.map { $0.type }
         #expect(stepTypes == [
             "fastp-dedup",
             "fastp-trim",

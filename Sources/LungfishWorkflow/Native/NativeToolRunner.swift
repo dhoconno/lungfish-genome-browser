@@ -299,19 +299,17 @@ public actor NativeToolRunner {
 
     /// Bundled tool versions, loaded from tool-versions.json at launch.
     public static let bundledVersions: [String: String] = {
-        // Try to load from the JSON manifest bundled as a resource
-        if let url = Bundle.module.url(forResource: "tool-versions", withExtension: "json", subdirectory: "Tools"),
+        if let url = RuntimeResourceLocator.path("Tools/tool-versions.json", in: .workflow),
            let data = try? Data(contentsOf: url),
            let manifest = try? JSONDecoder().decode(ToolVersionsManifest.self, from: data) {
             return Dictionary(uniqueKeysWithValues: manifest.tools.map { ($0.name, $0.version) })
         }
-        // Fallback if resource not found (e.g. unit tests without bundle)
         return [:]
     }()
 
     /// Full tool manifest with license and source info, loaded from tool-versions.json.
     public static let toolManifest: ToolVersionsManifest? = {
-        guard let url = Bundle.module.url(forResource: "tool-versions", withExtension: "json", subdirectory: "Tools"),
+        guard let url = RuntimeResourceLocator.path("Tools/tool-versions.json", in: .workflow),
               let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(ToolVersionsManifest.self, from: data)
     }()
@@ -438,11 +436,13 @@ public actor NativeToolRunner {
                 let value = String(arg[arg.index(after: eqIdx)...])
                 guard value.contains(" ") else { continue }
                 let key = String(arg[..<eqIdx])
-                let linkDir = try ProjectTempDirectory.createFromContext(
+                let originalURL = URL(fileURLWithPath: value)
+                let linkDir = try ProjectTempDirectory.create(
                     prefix: "lungfish-bbtools-",
-                    contextURL: URL(fileURLWithPath: value)
+                    contextURL: originalURL,
+                    policy: .systemOnly
                 )
-                let linkURL = linkDir.appendingPathComponent(URL(fileURLWithPath: value).lastPathComponent)
+                let linkURL = linkDir.appendingPathComponent(Self.bbToolsShellSafeLeafName(for: originalURL))
                 try fm.createSymbolicLink(at: linkURL, withDestinationURL: URL(fileURLWithPath: value))
                 resolvedArgs[i] = "\(key)=\(linkURL.path)"
                 symlinks.append(linkDir)
@@ -580,6 +580,16 @@ public actor NativeToolRunner {
                 ))
             }
         }
+    }
+
+    private static func bbToolsShellSafeLeafName(for originalURL: URL) -> String {
+        let suffix: String
+        if originalURL.pathExtension.isEmpty {
+            suffix = ""
+        } else {
+            suffix = ".\(originalURL.pathExtension)"
+        }
+        return "bbtools-\(UUID().uuidString.lowercased())\(suffix)"
     }
     
     /// Returns the path to a tool if available, or nil.
@@ -727,117 +737,23 @@ public actor NativeToolRunner {
     /// Finds the Tools directory in the app bundle.
     ///
     /// Searches in order:
-    /// 1. SwiftPM module bundle Resources/Tools
-    /// 2. Main bundle Resources/Tools (macOS app)
-    /// 3. Main bundle Resources/<WorkflowBundle>.bundle/Tools
-    /// 4. Scan executable directory for *.bundle/Tools (most robust for SPM executables)
-    /// 5. Executable directory/../Resources/Tools (CLI)
-    /// 6. Executable directory/Tools (development)
-    /// 7. Source directory Resources/Tools (SwiftPM development)
+    /// 1. Nested workflow bundle inside the installed app
+    /// 2. Main bundle Resources/Tools
+    /// 3. Executable-adjacent resource bundles for CLI layouts
+    /// 4. Development workspace resources discovered from the current executable or cwd
     private static func findToolsDirectory() -> URL? {
         let fileManager = FileManager.default
         let log = Logger(subsystem: LogSubsystem.workflow, category: "NativeToolRunner")
 
-        // 1. Check SwiftPM module bundle resources.
-        if let moduleResourceURL = Bundle.module.resourceURL {
-            let moduleTools = moduleResourceURL.appendingPathComponent("Tools")
-            if fileManager.fileExists(atPath: moduleTools.path) {
-                log.debug("findToolsDirectory: Found via Bundle.module.resourceURL: \(moduleTools.path, privacy: .public)")
-                return moduleTools
+        for resourceRoot in RuntimeResourceLocator.resourceRoots(for: .workflow) {
+            let toolsDirectory = resourceRoot.appendingPathComponent("Tools")
+            var isDirectory: ObjCBool = false
+            if fileManager.fileExists(atPath: toolsDirectory.path, isDirectory: &isDirectory),
+               isDirectory.boolValue
+            {
+                log.debug("findToolsDirectory: Found via runtime resource root: \(toolsDirectory.path, privacy: .public)")
+                return toolsDirectory
             }
-            log.debug("findToolsDirectory: Not at Bundle.module.resourceURL/Tools: \(moduleTools.path, privacy: .public)")
-        }
-
-        // Some packaging layouts keep resources at the bundle root.
-        let moduleBundleTools = Bundle.module.bundleURL.appendingPathComponent("Tools")
-        if fileManager.fileExists(atPath: moduleBundleTools.path) {
-            log.debug("findToolsDirectory: Found via Bundle.module.bundleURL: \(moduleBundleTools.path, privacy: .public)")
-            return moduleBundleTools
-        }
-        log.debug("findToolsDirectory: Not at Bundle.module.bundleURL/Tools: \(moduleBundleTools.path, privacy: .public)")
-
-        // 2. Check main bundle Resources/Tools (macOS app bundle)
-        if let resourceURL = Bundle.main.resourceURL {
-            let toolsPath = resourceURL.appendingPathComponent("Tools")
-            if fileManager.fileExists(atPath: toolsPath.path) {
-                log.debug("findToolsDirectory: Found via Bundle.main.resourceURL: \(toolsPath.path, privacy: .public)")
-                return toolsPath
-            }
-
-            // 3. Check workflow resource bundle nested in main bundle resources.
-            let workflowBundleCandidates = [
-                resourceURL.appendingPathComponent("LungfishGenomeBrowser_LungfishWorkflow.bundle"),
-                resourceURL.appendingPathComponent("LungfishWorkflow_LungfishWorkflow.bundle"),
-                resourceURL.appendingPathComponent("LungfishWorkflow.bundle")
-            ]
-            for workflowBundle in workflowBundleCandidates {
-                // Check both flat and hierarchical bundle layouts
-                for toolsSubpath in ["Tools", "Contents/Resources/Tools"] {
-                    let nestedTools = workflowBundle.appendingPathComponent(toolsSubpath)
-                    if fileManager.fileExists(atPath: nestedTools.path) {
-                        log.debug("findToolsDirectory: Found in nested bundle: \(nestedTools.path, privacy: .public)")
-                        return nestedTools
-                    }
-                }
-            }
-        }
-
-        // 4. Scan executable directory for any *LungfishWorkflow*.bundle containing Tools.
-        //    This is the most robust fallback for SPM-built executables where
-        //    Bundle.main and Bundle.module may resolve differently than expected.
-        let executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
-            .resolvingSymlinksInPath()
-        let executableDir = executableURL.deletingLastPathComponent()
-        log.debug("findToolsDirectory: Executable directory: \(executableDir.path, privacy: .public)")
-
-        if let contents = try? fileManager.contentsOfDirectory(atPath: executableDir.path) {
-            for item in contents where item.hasSuffix(".bundle") && item.contains("LungfishWorkflow") {
-                let bundleTools = executableDir
-                    .appendingPathComponent(item)
-                    .appendingPathComponent("Tools")
-                if fileManager.fileExists(atPath: bundleTools.path) {
-                    log.debug("findToolsDirectory: Found via executable dir scan: \(bundleTools.path, privacy: .public)")
-                    return bundleTools
-                }
-            }
-        }
-
-        // 5. Check relative to executable (CLI tool: ../Resources/Tools)
-        let cliResourcesTools = executableDir
-            .deletingLastPathComponent()
-            .appendingPathComponent("Resources")
-            .appendingPathComponent("Tools")
-        if fileManager.fileExists(atPath: cliResourcesTools.path) {
-            log.debug("findToolsDirectory: Found via CLI resources: \(cliResourcesTools.path, privacy: .public)")
-            return cliResourcesTools
-        }
-
-        // 6. Try ./Tools (development/testing)
-        let localTools = executableDir.appendingPathComponent("Tools")
-        if fileManager.fileExists(atPath: localTools.path) {
-            log.debug("findToolsDirectory: Found via local Tools: \(localTools.path, privacy: .public)")
-            return localTools
-        }
-
-        // 7. Try source directory (SwiftPM development)
-        // Look for Sources/LungfishWorkflow/Resources/Tools relative to repo root
-        var currentDir = executableDir
-        for _ in 0..<10 {  // Walk up at most 10 levels
-            let packageSwift = currentDir.appendingPathComponent("Package.swift")
-            if fileManager.fileExists(atPath: packageSwift.path) {
-                // Found repo root
-                let sourceTools = currentDir
-                    .appendingPathComponent("Sources")
-                    .appendingPathComponent("LungfishWorkflow")
-                    .appendingPathComponent("Resources")
-                    .appendingPathComponent("Tools")
-                if fileManager.fileExists(atPath: sourceTools.path) {
-                    log.debug("findToolsDirectory: Found via source tree: \(sourceTools.path, privacy: .public)")
-                    return sourceTools
-                }
-                break
-            }
-            currentDir = currentDir.deletingLastPathComponent()
         }
 
         log.error("findToolsDirectory: No Tools directory found in any search path")
