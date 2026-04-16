@@ -10,6 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+declare -a BUILDER_ROOTS=()
 
 usage() {
     echo "Usage: $0 <path> [<path> ...]" >&2
@@ -79,29 +80,77 @@ rewrite_embedded_path_prefix() {
     ' "$path"
 }
 
+append_builder_root() {
+    local candidate="$1"
+
+    [ -n "$candidate" ] || return
+    [ -d "$candidate" ] || return
+    candidate="$(cd "$candidate" && pwd)"
+
+    local existing
+    if [ "${#BUILDER_ROOTS[@]}" -gt 0 ]; then
+        for existing in "${BUILDER_ROOTS[@]}"; do
+            if [ "$existing" = "$candidate" ]; then
+                return
+            fi
+        done
+    fi
+
+    BUILDER_ROOTS+=("$candidate")
+}
+
+initialize_builder_roots() {
+    append_builder_root "$PROJECT_ROOT"
+
+    if ! command -v git >/dev/null 2>&1; then
+        return
+    fi
+
+    local line
+    while IFS= read -r line; do
+        case "$line" in
+            worktree\ *)
+                append_builder_root "${line#worktree }"
+                ;;
+        esac
+    done < <(/usr/bin/git -C "$PROJECT_ROOT" worktree list --porcelain 2>/dev/null || true)
+}
+
 rewrite_embedded_builder_paths() {
     local path="$1"
+    local builder_root
 
-    rewrite_embedded_path_prefix \
-        "$path" \
-        "${PROJECT_ROOT}/.build/xcode-cli-release/" \
-        "/swiftpm-build/"
+    for builder_root in "${BUILDER_ROOTS[@]}"; do
+        rewrite_embedded_path_prefix \
+            "$path" \
+            "${builder_root}/.build/xcode-cli-release/" \
+            "/swiftpm-build/"
+        rewrite_embedded_path_prefix \
+            "$path" \
+            "${builder_root}/.build/xcode-cli/" \
+            "/swiftpm-build/"
+        rewrite_embedded_path_prefix \
+            "$path" \
+            "${builder_root}/.build/tools/" \
+            "/lungfish-tools-build/"
+        rewrite_embedded_path_prefix \
+            "$path" \
+            "${builder_root}/" \
+            "/workspace/"
+    done
+
     rewrite_embedded_path_prefix \
         "$path" \
         "/workspace/.build/xcode-cli-release/" \
         "/swiftpm-build/"
     rewrite_embedded_path_prefix \
         "$path" \
-        "${PROJECT_ROOT}/.build/tools/" \
-        "/lungfish-tools-build/"
+        "/workspace/.build/xcode-cli/" \
+        "/swiftpm-build/"
     rewrite_embedded_path_prefix \
         "$path" \
         "/workspace/.build/tools/" \
         "/lungfish-tools-build/"
-    rewrite_embedded_path_prefix \
-        "$path" \
-        "${PROJECT_ROOT}/" \
-        "/workspace/"
     rewrite_embedded_path_prefix \
         "$path" \
         "/Users/dho/Documents/ncbi-vdb/" \
@@ -160,6 +209,8 @@ sanitize_target() {
         sanitize_file "$target" "$(dirname "$target")"
     fi
 }
+
+initialize_builder_roots
 
 for target in "$@"; do
     sanitize_target "$target"

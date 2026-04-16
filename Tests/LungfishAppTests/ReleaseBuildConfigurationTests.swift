@@ -173,6 +173,36 @@ struct ReleaseBuildConfigurationTests {
         #expect(project.contains("lungfish-cli.entitlements"))
     }
 
+    @Test("Embed lungfish-cli phase supports scripted release skip override")
+    func embedLungfishCLIPhaseSupportsScriptedReleaseSkipOverride() throws {
+        let project = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent("Lungfish.xcodeproj/project.pbxproj"),
+            encoding: .utf8
+        )
+
+        let embedBlock = try Self.buildPhaseBlock(
+            named: "F1E2D3C4B5A6978877665567 /* Embed lungfish-cli */",
+            in: project
+        )
+        #expect(embedBlock.contains("LUNGFISH_SKIP_EMBED_LUNGFISH_CLI"))
+    }
+
+    @Test("Sanitize bundled tools phase supports scripted release skip override")
+    func sanitizeBundledToolsPhaseSupportsScriptedReleaseSkipOverride() throws {
+        let project = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent("Lungfish.xcodeproj/project.pbxproj"),
+            encoding: .utf8
+        )
+
+        let sanitizeBlock = try Self.buildPhaseBlock(
+            named: "F1E2D3C4B5A6978877665568 /* Sanitize bundled tools */",
+            in: project
+        )
+        #expect(sanitizeBlock.contains("LUNGFISH_SKIP_SANITIZE_BUNDLED_TOOLS"))
+    }
+
     @Test("Release smoke test script exercises bundled tools")
     func releaseSmokeTestScriptExercisesBundledTools() throws {
         let script = try String(
@@ -243,6 +273,30 @@ struct ReleaseBuildConfigurationTests {
         #expect(script.contains("-debug-prefix-map"))
         #expect(script.contains("-file-compilation-dir"))
         #expect(script.contains("ffile-prefix-map"))
+    }
+
+    @Test("Notarized DMG release script preserves derived data cache across runs")
+    func notarizedDMGReleaseScriptPreservesDerivedDataCacheAcrossRuns() throws {
+        let script = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent("scripts/release/build-notarized-dmg.sh"),
+            encoding: .utf8
+        )
+
+        #expect(script.contains("${RELEASE_DIR}/DerivedData") == false)
+        #expect(script.contains("$PROJECT_ROOT/.build") || script.contains("${PROJECT_ROOT}/.build"))
+    }
+
+    @Test("Notarized DMG release script disables duplicate Xcode CLI embed and sanitize phases")
+    func notarizedDMGReleaseScriptDisablesDuplicateXcodeCLIEmbedAndSanitizePhases() throws {
+        let script = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent("scripts/release/build-notarized-dmg.sh"),
+            encoding: .utf8
+        )
+
+        #expect(script.contains("LUNGFISH_SKIP_EMBED_LUNGFISH_CLI=1"))
+        #expect(script.contains("LUNGFISH_SKIP_SANITIZE_BUNDLED_TOOLS=1"))
     }
 
     @Test("Notarized DMG release script sanitizes embedded CLI before signing")
@@ -427,6 +481,17 @@ struct ReleaseBuildConfigurationTests {
               let blockEnd = project[markerRange.lowerBound...].range(of: "\n\t\t};")
         else {
             throw NSError(domain: "ReleaseBuildConfigurationTests", code: 1)
+        }
+
+        return String(project[markerRange.lowerBound..<blockEnd.upperBound])
+    }
+
+    private static func buildPhaseBlock(named marker: String, in project: String) throws -> String {
+        let phaseMarker = "\t\t\(marker) = {"
+        guard let markerRange = project.range(of: phaseMarker),
+              let blockEnd = project[markerRange.lowerBound...].range(of: "\n\t\t};")
+        else {
+            throw NSError(domain: "ReleaseBuildConfigurationTests", code: 2)
         }
 
         return String(project[markerRange.lowerBound..<blockEnd.upperBound])

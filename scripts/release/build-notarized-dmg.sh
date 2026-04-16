@@ -21,7 +21,7 @@ Optional:
   --scratch-path      SwiftPM scratch path for lungfish-cli build (default: .build/xcode-cli-release)
   --archive-path      Archive output path (default: build/Release/Lungfish.xcarchive)
   --release-dir       Release directory (default: build/Release)
-  --derived-data-path DerivedData path for the Xcode archive (default: <release-dir>/DerivedData)
+  --derived-data-path DerivedData path for the Xcode archive (default: <project-root>/.build/release-derived-data)
 EOF
 }
 
@@ -84,7 +84,7 @@ if [ -z "$SIGNING_IDENTITY" ] || [ -z "$TEAM_ID" ] || [ -z "$NOTARY_PROFILE" ]; 
 fi
 
 if [ -z "$DERIVED_DATA_PATH" ]; then
-    DERIVED_DATA_PATH="${RELEASE_DIR}/DerivedData"
+    DERIVED_DATA_PATH="${PROJECT_ROOT}/.build/release-derived-data"
 fi
 
 require_command() {
@@ -116,6 +116,7 @@ DMG_NOTARY_LOG="${RELEASE_DIR}/notary-dmg-log.json"
 
 rm -rf "$RELEASE_DIR"
 mkdir -p "$RELEASE_DIR"
+mkdir -p "$(dirname "$DERIVED_DATA_PATH")"
 
 cd "$PROJECT_ROOT"
 
@@ -132,6 +133,8 @@ SWIFT_BUILD_PREFIX_MAP_ARGS=(
     -Xcc "-fdebug-prefix-map=$PROJECT_ROOT=/workspace"
 )
 
+LUNGFISH_SKIP_EMBED_LUNGFISH_CLI=1 \
+LUNGFISH_SKIP_SANITIZE_BUNDLED_TOOLS=1 \
 xcodebuild -project Lungfish.xcodeproj \
     -scheme Lungfish \
     -configuration Release \
