@@ -1,0 +1,293 @@
+@preconcurrency import Foundation
+
+public enum PluginPackKind: String, Sendable, Codable, Hashable {
+    case requiredSetup
+    case optionalTools
+}
+
+public struct PackToolRequirement: Sendable, Codable, Hashable, Identifiable {
+    public let id: String
+    public let displayName: String
+    public let environment: String
+    public let executables: [String]
+
+    public init(id: String, displayName: String, environment: String, executables: [String]) {
+        self.id = id
+        self.displayName = displayName
+        self.environment = environment
+        self.executables = executables
+    }
+
+    public static func package(_ name: String) -> PackToolRequirement {
+        PackToolRequirement(
+            id: name,
+            displayName: name.capitalized,
+            environment: name,
+            executables: [name]
+        )
+    }
+
+    public static let bbtools = PackToolRequirement(
+        id: "bbtools",
+        displayName: "BBTools",
+        environment: "bbtools",
+        executables: [
+            "clumpify.sh", "bbduk.sh", "bbmerge.sh",
+            "repair.sh", "tadpole.sh", "reformat.sh", "java",
+        ]
+    )
+}
+
+public struct PostInstallHook: Sendable, Codable, Hashable {
+    public let description: String
+    public let environment: String
+    public let command: [String]
+    public let requiresNetwork: Bool
+    public let refreshIntervalDays: Int?
+    public let estimatedDownloadSize: String?
+
+    public init(
+        description: String,
+        environment: String,
+        command: [String],
+        requiresNetwork: Bool = true,
+        refreshIntervalDays: Int? = nil,
+        estimatedDownloadSize: String? = nil
+    ) {
+        self.description = description
+        self.environment = environment
+        self.command = command
+        self.requiresNetwork = requiresNetwork
+        self.refreshIntervalDays = refreshIntervalDays
+        self.estimatedDownloadSize = estimatedDownloadSize
+    }
+}
+
+public struct PluginPack: Sendable, Codable, Identifiable, Hashable {
+    public let id: String
+    public let name: String
+    public let description: String
+    public let sfSymbol: String
+    public let packages: [String]
+    public let category: String
+    public let kind: PluginPackKind
+    public let isActive: Bool
+    public let requirements: [PackToolRequirement]
+    public let postInstallHooks: [PostInstallHook]
+    public let estimatedSizeMB: Int
+
+    public init(
+        id: String,
+        name: String,
+        description: String,
+        sfSymbol: String,
+        packages: [String],
+        category: String,
+        kind: PluginPackKind = .optionalTools,
+        isActive: Bool = false,
+        requirements: [PackToolRequirement] = [],
+        postInstallHooks: [PostInstallHook] = [],
+        estimatedSizeMB: Int = 0
+    ) {
+        self.id = id
+        self.name = name
+        self.description = description
+        self.sfSymbol = sfSymbol
+        self.packages = packages
+        self.category = category
+        self.kind = kind
+        self.isActive = isActive
+        self.requirements = requirements
+        self.postInstallHooks = postInstallHooks
+        self.estimatedSizeMB = estimatedSizeMB
+    }
+
+    public var isRequiredBeforeLaunch: Bool {
+        kind == .requiredSetup
+    }
+
+    public var toolRequirements: [PackToolRequirement] {
+        requirements.isEmpty ? packages.map(PackToolRequirement.package) : requirements
+    }
+}
+
+public extension PluginPack {
+    static let builtIn: [PluginPack] = [
+        PluginPack(
+            id: "lungfish-tools",
+            name: "Lungfish Tools",
+            description: "Needed before you can create or open a project",
+            sfSymbol: "checklist",
+            packages: ["nextflow", "snakemake", "bbtools"],
+            category: "Required Setup",
+            kind: .requiredSetup,
+            isActive: true,
+            requirements: [.package("nextflow"), .package("snakemake"), .bbtools],
+            estimatedSizeMB: 900
+        ),
+        PluginPack(
+            id: "illumina-qc",
+            name: "Illumina QC",
+            description: "Quality control and reporting for Illumina short-read sequencing data",
+            sfSymbol: "waveform.badge.magnifyingglass",
+            packages: ["fastqc", "multiqc", "trimmomatic"],
+            category: "Quality Control",
+            estimatedSizeMB: 1000
+        ),
+        PluginPack(
+            id: "alignment",
+            name: "Alignment",
+            description: "Map short and long reads to reference genomes",
+            sfSymbol: "arrow.left.and.right.text.vertical",
+            packages: ["bwa-mem2", "minimap2", "bowtie2", "hisat2"],
+            category: "Alignment",
+            estimatedSizeMB: 220
+        ),
+        PluginPack(
+            id: "variant-calling",
+            name: "Variant Calling",
+            description: "Discover SNPs, indels, and structural variants from aligned reads",
+            sfSymbol: "diamond.fill",
+            packages: ["freebayes", "lofreq", "gatk4", "ivar"],
+            category: "Variant Calling",
+            estimatedSizeMB: 850
+        ),
+        PluginPack(
+            id: "assembly",
+            name: "Genome Assembly",
+            description: "De novo genome assembly from short and long reads",
+            sfSymbol: "puzzlepiece.extension.fill",
+            packages: ["spades", "megahit", "flye", "quast"],
+            category: "Assembly",
+            estimatedSizeMB: 950
+        ),
+        PluginPack(
+            id: "phylogenetics",
+            name: "Phylogenetics",
+            description: "Multiple sequence alignment and phylogenetic tree construction",
+            sfSymbol: "tree",
+            packages: ["iqtree", "mafft", "muscle", "raxml-ng", "treetime"],
+            category: "Phylogenetics",
+            estimatedSizeMB: 400
+        ),
+        PluginPack(
+            id: "metagenomics",
+            name: "Metagenomics",
+            description: "Taxonomic classification, viral detection, and clinical triage of metagenomic samples",
+            sfSymbol: "leaf.fill",
+            packages: ["kraken2", "bracken", "metaphlan", "esviritu", "nextflow"],
+            category: "Metagenomics",
+            isActive: true,
+            estimatedSizeMB: 1200
+        ),
+        PluginPack(
+            id: "long-read",
+            name: "Long Read Analysis",
+            description: "Oxford Nanopore and PacBio long-read alignment, assembly, and polishing",
+            sfSymbol: "ruler",
+            packages: ["minimap2", "flye", "medaka", "hifiasm", "nanoplot"],
+            category: "Long Read",
+            estimatedSizeMB: 700
+        ),
+        PluginPack(
+            id: "wastewater-surveillance",
+            name: "Wastewater Surveillance",
+            description: "SARS-CoV-2 and multi-pathogen lineage de-mixing from wastewater sequencing data",
+            sfSymbol: "drop.triangle",
+            packages: ["freyja", "ivar", "pangolin", "nextclade", "minimap2"],
+            category: "Surveillance",
+            postInstallHooks: [
+                PostInstallHook(
+                    description: "Download latest SARS-CoV-2 lineage barcodes",
+                    environment: "freyja",
+                    command: ["freyja", "update"],
+                    refreshIntervalDays: 7,
+                    estimatedDownloadSize: "~15 MB"
+                ),
+                PostInstallHook(
+                    description: "Update Pango lineage designation data",
+                    environment: "pangolin",
+                    command: ["pangolin", "--update-data"],
+                    refreshIntervalDays: 7,
+                    estimatedDownloadSize: "~50 MB"
+                ),
+            ],
+            estimatedSizeMB: 1500
+        ),
+        PluginPack(
+            id: "rna-seq",
+            name: "RNA-Seq Analysis",
+            description: "Spliced alignment and transcript quantification for bulk RNA sequencing",
+            sfSymbol: "bolt.horizontal",
+            packages: ["star", "salmon", "subread", "stringtie"],
+            category: "Transcriptomics",
+            estimatedSizeMB: 600
+        ),
+        PluginPack(
+            id: "single-cell",
+            name: "Single-Cell Analysis",
+            description: "Preprocessing and analysis of droplet-based single-cell RNA-seq data",
+            sfSymbol: "circle.grid.3x3",
+            packages: ["scanpy", "scvi-tools", "star"],
+            category: "Single Cell",
+            estimatedSizeMB: 1800
+        ),
+        PluginPack(
+            id: "amplicon-analysis",
+            name: "Amplicon Analysis",
+            description: "Primer trimming, variant calling, and consensus generation for tiled-amplicon protocols",
+            sfSymbol: "waveform.badge.magnifyingglass",
+            packages: ["ivar", "pangolin", "nextclade"],
+            category: "Amplicon",
+            postInstallHooks: [
+                PostInstallHook(
+                    description: "Update Pango lineage designation data",
+                    environment: "pangolin",
+                    command: ["pangolin", "--update-data"],
+                    refreshIntervalDays: 7,
+                    estimatedDownloadSize: "~50 MB"
+                ),
+            ],
+            estimatedSizeMB: 550
+        ),
+        PluginPack(
+            id: "genome-annotation",
+            name: "Genome Annotation",
+            description: "Gene prediction and functional annotation for prokaryotic and viral genomes",
+            sfSymbol: "tag.fill",
+            packages: ["prokka", "bakta", "snpeff"],
+            category: "Annotation",
+            postInstallHooks: [
+                PostInstallHook(
+                    description: "Download Bakta light annotation database",
+                    environment: "bakta",
+                    command: ["bakta_db", "download", "--type", "light"],
+                    refreshIntervalDays: 90,
+                    estimatedDownloadSize: "~1.3 GB"
+                ),
+            ],
+            estimatedSizeMB: 1200
+        ),
+        PluginPack(
+            id: "data-format-utils",
+            name: "Data Format Utilities",
+            description: "File conversion, indexing, and interval manipulation for bioinformatics formats",
+            sfSymbol: "arrow.triangle.2.circlepath",
+            packages: ["bedtools", "picard"],
+            category: "Utilities",
+            estimatedSizeMB: 650
+        ),
+    ]
+
+    static var requiredSetupPack: PluginPack {
+        builtIn.first(where: \.isRequiredBeforeLaunch)!
+    }
+
+    static var activeOptionalPacks: [PluginPack] {
+        builtIn.filter { $0.kind == .optionalTools && $0.isActive }
+    }
+
+    static var visibleForCLI: [PluginPack] {
+        [requiredSetupPack] + activeOptionalPacks
+    }
+}

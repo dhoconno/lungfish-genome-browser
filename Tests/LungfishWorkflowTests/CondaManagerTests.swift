@@ -111,7 +111,8 @@ final class CondaManagerTests: XCTestCase {
 
     func testBuiltInPacksExist() {
         XCTAssertFalse(PluginPack.builtIn.isEmpty)
-        XCTAssertEqual(PluginPack.builtIn.count, 13, "Should have exactly 13 built-in packs")
+        XCTAssertEqual(PluginPack.builtIn.count, 14, "Should include Lungfish Tools plus 13 optional packs")
+        XCTAssertEqual(PluginPack.activeOptionalPacks.count, 1, "Only metagenomics should be active in this branch")
     }
 
     func testToolVersionsManifestIncludesMicromamba() throws {
