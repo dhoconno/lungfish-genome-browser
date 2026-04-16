@@ -17,8 +17,8 @@ struct WorktreeSetupTests {
         #expect(project.contains("${SRCROOT}"))
     }
 
-    @Test("setup-worktree copies ignored dylibs and links ignored database payloads")
-    func setupWorktreeCopiesIgnoredDylibsAndLinksIgnoredDatabasePayloads() throws {
+    @Test("setup-worktree copies supported ignored dylibs, prunes retired tool relics, and links ignored database payloads")
+    func setupWorktreeCopiesSupportedIgnoredDylibsPrunesRetiredToolRelicsAndLinksIgnoredDatabasePayloads() throws {
         let repositoryRoot = Self.repositoryRoot()
         let scriptURL = repositoryRoot.appendingPathComponent("scripts/setup-worktree.sh")
         #expect(FileManager.default.fileExists(atPath: scriptURL.path))
@@ -42,13 +42,29 @@ struct WorktreeSetupTests {
             encoding: .utf8
         )
 
-        let sourceLibURL = sourceRoot
-            .appendingPathComponent("Sources/LungfishWorkflow/Resources/Tools/jre/lib/libjli.dylib")
+        let sourceSupportedLibURL = sourceRoot
+            .appendingPathComponent("Sources/LungfishWorkflow/Resources/Tools/synthetic/libportable.dylib")
         try FileManager.default.createDirectory(
-            at: sourceLibURL.deletingLastPathComponent(),
+            at: sourceSupportedLibURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try "synthetic-dylib".write(to: sourceLibURL, atomically: true, encoding: .utf8)
+        try "synthetic-dylib".write(to: sourceSupportedLibURL, atomically: true, encoding: .utf8)
+
+        let sourceRetiredJREURL = sourceRoot
+            .appendingPathComponent("Sources/LungfishWorkflow/Resources/Tools/jre/lib/libjli.dylib")
+        try FileManager.default.createDirectory(
+            at: sourceRetiredJREURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try "retired-jre".write(to: sourceRetiredJREURL, atomically: true, encoding: .utf8)
+
+        let sourceRetiredBBToolsURL = sourceRoot
+            .appendingPathComponent("Sources/LungfishWorkflow/Resources/Tools/bbtools/jni/libbbtoolsjni.dylib")
+        try FileManager.default.createDirectory(
+            at: sourceRetiredBBToolsURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try "retired-bbtools".write(to: sourceRetiredBBToolsURL, atomically: true, encoding: .utf8)
 
         let sourceDBURL = sourceRoot
             .appendingPathComponent("Sources/LungfishWorkflow/Resources/Databases/human-scrubber/human_filter.db.20250916v2")
@@ -58,6 +74,22 @@ struct WorktreeSetupTests {
         )
         try "db".write(to: sourceDBURL, atomically: true, encoding: .utf8)
 
+        let staleTargetJREURL = targetRoot
+            .appendingPathComponent("Sources/LungfishWorkflow/Resources/Tools/jre/lib/libjli.dylib")
+        try FileManager.default.createDirectory(
+            at: staleTargetJREURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try "stale-jre".write(to: staleTargetJREURL, atomically: true, encoding: .utf8)
+
+        let staleTargetBBToolsURL = targetRoot
+            .appendingPathComponent("Sources/LungfishWorkflow/Resources/Tools/bbtools/jni/libbbtoolsjni.dylib")
+        try FileManager.default.createDirectory(
+            at: staleTargetBBToolsURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try "stale-bbtools".write(to: staleTargetBBToolsURL, atomically: true, encoding: .utf8)
+
         let result = try Self.runScript(
             scriptURL,
             arguments: ["--source-root", sourceRoot.path, targetRoot.path]
@@ -65,18 +97,21 @@ struct WorktreeSetupTests {
 
         #expect(result.status == 0, "script failed: \(result.stderr)")
 
-        let targetLibURL = targetRoot
-            .appendingPathComponent("Sources/LungfishWorkflow/Resources/Tools/jre/lib/libjli.dylib")
+        let targetSupportedLibURL = targetRoot
+            .appendingPathComponent("Sources/LungfishWorkflow/Resources/Tools/synthetic/libportable.dylib")
         let targetDBURL = targetRoot
             .appendingPathComponent("Sources/LungfishWorkflow/Resources/Databases/human-scrubber/human_filter.db.20250916v2")
 
-        #expect(FileManager.default.fileExists(atPath: targetLibURL.path))
+        #expect(FileManager.default.fileExists(atPath: targetSupportedLibURL.path))
         #expect(FileManager.default.fileExists(atPath: targetDBURL.path))
-        #expect(Self.symbolicLinkDestination(at: targetLibURL) == nil)
+        #expect(Self.symbolicLinkDestination(at: targetSupportedLibURL) == nil)
         #expect(Self.symbolicLinkDestination(at: targetDBURL) == sourceDBURL.path)
-        #expect(try Data(contentsOf: targetLibURL) == Data(contentsOf: sourceLibURL))
+        #expect(try Data(contentsOf: targetSupportedLibURL) == Data(contentsOf: sourceSupportedLibURL))
+        #expect(FileManager.default.fileExists(atPath: staleTargetJREURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: staleTargetBBToolsURL.path) == false)
         #expect(result.stdout.contains("Copied 1 runtime file(s)"))
         #expect(result.stdout.contains("Linked 1 runtime file(s)"))
+        #expect(result.stdout.contains("Removed 2 retired runtime file(s)"))
     }
 
     private static func repositoryRoot() -> URL {

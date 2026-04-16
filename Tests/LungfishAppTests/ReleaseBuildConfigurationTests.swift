@@ -58,7 +58,7 @@ struct ReleaseBuildConfigurationTests {
         #expect(script.contains("fdebug-prefix-map"))
     }
 
-    @Test("Bundled tool manifest excludes bbtools and openjdk")
+    @Test("Bundled tool manifest excludes managed core dependencies")
     func bundledToolManifestExcludesManagedCoreDependencies() throws {
         let manifest = try String(
             contentsOf: Self.repositoryRoot()
@@ -68,6 +68,7 @@ struct ReleaseBuildConfigurationTests {
 
         #expect(manifest.contains(#""name": "bbtools""#) == false)
         #expect(manifest.contains(#""name": "openjdk""#) == false)
+        #expect(manifest.contains(#""name": "fastp""#) == false)
     }
 
     @Test("Release tools sanitizer preserves scrubber wrappers and strips stray resource scripts")
@@ -181,8 +182,8 @@ struct ReleaseBuildConfigurationTests {
         #expect(sanitizeBlock.contains("LUNGFISH_SKIP_SANITIZE_BUNDLED_TOOLS"))
     }
 
-    @Test("Release smoke test asserts bundled BBTools and JRE are absent")
-    func releaseSmokeTestAssertsBundledBBToolsAndJREAreAbsent() throws {
+    @Test("Release smoke test asserts managed tools are absent from the bundle")
+    func releaseSmokeTestAssertsManagedToolsAreAbsentFromTheBundle() throws {
         let script = try String(
             contentsOf: Self.repositoryRoot()
                 .appendingPathComponent("scripts/smoke-test-release-tools.sh"),
@@ -191,9 +192,10 @@ struct ReleaseBuildConfigurationTests {
 
         #expect(script.contains(#"if [ -e "$TOOLS_DIR/bbtools" ]"#))
         #expect(script.contains(#"if [ -e "$TOOLS_DIR/jre" ]"#))
+        #expect(script.contains(#"if [ -e "$TOOLS_DIR/fastp" ]"#))
         #expect(script.contains("run_test samtools "))
         #expect(script.contains("run_test seqkit "))
-        #expect(script.contains("run_test fastp "))
+        #expect(script.contains("run_test fastp ") == false)
         #expect(script.contains("run_test scrub "))
     }
 

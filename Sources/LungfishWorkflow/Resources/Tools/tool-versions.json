@@ -94,21 +94,6 @@
       "notes": "FASTA/FASTQ toolkit"
     },
     {
-      "name": "fastp",
-      "displayName": "fastp",
-      "version": "1.1.0",
-      "license": "MIT",
-      "licenseId": "MIT",
-      "sourceUrl": "https://github.com/OpenGene/fastp",
-      "releaseUrl": "https://github.com/OpenGene/fastp/releases",
-      "licenseUrl": "https://github.com/OpenGene/fastp/blob/master/LICENSE",
-      "copyright": "Copyright (c) 2017-2024 OpenGene",
-      "executables": ["fastp"],
-      "dependencies": [],
-      "provisioningMethod": "downloadBinary",
-      "notes": "FASTQ quality control and preprocessing"
-    },
-    {
       "name": "vsearch",
       "displayName": "VSEARCH",
       "version": "2.29.2",

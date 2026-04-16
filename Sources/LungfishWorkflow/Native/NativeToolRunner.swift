@@ -184,6 +184,8 @@ public enum NativeTool: String, CaseIterable, Sendable {
             return .managed(environment: "bbtools", executableName: "reformat.sh")
         case .java:
             return .managed(environment: "bbtools", executableName: "java")
+        case .fastp:
+            return .managed(environment: "fastp", executableName: "fastp")
         case .alignsTo:
             return .bundled(relativePath: "scrubber/bin/aligns_to")
         case .scrubSh:

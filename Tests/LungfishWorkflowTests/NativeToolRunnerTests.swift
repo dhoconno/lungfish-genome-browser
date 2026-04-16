@@ -40,6 +40,7 @@ final class NativeToolRunnerTests: XCTestCase {
         XCTAssertTrue(valid, "Bundled tools should still validate without BBTools/JRE in the app bundle")
         XCTAssertFalse(missing.contains(.clumpify))
         XCTAssertFalse(missing.contains(.java))
+        XCTAssertFalse(missing.contains(.fastp))
     }
 
     func testFindToolReturnsExecutableURLForBundledTools() async throws {
@@ -135,7 +136,15 @@ final class NativeToolRunnerTests: XCTestCase {
 
     func testFastpVersion() async throws {
         let runner = NativeToolRunner()
-        let result = try await runner.run(.fastp, arguments: ["--version"])
+        let result: NativeToolResult
+        do {
+            result = try await runner.run(.fastp, arguments: ["--version"])
+        } catch let error as NativeToolError {
+            if case .toolNotFound = error {
+                throw XCTSkip("Managed fastp is not available")
+            }
+            throw error
+        }
         // fastp --version prints to stderr
         let output = result.stdout + result.stderr
         XCTAssertTrue(
@@ -324,6 +333,7 @@ final class NativeToolRunnerTests: XCTestCase {
         XCTAssertEqual(NativeTool.tadpole.executableName, "tadpole.sh")
         XCTAssertEqual(NativeTool.reformat.executableName, "reformat.sh")
         XCTAssertTrue(NativeTool.samtools.isBundled)
+        XCTAssertFalse(NativeTool.fastp.isBundled)
         XCTAssertFalse(NativeTool.clumpify.isBundled)
         XCTAssertFalse(NativeTool.java.isBundled)
     }
@@ -336,6 +346,10 @@ final class NativeToolRunnerTests: XCTestCase {
         XCTAssertEqual(
             NativeTool.java.location,
             .managed(environment: "bbtools", executableName: "java")
+        )
+        XCTAssertEqual(
+            NativeTool.fastp.location,
+            .managed(environment: "fastp", executableName: "fastp")
         )
     }
 
@@ -359,8 +373,8 @@ final class NativeToolRunnerTests: XCTestCase {
     }
 
     func testAllCasesCount() {
-        // 22 bundled tools + 1 conda-installed (deacon) = 23 total cases
-        XCTAssertEqual(NativeTool.allCases.count, 23, "Should have 23 NativeTool cases (22 bundled + 1 conda-installed)")
+        // 20 bundled tools + 3 conda-managed tools = 23 total cases
+        XCTAssertEqual(NativeTool.allCases.count, 23, "Should have 23 NativeTool cases (20 bundled + 3 conda-managed)")
     }
 
     // MARK: - Error Tests

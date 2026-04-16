@@ -1,4 +1,4 @@
-// FASTQToolIntegrationTests.swift - End-to-end FASTQ processing tests using bundled tools
+// FASTQToolIntegrationTests.swift - End-to-end FASTQ processing tests using real tools
 // Copyright (c) 2024 Lungfish Contributors
 // SPDX-License-Identifier: MIT
 
@@ -8,7 +8,7 @@ import XCTest
 /// Integration tests for FASTQ processing operations using real bioinformatics tools.
 ///
 /// These tests exercise the complete tool execution pipeline:
-/// NativeToolRunner → bundled tool binary → file I/O verification.
+/// NativeToolRunner → resolved tool binary → file I/O verification.
 ///
 /// Test data is synthetic FASTQ created in-memory (20 reads, variable lengths,
 /// mixed quality) to avoid network dependencies.
@@ -143,14 +143,18 @@ final class FASTQToolIntegrationTests: XCTestCase {
     }
 
     private func bbToolsEnv(for tool: NativeTool) async throws -> [String: String] {
-        guard (try? await runner.toolPath(for: tool)) != nil else {
-            throw XCTSkip("Managed \(tool.rawValue) is not available")
-        }
+        try await requireManagedTool(tool)
 
         return CoreToolLocator.bbToolsEnvironment(
             homeDirectory: FileManager.default.homeDirectoryForCurrentUser,
             existingPath: ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
         )
+    }
+
+    private func requireManagedTool(_ tool: NativeTool) async throws {
+        guard (try? await runner.toolPath(for: tool)) != nil else {
+            throw XCTSkip("Managed \(tool.rawValue) is not available")
+        }
     }
 
     // MARK: - Seqkit Operations
@@ -248,6 +252,7 @@ final class FASTQToolIntegrationTests: XCTestCase {
     // MARK: - Fastp Operations
 
     func testFastpQualityTrim() async throws {
+        try await requireManagedTool(.fastp)
         let outputURL = tempDir.appendingPathComponent("qtrim.fastq")
         let result = try await runner.run(.fastp, arguments: [
             "-i", inputFastqURL.path,
@@ -267,6 +272,7 @@ final class FASTQToolIntegrationTests: XCTestCase {
     }
 
     func testFastpAdapterTrim() async throws {
+        try await requireManagedTool(.fastp)
         let outputURL = tempDir.appendingPathComponent("adapter_trim.fastq")
         let result = try await runner.run(.fastp, arguments: [
             "-i", inputFastqURL.path,
@@ -282,6 +288,7 @@ final class FASTQToolIntegrationTests: XCTestCase {
     }
 
     func testFastpFixedTrim() async throws {
+        try await requireManagedTool(.fastp)
         let outputURL = tempDir.appendingPathComponent("fixed_trim.fastq")
         let result = try await runner.run(.fastp, arguments: [
             "-i", inputFastqURL.path,
@@ -600,6 +607,7 @@ final class FASTQToolIntegrationTests: XCTestCase {
 
     func testSubsampleFilterPipeline() async throws {
         // Multi-step pipeline: subsample → length filter → quality trim
+        try await requireManagedTool(.fastp)
         let step1URL = tempDir.appendingPathComponent("step1_subsample.fastq")
         let step2URL = tempDir.appendingPathComponent("step2_lenfilter.fastq")
         let step3URL = tempDir.appendingPathComponent("step3_qtrim.fastq")

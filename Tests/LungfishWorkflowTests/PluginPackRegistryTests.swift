@@ -10,18 +10,19 @@ final class PluginPackRegistryTests: XCTestCase {
         XCTAssertEqual(pack.name, "Lungfish Tools")
         XCTAssertTrue(pack.isRequiredBeforeLaunch)
         XCTAssertTrue(pack.isActive)
-        XCTAssertEqual(pack.packages, ["nextflow", "snakemake", "bbtools"])
+        XCTAssertEqual(pack.packages, ["nextflow", "snakemake", "bbtools", "fastp"])
     }
 
     func testRequiredSetupPackDefinesPerToolChecks() {
         let pack = PluginPack.requiredSetupPack
         let environments = pack.toolRequirements.map(\.environment)
 
-        XCTAssertEqual(environments, ["nextflow", "snakemake", "bbtools"])
+        XCTAssertEqual(environments, ["nextflow", "snakemake", "bbtools", "fastp"])
         XCTAssertEqual(pack.toolRequirements[2].executables, [
             "clumpify.sh", "bbduk.sh", "bbmerge.sh",
             "repair.sh", "tadpole.sh", "reformat.sh", "java",
         ])
+        XCTAssertEqual(pack.toolRequirements[3].executables, ["fastp"])
     }
 
     func testActiveOptionalPacksOnlyExposeMetagenomics() {

@@ -11,7 +11,7 @@ usage() {
     cat <<'EOF'
 Usage: smoke-test-release-tools.sh <Lungfish.app> [--scrubber-db /path/to/human_filter.db]
 
-Verifies that managed core tools such as BBTools and Java are not bundled, then
+Verifies that managed core tools such as BBTools, Java, and fastp are not bundled, then
 runs tiny-input smoke tests against the remaining bundled tools and, when a
 human-scrubber database is available, against scrub.sh as well.
 EOF
@@ -69,6 +69,11 @@ fi
 
 if [ -e "$TOOLS_DIR/jre" ]; then
     echo "jre should not be bundled: $TOOLS_DIR/jre" >&2
+    exit 66
+fi
+
+if [ -e "$TOOLS_DIR/fastp" ]; then
+    echo "fastp should not be bundled: $TOOLS_DIR/fastp" >&2
     exit 66
 fi
 
@@ -159,7 +164,6 @@ run_portability_scan
 
 run_test samtools "$TOOLS_DIR/samtools" --version
 run_test seqkit "$TOOLS_DIR/seqkit" version
-run_test fastp "$TOOLS_DIR/fastp" --version
 
 if SCRUBBER_DB=$(find_scrubber_db); then
     run_test scrub \

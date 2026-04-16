@@ -220,7 +220,7 @@ final class CondaManagerTests: XCTestCase {
         XCTAssertTrue(pack!.packages.contains("fastqc"))
         XCTAssertTrue(pack!.packages.contains("multiqc"))
         XCTAssertTrue(pack!.packages.contains("trimmomatic"))
-        // fastp is a Tier 1 native tool, should NOT be in any conda pack
+        // fastp moved to the required setup pack and should not appear here
         XCTAssertFalse(pack!.packages.contains("fastp"))
     }
 
@@ -301,7 +301,7 @@ final class CondaManagerTests: XCTestCase {
 
     func testNoPackContainsNativeTierOneTools() {
         // These tools are bundled natively and should NOT appear in any conda pack
-        let nativeTools = ["samtools", "bcftools", "fastp", "seqkit", "cutadapt",
+        let nativeTools = ["samtools", "bcftools", "seqkit", "cutadapt",
                            "pigz", "bgzip", "tabix"]
         for pack in PluginPack.builtIn {
             for tool in nativeTools {

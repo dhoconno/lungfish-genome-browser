@@ -30,6 +30,7 @@ final class PluginPackStatusServiceTests: XCTestCase {
         XCTAssertEqual(status.pack.id, "lungfish-tools")
         XCTAssertEqual(status.state, .needsInstall)
         XCTAssertEqual(status.toolStatuses.first(where: { $0.requirement.environment == "bbtools" })?.isReady, false)
+        XCTAssertEqual(status.toolStatuses.first(where: { $0.requirement.environment == "fastp" })?.isReady, false)
     }
 
     func testRequiredPackReadyWhenAllCoreExecutablesExist() async throws {
@@ -138,7 +139,7 @@ final class PluginPackStatusServiceTests: XCTestCase {
         try await service.install(pack: .requiredSetupPack, reinstall: true, progress: nil)
 
         let calls = await recorder.recordedCalls()
-        XCTAssertEqual(calls.map(\.environment), ["nextflow", "snakemake", "bbtools"])
+        XCTAssertEqual(calls.map(\.environment), ["nextflow", "snakemake", "bbtools", "fastp"])
         XCTAssertTrue(calls.allSatisfy(\.reinstall))
     }
 

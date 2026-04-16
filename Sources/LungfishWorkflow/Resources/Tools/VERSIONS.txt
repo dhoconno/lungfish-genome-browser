@@ -11,7 +11,6 @@ Versions:
 - UCSC tools (bedToBigBed, bedGraphToBigWig): 469 (MIT license)
 - pigz: 2.8 (zlib license)
 - seqkit: 2.9.0 (MIT license)
-- fastp: 1.1.0 (MIT license)
 - vsearch: 2.29.2 (BSD-2-Clause; dual-licensed, BSD-2-Clause elected)
 - cutadapt: 4.9 (MIT license)
 
@@ -24,7 +23,6 @@ Source URLs:
 - htslib: https://github.com/samtools/htslib/releases/download/1.22.1/htslib-1.22.1.tar.bz2
 - UCSC tools: https://hgdownload.soe.ucsc.edu/admin/exe/macOSX.x86_64/
 - seqkit: https://github.com/shenwei356/seqkit
-- fastp: https://github.com/OpenGene/fastp
 - vsearch: https://github.com/torognes/vsearch
 - cutadapt: https://github.com/marcelm/cutadapt
 
@@ -32,6 +30,5 @@ Licenses:
 - samtools/bcftools/htslib: https://github.com/samtools/samtools/blob/develop/LICENSE
 - UCSC tools: https://genome-source.gi.ucsc.edu/gitlist/kent.git/blob/master/src/LICENSE
 - seqkit: https://github.com/shenwei356/seqkit/blob/master/LICENSE
-- fastp: https://github.com/OpenGene/fastp/blob/master/LICENSE
 - vsearch: https://github.com/torognes/vsearch/blob/master/LICENSE.txt
 - cutadapt: https://github.com/marcelm/cutadapt/blob/main/LICENSE

@@ -118,11 +118,11 @@ public extension PluginPack {
             name: "Lungfish Tools",
             description: "Needed before you can create or open a project",
             sfSymbol: "checklist",
-            packages: ["nextflow", "snakemake", "bbtools"],
+            packages: ["nextflow", "snakemake", "bbtools", "fastp"],
             category: "Required Setup",
             kind: .requiredSetup,
             isActive: true,
-            requirements: [.package("nextflow"), .package("snakemake"), .bbtools],
+            requirements: [.package("nextflow"), .package("snakemake"), .bbtools, .package("fastp")],
             estimatedSizeMB: 900
         ),
         PluginPack(
