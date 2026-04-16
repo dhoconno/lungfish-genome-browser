@@ -59,6 +59,11 @@ public final class PluginManagerWindowController: NSWindowController, NSToolbarD
         showWindow(tab: tab)
     }
 
+    public static func show(packID: String) {
+        showWindow(tab: .packs)
+        shared?.viewModel.focusPack(packID)
+    }
+
     /// Internal implementation shared by both `show()` overloads.
     private static func showWindow(tab: PluginManagerViewModel.Tab?) {
         if shared == nil {

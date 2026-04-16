@@ -472,24 +472,69 @@ private struct PacksTabView: View {
     @Bindable var viewModel: PluginManagerViewModel
 
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 12) {
-                ForEach(viewModel.packs) { pack in
-                    PackCard(
-                        pack: pack,
-                        installedNames: viewModel.installedEnvironmentNames,
-                        isInstalling: viewModel.installingPacks.contains(pack.id),
-                        progressMessage: viewModel.packProgressMessage[pack.id],
-                        onInstallAll: {
-                            viewModel.installPack(pack)
-                        },
-                        onRemoveAll: {
-                            viewModel.removePack(pack)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    if let required = viewModel.requiredSetupPack {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Required Setup")
+                                .font(.headline)
+
+                            PackCard(
+                                status: required,
+                                installedNames: viewModel.installedEnvironmentNames,
+                                isInstalling: viewModel.installingPacks.contains(required.pack.id),
+                                progressMessage: viewModel.packProgressMessage[required.pack.id],
+                                onInstallAll: {
+                                    viewModel.installPack(
+                                        required.pack,
+                                        reinstall: required.state == .ready
+                                    )
+                                },
+                                onRemoveAll: nil
+                            )
+                            .id(required.pack.id)
                         }
-                    )
+                    }
+
+                    if !viewModel.optionalPackStatuses.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Optional Tools")
+                                .font(.headline)
+
+                            ForEach(viewModel.optionalPackStatuses) { status in
+                                PackCard(
+                                    status: status,
+                                    installedNames: viewModel.installedEnvironmentNames,
+                                    isInstalling: viewModel.installingPacks.contains(status.pack.id),
+                                    progressMessage: viewModel.packProgressMessage[status.pack.id],
+                                    onInstallAll: {
+                                        viewModel.installPack(status.pack)
+                                    },
+                                    onRemoveAll: {
+                                        viewModel.removePack(status.pack)
+                                    }
+                                )
+                                .id(status.pack.id)
+                            }
+                        }
+                    }
                 }
+                .padding(16)
             }
-            .padding(16)
+            .onAppear {
+                scrollToFocusedPack(with: proxy)
+            }
+            .onChange(of: viewModel.focusedPackID) { _, _ in
+                scrollToFocusedPack(with: proxy)
+            }
+        }
+    }
+
+    private func scrollToFocusedPack(with proxy: ScrollViewProxy) {
+        guard let focusedPackID = viewModel.focusedPackID else { return }
+        withAnimation {
+            proxy.scrollTo(focusedPackID, anchor: .top)
         }
     }
 }
@@ -499,21 +544,25 @@ private struct PacksTabView: View {
 /// A card view for a single plugin pack.
 private struct PackCard: View {
 
-    let pack: PluginPack
+    let status: PluginPackStatus
     let installedNames: Set<String>
     let isInstalling: Bool
     let progressMessage: String?
     let onInstallAll: () -> Void
-    let onRemoveAll: () -> Void
+    let onRemoveAll: (() -> Void)?
+
+    private var pack: PluginPack {
+        status.pack
+    }
 
     /// How many of this pack's packages are already installed.
     private var installedCount: Int {
         pack.packages.filter { installedNames.contains($0) }.count
     }
 
-    /// Whether all packages in the pack are installed.
-    private var allInstalled: Bool {
-        installedCount == pack.packages.count
+    /// Whether this pack is currently ready to use.
+    private var isReady: Bool {
+        status.state == .ready
     }
 
     var body: some View {
@@ -561,7 +610,18 @@ private struct PackCard: View {
                         }
                     }
                     .frame(width: 140)
-                } else if allInstalled {
+                } else if pack.isRequiredBeforeLaunch {
+                    Button {
+                        onInstallAll()
+                    } label: {
+                        Label(
+                            isReady ? "Reinstall" : "Install",
+                            systemImage: isReady ? "arrow.clockwise" : "arrow.down.circle.fill"
+                        )
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.borderedProminent)
+                } else if isReady, let onRemoveAll {
                     Button(role: .destructive) {
                         onRemoveAll()
                     } label: {
