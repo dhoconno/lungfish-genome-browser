@@ -87,9 +87,9 @@ struct UnifiedMetagenomicsWizard: View {
         /// The underlying tool name.
         var toolName: String {
             switch self {
-            case .classification: return "Kraken2 / Bracken"
-            case .viralDetection: return "EsViritu"
-            case .clinicalTriage: return "TaxTriage (Nextflow)"
+            case .classification: return "Classify & Profile (Kraken2)"
+            case .viralDetection: return "Detect Viruses (EsViritu)"
+            case .clinicalTriage: return "Detect Pathogens (TaxTriage)"
             }
         }
 

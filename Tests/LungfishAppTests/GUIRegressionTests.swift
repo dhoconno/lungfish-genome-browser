@@ -467,9 +467,38 @@ final class UnifiedWizardTests: XCTestCase {
         XCTAssertEqual(types.count, 3)
 
         let typeMap = Dictionary(uniqueKeysWithValues: types.map { ($0, $0.toolName) })
-        XCTAssertEqual(typeMap[.classification], "Kraken2 / Bracken")
-        XCTAssertEqual(typeMap[.viralDetection], "EsViritu")
-        XCTAssertEqual(typeMap[.clinicalTriage], "TaxTriage (Nextflow)")
+        XCTAssertEqual(typeMap[.classification], "Classify & Profile (Kraken2)")
+        XCTAssertEqual(typeMap[.viralDetection], "Detect Viruses (EsViritu)")
+        XCTAssertEqual(typeMap[.clinicalTriage], "Detect Pathogens (TaxTriage)")
+    }
+
+    /// Verifies the unified wizard strings are aligned with the new classifier terminology.
+    func testUnifiedWizardToolNamesUseUnifiedClassifierCopy() {
+        XCTAssertEqual(
+            UnifiedMetagenomicsWizard.AnalysisType.classification.toolName,
+            "Classify & Profile (Kraken2)"
+        )
+        XCTAssertEqual(
+            UnifiedMetagenomicsWizard.AnalysisType.viralDetection.toolName,
+            "Detect Viruses (EsViritu)"
+        )
+        XCTAssertEqual(
+            UnifiedMetagenomicsWizard.AnalysisType.clinicalTriage.toolName,
+            "Detect Pathogens (TaxTriage)"
+        )
+    }
+
+    /// Verifies the FASTQ dataset controller source has the unified classifier labels.
+    func testFASTQDatasetViewControllerUsesUnifiedClassifierCopy() throws {
+        let source = try String(
+            contentsOf: URL(
+                fileURLWithPath: "/Users/dho/Documents/lungfish-genome-browser/Sources/LungfishApp/Views/Viewer/FASTQDatasetViewController.swift"
+            ),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("case .comprehensiveTriage: return \"Detect Pathogens (TaxTriage)\""))
+        XCTAssertFalse(source.contains("Clinical Triage (TaxTriage)"))
     }
 
     /// Verifies analysis types have non-empty descriptions and runtime estimates.
