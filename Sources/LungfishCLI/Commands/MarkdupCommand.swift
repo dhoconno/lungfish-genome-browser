@@ -28,7 +28,7 @@ struct MarkdupCommand: AsyncParsableCommand {
         let fm = FileManager.default
 
         guard let samtoolsPath = locateSamtools() else {
-            throw ValidationError("samtools binary not found on PATH")
+            throw ValidationError("samtools binary not found")
         }
 
         var isDir: ObjCBool = false
@@ -101,6 +101,17 @@ struct MarkdupCommand: AsyncParsableCommand {
     }
 
     private func locateSamtools() -> String? {
-        SamtoolsLocator.locate(searchPath: ProcessInfo.processInfo.environment["PATH"])
+        SamtoolsLocator.locate()
+    }
+
+    static func locateSamtools(homeDirectory: URL = currentHomeDirectory()) -> String? {
+        SamtoolsLocator.locate(homeDirectory: homeDirectory, searchPath: nil)
+    }
+
+    private static func currentHomeDirectory() -> URL {
+        if let home = ProcessInfo.processInfo.environment["HOME"], !home.isEmpty {
+            return URL(fileURLWithPath: home, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
     }
 }

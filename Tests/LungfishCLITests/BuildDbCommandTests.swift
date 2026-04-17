@@ -15,6 +15,21 @@ final class BuildDbCommandTests: XCTestCase {
         return dir
     }
 
+    private func makeManagedSamtoolsHome() throws -> (home: URL, samtoolsPath: URL) {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory
+            .appendingPathComponent("BuildDbManagedHome-\(UUID().uuidString)", isDirectory: true)
+        let samtoolsPath = home
+            .appendingPathComponent(".lungfish/conda/envs/samtools/bin/samtools", isDirectory: false)
+        try fm.createDirectory(at: samtoolsPath.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        #!/bin/sh
+        exit 0
+        """.write(to: samtoolsPath, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: samtoolsPath.path)
+        return (home, samtoolsPath)
+    }
+
     /// Locates the taxtriage-mini fixture directory by walking up from the source file.
     private func findFixtureDir(_ name: String) -> URL {
         var url = URL(fileURLWithPath: #filePath)
@@ -92,6 +107,14 @@ final class BuildDbCommandTests: XCTestCase {
         let meta = try db.fetchMetadata()
         XCTAssertEqual(meta["tool"], "taxtriage")
         XCTAssertNotNil(meta["created_at"])
+    }
+
+    func testLocateSamtoolsPrefersManagedHome() throws {
+        let fixture = try makeManagedSamtoolsHome()
+        defer { try? FileManager.default.removeItem(at: fixture.home) }
+
+        let resolved = BuildDbCommand.locateSamtools(homeDirectory: fixture.home)
+        XCTAssertEqual(resolved, fixture.samtoolsPath.path)
     }
 
     /// Verifies that the command skips building when a database already exists

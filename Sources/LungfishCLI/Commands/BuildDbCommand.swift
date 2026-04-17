@@ -36,9 +36,9 @@ struct BuildDbCommand: AsyncParsableCommand {
 
 // MARK: - Unique Reads Computation (samtools dedup)
 
-/// Locates a samtools binary on the system.
+/// Locates a samtools binary using the managed-first locator.
 private func findSamtools() -> String? {
-    SamtoolsLocator.locate(searchPath: ProcessInfo.processInfo.environment["PATH"])
+    SamtoolsLocator.locate()
 }
 
 /// Updates the `unique_reads` column in a SQLite database for rows with BAM paths.
@@ -251,6 +251,19 @@ private func updateUniqueReadsInDB(
     }
     sqlite3_exec(db, "COMMIT", nil, nil, nil)
     if !quiet { print("  Updated read counts for \(updated)/\(rowsToProcess.count) organisms") }
+}
+
+extension BuildDbCommand {
+    static func locateSamtools(homeDirectory: URL = currentHomeDirectory()) -> String? {
+        SamtoolsLocator.locate(homeDirectory: homeDirectory, searchPath: nil)
+    }
+
+    private static func currentHomeDirectory() -> URL {
+        if let home = ProcessInfo.processInfo.environment["HOME"], !home.isEmpty {
+            return URL(fileURLWithPath: home, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+    }
 }
 
 // MARK: - TaxTriage Subcommand

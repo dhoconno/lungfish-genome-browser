@@ -7,20 +7,6 @@ import XCTest
 @testable import LungfishIO
 
 final class BuildDbCommandMarkdupTests: XCTestCase {
-
-    private func locateSamtools() -> String? {
-        let candidates = [
-            "/opt/homebrew/Cellar/samtools/1.23/bin/samtools",
-            "/opt/homebrew/bin/samtools",
-            "/usr/local/bin/samtools",
-            "/usr/bin/samtools",
-        ]
-        for p in candidates where FileManager.default.fileExists(atPath: p) {
-            return p
-        }
-        return nil
-    }
-
     private func findFixtureDir(_ name: String) -> URL {
         var url = URL(fileURLWithPath: #filePath)
         while url.path != "/" {
@@ -40,9 +26,32 @@ final class BuildDbCommandMarkdupTests: XCTestCase {
         return dir
     }
 
+    private func makeManagedSamtoolsHome() throws -> (home: URL, samtoolsPath: URL) {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory
+            .appendingPathComponent("BuildDbMarkdupManagedHome-\(UUID().uuidString)", isDirectory: true)
+        let samtoolsPath = home
+            .appendingPathComponent(".lungfish/conda/envs/samtools/bin/samtools", isDirectory: false)
+        try fm.createDirectory(at: samtoolsPath.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try """
+        #!/bin/sh
+        exit 0
+        """.write(to: samtoolsPath, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: samtoolsPath.path)
+        return (home, samtoolsPath)
+    }
+
+    func testLocateSamtoolsPrefersManagedHome() throws {
+        let fixture = try makeManagedSamtoolsHome()
+        defer { try? FileManager.default.removeItem(at: fixture.home) }
+
+        let resolved = MarkdupCommand.locateSamtools(homeDirectory: fixture.home)
+        XCTAssertEqual(resolved, fixture.samtoolsPath.path)
+    }
+
     /// build-db taxtriage should run markdup on all BAMs in the result directory.
     func testBuildDbTaxTriageRunsMarkdup() async throws {
-        guard let samtoolsPath = locateSamtools() else {
+        guard let samtoolsPath = SamtoolsLocator.locate() else {
             XCTFail("samtools not available")
             return
         }
