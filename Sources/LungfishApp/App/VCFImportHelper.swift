@@ -831,7 +831,6 @@ public enum VCFImportHelper {
         let cwd = fm.currentDirectoryPath
         candidates.append(cwd + "/Sources/LungfishWorkflow/Resources/Tools/\(tool)")
         candidates.append("/usr/local/bin/\(tool)")
-        candidates.append("/opt/homebrew/bin/\(tool)")
         candidates.append("/usr/bin/\(tool)")
 
         if let pathEnv = ProcessInfo.processInfo.environment["PATH"] {

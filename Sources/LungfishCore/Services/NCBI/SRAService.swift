@@ -397,7 +397,6 @@ public actor SRAService {
         // Common installation paths
         let searchPaths = [
             "/usr/local/bin",
-            "/opt/homebrew/bin",
             "~/sratoolkit/bin",
             "/usr/bin",
             "/Applications/sratoolkit.app/Contents/MacOS/bin"
@@ -593,7 +592,7 @@ public enum SRAError: Error, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .toolkitNotFound:
-            return "SRA Toolkit not found. Install with: brew install sratoolkit"
+            return "SRA Toolkit not found. Install it and ensure `prefetch` is available on PATH."
         case .downloadFailed(let message):
             return "Download failed: \(message)"
         case .conversionFailed(let message):

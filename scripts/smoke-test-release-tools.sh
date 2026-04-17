@@ -9,11 +9,11 @@ set -euo pipefail
 
 usage() {
     cat <<'EOF'
-Usage: smoke-test-release-tools.sh <Lungfish.app> [--scrubber-db /path/to/human_filter.db]
+Usage: smoke-test-release-tools.sh <Lungfish.app> [--portability-only]
 
-Verifies that managed core tools such as BBTools, Java, and fastp are not bundled, then
-runs tiny-input smoke tests against the remaining bundled tools and, when a
-human-scrubber database is available, against scrub.sh as well.
+Verifies that managed core tools and retired scrubber binaries are not bundled,
+scans the packaged app for leaked build/Homebrew paths, and optionally runs
+tiny-input smoke tests against the remaining bundled tools.
 EOF
 }
 
@@ -24,18 +24,12 @@ fi
 
 APP_PATH="$1"
 shift
-
-SCRUBBER_DB="${LUNGFISH_SCRUBBER_DB:-}"
+PORTABILITY_ONLY=0
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --scrubber-db)
-            shift
-            if [ "$#" -eq 0 ]; then
-                echo "missing value for --scrubber-db" >&2
-                exit 64
-            fi
-            SCRUBBER_DB="$1"
+        --portability-only)
+            PORTABILITY_ONLY=1
             ;;
         -h|--help)
             usage
@@ -77,29 +71,10 @@ if [ -e "$TOOLS_DIR/fastp" ]; then
     exit 66
 fi
 
-find_scrubber_db() {
-    if [ -n "$SCRUBBER_DB" ] && [ -f "$SCRUBBER_DB" ]; then
-        printf '%s\n' "$SCRUBBER_DB"
-        return 0
-    fi
-
-    local candidate
-    for candidate in \
-        "$HOME/.lungfish/databases/human-scrubber" \
-        "$HOME/Library/Application Support/Lungfish/databases/human-scrubber"
-    do
-        if [ -d "$candidate" ]; then
-            local found
-            found=$(find "$candidate" -maxdepth 2 -type f -name 'human_filter.db*' | head -n 1 || true)
-            if [ -n "$found" ]; then
-                printf '%s\n' "$found"
-                return 0
-            fi
-        fi
-    done
-
-    return 1
-}
+if [ -e "$TOOLS_DIR/scrubber/bin/aligns_to" ]; then
+    echo "aligns_to should not be bundled: $TOOLS_DIR/scrubber/bin/aligns_to" >&2
+    exit 66
+fi
 
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -146,6 +121,10 @@ run_portability_scan() {
     local leak_patterns=(
         "/Users/dho"
         ".build/xcode-cli-release"
+        "/opt/homebrew"
+        "/opt/homebrew/Cellar"
+        "/usr/local/Cellar"
+        "/usr/local/Homebrew"
     )
 
     local pattern
@@ -162,15 +141,9 @@ run_portability_scan() {
 
 run_portability_scan
 
+if [ "$PORTABILITY_ONLY" -eq 1 ]; then
+    exit 0
+fi
+
 run_test samtools "$TOOLS_DIR/samtools" --version
 run_test seqkit "$TOOLS_DIR/seqkit" version
-
-if SCRUBBER_DB=$(find_scrubber_db); then
-    run_test scrub \
-        "$TOOLS_DIR/scrubber/scripts/scrub.sh" \
-        -i "$TMP_DIR/single.fq" \
-        -o "$TMP_DIR/scrub.fq" \
-        -d "$SCRUBBER_DB"
-else
-    printf 'SKIP scrub (no installed human_filter.db found)\n'
-fi

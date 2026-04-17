@@ -10,9 +10,9 @@ public enum SamtoolsLocator {
     /// Returns the first executable samtools path that can be found.
     ///
     /// Search order:
-    /// 1. Bundled app resources.
-    /// 2. Common system locations.
-    /// 3. Directories from `searchPath` (defaults to the current environment's `PATH`).
+    /// 1. Directories from `searchPath` (defaults to the current environment's `PATH`).
+    /// 2. Bundled app resources.
+    /// 3. Stable system locations.
     public static func locate(searchPath: String? = ProcessInfo.processInfo.environment["PATH"]) -> String? {
         let fm = FileManager.default
 
@@ -31,10 +31,8 @@ public enum SamtoolsLocator {
         ]
 
         let fixedCandidates = [
-            "/opt/homebrew/Cellar/samtools/1.23/bin/samtools",
-            "/opt/homebrew/bin/samtools",
-            "/usr/local/bin/samtools",
             "/usr/bin/samtools",
+            "/usr/local/bin/samtools",
         ]
 
         for candidate in bundledCandidates.compactMap({ $0 }) + fixedCandidates {

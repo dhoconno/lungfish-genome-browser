@@ -37,34 +37,8 @@ struct BuildDbCommand: AsyncParsableCommand {
 // MARK: - Unique Reads Computation (samtools dedup)
 
 /// Locates a samtools binary on the system.
-///
-/// Checks common Homebrew and system paths, then falls back to `which` via PATH.
 private func findSamtools() -> String? {
-    let paths = [
-        "/opt/homebrew/bin/samtools",
-        "/usr/local/bin/samtools",
-        "/usr/bin/samtools",
-    ]
-    for path in paths {
-        if FileManager.default.fileExists(atPath: path) {
-            return path
-        }
-    }
-    // Try PATH
-    let which = Process()
-    which.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-    which.arguments = ["samtools"]
-    let pipe = Pipe()
-    which.standardOutput = pipe
-    which.standardError = FileHandle.nullDevice
-    try? which.run()
-    which.waitUntilExit()
-    let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-    if let path = output, !path.isEmpty, FileManager.default.fileExists(atPath: path) {
-        return path
-    }
-    return nil
+    SamtoolsLocator.locate(searchPath: ProcessInfo.processInfo.environment["PATH"])
 }
 
 /// Updates the `unique_reads` column in a SQLite database for rows with BAM paths.

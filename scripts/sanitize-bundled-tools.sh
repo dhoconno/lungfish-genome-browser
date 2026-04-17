@@ -135,6 +135,19 @@ rewrite_embedded_builder_paths() {
         "$path" \
         "/Users/dho/Documents/ncbi-vdb/" \
         "/ncbi-vdb-src/"
+
+    rewrite_embedded_path_prefix \
+        "$path" \
+        "/opt/homebrew/" \
+        "/opt/portable/"
+    rewrite_embedded_path_prefix \
+        "$path" \
+        "/usr/local/Cellar/" \
+        "/usr/local/pkgdir/"
+    rewrite_embedded_path_prefix \
+        "$path" \
+        "/usr/local/etc/" \
+        "/usr/local/cfg/"
 }
 
 sanitize_file() {

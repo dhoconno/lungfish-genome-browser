@@ -859,7 +859,6 @@ public actor TaxTriagePipeline {
         let dockerPaths = [
             condaRoot.appendingPathComponent("bin").path,
             "/usr/local/bin",
-            "/opt/homebrew/bin",
         ]
         let existingPaths = (environment["PATH"] ?? "")
             .split(separator: ":")

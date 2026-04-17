@@ -171,6 +171,11 @@ fi
 
 /usr/bin/install -m 755 "$CLI_SOURCE" "$CLI_DEST"
 /bin/bash scripts/sanitize-bundled-tools.sh "$APP_PATH/Contents/MacOS" "$WORKFLOW_TOOLS_DIR"
+rm -f "$WORKFLOW_TOOLS_DIR/scrubber/bin/aligns_to"
+
+# Fail before codesign/notarization work if release packaging leaked build or
+# Homebrew paths back into the app bundle.
+scripts/smoke-test-release-tools.sh "$APP_PATH" --portability-only
 
 /usr/bin/codesign --force --sign "$SIGNING_IDENTITY" \
     --options runtime \

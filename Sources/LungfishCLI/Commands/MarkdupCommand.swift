@@ -101,17 +101,6 @@ struct MarkdupCommand: AsyncParsableCommand {
     }
 
     private func locateSamtools() -> String? {
-        let candidates = [
-            "/opt/homebrew/Cellar/samtools/1.23/bin/samtools",
-            "/opt/homebrew/bin/samtools",
-            "/usr/local/bin/samtools",
-            "/usr/bin/samtools",
-        ]
-        for p in candidates {
-            if FileManager.default.fileExists(atPath: p) {
-                return p
-            }
-        }
-        return nil
+        SamtoolsLocator.locate(searchPath: ProcessInfo.processInfo.environment["PATH"])
     }
 }

@@ -182,8 +182,8 @@ struct ReleaseBuildConfigurationTests {
         #expect(sanitizeBlock.contains("LUNGFISH_SKIP_SANITIZE_BUNDLED_TOOLS"))
     }
 
-    @Test("Release smoke test asserts managed tools are absent from the bundle")
-    func releaseSmokeTestAssertsManagedToolsAreAbsentFromTheBundle() throws {
+    @Test("Release smoke test asserts managed and retired tools are absent from the bundle")
+    func releaseSmokeTestAssertsManagedAndRetiredToolsAreAbsentFromTheBundle() throws {
         let script = try String(
             contentsOf: Self.repositoryRoot()
                 .appendingPathComponent("scripts/smoke-test-release-tools.sh"),
@@ -193,10 +193,11 @@ struct ReleaseBuildConfigurationTests {
         #expect(script.contains(#"if [ -e "$TOOLS_DIR/bbtools" ]"#))
         #expect(script.contains(#"if [ -e "$TOOLS_DIR/jre" ]"#))
         #expect(script.contains(#"if [ -e "$TOOLS_DIR/fastp" ]"#))
+        #expect(script.contains(#"if [ -e "$TOOLS_DIR/scrubber/bin/aligns_to" ]"#))
         #expect(script.contains("run_test samtools "))
         #expect(script.contains("run_test seqkit "))
         #expect(script.contains("run_test fastp ") == false)
-        #expect(script.contains("run_test scrub "))
+        #expect(script.contains("run_test scrub ") == false)
     }
 
     @Test("Notarized DMG release script no longer signs JRE launchers")
@@ -221,6 +222,36 @@ struct ReleaseBuildConfigurationTests {
 
         #expect(script.contains("command -v rg"))
         #expect(script.contains("/usr/bin/rg") == false)
+    }
+
+    @Test("Release smoke test scans for Homebrew path leaks")
+    func releaseSmokeTestScansForHomebrewPathLeaks() throws {
+        let script = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent("scripts/smoke-test-release-tools.sh"),
+            encoding: .utf8
+        )
+
+        #expect(script.contains(#""/opt/homebrew""#))
+        #expect(script.contains(#""/usr/local/Cellar""#))
+        #expect(script.contains(#""/usr/local/Homebrew""#))
+    }
+
+    @Test("Production sources avoid hardcoded Homebrew path fallbacks")
+    func productionSourcesAvoidHardcodedHomebrewPathFallbacks() throws {
+        let repositoryRoot = Self.repositoryRoot()
+        let sourcesRoot = repositoryRoot.appendingPathComponent("Sources")
+        let enumerator = FileManager.default.enumerator(
+            at: sourcesRoot,
+            includingPropertiesForKeys: nil
+        )
+
+        while let fileURL = enumerator?.nextObject() as? URL {
+            guard fileURL.pathExtension == "swift" else { continue }
+            let source = try String(contentsOf: fileURL, encoding: .utf8)
+            #expect(source.contains("/opt/homebrew") == false, "\(fileURL.lastPathComponent) still hardcodes /opt/homebrew")
+            #expect(source.contains("/usr/local/Cellar") == false, "\(fileURL.lastPathComponent) still hardcodes /usr/local/Cellar")
+        }
     }
 
     @Test("Notarized DMG release script archives signs notarizes and staples")
@@ -301,6 +332,50 @@ struct ReleaseBuildConfigurationTests {
         }
 
         #expect(sanitizeIndex < codesignIndex)
+    }
+
+    @Test("Notarized DMG release script removes aligns_to before signing")
+    func notarizedDMGReleaseScriptRemovesAlignsToBeforeSigning() throws {
+        let script = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent("scripts/release/build-notarized-dmg.sh"),
+            encoding: .utf8
+        )
+
+        let removalMarker = #"rm -f "$WORKFLOW_TOOLS_DIR/scrubber/bin/aligns_to""#
+        let lines = script.split(separator: "\n", omittingEmptySubsequences: false)
+        guard let removalIndex = lines.firstIndex(where: { $0.contains(removalMarker) }),
+              let codesignIndex = lines.enumerated().first(where: { _, line in
+                  line.contains(#"/usr/bin/codesign --force --sign "$SIGNING_IDENTITY""#)
+              })?.offset
+        else {
+            Issue.record("expected aligns_to removal before first codesign")
+            return
+        }
+
+        #expect(removalIndex < codesignIndex)
+    }
+
+    @Test("Notarized DMG release script runs portability scan before signing")
+    func notarizedDMGReleaseScriptRunsPortabilityScanBeforeSigning() throws {
+        let script = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent("scripts/release/build-notarized-dmg.sh"),
+            encoding: .utf8
+        )
+
+        let scanMarker = #"scripts/smoke-test-release-tools.sh "$APP_PATH" --portability-only"#
+        let lines = script.split(separator: "\n", omittingEmptySubsequences: false)
+        guard let scanIndex = lines.firstIndex(where: { $0.contains(scanMarker) }),
+              let codesignIndex = lines.enumerated().first(where: { _, line in
+                  line.contains(#"/usr/bin/codesign --force --sign "$SIGNING_IDENTITY""#)
+              })?.offset
+        else {
+            Issue.record("expected pre-sign portability scan before first codesign")
+            return
+        }
+
+        #expect(scanIndex < codesignIndex)
     }
 
     @Test("Notarized DMG release script omits JRE launcher entitlements")
@@ -393,6 +468,9 @@ struct ReleaseBuildConfigurationTests {
         let embeddedPaths = [
             "prefix\0/Users/dho/Documents/lungfish-genome-browser/.build/xcode-cli-release/checkouts/test\0",
             "prefix\0/Users/dho/Documents/ncbi-vdb/libs/vfs/resolver.c\0",
+            "prefix\0/usr/local/Cellar/openssl@3/3.4.0/lib/engines-3\0",
+            "prefix\0/usr/local/etc/openssl@3\0",
+            "prefix\0/opt/homebrew/bin\0",
         ].joined()
         let handle = try FileHandle(forWritingTo: vendoredBinaryURL)
         try handle.seekToEnd()
@@ -405,6 +483,9 @@ struct ReleaseBuildConfigurationTests {
         let sanitized = String(decoding: try Data(contentsOf: vendoredBinaryURL), as: UTF8.self)
         #expect(sanitized.contains("/Users/dho") == false)
         #expect(sanitized.contains(".build/xcode-cli-release") == false)
+        #expect(sanitized.contains("/usr/local/Cellar") == false)
+        #expect(sanitized.contains("/usr/local/etc/openssl@3") == false)
+        #expect(sanitized.contains("/opt/homebrew") == false)
     }
 
     @Test("Release tools sanitizer scrubs builder paths from standalone executables")

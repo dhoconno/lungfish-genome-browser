@@ -601,7 +601,6 @@ extension ProcessManager {
         // Check common locations first
         let commonPaths = [
             "/usr/local/bin",
-            "/opt/homebrew/bin",
             "/usr/bin",
             "/bin"
         ]
