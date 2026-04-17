@@ -108,6 +108,8 @@ Selecting that action opens a dedicated storage-location sheet that explains:
 
 If the user does nothing, setup continues using the default storage root.
 
+The destination picker should prevent invalid choices from being committed. The user should not be able to confirm a location that Lungfish already knows will fail.
+
 ### Preferences
 
 After setup, the same feature should live in app preferences as an app-wide `Storage` section.
@@ -186,6 +188,25 @@ The first version should only allow destinations that satisfy all of the followi
 - path contains no spaces anywhere in the fully resolved path
 - volume is currently mounted and reachable
 - path is not nested inside the app bundle, temp directories, or project folders
+
+### Destination Picker Behavior
+
+The destination-selection UI must be proactive, not permissive.
+
+Requirements:
+
+- the picker only allows directory selection
+- the confirmation action stays disabled until the selected path passes validation
+- if the platform file picker cannot fully hide invalid folders in advance, Lungfish must still reject them immediately on selection rather than allowing the user to proceed
+- validation must run on the fully resolved path, not just the displayed folder name
+- symlink resolution must be included before checking for spaces, writability, and filesystem support
+
+Examples of destinations that must be rejected before migration can begin:
+
+- `/Volumes/My SSD/Lungfish`
+- `/Users/name/Desktop/Lungfish Tools`
+- any directory whose resolved path traverses a parent path with spaces
+- any unmounted or non-local target
 
 Recommended support policy:
 
@@ -451,6 +472,7 @@ The storage sheet should:
 - explain consequences in plain language
 - avoid jargon such as `conda root prefix`
 - present one clear recommended choice
+- prevent users from committing destinations that are known to be invalid
 - show progress during migration or installation
 - keep destructive cleanup separate from the initial migration action
 
