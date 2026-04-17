@@ -5,19 +5,42 @@
 import XCTest
 @testable import LungfishCore
 
-@MainActor
-final class AppSettingsTests: XCTestCase {
+@MainActor private var appSettingsTestsOriginalManagedStorageStore: ManagedStorageConfigStore?
+@MainActor private var appSettingsTestsManagedStorageHomeDirectory: URL?
 
+final class AppSettingsTests: XCTestCase {
     override func setUpWithError() throws {
         try super.setUpWithError()
-        // Clear any persisted settings before each test
-        UserDefaults.standard.removeObject(forKey: "com.lungfish.appSettings")
-        // Reset shared instance to defaults
-        AppSettings.shared.resetToDefaults()
+        MainActor.assumeIsolated {
+            // Clear any persisted settings before each test
+            UserDefaults.standard.removeObject(forKey: "com.lungfish.appSettings")
+            // Reset shared instance to defaults
+            AppSettings.shared.resetToDefaults()
+
+            appSettingsTestsOriginalManagedStorageStore = ManagedStorageConfigStore.shared
+            let home = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            try? FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+            appSettingsTestsManagedStorageHomeDirectory = home
+            ManagedStorageConfigStore.shared = ManagedStorageConfigStore(homeDirectory: home)
+        }
+    }
+
+    override func tearDownWithError() throws {
+        MainActor.assumeIsolated {
+            ManagedStorageConfigStore.shared = appSettingsTestsOriginalManagedStorageStore ?? ManagedStorageConfigStore()
+            if let managedStorageHomeDirectory = appSettingsTestsManagedStorageHomeDirectory {
+                try? FileManager.default.removeItem(at: managedStorageHomeDirectory)
+            }
+            appSettingsTestsManagedStorageHomeDirectory = nil
+            appSettingsTestsOriginalManagedStorageStore = nil
+        }
+        try super.tearDownWithError()
     }
 
     // MARK: - Default Values
 
+    @MainActor
     func testDefaultValues() {
         let settings = AppSettings.shared
         XCTAssertEqual(settings.defaultZoomWindow, 10_000)
@@ -36,8 +59,24 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.defaultAnnotationSpacing, 2)
     }
 
+    @MainActor
+    func testManagedStorageDisplayStateUsesSharedConfigStore() throws {
+        let settings = AppSettings.shared
+        let expectedDefaultRoot = ManagedStorageConfigStore.shared.defaultLocation.rootURL.standardizedFileURL
+
+        XCTAssertEqual(settings.managedStorageRootURL.standardizedFileURL.path, expectedDefaultRoot.path)
+        XCTAssertTrue(settings.isManagedStorageDefault)
+
+        let customRoot = URL(fileURLWithPath: "/tmp/custom-lungfish", isDirectory: true)
+        try ManagedStorageConfigStore.shared.setActiveRoot(customRoot)
+
+        XCTAssertEqual(settings.managedStorageRootURL.standardizedFileURL.path, customRoot.standardizedFileURL.path)
+        XCTAssertFalse(settings.isManagedStorageDefault)
+    }
+
     // MARK: - Save/Load Roundtrip
 
+    @MainActor
     func testSaveLoadRoundtrip() {
         let settings = AppSettings.shared
 
@@ -67,6 +106,7 @@ final class AppSettingsTests: XCTestCase {
 
     // MARK: - Reset
 
+    @MainActor
     func testResetToDefaults() {
         let settings = AppSettings.shared
         settings.maxAnnotationRows = 200
@@ -80,6 +120,7 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertFalse(settings.aiSearchEnabled)
     }
 
+    @MainActor
     func testResetSection() {
         let settings = AppSettings.shared
 
@@ -105,6 +146,7 @@ final class AppSettingsTests: XCTestCase {
 
     // MARK: - Decode Robustness
 
+    @MainActor
     func testLoadFromPartialSnapshotUsesDefaultsForMissingFields() {
         let partialJSON = #"{"defaultZoomWindow":42000}"#
         UserDefaults.standard.set(partialJSON.data(using: .utf8), forKey: "com.lungfish.appSettings")
@@ -118,6 +160,7 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.variantColorThemeName, VariantColorTheme.modern.name)
     }
 
+    @MainActor
     func testLoadClampsInvalidPersistedValues() {
         let invalidJSON = """
         {
@@ -160,6 +203,7 @@ final class AppSettingsTests: XCTestCase {
 
     // MARK: - Annotation Color Helpers
 
+    @MainActor
     func testAnnotationColorFromHex() {
         let color = AppSettings.color(from: "#FF0000")
         guard let rgb = color.usingColorSpace(.sRGB) else {
@@ -171,12 +215,14 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(rgb.blueComponent, 0.0, accuracy: 0.01)
     }
 
+    @MainActor
     func testHexStringFromColor() {
         let color = NSColor(srgbRed: 0.2, green: 0.6, blue: 0.2, alpha: 1.0)
         let hex = AppSettings.hexString(from: color)
         XCTAssertEqual(hex, "#339933")
     }
 
+    @MainActor
     func testAnnotationColorForType() {
         let settings = AppSettings.shared
         let geneColor = settings.annotationColor(for: .gene)
@@ -190,6 +236,7 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(rgb.blueComponent, 0.2, accuracy: 0.01)
     }
 
+    @MainActor
     func testDefaultAnnotationTypeColorsMatchExpected() {
         let defaults = AppSettings.defaultAnnotationTypeColorHexes
         XCTAssertEqual(defaults["gene"], "#339933")
@@ -205,6 +252,7 @@ final class AppSettingsTests: XCTestCase {
 
     // MARK: - Notification
 
+    @MainActor
     func testSavePostsNotification() {
         let expectation = expectation(forNotification: .appSettingsChanged, object: nil)
         AppSettings.shared.maxAnnotationRows = 99
@@ -212,6 +260,7 @@ final class AppSettingsTests: XCTestCase {
         wait(for: [expectation], timeout: 1.0)
     }
 
+    @MainActor
     func testSavePostsAppearanceNotification() {
         let expectation = expectation(forNotification: .appearanceChanged, object: nil)
         AppSettings.shared.annotationTypeColorHexes["gene"] = "#FF0000"

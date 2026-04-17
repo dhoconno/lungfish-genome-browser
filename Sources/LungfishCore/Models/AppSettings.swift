@@ -138,12 +138,13 @@ public final class AppSettings: Sendable {
 
     // MARK: - Storage
 
-    /// UserDefaults key for the custom database storage path.
+    /// Legacy UserDefaults key for the custom database storage path.
     ///
-    /// Stored as a standalone UserDefaults key (not inside the JSON snapshot)
-    /// so that ``MetagenomicsDatabaseRegistry`` in LungfishWorkflow can read
-    /// it independently without depending on LungfishCore's `AppSettings`.
+    /// Kept for compatibility while shared managed storage rolls out.
     public static let databaseStorageLocationKey = "DatabaseStorageLocation"
+
+    /// Shared managed storage key used by the bootstrap config store.
+    public static let managedStorageLocationKey = "ManagedStorageLocation"
 
     /// The default database storage directory (`~/.lungfish/databases/`).
     public static var defaultDatabaseStorageURL: URL {
@@ -178,6 +179,19 @@ public final class AppSettings: Sendable {
     /// Whether the database storage location is using the default path.
     public var isDatabaseStorageDefault: Bool {
         UserDefaults.standard.string(forKey: Self.databaseStorageLocationKey) == nil
+    }
+
+    /// The shared managed storage root used for tools and databases.
+    public var managedStorageRootURL: URL {
+        get { ManagedStorageConfigStore.shared.currentLocation().rootURL }
+        set {
+            try? ManagedStorageConfigStore.shared.setActiveRoot(newValue)
+        }
+    }
+
+    /// Whether shared managed storage is still using its default root.
+    public var isManagedStorageDefault: Bool {
+        managedStorageRootURL.standardizedFileURL == ManagedStorageConfigStore.shared.defaultLocation.rootURL.standardizedFileURL
     }
 
     // MARK: - Defaults
