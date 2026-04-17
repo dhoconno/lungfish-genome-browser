@@ -472,32 +472,18 @@ final class UnifiedWizardTests: XCTestCase {
         XCTAssertEqual(typeMap[.clinicalTriage], "Detect Pathogens (TaxTriage)")
     }
 
-    /// Verifies the unified wizard strings are aligned with the new classifier terminology.
-    func testUnifiedWizardToolNamesUseUnifiedClassifierCopy() {
-        XCTAssertEqual(
-            UnifiedMetagenomicsWizard.AnalysisType.classification.toolName,
-            "Classify & Profile (Kraken2)"
-        )
-        XCTAssertEqual(
-            UnifiedMetagenomicsWizard.AnalysisType.viralDetection.toolName,
-            "Detect Viruses (EsViritu)"
-        )
-        XCTAssertEqual(
-            UnifiedMetagenomicsWizard.AnalysisType.clinicalTriage.toolName,
-            "Detect Pathogens (TaxTriage)"
-        )
-    }
-
     /// Verifies the FASTQ dataset controller source has the unified classifier labels.
     func testFASTQDatasetViewControllerUsesUnifiedClassifierCopy() throws {
         let source = try String(
-            contentsOf: URL(
-                fileURLWithPath: "/Users/dho/Documents/lungfish-genome-browser/Sources/LungfishApp/Views/Viewer/FASTQDatasetViewController.swift"
-            ),
+            contentsOf: repositoryRoot()
+                .appendingPathComponent("Sources/LungfishApp/Views/Viewer/FASTQDatasetViewController.swift"),
             encoding: .utf8
         )
 
+        XCTAssertTrue(source.contains("case .classifyReads: return \"Classify & Profile (Kraken2)\""))
+        XCTAssertTrue(source.contains("case .detectViruses: return \"Detect Viruses (EsViritu)\""))
         XCTAssertTrue(source.contains("case .comprehensiveTriage: return \"Detect Pathogens (TaxTriage)\""))
+        XCTAssertTrue(source.contains("return \"Run TaxTriage for end-to-end pathogen detection from metagenomic reads with confidence scoring and organism reporting.\""))
         XCTAssertFalse(source.contains("Clinical Triage (TaxTriage)"))
     }
 
@@ -523,6 +509,13 @@ final class UnifiedWizardTests: XCTestCase {
             "Internal names contain pipeline step prefixes")
         XCTAssertFalse(userFriendlyName.contains("step_"),
             "User-friendly names should not contain pipeline prefixes")
+    }
+
+    private func repositoryRoot() -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
     }
 }
 
