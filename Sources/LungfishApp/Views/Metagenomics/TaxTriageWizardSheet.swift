@@ -8,7 +8,7 @@ import LungfishWorkflow
 
 // MARK: - TaxTriageWizardSheet
 
-/// A SwiftUI sheet for configuring and launching a TaxTriage clinical triage run.
+/// A SwiftUI sheet for configuring and launching a TaxTriage run.
 ///
 /// The wizard supports multi-sample input, platform selection, Kraken2 database
 /// path, assembly control, and advanced parameter tuning. Prerequisite checks
@@ -144,9 +144,9 @@ struct TaxTriageWizardSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("TaxTriage Metagenomic Triage")
+                    Text("TaxTriage")
                         .font(.headline)
-                    Text("Comprehensive taxonomic classification pipeline")
+                    Text("End-to-end pathogen detection for metagenomic samples")
                         .font(.caption)
                         .foregroundStyle(Color.lungfishSecondaryText)
                 }

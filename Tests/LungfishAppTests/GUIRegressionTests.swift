@@ -487,6 +487,19 @@ final class UnifiedWizardTests: XCTestCase {
         XCTAssertFalse(source.contains("Clinical Triage (TaxTriage)"))
     }
 
+    /// Verifies the TaxTriage sheet title and subtitle use the normalized copy.
+    func testTaxTriageWizardSheetUsesNormalizedTitleCopy() throws {
+        let source = try String(
+            contentsOf: repositoryRoot()
+                .appendingPathComponent("Sources/LungfishApp/Views/Metagenomics/TaxTriageWizardSheet.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("Text(\"TaxTriage\")"))
+        XCTAssertFalse(source.contains("TaxTriage Metagenomic Triage"))
+        XCTAssertFalse(source.contains("Comprehensive taxonomic classification pipeline"))
+    }
+
     /// Verifies analysis types have non-empty descriptions and runtime estimates.
     func testAnalysisTypeMetadata() {
         for type in UnifiedMetagenomicsWizard.AnalysisType.allCases {

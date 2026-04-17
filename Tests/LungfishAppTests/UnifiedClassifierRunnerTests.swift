@@ -14,6 +14,14 @@ final class UnifiedClassifierRunnerTests: XCTestCase {
         XCTAssertEqual(UnifiedMetagenomicsWizard.AnalysisType.clinicalTriage.runnerTitle, "TaxTriage")
     }
 
+    func testClinicalTriageDescriptionUsesPathogenDetectionLanguage() {
+        let description = UnifiedMetagenomicsWizard.AnalysisType.clinicalTriage.analysisDescription
+
+        XCTAssertTrue(description.localizedCaseInsensitiveContains("pathogen detection"))
+        XCTAssertTrue(description.localizedCaseInsensitiveContains("taxtriage"))
+        XCTAssertFalse(description.localizedCaseInsensitiveContains("clinical triage"))
+    }
+
     func testSharedSectionOrderMatchesRunnerShellContract() {
         XCTAssertEqual(
             UnifiedMetagenomicsWizard.sharedSectionOrder,

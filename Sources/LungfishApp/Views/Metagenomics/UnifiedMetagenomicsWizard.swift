@@ -15,7 +15,7 @@ import LungfishWorkflow
 /// |--------------------|-------------|---------------------------------------|--------|
 /// | Taxonomic          | Kraken2     | Broad taxonomic classification        | Fast   |
 /// | Viral Detection    | EsViritu    | Virus-specific detection + coverage   | Medium |
-/// | Clinical Triage    | TaxTriage   | End-to-end with confidence scoring    | Slow   |
+/// | Pathogen Detection  | TaxTriage   | End-to-end pathogen detection         | Slow   |
 ///
 /// ## Presentation
 ///
@@ -137,7 +137,7 @@ struct UnifiedMetagenomicsWizard: View {
             case .viralDetection:
                 return "Virus-focused read mapping pipeline. Detects and quantifies viral pathogens with per-genome coverage metrics, consensus sequences, and iterative alignment."
             case .clinicalTriage:
-                return "End-to-end metagenomic classification with alignment validation and TASS confidence scoring. Supports multiple classifiers, host removal, and PDF reporting. Can classify many types of sequences but prone to false negatives."
+                return "End-to-end pathogen detection with TaxTriage. Uses alignment validation, host removal, and confidence scoring to help flag likely pathogens in metagenomic samples."
             }
         }
     }
