@@ -36,6 +36,12 @@ struct CondaCommand: AsyncParsableCommand {
     )
 }
 
+extension CondaCommand {
+    static func visiblePacksForTesting() -> [PluginPack] {
+        PluginPack.visibleForCLI
+    }
+}
+
 // MARK: - Install
 
 extension CondaCommand {
@@ -59,38 +65,34 @@ extension CondaCommand {
         func run() async throws {
             let formatter = TerminalFormatter(useColors: globalOptions.useColors)
             let manager = CondaManager.shared
+            let packStatusService = PluginPackStatusService.shared
 
             if isPack {
                 // Install a plugin pack
                 for packID in packages {
-                    guard let pack = PluginPack.builtIn.first(where: { $0.id == packID }) else {
-                        print(formatter.error("Unknown plugin pack: \(packID)"))
-                        print("Available packs: \(PluginPack.builtIn.map(\.id).joined(separator: ", "))")
+                    guard let pack = CondaCommand.visiblePacksForTesting().first(where: { $0.id == packID }) else {
+                        print(formatter.error("Unknown tool pack: \(packID)"))
+                        print("Available packs: \(CondaCommand.visiblePacksForTesting().map(\.id).joined(separator: ", "))")
                         throw ExitCode.failure
                     }
 
-                    print(formatter.header("Installing Plugin Pack: \(pack.name)"))
+                    print(formatter.header("Installing Tool Pack: \(pack.name)"))
                     print("Packages: \(pack.packages.joined(separator: ", "))")
                     print("")
 
-                    for pkg in pack.packages {
-                        print(formatter.info("Installing \(pkg)..."))
-                        do {
-                            try await manager.install(
-                                packages: [pkg],
-                                environment: pkg
-                            ) { fraction, message in
-                                if !globalOptions.quiet {
-                                    print("\r\(formatter.info(message))", terminator: "")
-                                }
+                    do {
+                        try await packStatusService.install(pack: pack, reinstall: false) { event in
+                            if !globalOptions.quiet {
+                                print("\r\(formatter.info(event.message))", terminator: "")
                             }
-                            print(formatter.success("  \(pkg) installed"))
-                        } catch {
-                            print(formatter.warning("  \(pkg) failed: \(error.localizedDescription)"))
                         }
+                        print("")
+                        print(formatter.success("Tool pack '\(pack.name)' installed"))
+                    } catch {
+                        print("")
+                        print(formatter.error("Tool pack '\(pack.name)' failed: \(error.localizedDescription)"))
+                        throw ExitCode.failure
                     }
-                    print("")
-                    print(formatter.success("Plugin pack '\(pack.name)' installed"))
                 }
             } else {
                 // Install individual packages
@@ -348,9 +350,9 @@ extension CondaCommand {
         func run() async throws {
             let formatter = TerminalFormatter(useColors: globalOptions.useColors)
 
-            print(formatter.header("Available Plugin Packs"))
+            print(formatter.header("Available Tool Packs"))
             print("")
-            for pack in PluginPack.builtIn {
+            for pack in CondaCommand.visiblePacksForTesting() {
                 print(formatter.bold("\(pack.name)") + " (\(pack.id))")
                 print("  \(pack.description)")
                 print("  Packages: \(pack.packages.joined(separator: ", "))")

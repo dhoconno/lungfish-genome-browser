@@ -247,7 +247,7 @@ public final class FASTQCLIMaterializer: Sendable {
             // Filter trim positions to only selected read IDs, then extract trimmed
             let positions = try FASTQTrimPositionFile.load(from: trimPositionsURL)
             let selectedIDs = try loadSelectedReadIDSet(from: readIDListURL)
-            let filtered = positions.filter { selectedIDs.contains($0.key) }
+            let filtered = positions.filter { self.selectedReadIDsMatch($0.key, in: selectedIDs) }
             try await extractTrimmedReads(
                 fromRootFASTQ: rootFASTQURL,
                 positions: filtered,
@@ -324,7 +324,7 @@ public final class FASTQCLIMaterializer: Sendable {
         if let trimPositionsURL, isAbsoluteTrimPositionsFile(trimPositionsURL) {
             let positions = try FASTQTrimPositionFile.load(from: trimPositionsURL)
             let selectedIDs = try loadSelectedReadIDSet(from: readIDListURL)
-            let filtered = positions.filter { selectedIDs.contains($0.key) }
+            let filtered = positions.filter { self.selectedReadIDsMatch($0.key, in: selectedIDs) }
             try await extractTrimmedFASTAReads(
                 fromRootFASTA: rootFASTAURL,
                 positions: filtered,
@@ -509,17 +509,11 @@ public final class FASTQCLIMaterializer: Sendable {
     // MARK: - fullPaired interleave
 
     private func interleaveWithReformat(r1URL: URL, r2URL: URL, outputURL: URL) async throws {
-        var env: [String: String] = [:]
-        if let toolsDir = await runner.getToolsDirectory() {
-            let existingPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
-            let jreBin = toolsDir.appendingPathComponent("jre/bin")
-            env["PATH"] = "\(toolsDir.path):\(jreBin.path):\(existingPath)"
-            let javaURL = jreBin.appendingPathComponent("java")
-            if FileManager.default.fileExists(atPath: javaURL.path) {
-                env["JAVA_HOME"] = toolsDir.appendingPathComponent("jre").path
-                env["BBMAP_JAVA"] = javaURL.path
-            }
-        }
+        let existingPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+        let env = CoreToolLocator.bbToolsEnvironment(
+            homeDirectory: FileManager.default.homeDirectoryForCurrentUser,
+            existingPath: existingPath
+        )
         let result = try await runner.run(
             .reformat,
             arguments: [
@@ -690,6 +684,23 @@ public final class FASTQCLIMaterializer: Sendable {
     private func loadSelectedReadIDSet(from url: URL) throws -> Set<String> {
         let content = try String(contentsOf: url, encoding: .utf8)
         return Set(content.split(separator: "\n", omittingEmptySubsequences: true).map(String.init))
+    }
+
+    private func selectedReadIDsMatch(_ trimPositionKey: String, in selectedIDs: Set<String>) -> Bool {
+        selectedIDs.contains(trimPositionKey) || selectedIDs.contains(baseReadID(forTrimPositionKey: trimPositionKey))
+    }
+
+    private func baseReadID(forTrimPositionKey key: String) -> String {
+        guard let hashIndex = key.lastIndex(of: "#") else {
+            return key
+        }
+
+        let suffix = key[key.index(after: hashIndex)...]
+        guard !suffix.isEmpty, suffix.allSatisfy(\.isNumber) else {
+            return key
+        }
+
+        return String(key[..<hashIndex])
     }
 
     /// Strips mate suffixes and trailing description from a FASTQ/FASTA read identifier.

@@ -111,6 +111,18 @@ fi
 
 copy_count=0
 link_count=0
+removed_count=0
+
+is_retired_runtime_relative_path() {
+    case "$1" in
+        bbtools/*|jre/*)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
 
 copy_runtime_files() {
     local source_dir="$1"
@@ -122,6 +134,9 @@ copy_runtime_files() {
     local source_path relative_path target_path
     while IFS= read -r -d '' source_path; do
         relative_path="${source_path#"$source_dir"/}"
+        if is_retired_runtime_relative_path "$relative_path"; then
+            continue
+        fi
         target_path="$target_dir/$relative_path"
 
         /bin/mkdir -p "$(dirname "$target_path")"
@@ -167,8 +182,30 @@ link_runtime_files() {
     done < <(/usr/bin/find "$source_dir" -type f \( "$@" \) -print0)
 }
 
+remove_retired_runtime_files() {
+    local target_dir="$1"
+
+    [ -d "$target_dir" ] || return
+
+    local target_path relative_path
+    while IFS= read -r -d '' target_path; do
+        relative_path="${target_path#"$target_dir"/}"
+        if ! is_retired_runtime_relative_path "$relative_path"; then
+            continue
+        fi
+
+        /bin/rm -f "$target_path"
+        removed_count=$((removed_count + 1))
+    done < <(/usr/bin/find "$target_dir" \( -type f -o -type l \) -print0)
+
+    /usr/bin/find "$target_dir" -depth -type d -empty -delete
+}
+
 echo "Hydrating runtime resources into: $TARGET_ROOT"
 echo "Using source root: $SOURCE_ROOT"
+
+remove_retired_runtime_files \
+    "$TARGET_ROOT/Sources/LungfishWorkflow/Resources/Tools"
 
 if [ "$SOURCE_ROOT" != "$TARGET_ROOT" ]; then
     copy_runtime_files \
@@ -183,4 +220,5 @@ fi
 
 echo "Copied $copy_count runtime file(s)"
 echo "Linked $link_count runtime file(s)"
+echo "Removed $removed_count retired runtime file(s)"
 echo "Worktree setup complete."

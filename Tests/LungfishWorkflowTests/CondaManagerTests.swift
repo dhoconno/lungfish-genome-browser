@@ -111,7 +111,32 @@ final class CondaManagerTests: XCTestCase {
 
     func testBuiltInPacksExist() {
         XCTAssertFalse(PluginPack.builtIn.isEmpty)
-        XCTAssertEqual(PluginPack.builtIn.count, 13, "Should have exactly 13 built-in packs")
+        XCTAssertEqual(PluginPack.builtIn.count, 14, "Should include Lungfish Tools plus 13 optional packs")
+        XCTAssertEqual(PluginPack.activeOptionalPacks.count, 1, "Only metagenomics should be active in this branch")
+    }
+
+    func testReinstallRemovesExistingEnvironmentBeforeCreate() async throws {
+        let sandbox = try makeMicromambaSandbox()
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        let bundledMicromamba = try makeFakeMicromamba(
+            at: sandbox.appendingPathComponent("bundled-micromamba"),
+            version: "2.0.5-0"
+        )
+        let manager = CondaManager(
+            rootPrefix: sandbox.appendingPathComponent("conda"),
+            bundledMicromambaProvider: { bundledMicromamba },
+            bundledMicromambaVersionProvider: { "2.0.5-0" }
+        )
+
+        let envURL = await manager.environmentURL(named: "bbtools")
+        let staleFile = envURL.appendingPathComponent("conda-meta/stale.json")
+        try FileManager.default.createDirectory(at: staleFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: staleFile.path, contents: Data("stale".utf8))
+
+        try await manager.reinstall(packages: ["bbmap"], environment: "bbtools")
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staleFile.path))
     }
 
     func testToolVersionsManifestIncludesMicromamba() throws {
@@ -195,7 +220,7 @@ final class CondaManagerTests: XCTestCase {
         XCTAssertTrue(pack!.packages.contains("fastqc"))
         XCTAssertTrue(pack!.packages.contains("multiqc"))
         XCTAssertTrue(pack!.packages.contains("trimmomatic"))
-        // fastp is a Tier 1 native tool, should NOT be in any conda pack
+        // fastp moved to the required setup pack and should not appear here
         XCTAssertFalse(pack!.packages.contains("fastp"))
     }
 
@@ -213,8 +238,18 @@ final class CondaManagerTests: XCTestCase {
         XCTAssertTrue(pack!.packages.contains("kraken2"))
         XCTAssertTrue(pack!.packages.contains("bracken"))
         XCTAssertTrue(pack!.packages.contains("metaphlan"))
+        XCTAssertFalse(pack!.packages.contains("nextflow"))
         // freyja moved to wastewater-surveillance pack
         XCTAssertFalse(pack!.packages.contains("freyja"))
+    }
+
+    func testRequiredSetupPackIncludesDeacon() {
+        let pack = PluginPack.requiredSetupPack
+        XCTAssertTrue(pack.packages.contains("deacon"))
+        XCTAssertEqual(
+            pack.toolRequirements.first(where: { $0.environment == "deacon" })?.executables,
+            ["deacon"]
+        )
     }
 
     func testWastewaterSurveillancePack() {
@@ -276,7 +311,7 @@ final class CondaManagerTests: XCTestCase {
 
     func testNoPackContainsNativeTierOneTools() {
         // These tools are bundled natively and should NOT appear in any conda pack
-        let nativeTools = ["samtools", "bcftools", "fastp", "seqkit", "cutadapt",
+        let nativeTools = ["samtools", "bcftools", "seqkit", "cutadapt",
                            "pigz", "bgzip", "tabix"]
         for pack in PluginPack.builtIn {
             for tool in nativeTools {
@@ -565,6 +600,57 @@ final class CondaManagerTests: XCTestCase {
         }
     }
 
+    func testRunToolPreservesHomeDirectoryForManagedLaunchers() async throws {
+        let sandbox = try makeMicromambaSandbox()
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        let bundledMicromamba = sandbox.appendingPathComponent("bundled-micromamba")
+        try FileManager.default.createDirectory(
+            at: bundledMicromamba.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let script = """
+        #!/bin/sh
+        case "$1" in
+            --version)
+                echo "2.0.5-0"
+                exit 0
+                ;;
+            run)
+                printf '%s' "${HOME:-}"
+                exit 0
+                ;;
+            *)
+                echo "unexpected args: $@" >&2
+                exit 1
+                ;;
+        esac
+        """
+        try script.write(to: bundledMicromamba, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: bundledMicromamba.path
+        )
+
+        let manager = CondaManager(
+            rootPrefix: sandbox.appendingPathComponent("conda"),
+            bundledMicromambaProvider: { bundledMicromamba },
+            bundledMicromambaVersionProvider: { "2.0.5-0" }
+        )
+        _ = try await manager.ensureMicromamba()
+
+        let result = try await manager.runTool(
+            name: "nextflow",
+            arguments: ["-version"],
+            environment: "nextflow"
+        )
+
+        XCTAssertEqual(
+            result.stdout,
+            FileManager.default.homeDirectoryForCurrentUser.path
+        )
+    }
+
     // MARK: - Private Test Helper
 
     /// Result from running a process with concurrent pipe reading.
@@ -693,12 +779,37 @@ final class CondaManagerTests: XCTestCase {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let script = """
         #!/bin/sh
-        if [ "$1" = "--version" ]; then
-            echo "\(version)"
-            exit 0
-        fi
-        echo "unexpected args: $@" >&2
-        exit 1
+        case "$1" in
+            --version)
+                echo "\(version)"
+                exit 0
+                ;;
+            create|install)
+                while [ "$#" -gt 0 ]; do
+                    case "$1" in
+                        -n)
+                            shift
+                            env_name="$1"
+                            ;;
+                    esac
+                    shift
+                done
+                if [ -z "$MAMBA_ROOT_PREFIX" ] || [ -z "$env_name" ]; then
+                    echo "missing root prefix or env name" >&2
+                    exit 1
+                fi
+                mkdir -p "$MAMBA_ROOT_PREFIX/envs/$env_name/bin"
+                mkdir -p "$MAMBA_ROOT_PREFIX/envs/$env_name/conda-meta"
+                exit 0
+                ;;
+            remove)
+                exit 0
+                ;;
+            *)
+                echo "unexpected args: $@" >&2
+                exit 1
+                ;;
+        esac
         """
         try script.write(to: url, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)

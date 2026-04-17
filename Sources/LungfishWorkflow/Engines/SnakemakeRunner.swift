@@ -52,6 +52,7 @@ public actor SnakemakeRunner: WorkflowRunner {
 
     /// Base workflow runner for common functionality.
     private let baseRunner: BaseWorkflowRunner
+    private let homeDirectoryProvider: @Sendable () -> URL
 
     /// Path to the Snakemake executable.
     private var executablePath: URL?
@@ -67,11 +68,17 @@ public actor SnakemakeRunner: WorkflowRunner {
     /// Creates a new Snakemake runner.
     ///
     /// - Parameter processManager: Optional process manager (defaults to shared)
-    public init(processManager: ProcessManager = .shared) {
+    public init(
+        processManager: ProcessManager = .shared,
+        homeDirectoryProvider: @escaping @Sendable () -> URL = {
+            FileManager.default.homeDirectoryForCurrentUser
+        }
+    ) {
         self.baseRunner = BaseWorkflowRunner(
             category: "SnakemakeRunner",
             processManager: processManager
         )
+        self.homeDirectoryProvider = homeDirectoryProvider
     }
 
     // MARK: - WorkflowRunner Protocol
@@ -79,7 +86,7 @@ public actor SnakemakeRunner: WorkflowRunner {
     public func isAvailable() async -> Bool {
         Self.logger.debug("Checking Snakemake availability")
 
-        if let path = baseRunner.findEngine(.snakemake) {
+        if let path = resolveExecutablePath() {
             executablePath = path
             Self.logger.info("Snakemake found at \(path.path)")
             return true
@@ -96,10 +103,29 @@ public actor SnakemakeRunner: WorkflowRunner {
 
         Self.logger.debug("Getting Snakemake version")
 
-        if let version = await baseRunner.getEngineVersion(.snakemake) {
-            cachedVersion = version.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let execPath = resolveExecutablePath() else {
+            return nil
+        }
+
+        let workDir = FileManager.default.temporaryDirectory
+
+        do {
+            let environment = managedExecutionEnvironment(for: execPath)
+            let (_, stdout, stderr) = try await baseRunner.processManager.runAndWait(
+                executable: execPath,
+                arguments: ["--version"],
+                workingDirectory: workDir,
+                environment: environment
+            )
+
+            let output = [stdout, stderr]
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
+            cachedVersion = output.trimmingCharacters(in: .whitespacesAndNewlines)
             Self.logger.info("Snakemake version: \(self.cachedVersion ?? "unknown")")
             return cachedVersion
+        } catch {
+            Self.logger.error("Failed to get Snakemake version: \(error.localizedDescription)")
         }
 
         return nil
@@ -114,7 +140,7 @@ public actor SnakemakeRunner: WorkflowRunner {
         Self.logger.info("Starting Snakemake execution for workflow: \(workflow.name)")
 
         // Ensure Snakemake is available
-        guard let execPath = executablePath ?? baseRunner.findEngine(.snakemake) else {
+        guard let execPath = executablePath ?? resolveExecutablePath() else {
             throw WorkflowError.engineNotFound(
                 engine: "snakemake",
                 searchedPaths: getSearchPaths()
@@ -175,6 +201,8 @@ public actor SnakemakeRunner: WorkflowRunner {
 
         Self.logger.info("Executing: snakemake \(arguments.joined(separator: " "))")
 
+        let environment = managedExecutionEnvironment(for: execPath)
+
         let startTime = Date()
 
         // Spawn the process
@@ -184,7 +212,7 @@ public actor SnakemakeRunner: WorkflowRunner {
                 executable: execPath,
                 arguments: arguments,
                 workingDirectory: workDir,
-                environment: nil
+                environment: environment
             )
         } catch {
             try await stateMachine.markFailed(error: error)
@@ -305,7 +333,7 @@ public actor SnakemakeRunner: WorkflowRunner {
     ) async throws -> Data {
         Self.logger.info("Generating DAG for workflow: \(workflow.name)")
 
-        guard let execPath = executablePath ?? baseRunner.findEngine(.snakemake) else {
+        guard let execPath = executablePath ?? resolveExecutablePath() else {
             throw WorkflowError.engineNotFound(
                 engine: "snakemake",
                 searchedPaths: getSearchPaths()
@@ -339,10 +367,12 @@ public actor SnakemakeRunner: WorkflowRunner {
             arguments.append(configFile.path)
         }
 
+        let environment = managedExecutionEnvironment(for: execPath)
         let (exitCode, stdout, stderr) = try await baseRunner.processManager.runAndWait(
             executable: execPath,
             arguments: arguments,
-            workingDirectory: workDir
+            workingDirectory: workDir,
+            environment: environment
         )
 
         if exitCode != 0 {
@@ -548,6 +578,27 @@ public actor SnakemakeRunner: WorkflowRunner {
     private nonisolated func getSearchPaths() -> [String] {
         let pathEnv = ProcessInfo.processInfo.environment["PATH"] ?? ""
         return pathEnv.components(separatedBy: ":")
+    }
+
+    private func resolveExecutablePath() -> URL? {
+        preferredExecutablePath()
+    }
+
+    private func preferredExecutablePath() -> URL? {
+        let home = homeDirectoryProvider()
+        let url = CoreToolLocator.executableURL(
+            environment: engineType.executableName,
+            executableName: engineType.executableName,
+            homeDirectory: home
+        )
+        return FileManager.default.isExecutableFile(atPath: url.path) ? url : nil
+    }
+
+    private func managedExecutionEnvironment(for executablePath: URL) -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        let existingPath = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        environment["PATH"] = "\(executablePath.deletingLastPathComponent().path):\(existingPath)"
+        return environment
     }
 }
 

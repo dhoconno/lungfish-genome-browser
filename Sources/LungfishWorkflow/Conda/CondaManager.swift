@@ -107,284 +107,6 @@ public struct CondaPackageInfo: Sendable, Codable, Identifiable, Hashable {
     }
 }
 
-// MARK: - PostInstallHook
-
-/// A command to run after a plugin pack is installed.
-///
-/// Post-install hooks download reference data, update databases, or perform
-/// other setup that tools need before they can function. Hooks may also be
-/// re-run periodically to keep data current.
-public struct PostInstallHook: Sendable, Codable, Hashable {
-    /// Human-readable description of what this hook does.
-    public let description: String
-
-    /// The conda environment in which to run the command.
-    public let environment: String
-
-    /// The command to execute. First element is the tool name; remaining
-    /// elements are arguments. Passed to ``CondaManager/runTool(name:arguments:environment:)``.
-    public let command: [String]
-
-    /// Whether this hook requires network access.
-    public let requiresNetwork: Bool
-
-    /// How often this hook should be re-run, in days.
-    /// `nil` means run only once at install time.
-    /// `7` means weekly, `30` monthly, `90` quarterly.
-    public let refreshIntervalDays: Int?
-
-    /// Approximate download size (human-readable, e.g. "~15 MB").
-    public let estimatedDownloadSize: String?
-
-    public init(
-        description: String,
-        environment: String,
-        command: [String],
-        requiresNetwork: Bool = true,
-        refreshIntervalDays: Int? = nil,
-        estimatedDownloadSize: String? = nil
-    ) {
-        self.description = description
-        self.environment = environment
-        self.command = command
-        self.requiresNetwork = requiresNetwork
-        self.refreshIntervalDays = refreshIntervalDays
-        self.estimatedDownloadSize = estimatedDownloadSize
-    }
-}
-
-// MARK: - PluginPack
-
-/// A curated set of bioinformatics tools for a specific workflow.
-///
-/// Each pack installs one isolated conda environment per tool (not a single
-/// shared environment). The micromamba package cache is shared across all
-/// environments, so tools that appear in multiple packs are downloaded once.
-///
-/// ## Post-Install Hooks
-///
-/// Some packs require reference data downloads after tool installation.
-/// These are defined in ``postInstallHooks`` and run automatically after
-/// all packages in the pack are installed. Hooks with a non-nil
-/// ``PostInstallHook/refreshIntervalDays`` are re-run periodically.
-public struct PluginPack: Sendable, Codable, Identifiable {
-    public let id: String
-    public let name: String
-    public let description: String
-    public let sfSymbol: String
-    public let packages: [String]
-    public let category: String
-    public let postInstallHooks: [PostInstallHook]
-    public let estimatedSizeMB: Int
-
-    public init(id: String, name: String, description: String,
-                sfSymbol: String, packages: [String], category: String,
-                postInstallHooks: [PostInstallHook] = [],
-                estimatedSizeMB: Int = 0) {
-        self.id = id
-        self.name = name
-        self.description = description
-        self.sfSymbol = sfSymbol
-        self.packages = packages
-        self.category = category
-        self.postInstallHooks = postInstallHooks
-        self.estimatedSizeMB = estimatedSizeMB
-    }
-
-    /// All 13 built-in plugin packs covering major bioinformatics workflows.
-    ///
-    /// Tools already bundled natively (samtools, bcftools, fastp, seqkit,
-    /// cutadapt, pigz, BBTools, bgzip, tabix) are NOT included in any pack.
-    /// They are always available as Tier 1 tools.
-    ///
-    /// Tools that appear in multiple packs share a single conda environment.
-    /// The ``CondaManager/install(packages:environment:)`` method skips
-    /// creation if the environment already exists.
-    public static let builtIn: [PluginPack] = [
-        // MARK: Quality Control
-        PluginPack(
-            id: "illumina-qc",
-            name: "Illumina QC",
-            description: "Quality control and reporting for Illumina short-read sequencing data",
-            sfSymbol: "waveform.badge.magnifyingglass",
-            packages: ["fastqc", "multiqc", "trimmomatic"],
-            category: "Quality Control",
-            estimatedSizeMB: 1000
-        ),
-
-        // MARK: Alignment
-        PluginPack(
-            id: "alignment",
-            name: "Alignment",
-            description: "Map short and long reads to reference genomes",
-            sfSymbol: "arrow.left.and.right.text.vertical",
-            packages: ["bwa-mem2", "minimap2", "bowtie2", "hisat2"],
-            category: "Alignment",
-            estimatedSizeMB: 220
-        ),
-
-        // MARK: Variant Calling
-        PluginPack(
-            id: "variant-calling",
-            name: "Variant Calling",
-            description: "Discover SNPs, indels, and structural variants from aligned reads",
-            sfSymbol: "diamond.fill",
-            packages: ["freebayes", "lofreq", "gatk4", "ivar"],
-            category: "Variant Calling",
-            estimatedSizeMB: 850
-        ),
-
-        // MARK: Assembly
-        PluginPack(
-            id: "assembly",
-            name: "Genome Assembly",
-            description: "De novo genome assembly from short and long reads",
-            sfSymbol: "puzzlepiece.extension.fill",
-            packages: ["spades", "megahit", "flye", "quast"],
-            category: "Assembly",
-            estimatedSizeMB: 950
-        ),
-
-        // MARK: Phylogenetics
-        PluginPack(
-            id: "phylogenetics",
-            name: "Phylogenetics",
-            description: "Multiple sequence alignment and phylogenetic tree construction",
-            sfSymbol: "tree",
-            packages: ["iqtree", "mafft", "muscle", "raxml-ng", "treetime"],
-            category: "Phylogenetics",
-            estimatedSizeMB: 400
-        ),
-
-        // MARK: Metagenomics
-        PluginPack(
-            id: "metagenomics",
-            name: "Metagenomics",
-            description: "Taxonomic classification, viral detection, and clinical triage of metagenomic samples",
-            sfSymbol: "leaf.fill",
-            packages: ["kraken2", "bracken", "metaphlan", "esviritu", "nextflow"],
-            category: "Metagenomics",
-            estimatedSizeMB: 1200
-        ),
-
-        // MARK: Long Read
-        PluginPack(
-            id: "long-read",
-            name: "Long Read Analysis",
-            description: "Oxford Nanopore and PacBio long-read alignment, assembly, and polishing",
-            sfSymbol: "ruler",
-            packages: ["minimap2", "flye", "medaka", "hifiasm", "nanoplot"],
-            category: "Long Read",
-            estimatedSizeMB: 700
-        ),
-
-        // MARK: Wastewater Surveillance
-        PluginPack(
-            id: "wastewater-surveillance",
-            name: "Wastewater Surveillance",
-            description: "SARS-CoV-2 and multi-pathogen lineage de-mixing from wastewater sequencing data",
-            sfSymbol: "drop.triangle",
-            packages: ["freyja", "ivar", "pangolin", "nextclade", "minimap2"],
-            category: "Surveillance",
-            postInstallHooks: [
-                PostInstallHook(
-                    description: "Download latest SARS-CoV-2 lineage barcodes",
-                    environment: "freyja",
-                    command: ["freyja", "update"],
-                    requiresNetwork: true,
-                    refreshIntervalDays: 7,
-                    estimatedDownloadSize: "~15 MB"
-                ),
-                PostInstallHook(
-                    description: "Update Pango lineage designation data",
-                    environment: "pangolin",
-                    command: ["pangolin", "--update-data"],
-                    requiresNetwork: true,
-                    refreshIntervalDays: 7,
-                    estimatedDownloadSize: "~50 MB"
-                ),
-            ],
-            estimatedSizeMB: 1500
-        ),
-
-        // MARK: RNA-Seq
-        PluginPack(
-            id: "rna-seq",
-            name: "RNA-Seq Analysis",
-            description: "Spliced alignment and transcript quantification for bulk RNA sequencing",
-            sfSymbol: "bolt.horizontal",
-            packages: ["star", "salmon", "subread", "stringtie"],
-            category: "Transcriptomics",
-            estimatedSizeMB: 600
-        ),
-
-        // MARK: Single Cell
-        PluginPack(
-            id: "single-cell",
-            name: "Single-Cell Analysis",
-            description: "Preprocessing and analysis of droplet-based single-cell RNA-seq data",
-            sfSymbol: "circle.grid.3x3",
-            // STAR includes STARsolo mode for single-cell barcode-aware alignment
-            packages: ["scanpy", "scvi-tools", "star"],
-            category: "Single Cell",
-            estimatedSizeMB: 1800
-        ),
-
-        // MARK: Amplicon Analysis
-        PluginPack(
-            id: "amplicon-analysis",
-            name: "Amplicon Analysis",
-            description: "Primer trimming, variant calling, and consensus generation for tiled-amplicon protocols",
-            sfSymbol: "waveform.badge.magnifyingglass",
-            packages: ["ivar", "pangolin", "nextclade"],
-            category: "Amplicon",
-            postInstallHooks: [
-                PostInstallHook(
-                    description: "Update Pango lineage designation data",
-                    environment: "pangolin",
-                    command: ["pangolin", "--update-data"],
-                    requiresNetwork: true,
-                    refreshIntervalDays: 7,
-                    estimatedDownloadSize: "~50 MB"
-                ),
-            ],
-            estimatedSizeMB: 550
-        ),
-
-        // MARK: Genome Annotation
-        PluginPack(
-            id: "genome-annotation",
-            name: "Genome Annotation",
-            description: "Gene prediction and functional annotation for prokaryotic and viral genomes",
-            sfSymbol: "tag.fill",
-            packages: ["prokka", "bakta", "snpeff"],
-            category: "Annotation",
-            postInstallHooks: [
-                PostInstallHook(
-                    description: "Download Bakta light annotation database",
-                    environment: "bakta",
-                    command: ["bakta_db", "download", "--type", "light"],
-                    requiresNetwork: true,
-                    refreshIntervalDays: 90,
-                    estimatedDownloadSize: "~1.3 GB"
-                ),
-            ],
-            estimatedSizeMB: 1200
-        ),
-
-        // MARK: Data Format Utilities
-        PluginPack(
-            id: "data-format-utils",
-            name: "Data Format Utilities",
-            description: "File conversion, indexing, and interval manipulation for bioinformatics formats",
-            sfSymbol: "arrow.triangle.2.circlepath",
-            packages: ["bedtools", "picard"],
-            category: "Utilities",
-            estimatedSizeMB: 650
-        ),
-    ]
-}
-
 // MARK: - CondaManager
 
 /// Manages micromamba environments and bioconda package installation.
@@ -431,6 +153,10 @@ public actor CondaManager {
 
     /// Default channels for bioconda packages.
     public let defaultChannels: [String] = ["conda-forge", "bioconda"]
+
+    public func environmentURL(named name: String) -> URL {
+        rootPrefix.appendingPathComponent("envs/\(name)", isDirectory: true)
+    }
 
     private let bundledMicromambaProvider: BundledMicromambaProvider
     private let bundledMicromambaVersionProvider: BundledMicromambaVersionProvider
@@ -667,7 +393,7 @@ public actor CondaManager {
         try await ensureMicromamba()
         logger.info("Removing environment '\(name, privacy: .public)'")
 
-        let envPath = rootPrefix.appendingPathComponent("envs/\(name)")
+        let envPath = environmentURL(named: name)
         if FileManager.default.fileExists(atPath: envPath.path) {
             try FileManager.default.removeItem(at: envPath)
             logger.info("Environment '\(name, privacy: .public)' removed")
@@ -718,7 +444,7 @@ public actor CondaManager {
     ) async throws {
         try await ensureMicromamba()
 
-        let envPath = rootPrefix.appendingPathComponent("envs/\(environment)")
+        let envPath = environmentURL(named: environment)
         let effectiveChannels = channels ?? defaultChannels
 
         if !FileManager.default.fileExists(atPath: envPath.path) {
@@ -746,6 +472,26 @@ public actor CondaManager {
         }
     }
 
+    /// Reinstalls packages into an environment by removing the existing one first.
+    public func reinstall(
+        packages: [String],
+        environment: String,
+        channels: [String]? = nil,
+        progress: (@Sendable (Double, String) -> Void)? = nil
+    ) async throws {
+        let envPath = environmentURL(named: environment)
+        if FileManager.default.fileExists(atPath: envPath.path) {
+            try FileManager.default.removeItem(at: envPath)
+        }
+
+        try await install(
+            packages: packages,
+            environment: environment,
+            channels: channels,
+            progress: progress
+        )
+    }
+
     /// Uninstalls packages from an environment.
     public func uninstall(
         packages: [String],
@@ -762,8 +508,8 @@ public actor CondaManager {
     public func listInstalled(in environment: String) async throws -> [CondaPackageInfo] {
         // Scan conda-meta/*.json directly instead of running `micromamba list --json`
         // which hangs on large environments (198+ packages in freyja-env).
-        let condaMetaDir = rootPrefix
-            .appendingPathComponent("envs/\(environment)/conda-meta")
+        let condaMetaDir = environmentURL(named: environment)
+            .appendingPathComponent("conda-meta", isDirectory: true)
 
         guard FileManager.default.fileExists(atPath: condaMetaDir.path) else {
             throw CondaError.environmentNotFound(environment)
@@ -864,8 +610,8 @@ public actor CondaManager {
         name: String,
         environment: String
     ) async throws -> URL {
-        let binPath = rootPrefix
-            .appendingPathComponent("envs/\(environment)/bin/\(name)")
+        let binPath = environmentURL(named: environment)
+            .appendingPathComponent("bin/\(name)")
 
         guard FileManager.default.isExecutableFile(atPath: binPath.path) else {
             throw CondaError.toolNotFound(tool: name, environment: environment)
@@ -960,6 +706,7 @@ public actor CondaManager {
         timeout: TimeInterval = 3600,
         stderrHandler: (@Sendable (String) -> Void)? = nil
     ) async throws -> (stdout: String, stderr: String, exitCode: Int32) {
+        repairManagedLaunchers(environment: environment)
         try await ensureMicromamba()
 
         let args = ["run", "-n", environment, name] + arguments
@@ -967,6 +714,8 @@ public actor CondaManager {
 
         let executablePath = micromambaPath
         let rootPath = rootPrefix.path
+        let homePath = FileManager.default.homeDirectoryForCurrentUser.path
+        let tempDirectory = ProcessInfo.processInfo.environment["TMPDIR"]
 
         return try await withCheckedThrowingContinuation { continuation in
             let process = Process()
@@ -975,7 +724,11 @@ public actor CondaManager {
             var env: [String: String] = [
                 "MAMBA_ROOT_PREFIX": rootPath,
                 "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                "HOME": homePath,
             ]
+            if let tempDirectory {
+                env["TMPDIR"] = tempDirectory
+            }
             if let extraVars = environmentVariables {
                 env.merge(extraVars) { _, new in new }
             }
@@ -1113,7 +866,173 @@ public actor CondaManager {
         """
     }
 
+    // MARK: - Managed Launcher Repairs
+
+    public func repairManagedLaunchers(environment: String) {
+        let envURL = environmentURL(named: environment)
+        guard FileManager.default.fileExists(atPath: envURL.path) else { return }
+
+        switch environment {
+        case "bracken":
+            ensureBrackenLauncher(in: envURL)
+        case "metaphlan":
+            ensureMetaPhlAnLauncher(in: envURL)
+        case "nextflow":
+            patchNextflowLauncher(in: envURL)
+        default:
+            break
+        }
+    }
+
     // MARK: - Private Helpers
+
+    private func ensureBrackenLauncher(in envURL: URL) {
+        let binURL = envURL.appendingPathComponent("bin", isDirectory: true)
+        let launcherURL = binURL.appendingPathComponent("bracken")
+        let scriptURL = binURL.appendingPathComponent("est_abundance.py")
+
+        guard !FileManager.default.isExecutableFile(atPath: launcherURL.path) else { return }
+        guard FileManager.default.fileExists(atPath: scriptURL.path) else { return }
+        guard let pythonExecutable = preferredPythonExecutable(in: binURL) else { return }
+
+        let wrapper = launcherScript(
+            command: "\"$TOOL_BIN/\(pythonExecutable)\" \"$TOOL_BIN/est_abundance.py\" \"$@\""
+        )
+        writeManagedLauncher(
+            wrapper,
+            to: launcherURL,
+            description: "Created Bracken compatibility launcher"
+        )
+    }
+
+    private func ensureMetaPhlAnLauncher(in envURL: URL) {
+        let binURL = envURL.appendingPathComponent("bin", isDirectory: true)
+        let launcherURL = binURL.appendingPathComponent("metaphlan")
+
+        guard let pythonExecutable = preferredPythonExecutable(in: binURL) else { return }
+
+        let currentScript = try? String(contentsOf: launcherURL, encoding: .utf8)
+        let needsRepair = !FileManager.default.isExecutableFile(atPath: launcherURL.path)
+            || currentScript?.contains("Application Support/Lungfish") == true
+
+        guard needsRepair else { return }
+
+        let wrapper = launcherScript(
+            command: "\"$TOOL_BIN/\(pythonExecutable)\" -m metaphlan.metaphlan \"$@\""
+        )
+        writeManagedLauncher(
+            wrapper,
+            to: launcherURL,
+            description: "Repaired MetaPhlAn launcher"
+        )
+    }
+
+    private func patchNextflowLauncher(in envURL: URL) {
+        let launcherURL = envURL
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("nextflow")
+
+        guard FileManager.default.isExecutableFile(atPath: launcherURL.path),
+              let content = try? String(contentsOf: launcherURL, encoding: .utf8),
+              content.contains("NXF_DIST=/")
+        else {
+            return
+        }
+
+        let lines = content.components(separatedBy: "\n")
+        var newLines: [String] = []
+        var patched = false
+
+        for line in lines {
+            if line.hasPrefix("NXF_DIST=/") && !line.hasPrefix("NXF_DIST=\"") {
+                let value = String(line.dropFirst("NXF_DIST=".count))
+                if value.contains(" ") {
+                    newLines.append("NXF_DIST=\"\(value)\"")
+                    patched = true
+                    continue
+                }
+            }
+
+            if line == "NXF_BIN=${NXF_BIN:-$NXF_DIST/$NXF_VER/$NXF_JAR}" {
+                newLines.append("NXF_BIN=${NXF_BIN:-\"$NXF_DIST/$NXF_VER/$NXF_JAR\"}")
+                patched = true
+                continue
+            }
+
+            newLines.append(line)
+        }
+
+        guard patched else { return }
+
+        do {
+            try newLines.joined(separator: "\n").write(
+                to: launcherURL,
+                atomically: true,
+                encoding: .utf8
+            )
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755],
+                ofItemAtPath: launcherURL.path
+            )
+            logger.info("Patched Nextflow launcher for space-safe NXF_DIST handling")
+        } catch {
+            logger.warning(
+                "Failed to patch Nextflow launcher at \(launcherURL.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    private func preferredPythonExecutable(in binURL: URL) -> String? {
+        let preferred = ["python", "python3"]
+        for candidate in preferred {
+            let path = binURL.appendingPathComponent(candidate).path
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return candidate
+            }
+        }
+
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: binURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
+        }
+
+        return contents
+            .filter { $0.lastPathComponent.hasPrefix("python") }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            .first(where: { FileManager.default.isExecutableFile(atPath: $0.path) })?
+            .lastPathComponent
+    }
+
+    private func launcherScript(command: String) -> String {
+        """
+        #!/bin/sh
+        set -e
+        TOOL_BIN="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
+        exec \(command)
+        """
+    }
+
+    private func writeManagedLauncher(
+        _ script: String,
+        to url: URL,
+        description: String
+    ) {
+        do {
+            try script.write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755],
+                ofItemAtPath: url.path
+            )
+            logger.info("\(description, privacy: .public): \(url.path, privacy: .public)")
+        } catch {
+            logger.warning(
+                "Failed to write managed launcher '\(url.lastPathComponent, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
 
     /// Runs micromamba with the given arguments and returns stdout.
     ///
@@ -1128,6 +1047,8 @@ public actor CondaManager {
 
         let executablePath = micromambaPath
         let rootPath = rootPrefix.path
+        let homePath = FileManager.default.homeDirectoryForCurrentUser.path
+        let tempDirectory = ProcessInfo.processInfo.environment["TMPDIR"]
 
         return try await withCheckedThrowingContinuation { continuation in
             let process = Process()
@@ -1137,6 +1058,8 @@ public actor CondaManager {
                 "MAMBA_ROOT_PREFIX": rootPath,
                 "MAMBA_NO_BANNER": "1",
                 "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                "HOME": homePath,
+                "TMPDIR": tempDirectory ?? "/tmp",
             ]
 
             let stdoutPipe = Pipe()
