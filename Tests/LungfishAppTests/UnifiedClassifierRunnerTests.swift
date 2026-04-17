@@ -36,6 +36,8 @@ final class UnifiedClassifierRunnerTests: XCTestCase {
 
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
+        XCTAssertTrue(source.contains("runnerSidebar"))
+        XCTAssertTrue(source.contains("configurationStep"))
         XCTAssertFalse(source.contains("WizardStep"))
         XCTAssertFalse(source.contains("analysisTypeSelector"))
     }

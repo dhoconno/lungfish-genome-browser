@@ -179,9 +179,17 @@ struct UnifiedMetagenomicsWizard: View {
 
             Divider()
 
-            runnerSidebar
+            HStack(spacing: 0) {
+                runnerSidebar
+                    .frame(width: 280)
+
+                Divider()
+
+                configurationStep
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
         }
-        .frame(width: 560, height: 520)
+        .frame(width: 760, height: 520)
         .onAppear {
             checkToolAvailability()
         }
