@@ -531,7 +531,9 @@ final class PluginPackStatusServiceTests: XCTestCase {
         try await service.install(pack: .requiredSetupPack, reinstall: true, progress: nil)
 
         let calls = await recorder.recordedCalls()
-        XCTAssertEqual(calls.map(\.environment), ["nextflow", "snakemake", "bbtools", "fastp", "deacon"])
+        XCTAssertEqual(calls.map(\.environment), PluginPack.requiredSetupPack.toolRequirements
+            .compactMap { $0.managedDatabaseID == nil ? $0.environment : nil }
+        )
         XCTAssertTrue(calls.allSatisfy(\.reinstall))
 
         let databaseCalls = await databaseRecorder.recordedCalls()
@@ -570,7 +572,10 @@ final class PluginPackStatusServiceTests: XCTestCase {
 
         let calls = await recorder.recordedCalls()
         let bbtoolsCall = try XCTUnwrap(calls.first(where: { $0.environment == "bbtools" }))
-        XCTAssertEqual(bbtoolsCall.packages, ["bbmap"])
+        XCTAssertEqual(
+            bbtoolsCall.packages,
+            [try XCTUnwrap(ManagedToolLock.loadFromBundle().tool(named: "bbtools")?.packageSpec)]
+        )
         XCTAssertFalse(bbtoolsCall.reinstall)
     }
 

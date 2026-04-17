@@ -43,8 +43,18 @@ public struct ManagedToolLock: Sendable, Codable, Hashable {
                 environment: environment,
                 installPackages: [packageSpec],
                 executables: executables,
+                fallbackExecutablePaths: fallbackExecutablePaths,
                 smokeTest: smokeTest
             )
+        }
+
+        private var fallbackExecutablePaths: [String: [String]] {
+            switch id {
+            case "bbtools":
+                return ["java": ["lib/jvm/bin/java"]]
+            default:
+                return [:]
+            }
         }
 
         private var smokeTest: PackToolSmokeTest? {
