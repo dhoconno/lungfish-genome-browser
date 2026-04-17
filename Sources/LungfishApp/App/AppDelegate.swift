@@ -1105,21 +1105,6 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     @objc func importFiles(_ sender: Any?) {
         debugLog("importFiles: Menu action triggered")
 
-        // Get current project URL
-        guard workingDirectoryURL != nil else {
-            // No project open - show alert
-            let alert = NSAlert()
-            alert.messageText = "No Project Open"
-            alert.informativeText = "Please open or create a project before importing files."
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "OK")
-            alert.applyLungfishBranding()
-            if let window = mainWindowController?.window ?? NSApp.keyWindow {
-                alert.beginSheetModal(for: window)
-            }
-            return
-        }
-
         guard let window = mainWindowController?.window else {
             debugLog("importFiles: No main window available")
             return
@@ -1152,86 +1137,98 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 return
             }
 
-            debugLog("importFiles: Selected \(selectedURLs.count) file(s)")
+            self?.importProjectFilesFromURLs(selectedURLs)
+        }
+    }
 
-            // Schedule the file copy operation via CFRunLoop to ensure it executes
-            // even during modal session transitions
-            scheduleOnMainRunLoop {
-                guard let self = self else { return }
-                debugLog("importFiles: Starting import pipeline dispatch")
+    func importProjectFilesFromURLs(_ selectedURLs: [URL]) {
+        guard workingDirectoryURL != nil else {
+            let alert = NSAlert()
+            alert.messageText = "No Project Open"
+            alert.informativeText = "Please open or create a project before importing files."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.applyLungfishBranding()
+            if let window = mainWindowController?.window ?? NSApp.keyWindow {
+                alert.beginSheetModal(for: window)
+            }
+            return
+        }
 
-                // Get references to UI components
-                let activityIndicator = self.mainWindowController?.mainSplitViewController?.activityIndicator
+        guard !selectedURLs.isEmpty else { return }
+        debugLog("importProjectFilesFromURLs: Selected \(selectedURLs.count) file(s)")
 
-                // Show progress indicator
-                let fileCount = selectedURLs.count
-                let requestID = UUID().uuidString
-                let tracker = ImportCompletionTracker(urls: selectedURLs)
-                activityIndicator?.show(
-                    message: "Importing \(fileCount) file\(fileCount == 1 ? "" : "s")...",
-                    style: .indeterminate
-                )
+        scheduleOnMainRunLoop {
+            debugLog("importProjectFilesFromURLs: Starting import pipeline dispatch")
 
-                tracker.observerToken = NotificationCenter.default.addObserver(
-                    forName: .sidebarFileDropCompleted,
-                    object: nil,
-                    queue: .main
-                ) { completion in
-                    let completionRequestID = completion.userInfo?["requestID"] as? String
-                    let completedURL = completion.userInfo?["url"] as? URL
-                    let wasSuccessful = (completion.userInfo?["success"] as? Bool) == true
+            let activityIndicator = self.mainWindowController?.mainSplitViewController?.activityIndicator
+            let fileCount = selectedURLs.count
+            let requestID = UUID().uuidString
+            let tracker = ImportCompletionTracker(urls: selectedURLs)
+            activityIndicator?.show(
+                message: "Importing \(fileCount) file\(fileCount == 1 ? "" : "s")...",
+                style: .indeterminate
+            )
 
-                    Task { @MainActor in
-                        guard let completionRequestID,
-                              completionRequestID == requestID,
-                              let completedURL else {
-                            return
+            tracker.observerToken = NotificationCenter.default.addObserver(
+                forName: .sidebarFileDropCompleted,
+                object: nil,
+                queue: .main
+            ) { completion in
+                let completionRequestID = completion.userInfo?["requestID"] as? String
+                let completedURL = completion.userInfo?["url"] as? URL
+                let wasSuccessful = (completion.userInfo?["success"] as? Bool) == true
+
+                Task { @MainActor in
+                    guard let completionRequestID,
+                          completionRequestID == requestID,
+                          let completedURL else {
+                        return
+                    }
+                    guard tracker.pendingURLs.contains(completedURL) else { return }
+
+                    tracker.pendingURLs.remove(completedURL)
+                    if wasSuccessful {
+                        tracker.succeeded += 1
+                    } else {
+                        tracker.failed += 1
+                    }
+
+                    if tracker.pendingURLs.isEmpty {
+                        if let observerToken = tracker.observerToken {
+                            NotificationCenter.default.removeObserver(observerToken)
+                            tracker.observerToken = nil
                         }
-                        guard tracker.pendingURLs.contains(completedURL) else { return }
+                        activityIndicator?.hide()
+                        debugLog(
+                            "importProjectFilesFromURLs: Completed request \(requestID). success=\(tracker.succeeded), failed=\(tracker.failed)"
+                        )
 
-                        tracker.pendingURLs.remove(completedURL)
-                        if wasSuccessful {
-                            tracker.succeeded += 1
-                        } else {
-                            tracker.failed += 1
-                        }
-
-                        if tracker.pendingURLs.isEmpty {
-                            if let observerToken = tracker.observerToken {
-                                NotificationCenter.default.removeObserver(observerToken)
-                                tracker.observerToken = nil
-                            }
-                            activityIndicator?.hide()
-                            debugLog(
-                                "importFiles: Completed request \(requestID). success=\(tracker.succeeded), failed=\(tracker.failed)"
-                            )
-
-                            if tracker.failed > 0 {
-                                let alert = NSAlert()
-                                alert.messageText = "Import Completed with Errors"
-                                alert.informativeText = "\(tracker.succeeded) succeeded, \(tracker.failed) failed."
-                                alert.alertStyle = .warning
-                                alert.addButton(withTitle: "OK")
-                                alert.applyLungfishBranding()
-                                if let window = NSApp.keyWindow {
-                                    await alert.beginSheetModal(for: window)
-                                }
+                        if tracker.failed > 0 {
+                            let alert = NSAlert()
+                            alert.messageText = "Import Completed with Errors"
+                            alert.informativeText = "\(tracker.succeeded) succeeded, \(tracker.failed) failed."
+                            alert.alertStyle = .warning
+                            alert.addButton(withTitle: "OK")
+                            alert.applyLungfishBranding()
+                            if let window = NSApp.keyWindow {
+                                await alert.beginSheetModal(for: window)
                             }
                         }
                     }
                 }
-
-                for (index, sourceURL) in selectedURLs.enumerated() {
-                    activityIndicator?.updateMessage("Importing \(sourceURL.lastPathComponent) (\(index + 1)/\(fileCount))...")
-                    NotificationCenter.default.post(
-                        name: .sidebarFileDropped,
-                        object: self,
-                        userInfo: ["url": sourceURL, "destination": NSNull(), "requestID": requestID]
-                    )
-                }
-
-                debugLog("importFiles: Dispatched \(selectedURLs.count) file(s) to sidebar import pipeline")
             }
+
+            for (index, sourceURL) in selectedURLs.enumerated() {
+                activityIndicator?.updateMessage("Importing \(sourceURL.lastPathComponent) (\(index + 1)/\(fileCount))...")
+                NotificationCenter.default.post(
+                    name: .sidebarFileDropped,
+                    object: self,
+                    userInfo: ["url": sourceURL, "destination": NSNull(), "requestID": requestID]
+                )
+            }
+
+            debugLog("importProjectFilesFromURLs: Dispatched \(selectedURLs.count) file(s) to sidebar import pipeline")
         }
     }
 
@@ -1350,6 +1347,18 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         } else if let mainSplit = mainWindowController?.mainSplitViewController {
             mainSplit.loadVCFFilesInBackground(urls: [url])
         }
+    }
+
+    /// Import an ONT run directory from a known URL (called from Import Center).
+    func importONTRunFromURL(_ url: URL) {
+        guard let projectURL = workingDirectoryURL else {
+            showAlert(title: "No Project Open", message: "Please open or create a project before importing an ONT run.")
+            return
+        }
+        mainWindowController?.mainSplitViewController?.importONTDirectoryInBackground(
+            sourceURL: url,
+            projectURL: projectURL
+        )
     }
 
     /// Import a reference FASTA file from a known URL (called from Import Center).
@@ -1649,6 +1658,19 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         }
 
         presentMetadataImportPanel(for: bundleURL, presentingWindow: mainWindowController?.window)
+    }
+
+    func importBundleSampleMetadataFromURL(_ url: URL) {
+        guard let viewerController = mainWindowController?.mainSplitViewController?.viewerController,
+              let bundleURL = viewerController.currentBundleURL else {
+            showAlert(title: "No Bundle Loaded", message: "Please open a reference genome bundle before importing sample metadata.")
+            return
+        }
+        importBundleSampleMetadataFromURL(url, bundleURL: bundleURL)
+    }
+
+    func importBundleSampleMetadataFromURL(_ url: URL, bundleURL: URL) {
+        performSampleMetadataImport(metadataURL: url, bundleURL: bundleURL)
     }
 
     func presentMetadataImportPanel(for bundleURL: URL, presentingWindow: NSWindow?) {

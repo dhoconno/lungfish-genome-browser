@@ -173,7 +173,7 @@ final class WelcomeViewModel: ObservableObject {
         isInstallingRequiredSetup = true
         setupErrorMessage = nil
         requiredSetupProgress = 0
-        requiredSetupProgressMessage = "Preparing Lungfish Tools…"
+        requiredSetupProgressMessage = "Preparing \(pack.name)…"
         requiredSetupItemProgress = [:]
         requiredSetupActiveItemID = nil
         showingSetupDetails = true
@@ -253,7 +253,6 @@ struct WelcomeView: View {
     @ObservedObject var viewModel: WelcomeViewModel
     @State private var hoveredAction: WelcomeAction?
     @State private var selectedSection: WelcomeSection = .getStarted
-    @Environment(\.colorScheme) private var colorScheme
 
     private var navigationSections: [WelcomeSection] {
         var sections: [WelcomeSection] = [.getStarted, .recentProjects, .requiredSetup]
@@ -263,13 +262,9 @@ struct WelcomeView: View {
         return sections
     }
 
-    private var sidebarTintOpacity: Double {
-        colorScheme == .dark ? 0.16 : 0.09
-    }
-
     var body: some View {
         ZStack {
-            Color(nsColor: .windowBackgroundColor)
+            Color.lungfishWelcomeBackground
                 .ignoresSafeArea()
 
             HStack(alignment: .top, spacing: 18) {
@@ -288,7 +283,7 @@ struct WelcomeView: View {
                 }
                 .background(
                     RoundedRectangle(cornerRadius: 30, style: .continuous)
-                        .fill(Color(nsColor: .windowBackgroundColor))
+                        .fill(Color.lungfishWelcomeBackground)
                 )
             }
             .padding(18)
@@ -317,7 +312,7 @@ struct WelcomeView: View {
 
                 Text(sectionSubtitle)
                     .font(.title3)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.lungfishWelcomeSecondaryText)
             }
 
             Spacer(minLength: 12)
@@ -325,12 +320,12 @@ struct WelcomeView: View {
             if let status = viewModel.requiredSetupStatus {
                 StatusPill(
                     title: status.state == .ready ? "Core Tools Installed" : "Setup Needed",
-                    color: status.state == .ready ? .green : .orange
+                    color: status.state == .ready ? .lungfishSageFallback : .lungfishCreamsicleFallback
                 )
             } else if viewModel.isRefreshingSetup {
                 StatusPill(
                     title: "Checking Setup",
-                    color: .secondary
+                    color: .lungfishWarmGreyFallback
                 )
             }
         }
@@ -365,17 +360,17 @@ struct WelcomeView: View {
 
     private var emptyRecentProjectsState: some View {
         RoundedRectangle(cornerRadius: 20, style: .continuous)
-            .fill(Color(nsColor: .controlBackgroundColor))
+            .fill(Color.lungfishWelcomeCardBackground)
             .overlay {
                 VStack(spacing: 10) {
                     Image(systemName: "folder.badge.questionmark")
                         .font(.system(size: 28, weight: .medium))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.lungfishWelcomeSecondaryText)
                     Text("No recent projects")
                         .font(.headline)
                     Text("Create a project or open an existing one to see it here.")
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.lungfishWelcomeSecondaryText)
                 }
                 .padding(28)
             }
@@ -404,8 +399,8 @@ struct WelcomeView: View {
 
                 if viewModel.isRefreshingSetup && viewModel.requiredSetupStatus == nil {
                     SetupLoadingCard(
-                        title: "Checking Lungfish Tools",
-                        message: "Please wait while Lungfish checks the tools and data it needs before you begin."
+                        title: "Checking Required Setup",
+                        message: "Please wait while Lungfish checks the third-party tools and data it needs before you begin."
                     )
                 } else if let requiredStatus = viewModel.requiredSetupStatus {
                     RequiredSetupCard(
@@ -427,14 +422,15 @@ struct WelcomeView: View {
                     HStack(spacing: 10) {
                         ProgressView()
                             .controlSize(.small)
-                        Text("Checking Lungfish Tools before recent projects become available.")
+                            .tint(.lungfishCreamsicleFallback)
+                        Text("Checking required setup before recent projects become available.")
                             .font(.subheadline)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.lungfishWelcomeSecondaryText)
                     }
                 } else if !viewModel.canLaunch {
                     Text("Finish required setup before opening a recent project.")
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.lungfishWelcomeSecondaryText)
                 }
 
                 if viewModel.recentProjects.recentProjects.isEmpty {
@@ -456,8 +452,8 @@ struct WelcomeView: View {
         case .requiredSetup:
             if viewModel.isRefreshingSetup && viewModel.requiredSetupStatus == nil {
                 SetupLoadingCard(
-                    title: "Checking Lungfish Tools",
-                    message: "Lungfish is checking each required tool and required data item."
+                    title: "Checking Required Setup",
+                    message: "Lungfish is checking each required third-party tool and required data item."
                 )
             } else if let requiredStatus = viewModel.requiredSetupStatus {
                 RequiredSetupCard(
@@ -480,17 +476,17 @@ struct WelcomeView: View {
                 )
             } else if viewModel.optionalPackStatuses.isEmpty {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor))
+                    .fill(Color.lungfishWelcomeCardBackground)
                     .overlay {
                         VStack(spacing: 10) {
                             Image(systemName: "square.stack.3d.up.slash")
                                 .font(.system(size: 28, weight: .medium))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Color.lungfishWelcomeSecondaryText)
                             Text("No optional tools available")
                                 .font(.headline)
                             Text("Active optional tools will appear here when they are ready to use in Lungfish.")
                                 .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Color.lungfishWelcomeSecondaryText)
                                 .multilineTextAlignment(.center)
                         }
                         .padding(28)
@@ -536,11 +532,11 @@ struct WelcomeView: View {
                             .padding(.vertical, 11)
                             .background(
                                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .fill(selectedSection == section ? Color.lungfishOrangeFallback.opacity(0.14) : Color.clear)
+                                    .fill(selectedSection == section ? Color.lungfishWelcomeSelectionFill : Color.clear)
                             )
                         }
                         .buttonStyle(.plain)
-                        .foregroundStyle(selectedSection == section ? Color.lungfishOrangeFallback : Color.primary)
+                        .foregroundStyle(selectedSection == section ? Color.lungfishCreamsicleFallback : Color.primary)
                     }
                 }
             }
@@ -549,9 +545,10 @@ struct WelcomeView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 Divider()
+                    .overlay(Color.lungfishWelcomeStroke)
                 Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.4")")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.lungfishWelcomeSecondaryText)
             }
             .padding(.top, 22)
         }
@@ -561,15 +558,11 @@ struct WelcomeView: View {
         .padding(.vertical, 24)
         .background(
             RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(Color(nsColor: .windowBackgroundColor))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .fill(Color.lungfishOrangeFallback.opacity(sidebarTintOpacity))
-                )
+                .fill(Color.lungfishWelcomeSidebarBackground)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .stroke(Color.black.opacity(0.04), lineWidth: 1)
+                .stroke(Color.lungfishWelcomeStroke, lineWidth: 1)
         )
     }
 
@@ -635,22 +628,23 @@ private struct SetupLoadingCard: View {
             HStack(spacing: 12) {
                 ProgressView()
                     .controlSize(.regular)
+                    .tint(.lungfishCreamsicleFallback)
                 Text(title)
                     .font(.title3.weight(.semibold))
             }
 
             Text(message)
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.lungfishWelcomeSecondaryText)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(22)
         .background(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
+                .fill(Color.lungfishWelcomeCardBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                        .stroke(Color.lungfishWelcomeStroke, lineWidth: 1)
                 )
         )
     }
@@ -687,12 +681,12 @@ private struct LaunchActionTile: View {
         Button(action: onTap) {
             VStack(alignment: .leading, spacing: 22) {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.10))
+                    .fill(Color.lungfishWelcomeIconBackground)
                     .frame(width: 54, height: 54)
                     .overlay {
                         Image(systemName: action.icon)
                             .font(.system(size: 24, weight: .medium))
-                            .foregroundColor(.accentColor)
+                            .foregroundColor(.lungfishCreamsicleFallback)
                     }
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -702,7 +696,7 @@ private struct LaunchActionTile: View {
 
                     Text(action.description)
                         .font(.system(size: 15))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.lungfishWelcomeSecondaryText)
                         .lineLimit(3)
                 }
 
@@ -712,10 +706,10 @@ private struct LaunchActionTile: View {
             .padding(22)
             .background(
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor))
+                    .fill(Color.lungfishWelcomeCardBackground)
                     .overlay(
                         RoundedRectangle(cornerRadius: 24, style: .continuous)
-                            .stroke(isHovered ? Color.accentColor.opacity(0.35) : Color.black.opacity(0.06), lineWidth: 1)
+                            .stroke(isHovered ? Color.lungfishCreamsicleFallback.opacity(0.35) : Color.lungfishWelcomeStroke, lineWidth: 1)
                     )
             )
         }
@@ -746,7 +740,7 @@ private struct RequiredSetupCard: View {
     }
 
     private var statusColor: Color {
-        isReady ? .green : .red
+        isReady ? .lungfishSageFallback : .lungfishCreamsicleFallback
     }
 
     var body: some View {
@@ -757,13 +751,13 @@ private struct RequiredSetupCard: View {
                     .foregroundStyle(statusColor)
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Lungfish Tools")
+                    Text(status.pack.name)
                         .font(.title3.weight(.semibold))
                     Text(isReady
-                         ? "Core tools and required setup data are installed. You can create a project or open an existing one."
-                         : "Lungfish needs a few tools and required data before you can create or open a project.")
+                         ? "\(status.pack.name) and required data are installed. You can create a project or open an existing one."
+                         : "Lungfish needs a few third-party tools and required data before you can create or open a project.")
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.lungfishWelcomeSecondaryText)
                 }
 
                 Spacer()
@@ -780,6 +774,7 @@ private struct RequiredSetupCard: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .tint(.lungfishCreamsicleFallback)
                 .disabled(isInstalling)
 
                 Button(showingDetails ? "Hide Details" : "Show Details") {
@@ -787,21 +782,24 @@ private struct RequiredSetupCard: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
+                .tint(.lungfishCreamsicleFallback)
             }
 
             if isInstalling {
                 VStack(alignment: .leading, spacing: 8) {
                     ProgressView(value: min(max(progressValue ?? 0, 0), 1))
                         .progressViewStyle(.linear)
-                    Text(progressMessage ?? "Installing Lungfish Tools…")
+                        .tint(.lungfishCreamsicleFallback)
+                    Text(progressMessage ?? "Installing \(status.pack.name)…")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.lungfishWelcomeSecondaryText)
                 }
             }
 
             if showingDetails {
                 VStack(alignment: .leading, spacing: 8) {
                     Divider()
+                        .overlay(Color.lungfishWelcomeStroke)
                         .padding(.bottom, 8)
                     ForEach(status.toolStatuses) { toolStatus in
                         VStack(alignment: .leading, spacing: 8) {
@@ -826,10 +824,10 @@ private struct RequiredSetupCard: View {
                                         if toolStatus.requirement.managedDatabaseID != nil {
                                             Text("Required Data")
                                                 .font(.system(size: 10, weight: .semibold))
-                                                .foregroundStyle(.secondary)
+                                                .foregroundStyle(Color.lungfishWelcomeSecondaryText)
                                                 .padding(.horizontal, 6)
                                                 .padding(.vertical, 3)
-                                                .background(Color.black.opacity(0.05))
+                                                .background(Color.lungfishCreamsicleFallback.opacity(0.12))
                                                 .clipShape(Capsule(style: .continuous))
                                         }
                                     }
@@ -837,19 +835,20 @@ private struct RequiredSetupCard: View {
                                 Spacer()
                                 Text(statusLabel(for: toolStatus))
                                     .font(.caption)
-                                    .foregroundColor(.secondary)
+                                    .foregroundColor(.lungfishWelcomeSecondaryText)
                             }
 
                             if isInstalling, activeItemID == toolStatus.id {
                                 ProgressView(value: min(max(itemProgress[toolStatus.id] ?? 0, 0), 1))
                                     .progressViewStyle(.linear)
+                                    .tint(.lungfishCreamsicleFallback)
                             }
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
                         .background(
                             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .fill(Color(nsColor: .windowBackgroundColor))
+                                .fill(Color.lungfishWelcomeBackground)
                         )
                     }
                 }
@@ -858,7 +857,7 @@ private struct RequiredSetupCard: View {
         .padding(22)
         .background(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
+                .fill(Color.lungfishWelcomeCardBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
                         .stroke(statusColor.opacity(0.18), lineWidth: 1)
@@ -878,12 +877,12 @@ private struct RequiredSetupCard: View {
 
     private func statusColor(for toolStatus: PackToolStatus) -> Color {
         if toolStatus.isReady || (itemProgress[toolStatus.id] ?? 0) >= 1 {
-            return .green
+            return .lungfishSageFallback
         }
         if isInstalling {
-            return .secondary
+            return .lungfishWarmGreyFallback
         }
-        return .red
+        return .lungfishCreamsicleFallback
     }
 
     private func statusLabel(for toolStatus: PackToolStatus) -> String {
@@ -909,17 +908,17 @@ private struct OptionalToolCard: View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top, spacing: 14) {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.10))
+                    .fill(Color.lungfishWelcomeIconBackground)
                     .frame(width: 48, height: 48)
                     .overlay {
                         Circle()
-                            .fill(status.state == .ready ? Color.green : Color.orange)
+                            .fill(status.state == .ready ? Color.lungfishSageFallback : Color.lungfishCreamsicleFallback)
                             .frame(width: 10, height: 10)
                             .offset(x: -13, y: -13)
 
                         Image(systemName: "square.stack.3d.up")
                             .font(.system(size: 18, weight: .medium))
-                            .foregroundColor(.accentColor)
+                            .foregroundColor(.lungfishCreamsicleFallback)
                     }
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -927,7 +926,7 @@ private struct OptionalToolCard: View {
                         .font(.system(size: 19, weight: .semibold))
                     Text(status.pack.description)
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.lungfishWelcomeSecondaryText)
                         .lineLimit(3)
                 }
 
@@ -938,19 +937,20 @@ private struct OptionalToolCard: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
+                .tint(.lungfishCreamsicleFallback)
             }
 
             Text(status.state == .ready ? "Installed and ready to use." : "Available to install when you need it.")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.lungfishWelcomeSecondaryText)
         }
         .padding(22)
         .background(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
+                .fill(Color.lungfishWelcomeCardBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                        .stroke(Color.lungfishWelcomeStroke, lineWidth: 1)
                 )
         )
     }
@@ -969,12 +969,12 @@ private struct RecentProjectCard: View {
         Button(action: onTap) {
             HStack(spacing: 12) {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.10))
+                    .fill(Color.lungfishWelcomeIconBackground)
                     .frame(width: 40, height: 40)
                     .overlay {
                         Image(systemName: "folder.fill")
                             .font(.system(size: 17, weight: .medium))
-                            .foregroundColor(.accentColor)
+                            .foregroundColor(.lungfishCreamsicleFallback)
                     }
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -985,7 +985,7 @@ private struct RecentProjectCard: View {
 
                     Text(project.url.path)
                         .font(.system(size: 12))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.lungfishWelcomeSecondaryText)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
@@ -994,17 +994,17 @@ private struct RecentProjectCard: View {
 
                 Text(project.lastOpenedFormatted)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.lungfishWelcomeSecondaryText)
             }
             .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
             .padding(.horizontal, 18)
             .padding(.vertical, 12)
             .background(
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor))
+                    .fill(Color.lungfishWelcomeCardBackground)
                     .overlay(
                         RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .stroke(isHovered ? Color.accentColor.opacity(0.28) : Color.black.opacity(0.06), lineWidth: 1)
+                            .stroke(isHovered ? Color.lungfishCreamsicleFallback.opacity(0.28) : Color.lungfishWelcomeStroke, lineWidth: 1)
                     )
             )
         }

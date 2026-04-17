@@ -104,6 +104,10 @@ public enum RuntimeResourceLocator {
     ) -> [URL] {
         var roots: [URL] = []
         var seenPaths = Set<String>()
+        let allowSourceFallback = shouldAllowSourceFallback(
+            mainResourceURL: mainResourceURL,
+            executableURL: executableURL
+        )
 
         func appendIfExists(_ url: URL?) {
             guard let url else { return }
@@ -172,11 +176,42 @@ public enum RuntimeResourceLocator {
             appendIfExists(siblingResources)
             appendIfExists(executableDirectory.appendingPathComponent("Resources"))
             appendIfExists(executableDirectory)
-            appendSourceResources(from: executableDirectory)
+            if allowSourceFallback {
+                appendSourceResources(from: executableDirectory)
+            }
         }
 
-        appendSourceResources(from: currentWorkingDirectoryURL)
+        if allowSourceFallback {
+            appendSourceResources(from: currentWorkingDirectoryURL)
+        }
         return roots
+    }
+
+    private static func shouldAllowSourceFallback(
+        mainResourceURL: URL?,
+        executableURL: URL?
+    ) -> Bool {
+        !isInsideAppBundle(mainResourceURL) && !isInsideAppBundle(executableURL)
+    }
+
+    private static func isInsideAppBundle(_ url: URL?) -> Bool {
+        guard var current = url?.resolvingSymlinksInPath().standardizedFileURL else {
+            return false
+        }
+
+        for _ in 0..<12 {
+            if current.pathExtension == "app" {
+                return true
+            }
+
+            let parent = current.deletingLastPathComponent()
+            if parent.path == current.path {
+                return false
+            }
+            current = parent
+        }
+
+        return false
     }
 
     private static func defaultExecutableURL() -> URL? {

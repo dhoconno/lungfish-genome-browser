@@ -468,7 +468,7 @@ public struct ReadStyleSection: View {
                     Text("No alignment tracks loaded.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                    Text("Import a BAM or CRAM file via File > Import BAM/CRAM Alignments.")
+                    Text("Import a BAM or CRAM file via File > Import Center.")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }

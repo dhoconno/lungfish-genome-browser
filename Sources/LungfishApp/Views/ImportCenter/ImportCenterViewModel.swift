@@ -7,6 +7,7 @@ import AppKit
 import UniformTypeIdentifiers
 import LungfishCore
 import os.log
+import Observation
 
 /// Logger for the Import Center view model.
 private let logger = Logger(subsystem: LogSubsystem.app, category: "ImportCenterVM")
@@ -54,10 +55,32 @@ struct ImportCardInfo: Identifiable, Sendable {
     let tab: ImportCenterViewModel.Tab
     let importKind: ImportKind
 
+    struct OpenPanelConfiguration: Sendable {
+        let allowedTypes: [UTType]?
+        let canChooseFiles: Bool
+        let canChooseDirectories: Bool
+        let allowsMultipleSelection: Bool
+        let allowsOtherFileTypes: Bool
+
+        init(
+            allowedTypes: [UTType]? = nil,
+            canChooseFiles: Bool = true,
+            canChooseDirectories: Bool = false,
+            allowsMultipleSelection: Bool = true,
+            allowsOtherFileTypes: Bool = false
+        ) {
+            self.allowedTypes = allowedTypes
+            self.canChooseFiles = canChooseFiles
+            self.canChooseDirectories = canChooseDirectories
+            self.allowsMultipleSelection = allowsMultipleSelection
+            self.allowsOtherFileTypes = allowsOtherFileTypes
+        }
+    }
+
     /// The kind of import action to perform when the user clicks "Import...".
     enum ImportKind: Sendable {
         /// Open a file panel with the given UTTypes and forward to the app delegate.
-        case filePanel(allowedTypes: [UTType], action: ImportAction)
+        case openPanel(configuration: OpenPanelConfiguration, action: ImportAction)
         /// Open a custom wizard sheet (e.g. NAO-MGS).
         case wizardSheet(action: ImportAction)
     }
@@ -65,9 +88,12 @@ struct ImportCardInfo: Identifiable, Sendable {
     /// Identifies which import action to dispatch.
     enum ImportAction: Sendable {
         case fastq
+        case ontRun
         case bam
         case vcf
         case fasta
+        case bundleSampleMetadata
+        case projectSampleMetadata
         case naoMgs
         case kraken2
         case esViritu
@@ -79,7 +105,7 @@ struct ImportCardInfo: Identifiable, Sendable {
     /// file panel or a wizard sheet.
     var importAction: ImportAction {
         switch importKind {
-        case .filePanel(_, let action):  return action
+        case .openPanel(_, let action):  return action
         case .wizardSheet(let action):   return action
         }
     }
@@ -89,16 +115,16 @@ struct ImportCardInfo: Identifiable, Sendable {
 
 /// View model for the Import Center window.
 ///
-/// Manages tab state, search filtering, import history, and the static catalog of
-/// importable data types. All state is ``@MainActor``-isolated and
-/// uses ``@Observable`` for automatic SwiftUI invalidation.
+/// Manages section state, import history, and the static catalog of importable
+/// data types. All state is ``@MainActor``-isolated and uses ``@Observable``
+/// for automatic SwiftUI invalidation.
 @MainActor
 @Observable
 final class ImportCenterViewModel {
 
     // MARK: - Tab
 
-    /// The five sections of the Import Center.
+    /// The sections of the Import Center.
     enum Tab: Int, CaseIterable, Hashable, Sendable {
         case sequencingReads
         case alignments
@@ -112,8 +138,8 @@ final class ImportCenterViewModel {
             case .sequencingReads:       return "Sequencing Reads"
             case .alignments:            return "Alignments"
             case .variants:              return "Variants"
-            case .classificationResults: return "Classification"
-            case .references:            return "References"
+            case .classificationResults: return "Classification Results"
+            case .references:            return "Reference Sequences"
             }
         }
 
@@ -133,7 +159,7 @@ final class ImportCenterViewModel {
 
         /// Creates a tab from a segmented control index.
         static func from(segmentIndex: Int) -> Tab {
-            Tab(rawValue: segmentIndex) ?? .classificationResults
+            Tab(rawValue: segmentIndex) ?? .sequencingReads
         }
     }
 
@@ -141,9 +167,6 @@ final class ImportCenterViewModel {
 
     /// Currently selected tab.
     var selectedTab: Tab = .sequencingReads
-
-    /// Search text from the toolbar search field.
-    var searchText: String = ""
 
     // MARK: - Import History
 
@@ -186,14 +209,37 @@ final class ImportCenterViewModel {
             sfSymbol: "waveform.path",
             fileHint: ".fastq.gz, .fq.gz, .fastq, .fq (files or folders)",
             tab: .sequencingReads,
-            importKind: .filePanel(
-                allowedTypes: [
-                    UTType(filenameExtension: "gz") ?? .data,
-                    UTType(filenameExtension: "fastq") ?? .data,
-                    UTType(filenameExtension: "fq") ?? .data,
-                    .folder,
-                ],
+            importKind: .openPanel(
+                configuration: .init(
+                    allowedTypes: [
+                        UTType(filenameExtension: "gz") ?? .data,
+                        UTType(filenameExtension: "fastq") ?? .data,
+                        UTType(filenameExtension: "fq") ?? .data,
+                        .folder,
+                    ],
+                    canChooseFiles: true,
+                    canChooseDirectories: true,
+                    allowsMultipleSelection: true
+                ),
                 action: .fastq
+            )
+        ),
+        ImportCardInfo(
+            id: "ont-run",
+            title: "ONT Run Folder",
+            description: "Import an Oxford Nanopore run folder, including fastq_pass or individual barcode folders, into per-barcode FASTQ bundles.",
+            sfSymbol: "dot.radiowaves.left.and.right",
+            fileHint: "fastq_pass/ or barcode folder",
+            tab: .sequencingReads,
+            importKind: .openPanel(
+                configuration: .init(
+                    allowedTypes: nil,
+                    canChooseFiles: false,
+                    canChooseDirectories: true,
+                    allowsMultipleSelection: false,
+                    allowsOtherFileTypes: true
+                ),
+                action: .ontRun
             )
         ),
 
@@ -205,11 +251,16 @@ final class ImportCenterViewModel {
             sfSymbol: "arrow.left.arrow.right",
             fileHint: ".bam, .cram",
             tab: .alignments,
-            importKind: .filePanel(
-                allowedTypes: [
-                    UTType(filenameExtension: "bam") ?? .data,
-                    UTType(filenameExtension: "cram") ?? .data,
-                ],
+            importKind: .openPanel(
+                configuration: .init(
+                    allowedTypes: [
+                        UTType(filenameExtension: "bam") ?? .data,
+                        UTType(filenameExtension: "cram") ?? .data,
+                    ],
+                    canChooseFiles: true,
+                    canChooseDirectories: false,
+                    allowsMultipleSelection: true
+                ),
                 action: .bam
             )
         ),
@@ -222,15 +273,19 @@ final class ImportCenterViewModel {
             sfSymbol: "diamond.fill",
             fileHint: ".vcf, .vcf.gz",
             tab: .variants,
-            importKind: .filePanel(
-                allowedTypes: [
-                    UTType(filenameExtension: "vcf") ?? .data,
-                    UTType(filenameExtension: "gz") ?? .data,
-                ],
+            importKind: .openPanel(
+                configuration: .init(
+                    allowedTypes: [
+                        UTType(filenameExtension: "vcf") ?? .data,
+                        UTType(filenameExtension: "gz") ?? .data,
+                    ],
+                    canChooseFiles: true,
+                    canChooseDirectories: false,
+                    allowsMultipleSelection: true
+                ),
                 action: .vcf
             )
         ),
-
         // Classification Results
         ImportCardInfo(
             id: "nao-mgs",
@@ -249,13 +304,18 @@ final class ImportCenterViewModel {
             sfSymbol: "k.circle",
             fileHint: ".kreport, .kreport2, .bracken",
             tab: .classificationResults,
-            importKind: .filePanel(
-                allowedTypes: [
-                    UTType(filenameExtension: "kreport") ?? .data,
-                    UTType(filenameExtension: "kreport2") ?? .data,
-                    UTType(filenameExtension: "bracken") ?? .data,
-                    UTType(filenameExtension: "txt") ?? .data,
-                ],
+            importKind: .openPanel(
+                configuration: .init(
+                    allowedTypes: [
+                        UTType(filenameExtension: "kreport") ?? .data,
+                        UTType(filenameExtension: "kreport2") ?? .data,
+                        UTType(filenameExtension: "bracken") ?? .data,
+                        UTType(filenameExtension: "txt") ?? .data,
+                    ],
+                    canChooseFiles: true,
+                    canChooseDirectories: false,
+                    allowsMultipleSelection: true
+                ),
                 action: .kraken2
             )
         ),
@@ -267,11 +327,16 @@ final class ImportCenterViewModel {
             customImage: TextBadgeIcon.image(text: "ES", size: NSSize(width: 28, height: 28)),
             fileHint: "EsViritu output directory",
             tab: .classificationResults,
-            importKind: .filePanel(
-                allowedTypes: [
-                    UTType(filenameExtension: "tsv") ?? .data,
-                    UTType(filenameExtension: "txt") ?? .data,
-                ],
+            importKind: .openPanel(
+                configuration: .init(
+                    allowedTypes: [
+                        UTType(filenameExtension: "tsv") ?? .data,
+                        UTType(filenameExtension: "txt") ?? .data,
+                    ],
+                    canChooseFiles: true,
+                    canChooseDirectories: true,
+                    allowsMultipleSelection: true
+                ),
                 action: .esViritu
             )
         ),
@@ -282,12 +347,17 @@ final class ImportCenterViewModel {
             sfSymbol: "t.circle",
             fileHint: "TaxTriage output directory",
             tab: .classificationResults,
-            importKind: .filePanel(
-                allowedTypes: [
-                    UTType(filenameExtension: "tsv") ?? .data,
-                    UTType(filenameExtension: "csv") ?? .data,
-                    UTType(filenameExtension: "txt") ?? .data,
-                ],
+            importKind: .openPanel(
+                configuration: .init(
+                    allowedTypes: [
+                        UTType(filenameExtension: "tsv") ?? .data,
+                        UTType(filenameExtension: "csv") ?? .data,
+                        UTType(filenameExtension: "txt") ?? .data,
+                    ],
+                    canChooseFiles: true,
+                    canChooseDirectories: true,
+                    allowsMultipleSelection: true
+                ),
                 action: .taxTriage
             )
         ),
@@ -310,46 +380,42 @@ final class ImportCenterViewModel {
             sfSymbol: "doc.text",
             fileHint: ".fa, .fasta, .fna, .faa, .ffn, .frn, .gb, .gbk, .gbff, .genbank, .embl (+ .gz/.bgz/.bz2/.xz/.zst)",
             tab: .references,
-            importKind: .filePanel(
-                allowedTypes: [
-                    UTType(filenameExtension: "fa") ?? .data,
-                    UTType(filenameExtension: "fasta") ?? .data,
-                    UTType(filenameExtension: "fna") ?? .data,
-                    UTType(filenameExtension: "faa") ?? .data,
-                    UTType(filenameExtension: "ffn") ?? .data,
-                    UTType(filenameExtension: "frn") ?? .data,
-                    UTType(filenameExtension: "fas") ?? .data,
-                    UTType(filenameExtension: "fsa") ?? .data,
-                    UTType(filenameExtension: "gb") ?? .data,
-                    UTType(filenameExtension: "gbk") ?? .data,
-                    UTType(filenameExtension: "gbff") ?? .data,
-                    UTType(filenameExtension: "genbank") ?? .data,
-                    UTType(filenameExtension: "embl") ?? .data,
-                    UTType(filenameExtension: "gz") ?? .data,
-                    UTType(filenameExtension: "gzip") ?? .data,
-                    UTType(filenameExtension: "bgz") ?? .data,
-                    UTType(filenameExtension: "bz2") ?? .data,
-                    UTType(filenameExtension: "xz") ?? .data,
-                    UTType(filenameExtension: "zst") ?? .data,
-                    UTType(filenameExtension: "zstd") ?? .data,
-                ],
+            importKind: .openPanel(
+                configuration: .init(
+                    allowedTypes: [
+                        UTType(filenameExtension: "fa") ?? .data,
+                        UTType(filenameExtension: "fasta") ?? .data,
+                        UTType(filenameExtension: "fna") ?? .data,
+                        UTType(filenameExtension: "faa") ?? .data,
+                        UTType(filenameExtension: "ffn") ?? .data,
+                        UTType(filenameExtension: "frn") ?? .data,
+                        UTType(filenameExtension: "fas") ?? .data,
+                        UTType(filenameExtension: "fsa") ?? .data,
+                        UTType(filenameExtension: "gb") ?? .data,
+                        UTType(filenameExtension: "gbk") ?? .data,
+                        UTType(filenameExtension: "gbff") ?? .data,
+                        UTType(filenameExtension: "genbank") ?? .data,
+                        UTType(filenameExtension: "embl") ?? .data,
+                        UTType(filenameExtension: "gz") ?? .data,
+                        UTType(filenameExtension: "gzip") ?? .data,
+                        UTType(filenameExtension: "bgz") ?? .data,
+                        UTType(filenameExtension: "bz2") ?? .data,
+                        UTType(filenameExtension: "xz") ?? .data,
+                        UTType(filenameExtension: "zst") ?? .data,
+                        UTType(filenameExtension: "zstd") ?? .data,
+                    ],
+                    canChooseFiles: true,
+                    canChooseDirectories: false,
+                    allowsMultipleSelection: true
+                ),
                 action: .fasta
             )
         ),
     ]
 
-    /// Cards filtered by the selected tab and search text.
-    var filteredCards: [ImportCardInfo] {
-        let tabCards = allCards.filter { $0.tab == selectedTab }
-        if searchText.isEmpty {
-            return tabCards
-        }
-        let query = searchText.lowercased()
-        return tabCards.filter { card in
-            card.title.lowercased().contains(query)
-            || card.description.lowercased().contains(query)
-            || (card.fileHint?.lowercased().contains(query) ?? false)
-        }
+    /// Cards visible in the currently selected section.
+    var visibleCards: [ImportCardInfo] {
+        allCards.filter { $0.tab == selectedTab }
     }
 
     // MARK: - Initialisation
@@ -367,8 +433,8 @@ final class ImportCenterViewModel {
     /// For wizard-sheet imports, opens the appropriate wizard.
     func performImport(for card: ImportCardInfo) {
         switch card.importKind {
-        case .filePanel(let allowedTypes, let action):
-            openFilePanel(allowedTypes: allowedTypes, action: action)
+        case .openPanel(let configuration, let action):
+            openFilePanel(configuration: configuration, action: action)
         case .wizardSheet(let action):
             openWizardSheet(action: action)
         }
@@ -387,17 +453,20 @@ final class ImportCenterViewModel {
 
     // MARK: - File Panel
 
-    private func openFilePanel(allowedTypes: [UTType], action: ImportCardInfo.ImportAction) {
+    private func openFilePanel(configuration: ImportCardInfo.OpenPanelConfiguration, action: ImportCardInfo.ImportAction) {
         guard let window = NSApp.mainWindow ?? NSApp.keyWindow else {
             logger.warning("No window available for file panel")
             return
         }
 
         let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = (action == .fastq || action == .esViritu || action == .taxTriage || action == .nvd)
-        panel.allowsMultipleSelection = true
-        panel.allowedContentTypes = allowedTypes
+        panel.canChooseFiles = configuration.canChooseFiles
+        panel.canChooseDirectories = configuration.canChooseDirectories
+        panel.allowsMultipleSelection = configuration.allowsMultipleSelection
+        panel.allowsOtherFileTypes = configuration.allowsOtherFileTypes
+        if let allowedTypes = configuration.allowedTypes {
+            panel.allowedContentTypes = allowedTypes
+        }
         panel.message = panelMessage(for: action)
 
         panel.beginSheetModal(for: window) { [weak self] response in
@@ -409,9 +478,13 @@ final class ImportCenterViewModel {
     private func panelMessage(for action: ImportCardInfo.ImportAction) -> String {
         switch action {
         case .fastq:    return "Select FASTQ files or folders to import"
+        case .ontRun:   return "Select an ONT output directory to import"
         case .bam:      return "Select BAM or CRAM alignment files to import"
         case .vcf:      return "Select VCF variant files to import"
         case .fasta:    return "Select standalone reference sequence files (.fa/.fasta/.gb/.embl, optionally .gz) to import"
+        case .bundleSampleMetadata:
+            return "Select a CSV or TSV file with sample metadata for the selected dataset"
+        case .projectSampleMetadata: return "Select project sample metadata"
         case .kraken2:  return "Select Kraken2 report files to import"
         case .esViritu: return "Select EsViritu result files or directory"
         case .taxTriage: return "Select TaxTriage result files or directory"
@@ -435,6 +508,10 @@ final class ImportCenterViewModel {
         switch action {
         case .fastq:
             appDelegate.importFASTQFromURLs(urls)
+        case .ontRun:
+            for url in urls {
+                appDelegate.importONTRunFromURL(url)
+            }
         case .bam:
             for url in urls {
                 appDelegate.importBAMFromURL(url)
@@ -447,6 +524,12 @@ final class ImportCenterViewModel {
             for url in urls {
                 appDelegate.importFASTAFromURL(url)
             }
+        case .bundleSampleMetadata:
+            for url in urls {
+                appDelegate.importBundleSampleMetadataFromURL(url)
+            }
+        case .projectSampleMetadata:
+            break
         case .kraken2:
             for url in urls {
                 appDelegate.importKraken2ResultFromURL(url)
@@ -483,6 +566,8 @@ final class ImportCenterViewModel {
         switch action {
         case .naoMgs:
             appDelegate.launchNaoMgsImport(nil)
+        case .projectSampleMetadata:
+            appDelegate.importProjectSampleMetadata(nil)
         case .nvd:
             appDelegate.launchNvdImport(nil)
         case .kraken2:
@@ -503,9 +588,12 @@ final class ImportCenterViewModel {
     private func historyLabel(for action: ImportCardInfo.ImportAction) -> String {
         switch action {
         case .fastq:    return "FASTQ"
+        case .ontRun:   return "ONT Run"
         case .bam:      return "BAM"
         case .vcf:      return "VCF"
         case .fasta:    return "FASTA"
+        case .bundleSampleMetadata: return "Bundle Metadata"
+        case .projectSampleMetadata: return "Project Metadata"
         case .naoMgs:   return "NAO-MGS"
         case .kraken2:  return "Kraken2"
         case .esViritu: return "EsViritu"

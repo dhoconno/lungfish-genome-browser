@@ -310,13 +310,12 @@ public extension PluginPack {
             name: "Metagenomics",
             description: "Taxonomic classification, viral detection, and clinical triage of metagenomic samples",
             sfSymbol: "leaf.fill",
-            packages: ["kraken2", "bracken", "metaphlan", "esviritu"],
+            packages: ["kraken2", "bracken", "esviritu"],
             category: "Metagenomics",
             isActive: true,
             requirements: [
                 .package("kraken2", displayName: "Kraken 2", smokeTest: .command(arguments: ["--version"])),
                 .package("bracken", displayName: "Bracken", smokeTest: .command(arguments: ["--help"])),
-                .package("metaphlan", displayName: "MetaPhlAn", smokeTest: .command(arguments: ["--help"])),
                 .package("esviritu", displayName: "EsViritu", smokeTest: .command(arguments: ["--help"])),
             ],
             estimatedSizeMB: 1200

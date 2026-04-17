@@ -7,9 +7,8 @@ import LungfishWorkflow
 
 /// Main SwiftUI view for the Plugin Manager window.
 ///
-/// Displays four tabs controlled by the toolbar segmented control:
+/// Displays the tool-management tabs controlled by the toolbar segmented control:
 /// - **Installed**: Conda environments with expand-to-show-packages.
-/// - **Available**: Bioconda package search with install buttons.
 /// - **Packs**: Curated tool bundles for common workflows.
 /// - **Databases**: Kraken2 database download and management.
 struct PluginManagerView: View {
@@ -22,8 +21,6 @@ struct PluginManagerView: View {
             switch viewModel.selectedTab {
             case .installed:
                 InstalledTabView(viewModel: viewModel)
-            case .available:
-                AvailableTabView(viewModel: viewModel)
             case .packs:
                 PacksTabView(viewModel: viewModel)
             case .databases:
@@ -31,6 +28,8 @@ struct PluginManagerView: View {
             }
         }
         .frame(minWidth: 600, minHeight: 350)
+        .background(Color.lungfishCanvasBackground.ignoresSafeArea())
+        .tint(.lungfishCreamsicleFallback)
         .alert(
             "Plugin Manager Error",
             isPresented: $viewModel.showingError,
@@ -67,23 +66,22 @@ private struct InstalledTabView: View {
         VStack(spacing: 12) {
             ProgressView()
                 .controlSize(.large)
+                .tint(.lungfishCreamsicleFallback)
             Text("Loading environments...")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.lungfishSecondaryText)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.lungfishCanvasBackground)
     }
 
     private var emptyPlaceholder: some View {
         VStack(spacing: 16) {
-            Image(systemName: "shippingbox")
-                .font(.system(size: 48))
-                .foregroundStyle(.tertiary)
             Text("No Tools Installed")
                 .font(.title2)
                 .fontWeight(.medium)
-            Text("Browse the Available tab to search bioconda,\nor install a curated Pack to get started.")
+            Text("Install the required and optional tool packs to get started.")
                 .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.lungfishSecondaryText)
                 .font(.body)
             Button("Browse Packs") {
                 viewModel.selectedTab = .packs
@@ -91,6 +89,7 @@ private struct InstalledTabView: View {
             .controlSize(.large)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.lungfishCanvasBackground)
     }
 
     private var environmentList: some View {
@@ -108,13 +107,17 @@ private struct InstalledTabView: View {
                         viewModel.removeEnvironment(name: env.name)
                     }
                 )
+                .listRowBackground(Color.lungfishCardBackground)
             }
         }
         .listStyle(.inset(alternatesRowBackgrounds: true))
+        .scrollContentBackground(.hidden)
+        .background(Color.lungfishCanvasBackground)
         .overlay(alignment: .topTrailing) {
             if viewModel.isLoading {
                 ProgressView()
                     .controlSize(.small)
+                    .tint(.lungfishCreamsicleFallback)
                     .padding(8)
             }
         }
@@ -150,19 +153,19 @@ private struct EnvironmentRow: View {
             HStack(spacing: 10) {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.lungfishSecondaryText)
                     .frame(width: 12)
 
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                    .font(.title3)
+                Circle()
+                    .fill(Color.lungfishSageFallback)
+                    .frame(width: 8, height: 8)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(environment.name)
                         .font(.headline)
                     Text("\(environment.packageCount) packages")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.lungfishSecondaryText)
                 }
 
                 Spacer()
@@ -173,9 +176,8 @@ private struct EnvironmentRow: View {
                 } else {
                     Button(role: .destructive) {
                         onRemove()
-                    } label: {
-                        Label("Remove", systemImage: "trash")
                     }
+                    label: { Text("Remove") }
                     .controlSize(.small)
                     .help("Remove this environment and all its packages")
                 }
@@ -196,9 +198,10 @@ private struct EnvironmentRow: View {
                         Spacer()
                         ProgressView()
                             .controlSize(.small)
+                            .tint(.lungfishCreamsicleFallback)
                         Text("Loading packages...")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.lungfishSecondaryText)
                         Spacer()
                     }
                     .padding(.vertical, 8)
@@ -207,25 +210,25 @@ private struct EnvironmentRow: View {
                     VStack(alignment: .leading, spacing: 2) {
                         ForEach(packages) { pkg in
                             HStack(spacing: 8) {
-                                Image(systemName: "cube")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-
                                 Text(pkg.name)
                                     .font(.system(.caption, design: .monospaced))
 
                                 Text(pkg.version)
                                     .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(Color.lungfishSecondaryText)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(Color.lungfishMutedFill)
+                                    .clipShape(RoundedRectangle(cornerRadius: 4))
 
                                 if !pkg.channel.isEmpty && pkg.channel != "unknown" {
                                     Text(pkg.channel)
                                         .font(.caption2)
-                                        .foregroundStyle(.tertiary)
+                                        .foregroundStyle(Color.lungfishSecondaryText)
                                         .padding(.horizontal, 4)
                                         .padding(.vertical, 1)
-                                        .background(.quaternary)
-                                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                                        .background(Color.lungfishMutedFill)
+                                        .clipShape(RoundedRectangle(cornerRadius: 4))
                                 }
 
                                 Spacer()
@@ -238,229 +241,6 @@ private struct EnvironmentRow: View {
                 }
             }
         }
-    }
-}
-
-// MARK: - Available Tab
-
-/// Search bioconda packages and install them.
-private struct AvailableTabView: View {
-
-    @Bindable var viewModel: PluginManagerViewModel
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // Inline search bar for clarity (supplements the toolbar search)
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-
-                TextField("Search bioconda packages (e.g. samtools, bcftools, bwa)", text: $viewModel.searchText)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit {
-                        viewModel.commitSearch()
-                    }
-
-                Button("Search") {
-                    viewModel.commitSearch()
-                }
-                .controlSize(.regular)
-                .disabled(viewModel.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-
-            Divider()
-
-            // Results area
-            if viewModel.isLoading {
-                VStack(spacing: 12) {
-                    ProgressView()
-                        .controlSize(.large)
-                    Text("Searching bioconda...")
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if !viewModel.hasSearched {
-                searchPrompt
-            } else if viewModel.deduplicatedResults.isEmpty {
-                noResultsView
-            } else {
-                resultsList
-            }
-        }
-    }
-
-    private var searchPrompt: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "magnifyingglass.circle")
-                .font(.system(size: 48))
-                .foregroundStyle(.tertiary)
-            Text("Search Bioconda")
-                .font(.title2)
-                .fontWeight(.medium)
-            Text("Search for bioinformatics tools from bioconda\nand conda-forge channels.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .font(.body)
-
-            // Quick search suggestions
-            HStack(spacing: 8) {
-                ForEach(["samtools", "bcftools", "bwa-mem2", "minimap2"], id: \.self) { suggestion in
-                    Button(suggestion) {
-                        viewModel.searchText = suggestion
-                        viewModel.commitSearch()
-                    }
-                    .controlSize(.small)
-                    .buttonStyle(.bordered)
-                }
-            }
-            .padding(.top, 4)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var noResultsView: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "questionmark.circle")
-                .font(.system(size: 40))
-                .foregroundStyle(.tertiary)
-            Text("No Results")
-                .font(.title3)
-                .fontWeight(.medium)
-            Text("No packages found matching your search.\nTry a different term or check the spelling.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .font(.callout)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var resultsList: some View {
-        List {
-            ForEach(viewModel.deduplicatedResults) { pkg in
-                PackageSearchRow(
-                    package: pkg,
-                    isInstalled: viewModel.installedEnvironmentNames.contains(pkg.name),
-                    isInstalling: viewModel.installingPackages.contains(pkg.name),
-                    progress: viewModel.installProgress[pkg.name],
-                    onInstall: {
-                        viewModel.installPackage(pkg)
-                    }
-                )
-            }
-        }
-        .listStyle(.inset(alternatesRowBackgrounds: true))
-    }
-}
-
-// MARK: - Package Search Row
-
-/// A single search result row with install button.
-private struct PackageSearchRow: View {
-
-    let package: CondaPackageInfo
-    let isInstalled: Bool
-    let isInstalling: Bool
-    let progress: Double?
-    let onInstall: () -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            // Status icon
-            if isInstalled {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                    .font(.title3)
-            } else {
-                Image(systemName: "cube.box")
-                    .foregroundStyle(.secondary)
-                    .font(.title3)
-            }
-
-            // Package info
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(package.name)
-                        .font(.headline)
-
-                    Text(package.version)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(.quaternary)
-                        .clipShape(RoundedRectangle(cornerRadius: 3))
-                }
-
-                HStack(spacing: 8) {
-                    // Channel badge
-                    Label(package.channel, systemImage: "antenna.radiowaves.left.and.right")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    // Platform badge
-                    if !package.isNativeMacOS && !package.subdir.isEmpty {
-                        Text("Linux only")
-                            .font(.caption2)
-                            .fontWeight(.medium)
-                            .foregroundStyle(.orange)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Color.orange.opacity(0.12))
-                            .clipShape(RoundedRectangle(cornerRadius: 3))
-                    }
-
-                    // License badge
-                    if let license = package.license {
-                        Label(license, systemImage: "doc.text")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-
-                    // Size
-                    if let size = package.sizeBytes, size > 0 {
-                        Text(formatBytes(size))
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-
-                if let desc = package.description, !desc.isEmpty {
-                    Text(desc)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-            }
-
-            Spacer()
-
-            // Action button
-            if isInstalled {
-                Text("Installed")
-                    .font(.caption)
-                    .foregroundStyle(.green)
-                    .fontWeight(.medium)
-            } else if isInstalling {
-                VStack(spacing: 4) {
-                    ProgressView(value: progress ?? 0)
-                        .frame(width: 60)
-                    Text("Installing...")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                Button {
-                    onInstall()
-                } label: {
-                    Label("Install", systemImage: "arrow.down.circle")
-                }
-                .controlSize(.small)
-                .buttonStyle(.borderedProminent)
-            }
-        }
-        .padding(.vertical, 4)
     }
 }
 
@@ -479,8 +259,9 @@ private struct PacksTabView: View {
                 VStack(spacing: 12) {
                     ProgressView()
                         .controlSize(.large)
+                        .tint(.lungfishCreamsicleFallback)
                     Text("Checking installed tools...")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.lungfishSecondaryText)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -540,9 +321,10 @@ private struct PacksTabView: View {
                             HStack(spacing: 8) {
                                 ProgressView()
                                     .controlSize(.small)
+                                    .tint(.lungfishCreamsicleFallback)
                                 Text("Refreshing tool status...")
                                     .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(Color.lungfishSecondaryText)
                             }
                             .padding(10)
                         }
@@ -595,38 +377,29 @@ private struct PackCard: View {
         status.shouldReinstall ? "Reinstall" : (pack.isRequiredBeforeLaunch ? "Install" : "Install All")
     }
 
-    private var installActionSymbol: String {
-        status.shouldReinstall ? "arrow.clockwise" : "arrow.down.circle.fill"
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
             HStack(spacing: 12) {
-                Image(systemName: pack.sfSymbol)
-                    .font(.title2)
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: 36, height: 36)
-                    .background(Color.accentColor.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 8) {
                         Text(pack.name)
                             .font(.headline)
 
-                        Text(pack.category)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(.quaternary)
-                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                        if pack.category != pack.name {
+                            Text(pack.category)
+                                .font(.caption2)
+                                .foregroundStyle(Color.lungfishSecondaryText)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Color.lungfishMutedFill)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                        }
                     }
 
                     Text(pack.description)
                         .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.lungfishSecondaryText)
                 }
 
                 Spacer()
@@ -636,10 +409,11 @@ private struct PackCard: View {
                     VStack(spacing: 4) {
                         ProgressView()
                             .controlSize(.small)
+                            .tint(.lungfishCreamsicleFallback)
                         if let msg = progressMessage {
                             Text(msg)
                                 .font(.caption2)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Color.lungfishSecondaryText)
                                 .lineLimit(1)
                         }
                     }
@@ -647,27 +421,18 @@ private struct PackCard: View {
                 } else if pack.isRequiredBeforeLaunch {
                     Button {
                         onInstallAll()
-                    } label: {
-                        Label(
-                            installActionTitle,
-                            systemImage: installActionSymbol
-                        )
-                    }
+                    } label: { Text(installActionTitle) }
                     .controlSize(.small)
                     .buttonStyle(.borderedProminent)
                 } else if isReady, let onRemoveAll {
                     Button(role: .destructive) {
                         onRemoveAll()
-                    } label: {
-                        Label("Remove All", systemImage: "trash")
-                    }
+                    } label: { Text("Remove All") }
                     .controlSize(.small)
                 } else {
                     Button {
                         onInstallAll()
-                    } label: {
-                        Label(installActionTitle, systemImage: installActionSymbol)
-                    }
+                    } label: { Text(installActionTitle) }
                     .controlSize(.small)
                     .buttonStyle(.borderedProminent)
                 }
@@ -676,21 +441,15 @@ private struct PackCard: View {
             .padding(.vertical, 12)
 
             Divider()
-                .padding(.leading, 62)
+                .padding(.leading, 14)
 
             // Package list
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(status.toolStatuses) { toolStatus in
                     HStack(spacing: 8) {
-                        if toolStatus.isReady {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                                .font(.caption)
-                        } else {
-                            Image(systemName: "exclamationmark.circle.fill")
-                                .foregroundStyle(.red)
-                                .font(.caption)
-                        }
+                        Circle()
+                            .fill(toolStatus.isReady ? Color.lungfishSageFallback : Color.lungfishCreamsicleFallback)
+                            .frame(width: 8, height: 8)
 
                         Text(toolStatus.requirement.displayName)
                             .font(.caption)
@@ -699,47 +458,42 @@ private struct PackCard: View {
 
                         Text(toolStatus.statusText)
                             .font(.caption2)
-                            .foregroundStyle(toolStatus.isReady ? .green : .secondary)
+                            .foregroundStyle(toolStatus.isReady ? Color.lungfishSageFallback : Color.lungfishSecondaryText)
                     }
                 }
             }
             .padding(.horizontal, 14)
-            .padding(.leading, 48)
             .padding(.vertical, 10)
 
             // Status bar with install count, estimated size, and hook info
             HStack(spacing: 12) {
                 Text("\(installedCount) of \(status.toolStatuses.count) ready")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.lungfishSecondaryText)
 
                 if pack.estimatedSizeMB > 0 {
                     Text(formatPackSize(pack.estimatedSizeMB))
                         .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Color.lungfishSecondaryText)
                 }
 
                 if !pack.postInstallHooks.isEmpty {
-                    Label(
-                        "\(pack.postInstallHooks.count) post-install \(pack.postInstallHooks.count == 1 ? "step" : "steps")",
-                        systemImage: "arrow.down.circle"
-                    )
+                    Text("\(pack.postInstallHooks.count) post-install \(pack.postInstallHooks.count == 1 ? "step" : "steps")")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.lungfishSecondaryText)
                     .help(pack.postInstallHooks.map(\.description).joined(separator: "\n"))
                 }
 
                 Spacer()
             }
             .padding(.horizontal, 14)
-            .padding(.leading, 48)
             .padding(.bottom, 10)
         }
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(Color.lungfishCardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(.quaternary, lineWidth: 1)
+                .strokeBorder(Color.lungfishStroke, lineWidth: 1)
         )
     }
 }
@@ -775,6 +529,7 @@ struct DatabasesTabView: View {
             // Footer with storage info
             storageFooter
         }
+        .background(Color.lungfishCanvasBackground)
         .onAppear {
             if viewModel.databases.isEmpty {
                 viewModel.refreshDatabases()
@@ -805,9 +560,6 @@ struct DatabasesTabView: View {
     private var databaseHeader: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Image(systemName: "cylinder.split.1x2")
-                    .font(.title2)
-                    .foregroundStyle(Color.accentColor)
                 Text("Databases")
                     .font(.headline)
 
@@ -815,29 +567,29 @@ struct DatabasesTabView: View {
 
                 Button {
                     viewModel.refreshDatabases()
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
+                } label: { Text("Refresh") }
                 .controlSize(.small)
             }
 
             if !viewModel.recommendedDatabaseName.isEmpty {
                 HStack(spacing: 4) {
-                    Image(systemName: "info.circle")
-                        .foregroundStyle(.blue)
-                        .font(.caption)
                     Text("Recommended for your system (\(formatRAM(viewModel.systemRAMBytes)) RAM): ")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.lungfishSecondaryText)
                     Text(viewModel.recommendedDatabaseName)
                         .font(.caption)
                         .fontWeight(.semibold)
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(Color.lungfishCreamsicleFallback)
                 }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.lungfishAttentionFill)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+        .background(Color.lungfishCanvasBackground)
     }
 
     // MARK: - Loading
@@ -846,18 +598,20 @@ struct DatabasesTabView: View {
         VStack(spacing: 12) {
             ProgressView()
                 .controlSize(.large)
+                .tint(.lungfishCreamsicleFallback)
             Text("Loading database catalog...")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.lungfishSecondaryText)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.lungfishCanvasBackground)
     }
 
     // MARK: - Database List (grouped by tool)
 
     /// Groups databases by their tool property for sectioned display.
-    private var groupedDatabases: [(tool: String, title: String, symbol: String, databases: [MetagenomicsDatabaseInfo])] {
+    private var groupedDatabases: [(tool: String, title: String, databases: [MetagenomicsDatabaseInfo])] {
         let toolOrder: [MetagenomicsTool] = [.kraken2, .esviritu, .taxtriage]
-        var result: [(tool: String, title: String, symbol: String, databases: [MetagenomicsDatabaseInfo])] = []
+        var result: [(tool: String, title: String, databases: [MetagenomicsDatabaseInfo])] = []
 
         for tool in toolOrder {
             let dbs = viewModel.databases.filter { $0.tool == tool.rawValue }
@@ -865,7 +619,6 @@ struct DatabasesTabView: View {
                 result.append((
                     tool: tool.rawValue,
                     title: tool.databaseSectionTitle,
-                    symbol: tool.symbolName,
                     databases: dbs
                 ))
             }
@@ -875,7 +628,7 @@ struct DatabasesTabView: View {
         let knownTools = Set(toolOrder.map(\.rawValue))
         let otherDbs = viewModel.databases.filter { !knownTools.contains($0.tool) }
         if !otherDbs.isEmpty {
-            result.append((tool: "other", title: "Other Databases", symbol: "cylinder", databases: otherDbs))
+            result.append((tool: "other", title: "Other Databases", databases: otherDbs))
         }
 
         return result
@@ -908,36 +661,30 @@ struct DatabasesTabView: View {
                                 viewModel.downloadError.removeValue(forKey: db.name)
                             }
                         )
+                        .listRowBackground(Color.lungfishCardBackground)
                     }
                 } header: {
-                    HStack(spacing: 6) {
-                        Image(systemName: section.symbol)
-                            .foregroundStyle(Color.accentColor)
-                        Text(section.title)
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                    }
+                    Text(section.title)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color.lungfishSecondaryText)
                 }
             }
         }
         .listStyle(.inset(alternatesRowBackgrounds: true))
+        .scrollContentBackground(.hidden)
+        .background(Color.lungfishCanvasBackground)
     }
 
     // MARK: - Storage Footer
 
     private var storageFooter: some View {
         HStack(spacing: 12) {
-            Label {
-                Text(viewModel.databaseStoragePath)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            } icon: {
-                Image(systemName: "folder")
-                    .foregroundStyle(.secondary)
-                    .font(.caption)
-            }
+            Text(viewModel.databaseStoragePath)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(Color.lungfishSecondaryText)
+                .lineLimit(1)
+                .truncationMode(.middle)
 
             Button("Change Location...") {
                 viewModel.chooseDatabaseStorageLocation()
@@ -949,10 +696,11 @@ struct DatabasesTabView: View {
 
             Text("Total: \(formatDatabaseBytes(viewModel.totalDatabaseStorageBytes)) used")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.lungfishSecondaryText)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
+        .background(Color.lungfishCanvasBackground)
     }
 }
 
@@ -992,38 +740,38 @@ private struct DatabaseRow: View {
                             .font(.headline)
 
                         if isRecommended {
-                            Label("Recommended", systemImage: "star.fill")
+                            Text("Recommended")
                                 .font(.caption2)
                                 .fontWeight(.medium)
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(Color.lungfishCreamsicleFallback)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 2)
-                                .background(Color.orange.opacity(0.12))
+                                .background(Color.lungfishAttentionFill)
                                 .clipShape(RoundedRectangle(cornerRadius: 4))
                         }
                     }
 
                     HStack(spacing: 8) {
                         // Download size
-                        Label(formatDatabaseBytes(database.sizeBytes), systemImage: "arrow.down.circle")
+                        Text(formatDatabaseBytes(database.sizeBytes))
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.lungfishSecondaryText)
 
                         // RAM requirement
-                        Label(formatDatabaseRAM(database.recommendedRAM), systemImage: "memorychip")
+                        Text(formatDatabaseRAM(database.recommendedRAM))
                             .font(.caption)
-                            .foregroundStyle(exceedsSystemRAM ? .orange : .secondary)
+                            .foregroundStyle(exceedsSystemRAM ? Color.lungfishCreamsicleFallback : Color.lungfishSecondaryText)
 
                         if exceedsSystemRAM {
                             Text("(exceeds system RAM)")
                                 .font(.caption2)
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(Color.lungfishCreamsicleFallback)
                         }
                     }
 
                     Text(database.description)
                         .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Color.lungfishSecondaryText)
                         .lineLimit(1)
                 }
 
@@ -1037,12 +785,12 @@ private struct DatabaseRow: View {
             // Error message if download failed
             if let error = errorMessage {
                 HStack(spacing: 4) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
-                        .font(.caption)
+                    Circle()
+                        .fill(Color.lungfishCreamsicleFallback)
+                        .frame(width: 8, height: 8)
                     Text(error)
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.lungfishCreamsicleFallback)
                         .lineLimit(2)
 
                     Spacer()
@@ -1061,10 +809,11 @@ private struct DatabaseRow: View {
             if isDownloading, let progressValue = progress {
                 VStack(alignment: .leading, spacing: 2) {
                     ProgressView(value: progressValue)
+                        .tint(.lungfishCreamsicleFallback)
                     if let message = progressMessage {
                         Text(message)
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.lungfishSecondaryText)
                             .lineLimit(1)
                     }
                 }
@@ -1081,25 +830,26 @@ private struct DatabaseRow: View {
     private var statusIcon: some View {
         switch database.status {
         case .ready:
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-                .font(.title3)
+            Circle()
+                .fill(Color.lungfishSageFallback)
+                .frame(width: 10, height: 10)
         case .downloading:
             ProgressView()
                 .controlSize(.small)
+                .tint(.lungfishCreamsicleFallback)
                 .frame(width: 20, height: 20)
         case .corrupt:
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-                .font(.title3)
+            Circle()
+                .fill(Color.lungfishCreamsicleFallback)
+                .frame(width: 10, height: 10)
         case .volumeNotMounted:
-            Image(systemName: "externaldrive.badge.questionmark")
-                .foregroundStyle(.orange)
-                .font(.title3)
+            Circle()
+                .fill(Color.lungfishCreamsicleFallback)
+                .frame(width: 10, height: 10)
         case .missing, .verifying:
-            Image(systemName: "circle.dashed")
-                .foregroundStyle(.tertiary)
-                .font(.title3)
+            Circle()
+                .stroke(Color.lungfishWarmGreyFallback.opacity(0.6), lineWidth: 1)
+                .frame(width: 10, height: 10)
         }
     }
 
@@ -1110,35 +860,30 @@ private struct DatabaseRow: View {
         if isRemoving {
             ProgressView()
                 .controlSize(.small)
+                .tint(.lungfishCreamsicleFallback)
         } else if isDownloading {
             Button(role: .cancel) {
                 onCancel()
-            } label: {
-                Label("Cancel", systemImage: "xmark.circle")
-            }
+            } label: { Text("Cancel") }
             .controlSize(.small)
             .help("Cancel this download")
         } else if database.status == .ready {
             HStack(spacing: 8) {
                 Text("Installed")
                     .font(.caption)
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Color.lungfishSageFallback)
                     .fontWeight(.medium)
 
                 Button(role: .destructive) {
                     onRemove()
-                } label: {
-                    Label("Remove", systemImage: "trash")
-                }
+                } label: { Text("Remove") }
                 .controlSize(.small)
                 .help("Remove this database and free disk space")
             }
         } else {
             Button {
                 onDownload()
-            } label: {
-                Label("Download", systemImage: "arrow.down.circle")
-            }
+            } label: { Text("Download") }
             .controlSize(.small)
             .buttonStyle(.borderedProminent)
         }

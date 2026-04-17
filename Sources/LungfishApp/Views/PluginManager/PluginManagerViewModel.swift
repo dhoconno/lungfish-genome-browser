@@ -20,7 +20,6 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "PluginManage
 /// ## Tabs
 ///
 /// - **Installed**: Lists conda environments and their packages.
-/// - **Available**: Searches bioconda for packages to install.
 /// - **Packs**: Shows curated ``PluginPack`` bundles.
 /// - **Databases**: Kraken2 database download and management.
 @MainActor
@@ -29,10 +28,9 @@ final class PluginManagerViewModel {
 
     // MARK: - Tab
 
-    /// The four sections of the Plugin Manager.
+    /// The sections of the Plugin Manager.
     enum Tab: Hashable, Sendable {
         case installed
-        case available
         case packs
         case databases
 
@@ -40,9 +38,8 @@ final class PluginManagerViewModel {
         var segmentIndex: Int {
             switch self {
             case .installed:  return 0
-            case .available:  return 1
-            case .packs:      return 2
-            case .databases:  return 3
+            case .packs:      return 1
+            case .databases:  return 2
             }
         }
 
@@ -50,9 +47,8 @@ final class PluginManagerViewModel {
         static func from(segmentIndex: Int) -> Tab {
             switch segmentIndex {
             case 0: return .installed
-            case 1: return .available
-            case 2: return .packs
-            case 3: return .databases
+            case 1: return .packs
+            case 2: return .databases
             default: return .installed
             }
         }
@@ -61,7 +57,7 @@ final class PluginManagerViewModel {
     // MARK: - State
 
     /// Currently selected tab.
-    var selectedTab: Tab = .installed {
+    var selectedTab: Tab = .packs {
         didSet {
             if selectedTab == .installed {
                 refreshInstalled()
@@ -72,9 +68,6 @@ final class PluginManagerViewModel {
             }
         }
     }
-
-    /// Search text from the toolbar search field.
-    var searchText: String = ""
 
     /// Whether a loading operation is in progress.
     var isLoading: Bool = false
@@ -98,37 +91,6 @@ final class PluginManagerViewModel {
 
     /// Set of environment names currently being removed.
     var removingEnvironments: Set<String> = []
-
-    // MARK: - Available Tab State
-
-    /// Search results from bioconda.
-    var searchResults: [CondaPackageInfo] = []
-
-    /// Deduplicated search results (latest version per package name).
-    var deduplicatedResults: [CondaPackageInfo] {
-        // Group by package name, keep only the latest version
-        var seen: [String: CondaPackageInfo] = [:]
-        for pkg in searchResults {
-            if let existing = seen[pkg.name] {
-                // Simple version comparison: prefer the one that sorts later
-                if pkg.version.compare(existing.version, options: .numeric) == .orderedDescending {
-                    seen[pkg.name] = pkg
-                }
-            } else {
-                seen[pkg.name] = pkg
-            }
-        }
-        return seen.values.sorted { $0.name < $1.name }
-    }
-
-    /// Whether a search has been performed.
-    var hasSearched: Bool = false
-
-    /// Set of package names currently being installed.
-    var installingPackages: Set<String> = []
-
-    /// Map of package name to installation progress (0.0 to 1.0).
-    var installProgress: [String: Double] = [:]
 
     // MARK: - Packs Tab State
 
@@ -279,59 +241,6 @@ final class PluginManagerViewModel {
                 refreshInstalled()
             } catch {
                 handleError(error, context: "removing '\(name)'")
-            }
-        }
-    }
-
-    // MARK: - Available Tab Actions
-
-    /// Triggers a bioconda search.
-    func commitSearch() {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return }
-
-        Task {
-            isLoading = true
-            hasSearched = true
-            defer { isLoading = false }
-
-            do {
-                let results = try await CondaManager.shared.search(query: query)
-                searchResults = results
-                logger.info("Search for '\(query, privacy: .public)' returned \(results.count, privacy: .public) results")
-            } catch {
-                searchResults = []
-                handleError(error, context: "searching for '\(query)'")
-            }
-        }
-    }
-
-    /// Installs a package into its own environment.
-    func installPackage(_ package: CondaPackageInfo) {
-        let name = package.name
-        installingPackages.insert(name)
-        installProgress[name] = 0.0
-
-        Task {
-            defer {
-                installingPackages.remove(name)
-                installProgress.removeValue(forKey: name)
-            }
-
-            do {
-                try await CondaManager.shared.install(
-                    packages: [name],
-                    environment: name,
-                    progress: { [weak self] progress, message in
-                        Task { @MainActor [weak self] in
-                            self?.installProgress[name] = progress
-                        }
-                    }
-                )
-                logger.info("Installed package '\(name, privacy: .public)'")
-                refreshInstalled()
-            } catch {
-                handleError(error, context: "installing '\(name)'")
             }
         }
     }

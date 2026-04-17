@@ -168,25 +168,33 @@ final class WelcomeSetupTests: XCTestCase {
         XCTAssertTrue(source.contains("Optional Tools"))
     }
 
-    func testWelcomeViewSourceUsesCoreToolsStatusCopy() throws {
+    func testWelcomeViewSourceUsesRequiredPackCopy() throws {
         let source = try String(
             contentsOf: repositoryRoot()
                 .appendingPathComponent("Sources/LungfishApp/Views/Welcome/WelcomeWindowController.swift"),
             encoding: .utf8
         )
 
-        XCTAssertFalse(source.contains("Lungfish Tools Ready"))
-        XCTAssertTrue(source.contains("Core Tools Installed"))
+        XCTAssertFalse(source.contains("Lungfish Tools"))
+        XCTAssertTrue(source.contains("Checking Required Setup"))
+        XCTAssertTrue(source.contains("Preparing \\(pack.name)"))
+        XCTAssertTrue(source.contains("Text(status.pack.name)"))
     }
 
-    func testWelcomeViewSourceUsesLungfishOrangeSidebarTintAndNoVerticalFixedSize() throws {
+    func testWelcomeViewSourceUsesWarmPaletteAndNoVerticalFixedSize() throws {
         let source = try String(
             contentsOf: repositoryRoot()
                 .appendingPathComponent("Sources/LungfishApp/Views/Welcome/WelcomeWindowController.swift"),
             encoding: .utf8
         )
 
-        XCTAssertTrue(source.contains("Color.lungfishOrangeFallback"))
+        XCTAssertTrue(source.contains("Color.lungfishWelcomeSidebarBackground"))
+        XCTAssertTrue(source.contains("Color.lungfishWelcomeCardBackground"))
+        XCTAssertTrue(source.contains("Color.lungfishCreamsicleFallback"))
+        XCTAssertTrue(source.contains("Color.lungfishSageFallback"))
+        XCTAssertFalse(source.contains("Color.accentColor"))
+        XCTAssertFalse(source.contains("? .green"))
+        XCTAssertFalse(source.contains("? .red"))
         XCTAssertFalse(source.contains(".fixedSize(horizontal: false, vertical: true)"))
     }
 

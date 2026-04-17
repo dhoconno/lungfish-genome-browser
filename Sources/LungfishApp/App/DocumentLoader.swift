@@ -178,7 +178,7 @@ public enum DocumentLoader {
             logger.info("loadFile: VCF file detected — dashboard will handle display")
 
         case .bam:
-            throw DocumentLoadError.unsupportedFormat("BAM/CRAM files are imported as alignment tracks. Use File \u{203A} Import BAM/CRAM Alignments\u{2026} with a bundle open.")
+            throw DocumentLoadError.unsupportedFormat("BAM/CRAM files are imported as alignment tracks. Use File \u{203A} Import Center\u{2026} with a bundle open.")
 
         case .lungfishProject:
             throw DocumentLoadError.unsupportedFormat("Use openProject for .lungfish files")

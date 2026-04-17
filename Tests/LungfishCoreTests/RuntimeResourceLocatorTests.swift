@@ -86,4 +86,45 @@ struct RuntimeResourceLocatorTests {
 
         #expect(resolved?.standardizedFileURL.path == expected.standardizedFileURL.path)
     }
+
+    @Test
+    func doesNotUseWorkspaceFallbackWhenRunningFromAppBundle() throws {
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("runtime-resource-locator-\(UUID().uuidString)", isDirectory: true)
+        let repositoryRoot = tempRoot.appendingPathComponent("repo", isDirectory: true)
+        let workingDirectory = repositoryRoot.appendingPathComponent("Sources/LungfishApp/Services", isDirectory: true)
+        let appExecutable = tempRoot.appendingPathComponent("Lungfish.app/Contents/MacOS/Lungfish")
+        let appResources = tempRoot.appendingPathComponent("Lungfish.app/Contents/Resources", isDirectory: true)
+        let sourceFallback = repositoryRoot
+            .appendingPathComponent("Sources/LungfishWorkflow/Resources/Tools/micromamba")
+
+        try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: appExecutable.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(at: appResources, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: sourceFallback.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try "binary".write(to: sourceFallback, atomically: true, encoding: .utf8)
+        try "swift-tools-version: 6.2\n".write(
+            to: repositoryRoot.appendingPathComponent("Package.swift"),
+            atomically: true,
+            encoding: .utf8
+        )
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let resolved = RuntimeResourceLocator.path(
+            "Tools/micromamba",
+            in: .workflow,
+            mainResourceURL: appResources,
+            executableURL: appExecutable,
+            currentWorkingDirectoryURL: workingDirectory,
+            fileManager: .default
+        )
+
+        #expect(resolved == nil)
+    }
 }

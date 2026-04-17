@@ -7,163 +7,182 @@ import UniformTypeIdentifiers
 
 /// Main SwiftUI view for the Import Center window.
 ///
-/// Displays four tabs controlled by the toolbar segmented control:
-/// - **Alignments**: BAM/CRAM alignment imports.
-/// - **Variants**: VCF variant file imports.
-/// - **Classification Results**: NAO-MGS, Kraken2, EsViritu, TaxTriage.
-/// - **References**: Reference FASTA imports.
+/// Uses the same in-window sidebar pattern as the welcome screen so import
+/// categories stay visible as the catalog grows.
 struct ImportCenterView: View {
 
     /// The shared view model, owned by ``ImportCenterWindowController``.
     @Bindable var viewModel: ImportCenterViewModel
 
     var body: some View {
-        Group {
-            if viewModel.filteredCards.isEmpty {
-                emptyState
-            } else {
-                cardList
-            }
-        }
-        .frame(minWidth: 600, minHeight: 350)
-    }
+        ZStack {
+            Color.lungfishCanvasBackground
+                .ignoresSafeArea()
 
-    // MARK: - Card List
+            HStack(alignment: .top, spacing: 18) {
+                importSidebar
 
-    private var cardList: some View {
-        ScrollView {
-            LazyVStack(spacing: 12) {
-                // Tab header
-                tabHeader
-                    .padding(.top, 8)
-
-                ForEach(viewModel.filteredCards) { card in
-                    ImportCardView(card: card) {
-                        viewModel.performImport(for: card)
-                    } onDrop: { urls in
-                        viewModel.performDropImport(urls: urls, for: card)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        headerRow
+                        selectedSectionContent
+                        Spacer(minLength: 0)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 28)
+                    .padding(.top, 28)
+                    .padding(.bottom, 30)
                 }
-
-                // Recent Imports section (only when history exists for this tab)
-                if !viewModel.recentHistory.isEmpty {
-                    recentImportsSection
-                }
+                .background(
+                    RoundedRectangle(cornerRadius: 30, style: .continuous)
+                        .fill(Color.lungfishCanvasBackground)
+                )
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 20)
+            .padding(18)
         }
+        .frame(minWidth: 980, minHeight: 620)
+        .background(Color.lungfishCanvasBackground)
+        .tint(.lungfishCreamsicleFallback)
     }
 
-    private var tabHeader: some View {
-        HStack(spacing: 10) {
-            Image(systemName: viewModel.selectedTab.sfSymbol)
-                .font(.title2)
-                .foregroundStyle(Color.lungfishOrangeFallback)
-
-            VStack(alignment: .leading, spacing: 2) {
+    private var headerRow: some View {
+        HStack(alignment: .bottom, spacing: 20) {
+            VStack(alignment: .leading, spacing: 8) {
                 Text(viewModel.selectedTab.title)
-                    .font(.title2)
-                    .fontWeight(.semibold)
-                Text(tabSubtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 34, weight: .bold))
+
+                Text(sectionSubtitle)
+                    .font(.title3)
+                    .foregroundStyle(Color.lungfishSecondaryText)
             }
 
-            Spacer()
+            Spacer(minLength: 12)
         }
-        .padding(.horizontal, 4)
+        .padding(.bottom, 4)
     }
 
-    private var tabSubtitle: String {
+    private var sectionSubtitle: String {
         switch viewModel.selectedTab {
         case .sequencingReads:
-            return "Import raw sequencing data for processing and analysis"
+            return "Import raw sequencing reads and run folders for processing and analysis."
         case .alignments:
-            return "Import aligned reads for visualization"
+            return "Import aligned read files for coverage, duplicate marking, and track display."
         case .variants:
-            return "Import variant calls for annotation"
+            return "Import variant calls for annotation and bundle creation."
         case .classificationResults:
-            return "Import metagenomic classification results"
+            return "Import metagenomic result files that Lungfish can open and analyze."
         case .references:
-            return "Import reference genome sequences"
+            return "Import reference sequences and create Lungfish reference bundles."
         }
     }
 
-    // MARK: - Recent Imports Section
+    @ViewBuilder
+    private var selectedSectionContent: some View {
+        if viewModel.visibleCards.isEmpty {
+            emptyState(
+                title: "Nothing to Import Here Yet",
+                message: "The selected category does not have any import actions available right now."
+            )
+        } else {
+            cardSection(cards: viewModel.visibleCards)
+        }
+    }
 
-    private var recentImportsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Section header
-            HStack {
-                Text("Recent Imports")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-            .padding(.horizontal, 4)
-            .padding(.top, 8)
-
-            // Entry rows (last 5 from recentHistory)
-            VStack(spacing: 0) {
-                ForEach(Array(viewModel.recentHistory.prefix(5).enumerated()), id: \.element.id) { index, entry in
-                    if index > 0 {
-                        Divider()
-                            .padding(.leading, 36)
-                    }
-                    ImportHistoryRow(entry: entry)
+    private func cardSection(cards: [ImportCardInfo]) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(cards) { card in
+                ImportCardView(card: card) {
+                    viewModel.performImport(for: card)
+                } onDrop: { urls in
+                    viewModel.performDropImport(urls: urls, for: card)
                 }
             }
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(.background)
-                    .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
-            )
+        }
+    }
+
+    private func emptyState(title: String, message: String) -> some View {
+        RoundedRectangle(cornerRadius: 20, style: .continuous)
+            .fill(Color.lungfishCardBackground)
+            .overlay {
+                VStack(spacing: 10) {
+                    Text(title)
+                        .font(.headline)
+                    Text(message)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.lungfishSecondaryText)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(28)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 180)
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(.separator, lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(Color.lungfishStroke, lineWidth: 1)
             )
-
-            // Clear History link
-            HStack {
-                Spacer()
-                Button("Clear History") {
-                    viewModel.clearHistory()
-                }
-                .buttonStyle(.plain)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.trailing, 4)
-            }
-        }
     }
 
-    // MARK: - Empty State
+    private var importSidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Import Center")
+                    .font(.system(size: 28, weight: .bold))
 
-    private var emptyState: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 48))
-                .foregroundStyle(.tertiary)
-            Text("No Matching Import Types")
-                .font(.title2)
-                .fontWeight(.medium)
-            Text("Try a different search term or select another category.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .font(.body)
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(ImportCenterViewModel.Tab.allCases, id: \.self) { tab in
+                        Button {
+                            viewModel.selectedTab = tab
+                        } label: {
+                            HStack(spacing: 12) {
+                                Text(tab.title)
+                                    .font(.system(size: 15, weight: .medium))
+                                Spacer()
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 11)
+                            .background(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(viewModel.selectedTab == tab ? Color.lungfishWelcomeSelectionFill : Color.clear)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(viewModel.selectedTab == tab ? Color.lungfishCreamsicleFallback : Color.primary)
+                    }
+                }
+            }
+
+            Spacer(minLength: 28)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Divider()
+                    .overlay(Color.lungfishStroke)
+                Text("Imports are routed into the current project.")
+                    .font(.caption)
+                    .foregroundStyle(Color.lungfishSecondaryText)
+            }
+            .padding(.top, 22)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(width: 250)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 24)
+        .background(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(Color.lungfishWelcomeSidebarBackground)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .stroke(Color.lungfishStroke, lineWidth: 1)
+        )
     }
 }
 
 // MARK: - Import Card View
 
-/// A single import type card with icon, title, description, and Import button.
+/// A single import type card with title, description, and Import button.
 ///
 /// Supports drag-and-drop: files dragged onto the card trigger the same
-/// import path as clicking "Import...". The card highlights with an orange
+/// import path as clicking "Import...". The card highlights with a creamsicle
 /// border while a compatible drag is in progress over it.
 private struct ImportCardView: View {
 
@@ -176,48 +195,27 @@ private struct ImportCardView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
-            // Icon
-            Group {
-                if let customImage = card.customImage {
-                    Image(nsImage: customImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 28, height: 28)
-                } else {
-                    Image(systemName: card.sfSymbol)
-                        .font(.system(size: 28))
-                        .foregroundStyle(Color.lungfishOrangeFallback)
-                }
-            }
-            .frame(width: 44, height: 44)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.lungfishOrangeFallback.opacity(0.1))
-            )
-
-            // Text content
             VStack(alignment: .leading, spacing: 4) {
                 Text(card.title)
                     .font(.headline)
 
                 Text(card.description)
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.lungfishSecondaryText)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if let hint = card.fileHint {
                     Text(hint)
                         .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Color.lungfishSecondaryText)
                         .padding(.top, 2)
                 }
             }
 
             Spacer(minLength: 12)
 
-            // Import button
-            Button("Import\u{2026}") {
+            Button("Import…") {
                 onImport()
             }
             .controlSize(.regular)
@@ -227,15 +225,13 @@ private struct ImportCardView: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(.background)
+                .fill(Color.lungfishCardBackground)
                 .shadow(color: .black.opacity(0.06), radius: 3, y: 1)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(
-                    isDropTargeted
-                        ? Color.lungfishOrangeFallback
-                        : Color(.separatorColor),
+                    isDropTargeted ? Color.lungfishCreamsicleFallback : Color.lungfishStroke,
                     lineWidth: isDropTargeted ? 2 : 0.5
                 )
                 .animation(.easeInOut(duration: 0.15), value: isDropTargeted)
@@ -267,76 +263,6 @@ private struct ImportCardView: View {
                 guard !resolved.isEmpty else { return }
                 onDrop(resolved)
             }
-        }
-    }
-}
-
-// MARK: - Import History Row
-
-/// A compact row displaying a single ``ImportHistoryEntry``.
-private struct ImportHistoryRow: View {
-
-    let entry: ImportHistoryEntry
-
-    var body: some View {
-        HStack(spacing: 10) {
-            // Success / failure indicator
-            Image(systemName: entry.succeeded ? "checkmark.circle.fill" : "xmark.circle.fill")
-                .font(.system(size: 14))
-                .foregroundStyle(entry.succeeded ? Color.green : Color.red)
-                .frame(width: 18)
-
-            // File name
-            Text(entry.fileName)
-                .font(.subheadline)
-                .lineLimit(1)
-                .truncationMode(.middle)
-
-            // Import type badge
-            Text(entry.importAction)
-                .font(.caption)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(
-                    Capsule().fill(Color.lungfishOrangeFallback.opacity(0.12))
-                )
-                .foregroundStyle(Color.lungfishOrangeFallback)
-
-            Spacer()
-
-            // Relative date
-            Text(entry.date.relativeFormatted)
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-    }
-}
-
-// MARK: - Date Relative Formatting
-
-private extension Date {
-    /// Returns a short relative description such as "2 hours ago" or "just now".
-    var relativeFormatted: String {
-        let seconds = Date.now.timeIntervalSince(self)
-        switch seconds {
-        case ..<60:
-            return "just now"
-        case 60..<3600:
-            let mins = Int(seconds / 60)
-            return "\(mins) min\(mins == 1 ? "" : "s") ago"
-        case 3600..<86400:
-            let hrs = Int(seconds / 3600)
-            return "\(hrs) hour\(hrs == 1 ? "" : "s") ago"
-        case 86400..<604800:
-            let days = Int(seconds / 86400)
-            return "\(days) day\(days == 1 ? "" : "s") ago"
-        default:
-            let formatter = DateFormatter()
-            formatter.dateStyle = .short
-            formatter.timeStyle = .none
-            return formatter.string(from: self)
         }
     }
 }

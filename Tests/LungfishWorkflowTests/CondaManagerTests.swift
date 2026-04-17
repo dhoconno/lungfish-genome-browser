@@ -111,7 +111,7 @@ final class CondaManagerTests: XCTestCase {
 
     func testBuiltInPacksExist() {
         XCTAssertFalse(PluginPack.builtIn.isEmpty)
-        XCTAssertEqual(PluginPack.builtIn.count, 14, "Should include Lungfish Tools plus 13 optional packs")
+        XCTAssertEqual(PluginPack.builtIn.count, 14, "Should include the required setup pack plus 13 optional packs")
         XCTAssertEqual(PluginPack.activeOptionalPacks.count, 1, "Only metagenomics should be active in this branch")
     }
 
@@ -337,7 +337,7 @@ final class CondaManagerTests: XCTestCase {
         XCTAssertNotNil(pack)
         XCTAssertTrue(pack!.packages.contains("kraken2"))
         XCTAssertTrue(pack!.packages.contains("bracken"))
-        XCTAssertTrue(pack!.packages.contains("metaphlan"))
+        XCTAssertFalse(pack!.packages.contains("metaphlan"))
         XCTAssertFalse(pack!.packages.contains("nextflow"))
         // freyja moved to wastewater-surveillance pack
         XCTAssertFalse(pack!.packages.contains("freyja"))

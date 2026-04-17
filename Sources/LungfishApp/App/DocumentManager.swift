@@ -348,8 +348,8 @@ public final class DocumentManager {
                 logger.info("loadDocument: Loading VCF...")
                 try await loadVCF(into: document)
             case .bam:
-                logger.info("loadDocument: BAM/CRAM files are imported as alignment tracks via File > Import BAM/CRAM Alignments…")
-                throw DocumentLoadError.unsupportedFormat("BAM/CRAM files are imported as alignment tracks. Use File \u{203A} Import BAM/CRAM Alignments\u{2026} with a bundle open.")
+                logger.info("loadDocument: BAM/CRAM files are imported as alignment tracks via File > Import Center…")
+                throw DocumentLoadError.unsupportedFormat("BAM/CRAM files are imported as alignment tracks. Use File \u{203A} Import Center\u{2026} with a bundle open.")
             case .lungfishProject:
                 // For .lungfish projects, use openProject instead
                 logger.info("loadDocument: Opening Lungfish project...")

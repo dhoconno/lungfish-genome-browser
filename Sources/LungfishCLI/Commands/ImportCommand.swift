@@ -53,6 +53,7 @@ struct ImportCommand: AsyncParsableCommand {
             VCFSubcommand.self,
             FASTASubcommand.self,
             FastqSubcommand.self,
+            SampleMetadataSubcommand.self,
             Kraken2Subcommand.self,
             EsVirituSubcommand.self,
             TaxTriageSubcommand.self,
@@ -66,6 +67,92 @@ struct ImportCommand: AsyncParsableCommand {
 // MARK: - BAM Import
 
 extension ImportCommand {
+
+    /// Import sample metadata CSV/TSV into all variant tracks in a reference bundle.
+    struct SampleMetadataSubcommand: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "sample-metadata",
+            abstract: "Import sample metadata CSV/TSV into variant tracks in a reference bundle"
+        )
+
+        @Argument(help: "Path to the metadata CSV or TSV file")
+        var inputPath: String
+
+        @Option(
+            name: [.customLong("bundle"), .customShort("b")],
+            help: "Path to the reference bundle directory"
+        )
+        var bundlePath: String
+
+        @OptionGroup var globalOptions: GlobalOptions
+
+        func run() async throws {
+            let formatter = TerminalFormatter(useColors: globalOptions.useColors)
+            let fileManager = FileManager.default
+            let inputURL = URL(fileURLWithPath: inputPath)
+            let bundleURL = URL(fileURLWithPath: bundlePath)
+
+            guard fileManager.fileExists(atPath: inputURL.path) else {
+                print(formatter.error("Metadata file not found: \(inputPath)"))
+                throw ExitCode.failure
+            }
+
+            guard fileManager.fileExists(atPath: bundleURL.path) else {
+                print(formatter.error("Bundle directory not found: \(bundlePath)"))
+                throw ExitCode.failure
+            }
+
+            let manifest = try BundleManifest.load(from: bundleURL)
+            guard !manifest.variants.isEmpty else {
+                print(formatter.error("This bundle has no variant tracks to apply metadata to."))
+                throw ExitCode.failure
+            }
+
+            let format: MetadataFormat
+            switch inputURL.pathExtension.lowercased() {
+            case "csv":
+                format = .csv
+            case "tsv", "txt":
+                format = .tsv
+            default:
+                print(formatter.error("Unsupported metadata format: .\(inputURL.pathExtension). Use .csv, .tsv, or .txt"))
+                throw ExitCode.failure
+            }
+
+            var totalUpdated = 0
+            var updatedTracks = 0
+
+            for track in manifest.variants {
+                guard let databasePath = track.databasePath else { continue }
+                let databaseURL = bundleURL.appendingPathComponent(databasePath)
+                let database = try VariantDatabase(url: databaseURL, readWrite: true)
+                totalUpdated += try database.importSampleMetadata(from: inputURL, format: format)
+                updatedTracks += 1
+            }
+
+            guard updatedTracks > 0 else {
+                print(formatter.error("No writable variant databases were found in the bundle."))
+                throw ExitCode.failure
+            }
+
+            if globalOptions.outputFormat == .json {
+                let handler = JSONOutputHandler()
+                handler.writeData([
+                    "bundle": bundlePath,
+                    "tracksUpdated": "\(updatedTracks)",
+                    "sampleValuesUpdated": "\(totalUpdated)",
+                    "status": "ok",
+                ], label: nil)
+                return
+            }
+
+            if !globalOptions.quiet {
+                print(formatter.success(
+                    "Imported sample metadata into \(updatedTracks) variant track(s); updated \(totalUpdated) sample metadata value(s)."
+                ))
+            }
+        }
+    }
 
     /// Import a BAM/CRAM alignment file into a Lungfish project.
     ///

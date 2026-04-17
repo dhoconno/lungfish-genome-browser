@@ -178,61 +178,12 @@ public final class MainMenu {
 
         fileMenu.addItem(.separator())
 
-        // Import submenu
-        let importItem = NSMenuItem(title: "Import", action: nil, keyEquivalent: "")
-        let importMenu = NSMenu(title: "Import")
-
-        let importFilesItem = importMenu.addItem(
-            withTitle: "Files\u{2026}",
-            action: #selector(FileMenuActions.importFiles(_:)),
-            keyEquivalent: "i"
-        )
-        importFilesItem.keyEquivalentModifierMask = [.command, .shift]
-
-        // ONT Run import (no shortcut -- Cmd-Shift-O is used by Open Project Folder)
-        importMenu.addItem(
-            withTitle: "ONT Run\u{2026}",
-            action: #selector(FileMenuActions.importONTRun(_:)),
-            keyEquivalent: ""
-        )
-
-        importMenu.addItem(.separator())
-
-        importMenu.addItem(
-            withTitle: "VCF Variants\u{2026}",
-            action: #selector(FileMenuActions.importVCFToBundle(_:)),
-            keyEquivalent: ""
-        )
-        importMenu.addItem(
-            withTitle: "BAM/CRAM Alignments\u{2026}",
-            action: #selector(FileMenuActions.importBAMToBundle(_:)),
-            keyEquivalent: ""
-        )
-        importMenu.addItem(
-            withTitle: "Sample Metadata\u{2026}",
-            action: #selector(FileMenuActions.importSampleMetadataToBundle(_:)),
-            keyEquivalent: ""
-        )
-
-        importMenu.addItem(.separator())
-
-        importMenu.addItem(
-            withTitle: "Project Sample Metadata (CSV)\u{2026}",
-            action: #selector(FileMenuActions.importProjectSampleMetadata(_:)),
-            keyEquivalent: ""
-        )
-
-        importMenu.addItem(.separator())
-
-        let importCenterItem = importMenu.addItem(
+        let importCenterItem = fileMenu.addItem(
             withTitle: "Import Center\u{2026}",
             action: #selector(AppDelegate.showImportCenter(_:)),
-            keyEquivalent: "j"
+            keyEquivalent: "i"
         )
         importCenterItem.keyEquivalentModifierMask = [.command, .shift]
-
-        importItem.submenu = importMenu
-        fileMenu.addItem(importItem)
 
         // Export submenu
         let exportItem = NSMenuItem(title: "Export", action: nil, keyEquivalent: "")

@@ -115,27 +115,24 @@ struct EsVirituWizardSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             // Header: tool identity + dataset name
             HStack(spacing: 10) {
-                Image(systemName: "e.circle")
-                    .font(.system(size: 20))
-                    .foregroundStyle(Color.accentColor)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("EsViritu Viral Detection")
                         .font(.headline)
                     Text("Identify viral sequences using the EsViritu pipeline")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.lungfishSecondaryText)
                 }
                 Spacer()
                 if inputFiles.count == 1 {
                     Text(inputDisplayName)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.lungfishSecondaryText)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 } else {
                     Text("\(groupedSamples.count) sample\(groupedSamples.count == 1 ? "" : "s") \u{00B7} \(inputFiles.count) files")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.lungfishSecondaryText)
                 }
             }
             .padding(.horizontal, 20)
@@ -211,6 +208,8 @@ struct EsVirituWizardSheet: View {
             .padding(.vertical, 12)
         }
         .frame(width: 520, height: 500)
+        .background(Color.lungfishCanvasBackground)
+        .tint(.lungfishCreamsicleFallback)
         .onAppear {
             // Auto-populate sample name for single-sample runs
             if sampleName.isEmpty, let sample = groupedSamples.first {
@@ -273,25 +272,25 @@ struct EsVirituWizardSheet: View {
 
             if isDatabaseInstalled {
                 HStack {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                        .font(.system(size: 12))
+                    Circle()
+                        .fill(Color.lungfishSageFallback)
+                        .frame(width: 8, height: 8)
                     Text("EsViritu \(EsVirituDatabaseManager.currentVersion)")
                         .font(.system(size: 12))
                     if !databaseSizeText.isEmpty {
                         Text("(\(databaseSizeText))")
                             .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.lungfishSecondaryText)
                     }
                 }
             } else {
                 HStack {
-                    Image(systemName: "xmark.circle")
-                        .foregroundStyle(Color.lungfishOrangeFallback)
-                        .font(.system(size: 12))
+                    Circle()
+                        .fill(Color.lungfishCreamsicleFallback)
+                        .frame(width: 8, height: 8)
                     Text("Database not installed")
                         .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.lungfishSecondaryText)
 
                     Button("Download Database\u{2026}") {
                         PluginManagerWindowController.show(tab: .databases)
@@ -309,9 +308,10 @@ struct EsVirituWizardSheet: View {
     /// Warning banner for limited system RAM.
     private var ramWarningBanner: some View {
         HStack(alignment: .top, spacing: 6) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.yellow)
-                .font(.system(size: 12))
+            Circle()
+                .fill(Color.lungfishCreamsicleFallback)
+                .frame(width: 8, height: 8)
+                .padding(.top, 3)
             Text("This system has limited RAM. EsViritu may run slowly with large databases. Consider closing other applications before running.")
                 .font(.system(size: 11))
                 .foregroundStyle(.primary)
@@ -320,11 +320,11 @@ struct EsVirituWizardSheet: View {
         .padding(8)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(Color.yellow.opacity(0.1))
+                .fill(Color.lungfishAttentionFill)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 6)
-                .stroke(Color.yellow.opacity(0.3), lineWidth: 0.5)
+                .stroke(Color.lungfishCreamsicleFallback.opacity(0.35), lineWidth: 0.5)
         )
     }
 

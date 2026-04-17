@@ -622,6 +622,7 @@ final class ImportCommandRegressionTests: XCTestCase {
     func testHelpTextIsNonEmpty() {
         let help = ImportCommand.helpMessage()
         XCTAssertFalse(help.isEmpty)
+        XCTAssertTrue(help.contains("sample-metadata"))
     }
 }
 

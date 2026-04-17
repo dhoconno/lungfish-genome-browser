@@ -61,21 +61,21 @@ final class DatabasesTabTests: XCTestCase {
 
     /// Verifies that the databases tab has the correct segment index.
     func testDatabasesTabSegmentIndex() {
-        XCTAssertEqual(PluginManagerViewModel.Tab.databases.segmentIndex, 3)
+        XCTAssertEqual(PluginManagerViewModel.Tab.databases.segmentIndex, 2)
     }
 
-    /// Verifies that segment index 3 maps to the databases tab.
+    /// Verifies that segment index 2 maps to the databases tab.
     func testSegmentIndexToDatabasesTab() {
-        let tab = PluginManagerViewModel.Tab.from(segmentIndex: 3)
+        let tab = PluginManagerViewModel.Tab.from(segmentIndex: 2)
         XCTAssertEqual(tab, .databases)
     }
 
-    /// Verifies that all four tab cases exist and have distinct segment indices.
+    /// Verifies that all three tab cases exist and have distinct segment indices.
     func testAllTabsHaveDistinctIndices() {
-        let tabs: [PluginManagerViewModel.Tab] = [.installed, .available, .packs, .databases]
+        let tabs: [PluginManagerViewModel.Tab] = [.installed, .packs, .databases]
         let indices = tabs.map(\.segmentIndex)
-        XCTAssertEqual(Set(indices).count, 4, "All tabs should have distinct segment indices")
-        XCTAssertEqual(indices, [0, 1, 2, 3], "Tabs should be numbered 0-3")
+        XCTAssertEqual(Set(indices).count, 3, "All tabs should have distinct segment indices")
+        XCTAssertEqual(indices, [0, 1, 2], "Tabs should be numbered 0-2")
     }
 
     /// Verifies that out-of-range segment index defaults to .installed.

@@ -339,7 +339,6 @@ final class PluginPackStatusServiceTests: XCTestCase {
         let executableNames: [String: String] = [
             "kraken2": "kraken2",
             "bracken": "bracken",
-            "metaphlan": "metaphlan",
             "esviritu": "EsViritu",
         ]
 
@@ -403,27 +402,6 @@ final class PluginPackStatusServiceTests: XCTestCase {
             encoding: .utf8
         )
 
-        let metaphlanBin = await manager.environmentURL(named: "metaphlan").appendingPathComponent("bin")
-        try FileManager.default.createDirectory(at: metaphlanBin, withIntermediateDirectories: true)
-        try "#!/bin/sh\nexit 0\n".write(
-            to: metaphlanBin.appendingPathComponent("python"),
-            atomically: true,
-            encoding: .utf8
-        )
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o755],
-            ofItemAtPath: metaphlanBin.appendingPathComponent("python").path
-        )
-        try "#!/bin/sh\n'''exec' \"/Users/dho/Library/Application Support/Lungfish/conda/envs/metaphlan/bin/python3.13\" \"$0\" \"$@\" #'''\n".write(
-            to: metaphlanBin.appendingPathComponent("metaphlan"),
-            atomically: true,
-            encoding: .utf8
-        )
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o755],
-            ofItemAtPath: metaphlanBin.appendingPathComponent("metaphlan").path
-        )
-
         let esviritu = await manager.environmentURL(named: "esviritu").appendingPathComponent("bin/EsViritu")
         try FileManager.default.createDirectory(at: esviritu.deletingLastPathComponent(), withIntermediateDirectories: true)
         try "#!/bin/sh\nexit 0\n".write(to: esviritu, atomically: true, encoding: .utf8)
@@ -435,12 +413,6 @@ final class PluginPackStatusServiceTests: XCTestCase {
         XCTAssertEqual(status.state, .ready)
         XCTAssertTrue(status.toolStatuses.allSatisfy(\.isReady))
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: brackenBin.appendingPathComponent("bracken").path))
-
-        let repairedMetaphlan = try String(
-            contentsOf: metaphlanBin.appendingPathComponent("metaphlan"),
-            encoding: .utf8
-        )
-        XCTAssertFalse(repairedMetaphlan.contains("Application Support/Lungfish"))
     }
 
     func testRequiredPackNeedsInstallWhenMicromambaBootstrapIsMissingOrNotExecutable() async throws {

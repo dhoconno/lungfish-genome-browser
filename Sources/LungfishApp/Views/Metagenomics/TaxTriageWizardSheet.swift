@@ -93,27 +93,24 @@ struct TaxTriageWizardSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             // Header: tool identity + dataset name
             HStack(spacing: 10) {
-                Image(systemName: "t.circle")
-                    .font(.system(size: 20))
-                    .foregroundStyle(Color.accentColor)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("TaxTriage Metagenomic Triage")
                         .font(.headline)
                     Text("Comprehensive taxonomic classification pipeline")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.lungfishSecondaryText)
                 }
                 Spacer()
                 if initialFiles.count == 1 {
                     Text(inputDisplayName)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.lungfishSecondaryText)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 } else if !samples.isEmpty {
                     Text("\(samples.count) sample\(samples.count == 1 ? "" : "s")")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.lungfishSecondaryText)
                 }
             }
             .padding(.horizontal, 20)
@@ -185,6 +182,8 @@ struct TaxTriageWizardSheet: View {
             .padding(.vertical, 12)
         }
         .frame(width: 520, height: 520)
+        .background(Color.lungfishCanvasBackground)
+        .tint(.lungfishCreamsicleFallback)
         .onAppear {
             populateFromInitialFiles()
             checkPrerequisites()
@@ -238,18 +237,13 @@ struct TaxTriageWizardSheet: View {
     private func prerequisiteIndicator(label: String, available: Bool?) -> some View {
         HStack(spacing: 4) {
             if let available {
-                if available {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                        .font(.system(size: 12))
-                } else {
-                    Image(systemName: "xmark.circle")
-                        .foregroundStyle(Color.lungfishOrangeFallback)
-                        .font(.system(size: 12))
-                }
+                Circle()
+                    .fill(available ? Color.lungfishSageFallback : Color.lungfishCreamsicleFallback)
+                    .frame(width: 8, height: 8)
             } else {
                 ProgressView()
                     .controlSize(.small)
+                    .tint(.lungfishCreamsicleFallback)
             }
             Text(label)
                 .font(.system(size: 12))
@@ -270,15 +264,9 @@ struct TaxTriageWizardSheet: View {
 
             Button {
                 addSample()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "plus.circle")
-                    Text("Add Sample")
-                }
-                .font(.system(size: 12))
-            }
+            } label: { Text("Add Sample").font(.system(size: 12)) }
             .buttonStyle(.plain)
-            .foregroundStyle(Color.accentColor)
+            .foregroundStyle(Color.lungfishCreamsicleFallback)
         }
     }
 
@@ -317,10 +305,8 @@ struct TaxTriageWizardSheet: View {
 
             Button {
                 removeSample(at: index)
-            } label: {
-                Image(systemName: "xmark.circle")
-                    .foregroundStyle(.secondary)
-            }
+            } label: { Text("Remove") }
+            .foregroundStyle(Color.lungfishSecondaryText)
             .buttonStyle(.plain)
         }
         .padding(.vertical, 2)
@@ -349,11 +335,9 @@ struct TaxTriageWizardSheet: View {
 
             if installedDatabases.isEmpty {
                 HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.circle")
-                        .foregroundStyle(.orange)
                     Text("No Kraken2 databases installed")
                         .font(.system(size: 12))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.lungfishCreamsicleFallback)
                 }
             } else {
                 Picker("", selection: $selectedDatabaseName) {

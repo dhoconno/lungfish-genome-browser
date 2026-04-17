@@ -12,15 +12,14 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "ImportCenter
 
 /// NSWindowController that hosts the Import Center SwiftUI view.
 ///
-/// Provides a singleton window for importing alignments, variants,
-/// classification results, and reference sequences into the current
-/// project. Follows the same lazy singleton pattern used by
+/// Provides a singleton window for importing sequencing data, alignments,
+/// variants, classification results, reference sequences, and metadata into the
+/// current project. Follows the same lazy singleton pattern used by
 /// ``PluginManagerWindowController``.
 ///
-/// The window features a toolbar with a segmented control
-/// (Alignments / Variants / Classification Results / References)
-/// and a search field. The content area is a SwiftUI
-/// ``ImportCenterView`` wrapped in an ``NSHostingView``.
+/// The content area is a SwiftUI ``ImportCenterView`` wrapped in an
+/// ``NSHostingView`` and uses in-window sidebar navigation instead of
+/// titlebar controls.
 ///
 /// ## Usage
 ///
@@ -29,19 +28,13 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "ImportCenter
 /// ImportCenterWindowController.show(tab: .classificationResults)
 /// ```
 @MainActor
-public final class ImportCenterWindowController: NSWindowController, NSToolbarDelegate {
+public final class ImportCenterWindowController: NSWindowController {
 
     /// Shared singleton instance. Created on first call to ``show()``.
     private static var shared: ImportCenterWindowController?
 
     /// The SwiftUI view model, retained for toolbar-to-view binding.
     private let viewModel = ImportCenterViewModel()
-
-    /// Toolbar item identifiers.
-    private enum ToolbarID {
-        static let segmentedControl = NSToolbarItem.Identifier("importCenterSegment")
-        static let searchField = NSToolbarItem.Identifier("importCenterSearch")
-    }
 
     // MARK: - Singleton Access
 
@@ -73,7 +66,6 @@ public final class ImportCenterWindowController: NSWindowController, NSToolbarDe
         }
         if let tab {
             shared?.viewModel.selectedTab = tab
-            shared?.syncSegmentedControl(to: tab)
         }
         shared?.showWindow(nil)
     }
@@ -95,7 +87,6 @@ public final class ImportCenterWindowController: NSWindowController, NSToolbarDe
 
         super.init(window: window)
 
-        setupToolbar()
         setupContent()
     }
 
@@ -105,16 +96,6 @@ public final class ImportCenterWindowController: NSWindowController, NSToolbarDe
     }
 
     // MARK: - Setup
-
-    private func setupToolbar() {
-        guard let window else { return }
-
-        let toolbar = NSToolbar(identifier: "ImportCenterToolbar")
-        toolbar.delegate = self
-        toolbar.displayMode = .iconOnly
-        toolbar.allowsUserCustomization = false
-        window.toolbar = toolbar
-    }
 
     private func setupContent() {
         guard let window else { return }
@@ -132,92 +113,5 @@ public final class ImportCenterWindowController: NSWindowController, NSToolbarDe
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
         logger.info("Import Center window shown")
-    }
-
-    // MARK: - NSToolbarDelegate
-
-    public func toolbar(
-        _ toolbar: NSToolbar,
-        itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
-        willBeInsertedIntoToolbar flag: Bool
-    ) -> NSToolbarItem? {
-        switch itemIdentifier {
-        case ToolbarID.segmentedControl:
-            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            let labels = ImportCenterViewModel.Tab.allCases.map(\.title)
-            let segmented = NSSegmentedControl(
-                labels: labels,
-                trackingMode: .selectOne,
-                target: self,
-                action: #selector(segmentChanged(_:))
-            )
-            segmented.segmentStyle = .texturedRounded
-            segmented.selectedSegment = viewModel.selectedTab.segmentIndex
-            segmented.setWidth(120, forSegment: 0)  // Sequencing Reads
-            segmented.setWidth(90, forSegment: 1)   // Alignments
-            segmented.setWidth(70, forSegment: 2)    // Variants
-            segmented.setWidth(110, forSegment: 3)   // Classification
-            segmented.setWidth(85, forSegment: 4)    // References
-            segmented.sizeToFit()
-            item.view = segmented
-            item.label = "Category"
-            item.toolTip = "Switch between import categories"
-            item.minSize = segmented.fittingSize
-            item.maxSize = segmented.fittingSize
-            return item
-
-        case ToolbarID.searchField:
-            let item = NSSearchToolbarItem(itemIdentifier: itemIdentifier)
-            item.searchField.delegate = self
-            item.searchField.placeholderString = "Filter import types"
-            return item
-
-        default:
-            return nil
-        }
-    }
-
-    public func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [
-            ToolbarID.segmentedControl,
-            .flexibleSpace,
-            ToolbarID.searchField,
-        ]
-    }
-
-    public func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar)
-    }
-
-    // MARK: - Toolbar Actions
-
-    @objc private func segmentChanged(_ sender: NSSegmentedControl) {
-        let tab = ImportCenterViewModel.Tab.from(segmentIndex: sender.selectedSegment)
-        viewModel.selectedTab = tab
-    }
-
-    // MARK: - Helpers
-
-    /// Synchronizes the toolbar segmented control to match a given tab.
-    ///
-    /// Called when ``show(tab:)`` programmatically changes the selected tab
-    /// so that the toolbar visual state remains in sync with the view model.
-    private func syncSegmentedControl(to tab: ImportCenterViewModel.Tab) {
-        guard let toolbar = window?.toolbar else { return }
-        for item in toolbar.items where item.itemIdentifier == ToolbarID.segmentedControl {
-            if let segmented = item.view as? NSSegmentedControl {
-                segmented.selectedSegment = tab.segmentIndex
-            }
-        }
-    }
-}
-
-// MARK: - NSSearchFieldDelegate
-
-extension ImportCenterWindowController: NSSearchFieldDelegate {
-
-    public func controlTextDidChange(_ obj: Notification) {
-        guard let field = obj.object as? NSSearchField else { return }
-        viewModel.searchText = field.stringValue
     }
 }

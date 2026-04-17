@@ -64,14 +64,9 @@ final class PluginPackRegistryTests: XCTestCase {
         let pack = try! XCTUnwrap(PluginPack.activeOptionalPacks.first(where: { $0.id == "metagenomics" }))
         let environments = pack.toolRequirements.map(\.environment)
 
-        XCTAssertEqual(environments, ["kraken2", "bracken", "metaphlan", "esviritu"])
+        XCTAssertEqual(environments, ["kraken2", "bracken", "esviritu"])
         XCTAssertTrue(pack.toolRequirements.allSatisfy { $0.smokeTest != nil })
-        XCTAssertEqual(pack.toolRequirements.first(where: { $0.environment == "metaphlan" })?.executables, ["metaphlan"])
         XCTAssertEqual(pack.toolRequirements.first(where: { $0.environment == "esviritu" })?.executables, ["esviritu"])
-        XCTAssertEqual(
-            pack.toolRequirements.first(where: { $0.environment == "metaphlan" })?.smokeTest?.arguments,
-            ["--help"]
-        )
     }
 
     func testRequiredSetupPackUsesLighterSnakemakeSmokeProbe() {

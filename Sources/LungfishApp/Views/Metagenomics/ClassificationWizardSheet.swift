@@ -183,27 +183,24 @@ struct ClassificationWizardSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             // Header: tool identity + dataset name
             HStack(spacing: 10) {
-                Image(systemName: "k.circle")
-                    .font(.system(size: 20))
-                    .foregroundStyle(Color.accentColor)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Kraken2 Classification")
                         .font(.headline)
                     Text("Classify reads and estimate abundances with Bracken")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.lungfishSecondaryText)
                 }
                 Spacer()
                 if inputFiles.count == 1 {
                     Text(inputDisplayName)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.lungfishSecondaryText)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 } else {
                     Text("\(groupedSamples.count) sample\(groupedSamples.count == 1 ? "" : "s")")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.lungfishSecondaryText)
                 }
             }
             .padding(.horizontal, 20)
@@ -272,6 +269,8 @@ struct ClassificationWizardSheet: View {
             .padding(.vertical, 12)
         }
         .frame(width: 520, height: 520)
+        .background(Color.lungfishCanvasBackground)
+        .tint(.lungfishCreamsicleFallback)
         .task { await loadDatabases() }
         .onChange(of: preset) { _, newPreset in
             applyPreset(newPreset)
@@ -373,9 +372,10 @@ struct ClassificationWizardSheet: View {
     /// Warning banner shown when the selected database exceeds available RAM.
     private var ramWarningBanner: some View {
         HStack(alignment: .top, spacing: 6) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.yellow)
-                .font(.system(size: 12))
+            Circle()
+                .fill(Color.lungfishCreamsicleFallback)
+                .frame(width: 8, height: 8)
+                .padding(.top, 3)
             Text(ramWarningText)
                 .font(.system(size: 11))
                 .foregroundStyle(.primary)
@@ -384,11 +384,11 @@ struct ClassificationWizardSheet: View {
         .padding(8)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(Color.yellow.opacity(0.1))
+                .fill(Color.lungfishAttentionFill)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 6)
-                .stroke(Color.yellow.opacity(0.3), lineWidth: 0.5)
+                .stroke(Color.lungfishCreamsicleFallback.opacity(0.35), lineWidth: 0.5)
         )
         .accessibilityLabel("RAM warning: \(ramWarningText)")
     }

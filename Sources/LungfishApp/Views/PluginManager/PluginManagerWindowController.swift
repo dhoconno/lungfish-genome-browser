@@ -17,7 +17,7 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "PluginManage
 /// lazy singleton pattern used by ``SettingsWindowController``.
 ///
 /// The window features a toolbar with a segmented control (Installed /
-/// Available / Packs / Databases) and a search field. The content area is a
+/// Packs / Databases). The content area is a
 /// SwiftUI ``PluginManagerView`` wrapped in an ``NSHostingView``.
 ///
 /// ## Usage
@@ -38,7 +38,6 @@ public final class PluginManagerWindowController: NSWindowController, NSToolbarD
     /// Toolbar item identifiers.
     private enum ToolbarID {
         static let segmentedControl = NSToolbarItem.Identifier("pluginManagerSegment")
-        static let searchField = NSToolbarItem.Identifier("pluginManagerSearch")
     }
 
     // MARK: - Singleton Access
@@ -143,30 +142,19 @@ public final class PluginManagerWindowController: NSWindowController, NSToolbarD
         case ToolbarID.segmentedControl:
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
             let segmented = NSSegmentedControl(
-                labels: ["Installed", "Available", "Packs", "Databases"],
+                labels: ["Installed", "Packs", "Databases"],
                 trackingMode: .selectOne,
                 target: self,
                 action: #selector(segmentChanged(_:))
             )
             segmented.segmentStyle = .texturedRounded
             segmented.selectedSegment = viewModel.selectedTab.segmentIndex
-            segmented.setWidth(90, forSegment: 0)
-            segmented.setWidth(90, forSegment: 1)
-            segmented.setWidth(70, forSegment: 2)
-            segmented.setWidth(90, forSegment: 3)
-            segmented.setImage(
-                NSImage(systemSymbolName: "cylinder.split.1x2", accessibilityDescription: "Databases"),
-                forSegment: 3
-            )
+            segmented.setWidth(96, forSegment: 0)
+            segmented.setWidth(72, forSegment: 1)
+            segmented.setWidth(92, forSegment: 2)
             item.view = segmented
-            item.label = "View"
-            item.toolTip = "Switch between Installed, Available, Packs, and Databases"
-            return item
-
-        case ToolbarID.searchField:
-            let item = NSSearchToolbarItem(itemIdentifier: itemIdentifier)
-            item.searchField.delegate = self
-            item.searchField.placeholderString = "Search bioconda packages"
+            item.label = "Sections"
+            item.toolTip = "Switch between Installed, Packs, and Databases"
             return item
 
         default:
@@ -177,8 +165,6 @@ public final class PluginManagerWindowController: NSWindowController, NSToolbarD
     public func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
             ToolbarID.segmentedControl,
-            .flexibleSpace,
-            ToolbarID.searchField,
         ]
     }
 
@@ -206,28 +192,5 @@ public final class PluginManagerWindowController: NSWindowController, NSToolbarD
                 segmented.selectedSegment = tab.segmentIndex
             }
         }
-    }
-}
-
-// MARK: - NSSearchFieldDelegate
-
-extension PluginManagerWindowController: NSSearchFieldDelegate {
-
-    public func controlTextDidChange(_ obj: Notification) {
-        guard let field = obj.object as? NSSearchField else { return }
-        viewModel.searchText = field.stringValue
-    }
-
-    /// Commit the search when the user presses Return.
-    public func control(
-        _ control: NSControl,
-        textView: NSTextView,
-        doCommandBy commandSelector: Selector
-    ) -> Bool {
-        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-            viewModel.commitSearch()
-            return true
-        }
-        return false
     }
 }
