@@ -33,11 +33,21 @@ struct UnifiedMetagenomicsWizard: View {
 
     /// The input FASTQ files to analyze.
     let inputFiles: [URL]
+    let initialSelection: AnalysisType
+
+    /// Section order shared by the unified runner shell.
+    static let sharedSectionOrder = [
+        "Overview",
+        "Prerequisites",
+        "Samples",
+        "Database",
+        "Tool Settings",
+        "Advanced Settings"
+    ]
 
     // MARK: - State
 
-    @State private var currentStep: WizardStep = .chooseType
-    @State private var selectedType: AnalysisType? = nil
+    @State private var sidebarSelection: AnalysisType
 
     // Tool availability (checked asynchronously)
     @State private var kraken2Available: Bool? = nil
@@ -59,21 +69,42 @@ struct UnifiedMetagenomicsWizard: View {
     /// Called when the user cancels.
     var onCancel: (() -> Void)?
 
-    // MARK: - Enums
-
-    /// The steps in the wizard flow.
-    enum WizardStep {
-        case chooseType
-        case configure
+    init(
+        inputFiles: [URL],
+        initialSelection: AnalysisType = .classification,
+        onRunClassification: (([ClassificationConfig]) -> Void)? = nil,
+        onRunEsViritu: (([EsVirituConfig]) -> Void)? = nil,
+        onRunTaxTriage: ((TaxTriageConfig) -> Void)? = nil,
+        onCancel: (() -> Void)? = nil
+    ) {
+        self.inputFiles = inputFiles
+        self.initialSelection = initialSelection
+        self.onRunClassification = onRunClassification
+        self.onRunEsViritu = onRunEsViritu
+        self.onRunTaxTriage = onRunTaxTriage
+        self.onCancel = onCancel
+        _sidebarSelection = State(initialValue: initialSelection)
     }
 
-    /// The available metagenomics analysis types.
-    enum AnalysisType: String, CaseIterable, Identifiable {
-        case classification = "Taxonomic Classification"
-        case viralDetection = "Viral Detection"
-        case clinicalTriage = "Comprehensive Triage"
+    // MARK: - Enums
 
-        var id: String { rawValue }
+    /// The available metagenomics analysis types.
+    enum AnalysisType: CaseIterable, Identifiable {
+        case classification
+        case viralDetection
+        case clinicalTriage
+
+        var id: Self { self }
+
+        var sidebarTitle: String {
+            switch self {
+            case .classification: return "Kraken2"
+            case .viralDetection: return "EsViritu"
+            case .clinicalTriage: return "TaxTriage"
+            }
+        }
+
+        var runnerTitle: String { sidebarTitle }
 
         /// SF Symbol name for the analysis type card.
         var symbolName: String {
@@ -116,21 +147,8 @@ struct UnifiedMetagenomicsWizard: View {
         VStack(alignment: .leading, spacing: 0) {
             // Title
             HStack {
-                if currentStep == .configure, let type = selectedType {
-                    Button {
-                        currentStep = .chooseType
-                    } label: {
-                        Image(systemName: "chevron.left")
-                    }
-                    .buttonStyle(.plain)
-                    .help("Back to analysis selection")
-
-                    Text(type.rawValue)
-                        .font(.headline)
-                } else {
-                    Text("Classify Reads")
-                        .font(.headline)
-                }
+                Text("Classify Reads")
+                    .font(.headline)
                 Spacer()
                 if inputFiles.count == 1 {
                     Text(inputFiles.first?.lastPathComponent ?? "")
@@ -150,89 +168,55 @@ struct UnifiedMetagenomicsWizard: View {
 
             Divider()
 
-            // Content
-            switch currentStep {
-            case .chooseType:
-                analysisTypeSelector
-
-            case .configure:
-                configurationStep
-            }
+            runnerSidebar
         }
-        .frame(width: 560, height: currentStep == .chooseType ? 520 : 680)
-        .animation(.easeInOut(duration: 0.2), value: currentStep)
+        .frame(width: 560, height: 520)
         .onAppear {
             checkToolAvailability()
         }
     }
 
-    // MARK: - Step 1: Analysis Type Selector
+    // MARK: - Runner Sidebar
 
-    private var analysisTypeSelector: some View {
+    private var runnerSidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Choose an analysis type for your sequencing data.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                    ForEach(Self.sharedSectionOrder, id: \.self) { section in
+                        Text(section)
+                            .font(.system(size: 12, weight: .semibold))
+                    }
 
-                    ForEach(AnalysisType.allCases) { type in
-                        analysisTypeCard(type)
+                    Picker("Analysis Type", selection: $sidebarSelection) {
+                        ForEach(AnalysisType.allCases) { type in
+                            Text(type.sidebarTitle).tag(type)
+                        }
                     }
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
             }
-
-            Divider()
-
-            // Action buttons
-            HStack {
-                if let selected = selectedType, !selected.isConfigurable {
-                    Text("\(selected.toolName) wizard not yet available")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-
-                Spacer()
-
-                Button("Cancel") {
-                    onCancel?()
-                }
-                .keyboardShortcut(.cancelAction)
-
-                Button("Next") {
-                    if let selected = selectedType, selected.isConfigurable {
-                        currentStep = .configure
-                    }
-                }
-                .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
-                .disabled(selectedType == nil || !(selectedType?.isConfigurable ?? false))
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
         }
     }
 
     /// A single analysis type selection card.
     private func analysisTypeCard(_ type: AnalysisType) -> some View {
         Button {
-            selectedType = type
+            sidebarSelection = type
         } label: {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: type.symbolName)
                     .font(.system(size: 24))
-                    .foregroundStyle(selectedType == type ? .white : Color.accentColor)
+                    .foregroundStyle(sidebarSelection == type ? .white : Color.accentColor)
                     .frame(width: 40, height: 40)
                     .background(
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(selectedType == type ? Color.accentColor : Color.accentColor.opacity(0.1))
+                            .fill(sidebarSelection == type ? Color.accentColor : Color.accentColor.opacity(0.1))
                     )
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Text(type.rawValue)
+                        Text(type.sidebarTitle)
                             .font(.system(size: 13, weight: .semibold))
                         Spacer()
                         toolAvailabilityBadge(for: type)
@@ -252,20 +236,20 @@ struct UnifiedMetagenomicsWizard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(selectedType == type
+                    .fill(sidebarSelection == type
                           ? Color.accentColor.opacity(0.08)
                           : Color(nsColor: .controlBackgroundColor))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(
-                        selectedType == type ? Color.accentColor : Color(nsColor: .separatorColor),
-                        lineWidth: selectedType == type ? 2 : 0.5
+                        sidebarSelection == type ? Color.accentColor : Color(nsColor: .separatorColor),
+                        lineWidth: sidebarSelection == type ? 2 : 0.5
                     )
             )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(type.rawValue)
+        .accessibilityLabel(type.sidebarTitle)
         .accessibilityHint(type.analysisDescription)
     }
 
@@ -319,7 +303,7 @@ struct UnifiedMetagenomicsWizard: View {
 
     @ViewBuilder
     private var configurationStep: some View {
-        switch selectedType {
+        switch sidebarSelection {
         case .classification:
             ClassificationWizardSheet(
                 inputFiles: inputFiles,
@@ -346,11 +330,12 @@ struct UnifiedMetagenomicsWizard: View {
                 },
                 onCancel: { onCancel?() }
             )
-
-        case nil:
-            EmptyView()
         }
     }
+
+    #if DEBUG
+    var testingInitialSelection: AnalysisType { initialSelection }
+    #endif
 
     // MARK: - Tool Availability Checks
 
