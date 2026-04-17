@@ -139,6 +139,44 @@ final class CondaManagerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: staleFile.path))
     }
 
+    func testInstallPackageSpecPassesExactSpecThrough() async throws {
+        let recorder = try RecordingMicromamba()
+        let micromambaURL = recorder.url
+        let manager = CondaManager(
+            rootPrefix: recorder.root,
+            bundledMicromambaProvider: { micromambaURL },
+            bundledMicromambaVersionProvider: { "2.0.5-0" }
+        )
+
+        try await manager.install(
+            packageSpec: "bioconda::samtools=1.23.1=hc612e98_0",
+            environment: "samtools"
+        )
+
+        let installArgs = try XCTUnwrap(recorder.firstInstallArgs())
+        XCTAssertTrue(installArgs.contains("bioconda::samtools=1.23.1=hc612e98_0"))
+        XCTAssertTrue(installArgs.contains("samtools"))
+    }
+
+    func testReinstallPackageSpecPassesExactSpecThrough() async throws {
+        let recorder = try RecordingMicromamba()
+        let micromambaURL = recorder.url
+        let manager = CondaManager(
+            rootPrefix: recorder.root,
+            bundledMicromambaProvider: { micromambaURL },
+            bundledMicromambaVersionProvider: { "2.0.5-0" }
+        )
+
+        try await manager.reinstall(
+            packageSpec: "bioconda::fastp=1.3.2=ha1d0559_0",
+            environment: "fastp"
+        )
+
+        let installArgs = try XCTUnwrap(recorder.firstInstallArgs())
+        XCTAssertTrue(installArgs.contains("bioconda::fastp=1.3.2=ha1d0559_0"))
+        XCTAssertTrue(installArgs.contains("fastp"))
+    }
+
     func testToolVersionsManifestIncludesMicromamba() throws {
         let manifestURL = Self.toolVersionsManifestURL()
         let data = try Data(contentsOf: manifestURL)
@@ -847,6 +885,35 @@ final class CondaManagerTests: XCTestCase {
         try script.write(to: url, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
         return url
+    }
+
+    private final class RecordingMicromamba {
+        let root: URL
+        let url: URL
+
+        init() throws {
+            root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            url = root.appendingPathComponent("micromamba")
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let script = """
+            #!/bin/sh
+            if [ "$1" = "--version" ]; then
+                echo "2.0.5-0"
+                exit 0
+            fi
+            printf '%s\n' "$*" >> "$MAMBA_ROOT_PREFIX/install-log.txt"
+            exit 0
+            """
+            try script.write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        }
+
+        func firstInstallArgs() -> [String]? {
+            let logURL = root.appendingPathComponent("install-log.txt")
+            guard let data = try? Data(contentsOf: logURL) else { return nil }
+            let lines = String(decoding: data, as: UTF8.self).split(separator: "\n").map(String.init)
+            return lines.first?.split(separator: " ").map(String.init)
+        }
     }
 
     private func readMicromambaVersion(at url: URL) async throws -> String {

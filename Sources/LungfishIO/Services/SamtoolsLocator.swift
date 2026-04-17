@@ -10,11 +10,26 @@ public enum SamtoolsLocator {
     /// Returns the first executable samtools path that can be found.
     ///
     /// Search order:
-    /// 1. Directories from `searchPath` (defaults to the current environment's `PATH`).
-    /// 2. Bundled app resources.
-    /// 3. Stable system locations.
-    public static func locate(searchPath: String? = ProcessInfo.processInfo.environment["PATH"]) -> String? {
+    /// 1. Managed `~/.lungfish/conda/envs/samtools/bin/samtools`
+    /// 2. Directories from `searchPath` (defaults to the current environment's `PATH`).
+    /// 3. Bundled app resources.
+    /// 4. Stable system locations.
+    public static func locate(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        searchPath: String? = ProcessInfo.processInfo.environment["PATH"]
+    ) -> String? {
         let fm = FileManager.default
+
+        let managedSamtools = homeDirectory
+            .appendingPathComponent(".lungfish", isDirectory: true)
+            .appendingPathComponent("conda", isDirectory: true)
+            .appendingPathComponent("envs", isDirectory: true)
+            .appendingPathComponent("samtools", isDirectory: true)
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("samtools")
+        if fm.isExecutableFile(atPath: managedSamtools.path) {
+            return managedSamtools.path
+        }
 
         if let searchPath, !searchPath.isEmpty {
             for dir in searchPath.split(separator: ":") {

@@ -5,9 +5,37 @@
 import Foundation
 
 public enum CoreToolLocator {
+    public static func managedExecutableURL(
+        environment: String,
+        executableName: String,
+        homeDirectory: URL,
+        fallbackExecutablePaths: [String] = []
+    ) -> URL {
+        let envRoot = environmentURL(named: environment, homeDirectory: homeDirectory)
+        let primary = envRoot
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent(executableName)
+        let fileManager = FileManager.default
+
+        if fileManager.isExecutableFile(atPath: primary.path) {
+            return primary
+        }
+
+        for fallbackPath in fallbackExecutablePaths {
+            let fallback = envRoot.appendingPathComponent(fallbackPath)
+            if fileManager.isExecutableFile(atPath: fallback.path) {
+                return fallback
+            }
+        }
+
+        return primary
+    }
+
     public static func bbToolsJavaURL(homeDirectory: URL) -> URL {
         environmentURL(named: "bbtools", homeDirectory: homeDirectory)
-            .appendingPathComponent("lib/jvm/bin/java")
+            .appendingPathComponent("lib/jvm", isDirectory: true)
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("java")
     }
 
     public static func condaRoot(homeDirectory: URL) -> URL {

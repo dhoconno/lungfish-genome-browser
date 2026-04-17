@@ -437,6 +437,34 @@ public actor CondaManager {
 
     /// Installs packages into an existing environment, creating it if needed.
     public func install(
+        packageSpec: String,
+        environment: String,
+        channels: [String]? = nil,
+        progress: (@Sendable (Double, String) -> Void)? = nil
+    ) async throws {
+        try await installPackageSpecs(
+            packages: [packageSpec],
+            environment: environment,
+            channels: channels,
+            progress: progress
+        )
+    }
+
+    public func install(
+        packages: [String],
+        environment: String,
+        channels: [String]? = nil,
+        progress: (@Sendable (Double, String) -> Void)? = nil
+    ) async throws {
+        try await installPackageSpecs(
+            packages: packages,
+            environment: environment,
+            channels: channels,
+            progress: progress
+        )
+    }
+
+    private func installPackageSpecs(
         packages: [String],
         environment: String,
         channels: [String]? = nil,
@@ -474,6 +502,34 @@ public actor CondaManager {
 
     /// Reinstalls packages into an environment by removing the existing one first.
     public func reinstall(
+        packageSpec: String,
+        environment: String,
+        channels: [String]? = nil,
+        progress: (@Sendable (Double, String) -> Void)? = nil
+    ) async throws {
+        try await reinstallPackageSpecs(
+            packages: [packageSpec],
+            environment: environment,
+            channels: channels,
+            progress: progress
+        )
+    }
+
+    public func reinstall(
+        packages: [String],
+        environment: String,
+        channels: [String]? = nil,
+        progress: (@Sendable (Double, String) -> Void)? = nil
+    ) async throws {
+        try await reinstallPackageSpecs(
+            packages: packages,
+            environment: environment,
+            channels: channels,
+            progress: progress
+        )
+    }
+
+    private func reinstallPackageSpecs(
         packages: [String],
         environment: String,
         channels: [String]? = nil,
@@ -484,7 +540,7 @@ public actor CondaManager {
             try FileManager.default.removeItem(at: envPath)
         }
 
-        try await install(
+        try await installPackageSpecs(
             packages: packages,
             environment: environment,
             channels: channels,

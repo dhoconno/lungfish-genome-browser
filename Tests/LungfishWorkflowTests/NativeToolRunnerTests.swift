@@ -65,7 +65,8 @@ final class NativeToolRunnerTests: XCTestCase {
     }
 
     func testFindToolCachesPath() async throws {
-        let runner = NativeToolRunner()
+        let (runner, root) = try makeManagedNativeToolRunner()
+        defer { try? FileManager.default.removeItem(at: root) }
 
         let url1 = try await runner.findTool(.bgzip)
         let url2 = try await runner.findTool(.bgzip)
@@ -73,7 +74,8 @@ final class NativeToolRunnerTests: XCTestCase {
     }
 
     func testClearCacheForcesFreshDiscovery() async throws {
-        let runner = NativeToolRunner()
+        let (runner, root) = try makeManagedNativeToolRunner()
+        defer { try? FileManager.default.removeItem(at: root) }
 
         let url1 = try await runner.findTool(.samtools)
         await runner.clearCache()
@@ -86,7 +88,8 @@ final class NativeToolRunnerTests: XCTestCase {
     // MARK: - Tool Execution Tests
 
     func testBgzipVersion() async throws {
-        let runner = NativeToolRunner()
+        let (runner, root) = try makeManagedNativeToolRunner()
+        defer { try? FileManager.default.removeItem(at: root) }
         let result = try await runner.run(.bgzip, arguments: ["--version"])
         // bgzip --version prints to stderr and exits 0
         XCTAssertTrue(
@@ -101,7 +104,8 @@ final class NativeToolRunnerTests: XCTestCase {
     }
 
     func testSamtoolsVersion() async throws {
-        let runner = NativeToolRunner()
+        let (runner, root) = try makeManagedNativeToolRunner()
+        defer { try? FileManager.default.removeItem(at: root) }
         let result = try await runner.run(.samtools, arguments: ["--version"])
         XCTAssertTrue(result.isSuccess, "samtools --version should succeed")
         XCTAssertTrue(
@@ -111,7 +115,8 @@ final class NativeToolRunnerTests: XCTestCase {
     }
 
     func testBcftoolsVersion() async throws {
-        let runner = NativeToolRunner()
+        let (runner, root) = try makeManagedNativeToolRunner()
+        defer { try? FileManager.default.removeItem(at: root) }
         let result = try await runner.run(.bcftools, arguments: ["--version"])
         XCTAssertTrue(result.isSuccess, "bcftools --version should succeed")
         XCTAssertTrue(
@@ -121,7 +126,8 @@ final class NativeToolRunnerTests: XCTestCase {
     }
 
     func testTabixVersion() async throws {
-        let runner = NativeToolRunner()
+        let (runner, root) = try makeManagedNativeToolRunner()
+        defer { try? FileManager.default.removeItem(at: root) }
         let result = try await runner.run(.tabix, arguments: ["--version"])
         // tabix --version exits 0 and prints to stderr
         let output = result.stdout + result.stderr
@@ -132,7 +138,8 @@ final class NativeToolRunnerTests: XCTestCase {
     }
 
     func testBedToBigBedUsage() async throws {
-        let runner = NativeToolRunner()
+        let (runner, root) = try makeManagedNativeToolRunner()
+        defer { try? FileManager.default.removeItem(at: root) }
         // bedToBigBed with no arguments prints usage and exits with non-zero
         let result = try await runner.run(.bedToBigBed, arguments: [])
         // We just verify it ran without crashing (exit code will be non-zero)
@@ -144,7 +151,8 @@ final class NativeToolRunnerTests: XCTestCase {
     }
 
     func testFastpVersion() async throws {
-        let runner = NativeToolRunner()
+        let (runner, root) = try makeManagedNativeToolRunner()
+        defer { try? FileManager.default.removeItem(at: root) }
         let result: NativeToolResult
         do {
             result = try await runner.run(.fastp, arguments: ["--version"])
@@ -163,7 +171,8 @@ final class NativeToolRunnerTests: XCTestCase {
     }
 
     func testVsearchVersion() async throws {
-        let runner = NativeToolRunner()
+        let (runner, root) = try makeManagedNativeToolRunner()
+        defer { try? FileManager.default.removeItem(at: root) }
         let result = try await runner.run(.vsearch, arguments: ["--version"])
         let output = result.stdout + result.stderr
         XCTAssertTrue(
@@ -173,7 +182,8 @@ final class NativeToolRunnerTests: XCTestCase {
     }
 
     func testCutadaptVersion() async throws {
-        let runner = NativeToolRunner()
+        let (runner, root) = try makeManagedNativeToolRunner()
+        defer { try? FileManager.default.removeItem(at: root) }
         let result = try await runner.run(.cutadapt, arguments: ["--version"])
         XCTAssertTrue(result.isSuccess, "cutadapt --version should succeed")
         let output = result.stdout + result.stderr
@@ -186,7 +196,8 @@ final class NativeToolRunnerTests: XCTestCase {
     // MARK: - Pipeline Tests
 
     func testSingleStagePipeline() async throws {
-        let runner = NativeToolRunner()
+        let (runner, root) = try makeManagedNativeToolRunner()
+        defer { try? FileManager.default.removeItem(at: root) }
         let result = try await runner.runPipeline(
             [NativePipelineStage(.seqkit, arguments: ["version"])]
         )
@@ -200,7 +211,8 @@ final class NativeToolRunnerTests: XCTestCase {
         // but the pipe itself should work)
         // Better test: use samtools --version | grep samtools via pipeline
         // Actually, let's test with a simple echo-like pattern using seqkit
-        let runner = NativeToolRunner()
+        let (runner, root) = try makeManagedNativeToolRunner()
+        defer { try? FileManager.default.removeItem(at: root) }
 
         // Create a temp FASTQ file for the pipeline test
         let tempDir = FileManager.default.temporaryDirectory
@@ -234,7 +246,8 @@ final class NativeToolRunnerTests: XCTestCase {
     }
 
     func testPipelineWithFileOutput() async throws {
-        let runner = NativeToolRunner()
+        let (runner, root) = try makeManagedNativeToolRunner()
+        defer { try? FileManager.default.removeItem(at: root) }
 
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("PipelineFileTest-\(UUID().uuidString)")
@@ -340,19 +353,59 @@ final class NativeToolRunnerTests: XCTestCase {
         XCTAssertEqual(NativeTool.repair.executableName, "repair.sh")
         XCTAssertEqual(NativeTool.tadpole.executableName, "tadpole.sh")
         XCTAssertEqual(NativeTool.reformat.executableName, "reformat.sh")
-        XCTAssertTrue(NativeTool.samtools.isBundled)
+        XCTAssertFalse(NativeTool.samtools.isBundled)
         XCTAssertFalse(NativeTool.fastp.isBundled)
         XCTAssertFalse(NativeTool.clumpify.isBundled)
     }
 
     func testManagedCoreToolLocationsUseCondaEnvironments() {
         XCTAssertEqual(
-            NativeTool.clumpify.location,
-            .managed(environment: "bbtools", executableName: "clumpify.sh")
+            NativeTool.samtools.location,
+            .managed(environment: "samtools", executableName: "samtools")
         )
         XCTAssertEqual(
-            NativeTool.fastp.location,
-            .managed(environment: "fastp", executableName: "fastp")
+            NativeTool.bcftools.location,
+            .managed(environment: "bcftools", executableName: "bcftools")
+        )
+        XCTAssertEqual(
+            NativeTool.bgzip.location,
+            .managed(environment: "htslib", executableName: "bgzip")
+        )
+        XCTAssertEqual(
+            NativeTool.tabix.location,
+            .managed(environment: "htslib", executableName: "tabix")
+        )
+        XCTAssertEqual(
+            NativeTool.seqkit.location,
+            .managed(environment: "seqkit", executableName: "seqkit")
+        )
+        XCTAssertEqual(
+            NativeTool.vsearch.location,
+            .managed(environment: "vsearch", executableName: "vsearch")
+        )
+        XCTAssertEqual(
+            NativeTool.cutadapt.location,
+            .managed(environment: "cutadapt", executableName: "cutadapt")
+        )
+        XCTAssertEqual(
+            NativeTool.pigz.location,
+            .managed(environment: "pigz", executableName: "pigz")
+        )
+        XCTAssertEqual(
+            NativeTool.fasterqDump.location,
+            .managed(environment: "sra-tools", executableName: "fasterq-dump")
+        )
+        XCTAssertEqual(
+            NativeTool.prefetch.location,
+            .managed(environment: "sra-tools", executableName: "prefetch")
+        )
+        XCTAssertEqual(
+            NativeTool.bedToBigBed.location,
+            .managed(environment: "ucsc-bedtobigbed", executableName: "bedToBigBed")
+        )
+        XCTAssertEqual(
+            NativeTool.bedGraphToBigWig.location,
+            .managed(environment: "ucsc-bedgraphtobigwig", executableName: "bedGraphToBigWig")
         )
     }
 
@@ -504,5 +557,104 @@ final class NativeToolRunnerTests: XCTestCase {
         XCTAssertTrue(tokens.allSatisfy { $0.contains("=") }, "Arguments should not be split into bare path fragments: \(tokens)")
         XCTAssertTrue(tokens.allSatisfy { !$0.contains(" ") }, "Rewritten BBTools arguments should be space-free: \(tokens)")
         XCTAssertFalse(tokens.joined(separator: "\n").contains(projectDir.path), "Safe BBTools paths should not live under the spaced project directory: \(tokens)")
+    }
+
+    // MARK: - Managed Fixture
+
+    private func makeManagedNativeToolRunner() throws -> (runner: NativeToolRunner, root: URL) {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory
+            .appendingPathComponent("NativeToolRunner Managed Test \(UUID().uuidString)", isDirectory: true)
+
+        let scripts: [(environment: String, executable: String, script: String)] = [
+            ("samtools", "samtools", """
+            #!/bin/sh
+            echo "samtools 1.23"
+            """),
+            ("bcftools", "bcftools", """
+            #!/bin/sh
+            echo "bcftools 1.23"
+            """),
+            ("htslib", "bgzip", """
+            #!/bin/sh
+            echo "bgzip 1.23" >&2
+            """),
+            ("htslib", "tabix", """
+            #!/bin/sh
+            echo "tabix 1.23" >&2
+            """),
+            ("ucsc-bedtobigbed", "bedToBigBed", """
+            #!/bin/sh
+            echo "usage: bedToBigBed" >&2
+            exit 1
+            """),
+            ("ucsc-bedgraphtobigwig", "bedGraphToBigWig", """
+            #!/bin/sh
+            echo "bedGraphToBigWig 1.0" >&2
+            exit 1
+            """),
+            ("pigz", "pigz", """
+            #!/bin/sh
+            echo "pigz 2.0"
+            """),
+            ("seqkit", "seqkit", """
+            #!/bin/sh
+            case "$1" in
+              version|--version)
+                echo "seqkit v2.0"
+                ;;
+              seq)
+                if [ $# -ge 3 ] && [ -n "$3" ]; then
+                  cat "$3"
+                else
+                  cat
+                fi
+                ;;
+              stats)
+                awk 'BEGIN { count = 0 } /^@/ { count++ } END { print count }'
+                ;;
+              *)
+                echo "seqkit v2.0"
+                ;;
+            esac
+            """),
+            ("fastp", "fastp", """
+            #!/bin/sh
+            echo "fastp 1.3.2" >&2
+            """),
+            ("vsearch", "vsearch", """
+            #!/bin/sh
+            echo "vsearch v2.29.4"
+            """),
+            ("cutadapt", "cutadapt", """
+            #!/bin/sh
+            echo "cutadapt 4.8"
+            """),
+            ("sra-tools", "fasterq-dump", """
+            #!/bin/sh
+            echo "fasterq-dump 3.1.1"
+            """),
+            ("sra-tools", "prefetch", """
+            #!/bin/sh
+            echo "prefetch 3.1.1"
+            """),
+        ]
+
+        try fm.createDirectory(
+            at: root.appendingPathComponent(".lungfish/conda/envs", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+
+        for spec in scripts {
+            let executableDir = root
+                .appendingPathComponent(".lungfish/conda/envs/\(spec.environment)/bin", isDirectory: true)
+            try fm.createDirectory(at: executableDir, withIntermediateDirectories: true)
+
+            let executableURL = executableDir.appendingPathComponent(spec.executable)
+            try spec.script.write(to: executableURL, atomically: true, encoding: .utf8)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+        }
+
+        return (NativeToolRunner(toolsDirectory: nil, homeDirectory: root), root)
     }
 }

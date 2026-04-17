@@ -35,4 +35,22 @@ final class CoreToolLocatorTests: XCTestCase {
             "/tmp/lungfish-home/.lungfish/conda/envs/bbtools/bin:/usr/bin:/bin"
         )
     }
+
+    func testManagedExecutableURLFallsBackToAlternatePath() {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let envRoot = CoreToolLocator.environmentURL(named: "bbtools", homeDirectory: home)
+        let fallbackJava = envRoot.appendingPathComponent("lib/jvm/bin/java")
+        try? FileManager.default.createDirectory(at: fallbackJava.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? "#!/bin/sh\nexit 0\n".write(to: fallbackJava, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fallbackJava.path)
+
+        let resolved = CoreToolLocator.managedExecutableURL(
+            environment: "bbtools",
+            executableName: "java",
+            homeDirectory: home,
+            fallbackExecutablePaths: ["lib/jvm/bin/java"]
+        )
+
+        XCTAssertEqual(resolved.path, fallbackJava.path)
+    }
 }

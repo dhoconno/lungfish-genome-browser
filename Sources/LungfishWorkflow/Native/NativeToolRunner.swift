@@ -168,6 +168,28 @@ public enum NativeTool: String, CaseIterable, Sendable {
 
     public var location: NativeToolLocation {
         switch self {
+        case .samtools:
+            return .managed(environment: "samtools", executableName: "samtools")
+        case .bcftools:
+            return .managed(environment: "bcftools", executableName: "bcftools")
+        case .bgzip:
+            return .managed(environment: "htslib", executableName: "bgzip")
+        case .tabix:
+            return .managed(environment: "htslib", executableName: "tabix")
+        case .bedToBigBed:
+            return .managed(environment: "ucsc-bedtobigbed", executableName: "bedToBigBed")
+        case .bedGraphToBigWig:
+            return .managed(environment: "ucsc-bedgraphtobigwig", executableName: "bedGraphToBigWig")
+        case .pigz:
+            return .managed(environment: "pigz", executableName: "pigz")
+        case .seqkit:
+            return .managed(environment: "seqkit", executableName: "seqkit")
+        case .fastp:
+            return .managed(environment: "fastp", executableName: "fastp")
+        case .vsearch:
+            return .managed(environment: "vsearch", executableName: "vsearch")
+        case .cutadapt:
+            return .managed(environment: "cutadapt", executableName: "cutadapt")
         case .clumpify:
             return .managed(environment: "bbtools", executableName: "clumpify.sh")
         case .bbduk:
@@ -180,16 +202,14 @@ public enum NativeTool: String, CaseIterable, Sendable {
             return .managed(environment: "bbtools", executableName: "tadpole.sh")
         case .reformat:
             return .managed(environment: "bbtools", executableName: "reformat.sh")
-        case .fastp:
-            return .managed(environment: "fastp", executableName: "fastp")
         case .alignsTo:
             return .bundled(relativePath: "scrubber/bin/aligns_to")
         case .scrubSh:
             return .bundled(relativePath: "scrubber/scripts/scrub.sh")
         case .fasterqDump:
-            return .bundled(relativePath: "sra-tools/fasterq-dump")
+            return .managed(environment: "sra-tools", executableName: "fasterq-dump")
         case .prefetch:
-            return .bundled(relativePath: "sra-tools/prefetch")
+            return .managed(environment: "sra-tools", executableName: "prefetch")
         case .deacon:
             return .managed(environment: "deacon", executableName: "deacon")
         default:
@@ -737,7 +757,7 @@ public actor NativeToolRunner {
     private func discoverToolPath(_ tool: NativeTool) throws -> URL {
         switch tool.location {
         case .managed(let environment, let executableName):
-            let managedToolPath = CoreToolLocator.executableURL(
+            let managedToolPath = CoreToolLocator.managedExecutableURL(
                 environment: environment,
                 executableName: executableName,
                 homeDirectory: homeDirectory
