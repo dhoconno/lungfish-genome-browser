@@ -32,6 +32,46 @@ private actor StubWelcomePackStatusProvider: PluginPackStatusProviding {
     }
 }
 
+private final class DelayedWelcomePackStatusProvider: @unchecked Sendable, PluginPackStatusProviding {
+    let statuses: [PluginPackStatus]
+    private let lock = NSLock()
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    init(statuses: [PluginPackStatus]) {
+        self.statuses = statuses
+    }
+
+    func visibleStatuses() async -> [PluginPackStatus] {
+        await withCheckedContinuation { continuation in
+            lock.withLock {
+                continuations.append(continuation)
+            }
+        }
+        return statuses
+    }
+
+    func status(for pack: PluginPack) async -> PluginPackStatus {
+        statuses.first(where: { $0.pack.id == pack.id })!
+    }
+
+    func install(
+        pack: PluginPack,
+        reinstall: Bool,
+        progress: (@Sendable (PluginPackInstallProgress) -> Void)?
+    ) async throws {}
+
+    func release() {
+        let pending = lock.withLock {
+            let pending = continuations
+            continuations.removeAll()
+            return pending
+        }
+        for continuation in pending {
+            continuation.resume()
+        }
+    }
+}
+
 @MainActor
 final class WelcomeSetupTests: XCTestCase {
 
@@ -137,6 +177,30 @@ final class WelcomeSetupTests: XCTestCase {
         await viewModel.refreshSetup()
 
         XCTAssertTrue(viewModel.canLaunch)
+    }
+
+    func testRefreshSetupExposesLoadingStateWhileStatusesArePending() async {
+        let required = PluginPackStatus(
+            pack: .requiredSetupPack,
+            state: .ready,
+            toolStatuses: [],
+            failureMessage: nil
+        )
+
+        let provider = DelayedWelcomePackStatusProvider(statuses: [required])
+        let viewModel = WelcomeViewModel(statusProvider: provider)
+
+        let refreshTask = Task { await viewModel.refreshSetup() }
+        await Task.yield()
+
+        XCTAssertTrue(viewModel.isRefreshingSetup)
+        XCTAssertNil(viewModel.requiredSetupStatus)
+
+        provider.release()
+        await refreshTask.value
+
+        XCTAssertFalse(viewModel.isRefreshingSetup)
+        XCTAssertEqual(viewModel.requiredSetupStatus?.state, .ready)
     }
 
     private func repositoryRoot() -> URL {

@@ -79,6 +79,9 @@ final class PluginManagerViewModel {
     /// Whether a loading operation is in progress.
     var isLoading: Bool = false
 
+    /// Whether pack status checks are running.
+    var isLoadingPackStatuses: Bool = false
+
     /// Current error message to display, if any.
     var errorMessage: String?
 
@@ -336,6 +339,8 @@ final class PluginManagerViewModel {
     // MARK: - Packs Tab Actions
 
     func loadPackStatuses() async {
+        isLoadingPackStatuses = true
+        defer { isLoadingPackStatuses = false }
         let statuses = await packStatusProvider.visibleStatuses()
         requiredSetupPack = statuses.first(where: { $0.pack.isRequiredBeforeLaunch })
         optionalPackStatuses = statuses.filter { !$0.pack.isRequiredBeforeLaunch }

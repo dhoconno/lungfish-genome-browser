@@ -209,7 +209,7 @@ public extension PluginPack {
             isActive: true,
             requirements: [
                 .package("nextflow", displayName: "Nextflow", smokeTest: .command(arguments: ["-version"])),
-                .package("snakemake", displayName: "Snakemake", smokeTest: .command(arguments: ["--version"])),
+                .package("snakemake", displayName: "Snakemake", smokeTest: .command(arguments: ["--help"])),
                 .bbtools,
                 .package("fastp", displayName: "Fastp", smokeTest: .command(arguments: ["--help"])),
                 .package("deacon", displayName: "Deacon", smokeTest: .command(arguments: ["--help"])),
@@ -273,7 +273,7 @@ public extension PluginPack {
             requirements: [
                 .package("kraken2", displayName: "Kraken 2", smokeTest: .command(arguments: ["--version"])),
                 .package("bracken", displayName: "Bracken", smokeTest: .command(arguments: ["--help"])),
-                .package("metaphlan", displayName: "MetaPhlAn", smokeTest: .command(arguments: ["--version"])),
+                .package("metaphlan", displayName: "MetaPhlAn", smokeTest: .command(arguments: ["--help"])),
                 .package("esviritu", displayName: "EsViritu", smokeTest: .command(arguments: ["--help"])),
             ],
             estimatedSizeMB: 1200

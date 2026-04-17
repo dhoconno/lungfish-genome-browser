@@ -472,62 +472,88 @@ private struct PacksTabView: View {
     @Bindable var viewModel: PluginManagerViewModel
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 16) {
-                    if let required = viewModel.requiredSetupPack {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Required Setup")
-                                .font(.headline)
+        Group {
+            if viewModel.isLoadingPackStatuses
+                && viewModel.requiredSetupPack == nil
+                && viewModel.optionalPackStatuses.isEmpty {
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .controlSize(.large)
+                    Text("Checking installed tools...")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 16) {
+                            if let required = viewModel.requiredSetupPack {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Required Setup")
+                                        .font(.headline)
 
-                            PackCard(
-                                status: required,
-                                isInstalling: viewModel.installingPacks.contains(required.pack.id),
-                                progressMessage: viewModel.packProgressMessage[required.pack.id],
-                                onInstallAll: {
-                                    viewModel.installPack(
-                                        required.pack,
-                                        reinstall: required.shouldReinstall
+                                    PackCard(
+                                        status: required,
+                                        isInstalling: viewModel.installingPacks.contains(required.pack.id),
+                                        progressMessage: viewModel.packProgressMessage[required.pack.id],
+                                        onInstallAll: {
+                                            viewModel.installPack(
+                                                required.pack,
+                                                reinstall: required.shouldReinstall
+                                            )
+                                        },
+                                        onRemoveAll: nil
                                     )
-                                },
-                                onRemoveAll: nil
-                            )
-                            .id(required.pack.id)
-                        }
-                    }
+                                    .id(required.pack.id)
+                                }
+                            }
 
-                    if !viewModel.optionalPackStatuses.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Optional Tools")
-                                .font(.headline)
+                            if !viewModel.optionalPackStatuses.isEmpty {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Optional Tools")
+                                        .font(.headline)
 
-                            ForEach(viewModel.optionalPackStatuses) { status in
-                                PackCard(
-                                    status: status,
-                                    isInstalling: viewModel.installingPacks.contains(status.pack.id),
-                                    progressMessage: viewModel.packProgressMessage[status.pack.id],
-                                    onInstallAll: {
-                                        viewModel.installPack(
-                                            status.pack,
-                                            reinstall: status.shouldReinstall
+                                    ForEach(viewModel.optionalPackStatuses) { status in
+                                        PackCard(
+                                            status: status,
+                                            isInstalling: viewModel.installingPacks.contains(status.pack.id),
+                                            progressMessage: viewModel.packProgressMessage[status.pack.id],
+                                            onInstallAll: {
+                                                viewModel.installPack(
+                                                    status.pack,
+                                                    reinstall: status.shouldReinstall
+                                                )
+                                            },
+                                            onRemoveAll: {
+                                                viewModel.removePack(status.pack)
+                                            }
                                         )
-                                    },
-                                    onRemoveAll: {
-                                        viewModel.removePack(status.pack)
+                                        .id(status.pack.id)
                                     }
-                                )
-                                .id(status.pack.id)
+                                }
                             }
                         }
+                        .padding(16)
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        if viewModel.isLoadingPackStatuses {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("Refreshing tool status...")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(10)
+                        }
+                    }
+                    .onAppear {
+                        scrollToFocusedPack(with: proxy)
+                    }
+                    .onChange(of: viewModel.focusedPackID) { _, _ in
+                        scrollToFocusedPack(with: proxy)
                     }
                 }
-                .padding(16)
-            }
-            .onAppear {
-                scrollToFocusedPack(with: proxy)
-            }
-            .onChange(of: viewModel.focusedPackID) { _, _ in
-                scrollToFocusedPack(with: proxy)
             }
         }
     }

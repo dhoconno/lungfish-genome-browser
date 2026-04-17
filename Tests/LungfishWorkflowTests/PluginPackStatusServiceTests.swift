@@ -3,6 +3,100 @@ import XCTest
 
 final class PluginPackStatusServiceTests: XCTestCase {
 
+    func testVisibleStatusesReuseCachedResultWithinTTL() async throws {
+        actor DatabaseRecorder {
+            var callCount = 0
+
+            func recordCall() {
+                callCount += 1
+            }
+
+            func recordedCallCount() -> Int { callCount }
+        }
+
+        let recorder = DatabaseRecorder()
+        let manager = CondaManager(
+            rootPrefix: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),
+            bundledMicromambaProvider: { nil },
+            bundledMicromambaVersionProvider: { nil }
+        )
+
+        let service = PluginPackStatusService(
+            condaManager: manager,
+            databaseInstalledCheck: { _ in
+                await recorder.recordCall()
+                return false
+            },
+            cacheLifetime: 60
+        )
+
+        _ = await service.visibleStatuses()
+        _ = await service.visibleStatuses()
+
+        let callCount = await recorder.recordedCallCount()
+        XCTAssertEqual(callCount, 1)
+    }
+
+    func testVisibleStatusesShareInFlightRefreshWork() async throws {
+        final class DatabaseGate: @unchecked Sendable {
+            var callCount = 0
+            private let lock = NSLock()
+            private var continuation: CheckedContinuation<Void, Never>?
+
+            func waitForRelease() async {
+                lock.withLock {
+                    callCount += 1
+                }
+                await withCheckedContinuation { continuation in
+                    lock.withLock {
+                        self.continuation = continuation
+                    }
+                }
+            }
+
+            func release() {
+                let continuation = lock.withLock {
+                    let continuation = self.continuation
+                    self.continuation = nil
+                    return continuation
+                }
+                continuation?.resume()
+            }
+
+            func recordedCallCount() -> Int { lock.withLock { callCount } }
+        }
+
+        let gate = DatabaseGate()
+        let manager = CondaManager(
+            rootPrefix: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),
+            bundledMicromambaProvider: { nil },
+            bundledMicromambaVersionProvider: { nil }
+        )
+
+        let service = PluginPackStatusService(
+            condaManager: manager,
+            databaseInstalledCheck: { _ in
+                await gate.waitForRelease()
+                return false
+            },
+            cacheLifetime: 60
+        )
+
+        async let firstStatuses = service.visibleStatuses()
+        async let secondStatuses = service.visibleStatuses()
+
+        try? await Task.sleep(for: .milliseconds(50))
+        let initialCallCount = gate.recordedCallCount()
+        XCTAssertEqual(initialCallCount, 1)
+
+        gate.release()
+        _ = await firstStatuses
+        _ = await secondStatuses
+
+        let finalCallCount = gate.recordedCallCount()
+        XCTAssertEqual(finalCallCount, 1)
+    }
+
     func testRequiredPackNeedsInstallWhenBBToolsExecutablesAreMissing() async throws {
         let sandbox = FileManager.default.temporaryDirectory
             .appendingPathComponent("pack-status-\(UUID().uuidString)", isDirectory: true)
@@ -115,7 +209,10 @@ final class PluginPackStatusServiceTests: XCTestCase {
         FileManager.default.createFile(atPath: javaPath.path, contents: Data("#!/bin/sh\n".utf8))
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: javaPath.path)
 
-        let service = PluginPackStatusService(condaManager: manager)
+        let service = PluginPackStatusService(
+            condaManager: manager,
+            databaseInstalledCheck: { _ in true }
+        )
         let status = await service.status(for: .requiredSetupPack)
 
         XCTAssertEqual(status.state, .ready)
@@ -343,7 +440,16 @@ final class PluginPackStatusServiceTests: XCTestCase {
             func recordedCalls() -> [(packages: [String], environment: String, reinstall: Bool)] { calls }
         }
 
+        actor DatabaseRecorder {
+            var calls: [(databaseID: String, reinstall: Bool)] = []
+            func record(_ databaseID: String, _ reinstall: Bool) {
+                calls.append((databaseID, reinstall))
+            }
+            func recordedCalls() -> [(databaseID: String, reinstall: Bool)] { calls }
+        }
+
         let recorder = InstallRecorder()
+        let databaseRecorder = DatabaseRecorder()
         let manager = CondaManager(
             rootPrefix: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),
             bundledMicromambaProvider: { nil },
@@ -354,6 +460,10 @@ final class PluginPackStatusServiceTests: XCTestCase {
             condaManager: manager,
             installAction: { packages, environment, reinstall, _ in
                 await recorder.record(packages, environment, reinstall)
+            },
+            databaseInstallAction: { databaseID, reinstall, _ in
+                await databaseRecorder.record(databaseID, reinstall)
+                return URL(fileURLWithPath: "/tmp/\(databaseID)")
             }
         )
 
@@ -362,6 +472,11 @@ final class PluginPackStatusServiceTests: XCTestCase {
         let calls = await recorder.recordedCalls()
         XCTAssertEqual(calls.map(\.environment), ["nextflow", "snakemake", "bbtools", "fastp", "deacon"])
         XCTAssertTrue(calls.allSatisfy(\.reinstall))
+
+        let databaseCalls = await databaseRecorder.recordedCalls()
+        XCTAssertEqual(databaseCalls.count, 1)
+        XCTAssertEqual(databaseCalls.first?.databaseID, "deacon-panhuman")
+        XCTAssertTrue(databaseCalls.first?.reinstall ?? false)
     }
 
     func testRequiredPackInstallsBBToolsEnvironmentFromBBMapPackage() async throws {
@@ -384,6 +499,9 @@ final class PluginPackStatusServiceTests: XCTestCase {
             condaManager: manager,
             installAction: { packages, environment, reinstall, _ in
                 await recorder.record(packages, environment, reinstall)
+            },
+            databaseInstallAction: { _, _, _ in
+                URL(fileURLWithPath: "/tmp/deacon-panhuman")
             }
         )
 
@@ -415,15 +533,13 @@ final class PluginPackStatusServiceTests: XCTestCase {
             private var events: [PluginPackInstallProgress] = []
 
             func record(_ event: PluginPackInstallProgress) {
-                lock.lock()
-                events.append(event)
-                lock.unlock()
+                lock.withLock {
+                    events.append(event)
+                }
             }
 
             func recordedEvents() -> [PluginPackInstallProgress] {
-                lock.lock()
-                defer { lock.unlock() }
-                return events
+                lock.withLock { events }
             }
         }
         let eventRecorder = EventRecorder()

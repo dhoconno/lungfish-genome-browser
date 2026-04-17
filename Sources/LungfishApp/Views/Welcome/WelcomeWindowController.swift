@@ -131,6 +131,7 @@ public struct RecentProject: Codable, Identifiable, Equatable {
 final class WelcomeViewModel: ObservableObject {
     @Published var selectedAction: WelcomeAction?
     @Published var isLoading = false
+    @Published private(set) var isRefreshingSetup = false
     @Published var isInstallingRequiredSetup = false
     @Published var requiredSetupProgress: Double?
     @Published var requiredSetupProgressMessage: String?
@@ -158,6 +159,8 @@ final class WelcomeViewModel: ObservableObject {
     }
 
     func refreshSetup() async {
+        isRefreshingSetup = true
+        defer { isRefreshingSetup = false }
         let statuses = await statusProvider.visibleStatuses()
         requiredSetupStatus = statuses.first(where: { $0.pack.isRequiredBeforeLaunch })
         optionalPackStatuses = statuses.filter { !$0.pack.isRequiredBeforeLaunch }
@@ -322,6 +325,11 @@ struct WelcomeView: View {
                     title: status.state == .ready ? "Core Tools Installed" : "Setup Needed",
                     color: status.state == .ready ? .green : .orange
                 )
+            } else if viewModel.isRefreshingSetup {
+                StatusPill(
+                    title: "Checking Setup",
+                    color: .secondary
+                )
             }
         }
         .padding(.bottom, 4)
@@ -392,7 +400,12 @@ struct WelcomeView: View {
                     }
                 }
 
-                if let requiredStatus = viewModel.requiredSetupStatus {
+                if viewModel.isRefreshingSetup && viewModel.requiredSetupStatus == nil {
+                    SetupLoadingCard(
+                        title: "Checking Lungfish Tools",
+                        message: "Please wait while Lungfish checks the tools and data it needs before you begin."
+                    )
+                } else if let requiredStatus = viewModel.requiredSetupStatus {
                     RequiredSetupCard(
                         status: requiredStatus,
                         isInstalling: viewModel.isInstallingRequiredSetup,
@@ -408,7 +421,15 @@ struct WelcomeView: View {
 
         case .recentProjects:
             VStack(alignment: .leading, spacing: 16) {
-                if !viewModel.canLaunch {
+                if viewModel.isRefreshingSetup && viewModel.requiredSetupStatus == nil {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Checking Lungfish Tools before recent projects become available.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                } else if !viewModel.canLaunch {
                     Text("Finish required setup before opening a recent project.")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
@@ -431,7 +452,12 @@ struct WelcomeView: View {
             }
 
         case .requiredSetup:
-            if let requiredStatus = viewModel.requiredSetupStatus {
+            if viewModel.isRefreshingSetup && viewModel.requiredSetupStatus == nil {
+                SetupLoadingCard(
+                    title: "Checking Lungfish Tools",
+                    message: "Lungfish is checking each required tool and required data item."
+                )
+            } else if let requiredStatus = viewModel.requiredSetupStatus {
                 RequiredSetupCard(
                     status: requiredStatus,
                     isInstalling: viewModel.isInstallingRequiredSetup,
@@ -445,7 +471,12 @@ struct WelcomeView: View {
             }
 
         case .optionalTools:
-            if viewModel.optionalPackStatuses.isEmpty {
+            if viewModel.isRefreshingSetup && viewModel.requiredSetupStatus == nil {
+                SetupLoadingCard(
+                    title: "Checking Optional Tools",
+                    message: "Lungfish is checking optional tools that are available in this build."
+                )
+            } else if viewModel.optionalPackStatuses.isEmpty {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(Color(nsColor: .controlBackgroundColor))
                     .overlay {
@@ -592,6 +623,36 @@ struct WelcomeView: View {
 }
 
 // MARK: - Welcome Components
+
+private struct SetupLoadingCard: View {
+    let title: String
+    let message: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                ProgressView()
+                    .controlSize(.regular)
+                Text(title)
+                    .font(.title3.weight(.semibold))
+            }
+
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(22)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                )
+        )
+    }
+}
 
 private struct StatusPill: View {
     let title: String

@@ -104,12 +104,17 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
     private let installAction: InstallAction
     private let databaseInstallAction: DatabaseInstallAction
     private let databaseInstalledCheck: DatabaseInstalledCheck
+    private let cacheLifetime: TimeInterval
+    private var cacheGeneration = 0
+    private var cachedVisibleStatuses: (generation: Int, timestamp: Date, statuses: [PluginPackStatus])?
+    private var inFlightVisibleStatuses: (generation: Int, task: Task<[PluginPackStatus], Never>)?
 
     public init(
         condaManager: CondaManager,
         installAction: InstallAction? = nil,
         databaseInstallAction: DatabaseInstallAction? = nil,
-        databaseInstalledCheck: DatabaseInstalledCheck? = nil
+        databaseInstalledCheck: DatabaseInstalledCheck? = nil,
+        cacheLifetime: TimeInterval = 30
     ) {
         self.condaManager = condaManager
         self.installAction = installAction ?? { [condaManager] packages, environment, reinstall, progress in
@@ -129,35 +134,38 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
         self.databaseInstalledCheck = databaseInstalledCheck ?? { databaseID in
             await DatabaseRegistry.shared.isDatabaseInstalled(databaseID)
         }
+        self.cacheLifetime = cacheLifetime
     }
 
     public func visibleStatuses() async -> [PluginPackStatus] {
-        let bootstrapReady = await bootstrapIsReady()
-        var cache: [PackToolRequirement: PackToolStatus] = [:]
-        var statuses: [PluginPackStatus] = []
-        statuses.reserveCapacity(PluginPack.visibleForCLI.count)
-        for pack in PluginPack.visibleForCLI {
-            var toolStatuses: [PackToolStatus] = []
-            toolStatuses.reserveCapacity(pack.toolRequirements.count)
-            for requirement in pack.toolRequirements {
-                if let cached = cache[requirement] {
-                    toolStatuses.append(cached)
-                    continue
-                }
-                let evaluated = await evaluate(requirement, bootstrapReady: bootstrapReady)
-                cache[requirement] = evaluated
-                toolStatuses.append(evaluated)
-            }
-            statuses.append(makePackStatus(
-                pack: pack,
-                toolStatuses: toolStatuses,
-                bootstrapReady: bootstrapReady
-            ))
+        let generation = cacheGeneration
+        if let cachedVisibleStatuses,
+           cachedVisibleStatuses.generation == generation,
+           Date().timeIntervalSince(cachedVisibleStatuses.timestamp) < cacheLifetime {
+            return cachedVisibleStatuses.statuses
+        }
+
+        if let inFlightVisibleStatuses, inFlightVisibleStatuses.generation == generation {
+            return await inFlightVisibleStatuses.task.value
+        }
+
+        let task = Task { await self.computeVisibleStatuses(forGeneration: generation) }
+        inFlightVisibleStatuses = (generation, task)
+        let statuses = await task.value
+        if inFlightVisibleStatuses?.generation == generation {
+            inFlightVisibleStatuses = nil
         }
         return statuses
     }
 
     public func status(for pack: PluginPack) async -> PluginPackStatus {
+        if PluginPack.visibleForCLI.contains(pack) {
+            let statuses = await visibleStatuses()
+            if let matching = statuses.first(where: { $0.pack.id == pack.id }) {
+                return matching
+            }
+        }
+
         let bootstrapReady = await bootstrapIsReady()
         var toolStatuses: [PackToolStatus] = []
         toolStatuses.reserveCapacity(pack.toolRequirements.count)
@@ -194,6 +202,7 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
         reinstall: Bool,
         progress: (@Sendable (PluginPackInstallProgress) -> Void)?
     ) async throws {
+        invalidateVisibleStatusCache()
         let installTargets = pack.toolRequirements
         let totalSteps = max(installTargets.count, 1)
         for (index, requirement) in installTargets.enumerated() {
@@ -238,6 +247,7 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
             }
         }
         await runPostInstallHooks(for: pack)
+        invalidateVisibleStatusCache()
         progress?(PluginPackInstallProgress(
             requirementID: nil,
             requirementDisplayName: nil,
@@ -245,6 +255,44 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
             itemFraction: 1.0,
             message: "\(pack.name) ready"
         ))
+    }
+
+    private func invalidateVisibleStatusCache() {
+        cacheGeneration += 1
+        cachedVisibleStatuses = nil
+        inFlightVisibleStatuses = nil
+    }
+
+    private func computeVisibleStatuses(forGeneration generation: Int) async -> [PluginPackStatus] {
+        let bootstrapReady = await bootstrapIsReady()
+        var requirementCache: [PackToolRequirement: PackToolStatus] = [:]
+        var statuses: [PluginPackStatus] = []
+        statuses.reserveCapacity(PluginPack.visibleForCLI.count)
+        for pack in PluginPack.visibleForCLI {
+            var toolStatuses: [PackToolStatus] = []
+            toolStatuses.reserveCapacity(pack.toolRequirements.count)
+            for requirement in pack.toolRequirements {
+                if let cached = requirementCache[requirement] {
+                    toolStatuses.append(cached)
+                    continue
+                }
+                let evaluated = await evaluate(requirement, bootstrapReady: bootstrapReady)
+                requirementCache[requirement] = evaluated
+                toolStatuses.append(evaluated)
+            }
+            statuses.append(makePackStatus(
+                pack: pack,
+                toolStatuses: toolStatuses,
+                bootstrapReady: bootstrapReady
+            ))
+        }
+        storeVisibleStatuses(statuses, forGeneration: generation)
+        return statuses
+    }
+
+    private func storeVisibleStatuses(_ statuses: [PluginPackStatus], forGeneration generation: Int) {
+        guard generation == cacheGeneration else { return }
+        cachedVisibleStatuses = (generation, Date(), statuses)
     }
 
     private func bootstrapIsReady() async -> Bool {
