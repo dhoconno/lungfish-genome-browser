@@ -161,6 +161,13 @@ final class WindowAppearanceTests: XCTestCase {
         XCTAssertTrue(source.contains("toolSidebar"))
         XCTAssertTrue(source.contains("detailPane"))
         XCTAssertTrue(source.contains("footerBar"))
+        XCTAssertTrue(source.contains("Color.lungfishCanvasBackground"))
+        XCTAssertTrue(source.contains("Color.lungfishSidebarBackground"))
+        XCTAssertTrue(source.contains("Color.lungfishCardBackground"))
+        XCTAssertTrue(source.contains("Color.lungfishStroke"))
+        XCTAssertTrue(source.contains("Color.lungfishCreamsicleFallback"))
+        XCTAssertTrue(source.contains(".tint(.lungfishCreamsicleFallback)"))
+        XCTAssertFalse(source.contains("Color.accentColor"))
     }
 
     private func repositoryRoot() -> URL {

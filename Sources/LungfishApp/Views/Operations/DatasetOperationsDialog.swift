@@ -17,13 +17,16 @@ struct DatasetOperationsDialog<Detail: View>: View {
         HStack(spacing: 0) {
             toolSidebar
                 .frame(width: 260)
+                .background(Color.lungfishSidebarBackground)
             Divider()
             VStack(spacing: 0) {
                 detailPane
                 Divider()
                 footerBar
             }
+            .background(Color.lungfishCanvasBackground)
         }
+        .background(Color.lungfishCanvasBackground)
     }
 
     private var toolSidebar: some View {
@@ -43,7 +46,7 @@ struct DatasetOperationsDialog<Detail: View>: View {
 
                 ForEach(tools) { tool in
                     Button {
-                        onSelectTool(tool.id)
+                        selectToolIfAvailable(tool)
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack {
@@ -61,11 +64,11 @@ struct DatasetOperationsDialog<Detail: View>: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(10)
+                        .background(sidebarCardBackground(for: tool))
+                        .overlay(sidebarCardBorder(for: tool))
                     }
                     .buttonStyle(.plain)
-                    .disabled(tool.availability != .available)
-                    .background(selectedToolID == tool.id ? Color.accentColor.opacity(0.12) : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .disabled(!canSelect(tool))
                 }
             }
             .padding(16)
@@ -82,13 +85,48 @@ struct DatasetOperationsDialog<Detail: View>: View {
         HStack(spacing: 12) {
             Text(statusText)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(isRunEnabled ? Color.lungfishSecondaryText : Color.lungfishOrangeFallback)
             Spacer()
             Button("Cancel", action: onCancel)
-            Button("Run", action: onRun)
+            Button("Run", action: runIfEnabled)
+                .buttonStyle(.borderedProminent)
+                .tint(.lungfishCreamsicleFallback)
                 .disabled(!isRunEnabled)
         }
         .padding(16)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color.lungfishCanvasBackground)
+    }
+
+    func canSelect(_ tool: DatasetOperationToolSidebarItem) -> Bool {
+        tool.availability == .available
+    }
+
+    func selectToolIfAvailable(_ tool: DatasetOperationToolSidebarItem) {
+        guard canSelect(tool) else { return }
+        onSelectTool(tool.id)
+    }
+
+    func runIfEnabled() {
+        guard isRunEnabled else { return }
+        onRun()
+    }
+
+    private func sidebarCardBackground(for tool: DatasetOperationToolSidebarItem) -> some View {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(
+                selectedToolID == tool.id
+                ? Color.lungfishCreamsicleFallback.opacity(0.18)
+                : Color.lungfishCardBackground
+            )
+    }
+
+    private func sidebarCardBorder(for tool: DatasetOperationToolSidebarItem) -> some View {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .stroke(
+                selectedToolID == tool.id
+                ? Color.lungfishCreamsicleFallback.opacity(0.35)
+                : Color.lungfishStroke,
+                lineWidth: 1
+            )
     }
 }
