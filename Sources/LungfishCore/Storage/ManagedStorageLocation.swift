@@ -5,6 +5,9 @@ public struct ManagedStorageLocation: Sendable, Codable, Equatable {
         case containsSpaces
         case nestedInsideProject
         case nestedInsideAppBundle
+        case notWritable
+        case unsupportedFilesystem
+        case unreachable
     }
 
     public enum ValidationResult: Sendable, Equatable {

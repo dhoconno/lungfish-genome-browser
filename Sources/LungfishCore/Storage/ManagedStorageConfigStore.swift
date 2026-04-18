@@ -2,14 +2,28 @@ import Foundation
 
 public struct ManagedStorageBootstrapConfig: Codable, Equatable, Sendable {
     public var activeRootPath: String
+    public var previousRootPath: String?
+    public var migrationState: MigrationState?
 
-    public init(activeRootPath: String) {
+    public enum MigrationState: String, Codable, Equatable, Sendable {
+        case pending
+        case completed
+    }
+
+    public init(
+        activeRootPath: String,
+        previousRootPath: String? = nil,
+        migrationState: MigrationState? = nil
+    ) {
         self.activeRootPath = activeRootPath
+        self.previousRootPath = previousRootPath
+        self.migrationState = migrationState
     }
 }
 
 public final class ManagedStorageConfigStore: @unchecked Sendable {
     @MainActor public static var shared = ManagedStorageConfigStore()
+    private static let legacyDatabaseStorageLocationKey = "DatabaseStorageLocation"
 
     public let configURL: URL
 
@@ -35,7 +49,7 @@ public final class ManagedStorageConfigStore: @unchecked Sendable {
     public func currentLocation() -> ManagedStorageLocation {
         guard let config = loadBootstrapConfig(),
               !config.activeRootPath.isEmpty else {
-            return defaultLocation
+            return legacyLocation() ?? defaultLocation
         }
 
         return ManagedStorageLocation(rootURL: URL(fileURLWithPath: config.activeRootPath, isDirectory: true))
@@ -70,6 +84,15 @@ public final class ManagedStorageConfigStore: @unchecked Sendable {
         } catch {
             return nil
         }
+    }
+
+    private func legacyLocation() -> ManagedStorageLocation? {
+        guard let path = UserDefaults.standard.string(forKey: Self.legacyDatabaseStorageLocationKey),
+              !path.isEmpty else {
+            return nil
+        }
+
+        return ManagedStorageLocation(rootURL: URL(fileURLWithPath: path, isDirectory: true))
     }
 
     private func saveBootstrapConfig(_ config: ManagedStorageBootstrapConfig) throws {
