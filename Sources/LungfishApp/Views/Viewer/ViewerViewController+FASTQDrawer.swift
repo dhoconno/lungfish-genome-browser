@@ -286,8 +286,12 @@ extension ViewerViewController: FASTQMetadataDrawerViewDelegate {
 
     public func fastqMetadataDrawerDidDragDivider(_ drawer: FASTQMetadataDrawerView, deltaY: CGFloat) {
         guard let heightConstraint = fastqMetadataDrawerHeightConstraint else { return }
-        let maxHeight = view.bounds.height * 0.7
-        let newHeight = max(150, min(maxHeight, heightConstraint.constant + deltaY))
+        let newHeight = MetagenomicsPaneSizing.clampedDrawerExtent(
+            proposed: heightConstraint.constant + deltaY,
+            containerExtent: view.bounds.height,
+            minimumDrawerExtent: 150,
+            minimumSiblingExtent: 0
+        )
         heightConstraint.constant = newHeight
         fastqMetadataDrawerBottomConstraint?.constant = 0  // Keep visible while dragging
         view.layoutSubtreeIfNeeded()

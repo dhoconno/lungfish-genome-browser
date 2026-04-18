@@ -440,7 +440,15 @@ final class TaxaCollectionsDrawerTests: XCTestCase {
         // Default height should be 220
         XCTAssertEqual(TaxonomyViewController.defaultTaxaDrawerHeight, 220)
         XCTAssertEqual(TaxonomyViewController.minTaxaDrawerHeight, 140)
-        XCTAssertEqual(TaxonomyViewController.maxTaxaDrawerFraction, 0.5)
+        XCTAssertEqual(
+            MetagenomicsPaneSizing.clampedDrawerExtent(
+                proposed: 960,
+                containerExtent: 1000,
+                minimumDrawerExtent: TaxonomyViewController.minTaxaDrawerHeight,
+                minimumSiblingExtent: 120
+            ),
+            880
+        )
     }
 
     // MARK: - Collection Scope Filter

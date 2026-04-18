@@ -21,8 +21,8 @@ extension TaxonomyViewController: TaxaCollectionsDrawerDelegate {
     /// Minimum height for the taxa collections drawer.
     static let minTaxaDrawerHeight: CGFloat = 140
 
-    /// Maximum fraction of parent height the drawer may occupy.
-    static let maxTaxaDrawerFraction: CGFloat = 0.5
+    /// Minimum visible host area left above the drawer during resizing.
+    static let minVisibleViewportHeight: CGFloat = 120
 
     /// UserDefaults key for persisted drawer height.
     static let taxaDrawerHeightKey = "taxaCollectionsDrawerHeight"
@@ -168,8 +168,12 @@ extension TaxonomyViewController: TaxaCollectionsDrawerDelegate {
 
     public func taxaCollectionsDrawerDidDragDivider(_ drawer: TaxaCollectionsDrawerView, deltaY: CGFloat) {
         guard let heightConstraint = taxaCollectionsDrawerHeightConstraint else { return }
-        let maxHeight = view.bounds.height * Self.maxTaxaDrawerFraction
-        let newHeight = max(Self.minTaxaDrawerHeight, min(maxHeight, heightConstraint.constant + deltaY))
+        let newHeight = MetagenomicsPaneSizing.clampedDrawerExtent(
+            proposed: heightConstraint.constant + deltaY,
+            containerExtent: view.bounds.height,
+            minimumDrawerExtent: Self.minTaxaDrawerHeight,
+            minimumSiblingExtent: Self.minVisibleViewportHeight
+        )
         heightConstraint.constant = newHeight
         taxaCollectionsDrawerBottomConstraint?.constant = 0  // Keep visible while dragging
         view.layoutSubtreeIfNeeded()

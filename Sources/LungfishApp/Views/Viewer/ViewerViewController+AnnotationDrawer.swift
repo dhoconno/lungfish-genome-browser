@@ -327,8 +327,12 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
 
     public func annotationDrawerDidDragDivider(_ drawer: AnnotationTableDrawerView, deltaY: CGFloat) {
         guard let heightConstraint = annotationDrawerHeightConstraint else { return }
-        let maxHeight = view.bounds.height * 0.7
-        let newHeight = max(100, min(maxHeight, heightConstraint.constant + deltaY))
+        let newHeight = MetagenomicsPaneSizing.clampedDrawerExtent(
+            proposed: heightConstraint.constant + deltaY,
+            containerExtent: view.bounds.height,
+            minimumDrawerExtent: 100,
+            minimumSiblingExtent: 0
+        )
         heightConstraint.constant = newHeight
         annotationDrawerBottomConstraint?.constant = 0  // Keep visible while dragging
         view.layoutSubtreeIfNeeded()

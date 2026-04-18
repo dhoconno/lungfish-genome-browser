@@ -1099,7 +1099,12 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
         ofSubviewAt dividerIndex: Int
     ) -> CGFloat {
         // Minimum left pane (sunburst) width
-        max(proposedMinimumPosition, 300)
+        MetagenomicsPaneSizing.clampedDividerPosition(
+            proposed: proposedMinimumPosition,
+            containerExtent: splitView.bounds.width,
+            minimumLeadingExtent: 300,
+            minimumTrailingExtent: 260
+        )
     }
 
     public func splitView(
@@ -1108,7 +1113,12 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
         ofSubviewAt dividerIndex: Int
     ) -> CGFloat {
         // Ensure right pane (table) has at least 260px
-        min(proposedMaximumPosition, splitView.bounds.width - 260)
+        MetagenomicsPaneSizing.clampedDividerPosition(
+            proposed: proposedMaximumPosition,
+            containerExtent: splitView.bounds.width,
+            minimumLeadingExtent: 300,
+            minimumTrailingExtent: 260
+        )
     }
 
     // MARK: - Context Menu (Taxon)
