@@ -322,8 +322,8 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
 
     // MARK: - BLAST Drawer
 
-    private var blastDrawerView: BlastResultsDrawerTab?
-    private var blastDrawerBottomConstraint: NSLayoutConstraint?
+    private var blastDrawerContainer: BlastResultsDrawerContainerView?
+    private var blastDrawerHeightConstraint: NSLayoutConstraint?
     private var isBlastDrawerOpen = false
 
     // MARK: - Lifecycle
@@ -342,7 +342,7 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
 
     public override func viewDidLayout() {
         super.viewDidLayout()
-        applySplitPositionIfNeeded(force: false)
+        applyLayoutPreference()
     }
 
     // MARK: - Public API: Two-Phase Loading
@@ -918,22 +918,27 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
     /// Uses raw NSSplitView (not NSSplitViewController) per macOS 26 rules.
     private func setupSplitView() {
         splitView.translatesAutoresizingMaskIntoConstraints = false
-        splitView.isVertical = true
+        splitView.isVertical = MetagenomicsPanelLayout.current() != .stacked
         splitView.dividerStyle = .thin
         splitView.delegate = self
 
-        // Left pane: detail
+        // Detail pane in detail-leading mode.
         let detail = NvdDetailContainer(scrollView: detailScrollView, contentView: detailContentView)
         detailContainer = detail
 
-        // Right pane: outline view with search bar
+        // Outline pane in list-leading / stacked mode.
         let outlineCont = NSView()
         self.outlineContainer = outlineCont
         setupOutlineView()
         setupFilterBar(in: outlineCont)
 
-        splitView.addArrangedSubview(detail)
-        splitView.addArrangedSubview(outlineCont)
+        if MetagenomicsPanelLayout.current() == .detailLeading {
+            splitView.addArrangedSubview(detail)
+            splitView.addArrangedSubview(outlineCont)
+        } else {
+            splitView.addArrangedSubview(outlineCont)
+            splitView.addArrangedSubview(detail)
+        }
 
         // Multi-selection placeholder overlay on the detail container
         detail.addSubview(multiSelectionPlaceholder)
@@ -944,14 +949,16 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
             multiSelectionPlaceholder.trailingAnchor.constraint(equalTo: detail.trailingAnchor),
         ])
 
-        // Outline pane resizes first; detail pane holds width firmly.
-        splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
-        splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
+        if MetagenomicsPanelLayout.current() == .detailLeading {
+            splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+            splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
+        } else {
+            splitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
+            splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
+        }
 
         splitView.adjustSubviews()
         view.addSubview(splitView)
-
-        applyLayoutPreference()
     }
 
     private func setupOutlineView() {
@@ -1163,19 +1170,10 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
     }
 
     private func applySplitPositionIfNeeded(force: Bool) {
-        guard splitView.arrangedSubviews.count >= 2 else { return }
-        guard splitView.bounds.width > 0 else {
-            if force { didSetInitialSplitPosition = false }
-            return
+        if force {
+            didSetInitialSplitPosition = false
         }
-
-        guard force || !didSetInitialSplitPosition else { return }
-
-        // Detail pane on left gets 40%, outline on right gets 60%.
-        let position = round(splitView.bounds.width * 0.4)
-        splitView.setPosition(position, ofDividerAt: 0)
-        didSetInitialSplitPosition = true
-        resizeDetailContentToFit()
+        applyLayoutPreference()
     }
 
     // MARK: - Callback Wiring
@@ -1269,38 +1267,64 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
     }
 
     private func applyLayoutPreference() {
-        let tableOnLeft = UserDefaults.standard.bool(forKey: "metagenomicsTableOnLeft")
-        guard splitView.arrangedSubviews.count == 2,
-              let detail = detailContainer,
-              let outline = outlineContainer else { return }
+        let layout = MetagenomicsPanelLayout.current()
+        guard splitView.arrangedSubviews.count == 2 else { return }
 
-        let currentOutlineIsFirst = (splitView.arrangedSubviews[0] === outline)
-        guard tableOnLeft != currentOutlineIsFirst else { return }
+        let desiredIsVertical = layout != .stacked
+        let desiredFirstPane: NSView = layout == .detailLeading ? detailContainer! : outlineContainer!
+        let desiredSecondPane: NSView = layout == .detailLeading ? outlineContainer! : detailContainer!
 
-        let totalWidth = max(splitView.bounds.width, 1)
-        let leftRatio = splitView.arrangedSubviews[0].frame.width / totalWidth
+        let currentFirstPane = splitView.arrangedSubviews[0]
+        let currentSecondPane = splitView.arrangedSubviews[1]
+        let currentExtent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+        let currentFirstExtent = splitView.isVertical ? currentFirstPane.frame.width : currentFirstPane.frame.height
+        let currentSecondExtent = max(0, currentExtent - currentFirstExtent)
+        let needsRebuild = splitView.isVertical != desiredIsVertical
+            || splitView.arrangedSubviews[0] !== desiredFirstPane
+            || splitView.arrangedSubviews[1] !== desiredSecondPane
 
-        splitView.removeArrangedSubview(detail)
-        splitView.removeArrangedSubview(outline)
-        detail.removeFromSuperview()
-        outline.removeFromSuperview()
+        if needsRebuild {
+            splitView.removeArrangedSubview(currentFirstPane)
+            splitView.removeArrangedSubview(currentSecondPane)
+            currentFirstPane.removeFromSuperview()
+            currentSecondPane.removeFromSuperview()
 
-        if tableOnLeft {
-            splitView.addArrangedSubview(outline)
-            splitView.addArrangedSubview(detail)
+            splitView.isVertical = desiredIsVertical
+            splitView.addArrangedSubview(desiredFirstPane)
+            splitView.addArrangedSubview(desiredSecondPane)
         } else {
-            splitView.addArrangedSubview(detail)
-            splitView.addArrangedSubview(outline)
+            splitView.isVertical = desiredIsVertical
         }
 
-        let outlineIndex = tableOnLeft ? 0 : 1
-        let detailIndex = tableOnLeft ? 1 : 0
-        splitView.setHoldingPriority(.defaultLow, forSubviewAt: outlineIndex)
-        splitView.setHoldingPriority(.defaultHigh, forSubviewAt: detailIndex)
+        if layout == .detailLeading {
+            splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+            splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
+        } else {
+            splitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
+            splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
+        }
 
-        let newPosition = round(totalWidth * (1.0 - leftRatio))
-        splitView.setPosition(newPosition, ofDividerAt: 0)
+        let totalExtent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+        guard totalExtent > 0 else {
+            didSetInitialSplitPosition = false
+            return
+        }
+
+        let defaultLeadingFraction: CGFloat = layout == .detailLeading ? 0.4 : 0.6
+        let leadingExtent = currentFirstExtent > 0
+            ? (desiredFirstPane === currentFirstPane ? currentFirstExtent : currentSecondExtent)
+            : round(totalExtent * defaultLeadingFraction)
+
+        let clampedPosition = MetagenomicsPaneSizing.clampedDividerPosition(
+            proposed: leadingExtent,
+            containerExtent: totalExtent,
+            minimumLeadingExtent: 250,
+            minimumTrailingExtent: 300
+        )
+        splitView.setPosition(clampedPosition, ofDividerAt: 0)
         splitView.adjustSubviews()
+        didSetInitialSplitPosition = true
+        resizeDetailContentToFit()
     }
 
     // MARK: - Sample Filter
@@ -1381,18 +1405,16 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
     /// (not NSSplitViewController) — safe per macOS 26 rules.
     public func splitView(
         _ splitView: NSSplitView,
-        constrainMinCoordinate proposedMinimumPosition: CGFloat,
+        constrainSplitPosition proposedPosition: CGFloat,
         ofSubviewAt dividerIndex: Int
     ) -> CGFloat {
-        max(proposedMinimumPosition, 250)
-    }
-
-    public func splitView(
-        _ splitView: NSSplitView,
-        constrainMaxCoordinate proposedMaximumPosition: CGFloat,
-        ofSubviewAt dividerIndex: Int
-    ) -> CGFloat {
-        min(proposedMaximumPosition, splitView.bounds.width - 300)
+        let extent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+        return MetagenomicsPaneSizing.clampedDividerPosition(
+            proposed: proposedPosition,
+            containerExtent: extent,
+            minimumLeadingExtent: 250,
+            minimumTrailingExtent: 300
+        )
     }
 
     // MARK: - BLAST Verification
@@ -1453,40 +1475,56 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
     }
 
     private func ensureBlastDrawer() -> BlastResultsDrawerTab {
-        if let blastDrawerView { return blastDrawerView }
+        if let blastDrawerContainer { return blastDrawerContainer.blastResultsTab }
 
-        let drawer = BlastResultsDrawerTab()
-        drawer.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(drawer)
+        let container = BlastResultsDrawerContainerView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(container)
 
-        let bottomConstraint = drawer.bottomAnchor.constraint(equalTo: actionBar.topAnchor, constant: 220)
+        let heightConstraint = container.heightAnchor.constraint(equalToConstant: 0)
 
         NSLayoutConstraint.activate([
-            drawer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            drawer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            drawer.heightAnchor.constraint(equalToConstant: 220),
-            bottomConstraint,
+            container.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            container.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            container.bottomAnchor.constraint(equalTo: actionBar.topAnchor),
+            heightConstraint,
         ])
 
         splitViewBottomConstraint?.isActive = false
-        let newSplitBottom = splitView.bottomAnchor.constraint(equalTo: drawer.topAnchor)
+        let newSplitBottom = splitView.bottomAnchor.constraint(equalTo: container.topAnchor)
         newSplitBottom.isActive = true
         splitViewBottomConstraint = newSplitBottom
 
-        blastDrawerView = drawer
-        blastDrawerBottomConstraint = bottomConstraint
+        blastDrawerContainer = container
+        blastDrawerHeightConstraint = heightConstraint
+        container.onDrag = { [weak self] delta in
+            guard let self, let heightConstraint = self.blastDrawerHeightConstraint else { return }
+            let availableExtent = max(0, self.view.bounds.height - self.actionBar.frame.height)
+            let proposed = heightConstraint.constant + delta
+            heightConstraint.constant = MetagenomicsPaneSizing.clampedDrawerExtent(
+                proposed: proposed,
+                containerExtent: availableExtent,
+                minimumDrawerExtent: 160,
+                minimumSiblingExtent: 120
+            )
+            self.view.layoutSubtreeIfNeeded()
+        }
+        container.onDragEnd = { [weak self] in
+            self?.view.layoutSubtreeIfNeeded()
+        }
         view.layoutSubtreeIfNeeded()
 
-        return drawer
+        return container.blastResultsTab
     }
 
     private func openBlastDrawerIfNeeded() {
         guard !isBlastDrawerOpen else { return }
+        guard let blastDrawerHeightConstraint else { return }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.25
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             context.allowsImplicitAnimation = true
-            blastDrawerBottomConstraint?.animator().constant = 0
+            blastDrawerHeightConstraint.animator().constant = 220
             view.layoutSubtreeIfNeeded()
         }
         isBlastDrawerOpen = true
@@ -2061,6 +2099,13 @@ extension NvdResultViewController {
 
         return cell
     }
+
+    // MARK: - Testing Accessors
+
+    var testDetailContainer: NSView? { detailContainer }
+    var testOutlineContainer: NSView? { outlineContainer }
+    var testSplitView: NSSplitView { splitView }
+    var testBlastDrawerContainer: BlastResultsDrawerContainerView? { blastDrawerContainer }
 }
 
 // MARK: - NSMenuDelegate

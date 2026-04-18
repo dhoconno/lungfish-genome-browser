@@ -143,6 +143,8 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
     private let summaryBar = TaxonomySummaryBar()
     private let breadcrumbBar = TaxonomyBreadcrumbBar()
     let splitView = NSSplitView()
+    private let sunburstContainer = NSView()
+    private let tableContainer = NSView()
     private let sunburstView = TaxonomySunburstView()
     private let taxonomyTableView = TaxonomyTableView()
     let actionBar = ClassifierActionBar()
@@ -326,15 +328,7 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
 
     public override func viewDidLayout() {
         super.viewDidLayout()
-
-        // Apply the initial 60/40 split once the split view has real bounds.
-        // NSSplitView.setPosition is a no-op when bounds are zero, so we
-        // must wait until after the first layout pass.
-        if !didSetInitialSplitPosition, splitView.bounds.width > 0 {
-            didSetInitialSplitPosition = true
-            let position = round(splitView.bounds.width * 0.6)
-            splitView.setPosition(position, ofDividerAt: 0)
-        }
+        applyLayoutPreference()
     }
 
     // MARK: - Public API
@@ -761,14 +755,13 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
     /// the container as its frame changes.
     private func setupSplitView() {
         splitView.translatesAutoresizingMaskIntoConstraints = false
-        splitView.isVertical = true
+        splitView.isVertical = MetagenomicsPanelLayout.current() != .stacked
         splitView.dividerStyle = .thin
         splitView.delegate = self
 
-        // Sunburst container (left pane)
+        // Sunburst container (detail pane in detail-leading mode).
         // NSSplitView sets this view's frame directly -- do NOT disable
         // translatesAutoresizingMaskIntoConstraints on the container.
-        let sunburstContainer = NSView()
         sunburstView.autoresizingMask = [.width, .height]
         sunburstContainer.addSubview(sunburstView)
 
@@ -781,19 +774,28 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
             multiSelectionPlaceholder.trailingAnchor.constraint(equalTo: sunburstContainer.trailingAnchor),
         ])
 
-        // Table container (right pane)
-        let tableContainer = NSView()
+        // Table container (list pane in list-leading / stacked mode).
         taxonomyTableView.autoresizingMask = [.width, .height]
         tableContainer.addSubview(taxonomyTableView)
 
-        splitView.addArrangedSubview(sunburstContainer)
-        splitView.addArrangedSubview(tableContainer)
+        if MetagenomicsPanelLayout.current() == .detailLeading {
+            splitView.addArrangedSubview(sunburstContainer)
+            splitView.addArrangedSubview(tableContainer)
+        } else {
+            splitView.addArrangedSubview(tableContainer)
+            splitView.addArrangedSubview(sunburstContainer)
+        }
 
         // Set holding priorities so the table pane is preferred to resize
         // when the split view itself resizes (e.g., window resize). The left
         // pane (sunburst) holds its width more firmly.
-        splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
-        splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
+        if MetagenomicsPanelLayout.current() == .detailLeading {
+            splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+            splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
+        } else {
+            splitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
+            splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
+        }
 
         view.addSubview(splitView)
     }
@@ -973,38 +975,62 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
 
     /// Swaps the split view pane order based on the persisted layout preference.
     private func applyLayoutPreference() {
-        let tableOnLeft = UserDefaults.standard.bool(forKey: "metagenomicsTableOnLeft")
-        guard splitView.arrangedSubviews.count == 2,
-              let detail = sunburstView.superview,
-              let table = taxonomyTableView.superview else { return }
+        let layout = MetagenomicsPanelLayout.current()
+        guard splitView.arrangedSubviews.count == 2 else { return }
 
-        let currentTableIsFirst = (splitView.arrangedSubviews[0] === table)
-        guard tableOnLeft != currentTableIsFirst else { return }
+        let desiredIsVertical = layout != .stacked
+        let desiredFirstPane: NSView = layout == .detailLeading ? sunburstContainer : tableContainer
+        let desiredSecondPane: NSView = layout == .detailLeading ? tableContainer : sunburstContainer
 
-        let totalWidth = max(splitView.bounds.width, 1)
-        let leftRatio = splitView.arrangedSubviews[0].frame.width / totalWidth
+        let currentFirstPane = splitView.arrangedSubviews[0]
+        let currentSecondPane = splitView.arrangedSubviews[1]
+        let currentFirstExtent = splitView.isVertical ? currentFirstPane.frame.width : currentFirstPane.frame.height
+        let currentSecondExtent = max(0, (splitView.isVertical ? splitView.bounds.width : splitView.bounds.height) - currentFirstExtent)
+        let needsRebuild = splitView.isVertical != desiredIsVertical
+            || splitView.arrangedSubviews[0] !== desiredFirstPane
+            || splitView.arrangedSubviews[1] !== desiredSecondPane
 
-        splitView.removeArrangedSubview(detail)
-        splitView.removeArrangedSubview(table)
-        detail.removeFromSuperview()
-        table.removeFromSuperview()
+        if needsRebuild {
+            splitView.removeArrangedSubview(currentFirstPane)
+            splitView.removeArrangedSubview(currentSecondPane)
+            currentFirstPane.removeFromSuperview()
+            currentSecondPane.removeFromSuperview()
 
-        if tableOnLeft {
-            splitView.addArrangedSubview(table)
-            splitView.addArrangedSubview(detail)
+            splitView.isVertical = desiredIsVertical
+            splitView.addArrangedSubview(desiredFirstPane)
+            splitView.addArrangedSubview(desiredSecondPane)
+
+            if layout == .detailLeading {
+                splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+                splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
+            } else {
+                splitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
+                splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
+            }
         } else {
-            splitView.addArrangedSubview(detail)
-            splitView.addArrangedSubview(table)
+            splitView.isVertical = desiredIsVertical
         }
 
-        let tableIndex = tableOnLeft ? 0 : 1
-        let detailIndex = tableOnLeft ? 1 : 0
-        splitView.setHoldingPriority(.defaultLow, forSubviewAt: tableIndex)
-        splitView.setHoldingPriority(.defaultHigh, forSubviewAt: detailIndex)
+        let totalExtent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+        guard totalExtent > 0 else {
+            didSetInitialSplitPosition = false
+            return
+        }
 
-        let newPosition = round(totalWidth * (1.0 - leftRatio))
-        splitView.setPosition(newPosition, ofDividerAt: 0)
+        let leadingDefaultFraction: CGFloat = layout == .detailLeading ? 0.6 : 0.4
+        let leadingExtent = currentFirstExtent > 0
+            ? (desiredFirstPane === currentFirstPane ? currentFirstExtent : currentSecondExtent)
+            : round(totalExtent * leadingDefaultFraction)
+
+        let clampedPosition = MetagenomicsPaneSizing.clampedDividerPosition(
+            proposed: leadingExtent,
+            containerExtent: totalExtent,
+            minimumLeadingExtent: 250,
+            minimumTrailingExtent: 250
+        )
+        splitView.setPosition(clampedPosition, ofDividerAt: 0)
         splitView.adjustSubviews()
+        didSetInitialSplitPosition = true
     }
 
     /// Toggles the BLAST results tab in the taxa collections drawer.
@@ -1092,30 +1118,15 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
 
     // MARK: - NSSplitViewDelegate
 
-    /// Enforces minimum widths for sunburst (300px) and table (260px).
     public func splitView(
         _ splitView: NSSplitView,
-        constrainMinCoordinate proposedMinimumPosition: CGFloat,
+        constrainSplitPosition proposedPosition: CGFloat,
         ofSubviewAt dividerIndex: Int
     ) -> CGFloat {
-        // Minimum left pane (sunburst) width
-        MetagenomicsPaneSizing.clampedDividerPosition(
-            proposed: proposedMinimumPosition,
-            containerExtent: splitView.bounds.width,
-            minimumLeadingExtent: 300,
-            minimumTrailingExtent: 260
-        )
-    }
-
-    public func splitView(
-        _ splitView: NSSplitView,
-        constrainMaxCoordinate proposedMaximumPosition: CGFloat,
-        ofSubviewAt dividerIndex: Int
-    ) -> CGFloat {
-        // Ensure right pane (table) has at least 260px
-        MetagenomicsPaneSizing.clampedDividerPosition(
-            proposed: proposedMaximumPosition,
-            containerExtent: splitView.bounds.width,
+        let extent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+        return MetagenomicsPaneSizing.clampedDividerPosition(
+            proposed: proposedPosition,
+            containerExtent: extent,
             minimumLeadingExtent: 300,
             minimumTrailingExtent: 260
         )

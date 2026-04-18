@@ -196,8 +196,8 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     private var splitViewBottomConstraint: NSLayoutConstraint?
 
     /// Bottom BLAST results drawer shown after in-app verification.
-    private var blastDrawerView: BlastResultsDrawerTab?
-    private var blastDrawerBottomConstraint: NSLayoutConstraint?
+    private var blastDrawerContainer: BlastResultsDrawerContainerView?
+    private var blastDrawerHeightConstraint: NSLayoutConstraint?
     private var isBlastDrawerOpen = false
 
     /// Active sample picker popover.
@@ -248,7 +248,7 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
 
     public override func viewDidLayout() {
         super.viewDidLayout()
-        applySplitPositionIfNeeded(force: false)
+        applyLayoutPreference()
     }
 
     // MARK: - Public API
@@ -1281,23 +1281,27 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     /// Uses raw NSSplitView (not NSSplitViewController) per macOS 26 rules.
     private func setupSplitView() {
         splitView.translatesAutoresizingMaskIntoConstraints = false
-        splitView.isVertical = true
+        splitView.isVertical = MetagenomicsPanelLayout.current() != .stacked
         splitView.dividerStyle = .thin
         splitView.delegate = self
 
-        // Left pane: detail (miniBAM + metrics + accessions).
-        // The detail pane is a self-contained NSView that uses an internal scroll view.
+        // Detail pane in detail-leading mode.
         let detail = NaoMgsDetailContainer(scrollView: detailScrollView, contentView: detailContentView)
         detailContainer = detail
 
-        // Right pane: taxonomy table
+        // Table pane in list-leading / stacked mode.
         let tableCont = NSView()
         self.tableContainer = tableCont
         setupTaxonomyTable()
         setupTaxonomyFilterBar(in: tableCont)
 
-        splitView.addArrangedSubview(detail)
-        splitView.addArrangedSubview(tableCont)
+        if MetagenomicsPanelLayout.current() == .detailLeading {
+            splitView.addArrangedSubview(detail)
+            splitView.addArrangedSubview(tableCont)
+        } else {
+            splitView.addArrangedSubview(tableCont)
+            splitView.addArrangedSubview(detail)
+        }
 
         // Multi-selection placeholder overlay on the detail container
         detail.addSubview(multiSelectionPlaceholder)
@@ -1308,17 +1312,18 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
             multiSelectionPlaceholder.trailingAnchor.constraint(equalTo: detail.trailingAnchor),
         ])
 
-        // Table pane resizes first; detail pane holds width firmly.
-        splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
-        splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
+        if MetagenomicsPanelLayout.current() == .detailLeading {
+            splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+            splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
+        } else {
+            splitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
+            splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
+        }
 
         // Force initial layout so both panes are visible.
         splitView.adjustSubviews()
 
         view.addSubview(splitView)
-
-        // Respect saved layout preference (table on left vs right).
-        applyLayoutPreference()
     }
 
     /// Configures the taxonomy table with columns for taxon data.
@@ -1601,41 +1606,63 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
 
     /// Swaps the split view pane order based on the persisted layout preference.
     private func applyLayoutPreference() {
-        let tableOnLeft = UserDefaults.standard.bool(forKey: "metagenomicsTableOnLeft")
-        guard splitView.arrangedSubviews.count == 2,
-              let detail = detailContainer,
-              let table = tableContainer else { return }
+        let layout = MetagenomicsPanelLayout.current()
+        guard splitView.arrangedSubviews.count == 2 else { return }
 
-        let currentTableIsFirst = (splitView.arrangedSubviews[0] === table)
-        guard tableOnLeft != currentTableIsFirst else { return }  // Already correct
+        let desiredIsVertical = layout != .stacked
+        let desiredFirstPane: NSView = layout == .detailLeading ? detailContainer! : tableContainer!
+        let desiredSecondPane: NSView = layout == .detailLeading ? tableContainer! : detailContainer!
 
-        // Preserve split ratio
-        let totalWidth = max(splitView.bounds.width, 1)
-        let leftRatio = splitView.arrangedSubviews[0].frame.width / totalWidth
+        let currentFirstPane = splitView.arrangedSubviews[0]
+        let currentSecondPane = splitView.arrangedSubviews[1]
+        let currentExtent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+        let currentFirstExtent = splitView.isVertical ? currentFirstPane.frame.width : currentFirstPane.frame.height
+        let currentSecondExtent = max(0, currentExtent - currentFirstExtent)
+        let needsRebuild = splitView.isVertical != desiredIsVertical
+            || splitView.arrangedSubviews[0] !== desiredFirstPane
+            || splitView.arrangedSubviews[1] !== desiredSecondPane
 
-        splitView.removeArrangedSubview(detail)
-        splitView.removeArrangedSubview(table)
-        detail.removeFromSuperview()
-        table.removeFromSuperview()
+        if needsRebuild {
+            splitView.removeArrangedSubview(currentFirstPane)
+            splitView.removeArrangedSubview(currentSecondPane)
+            currentFirstPane.removeFromSuperview()
+            currentSecondPane.removeFromSuperview()
 
-        if tableOnLeft {
-            splitView.addArrangedSubview(table)
-            splitView.addArrangedSubview(detail)
+            splitView.isVertical = desiredIsVertical
+            splitView.addArrangedSubview(desiredFirstPane)
+            splitView.addArrangedSubview(desiredSecondPane)
         } else {
-            splitView.addArrangedSubview(detail)
-            splitView.addArrangedSubview(table)
+            splitView.isVertical = desiredIsVertical
         }
 
-        // Table always gets low holding priority (resizes first on window resize)
-        let tableIndex = tableOnLeft ? 0 : 1
-        let detailIndex = tableOnLeft ? 1 : 0
-        splitView.setHoldingPriority(.defaultLow, forSubviewAt: tableIndex)
-        splitView.setHoldingPriority(.defaultHigh, forSubviewAt: detailIndex)
+        if layout == .detailLeading {
+            splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+            splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
+        } else {
+            splitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
+            splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
+        }
 
-        // Apply inverse ratio to maintain visual proportion
-        let newPosition = round(totalWidth * (1.0 - leftRatio))
-        splitView.setPosition(newPosition, ofDividerAt: 0)
+        let totalExtent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+        guard totalExtent > 0 else {
+            didSetInitialSplitPosition = false
+            return
+        }
+
+        let defaultLeadingFraction: CGFloat = layout == .detailLeading ? 0.4 : 0.6
+        let leadingExtent = currentFirstExtent > 0
+            ? (desiredFirstPane === currentFirstPane ? currentFirstExtent : currentSecondExtent)
+            : round(totalExtent * defaultLeadingFraction)
+
+        let clampedPosition = MetagenomicsPaneSizing.clampedDividerPosition(
+            proposed: leadingExtent,
+            containerExtent: totalExtent,
+            minimumLeadingExtent: 250,
+            minimumTrailingExtent: 300
+        )
+        splitView.setPosition(clampedPosition, ofDividerAt: 0)
         splitView.adjustSubviews()
+        didSetInitialSplitPosition = true
     }
 
     // MARK: - BLAST Drawer
@@ -1659,42 +1686,58 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     }
 
     private func ensureBlastDrawer() -> BlastResultsDrawerTab {
-        if let blastDrawerView {
-            return blastDrawerView
+        if let blastDrawerContainer {
+            return blastDrawerContainer.blastResultsTab
         }
 
-        let drawer = BlastResultsDrawerTab()
-        drawer.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(drawer)
+        let container = BlastResultsDrawerContainerView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(container)
 
-        let bottomConstraint = drawer.bottomAnchor.constraint(equalTo: actionBar.topAnchor, constant: 220)
+        let heightConstraint = container.heightAnchor.constraint(equalToConstant: 0)
 
         NSLayoutConstraint.activate([
-            drawer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            drawer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            drawer.heightAnchor.constraint(equalToConstant: 220),
-            bottomConstraint,
+            container.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            container.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            container.bottomAnchor.constraint(equalTo: actionBar.topAnchor),
+            heightConstraint,
         ])
 
         splitViewBottomConstraint?.isActive = false
-        let newSplitBottom = splitView.bottomAnchor.constraint(equalTo: drawer.topAnchor)
+        let newSplitBottom = splitView.bottomAnchor.constraint(equalTo: container.topAnchor)
         newSplitBottom.isActive = true
         splitViewBottomConstraint = newSplitBottom
 
-        blastDrawerView = drawer
-        blastDrawerBottomConstraint = bottomConstraint
+        blastDrawerContainer = container
+        blastDrawerHeightConstraint = heightConstraint
+        container.onDrag = { [weak self] delta in
+            guard let self, let heightConstraint = self.blastDrawerHeightConstraint else { return }
+            let availableExtent = max(0, self.view.bounds.height - self.actionBar.frame.height)
+            let proposed = heightConstraint.constant + delta
+            heightConstraint.constant = MetagenomicsPaneSizing.clampedDrawerExtent(
+                proposed: proposed,
+                containerExtent: availableExtent,
+                minimumDrawerExtent: 160,
+                minimumSiblingExtent: 120
+            )
+            self.view.layoutSubtreeIfNeeded()
+        }
+        container.onDragEnd = { [weak self] in
+            self?.view.layoutSubtreeIfNeeded()
+        }
         view.layoutSubtreeIfNeeded()
 
-        return drawer
+        return container.blastResultsTab
     }
 
     private func openBlastDrawerIfNeeded() {
         guard !isBlastDrawerOpen else { return }
+        guard let blastDrawerHeightConstraint else { return }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.25
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             context.allowsImplicitAnimation = true
-            blastDrawerBottomConstraint?.animator().constant = 0
+            blastDrawerHeightConstraint.animator().constant = 220
             view.layoutSubtreeIfNeeded()
         }
         isBlastDrawerOpen = true
@@ -2036,19 +2079,24 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
 
     public func splitView(
         _ splitView: NSSplitView,
-        constrainMinCoordinate proposedMinimumPosition: CGFloat,
+        constrainSplitPosition proposedPosition: CGFloat,
         ofSubviewAt dividerIndex: Int
     ) -> CGFloat {
-        max(proposedMinimumPosition, 250)
+        let extent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+        return MetagenomicsPaneSizing.clampedDividerPosition(
+            proposed: proposedPosition,
+            containerExtent: extent,
+            minimumLeadingExtent: 250,
+            minimumTrailingExtent: 300
+        )
     }
 
-    public func splitView(
-        _ splitView: NSSplitView,
-        constrainMaxCoordinate proposedMaximumPosition: CGFloat,
-        ofSubviewAt dividerIndex: Int
-    ) -> CGFloat {
-        min(proposedMaximumPosition, splitView.bounds.width - 300)
-    }
+    // MARK: - Testing Accessors
+
+    var testDetailContainer: NSView? { detailContainer }
+    var testTableContainer: NSView? { tableContainer }
+    var testSplitView: NSSplitView { splitView }
+    var testBlastDrawerContainer: BlastResultsDrawerContainerView? { blastDrawerContainer }
 
     // MARK: - Multi-Selection Helpers
 

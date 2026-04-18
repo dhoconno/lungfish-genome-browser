@@ -119,6 +119,8 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
     private let summaryBar = EsVirituSummaryBar()
     let splitView = NSSplitView()
+    private let detailContainer = NSView()
+    private let rightPaneContainer = NSView()
     private let detailPane = EsVirituDetailPane()
     private let detectionTableView = ViralDetectionTableView()
     let actionBar = ClassifierActionBar()
@@ -240,8 +242,8 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     }()
 
     /// The BLAST results drawer embedded at the bottom of the view.
-    private var blastDrawerView: BlastResultsDrawerTab?
-    private var blastDrawerBottomConstraint: NSLayoutConstraint?
+    private var blastDrawerContainer: BlastResultsDrawerContainerView?
+    private var blastDrawerHeightConstraint: NSLayoutConstraint?
     private var isBlastDrawerOpen = false
 
     /// Called when the user clicks "View Alignments" to open the BAM viewer
@@ -265,10 +267,6 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
     /// The URL of the batch result directory (set during `configureFromDatabase`).
     var batchURL: URL?
-
-    /// Container for the right pane content (detection table or batch table).
-    /// Saved as an instance property so `setupBatchTableView` can add to it.
-    private var rightPaneContainer = NSView()
 
     /// Lookup dictionary mapping (sampleId, assemblyAccession) -> ViralAssembly,
     /// built during `configureFromDatabase` for detail pane wiring.
@@ -332,13 +330,7 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
     public override func viewDidLayout() {
         super.viewDidLayout()
-
-        // Apply the initial 40/60 split once the split view has real bounds.
-        if !didSetInitialSplitPosition, splitView.bounds.width > 0 {
-            didSetInitialSplitPosition = true
-            let position = round(splitView.bounds.width * 0.4)
-            splitView.setPosition(position, ofDividerAt: 0)
-        }
+        applyLayoutPreference()
     }
 
     // MARK: - SQLite Database Mode
@@ -917,12 +909,11 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     /// Uses raw NSSplitView (not NSSplitViewController) per macOS 26 rules.
     private func setupSplitView() {
         splitView.translatesAutoresizingMaskIntoConstraints = false
-        splitView.isVertical = true
+        splitView.isVertical = MetagenomicsPanelLayout.current() != .stacked
         splitView.dividerStyle = .thin
         splitView.delegate = self
 
-        // Detail pane (left) — coverage plots, BAM info, overview
-        let detailContainer = NSView()
+        // Detail pane (detail-leading mode) — coverage plots, BAM info, overview
         detailPane.autoresizingMask = [.width, .height]
         detailContainer.addSubview(detailPane)
 
@@ -935,17 +926,26 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             multiSelectionPlaceholder.trailingAnchor.constraint(equalTo: detailContainer.trailingAnchor),
         ])
 
-        // Table container (right pane) — stored as instance property so
-        // setupBatchTableView() can add batchTableView inside it later.
+        // Table container (list-leading / stacked mode) — stored as instance
+        // property so setupBatchTableView() can add batchTableView inside it later.
         detectionTableView.autoresizingMask = [.width, .height]
         rightPaneContainer.addSubview(detectionTableView)
 
-        splitView.addArrangedSubview(detailContainer)
-        splitView.addArrangedSubview(rightPaneContainer)
+        if MetagenomicsPanelLayout.current() == .detailLeading {
+            splitView.addArrangedSubview(detailContainer)
+            splitView.addArrangedSubview(rightPaneContainer)
+        } else {
+            splitView.addArrangedSubview(rightPaneContainer)
+            splitView.addArrangedSubview(detailContainer)
+        }
 
-        // Table pane is preferred to resize (detail pane holds width more firmly)
-        splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
-        splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
+        if MetagenomicsPanelLayout.current() == .detailLeading {
+            splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+            splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
+        } else {
+            splitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
+            splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
+        }
 
         view.addSubview(splitView)
     }
@@ -1205,38 +1205,63 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
     /// Swaps the split view pane order based on the persisted layout preference.
     private func applyLayoutPreference() {
-        let tableOnLeft = UserDefaults.standard.bool(forKey: "metagenomicsTableOnLeft")
-        guard splitView.arrangedSubviews.count == 2,
-              let detail = detailPane.superview,
-              let table = detectionTableView.superview else { return }
+        let layout = MetagenomicsPanelLayout.current()
+        guard splitView.arrangedSubviews.count == 2 else { return }
 
-        let currentTableIsFirst = (splitView.arrangedSubviews[0] === table)
-        guard tableOnLeft != currentTableIsFirst else { return }
+        let desiredIsVertical = layout != .stacked
+        let desiredFirstPane: NSView = layout == .detailLeading ? detailContainer : rightPaneContainer
+        let desiredSecondPane: NSView = layout == .detailLeading ? rightPaneContainer : detailContainer
 
-        let totalWidth = max(splitView.bounds.width, 1)
-        let leftRatio = splitView.arrangedSubviews[0].frame.width / totalWidth
+        let currentFirstPane = splitView.arrangedSubviews[0]
+        let currentSecondPane = splitView.arrangedSubviews[1]
+        let currentExtent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+        let currentFirstExtent = splitView.isVertical ? currentFirstPane.frame.width : currentFirstPane.frame.height
+        let currentSecondExtent = max(0, currentExtent - currentFirstExtent)
+        let needsRebuild = splitView.isVertical != desiredIsVertical
+            || splitView.arrangedSubviews[0] !== desiredFirstPane
+            || splitView.arrangedSubviews[1] !== desiredSecondPane
 
-        splitView.removeArrangedSubview(detail)
-        splitView.removeArrangedSubview(table)
-        detail.removeFromSuperview()
-        table.removeFromSuperview()
+        if needsRebuild {
+            splitView.removeArrangedSubview(currentFirstPane)
+            splitView.removeArrangedSubview(currentSecondPane)
+            currentFirstPane.removeFromSuperview()
+            currentSecondPane.removeFromSuperview()
 
-        if tableOnLeft {
-            splitView.addArrangedSubview(table)
-            splitView.addArrangedSubview(detail)
+            splitView.isVertical = desiredIsVertical
+            splitView.addArrangedSubview(desiredFirstPane)
+            splitView.addArrangedSubview(desiredSecondPane)
         } else {
-            splitView.addArrangedSubview(detail)
-            splitView.addArrangedSubview(table)
+            splitView.isVertical = desiredIsVertical
         }
 
-        let tableIndex = tableOnLeft ? 0 : 1
-        let detailIndex = tableOnLeft ? 1 : 0
-        splitView.setHoldingPriority(.defaultLow, forSubviewAt: tableIndex)
-        splitView.setHoldingPriority(.defaultHigh, forSubviewAt: detailIndex)
+        if layout == .detailLeading {
+            splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+            splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
+        } else {
+            splitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
+            splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
+        }
 
-        let newPosition = round(totalWidth * (1.0 - leftRatio))
-        splitView.setPosition(newPosition, ofDividerAt: 0)
+        let totalExtent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+        guard totalExtent > 0 else {
+            didSetInitialSplitPosition = false
+            return
+        }
+
+        let defaultLeadingFraction: CGFloat = layout == .detailLeading ? 0.4 : 0.6
+        let leadingExtent = currentFirstExtent > 0
+            ? (desiredFirstPane === currentFirstPane ? currentFirstExtent : currentSecondExtent)
+            : round(totalExtent * defaultLeadingFraction)
+
+        let clampedPosition = MetagenomicsPaneSizing.clampedDividerPosition(
+            proposed: leadingExtent,
+            containerExtent: totalExtent,
+            minimumLeadingExtent: 250,
+            minimumTrailingExtent: 250
+        )
+        splitView.setPosition(clampedPosition, ofDividerAt: 0)
         splitView.adjustSubviews()
+        didSetInitialSplitPosition = true
     }
 
     private func resolveAssembly(for detection: ViralDetection) -> ViralAssembly? {
@@ -1313,44 +1338,59 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     }
 
     private func ensureBlastDrawer() -> BlastResultsDrawerTab {
-        if let blastDrawerView {
-            return blastDrawerView
+        if let blastDrawerContainer {
+            return blastDrawerContainer.blastResultsTab
         }
 
-        let drawer = BlastResultsDrawerTab()
-        drawer.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(drawer)
+        let container = BlastResultsDrawerContainerView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(container)
 
-        let bottomConstraint = drawer.bottomAnchor.constraint(equalTo: actionBar.topAnchor, constant: 220)
-        let heightConstraint = drawer.heightAnchor.constraint(equalToConstant: 220)
+        let heightConstraint = container.heightAnchor.constraint(equalToConstant: 0)
 
         NSLayoutConstraint.activate([
-            drawer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            drawer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            container.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            container.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            container.bottomAnchor.constraint(equalTo: actionBar.topAnchor),
             heightConstraint,
-            bottomConstraint,
         ])
 
         // Re-pin main content above the drawer so opening it resizes the
         // top panels instead of drawing over them.
         splitViewBottomConstraint?.isActive = false
-        let newSplitBottom = splitView.bottomAnchor.constraint(equalTo: drawer.topAnchor)
+        let newSplitBottom = splitView.bottomAnchor.constraint(equalTo: container.topAnchor)
         newSplitBottom.isActive = true
         splitViewBottomConstraint = newSplitBottom
 
-        blastDrawerView = drawer
-        blastDrawerBottomConstraint = bottomConstraint
+        blastDrawerContainer = container
+        blastDrawerHeightConstraint = heightConstraint
+        container.onDrag = { [weak self] delta in
+            guard let self, let heightConstraint = self.blastDrawerHeightConstraint else { return }
+            let availableExtent = max(0, self.view.bounds.height - self.actionBar.frame.height)
+            let proposed = heightConstraint.constant + delta
+            heightConstraint.constant = MetagenomicsPaneSizing.clampedDrawerExtent(
+                proposed: proposed,
+                containerExtent: availableExtent,
+                minimumDrawerExtent: 160,
+                minimumSiblingExtent: 120
+            )
+            self.view.layoutSubtreeIfNeeded()
+        }
+        container.onDragEnd = { [weak self] in
+            self?.view.layoutSubtreeIfNeeded()
+        }
         view.layoutSubtreeIfNeeded()
-        return drawer
+        return container.blastResultsTab
     }
 
     private func openBlastDrawerIfNeeded() {
         guard !isBlastDrawerOpen else { return }
+        guard let blastDrawerHeightConstraint else { return }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.25
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             context.allowsImplicitAnimation = true
-            self.blastDrawerBottomConstraint?.animator().constant = 0
+            blastDrawerHeightConstraint.animator().constant = 220
             self.view.layoutSubtreeIfNeeded()
         }
         isBlastDrawerOpen = true
@@ -1358,21 +1398,18 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
     // MARK: - NSSplitViewDelegate
 
-    /// Enforces minimum widths for detail pane (250px) and table (300px).
     public func splitView(
         _ splitView: NSSplitView,
-        constrainMinCoordinate proposedMinimumPosition: CGFloat,
+        constrainSplitPosition proposedPosition: CGFloat,
         ofSubviewAt dividerIndex: Int
     ) -> CGFloat {
-        max(proposedMinimumPosition, 250)
-    }
-
-    public func splitView(
-        _ splitView: NSSplitView,
-        constrainMaxCoordinate proposedMaximumPosition: CGFloat,
-        ofSubviewAt dividerIndex: Int
-    ) -> CGFloat {
-        min(proposedMaximumPosition, splitView.bounds.width - 300)
+        let extent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+        return MetagenomicsPaneSizing.clampedDividerPosition(
+            proposed: proposedPosition,
+            containerExtent: extent,
+            minimumLeadingExtent: 250,
+            minimumTrailingExtent: 250
+        )
     }
 
     // MARK: - Multi-Selection Helpers
@@ -1627,14 +1664,23 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
     /// Returns the detail pane for testing.
     var testDetailPane: EsVirituDetailPane { detailPane }
 
+    /// Returns the detail pane container for testing.
+    var testDetailContainer: NSView { detailContainer }
+
     /// Returns the detection table view for testing.
     var testDetectionTableView: ViralDetectionTableView { detectionTableView }
+
+    /// Returns the right pane container for testing.
+    var testRightPaneContainer: NSView { rightPaneContainer }
 
     /// Returns the action bar for testing.
     var testActionBar: ClassifierActionBar { actionBar }
 
     /// Returns the split view for testing.
     var testSplitView: NSSplitView { splitView }
+
+    /// Returns the shared BLAST drawer container for testing.
+    var testBlastDrawerContainer: BlastResultsDrawerContainerView? { blastDrawerContainer }
 
     /// Returns the current EsViritu result for testing.
     var testResult: LungfishIO.EsVirituResult? { esVirituResult }

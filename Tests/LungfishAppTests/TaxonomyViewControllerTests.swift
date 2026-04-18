@@ -1153,3 +1153,33 @@ final class ViewerViewControllerTaxonomyTests: XCTestCase {
         )
     }
 }
+
+// MARK: - Taxonomy Layout Preference Tests
+
+@MainActor
+final class TaxonomyLayoutPreferenceTests: XCTestCase {
+    private func setLayoutPreference(
+        _ layout: MetagenomicsPanelLayout,
+        legacyTableOnLeft: Bool
+    ) {
+        UserDefaults.standard.set(layout.rawValue, forKey: MetagenomicsPanelLayout.defaultsKey)
+        UserDefaults.standard.set(legacyTableOnLeft, forKey: MetagenomicsPanelLayout.legacyTableOnLeftKey)
+    }
+
+    override func tearDown() {
+        UserDefaults.standard.removeObject(forKey: MetagenomicsPanelLayout.defaultsKey)
+        UserDefaults.standard.removeObject(forKey: MetagenomicsPanelLayout.legacyTableOnLeftKey)
+        super.tearDown()
+    }
+
+    func testTaxonomyViewUsesEnumLayoutPreferenceForStackedMode() {
+        setLayoutPreference(.stacked, legacyTableOnLeft: false)
+
+        let vc = TaxonomyViewController()
+        _ = vc.view
+
+        XCTAssertFalse(vc.testSplitView.isVertical)
+        XCTAssertTrue(vc.testSplitView.arrangedSubviews[0].subviews.contains(vc.testTableView))
+        XCTAssertTrue(vc.testSplitView.arrangedSubviews[1].subviews.contains(vc.testSunburstView))
+    }
+}

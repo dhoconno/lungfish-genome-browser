@@ -751,6 +751,16 @@ final class BlastResultsDrawerTests: XCTestCase {
         XCTAssertEqual(drawer.tabControl.label(forSegment: 1), "BLAST Results")
     }
 
+    func testSharedBlastDrawerContainerForwardsResultsAndExposesDivider() throws {
+        let container = BlastResultsDrawerContainerView(frame: NSRect(x: 0, y: 0, width: 800, height: 320))
+        let result = makeHighConfidenceResult()
+
+        container.showResults(result)
+
+        XCTAssertTrue(container.subviews.contains(container.testDividerView))
+        XCTAssertEqual(container.testDrawerTab.currentResult?.taxonName, "Escherichia coli")
+    }
+
     // MARK: - Verification Result Model
 
     func testVerificationResultComputedProperties() throws {

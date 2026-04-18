@@ -760,6 +760,22 @@ final class EsVirituViewControllerBatchModeTests: XCTestCase {
         XCTAssertFalse(vc.splitView.isHidden, "splitView should be visible by default")
     }
 
+    func testLayoutPreferenceStacksDetectionTableAboveDetail() {
+        UserDefaults.standard.set(MetagenomicsPanelLayout.stacked.rawValue, forKey: MetagenomicsPanelLayout.defaultsKey)
+        UserDefaults.standard.set(false, forKey: MetagenomicsPanelLayout.legacyTableOnLeftKey)
+        defer {
+            UserDefaults.standard.removeObject(forKey: MetagenomicsPanelLayout.defaultsKey)
+            UserDefaults.standard.removeObject(forKey: MetagenomicsPanelLayout.legacyTableOnLeftKey)
+        }
+
+        let vc = EsVirituResultViewController()
+        vc.loadViewIfNeeded()
+
+        XCTAssertFalse(vc.splitView.isVertical)
+        XCTAssertTrue(vc.testSplitView.arrangedSubviews[0] === vc.testRightPaneContainer)
+        XCTAssertTrue(vc.testSplitView.arrangedSubviews[1] === vc.testDetailContainer)
+    }
+
     // MARK: - configureFromDatabase Tests
 
     // MARK: - applyBatchSampleFilter Tests
