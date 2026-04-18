@@ -25,8 +25,14 @@ private final class StorageLocationChangeObserver {
             object: nil,
             queue: nil
         ) { _ in
-            Task { @MainActor in
-                onChange()
+            if Thread.isMainThread {
+                MainActor.assumeIsolated {
+                    onChange()
+                }
+            } else {
+                Task { @MainActor in
+                    onChange()
+                }
             }
         }
     }

@@ -26,7 +26,7 @@ final class SettingsNavigationState {
 
     func open(_ tab: SettingsNavigationTab) {
         selectedTab = tab
-        NSApp.sendAction(Selector(("showPreferences:")), to: nil, from: nil)
+        NSApp?.sendAction(Selector(("showPreferences:")), to: nil, from: nil)
     }
 }
 
