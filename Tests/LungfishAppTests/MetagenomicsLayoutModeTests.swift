@@ -1,5 +1,15 @@
 import XCTest
 @testable import LungfishApp
+import ObjectiveC.runtime
+
+private final class SplitViewPositionSpy: NSSplitView {
+    static var setPositionCallCount = 0
+
+    override func setPosition(_ position: CGFloat, ofDividerAt dividerIndex: Int) {
+        Self.setPositionCallCount += 1
+        super.setPosition(position, ofDividerAt: dividerIndex)
+    }
+}
 
 @MainActor
 final class MetagenomicsLayoutModeTests: XCTestCase {
@@ -195,6 +205,30 @@ final class MetagenomicsLayoutModeTests: XCTestCase {
         XCTAssertTrue(vc.testSplitView.isVertical)
         XCTAssertTrue(vc.testSplitView.arrangedSubviews[0] === initialFirstPane)
         XCTAssertTrue(vc.testSplitView.arrangedSubviews[1] === initialSecondPane)
+    }
+
+    func testTaxonomyViewDidLayoutDoesNotSynchronouslyMoveDivider() {
+        setLayoutPreference(.stacked, legacyTableOnLeft: false)
+
+        let vc = TaxonomyViewController()
+        _ = vc.view
+
+        SplitViewPositionSpy.setPositionCallCount = 0
+        let originalClass: AnyClass = object_getClass(vc.testSplitView)!
+        object_setClass(vc.testSplitView, SplitViewPositionSpy.self)
+        defer { object_setClass(vc.testSplitView, originalClass) }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
+            styleMask: [.titled, .resizable, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = vc
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(SplitViewPositionSpy.setPositionCallCount, 0)
     }
 
     func testNaoMgsViewDidLayoutDoesNotApplyNewPreferenceWithoutNotification() {

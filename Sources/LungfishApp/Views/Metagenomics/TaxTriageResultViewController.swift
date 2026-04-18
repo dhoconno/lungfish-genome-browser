@@ -531,12 +531,13 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     }
 
     private func scheduleInitialSplitValidationIfNeeded() {
-        guard !pendingInitialSplitValidation else { return }
+        guard view.window != nil, !pendingInitialSplitValidation else { return }
         pendingInitialSplitValidation = true
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.pendingInitialSplitValidation = false
+            guard self.view.window != nil else { return }
             self.resetInitialSplitPositionIfNeeded()
             self.applyInitialSplitPositionIfNeeded()
         }
@@ -716,7 +717,6 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     public override func viewDidLayout() {
         super.viewDidLayout()
         resetInitialSplitPositionIfNeeded()
-        applyInitialSplitPositionIfNeeded()
         scheduleInitialSplitValidationIfNeeded()
     }
 
