@@ -1,13 +1,30 @@
 import Foundation
 
 public struct ManagedStorageLocation: Sendable, Codable, Equatable {
-    public enum ValidationError: String, Sendable, Codable, Equatable, Error {
+    public enum ValidationError: String, Sendable, Codable, Equatable, Error, LocalizedError {
         case containsSpaces
         case nestedInsideProject
         case nestedInsideAppBundle
         case notWritable
         case unsupportedFilesystem
         case unreachable
+
+        public var errorDescription: String? {
+            switch self {
+            case .containsSpaces:
+                return "The selected location resolves to a path with spaces. Managed tool installs still require a space-free path, so choose a folder whose full path has no spaces or rename the external volume."
+            case .nestedInsideProject:
+                return "Choose a location outside any .lungfish project folder."
+            case .nestedInsideAppBundle:
+                return "Choose a location outside the Lungfish app bundle."
+            case .notWritable:
+                return "The selected location is not writable."
+            case .unsupportedFilesystem:
+                return "The selected location uses an unsupported filesystem."
+            case .unreachable:
+                return "The selected location is not reachable right now."
+            }
+        }
     }
 
     public enum ValidationResult: Sendable, Equatable {

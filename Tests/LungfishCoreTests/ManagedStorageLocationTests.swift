@@ -16,6 +16,10 @@ final class ManagedStorageLocationTests: XCTestCase {
         let result = ManagedStorageLocation.validateSelection(base)
 
         XCTAssertEqual(result, .invalid(.containsSpaces))
+        XCTAssertEqual(
+            ManagedStorageLocation.ValidationError.containsSpaces.errorDescription,
+            "The selected location resolves to a path with spaces. Managed tool installs still require a space-free path, so choose a folder whose full path has no spaces or rename the external volume."
+        )
     }
 
     func testValidationRejectsProjectNestedPath() {

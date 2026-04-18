@@ -177,6 +177,12 @@ final class WelcomeStorageFlowTests: XCTestCase {
 
         viewModel.chooseAlternateStorageLocation()
         viewModel.updatePendingStorageSelection(invalidSelection)
+
+        XCTAssertEqual(
+            viewModel.storageValidationMessage,
+            ManagedStorageLocation.ValidationError.containsSpaces.errorDescription
+        )
+
         try await viewModel.confirmAlternateStorageLocation()
 
         XCTAssertEqual(store.currentLocation().rootURL, defaultRoot)

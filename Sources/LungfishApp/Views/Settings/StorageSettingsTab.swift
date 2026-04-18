@@ -292,7 +292,7 @@ struct StorageSettingsTab: View {
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         panel.prompt = "Choose"
-        panel.message = "Select a storage location for managed tools and databases"
+        panel.message = "Select a storage location for managed tools and databases. The full resolved path cannot contain spaces."
 
         panel.begin { response in
             DispatchQueue.main.async {

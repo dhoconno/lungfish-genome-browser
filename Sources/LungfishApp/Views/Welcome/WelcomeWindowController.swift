@@ -219,20 +219,7 @@ final class WelcomeViewModel: ObservableObject {
         case .valid:
             return nil
         case .invalid(let error):
-            switch error {
-            case .containsSpaces:
-                return "Storage locations cannot contain spaces in their resolved path."
-            case .nestedInsideProject:
-                return "Choose a location outside any .lungfish project folder."
-            case .nestedInsideAppBundle:
-                return "Choose a location outside the Lungfish app bundle."
-            case .notWritable:
-                return "The selected location is not writable."
-            case .unsupportedFilesystem:
-                return "The selected location uses an unsupported filesystem."
-            case .unreachable:
-                return "The selected location is not reachable right now."
-            }
+            return error.errorDescription
         }
     }
 
@@ -754,7 +741,7 @@ struct WelcomeView: View {
     private func showStorageLocationPanel() async {
         let openPanel = NSOpenPanel()
         openPanel.title = "Choose Storage Location"
-        openPanel.message = "Select a storage location for managed tools and databases"
+        openPanel.message = "Select a storage location for managed tools and databases. The full resolved path cannot contain spaces."
         openPanel.canChooseFiles = false
         openPanel.canChooseDirectories = true
         openPanel.allowsMultipleSelection = false
@@ -1113,8 +1100,8 @@ private struct WelcomeStorageChooserSheet: View {
                     )
 
                 if let validationMessage = viewModel.storageValidationMessage {
-                    Text(validationMessage)
-                        .font(.caption)
+                    Label(validationMessage, systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote)
                         .foregroundStyle(Color.lungfishCreamsicleFallback)
                 }
 
