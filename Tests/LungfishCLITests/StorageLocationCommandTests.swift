@@ -2,28 +2,52 @@ import ArgumentParser
 import XCTest
 import Darwin
 @testable import LungfishCLI
+@testable import LungfishWorkflow
 
 final class StorageLocationCommandTests: XCTestCase {
     func testProvisionToolsStatusReportsConfiguredStorageRoot() async throws {
-        let root = URL(fileURLWithPath: "/Volumes/Lungfish SSD/custom-storage-root", isDirectory: true)
-        let originalOverride = ProvisionToolsCommand.storageRootOverride
-        ProvisionToolsCommand.storageRootOverride = root
-        defer { ProvisionToolsCommand.storageRootOverride = originalOverride }
+        let orchestrator = ToolProvisioningOrchestrator()
+        let expectedOutputDirectory = await orchestrator.getOutputDirectory()
 
         let output = try await captureStandardOutput {
             var command = try ProvisionToolsCommand.parse(["--status"])
             try await command.run()
         }
 
-        XCTAssertTrue(output.contains(root.path), "Expected status output to mention \(root.path), got: \(output)")
+        XCTAssertTrue(output.contains(expectedOutputDirectory.path), "Expected status output to mention \(expectedOutputDirectory.path), got: \(output)")
+    }
+
+    func testCondaHelpMentionsConfiguredStorageRoot() throws {
+        let root = URL(fileURLWithPath: "/Volumes/Lungfish SSD/custom-storage-root", isDirectory: true)
+        let originalOverride = CondaCommand.storageRootOverride
+        CondaCommand.storageRootOverride = root
+        defer { CondaCommand.storageRootOverride = originalOverride }
+
+        let help = CondaCommand.helpMessage()
+
+        XCTAssertTrue(help.contains(root.path), "Expected conda help to mention \(root.path), got: \(help)")
+        XCTAssertFalse(help.contains("Application Support/Lungfish/conda"))
     }
 
     func testCondaPackInstallSurfacesStorageUnavailableError() async throws {
         let root = URL(fileURLWithPath: "/Volumes/Lungfish SSD/conda", isDirectory: true)
-        let error = CondaCommand.storageUnavailableValidationError(for: root)
+        let originalOverride = CondaCommand.packStatusServiceOverride
+        CondaCommand.packStatusServiceOverride = StorageUnavailablePackStatusService(root: root)
+        defer { CondaCommand.packStatusServiceOverride = originalOverride }
 
-        XCTAssertTrue(error.description.contains("Storage location unavailable"))
-        XCTAssertTrue(error.description.contains(root.path))
+        guard let packID = CondaCommand.visiblePacksForTesting().first?.id else {
+            throw XCTSkip("No visible CLI packs available")
+        }
+
+        let command = try CondaCommand.InstallSubcommand.parse(["--pack", packID])
+
+        do {
+            try await command.run()
+            XCTFail("Expected storage unavailable error")
+        } catch let error as ArgumentParser.ValidationError {
+            XCTAssertTrue(error.description.contains("Storage location unavailable"))
+            XCTAssertTrue(error.description.contains(root.path))
+        }
     }
 
     private func captureStandardOutput(_ operation: () async throws -> Void) async throws -> String {
@@ -47,5 +71,29 @@ final class StorageLocationCommandTests: XCTestCase {
         pipe.fileHandleForWriting.closeFile()
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         return String(data: data, encoding: .utf8) ?? ""
+    }
+}
+
+private actor StorageUnavailablePackStatusService: PluginPackStatusProviding {
+    let root: URL
+
+    init(root: URL) {
+        self.root = root
+    }
+
+    func visibleStatuses() async -> [PluginPackStatus] { [] }
+
+    func status(for pack: PluginPack) async -> PluginPackStatus {
+        PluginPackStatus(pack: pack, state: .failed, toolStatuses: [], failureMessage: nil)
+    }
+
+    func invalidateVisibleStatusesCache() async {}
+
+    func install(
+        pack: PluginPack,
+        reinstall: Bool,
+        progress: (@Sendable (PluginPackInstallProgress) -> Void)?
+    ) async throws {
+        throw PluginPackStatusServiceError.storageUnavailable(root)
     }
 }

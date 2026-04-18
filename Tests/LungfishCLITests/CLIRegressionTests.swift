@@ -761,18 +761,6 @@ final class CondaCommandRegressionTests: XCTestCase {
         XCTAssertFalse(help.isEmpty)
     }
 
-    func testHelpTextUsesConfiguredStorageRoot() throws {
-        let rootPath = URL(fileURLWithPath: "/Volumes/Lungfish SSD/custom-storage-root", isDirectory: true)
-        let originalOverride = CondaCommand.storageRootOverride
-        CondaCommand.storageRootOverride = rootPath
-        defer { CondaCommand.storageRootOverride = originalOverride }
-
-        let help = CondaCommand.helpMessage()
-
-        XCTAssertTrue(help.contains(rootPath.path), "Expected conda help to mention \(rootPath.path), got: \(help)")
-        XCTAssertFalse(help.contains("Application Support/Lungfish/conda"))
-    }
-
     func testSubcommandCount() {
         let subs = CondaCommand.configuration.subcommands
         XCTAssertGreaterThanOrEqual(subs.count, 10)

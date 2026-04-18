@@ -40,6 +40,7 @@ struct CondaCommand: AsyncParsableCommand {
 
 extension CondaCommand {
     nonisolated(unsafe) static var storageRootOverride: URL?
+    nonisolated(unsafe) static var packStatusServiceOverride: (any PluginPackStatusProviding)?
 
     static func visiblePacksForTesting() -> [PluginPack] {
         PluginPack.visibleForCLI
@@ -80,7 +81,7 @@ extension CondaCommand {
         func run() async throws {
             let formatter = TerminalFormatter(useColors: globalOptions.useColors)
             let manager = CondaManager.shared
-            let packStatusService = PluginPackStatusService.shared
+            let packStatusService = CondaCommand.packStatusServiceOverride ?? PluginPackStatusService.shared
 
             if isPack {
                 // Install a plugin pack
