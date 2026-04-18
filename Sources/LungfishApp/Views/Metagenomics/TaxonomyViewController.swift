@@ -973,6 +973,24 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
         applyLayoutPreference()
     }
 
+    private func defaultLeadingFraction(for layout: MetagenomicsPanelLayout) -> CGFloat {
+        switch layout {
+        case .detailLeading:
+            return 0.6
+        case .listLeading, .stacked:
+            return 0.4
+        }
+    }
+
+    private func minimumExtents(for layout: MetagenomicsPanelLayout) -> (leading: CGFloat, trailing: CGFloat) {
+        switch layout {
+        case .detailLeading:
+            return (300, 260)
+        case .listLeading, .stacked:
+            return (260, 300)
+        }
+    }
+
     private func applyInitialSplitPositionIfNeeded() {
         guard !didSetInitialSplitPosition, splitView.arrangedSubviews.count == 2 else { return }
 
@@ -980,12 +998,12 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
         guard totalExtent > 0 else { return }
 
         let layout = MetagenomicsPanelLayout.current()
-        let defaultLeadingFraction: CGFloat = layout == .detailLeading ? 0.6 : 0.4
+        let minimumExtents = minimumExtents(for: layout)
         let clampedPosition = MetagenomicsPaneSizing.clampedDividerPosition(
-            proposed: round(totalExtent * defaultLeadingFraction),
+            proposed: round(totalExtent * defaultLeadingFraction(for: layout)),
             containerExtent: totalExtent,
-            minimumLeadingExtent: 300,
-            minimumTrailingExtent: 260
+            minimumLeadingExtent: minimumExtents.leading,
+            minimumTrailingExtent: minimumExtents.trailing
         )
         splitView.setPosition(clampedPosition, ofDividerAt: 0)
         didSetInitialSplitPosition = true
@@ -1002,9 +1020,10 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
 
         let currentFirstPane = splitView.arrangedSubviews[0]
         let currentSecondPane = splitView.arrangedSubviews[1]
+        let orientationChanged = splitView.isVertical != desiredIsVertical
         let currentFirstExtent = splitView.isVertical ? currentFirstPane.frame.width : currentFirstPane.frame.height
         let currentSecondExtent = max(0, (splitView.isVertical ? splitView.bounds.width : splitView.bounds.height) - currentFirstExtent)
-        let needsRebuild = splitView.isVertical != desiredIsVertical
+        let needsRebuild = orientationChanged
             || splitView.arrangedSubviews[0] !== desiredFirstPane
             || splitView.arrangedSubviews[1] !== desiredSecondPane
 
@@ -1017,17 +1036,12 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
             splitView.isVertical = desiredIsVertical
             splitView.addArrangedSubview(desiredFirstPane)
             splitView.addArrangedSubview(desiredSecondPane)
-
-            if layout == .detailLeading {
-                splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
-                splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
-            } else {
-                splitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
-                splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
-            }
         } else {
             splitView.isVertical = desiredIsVertical
         }
+
+        splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+        splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
 
         let totalExtent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
         guard totalExtent > 0 else {
@@ -1035,16 +1049,17 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
             return
         }
 
-        let leadingDefaultFraction: CGFloat = layout == .detailLeading ? 0.6 : 0.4
-        let leadingExtent = currentFirstExtent > 0
+        let minimumExtents = minimumExtents(for: layout)
+        let defaultLeadingExtent = round(totalExtent * defaultLeadingFraction(for: layout))
+        let leadingExtent = !orientationChanged && currentFirstExtent > 0 && currentSecondExtent > 0
             ? (desiredFirstPane === currentFirstPane ? currentFirstExtent : currentSecondExtent)
-            : round(totalExtent * leadingDefaultFraction)
+            : defaultLeadingExtent
 
         let clampedPosition = MetagenomicsPaneSizing.clampedDividerPosition(
             proposed: leadingExtent,
             containerExtent: totalExtent,
-            minimumLeadingExtent: 250,
-            minimumTrailingExtent: 250
+            minimumLeadingExtent: minimumExtents.leading,
+            minimumTrailingExtent: minimumExtents.trailing
         )
         splitView.setPosition(clampedPosition, ofDividerAt: 0)
         splitView.adjustSubviews()
@@ -1142,11 +1157,14 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
         ofSubviewAt dividerIndex: Int
     ) -> CGFloat {
         let extent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+        let minimumExtents: (leading: CGFloat, trailing: CGFloat) = splitView.arrangedSubviews.first === sunburstContainer
+            ? (300, 260)
+            : (260, 300)
         return MetagenomicsPaneSizing.clampedDividerPosition(
             proposed: proposedPosition,
             containerExtent: extent,
-            minimumLeadingExtent: 300,
-            minimumTrailingExtent: 260
+            minimumLeadingExtent: minimumExtents.leading,
+            minimumTrailingExtent: minimumExtents.trailing
         )
     }
 

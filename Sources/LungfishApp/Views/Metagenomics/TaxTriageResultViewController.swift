@@ -399,19 +399,102 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         applyLayoutPreference()
     }
 
+    private func defaultLeadingFraction(for layout: MetagenomicsPanelLayout) -> CGFloat {
+        switch layout {
+        case .detailLeading:
+            return 0.6
+        case .listLeading:
+            return 0.4
+        case .stacked:
+            return 0.4
+        }
+    }
+
+    private func minimumExtents(for layout: MetagenomicsPanelLayout) -> (leading: CGFloat, trailing: CGFloat) {
+        switch layout {
+        case .detailLeading:
+            return (250, 300)
+        case .listLeading, .stacked:
+            return (300, 250)
+        }
+    }
+
+    private func currentMinimumExtents() -> (leading: CGFloat, trailing: CGFloat) {
+        let detailIsLeading = splitView.arrangedSubviews.first === leftPaneContainer
+        var minimumExtents: (leading: CGFloat, trailing: CGFloat) = detailIsLeading ? (250, 300) : (300, 250)
+
+        if leftPaneContainer.isHidden {
+            if detailIsLeading {
+                minimumExtents.leading = 0
+            } else {
+                minimumExtents.trailing = 0
+            }
+        }
+
+        return minimumExtents
+    }
+
+    private func splitContainerExtent() -> CGFloat {
+        splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+    }
+
+    private func collapsedSplitPositionForHiddenDetail(containerExtent: CGFloat? = nil) -> CGFloat {
+        let totalExtent = containerExtent ?? splitContainerExtent()
+        guard totalExtent > 0 else { return 0 }
+        return splitView.arrangedSubviews.first === leftPaneContainer ? 0 : totalExtent
+    }
+
+    private func restoreDefaultSplitPosition(for layout: MetagenomicsPanelLayout? = nil) {
+        guard splitView.arrangedSubviews.count > 1 else { return }
+
+        let layout = layout ?? MetagenomicsPanelLayout.current()
+        let totalExtent = splitContainerExtent()
+        guard totalExtent > 0 else {
+            didSetInitialSplitPosition = false
+            return
+        }
+
+        let minimumExtents = minimumExtents(for: layout)
+        let position = MetagenomicsPaneSizing.clampedDividerPosition(
+            proposed: round(totalExtent * defaultLeadingFraction(for: layout)),
+            containerExtent: totalExtent,
+            minimumLeadingExtent: minimumExtents.leading,
+            minimumTrailingExtent: minimumExtents.trailing
+        )
+        splitView.setPosition(position, ofDividerAt: 0)
+        splitView.adjustSubviews()
+        didSetInitialSplitPosition = true
+    }
+
+    private func collapseHiddenDetailPaneIfNeeded() {
+        guard splitView.arrangedSubviews.count > 1 else { return }
+
+        let totalExtent = splitContainerExtent()
+        guard totalExtent > 0 else { return }
+
+        splitView.setPosition(collapsedSplitPositionForHiddenDetail(containerExtent: totalExtent), ofDividerAt: 0)
+        splitView.adjustSubviews()
+        didSetInitialSplitPosition = true
+    }
+
     private func applyInitialSplitPositionIfNeeded() {
         guard !didSetInitialSplitPosition, splitView.arrangedSubviews.count == 2 else { return }
+
+        if leftPaneContainer.isHidden {
+            collapseHiddenDetailPaneIfNeeded()
+            return
+        }
 
         let totalExtent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
         guard totalExtent > 0 else { return }
 
         let layout = MetagenomicsPanelLayout.current()
-        let defaultLeadingFraction: CGFloat = layout == .detailLeading ? 0.4 : 0.6
+        let minimumExtents = minimumExtents(for: layout)
         let clampedPosition = MetagenomicsPaneSizing.clampedDividerPosition(
-            proposed: round(totalExtent * defaultLeadingFraction),
+            proposed: round(totalExtent * defaultLeadingFraction(for: layout)),
             containerExtent: totalExtent,
-            minimumLeadingExtent: 250,
-            minimumTrailingExtent: 300
+            minimumLeadingExtent: minimumExtents.leading,
+            minimumTrailingExtent: minimumExtents.trailing
         )
         splitView.setPosition(clampedPosition, ofDividerAt: 0)
         didSetInitialSplitPosition = true
@@ -429,9 +512,10 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         let currentFirstPane = splitView.arrangedSubviews[0]
         let currentSecondPane = splitView.arrangedSubviews[1]
         let currentExtent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+        let orientationChanged = splitView.isVertical != desiredIsVertical
         let currentFirstExtent = splitView.isVertical ? currentFirstPane.frame.width : currentFirstPane.frame.height
         let currentSecondExtent = max(0, currentExtent - currentFirstExtent)
-        let needsRebuild = splitView.isVertical != desiredIsVertical
+        let needsRebuild = orientationChanged
             || splitView.arrangedSubviews[0] !== desiredFirstPane
             || splitView.arrangedSubviews[1] !== desiredSecondPane
 
@@ -448,13 +532,8 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             splitView.isVertical = desiredIsVertical
         }
 
-        if layout == .detailLeading {
-            splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
-            splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
-        } else {
-            splitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
-            splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
-        }
+        splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+        splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
 
         let totalExtent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
         guard totalExtent > 0 else {
@@ -462,16 +541,24 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             return
         }
 
-        let defaultLeadingFraction: CGFloat = layout == .detailLeading ? 0.4 : 0.6
-        let leadingExtent = currentFirstExtent > 0
+        if leftPaneContainer.isHidden {
+            splitView.setPosition(collapsedSplitPositionForHiddenDetail(containerExtent: totalExtent), ofDividerAt: 0)
+            splitView.adjustSubviews()
+            didSetInitialSplitPosition = true
+            return
+        }
+
+        let minimumExtents = minimumExtents(for: layout)
+        let defaultLeadingExtent = round(totalExtent * defaultLeadingFraction(for: layout))
+        let leadingExtent = !orientationChanged && currentFirstExtent > 0 && currentSecondExtent > 0
             ? (desiredFirstPane === currentFirstPane ? currentFirstExtent : currentSecondExtent)
-            : round(totalExtent * defaultLeadingFraction)
+            : defaultLeadingExtent
 
         let clampedPosition = MetagenomicsPaneSizing.clampedDividerPosition(
             proposed: leadingExtent,
             containerExtent: totalExtent,
-            minimumLeadingExtent: 250,
-            minimumTrailingExtent: 300
+            minimumLeadingExtent: minimumExtents.leading,
+            minimumTrailingExtent: minimumExtents.trailing
         )
         splitView.setPosition(clampedPosition, ofDividerAt: 0)
         splitView.adjustSubviews()
@@ -863,15 +950,12 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         if showBatchOverview {
             // Hide left pane — give all space to the batch comparison table
             leftPaneContainer.isHidden = true
-            if splitView.arrangedSubviews.count > 1 {
-                splitView.setPosition(0, ofDividerAt: 0)
-            }
+            collapseHiddenDetailPaneIfNeeded()
         } else {
             // Restore the left pane (taxonomy/alignments)
             if leftPaneContainer.isHidden {
                 leftPaneContainer.isHidden = false
-                let position = round(splitView.bounds.width * 0.4)
-                splitView.setPosition(position, ofDividerAt: 0)
+                restoreDefaultSplitPosition()
             }
         }
 
@@ -2195,11 +2279,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             // selected — we know exactly which sample + organism to display.
             if self.leftPaneContainer.isHidden {
                 self.leftPaneContainer.isHidden = false
-                // Restore a reasonable split position for the alignment pane.
-                if self.splitView.arrangedSubviews.count > 1 {
-                    let totalWidth = self.splitView.frame.width
-                    self.splitView.setPosition(totalWidth * 0.4, ofDividerAt: 0)
-                }
+                self.restoreDefaultSplitPosition()
             }
 
             guard let sampleId = row.sample,
@@ -2239,9 +2319,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             // miniBAM viewer can only show one organism at a time.
             if !self.leftPaneContainer.isHidden {
                 self.leftPaneContainer.isHidden = true
-                if self.splitView.arrangedSubviews.count > 1 {
-                    self.splitView.setPosition(0, ofDividerAt: 0)
-                }
+                self.collapseHiddenDetailPaneIfNeeded()
             }
         }
         batchFlatTableView.onSelectionCleared = { [weak self] in
@@ -2412,10 +2490,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             // Show the left pane (miniBAM viewer) for the selected sample + organism.
             if self.leftPaneContainer.isHidden {
                 self.leftPaneContainer.isHidden = false
-                if self.splitView.arrangedSubviews.count > 1 {
-                    let totalWidth = self.splitView.frame.width
-                    self.splitView.setPosition(totalWidth * 0.4, ofDividerAt: 0)
-                }
+                self.restoreDefaultSplitPosition()
             }
 
             guard let sampleId = row.sample,
@@ -2456,9 +2531,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             // Hide the left pane when multiple rows are selected.
             if !self.leftPaneContainer.isHidden {
                 self.leftPaneContainer.isHidden = true
-                if self.splitView.arrangedSubviews.count > 1 {
-                    self.splitView.setPosition(0, ofDividerAt: 0)
-                }
+                self.collapseHiddenDetailPaneIfNeeded()
             }
         }
         batchFlatTableView.onSelectionCleared = { [weak self] in
@@ -2931,13 +3004,13 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         constrainSplitPosition proposedPosition: CGFloat,
         ofSubviewAt dividerIndex: Int
     ) -> CGFloat {
-        let isBatchOverview = selectedSampleIndex == 0 && sampleIds.count > 1
         let extent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+        let minimumExtents = currentMinimumExtents()
         return MetagenomicsPaneSizing.clampedDividerPosition(
             proposed: proposedPosition,
             containerExtent: extent,
-            minimumLeadingExtent: isBatchOverview ? 0 : 300,
-            minimumTrailingExtent: isBatchOverview ? 0 : 300
+            minimumLeadingExtent: minimumExtents.leading,
+            minimumTrailingExtent: minimumExtents.trailing
         )
     }
 

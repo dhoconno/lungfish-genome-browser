@@ -54,6 +54,17 @@ final class MetagenomicsLayoutModeTests: XCTestCase {
         XCTAssertTrue(vc.testSplitView.arrangedSubviews[1] === vc.testDetailContainer)
     }
 
+    func testTaxTriageViewStacksListAboveDetailWhenLayoutIsStacked() {
+        setLayoutPreference(.stacked, legacyTableOnLeft: false)
+
+        let vc = TaxTriageResultViewController()
+        _ = vc.view
+
+        XCTAssertFalse(vc.testSplitView.isVertical)
+        XCTAssertTrue(vc.testSplitView.arrangedSubviews[0] === vc.testRightPaneContainer)
+        XCTAssertTrue(vc.testSplitView.arrangedSubviews[1] === vc.testLeftPaneContainer)
+    }
+
     func testTaxonomyViewDidLayoutDoesNotApplyNewPreferenceWithoutNotification() {
         setLayoutPreference(.detailLeading, legacyTableOnLeft: false)
 
@@ -88,5 +99,54 @@ final class MetagenomicsLayoutModeTests: XCTestCase {
         XCTAssertTrue(vc.testSplitView.isVertical)
         XCTAssertTrue(vc.testSplitView.arrangedSubviews[0] === initialFirstPane)
         XCTAssertTrue(vc.testSplitView.arrangedSubviews[1] === initialSecondPane)
+    }
+
+    func testTaxTriageLayoutChangeResetsCollapsedStackedPaneToSensibleWidth() {
+        setLayoutPreference(.stacked, legacyTableOnLeft: false)
+
+        let vc = TaxTriageResultViewController()
+        _ = vc.view
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800),
+            styleMask: [.titled, .resizable, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = vc
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+
+        vc.testSplitView.setPosition(80, ofDividerAt: 0)
+
+        setLayoutPreference(.listLeading, legacyTableOnLeft: true)
+        NotificationCenter.default.post(name: .metagenomicsLayoutSwapRequested, object: nil)
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+
+        let firstPaneWidth = vc.testSplitView.arrangedSubviews[0].frame.width
+        let secondPaneWidth = vc.testSplitView.arrangedSubviews[1].frame.width
+        XCTAssertGreaterThan(firstPaneWidth, 200)
+        XCTAssertGreaterThan(secondPaneWidth, 80)
+    }
+
+    func testTaxTriageSplitAllowsHiddenTrailingDetailPaneToFullyCollapse() {
+        setLayoutPreference(.stacked, legacyTableOnLeft: false)
+
+        let vc = TaxTriageResultViewController()
+        _ = vc.view
+        vc.view.frame = NSRect(x: 0, y: 0, width: 1200, height: 800)
+        vc.testSplitView.frame = NSRect(x: 0, y: 0, width: 1200, height: 700)
+        vc.testSplitView.layoutSubtreeIfNeeded()
+        vc.viewDidLayout()
+        vc.testLeftPaneContainer.isHidden = true
+
+        let totalExtent = vc.testSplitView.bounds.height
+        let clamped = vc.splitView(
+            vc.testSplitView,
+            constrainSplitPosition: totalExtent,
+            ofSubviewAt: 0
+        )
+
+        XCTAssertEqual(clamped, totalExtent, accuracy: 0.5)
     }
 }

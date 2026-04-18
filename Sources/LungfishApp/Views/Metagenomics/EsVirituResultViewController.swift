@@ -1219,6 +1219,15 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         applyLayoutPreference()
     }
 
+    private func defaultLeadingFraction(for layout: MetagenomicsPanelLayout) -> CGFloat {
+        switch layout {
+        case .detailLeading, .stacked:
+            return 0.4
+        case .listLeading:
+            return 0.6
+        }
+    }
+
     private func applyInitialSplitPositionIfNeeded() {
         guard !didSetInitialSplitPosition, splitView.arrangedSubviews.count == 2 else { return }
 
@@ -1226,9 +1235,8 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         guard totalExtent > 0 else { return }
 
         let layout = MetagenomicsPanelLayout.current()
-        let defaultLeadingFraction: CGFloat = layout == .detailLeading ? 0.4 : 0.6
         let clampedPosition = MetagenomicsPaneSizing.clampedDividerPosition(
-            proposed: round(totalExtent * defaultLeadingFraction),
+            proposed: round(totalExtent * defaultLeadingFraction(for: layout)),
             containerExtent: totalExtent,
             minimumLeadingExtent: 250,
             minimumTrailingExtent: 250
@@ -1249,9 +1257,10 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
         let currentFirstPane = splitView.arrangedSubviews[0]
         let currentSecondPane = splitView.arrangedSubviews[1]
         let currentExtent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+        let orientationChanged = splitView.isVertical != desiredIsVertical
         let currentFirstExtent = splitView.isVertical ? currentFirstPane.frame.width : currentFirstPane.frame.height
         let currentSecondExtent = max(0, currentExtent - currentFirstExtent)
-        let needsRebuild = splitView.isVertical != desiredIsVertical
+        let needsRebuild = orientationChanged
             || splitView.arrangedSubviews[0] !== desiredFirstPane
             || splitView.arrangedSubviews[1] !== desiredSecondPane
 
@@ -1268,13 +1277,8 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             splitView.isVertical = desiredIsVertical
         }
 
-        if layout == .detailLeading {
-            splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
-            splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
-        } else {
-            splitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
-            splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 1)
-        }
+        splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+        splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
 
         let totalExtent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
         guard totalExtent > 0 else {
@@ -1282,10 +1286,10 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             return
         }
 
-        let defaultLeadingFraction: CGFloat = layout == .detailLeading ? 0.4 : 0.6
-        let leadingExtent = currentFirstExtent > 0
+        let defaultLeadingExtent = round(totalExtent * defaultLeadingFraction(for: layout))
+        let leadingExtent = !orientationChanged && currentFirstExtent > 0 && currentSecondExtent > 0
             ? (desiredFirstPane === currentFirstPane ? currentFirstExtent : currentSecondExtent)
-            : round(totalExtent * defaultLeadingFraction)
+            : defaultLeadingExtent
 
         let clampedPosition = MetagenomicsPaneSizing.clampedDividerPosition(
             proposed: leadingExtent,
