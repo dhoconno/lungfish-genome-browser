@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import LungfishCore
 
 import os.log
 
@@ -56,7 +57,7 @@ public enum EsVirituDatabaseError: Error, LocalizedError, Sendable {
 /// Manages the EsViritu viral reference database.
 ///
 /// Downloads, extracts, and validates the curated viral database from Zenodo.
-/// The database is stored in `~/.lungfish/databases/esviritu/<version>/`.
+/// The database is stored in `<configured managed storage root>/databases/esviritu/<version>/`.
 ///
 /// ## Database Structure
 ///
@@ -109,8 +110,7 @@ public actor EsVirituDatabaseManager {
     private let databasesRoot: URL
 
     private init() {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        self.databasesRoot = home.appendingPathComponent(".lungfish/databases")
+        self.databasesRoot = ManagedStorageConfigStore().currentLocation().databaseRootURL
     }
 
     /// Creates a database manager with a custom storage root (for testing).
@@ -120,11 +120,15 @@ public actor EsVirituDatabaseManager {
         self.databasesRoot = storageRoot
     }
 
+    init(storageConfigStore: ManagedStorageConfigStore) {
+        self.databasesRoot = storageConfigStore.currentLocation().databaseRootURL
+    }
+
     // MARK: - Path Computation
 
     /// The storage path for the current version of the EsViritu database.
     ///
-    /// Returns `~/.lungfish/databases/esviritu/<version>/`.
+    /// Returns `<configured managed storage root>/databases/esviritu/<version>/`.
     public var databaseURL: URL {
         databasesRoot
             .appendingPathComponent("esviritu")
@@ -136,7 +140,7 @@ public actor EsVirituDatabaseManager {
     /// Whether the database is installed and contains the expected files.
     ///
     /// Checks two locations:
-    /// 1. The legacy versioned path (`~/.lungfish/databases/esviritu/<version>/`)
+    /// 1. The shared-root versioned path (`<configured root>/databases/esviritu/<version>/`)
     /// 2. The registry-managed path (from ``MetagenomicsDatabaseRegistry``)
     ///
     /// - Returns: `true` if the database appears to be installed and valid.

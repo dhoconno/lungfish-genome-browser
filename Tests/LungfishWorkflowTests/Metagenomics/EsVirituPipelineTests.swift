@@ -4,6 +4,7 @@
 
 import XCTest
 @testable import LungfishWorkflow
+import LungfishCore
 
 // MARK: - EsVirituConfigTests
 
@@ -712,6 +713,25 @@ final class EsVirituDatabaseManagerTests: XCTestCase {
         XCTAssertTrue(dbURL.path.hasPrefix(tempDir.path))
         XCTAssertTrue(dbURL.path.contains("esviritu"))
         XCTAssertTrue(dbURL.path.contains(EsVirituDatabaseManager.currentVersion))
+    }
+
+    func testDatabaseURLUsesConfiguredManagedStorageRoot() async throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("esviritu-home-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let configuredRoot = home.appendingPathComponent("managed-storage", isDirectory: true)
+        let store = ManagedStorageConfigStore(homeDirectory: home)
+        try store.setActiveRoot(configuredRoot)
+
+        let manager = EsVirituDatabaseManager(storageConfigStore: store)
+        let dbURL = await manager.databaseURL
+
+        XCTAssertEqual(
+            dbURL.standardizedFileURL.path,
+            configuredRoot
+                .appendingPathComponent("databases/esviritu/\(EsVirituDatabaseManager.currentVersion)", isDirectory: true)
+                .standardizedFileURL.path
+        )
     }
 
     func testIsInstalledReturnsFalseForMissingDatabase() async {

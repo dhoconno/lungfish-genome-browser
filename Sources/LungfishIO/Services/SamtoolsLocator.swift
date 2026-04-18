@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import LungfishCore
 
 /// Centralized samtools discovery used by import, materialization, and viewer code.
 public enum SamtoolsLocator {
@@ -10,7 +11,7 @@ public enum SamtoolsLocator {
     /// Returns the first executable samtools path that can be found.
     ///
     /// Search order:
-    /// 1. Managed `~/.lungfish/conda/envs/samtools/bin/samtools`
+    /// 1. Managed `<configured storage root>/conda/envs/samtools/bin/samtools`
     /// 2. Directories from an explicitly provided `searchPath`, when a caller
     ///    intentionally opts into an extra fallback (for example in tests).
     public static func locate(
@@ -19,9 +20,9 @@ public enum SamtoolsLocator {
     ) -> String? {
         let fm = FileManager.default
 
-        let managedSamtools = homeDirectory
-            .appendingPathComponent(".lungfish", isDirectory: true)
-            .appendingPathComponent("conda", isDirectory: true)
+        let managedSamtools = ManagedStorageConfigStore(homeDirectory: homeDirectory)
+            .currentLocation()
+            .condaRootURL
             .appendingPathComponent("envs", isDirectory: true)
             .appendingPathComponent("samtools", isDirectory: true)
             .appendingPathComponent("bin", isDirectory: true)
