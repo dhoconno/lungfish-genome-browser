@@ -156,38 +156,28 @@ final class PluginManagerViewModel {
             .reduce(0, +)
     }
 
-    /// The base directory where databases are stored.
-    ///
-    /// Reads from AppSettings/databaseStorageURL so it reflects any
-    /// custom storage location the user has configured.
-    var databaseStoragePath: String {
-        AppSettings.shared.databaseStorageURL.path
+    /// The shared managed storage root shown in the Databases footer.
+    var storageLocationPath: String {
+        AppSettings.shared.managedStorageRootURL.path
     }
 
-    /// Presents an NSOpenPanel to choose a new database storage directory.
-    ///
-    /// On selection, updates AppSettings/databaseStorageURL and posts
-    /// the databaseStorageLocationChanged notification so the registry
-    /// and other observers update.
-    func chooseDatabaseStorageLocation() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.canCreateDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Choose"
-        panel.message = "Select a directory for database storage"
+    /// Describes the current shared storage state for footer copy.
+    var databaseStorageStatusText: String {
+        switch AppSettings.shared.managedStorageDisplayState {
+        case .defaultRoot:
+            return "Default shared storage"
+        case .customRoot:
+            return "Custom shared storage"
+        case .malformedBootstrap:
+            return "Using default shared storage (config needs attention)"
+        }
+    }
 
-        panel.begin { [weak self] response in
-            // panel.begin calls back on the main thread; use
-            // MainActor.assumeIsolated to satisfy Swift 6 isolation.
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard response == .OK, let url = panel.url else { return }
-                    AppSettings.shared.databaseStorageURL = url
-                    self?.refreshDatabases()
-                }
-            }
+    /// Opens the Storage tab in Settings.
+    func openStorageSettings() {
+        SettingsNavigationState.shared.open(.storage)
+        if selectedTab == .databases {
+            refreshDatabases()
         }
     }
 

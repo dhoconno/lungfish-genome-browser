@@ -9,6 +9,27 @@ import LungfishCore
 
 private let logger = Logger(subsystem: LogSubsystem.app, category: "SettingsWindow")
 
+enum SettingsNavigationTab: Hashable {
+    case general
+    case appearance
+    case rendering
+    case storage
+    case aiServices
+}
+
+@MainActor
+@Observable
+final class SettingsNavigationState {
+    static let shared = SettingsNavigationState()
+
+    var selectedTab: SettingsNavigationTab = .general
+
+    func open(_ tab: SettingsNavigationTab) {
+        selectedTab = tab
+        NSApp.sendAction(Selector(("showPreferences:")), to: nil, from: nil)
+    }
+}
+
 /// NSWindowController that hosts the SwiftUI Settings view.
 ///
 /// Follows the macOS HIG pattern: titled tabbed settings window,

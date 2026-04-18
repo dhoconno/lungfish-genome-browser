@@ -5,6 +5,9 @@
 import XCTest
 @testable import LungfishWorkflow
 @testable import LungfishApp
+@testable import LungfishCore
+
+@MainActor private var databasesTabTestsOriginalManagedStorageStore: ManagedStorageConfigStore?
 
 // MARK: - DatabasesTabTests
 
@@ -28,6 +31,10 @@ final class DatabasesTabTests: XCTestCase {
 
     override func tearDownWithError() throws {
         try? FileManager.default.removeItem(at: tempDir)
+        MainActor.assumeIsolated {
+            ManagedStorageConfigStore.shared = databasesTabTestsOriginalManagedStorageStore ?? ManagedStorageConfigStore()
+            databasesTabTestsOriginalManagedStorageStore = nil
+        }
     }
 
     /// Creates a fake database info entry for testing.
@@ -311,12 +318,32 @@ final class DatabasesTabTests: XCTestCase {
         XCTAssertEqual(vm.totalDatabaseStorageBytes, expected)
     }
 
-    /// Verifies that the storage path is under ~/.lungfish/databases.
-    func testDatabaseStoragePath() {
-        let vm = PluginManagerViewModel()
-        let path = vm.databaseStoragePath
+    /// Verifies that the footer path uses the shared managed storage root.
+    func testDatabaseStoragePathUsesManagedStorageRoot() throws {
+        databasesTabTestsOriginalManagedStorageStore = ManagedStorageConfigStore.shared
+        let home = tempDir.appendingPathComponent("managed-storage-home", isDirectory: true)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
 
-        XCTAssertTrue(path.contains(".lungfish/databases"), "Storage path should contain .lungfish/databases")
+        let store = ManagedStorageConfigStore(homeDirectory: home)
+        let customRoot = home.appendingPathComponent("External/Lungfish", isDirectory: true)
+        try store.setActiveRoot(customRoot)
+        ManagedStorageConfigStore.shared = store
+
+        let vm = PluginManagerViewModel()
+        let path = vm.storageLocationPath
+
+        XCTAssertEqual(path, customRoot.path)
+    }
+
+    func testDatabasesFooterSourceUsesStorageSettingsAction() throws {
+        let source = try String(
+            contentsOf: repositoryRoot()
+                .appendingPathComponent("Sources/LungfishApp/Views/PluginManager/PluginManagerView.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("Storage Settings..."))
+        XCTAssertFalse(source.contains("Change Location..."))
     }
 
     // MARK: - Database Collection Tests
@@ -383,5 +410,12 @@ final class DatabasesTabTests: XCTestCase {
             viral?.description.lowercased().contains("viral") ?? false,
             "Viral description should mention viral"
         )
+    }
+
+    private func repositoryRoot() -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
     }
 }

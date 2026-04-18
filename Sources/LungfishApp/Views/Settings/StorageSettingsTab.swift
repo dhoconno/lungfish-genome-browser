@@ -2,94 +2,134 @@
 // Copyright (c) 2024 Lungfish Contributors
 // SPDX-License-Identifier: MIT
 
+import AppKit
 import SwiftUI
 import LungfishCore
+import LungfishWorkflow
 
-/// Storage preferences: database storage location.
+/// Storage preferences for shared managed storage.
 ///
-/// Allows the user to choose a custom directory for Kraken2 metagenomics
-/// databases. Changes are persisted to UserDefaults and communicated to
-/// ``MetagenomicsDatabaseRegistry`` via notification.
+/// Allows the user to choose where Lungfish stores managed third-party tools
+/// and databases, and to clean up old local copies after a successful move.
 struct StorageSettingsTab: View {
-
     @State private var settings = AppSettings.shared
     @State private var displayPath: String = ""
-    @State private var isDefault: Bool = true
-    @State private var showingMigrateAlert: Bool = false
-    @State private var pendingNewURL: URL?
+    @State private var displayState: ManagedStorageDisplayState = .defaultRoot
+    @State private var previousRootPath: String?
+    @State private var currentOperationMessage: String?
+    @State private var showingCleanupConfirmation: Bool = false
+    @State private var showingErrorAlert: Bool = false
+    @State private var errorMessage: String = ""
+    @State private var isWorking: Bool = false
+
+    private let storageCoordinator: ManagedStorageCoordinator
+
+    init(storageCoordinator: ManagedStorageCoordinator = ManagedStorageCoordinator()) {
+        self.storageCoordinator = storageCoordinator
+    }
 
     var body: some View {
         Form {
-            Section("Database Storage") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Kraken2 and other metagenomics databases are stored at this location.")
+            Section("Storage Location") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Third-Party Tools and Databases are stored at this location.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
 
-                    HStack(spacing: 8) {
-                        Image(systemName: "folder")
+                    HStack(alignment: .center, spacing: 10) {
+                        Image(systemName: "externaldrive.connected.to.line.below")
                             .foregroundStyle(.secondary)
+
                         Text(displayPath)
                             .font(.system(.body, design: .monospaced))
                             .lineLimit(2)
                             .truncationMode(.middle)
                             .textSelection(.enabled)
-                        Spacer()
+
+                        Spacer(minLength: 12)
+
+                        Text(locationBadgeText)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundStyle(locationBadgeColor)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(locationBadgeBackground)
+                            .clipShape(Capsule())
                     }
-                    .padding(8)
+                    .padding(10)
                     .background(Color(nsColor: .controlBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                    Text(locationStatusDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if let currentOperationMessage {
+                        Label(currentOperationMessage, systemImage: "arrow.triangle.2.circlepath")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if case .malformedBootstrap = displayState {
+                        Label(
+                            "The managed storage config could not be read. Lungfish is using the default location until you pick a new one.",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    }
+
+                    if let previousRootPath {
+                        Label(
+                            "Old local copies are still present at \(previousRootPath). Remove them after you have confirmed the new location is working.",
+                            systemImage: "trash"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
 
                     HStack(spacing: 12) {
-                        Button("Choose...") {
+                        Button("Change Location...") {
                             chooseDirectory()
                         }
+                        .disabled(isWorking)
 
                         Button("Reveal in Finder") {
-                            NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: displayPath)
+                            revealCurrentLocation()
                         }
-                        .disabled(!FileManager.default.fileExists(atPath: displayPath))
+                        .disabled(!canRevealCurrentLocation || isWorking)
+
+                        if !settings.isManagedStorageDefault {
+                            Button("Use Default Location") {
+                                moveToDefaultLocation()
+                            }
+                            .disabled(isWorking)
+                        }
 
                         Spacer()
 
-                        Button("Default") {
-                            resetToDefault()
-                        }
-                        .disabled(isDefault)
-                    }
-
-                    if !isDefault {
-                        HStack(spacing: 4) {
-                            Image(systemName: "info.circle")
-                                .foregroundStyle(.blue)
-                                .font(.caption)
-                            Text("Custom location. Click Default to restore ~/.lungfish/databases/")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                        if previousRootPath != nil {
+                            Button("Remove old local copies...", role: .destructive) {
+                                showingCleanupConfirmation = true
+                            }
+                            .disabled(isWorking)
                         }
                     }
                 }
             }
 
-            Section("About Database Storage") {
+            Section("About Managed Storage") {
                 VStack(alignment: .leading, spacing: 6) {
-                    Label("Databases can be several gigabytes in size", systemImage: "internaldrive")
+                    Label("Managed tools and downloaded databases share one storage root", systemImage: "folder.badge.gearshape")
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                    Label("Choose an external drive or NAS for large collections", systemImage: "externaldrive")
+                    Label("Changing location migrates databases and reprovisions managed tools", systemImage: "arrow.triangle.2.circlepath")
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                    Label("The manifest file tracks installed databases", systemImage: "doc.text")
+                    Label("Use cleanup only after confirming the new storage location works", systemImage: "trash")
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                }
-            }
-
-            HStack {
-                Spacer()
-                Button("Restore Defaults") {
-                    resetToDefault()
-                    settings.resetSection(.storage)
                 }
             }
         }
@@ -97,26 +137,73 @@ struct StorageSettingsTab: View {
         .onAppear {
             refreshDisplay()
         }
-        .alert(
-            "Move Existing Databases?",
-            isPresented: $showingMigrateAlert,
-            presenting: pendingNewURL
-        ) { newURL in
-            Button("Move Databases") {
-                applyNewLocation(newURL, migrate: true)
+        .confirmationDialog(
+            "Remove old local copies?",
+            isPresented: $showingCleanupConfirmation
+        ) {
+            Button("Remove old local copies", role: .destructive) {
+                removeOldLocalCopies()
             }
-            Button("Use Empty Location") {
-                applyNewLocation(newURL, migrate: false)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let previousRootPath {
+                Text("This will delete migrated tool and database files from \(previousRootPath).")
             }
-            Button("Cancel", role: .cancel) {
-                pendingNewURL = nil
-            }
-        } message: { _ in
-            Text("Would you like to move existing databases to the new location, or start fresh?")
+        }
+        .alert("Storage Error", isPresented: $showingErrorAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage)
         }
     }
 
-    // MARK: - Actions
+    private var canRevealCurrentLocation: Bool {
+        FileManager.default.fileExists(atPath: settings.managedStorageRootURL.path)
+    }
+
+    private var locationBadgeText: String {
+        switch displayState {
+        case .defaultRoot:
+            return "Recommended"
+        case .customRoot:
+            return "Custom"
+        case .malformedBootstrap:
+            return "Needs Attention"
+        }
+    }
+
+    private var locationBadgeColor: Color {
+        switch displayState {
+        case .defaultRoot:
+            return .secondary
+        case .customRoot:
+            return .blue
+        case .malformedBootstrap:
+            return .orange
+        }
+    }
+
+    private var locationBadgeBackground: Color {
+        switch displayState {
+        case .defaultRoot:
+            return Color.secondary.opacity(0.12)
+        case .customRoot:
+            return Color.blue.opacity(0.12)
+        case .malformedBootstrap:
+            return Color.orange.opacity(0.14)
+        }
+    }
+
+    private var locationStatusDescription: String {
+        switch displayState {
+        case .defaultRoot:
+            return "Lungfish is using the default shared storage root."
+        case .customRoot(let location):
+            return "Managed tools and databases are being stored under \(location.rootURL.lastPathComponent)."
+        case .malformedBootstrap:
+            return "The bootstrap config needs attention. The default shared storage root is being used right now."
+        }
+    }
 
     private func chooseDirectory() {
         let panel = NSOpenPanel()
@@ -125,43 +212,99 @@ struct StorageSettingsTab: View {
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         panel.prompt = "Choose"
-        panel.message = "Select a directory for database storage"
+        panel.message = "Select a storage location for managed tools and databases"
 
         panel.begin { response in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard response == .OK, let url = panel.url else { return }
-
-                    // Check if there are existing databases at the current location.
-                    let currentPath = settings.databaseStorageURL
-                    let kraken2Dir = currentPath.appendingPathComponent("kraken2")
-                    if FileManager.default.fileExists(atPath: kraken2Dir.path) {
-                        pendingNewURL = url
-                        showingMigrateAlert = true
-                    } else {
-                        applyNewLocation(url, migrate: false)
-                    }
+                    updateManagedStorageLocation(to: url)
                 }
             }
         }
     }
 
-    private func applyNewLocation(_ url: URL, migrate: Bool) {
-        settings.databaseStorageURL = url
-        // The MetagenomicsDatabaseRegistry will pick up the change via notification
-        // or the next time it reads UserDefaults.
-        refreshDisplay()
-        pendingNewURL = nil
+    private func moveToDefaultLocation() {
+        updateManagedStorageLocation(to: ManagedStorageConfigStore.shared.defaultLocation.rootURL)
     }
 
-    private func resetToDefault() {
-        UserDefaults.standard.removeObject(forKey: AppSettings.databaseStorageLocationKey)
-        NotificationCenter.default.post(name: .databaseStorageLocationChanged, object: nil)
-        refreshDisplay()
+    private func revealCurrentLocation() {
+        NSWorkspace.shared.activateFileViewerSelecting([settings.managedStorageRootURL])
+    }
+
+    private func updateManagedStorageLocation(to url: URL) {
+        let targetURL = url.standardizedFileURL
+        let defaultRoot = ManagedStorageConfigStore.shared.defaultLocation.rootURL
+        isWorking = true
+        currentOperationMessage = targetURL == defaultRoot
+            ? "Moving managed storage to the default location..."
+            : "Moving managed storage to the selected location..."
+
+        Task {
+            do {
+                if case .malformedBootstrap = displayState, targetURL == defaultRoot {
+                    try ManagedStorageConfigStore.shared.resetToDefaultLocation()
+                } else {
+                    try await storageCoordinator.changeLocation(to: targetURL)
+                }
+                await MainActor.run {
+                    NotificationCenter.default.post(name: .databaseStorageLocationChanged, object: nil)
+                    refreshDisplay()
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    showingErrorAlert = true
+                    refreshDisplay()
+                }
+            }
+
+            await MainActor.run {
+                isWorking = false
+                currentOperationMessage = nil
+            }
+        }
+    }
+
+    private func removeOldLocalCopies() {
+        isWorking = true
+        currentOperationMessage = "Removing old local copies..."
+
+        Task {
+            do {
+                try await storageCoordinator.removeOldLocalCopies()
+                await MainActor.run {
+                    refreshDisplay()
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    showingErrorAlert = true
+                    refreshDisplay()
+                }
+            }
+
+            await MainActor.run {
+                isWorking = false
+                currentOperationMessage = nil
+            }
+        }
     }
 
     private func refreshDisplay() {
-        displayPath = settings.databaseStorageURL.path
-        isDefault = settings.isDatabaseStorageDefault
+        displayPath = settings.managedStorageRootURL.path
+        displayState = settings.managedStorageDisplayState
+        previousRootPath = cleanupCandidatePath()
+    }
+
+    private func cleanupCandidatePath() -> String? {
+        guard case .loaded(let config) = ManagedStorageConfigStore.shared.bootstrapConfigLoadState(),
+              config.migrationState == .completed,
+              let previousRootPath = config.previousRootPath,
+              !previousRootPath.isEmpty else {
+            return nil
+        }
+
+        return previousRootPath
     }
 }

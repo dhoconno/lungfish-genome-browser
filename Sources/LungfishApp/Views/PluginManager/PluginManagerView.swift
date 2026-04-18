@@ -680,14 +680,20 @@ struct DatabasesTabView: View {
 
     private var storageFooter: some View {
         HStack(spacing: 12) {
-            Text(viewModel.databaseStoragePath)
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(Color.lungfishSecondaryText)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(viewModel.databaseStorageStatusText)
+                    .font(.caption)
+                    .foregroundStyle(Color.lungfishSecondaryText)
 
-            Button("Change Location...") {
-                viewModel.chooseDatabaseStorageLocation()
+                Text(viewModel.storageLocationPath)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(Color.lungfishSecondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Button("Storage Settings...") {
+                viewModel.openStorageSettings()
             }
             .controlSize(.small)
             .font(.caption)
