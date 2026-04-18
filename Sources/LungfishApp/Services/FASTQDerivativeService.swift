@@ -10,7 +10,7 @@ import os.log
 
 private let derivativeLogger = Logger(subsystem: LogSubsystem.app, category: "FASTQDerivativeService")
 
-public enum FASTQDerivativeRequest: Sendable {
+public enum FASTQDerivativeRequest: Sendable, Equatable {
     // Subset operations (produce read ID lists)
     case subsampleProportion(Double)
     case subsampleCount(Int)

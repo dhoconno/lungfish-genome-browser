@@ -39,12 +39,40 @@ final class FASTQOperationExecutionServiceTests: XCTestCase {
             "qc-summary",
             "/tmp/input-1.fastq",
             "/tmp/input-2.fastq",
+            "--output",
+            "<derived>",
         ])
     }
 
-    func testDerivativeLaunchBuildsFastqSubcommandInvocation() throws {
+    @MainActor
+    func testPrepareForRunSynthesizesConcreteDerivativeRequest() throws {
+        let state = FASTQOperationDialogState(
+            initialCategory: .readProcessing,
+            selectedInputURLs: [URL(fileURLWithPath: "/tmp/input.fastq")],
+            projectURL: nil
+        )
+        state.selectTool(.orientReads)
+        state.setAuxiliaryInput(URL(fileURLWithPath: "/tmp/reference.fasta"), for: .referenceSequence)
+
+        state.prepareForRun()
+
+        guard case .derivative(let request, let inputURLs, let outputMode)? = state.pendingLaunchRequest else {
+            return XCTFail("Expected concrete derivative launch request")
+        }
+
+        XCTAssertEqual(inputURLs, [URL(fileURLWithPath: "/tmp/input.fastq")])
+        XCTAssertEqual(outputMode, .perInput)
+        XCTAssertEqual(request, .orient(
+            referenceURL: URL(fileURLWithPath: "/tmp/reference.fasta"),
+            wordLength: 12,
+            dbMask: "dust",
+            saveUnoriented: true
+        ))
+    }
+
+    func testDerivativeLaunchBuildsConcreteFastqInvocation() throws {
         let request = FASTQOperationLaunchRequest.derivative(
-            tool: .qualityTrim,
+            request: .subsampleProportion(0.25),
             inputURLs: [URL(fileURLWithPath: "/tmp/input.fastq")],
             outputMode: .perInput
         )
@@ -53,8 +81,12 @@ final class FASTQOperationExecutionServiceTests: XCTestCase {
 
         XCTAssertEqual(invocation.subcommand, "fastq")
         XCTAssertEqual(invocation.arguments, [
-            "quality-trim",
+            "subsample",
             "/tmp/input.fastq",
+            "--proportion",
+            "0.25",
+            "-o",
+            "<derived>",
         ])
     }
 

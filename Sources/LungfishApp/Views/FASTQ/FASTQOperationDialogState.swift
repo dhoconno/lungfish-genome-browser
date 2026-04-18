@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import LungfishIO
 import LungfishWorkflow
 
 @MainActor
@@ -117,15 +118,227 @@ final class FASTQOperationDialogState {
         pendingClassificationConfigs = []
         pendingEsVirituConfigs = []
         pendingTaxTriageConfig = nil
-        if selectedToolID == .refreshQCSummary {
-            pendingLaunchRequest = .refreshQCSummary(inputURLs: selectedInputURLs)
-        } else {
-            pendingLaunchRequest = .derivative(
-                tool: selectedToolID,
+        pendingLaunchRequest = launchRequestForSelectedTool()
+    }
+
+    private func launchRequestForSelectedTool() -> FASTQOperationLaunchRequest? {
+        switch selectedToolID {
+        case .refreshQCSummary:
+            return .refreshQCSummary(inputURLs: selectedInputURLs)
+
+        case .demultiplexBarcodes:
+            guard let request = concreteDemultiplexRequest() else { return nil }
+            return .derivative(
+                request: request,
                 inputURLs: selectedInputURLs,
                 outputMode: outputMode
             )
+
+        case .qualityTrim:
+            return .derivative(
+                request: .qualityTrim(threshold: 20, windowSize: 4, mode: .cutRight),
+                inputURLs: selectedInputURLs,
+                outputMode: outputMode
+            )
+
+        case .adapterRemoval:
+            return .derivative(
+                request: .adapterTrim(mode: .autoDetect, sequence: nil, sequenceR2: nil, fastaFilename: nil),
+                inputURLs: selectedInputURLs,
+                outputMode: outputMode
+            )
+
+        case .primerTrimming:
+            return .derivative(
+                request: concretePrimerTrimRequest(),
+                inputURLs: selectedInputURLs,
+                outputMode: outputMode
+            )
+
+        case .trimFixedBases:
+            return .derivative(
+                request: .fixedTrim(from5Prime: 0, from3Prime: 0),
+                inputURLs: selectedInputURLs,
+                outputMode: outputMode
+            )
+
+        case .filterByReadLength:
+            return .derivative(
+                request: .lengthFilter(min: nil, max: nil),
+                inputURLs: selectedInputURLs,
+                outputMode: outputMode
+            )
+
+        case .removeHumanReads:
+            return .derivative(
+                request: .humanReadScrub(
+                    databaseID: DeaconPanhumanDatabaseInstaller.databaseID,
+                    removeReads: true
+                ),
+                inputURLs: selectedInputURLs,
+                outputMode: outputMode
+            )
+
+        case .removeContaminants:
+            return .derivative(
+                request: concreteContaminantFilterRequest(),
+                inputURLs: selectedInputURLs,
+                outputMode: outputMode
+            )
+
+        case .removeDuplicates:
+            return .derivative(
+                request: .deduplicate(
+                    preset: .exactPCR,
+                    substitutions: 0,
+                    optical: false,
+                    opticalDistance: 40
+                ),
+                inputURLs: selectedInputURLs,
+                outputMode: outputMode
+            )
+
+        case .mergeOverlappingPairs:
+            return .derivative(
+                request: .pairedEndMerge(strictness: .normal, minOverlap: 12),
+                inputURLs: selectedInputURLs,
+                outputMode: outputMode
+            )
+
+        case .repairPairedEndFiles:
+            return .derivative(
+                request: .pairedEndRepair,
+                inputURLs: selectedInputURLs,
+                outputMode: outputMode
+            )
+
+        case .orientReads:
+            guard let referenceURL = auxiliaryInputURL(for: .referenceSequence) else { return nil }
+            return .derivative(
+                request: .orient(
+                    referenceURL: referenceURL,
+                    wordLength: 12,
+                    dbMask: "dust",
+                    saveUnoriented: true
+                ),
+                inputURLs: selectedInputURLs,
+                outputMode: outputMode
+            )
+
+        case .correctSequencingErrors:
+            return .derivative(
+                request: .errorCorrection(kmerSize: 50),
+                inputURLs: selectedInputURLs,
+                outputMode: outputMode
+            )
+
+        case .subsampleByProportion:
+            return .derivative(
+                request: .subsampleProportion(0.10),
+                inputURLs: selectedInputURLs,
+                outputMode: outputMode
+            )
+
+        case .subsampleByCount:
+            return .derivative(
+                request: .subsampleCount(10_000),
+                inputURLs: selectedInputURLs,
+                outputMode: outputMode
+            )
+
+        case .extractReadsByID:
+            return .derivative(
+                request: .searchText(query: "SRR1770413", field: .id, regex: false),
+                inputURLs: selectedInputURLs,
+                outputMode: outputMode
+            )
+
+        case .extractReadsByMotif:
+            return .derivative(
+                request: .searchMotif(pattern: "ATGNNNT", regex: false),
+                inputURLs: selectedInputURLs,
+                outputMode: outputMode
+            )
+
+        case .selectReadsBySequence:
+            return .derivative(
+                request: .sequencePresenceFilter(
+                    sequence: "AGATCGGAAGAGC",
+                    fastaPath: nil,
+                    searchEnd: .fivePrime,
+                    minOverlap: 16,
+                    errorRate: 0.15,
+                    keepMatched: true,
+                    searchReverseComplement: false
+                ),
+                inputURLs: selectedInputURLs,
+                outputMode: outputMode
+            )
+
+        case .minimap2, .spades, .kraken2, .esViritu, .taxTriage:
+            return nil
         }
+    }
+
+    private func concreteDemultiplexRequest() -> FASTQDerivativeRequest? {
+        let customCSVPath = auxiliaryInputURL(for: .barcodeDefinition)?.path
+        let defaultKitID = BarcodeKitRegistry.builtinKits().first?.id ?? customCSVPath.map { URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent } ?? ""
+
+        return .demultiplex(
+            kitID: defaultKitID,
+            customCSVPath: customCSVPath,
+            location: "bothends",
+            symmetryMode: .symmetric,
+            maxDistanceFrom5Prime: 0,
+            maxDistanceFrom3Prime: 0,
+            errorRate: 0.15,
+            trimBarcodes: true,
+            sampleAssignments: [],
+            kitOverride: nil
+        )
+    }
+
+    private func concreteContaminantFilterRequest() -> FASTQDerivativeRequest {
+        if let referenceFasta = auxiliaryInputURL(for: .contaminantReference)?.path {
+            return .contaminantFilter(
+                mode: .custom,
+                referenceFasta: referenceFasta,
+                kmerSize: 31,
+                hammingDistance: 1
+            )
+        }
+
+        return .contaminantFilter(
+            mode: .phix,
+            referenceFasta: nil,
+            kmerSize: 31,
+            hammingDistance: 1
+        )
+    }
+
+    private func concretePrimerTrimRequest() -> FASTQDerivativeRequest {
+        let referenceFasta = auxiliaryInputURL(for: .primerSource)?.path
+        return .primerRemoval(configuration: FASTQPrimerTrimConfiguration(
+            source: referenceFasta == nil ? .literal : .reference,
+            readMode: .single,
+            mode: .fivePrime,
+            forwardSequence: nil,
+            reverseSequence: nil,
+            referenceFasta: referenceFasta,
+            anchored5Prime: true,
+            anchored3Prime: true,
+            errorRate: 0.12,
+            minimumOverlap: 12,
+            allowIndels: true,
+            keepUntrimmed: false,
+            searchReverseComplement: true,
+            pairFilter: .any,
+            tool: .cutadapt,
+            ktrimDirection: .left,
+            kmerSize: 15,
+            minKmer: 11,
+            hammingDistance: 1
+        ))
     }
 
     func captureMinimap2Config(_ config: Minimap2Config) {
@@ -643,7 +856,7 @@ enum FASTQOperationOutputMode: String, CaseIterable, Sendable {
 
 enum FASTQOperationLaunchRequest: Sendable, Equatable {
     case refreshQCSummary(inputURLs: [URL])
-    case derivative(tool: FASTQOperationToolID, inputURLs: [URL], outputMode: FASTQOperationOutputMode)
+    case derivative(request: FASTQDerivativeRequest, inputURLs: [URL], outputMode: FASTQOperationOutputMode)
     case map(inputURLs: [URL], referenceURL: URL, outputMode: FASTQOperationOutputMode)
     case assemble(inputURLs: [URL], outputMode: FASTQOperationOutputMode)
     case classify(tool: FASTQOperationToolID, inputURLs: [URL], databaseName: String)
