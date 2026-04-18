@@ -488,6 +488,63 @@ final class PluginPackStatusServiceTests: XCTestCase {
         XCTAssertEqual(requiredSetup.failureMessage, "Storage location unavailable")
     }
 
+    func testInstallPackFailsFastWhenStorageIsUnavailable() async throws {
+        actor CallRecorder {
+            var installCalls = 0
+            var databaseCalls = 0
+
+            func recordInstall() {
+                installCalls += 1
+            }
+
+            func recordDatabase() {
+                databaseCalls += 1
+            }
+
+            func snapshot() -> (Int, Int) {
+                (installCalls, databaseCalls)
+            }
+        }
+
+        let recorder = CallRecorder()
+        let manager = CondaManager(
+            rootPrefix: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),
+            bundledMicromambaProvider: { nil },
+            bundledMicromambaVersionProvider: { nil }
+        )
+
+        let unavailableRoot = URL(fileURLWithPath: "/Volumes/LungfishSSD", isDirectory: true)
+        let service = PluginPackStatusService(
+            condaManager: manager,
+            installAction: { _, _, _, _ in
+                await recorder.recordInstall()
+            },
+            databaseInstallAction: { _, _, _ in
+                await recorder.recordDatabase()
+                return URL(fileURLWithPath: "/tmp/db")
+            },
+            storageAvailability: {
+                .unavailable(unavailableRoot)
+            }
+        )
+
+        do {
+            try await service.install(pack: .requiredSetupPack, reinstall: false, progress: nil)
+            XCTFail("Expected install to fail for unavailable storage")
+        } catch let error as PluginPackStatusServiceError {
+            guard case .storageUnavailable(let root) = error else {
+                return XCTFail("Unexpected service error: \(error)")
+            }
+            XCTAssertEqual(root.standardizedFileURL, unavailableRoot.standardizedFileURL)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        let snapshot = await recorder.snapshot()
+        XCTAssertEqual(snapshot.0, 0)
+        XCTAssertEqual(snapshot.1, 0)
+    }
+
     func testInstallPackUsesReinstallWhenRequested() async throws {
         actor InstallRecorder {
             var calls: [(packages: [String], environment: String, reinstall: Bool)] = []

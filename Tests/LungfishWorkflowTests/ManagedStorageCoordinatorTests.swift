@@ -125,16 +125,46 @@ final class ManagedStorageCoordinatorTests: XCTestCase {
         XCTAssertNil(config.migrationState)
     }
 
-    func testRemoveOldLocalCopiesDeletesPreviousRootAndClearsCleanupMetadata() async throws {
+    func testChangeLocationRejectsNestedRootRelationships() async throws {
+        let home = tempDir.appendingPathComponent("home", isDirectory: true)
+        let oldRoot = tempDir.appendingPathComponent("managed-root", isDirectory: true)
+        let newRoot = oldRoot.appendingPathComponent("nested-child", isDirectory: true)
+        let configStore = ManagedStorageConfigStore(homeDirectory: home)
+        try configStore.setActiveRoot(oldRoot)
+
+        let coordinator = ManagedStorageCoordinator(
+            configStore: configStore,
+            validator: { ManagedStorageLocation(rootURL: $0) },
+            databaseMigrator: { _, _ in XCTFail("Migration should not start for nested roots") },
+            toolInstaller: { _ in XCTFail("Install should not start for nested roots") },
+            verifier: { _ in XCTFail("Verification should not start for nested roots") }
+        )
+
+        do {
+            try await coordinator.changeLocation(to: newRoot)
+            XCTFail("Expected nested-root migration to fail")
+        } catch let error as ManagedStorageCoordinator.Error {
+            guard case .nestedRootRelationship(let currentRoot, let requestedRoot) = error else {
+                return XCTFail("Unexpected coordinator error: \(error)")
+            }
+            XCTAssertEqual(currentRoot.standardizedFileURL, oldRoot.standardizedFileURL)
+            XCTAssertEqual(requestedRoot.standardizedFileURL, newRoot.standardizedFileURL)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testRemoveOldLocalCopiesDeletesOnlyManagedContentWhenPreviousRootContainsOtherFiles() async throws {
         let home = tempDir.appendingPathComponent("home", isDirectory: true)
         let oldRoot = tempDir.appendingPathComponent("old-root", isDirectory: true)
         let newRoot = tempDir.appendingPathComponent("new-root", isDirectory: true)
         let configStore = ManagedStorageConfigStore(homeDirectory: home)
         try configStore.setActiveRoot(oldRoot)
-        try FileManager.default.createDirectory(at: oldRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: oldRoot.appendingPathComponent("conda"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: oldRoot.appendingPathComponent("databases"), withIntermediateDirectories: true)
         FileManager.default.createFile(
-            atPath: oldRoot.appendingPathComponent("sentinel.txt").path,
-            contents: Data("old-root".utf8)
+            atPath: oldRoot.appendingPathComponent("notes.txt").path,
+            contents: Data("keep-me".utf8)
         )
 
         let coordinator = ManagedStorageCoordinator(
@@ -150,12 +180,61 @@ final class ManagedStorageCoordinatorTests: XCTestCase {
 
         try await coordinator.removeOldLocalCopies()
 
-        XCTAssertFalse(FileManager.default.fileExists(atPath: oldRoot.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: oldRoot.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldRoot.appendingPathComponent("conda").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldRoot.appendingPathComponent("databases").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: oldRoot.appendingPathComponent("notes.txt").path))
         guard case .loaded(let config) = configStore.bootstrapConfigLoadState() else {
             return XCTFail("Expected bootstrap config to remain readable")
         }
         XCTAssertEqual(config.activeRootPath, newRoot.path)
         XCTAssertNil(config.previousRootPath)
         XCTAssertNil(config.migrationState)
+    }
+
+    func testRemoveOldLocalCopiesRejectsNestedRootRelationships() async throws {
+        let home = tempDir.appendingPathComponent("home", isDirectory: true)
+        let oldRoot = tempDir.appendingPathComponent("old-root", isDirectory: true)
+        let activeRoot = oldRoot.appendingPathComponent("nested-active", isDirectory: true)
+        let configStore = ManagedStorageConfigStore(homeDirectory: home)
+
+        try FileManager.default.createDirectory(at: oldRoot.appendingPathComponent("conda"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: oldRoot.appendingPathComponent("databases"), withIntermediateDirectories: true)
+
+        let config = ManagedStorageBootstrapConfig(
+            activeRootPath: activeRoot.path,
+            previousRootPath: oldRoot.path,
+            migrationState: .completed
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try FileManager.default.createDirectory(
+            at: configStore.configURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try encoder.encode(config).write(to: configStore.configURL, options: [.atomic])
+
+        let coordinator = ManagedStorageCoordinator(configStore: configStore)
+
+        do {
+            try await coordinator.removeOldLocalCopies()
+            XCTFail("Expected nested-root cleanup to fail")
+        } catch let error as ManagedStorageCoordinator.Error {
+            guard case .nestedRootRelationship(let currentRoot, let requestedRoot) = error else {
+                return XCTFail("Unexpected coordinator error: \(error)")
+            }
+            XCTAssertEqual(currentRoot.standardizedFileURL, activeRoot.standardizedFileURL)
+            XCTAssertEqual(requestedRoot.standardizedFileURL, oldRoot.standardizedFileURL)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: oldRoot.appendingPathComponent("conda").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: oldRoot.appendingPathComponent("databases").path))
+        guard case .loaded(let persisted) = configStore.bootstrapConfigLoadState() else {
+            return XCTFail("Expected cleanup metadata to remain after rejection")
+        }
+        XCTAssertEqual(persisted.previousRootPath, oldRoot.path)
+        XCTAssertEqual(persisted.migrationState, .completed)
     }
 }

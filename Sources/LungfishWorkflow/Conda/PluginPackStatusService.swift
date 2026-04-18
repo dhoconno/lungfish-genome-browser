@@ -91,6 +91,17 @@ public protocol PluginPackStatusProviding: Sendable {
     ) async throws
 }
 
+public enum PluginPackStatusServiceError: Swift.Error, LocalizedError, Equatable {
+    case storageUnavailable(URL)
+
+    public var errorDescription: String? {
+        switch self {
+        case .storageUnavailable(let root):
+            return "Storage location unavailable: \(root.path)"
+        }
+    }
+}
+
 public actor PluginPackStatusService: PluginPackStatusProviding {
     public typealias InstallAction = @Sendable (
         _ packages: [String],
@@ -236,6 +247,10 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
         reinstall: Bool,
         progress: (@Sendable (PluginPackInstallProgress) -> Void)?
     ) async throws {
+        if case .unavailable(let unavailableRoot) = storageAvailability() {
+            throw PluginPackStatusServiceError.storageUnavailable(unavailableRoot)
+        }
+
         await invalidateVisibleStatusesCache()
         let installTargets = pack.toolRequirements
         let totalSteps = max(installTargets.count, 1)

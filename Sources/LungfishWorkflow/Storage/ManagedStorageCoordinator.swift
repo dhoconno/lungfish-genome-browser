@@ -2,6 +2,17 @@ import Foundation
 import LungfishCore
 
 public actor ManagedStorageCoordinator {
+    public enum Error: Swift.Error, LocalizedError {
+        case nestedRootRelationship(currentRoot: URL, requestedRoot: URL)
+
+        public var errorDescription: String? {
+            switch self {
+            case .nestedRootRelationship(let currentRoot, let requestedRoot):
+                return "Managed storage roots must not be nested: \(currentRoot.path) and \(requestedRoot.path)"
+            }
+        }
+    }
+
     public typealias Validator = @Sendable (URL) throws -> ManagedStorageLocation
     public typealias DatabaseMigrator = @Sendable (_ from: URL, _ to: URL) async throws -> Void
     public typealias ToolInstaller = @Sendable (_ condaRoot: URL) async throws -> Void
@@ -45,6 +56,7 @@ public actor ManagedStorageCoordinator {
         guard current.rootURL.standardizedFileURL != validated.rootURL.standardizedFileURL else {
             return
         }
+        try validateNoNestedRelationship(currentRoot: current.rootURL, requestedRoot: validated.rootURL)
 
         let originalState = persistedConfigState()
         try fileManager.createDirectory(at: validated.rootURL, withIntermediateDirectories: true)
@@ -79,9 +91,23 @@ public actor ManagedStorageCoordinator {
 
         let activeRoot = URL(fileURLWithPath: config.activeRootPath, isDirectory: true).standardizedFileURL
         let previousRoot = URL(fileURLWithPath: previousRootPath, isDirectory: true).standardizedFileURL
+        try validateNoNestedRelationship(currentRoot: activeRoot, requestedRoot: previousRoot)
 
         if previousRoot != activeRoot, fileManager.fileExists(atPath: previousRoot.path) {
-            try fileManager.removeItem(at: previousRoot)
+            let previousLocation = ManagedStorageLocation(rootURL: previousRoot)
+            for managedURL in [previousLocation.condaRootURL, previousLocation.databaseRootURL] {
+                if fileManager.fileExists(atPath: managedURL.path) {
+                    try fileManager.removeItem(at: managedURL)
+                }
+            }
+
+            let remainingContents = try? fileManager.contentsOfDirectory(
+                at: previousRoot,
+                includingPropertiesForKeys: nil
+            )
+            if remainingContents?.isEmpty == true {
+                try fileManager.removeItem(at: previousRoot)
+            }
         }
 
         config.previousRootPath = nil
@@ -129,5 +155,25 @@ public actor ManagedStorageCoordinator {
         case .invalid(let error):
             throw error
         }
+    }
+
+    private func validateNoNestedRelationship(currentRoot: URL, requestedRoot: URL) throws {
+        let currentRoot = currentRoot.standardizedFileURL
+        let requestedRoot = requestedRoot.standardizedFileURL
+
+        if Self.isAncestor(currentRoot, of: requestedRoot) || Self.isAncestor(requestedRoot, of: currentRoot) {
+            throw Error.nestedRootRelationship(currentRoot: currentRoot, requestedRoot: requestedRoot)
+        }
+    }
+
+    private static func isAncestor(_ candidateAncestor: URL, of candidateDescendant: URL) -> Bool {
+        let ancestorComponents = candidateAncestor.standardizedFileURL.pathComponents
+        let descendantComponents = candidateDescendant.standardizedFileURL.pathComponents
+
+        guard ancestorComponents.count < descendantComponents.count else {
+            return false
+        }
+
+        return zip(ancestorComponents, descendantComponents).allSatisfy(==)
     }
 }
