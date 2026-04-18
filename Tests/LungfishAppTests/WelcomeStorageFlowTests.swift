@@ -183,6 +183,40 @@ final class WelcomeStorageFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testStorageChooserReferenceUsesDefaultLocationWhenCurrentRootIsDefault() {
+        let store = ManagedStorageConfigStore(homeDirectory: tempHome)
+        let viewModel = WelcomeViewModel(
+            statusProvider: SequencedWelcomeStorageStatusProvider(sequences: [[requiredStatus(state: .ready)]]),
+            storageConfigStore: store
+        )
+
+        XCTAssertEqual(viewModel.storageReferenceTitle, "Default location")
+        XCTAssertEqual(viewModel.storageReferenceRootURL.path, store.defaultLocation.rootURL.path)
+        XCTAssertEqual(
+            viewModel.storageReferenceMessage,
+            "Close this sheet to keep using the default location."
+        )
+    }
+
+    @MainActor
+    func testStorageChooserReferenceUsesCurrentLocationWhenCustomRootIsActive() throws {
+        let store = ManagedStorageConfigStore(homeDirectory: tempHome)
+        let customRoot = tempHome.appendingPathComponent("ExternalManagedStorage", isDirectory: true)
+        try store.setActiveRoot(customRoot)
+        let viewModel = WelcomeViewModel(
+            statusProvider: SequencedWelcomeStorageStatusProvider(sequences: [[requiredStatus(state: .ready)]]),
+            storageConfigStore: store
+        )
+
+        XCTAssertEqual(viewModel.storageReferenceTitle, "Current location")
+        XCTAssertEqual(viewModel.storageReferenceRootURL.path, customRoot.standardizedFileURL.path)
+        XCTAssertEqual(
+            viewModel.storageReferenceMessage,
+            "Close this sheet to keep using the current location."
+        )
+    }
+
+    @MainActor
     func testChooseAlternateStorageLocationPrefillsCurrentCustomRoot() throws {
         let store = ManagedStorageConfigStore(homeDirectory: tempHome)
         let customRoot = tempHome.appendingPathComponent("ExternalManagedStorage", isDirectory: true)

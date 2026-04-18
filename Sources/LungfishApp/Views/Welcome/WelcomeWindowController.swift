@@ -196,6 +196,27 @@ final class WelcomeViewModel: ObservableObject {
         storageConfigStore.defaultLocation.rootURL
     }
 
+    private var isUsingDefaultStorageRoot: Bool {
+        currentStorageRootURL.resolvingSymlinksInPath().standardizedFileURL
+            == defaultStorageRootURL.resolvingSymlinksInPath().standardizedFileURL
+    }
+
+    var storageReferenceTitle: String {
+        isUsingDefaultStorageRoot ? "Default location" : "Current location"
+    }
+
+    var storageReferenceRootURL: URL {
+        isUsingDefaultStorageRoot
+            ? defaultStorageRootURL.resolvingSymlinksInPath().standardizedFileURL
+            : currentStorageRootURL.resolvingSymlinksInPath().standardizedFileURL
+    }
+
+    var storageReferenceMessage: String {
+        isUsingDefaultStorageRoot
+            ? "Close this sheet to keep using the default location."
+            : "Close this sheet to keep using the current location."
+    }
+
     var isStorageChooserEnabled: Bool {
         !isInstallingRequiredSetup && !isRefreshingSetup && !isApplyingStorageSelection
     }
@@ -1127,13 +1148,13 @@ private struct WelcomeStorageChooserSheet: View {
                 .foregroundStyle(Color.lungfishWelcomeSecondaryText)
 
             VStack(alignment: .leading, spacing: 8) {
-                Label("Default location", systemImage: "checkmark.circle.fill")
+                Label(viewModel.storageReferenceTitle, systemImage: "checkmark.circle.fill")
                     .font(.headline)
                     .foregroundStyle(Color.lungfishSageFallback)
-                Text(viewModel.defaultStorageRootURL.path)
+                Text(viewModel.storageReferenceRootURL.path)
                     .font(.system(.body, design: .monospaced))
                     .textSelection(.enabled)
-                Text("Close this sheet to keep using the default location.")
+                Text(viewModel.storageReferenceMessage)
                     .font(.caption)
                     .foregroundStyle(Color.lungfishWelcomeSecondaryText)
             }
