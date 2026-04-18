@@ -147,12 +147,9 @@ final class WelcomeViewModel: ObservableObject {
 
     let recentProjects = RecentProjectsManager.shared
     private let statusProvider: any PluginPackStatusProviding
-<<<<<<< HEAD
     private let storageCoordinator: ManagedStorageCoordinator
     private let storageConfigStore: ManagedStorageConfigStore
-=======
     private let notificationCenter: NotificationCenter
->>>>>>> cc9a216b (fix: refresh metagenomics resource state in place)
 
     var onCreateProject: ((URL) -> Void)?
     var onOpenProject: ((URL) -> Void)?
