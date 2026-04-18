@@ -5,21 +5,26 @@
 
 import ArgumentParser
 import Foundation
+import LungfishCore
 import LungfishWorkflow
 
 /// Command for provisioning the bundled micromamba bootstrap tool.
 struct ProvisionToolsCommand: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(
-        commandName: "provision-tools",
-        abstract: "Provision the bundled micromamba bootstrap tool",
-        discussion: """
-            Provisions the bundled micromamba bootstrap binary used by Lungfish.
+    nonisolated(unsafe) static var storageRootOverride: URL?
 
-            This copies the version pinned in the application resources into the
-            managed tools directory so conda-based workflows can bootstrap their
-            own environments consistently.
-            """
-    )
+    static var configuration: CommandConfiguration {
+        CommandConfiguration(
+            commandName: "provision-tools",
+            abstract: "Provision the bundled micromamba bootstrap tool",
+            discussion: """
+                Provisions the bundled micromamba bootstrap binary used by Lungfish.
+
+                This copies the version pinned in the application resources into the
+                managed tools directory at \(managedStorageRootDescription()) so conda-based
+                workflows can bootstrap their own environments consistently.
+                """
+        )
+    }
 
     @OptionGroup var globalOptions: GlobalOptions
 
@@ -59,7 +64,7 @@ struct ProvisionToolsCommand: AsyncParsableCommand {
         if !globalOptions.quiet {
             print(formatter.header("Provisioning Bundled Bootstrap Tool"))
             print("Target architecture: \(targetArch.rawValue)")
-            print("Output directory: \(await orchestrator.getOutputDirectory().path)")
+            print("Output directory: \(Self.managedStorageRootDescription())")
             print("")
         }
 
@@ -199,6 +204,7 @@ struct ProvisionToolsCommand: AsyncParsableCommand {
             handler.writeData(InstallationStatusSummary(status: status), label: nil)
         } else {
             print(formatter.header("Bundled Bootstrap Tool Status"))
+            print("Output directory: \(Self.managedStorageRootDescription())")
             print("")
 
             for (name, installed) in status.sorted(by: { $0.key < $1.key }) {
@@ -219,6 +225,13 @@ struct ProvisionToolsCommand: AsyncParsableCommand {
         case .custom(let name):
             return "custom (\(name))"
         }
+    }
+
+    private static func managedStorageRootDescription() -> String {
+        if let storageRootOverride {
+            return storageRootOverride.path
+        }
+        return ManagedStorageConfigStore().currentLocation().condaRootURL.path
     }
 
     private func resolvedArchitecture() throws -> Architecture {

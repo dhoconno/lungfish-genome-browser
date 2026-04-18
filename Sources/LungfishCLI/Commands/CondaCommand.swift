@@ -12,33 +12,48 @@ import LungfishCore
 /// Install, remove, and run bioinformatics tools from the bioconda and
 /// conda-forge package repositories.
 struct CondaCommand: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(
-        commandName: "conda",
-        abstract: "Manage bioconda tool plugins via micromamba",
-        discussion: """
-        Install bioinformatics tools from bioconda and conda-forge using micromamba.
-        Each tool is installed in its own isolated environment to prevent dependency
-        conflicts. Tools are stored in ~/Library/Application Support/Lungfish/conda/.
-        """,
-        subcommands: [
-            InstallSubcommand.self,
-            RemoveSubcommand.self,
-            ListSubcommand.self,
-            SearchSubcommand.self,
-            RunSubcommand.self,
-            EnvsSubcommand.self,
-            SetupSubcommand.self,
-            PacksSubcommand.self,
-            ClassifyCommand.self,
-            DbCommand.self,
-            ExtractSubcommand.self,
-        ]
-    )
+    static var configuration: CommandConfiguration {
+        CommandConfiguration(
+            commandName: "conda",
+            abstract: "Manage bioconda tool plugins via micromamba",
+            discussion: """
+            Install bioinformatics tools from bioconda and conda-forge using micromamba.
+            Each tool is installed in its own isolated environment to prevent dependency
+            conflicts. Tools are stored in \(managedStorageRootDescription()).
+            """,
+            subcommands: [
+                InstallSubcommand.self,
+                RemoveSubcommand.self,
+                ListSubcommand.self,
+                SearchSubcommand.self,
+                RunSubcommand.self,
+                EnvsSubcommand.self,
+                SetupSubcommand.self,
+                PacksSubcommand.self,
+                ClassifyCommand.self,
+                DbCommand.self,
+                ExtractSubcommand.self,
+            ]
+        )
+    }
 }
 
 extension CondaCommand {
+    nonisolated(unsafe) static var storageRootOverride: URL?
+
     static func visiblePacksForTesting() -> [PluginPack] {
         PluginPack.visibleForCLI
+    }
+
+    static func storageUnavailableValidationError(for root: URL) -> ArgumentParser.ValidationError {
+        ArgumentParser.ValidationError("Storage location unavailable: \(root.path)")
+    }
+
+    private static func managedStorageRootDescription() -> String {
+        if let storageRootOverride {
+            return storageRootOverride.path
+        }
+        return ManagedStorageConfigStore().currentLocation().condaRootURL.path
     }
 }
 
@@ -88,6 +103,11 @@ extension CondaCommand {
                         }
                         print("")
                         print(formatter.success("Tool pack '\(pack.name)' installed"))
+                    } catch let error as PluginPackStatusServiceError {
+                        switch error {
+                        case .storageUnavailable(let root):
+                            throw CondaCommand.storageUnavailableValidationError(for: root)
+                        }
                     } catch {
                         print("")
                         print(formatter.error("Tool pack '\(pack.name)' failed: \(error.localizedDescription)"))
