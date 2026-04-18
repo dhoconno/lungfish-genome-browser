@@ -106,8 +106,8 @@ public final class DocumentSectionViewModel {
     }
 
     // MARK: - Layout Preferences
-    /// When true, taxonomy table is on the left instead of the default right.
-    var isTableOnLeft: Bool = UserDefaults.standard.bool(forKey: "metagenomicsTableOnLeft")
+    /// Persisted metagenomics layout preference, migrated from the legacy bool.
+    var metagenomicsPanelLayout: MetagenomicsPanelLayout = .current()
 
     // MARK: - Unified Classifier Sample Picker
     /// Shared classifier sample picker state for Inspector-embedded sample selector.

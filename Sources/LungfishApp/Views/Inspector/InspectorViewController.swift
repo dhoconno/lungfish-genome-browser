@@ -1728,18 +1728,22 @@ private struct MetagenomicsResultSummarySection: View {
                 Text("Panel Layout")
                     .font(.caption.weight(.semibold))
 
-                Picker("Layout", selection: $viewModel.isTableOnLeft) {
-                    Label("Detail | Table", systemImage: "sidebar.left")
-                        .tag(false)
-                    Label("Table | Detail", systemImage: "sidebar.right")
-                        .tag(true)
+                Picker("Layout", selection: Binding(
+                    get: { viewModel.metagenomicsPanelLayout },
+                    set: { newValue in
+                        viewModel.metagenomicsPanelLayout = newValue
+                        newValue.persist()
+                    }
+                )) {
+                    Label("Detail | List", systemImage: "sidebar.left")
+                        .tag(MetagenomicsPanelLayout.detailLeading)
+                    Label("List | Detail", systemImage: "sidebar.right")
+                        .tag(MetagenomicsPanelLayout.listLeading)
+                    Label("List Over Detail", systemImage: "rectangle.split.1x2")
+                        .tag(MetagenomicsPanelLayout.stacked)
                 }
                 .pickerStyle(.radioGroup)
                 .labelsHidden()
-                .onChange(of: viewModel.isTableOnLeft) { _, newValue in
-                    UserDefaults.standard.set(newValue, forKey: "metagenomicsTableOnLeft")
-                    NotificationCenter.default.post(name: .metagenomicsLayoutSwapRequested, object: nil)
-                }
             }
 
             if let tool = viewModel.batchOperationTool {
