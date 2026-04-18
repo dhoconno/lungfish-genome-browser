@@ -150,6 +150,19 @@ final class WindowAppearanceTests: XCTestCase {
         XCTAssertTrue(source.contains("if !embeddedInUnifiedRunner"))
     }
 
+    func testDatasetOperationsDialogUsesTwoPaneSharedShell() throws {
+        let source = try String(
+            contentsOf: repositoryRoot()
+                .appendingPathComponent("Sources/LungfishApp/Views/Operations/DatasetOperationsDialog.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("HStack(spacing: 0)"))
+        XCTAssertTrue(source.contains("toolSidebar"))
+        XCTAssertTrue(source.contains("detailPane"))
+        XCTAssertTrue(source.contains("footerBar"))
+    }
+
     private func repositoryRoot() -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
