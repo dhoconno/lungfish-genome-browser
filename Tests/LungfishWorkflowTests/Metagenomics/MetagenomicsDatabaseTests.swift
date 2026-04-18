@@ -4,6 +4,7 @@
 
 import XCTest
 @testable import LungfishWorkflow
+import LungfishCore
 
 // MARK: - MetagenomicsDatabaseInfoTests
 
@@ -355,6 +356,68 @@ final class MetagenomicsDatabaseRegistryTests: XCTestCase {
             XCTAssertEqual(db.status, .missing, "\(db.name) should start as .missing")
             XCTAssertFalse(db.isDownloaded, "\(db.name) should not be downloaded")
         }
+    }
+
+    func testSharedRegistryFollowsActiveRootChangesAfterInitialLoad() async throws {
+        let home = tempDir.appendingPathComponent("shared-home", isDirectory: true)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+
+        let store = ManagedStorageConfigStore(homeDirectory: home)
+        let originalShared = MetagenomicsDatabaseRegistry.shared
+        MetagenomicsDatabaseRegistry.shared = MetagenomicsDatabaseRegistry(storageConfigStore: store)
+        defer { MetagenomicsDatabaseRegistry.shared = originalShared }
+
+        let legacyDatabase = createMockKraken2Database(name: "legacy-only")
+        try await MetagenomicsDatabaseRegistry.shared.registerExisting(at: legacyDatabase, name: "LegacyOnly")
+        let legacyEntry = try await MetagenomicsDatabaseRegistry.shared.database(named: "LegacyOnly")
+        XCTAssertNotNil(legacyEntry)
+
+        let updatedRoot = home.appendingPathComponent("managed-storage", isDirectory: true)
+        try store.setActiveRoot(updatedRoot)
+
+        let reloadedDatabases = try await MetagenomicsDatabaseRegistry.shared.availableDatabases()
+        let storagePath = await MetagenomicsDatabaseRegistry.shared.storagePath
+        XCTAssertNil(reloadedDatabases.first { $0.name == "LegacyOnly" })
+        XCTAssertEqual(storagePath, updatedRoot.appendingPathComponent("databases", isDirectory: true).path)
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: updatedRoot
+                    .appendingPathComponent("databases/metagenomics-db-registry.json")
+                    .path
+            )
+        )
+    }
+
+    func testSetStorageLocationPersistsSharedManagedStorageRoot() async throws {
+        let home = tempDir.appendingPathComponent("storage-home", isDirectory: true)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+
+        let legacyKey = "DatabaseStorageLocation"
+        let originalLegacyValue = UserDefaults.standard.object(forKey: legacyKey)
+        UserDefaults.standard.set("/tmp/legacy-only", forKey: legacyKey)
+        addTeardownBlock {
+            if let originalLegacyValue {
+                UserDefaults.standard.set(originalLegacyValue, forKey: legacyKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: legacyKey)
+            }
+        }
+
+        let store = ManagedStorageConfigStore(homeDirectory: home)
+        let registry = MetagenomicsDatabaseRegistry(storageConfigStore: store)
+        let targetRoot = home.appendingPathComponent("custom-root", isDirectory: true)
+
+        try await registry.setStorageLocation(
+            targetRoot.appendingPathComponent("databases", isDirectory: true)
+        )
+
+        let storagePath = await registry.storagePath
+        XCTAssertEqual(
+            store.currentLocation().rootURL.standardizedFileURL.path,
+            targetRoot.standardizedFileURL.path
+        )
+        XCTAssertNil(UserDefaults.standard.object(forKey: legacyKey))
+        XCTAssertEqual(storagePath, targetRoot.appendingPathComponent("databases", isDirectory: true).path)
     }
 
     // MARK: - Manifest Persistence

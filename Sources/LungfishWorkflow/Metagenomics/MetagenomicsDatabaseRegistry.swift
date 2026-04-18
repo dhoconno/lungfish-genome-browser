@@ -81,10 +81,8 @@ public enum MetagenomicsDatabaseRegistryError: Error, LocalizedError, Sendable {
 ///
 /// ## Configurable Storage Location
 ///
-/// The storage location can be customized via UserDefaults key
-/// `"DatabaseStorageLocation"`. Call ``setStorageLocation(_:migrateExisting:)``
-/// to change it at runtime. The singleton reads the UserDefaults key on init
-/// to determine the initial base directory.
+/// The storage location follows the shared managed storage root. Call
+/// ``setStorageLocation(_:migrateExisting:)`` to change it at runtime.
 ///
 /// ## External Volume Support
 ///
@@ -103,16 +101,10 @@ public actor MetagenomicsDatabaseRegistry {
 
     /// Shared singleton instance.
     ///
-    /// Uses the default manifest path at `<databasesBaseURL>/metagenomics-db-registry.json`,
-    /// where `databasesBaseURL` is read from UserDefaults key `"DatabaseStorageLocation"`
-    /// or falls back to `~/.lungfish/databases/`.
-    public static let shared = MetagenomicsDatabaseRegistry()
-
-    /// UserDefaults key matching ``AppSettings/databaseStorageLocationKey``.
-    ///
-    /// Duplicated here to avoid a compile-time dependency on the `@MainActor`
-    /// `AppSettings` class from within this actor.
-    private static let storageLocationKey = "DatabaseStorageLocation"
+    /// Uses the current shared managed storage root for each access.
+    public nonisolated(unsafe) static var shared = MetagenomicsDatabaseRegistry(
+        storageConfigStore: ManagedStorageConfigStore()
+    )
 
     // MARK: - Storage
 
@@ -122,6 +114,9 @@ public actor MetagenomicsDatabaseRegistry {
     /// Base directory for downloaded databases.
     private(set) var databasesBaseURL: URL
 
+    /// Storage configuration source for shared managed storage resolution.
+    private let storageConfigStore: ManagedStorageConfigStore?
+
     /// In-memory database entries, keyed by name.
     private var databases: [String: MetagenomicsDatabaseInfo] = [:]
 
@@ -130,14 +125,18 @@ public actor MetagenomicsDatabaseRegistry {
 
     // MARK: - Initialization
 
-    /// Creates a registry backed by the configured or default `~/.lungfish/databases/` directory.
-    ///
-    /// Reads UserDefaults key `"DatabaseStorageLocation"` for a custom path.
-    /// Falls back to `~/.lungfish/databases/` if no custom path is set.
-    /// The directory and manifest file are created on first access if they do
-    /// not already exist.
+    /// Creates a registry backed by the current shared managed storage root.
     public init() {
-        let base = ManagedStorageConfigStore().currentLocation().databaseRootURL
+        let storageConfigStore = ManagedStorageConfigStore()
+        let base = storageConfigStore.currentLocation().databaseRootURL
+        self.storageConfigStore = storageConfigStore
+        self.databasesBaseURL = base
+        self.manifestURL = base.appendingPathComponent("metagenomics-db-registry.json")
+    }
+
+    init(storageConfigStore: ManagedStorageConfigStore) {
+        let base = storageConfigStore.currentLocation().databaseRootURL
+        self.storageConfigStore = storageConfigStore
         self.databasesBaseURL = base
         self.manifestURL = base.appendingPathComponent("metagenomics-db-registry.json")
     }
@@ -148,6 +147,7 @@ public actor MetagenomicsDatabaseRegistry {
     ///
     /// - Parameter baseDirectory: Root directory for the manifest and database storage.
     public init(baseDirectory: URL) {
+        self.storageConfigStore = nil
         self.databasesBaseURL = baseDirectory
         self.manifestURL = baseDirectory.appendingPathComponent("metagenomics-db-registry.json")
     }
@@ -160,14 +160,22 @@ public actor MetagenomicsDatabaseRegistry {
     /// new one. The manifest is always regenerated at the new location.
     ///
     /// - Parameters:
-    ///   - url: The new base directory URL.
+    ///   - url: The new shared storage root, or its `databases/` subdirectory.
     ///   - migrateExisting: If `true`, moves existing database files to the new location.
     ///     Defaults to `false`.
     public func setStorageLocation(_ url: URL, migrateExisting: Bool = false) throws {
+        refreshStorageLocationFromConfigIfNeeded(resetLoadedState: false)
+
         let oldBase = databasesBaseURL
-        let newBase = url
+        let normalized = Self.normalizeStorageLocation(url)
+        let newBase = normalized.databaseBaseURL
 
         let fm = FileManager.default
+
+        if let storageConfigStore {
+            try storageConfigStore.setActiveRoot(normalized.sharedRootURL)
+            UserDefaults.standard.removeObject(forKey: "DatabaseStorageLocation")
+        }
 
         // Create the new directory if needed.
         if !fm.fileExists(atPath: newBase.path) {
@@ -197,15 +205,6 @@ public actor MetagenomicsDatabaseRegistry {
         databasesBaseURL = newBase
         manifestURL = newBase.appendingPathComponent("metagenomics-db-registry.json")
 
-        // Persist UserDefaults.
-        let defaultBase = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".lungfish/databases")
-        if newBase.standardizedFileURL == defaultBase.standardizedFileURL {
-            UserDefaults.standard.removeObject(forKey: Self.storageLocationKey)
-        } else {
-            UserDefaults.standard.set(newBase.path, forKey: Self.storageLocationKey)
-        }
-
         // Save the manifest at the new location.
         if !databases.isEmpty {
             try saveManifest()
@@ -216,7 +215,8 @@ public actor MetagenomicsDatabaseRegistry {
 
     /// Returns the current base directory path for display purposes.
     public var storagePath: String {
-        databasesBaseURL.path
+        refreshStorageLocationFromConfigIfNeeded()
+        return databasesBaseURL.path
     }
 
     /// Loads the manifest from disk, or initializes from the built-in catalog
@@ -225,6 +225,7 @@ public actor MetagenomicsDatabaseRegistry {
     /// This method is idempotent -- calling it multiple times has no effect
     /// after the first successful load.
     public func loadIfNeeded() throws {
+        refreshStorageLocationFromConfigIfNeeded()
         guard databases.isEmpty else { return }
 
         let fm = FileManager.default
@@ -781,12 +782,47 @@ public actor MetagenomicsDatabaseRegistry {
 
         do {
             let data = try encoder.encode(manifest)
+            try FileManager.default.createDirectory(
+                at: manifestURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
             try data.write(to: manifestURL, options: .atomic)
         } catch {
             throw MetagenomicsDatabaseRegistryError.manifestIOError(
                 operation: "save", underlying: error
             )
         }
+    }
+
+    private func refreshStorageLocationFromConfigIfNeeded(resetLoadedState: Bool = true) {
+        guard let configuredBaseURL = storageConfigStore?.currentLocation().databaseRootURL.standardizedFileURL,
+              configuredBaseURL != databasesBaseURL.standardizedFileURL else {
+            return
+        }
+
+        databasesBaseURL = configuredBaseURL
+        manifestURL = configuredBaseURL.appendingPathComponent("metagenomics-db-registry.json")
+        if resetLoadedState {
+            databases.removeAll()
+        }
+    }
+
+    private static func normalizeStorageLocation(_ url: URL) -> (
+        sharedRootURL: URL,
+        databaseBaseURL: URL
+    ) {
+        let standardizedURL = url.standardizedFileURL
+        if standardizedURL.lastPathComponent == "databases" {
+            return (
+                sharedRootURL: standardizedURL.deletingLastPathComponent(),
+                databaseBaseURL: standardizedURL
+            )
+        }
+
+        return (
+            sharedRootURL: standardizedURL,
+            databaseBaseURL: standardizedURL.appendingPathComponent("databases", isDirectory: true)
+        )
     }
 
     /// Returns the names of required files missing from a database directory.

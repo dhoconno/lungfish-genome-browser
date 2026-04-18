@@ -86,7 +86,9 @@ public enum EsVirituDatabaseError: Error, LocalizedError, Sendable {
 public actor EsVirituDatabaseManager {
 
     /// Shared singleton instance.
-    public static let shared = EsVirituDatabaseManager()
+    public nonisolated(unsafe) static var shared = EsVirituDatabaseManager(
+        storageConfigStore: ManagedStorageConfigStore()
+    )
 
     /// Current database version.
     public static let currentVersion = "v3.2.4"
@@ -106,25 +108,37 @@ public actor EsVirituDatabaseManager {
     /// Approximate extracted size in bytes (~5 GB).
     public static let approximateExtractedSize: Int64 = 5_368_709_120
 
-    /// Root storage directory for all Lungfish databases.
-    private let databasesRoot: URL
+    /// Storage configuration source for shared managed storage resolution.
+    private let storageConfigStore: ManagedStorageConfigStore?
 
     private init() {
-        self.databasesRoot = ManagedStorageConfigStore().currentLocation().databaseRootURL
+        self.storageConfigStore = ManagedStorageConfigStore()
+        self.overriddenDatabasesRoot = nil
     }
 
     /// Creates a database manager with a custom storage root (for testing).
     ///
     /// - Parameter storageRoot: Custom root directory for database storage.
     init(storageRoot: URL) {
-        self.databasesRoot = storageRoot
+        self.storageConfigStore = nil
+        self.overriddenDatabasesRoot = storageRoot
     }
 
     init(storageConfigStore: ManagedStorageConfigStore) {
-        self.databasesRoot = storageConfigStore.currentLocation().databaseRootURL
+        self.storageConfigStore = storageConfigStore
+        self.overriddenDatabasesRoot = nil
     }
 
+    /// Fixed storage root used by tests that intentionally bypass shared storage.
+    private let overriddenDatabasesRoot: URL?
+
     // MARK: - Path Computation
+
+    private var databasesRoot: URL {
+        overriddenDatabasesRoot
+            ?? storageConfigStore?.currentLocation().databaseRootURL
+            ?? ManagedStorageConfigStore().currentLocation().databaseRootURL
+    }
 
     /// The storage path for the current version of the EsViritu database.
     ///

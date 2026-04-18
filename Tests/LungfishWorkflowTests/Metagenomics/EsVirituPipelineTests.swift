@@ -734,6 +734,43 @@ final class EsVirituDatabaseManagerTests: XCTestCase {
         )
     }
 
+    func testSharedManagerFollowsActiveRootChanges() async throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory
+            .appendingPathComponent("esviritu-shared-home-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: home) }
+
+        let store = ManagedStorageConfigStore(homeDirectory: home)
+        let originalShared = EsVirituDatabaseManager.shared
+        EsVirituDatabaseManager.shared = EsVirituDatabaseManager(storageConfigStore: store)
+        defer { EsVirituDatabaseManager.shared = originalShared }
+
+        let initialURL = await EsVirituDatabaseManager.shared.databaseURL
+        try fm.createDirectory(at: initialURL, withIntermediateDirectories: true)
+        try Data("fake".utf8).write(to: initialURL.appendingPathComponent("refseq_viral.fasta"))
+        let initiallyInstalled = await EsVirituDatabaseManager.shared.isInstalled()
+        XCTAssertTrue(initiallyInstalled)
+
+        let updatedRoot = home.appendingPathComponent("managed-storage", isDirectory: true)
+        try store.setActiveRoot(updatedRoot)
+
+        let updatedURL = await EsVirituDatabaseManager.shared.databaseURL
+        XCTAssertEqual(
+            updatedURL.standardizedFileURL.path,
+            updatedRoot
+                .appendingPathComponent("databases/esviritu/\(EsVirituDatabaseManager.currentVersion)", isDirectory: true)
+                .standardizedFileURL.path
+        )
+        let installedAfterRootChange = await EsVirituDatabaseManager.shared.isInstalled()
+        XCTAssertFalse(installedAfterRootChange)
+
+        try fm.createDirectory(at: updatedURL, withIntermediateDirectories: true)
+        try Data("fake".utf8).write(to: updatedURL.appendingPathComponent("refseq_viral.fasta"))
+        let installedAtUpdatedRoot = await EsVirituDatabaseManager.shared.isInstalled()
+        XCTAssertTrue(installedAtUpdatedRoot)
+    }
+
     func testIsInstalledReturnsFalseForMissingDatabase() async {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("esviritu-db-empty-\(UUID().uuidString)")
