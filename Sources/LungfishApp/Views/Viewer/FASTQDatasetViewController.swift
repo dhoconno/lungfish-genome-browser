@@ -555,7 +555,7 @@ public final class FASTQDatasetViewController: NSViewController {
         previewCanvas.update(operation: selectedOperation?.previewKind ?? .none, statistics: statistics)
         loadFASTAPreview(fastqURL: fastqURL, fallbackRecords: records)
         updateQualityReportButton()
-        updateParameterBar()
+        showOperationsDialogLauncherHint()
         setStatus("Loaded: \(statistics.readCount) reads")
         if let derivativeManifest {
             setStatus("Derived: \(derivativeManifest.operation.displaySummary)")
@@ -2792,10 +2792,26 @@ public final class FASTQDatasetViewController: NSViewController {
 
     private func launchFASTQOperationCategory(_ category: FASTQOperationCategoryID) {
         selectedOperation = nil
-        updateParameterBar()
+        showOperationsDialogLauncherHint()
         dismissErrorBanner()
         setStatus("Open \(titleForOperationCategory(category)) tools in the FASTQ operations dialog.")
         onLaunchFASTQOperationCategory?(category)
+    }
+
+    private func showOperationsDialogLauncherHint() {
+        for subview in parameterBar.arrangedSubviews {
+            parameterBar.removeArrangedSubview(subview)
+            subview.removeFromSuperview()
+        }
+
+        let label = NSTextField(labelWithString: "Choose a FASTQ operations category to open the dialog.")
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .tertiaryLabelColor
+        parameterBar.addArrangedSubview(label)
+
+        runButton.isEnabled = false
+        outputEstimateLabel.stringValue = ""
+        previewCanvas.update(operation: .none, statistics: statistics ?? .empty)
     }
 }
 

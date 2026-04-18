@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import LungfishWorkflow
 
 @MainActor
 @Observable
@@ -11,7 +12,7 @@ final class FASTQOperationDialogState {
                 return
             }
 
-            normalizeOutputMode()
+            normalizeSelectionState()
         }
     }
 
@@ -22,35 +23,226 @@ final class FASTQOperationDialogState {
                 return
             }
 
-            normalizeOutputMode()
+            normalizeSelectionState()
         }
     }
 
     var selectedInputURLs: [URL]
+    var auxiliaryInputs: [FASTQOperationInputKind: URL]
     var outputMode: FASTQOperationOutputMode {
         didSet {
             normalizeOutputMode()
         }
     }
+    var embeddedRunTrigger: Int
+    var projectURL: URL?
+    var outputDirectoryURL: URL?
+    var pendingLaunchRequest: FASTQOperationLaunchRequest?
+    var pendingMinimap2Config: Minimap2Config?
+    var pendingSPAdesConfig: SPAdesAssemblyConfig?
+    var pendingClassificationConfigs: [ClassificationConfig]
+    var pendingEsVirituConfigs: [EsVirituConfig]
+    var pendingTaxTriageConfig: TaxTriageConfig?
 
-    init(initialCategory: FASTQOperationCategoryID, selectedInputURLs: [URL]) {
+    private var embeddedToolReady: Bool
+
+    init(
+        initialCategory: FASTQOperationCategoryID,
+        selectedInputURLs: [URL],
+        projectURL: URL? = DocumentManager.shared.activeProject?.url
+    ) {
         let defaultToolID = initialCategory.defaultToolID
         self.selectedCategory = initialCategory
         self.selectedToolID = defaultToolID
         self.selectedInputURLs = selectedInputURLs
+        self.auxiliaryInputs = [:]
         self.outputMode = defaultToolID.defaultOutputMode
+        self.embeddedRunTrigger = 0
+        self.projectURL = projectURL
+        self.outputDirectoryURL = Self.defaultOutputDirectory(
+            projectURL: projectURL,
+            selectedInputURLs: selectedInputURLs
+        )
+        self.pendingLaunchRequest = nil
+        self.pendingMinimap2Config = nil
+        self.pendingSPAdesConfig = nil
+        self.pendingClassificationConfigs = []
+        self.pendingEsVirituConfigs = []
+        self.pendingTaxTriageConfig = nil
+        self.embeddedToolReady = defaultToolID.defaultEmbeddedReadiness
     }
 
     func selectCategory(_ category: FASTQOperationCategoryID) {
         selectedCategory = category
         selectedToolID = category.defaultToolID
-        outputMode = selectedToolID.defaultOutputMode
+        normalizeSelectionState()
     }
 
     func selectTool(_ toolID: FASTQOperationToolID) {
         selectedCategory = toolID.categoryID
         selectedToolID = toolID
-        outputMode = toolID.defaultOutputMode
+        normalizeSelectionState()
+    }
+
+    func setAuxiliaryInput(_ url: URL, for kind: FASTQOperationInputKind) {
+        auxiliaryInputs[kind] = url.standardizedFileURL
+    }
+
+    func removeAuxiliaryInput(for kind: FASTQOperationInputKind) {
+        auxiliaryInputs.removeValue(forKey: kind)
+    }
+
+    func auxiliaryInputURL(for kind: FASTQOperationInputKind) -> URL? {
+        auxiliaryInputs[kind]
+    }
+
+    func isAuxiliaryInputValid(for kind: FASTQOperationInputKind) -> Bool {
+        guard let url = auxiliaryInputs[kind] else { return false }
+        return kind.accepts(url: url)
+    }
+
+    func updateEmbeddedReadiness(_ ready: Bool) {
+        embeddedToolReady = ready
+    }
+
+    func prepareForRun() {
+        if selectedToolID.usesEmbeddedConfiguration {
+            pendingLaunchRequest = nil
+            embeddedRunTrigger += 1
+            return
+        }
+
+        pendingMinimap2Config = nil
+        pendingSPAdesConfig = nil
+        pendingClassificationConfigs = []
+        pendingEsVirituConfigs = []
+        pendingTaxTriageConfig = nil
+        pendingLaunchRequest = .derivative(
+            tool: selectedToolID,
+            inputURLs: selectedInputURLs,
+            outputMode: outputMode
+        )
+    }
+
+    func captureMinimap2Config(_ config: Minimap2Config) {
+        setAuxiliaryInput(config.referenceURL, for: .referenceSequence)
+        pendingMinimap2Config = config
+        pendingSPAdesConfig = nil
+        pendingClassificationConfigs = []
+        pendingEsVirituConfigs = []
+        pendingTaxTriageConfig = nil
+        pendingLaunchRequest = .map(
+            inputURLs: config.inputFiles,
+            referenceURL: config.referenceURL,
+            outputMode: outputMode
+        )
+        embeddedToolReady = true
+    }
+
+    func captureSPAdesConfig(_ config: SPAdesAssemblyConfig) {
+        outputDirectoryURL = config.outputDirectory
+        pendingMinimap2Config = nil
+        pendingSPAdesConfig = config
+        pendingClassificationConfigs = []
+        pendingEsVirituConfigs = []
+        pendingTaxTriageConfig = nil
+        pendingLaunchRequest = .assemble(
+            inputURLs: config.allInputFiles,
+            outputMode: outputMode
+        )
+        embeddedToolReady = true
+    }
+
+    func captureClassificationConfigs(_ configs: [ClassificationConfig]) {
+        guard let first = configs.first else { return }
+        setAuxiliaryInput(first.databasePath, for: .database)
+        pendingMinimap2Config = nil
+        pendingSPAdesConfig = nil
+        pendingClassificationConfigs = configs
+        pendingEsVirituConfigs = []
+        pendingTaxTriageConfig = nil
+        pendingLaunchRequest = .classify(
+            tool: .kraken2,
+            inputURLs: configs.flatMap(\.inputFiles),
+            databaseName: first.databaseName
+        )
+        embeddedToolReady = true
+    }
+
+    func captureEsVirituConfigs(_ configs: [EsVirituConfig]) {
+        guard let first = configs.first else { return }
+        setAuxiliaryInput(first.databasePath, for: .database)
+        pendingMinimap2Config = nil
+        pendingSPAdesConfig = nil
+        pendingClassificationConfigs = []
+        pendingEsVirituConfigs = configs
+        pendingTaxTriageConfig = nil
+        pendingLaunchRequest = .classify(
+            tool: .esViritu,
+            inputURLs: configs.flatMap(\.inputFiles),
+            databaseName: first.databasePath.lastPathComponent
+        )
+        embeddedToolReady = true
+    }
+
+    func captureTaxTriageConfig(_ config: TaxTriageConfig) {
+        if let databasePath = config.kraken2DatabasePath {
+            setAuxiliaryInput(databasePath, for: .database)
+        }
+        pendingMinimap2Config = nil
+        pendingSPAdesConfig = nil
+        pendingClassificationConfigs = []
+        pendingEsVirituConfigs = []
+        pendingTaxTriageConfig = config
+        pendingLaunchRequest = .classify(
+            tool: .taxTriage,
+            inputURLs: config.samples.flatMap { sample in
+                [sample.fastq1] + (sample.fastq2.map { [$0] } ?? [])
+            },
+            databaseName: config.kraken2DatabasePath?.lastPathComponent ?? ""
+        )
+        embeddedToolReady = true
+    }
+
+    var visibleSections: [DatasetOperationSection] {
+        var sections: [DatasetOperationSection] = [.inputs, .primarySettings, .advancedSettings]
+        if showsOutputStrategyPicker {
+            sections.append(.output)
+        }
+        sections.append(.readiness)
+        return sections
+    }
+
+    var inputSectionTitle: String {
+        DatasetOperationSection.inputs.title
+    }
+
+    var outputSectionTitle: String {
+        DatasetOperationSection.output.title
+    }
+
+    var readinessText: String {
+        if selectedInputURLs.isEmpty {
+            return "Select at least one FASTQ dataset."
+        }
+
+        if let missingKind = missingRequiredAuxiliaryInputKinds.first {
+            return missingKind.missingSelectionText
+        }
+
+        if !embeddedToolReady {
+            return selectedToolID.embeddedReadinessText
+        }
+
+        if showsOutputStrategyPicker {
+            return "Ready to configure output."
+        }
+
+        return "Batch output is fixed for this tool."
+    }
+
+    var outputStrategyOptions: [FASTQOperationOutputMode] {
+        showsOutputStrategyPicker ? [.perInput, .groupedResult] : [.fixedBatch]
     }
 
     var showsOutputStrategyPicker: Bool {
@@ -62,7 +254,9 @@ final class FASTQOperationDialogState {
     }
 
     var isRunEnabled: Bool {
-        !selectedInputURLs.isEmpty && requiredInputKinds.allSatisfy { $0 == .fastqDataset }
+        !selectedInputURLs.isEmpty
+        && missingRequiredAuxiliaryInputKinds.isEmpty
+        && embeddedToolReady
     }
 
     var datasetLabel: String {
@@ -78,6 +272,59 @@ final class FASTQOperationDialogState {
 
     var sidebarItems: [DatasetOperationToolSidebarItem] {
         Self.toolIDs(for: selectedCategory).map(\.sidebarItem)
+    }
+
+    var selectedToolSummary: String {
+        switch selectedToolID {
+        case .refreshQCSummary:
+            return "Recompute the QC summary for the selected FASTQ datasets."
+        case .demultiplexBarcodes:
+            return "Split pooled reads into sample-specific outputs using a barcode definition."
+        case .qualityTrim:
+            return "Trim low-quality bases from read ends."
+        case .adapterRemoval:
+            return "Remove adapter sequence from reads."
+        case .primerTrimming:
+            return "Trim PCR primer sequences using a literal or reference-backed source."
+        case .trimFixedBases:
+            return "Remove a fixed number of bases from either end of each read."
+        case .filterByReadLength:
+            return "Keep reads in the requested length range."
+        case .removeHumanReads:
+            return "Filter reads that match the configured human database."
+        case .removeContaminants:
+            return "Filter reads that match a contaminant reference."
+        case .removeDuplicates:
+            return "Collapse duplicate reads from the selected datasets."
+        case .mergeOverlappingPairs:
+            return "Merge overlapping paired-end reads."
+        case .repairPairedEndFiles:
+            return "Repair synchronization issues between paired-end mates."
+        case .orientReads:
+            return "Orient reads against a required reference sequence."
+        case .correctSequencingErrors:
+            return "Correct likely sequencing errors before downstream analysis."
+        case .subsampleByProportion:
+            return "Keep a user-defined fraction of reads."
+        case .subsampleByCount:
+            return "Keep a fixed number of reads."
+        case .extractReadsByID:
+            return "Extract reads whose identifiers match the requested values."
+        case .extractReadsByMotif:
+            return "Extract reads containing the requested motif."
+        case .selectReadsBySequence:
+            return "Keep reads matching a target sequence."
+        case .minimap2:
+            return "Configure minimap2 mapping against a reference sequence."
+        case .spades:
+            return "Configure a SPAdes assembly run."
+        case .kraken2:
+            return "Configure Kraken2 classification."
+        case .esViritu:
+            return "Configure EsViritu viral detection."
+        case .taxTriage:
+            return "Configure TaxTriage pathogen triage."
+        }
     }
 
     static func toolIDs(for category: FASTQOperationCategoryID) -> [FASTQOperationToolID] {
@@ -101,6 +348,48 @@ final class FASTQOperationDialogState {
         case .classification:
             return [.kraken2, .esViritu, .taxTriage]
         }
+    }
+
+    private var missingRequiredAuxiliaryInputKinds: [FASTQOperationInputKind] {
+        guard !selectedToolID.usesEmbeddedConfiguration else {
+            return []
+        }
+
+        return requiredInputKinds.filter { kind in
+            kind != .fastqDataset && !isAuxiliaryInputValid(for: kind)
+        }
+    }
+
+    private func normalizeSelectionState() {
+        auxiliaryInputs = auxiliaryInputs.filter { requiredInputKinds.contains($0.key) }
+        embeddedToolReady = selectedToolID.defaultEmbeddedReadiness
+        embeddedRunTrigger = 0
+        pendingLaunchRequest = nil
+        pendingMinimap2Config = nil
+        pendingSPAdesConfig = nil
+        pendingClassificationConfigs = []
+        pendingEsVirituConfigs = []
+        pendingTaxTriageConfig = nil
+        normalizeOutputMode()
+    }
+
+    private func normalizeOutputMode() {
+        if outputMode != selectedToolID.defaultOutputMode && !selectedToolID.supportsConfigurableOutput {
+            outputMode = selectedToolID.defaultOutputMode
+            return
+        }
+
+        if !outputStrategyOptions.contains(outputMode) {
+            outputMode = outputStrategyOptions.first ?? selectedToolID.defaultOutputMode
+        }
+    }
+
+    private static func defaultOutputDirectory(projectURL: URL?, selectedInputURLs: [URL]) -> URL? {
+        if let projectURL {
+            return projectURL.appendingPathComponent("Analyses", isDirectory: true)
+        }
+
+        return selectedInputURLs.first?.deletingLastPathComponent()
     }
 }
 
@@ -245,6 +534,41 @@ enum FASTQOperationToolID: String, CaseIterable, Sendable {
             availability: .available
         )
     }
+
+    var usesEmbeddedConfiguration: Bool {
+        switch self {
+        case .minimap2, .spades, .kraken2, .esViritu, .taxTriage:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var supportsConfigurableOutput: Bool {
+        categoryID != .classification
+    }
+
+    var defaultEmbeddedReadiness: Bool {
+        switch self {
+        case .minimap2, .kraken2, .esViritu, .taxTriage:
+            return false
+        default:
+            return true
+        }
+    }
+
+    var embeddedReadinessText: String {
+        switch self {
+        case .minimap2:
+            return "Select a reference sequence to continue."
+        case .kraken2, .esViritu, .taxTriage:
+            return "Complete the classifier settings to continue."
+        case .spades:
+            return "Complete the assembly settings to continue."
+        default:
+            return "Complete the required tool settings to continue."
+        }
+    }
 }
 
 enum FASTQOperationInputKind: String, CaseIterable, Sendable {
@@ -254,12 +578,70 @@ enum FASTQOperationInputKind: String, CaseIterable, Sendable {
     case barcodeDefinition
     case primerSource
     case contaminantReference
+
+    var title: String {
+        switch self {
+        case .fastqDataset:
+            return "FASTQ Datasets"
+        case .referenceSequence:
+            return "Reference Sequence"
+        case .database:
+            return "Database"
+        case .barcodeDefinition:
+            return "Barcode Definition"
+        case .primerSource:
+            return "Primer Source"
+        case .contaminantReference:
+            return "Contaminant Reference"
+        }
+    }
+
+    var missingSelectionText: String {
+        switch self {
+        case .referenceSequence:
+            return "Select a reference sequence to continue."
+        case .database:
+            return "Select a database to continue."
+        case .barcodeDefinition:
+            return "Select a barcode definition to continue."
+        case .primerSource:
+            return "Select a primer source to continue."
+        case .contaminantReference:
+            return "Select a contaminant reference to continue."
+        case .fastqDataset:
+            return "Select at least one FASTQ dataset."
+        }
+    }
+
+    func accepts(url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        let fastaLike = ["fa", "fasta", "fna", "fas", "ffn", "frn", "faa", "gb", "gbk", "gbff", "embl", "lungfishref"]
+        let textLike = ["txt", "csv", "tsv", "json", "fasta", "fa"]
+
+        switch self {
+        case .fastqDataset:
+            return true
+        case .referenceSequence, .contaminantReference:
+            return fastaLike.contains(ext)
+        case .database:
+            return url.hasDirectoryPath || ext.isEmpty || ["db", "k2d", "sqlite", "json"].contains(ext)
+        case .barcodeDefinition, .primerSource:
+            return textLike.contains(ext)
+        }
+    }
 }
 
 enum FASTQOperationOutputMode: String, CaseIterable, Sendable {
     case perInput
     case groupedResult
     case fixedBatch
+}
+
+enum FASTQOperationLaunchRequest: Sendable, Equatable {
+    case derivative(tool: FASTQOperationToolID, inputURLs: [URL], outputMode: FASTQOperationOutputMode)
+    case map(inputURLs: [URL], referenceURL: URL, outputMode: FASTQOperationOutputMode)
+    case assemble(inputURLs: [URL], outputMode: FASTQOperationOutputMode)
+    case classify(tool: FASTQOperationToolID, inputURLs: [URL], databaseName: String)
 }
 
 extension FASTQOperationCategoryID {
@@ -283,15 +665,6 @@ extension FASTQOperationCategoryID {
             return .spades
         case .classification:
             return .kraken2
-        }
-    }
-}
-
-private extension FASTQOperationDialogState {
-    func normalizeOutputMode() {
-        let enforcedMode = selectedToolID.defaultOutputMode
-        if outputMode != enforcedMode {
-            outputMode = enforcedMode
         }
     }
 }

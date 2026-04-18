@@ -1,8 +1,63 @@
 import XCTest
 @testable import LungfishApp
+@testable import LungfishWorkflow
 
 @MainActor
 final class FASTQOperationDialogRoutingTests: XCTestCase {
+    func testDerivativeToolsExposeStandardizedPaneSectionsAndOutputStrategy() {
+        let state = FASTQOperationDialogState(
+            initialCategory: .trimmingFiltering,
+            selectedInputURLs: [URL(fileURLWithPath: "/tmp/sample.lungfishfastq")]
+        )
+
+        state.selectTool(.qualityTrim)
+
+        XCTAssertEqual(
+            state.visibleSections,
+            [.inputs, .primarySettings, .advancedSettings, .output, .readiness]
+        )
+        XCTAssertEqual(state.inputSectionTitle, "Inputs")
+        XCTAssertEqual(state.outputSectionTitle, "Output")
+        XCTAssertEqual(state.readinessText, "Ready to configure output.")
+        XCTAssertEqual(state.outputStrategyOptions, [.perInput, .groupedResult])
+    }
+
+    func testOrientingRequiresReferenceSequenceBeforeRunCanProceed() {
+        let state = FASTQOperationDialogState(
+            initialCategory: .readProcessing,
+            selectedInputURLs: [URL(fileURLWithPath: "/tmp/sample.lungfishfastq")]
+        )
+
+        state.selectTool(.orientReads)
+
+        XCTAssertEqual(state.requiredInputKinds, [.fastqDataset, .referenceSequence])
+        XCTAssertFalse(state.isRunEnabled)
+        XCTAssertEqual(state.readinessText, "Select a reference sequence to continue.")
+
+        state.setAuxiliaryInput(
+            URL(fileURLWithPath: "/tmp/reference.fasta"),
+            for: .referenceSequence
+        )
+
+        XCTAssertTrue(state.isRunEnabled)
+        XCTAssertEqual(state.auxiliaryInputURL(for: .referenceSequence)?.lastPathComponent, "reference.fasta")
+        XCTAssertEqual(state.readinessText, "Ready to configure output.")
+    }
+
+    func testOrientingRejectsInvalidReferenceSelection() {
+        let state = FASTQOperationDialogState(
+            initialCategory: .readProcessing,
+            selectedInputURLs: [URL(fileURLWithPath: "/tmp/sample.lungfishfastq")]
+        )
+
+        state.selectTool(.orientReads)
+        state.setAuxiliaryInput(URL(fileURLWithPath: "/tmp/not-a-reference.pdf"), for: .referenceSequence)
+
+        XCTAssertFalse(state.isAuxiliaryInputValid(for: .referenceSequence))
+        XCTAssertFalse(state.isRunEnabled)
+        XCTAssertEqual(state.readinessText, "Select a reference sequence to continue.")
+    }
+
     func testClassificationToolsUseFixedBatchOutputModeAndHideOutputStrategyPicker() {
         let state = FASTQOperationDialogState(
             initialCategory: .classification,
@@ -32,6 +87,21 @@ final class FASTQOperationDialogRoutingTests: XCTestCase {
         XCTAssertTrue(state.showsOutputStrategyPicker)
         XCTAssertFalse(state.isRunEnabled)
         XCTAssertTrue(state.requiredInputKinds.contains(.referenceSequence))
+
+        state.outputMode = .groupedResult
+        XCTAssertEqual(state.outputMode, .groupedResult)
+    }
+
+    func testAssemblyAllowsGroupedResultOutputMode() {
+        let state = FASTQOperationDialogState(
+            initialCategory: .assembly,
+            selectedInputURLs: [URL(fileURLWithPath: "/tmp/sample.lungfishfastq")]
+        )
+
+        XCTAssertEqual(state.outputMode, .perInput)
+
+        state.outputMode = .groupedResult
+        XCTAssertEqual(state.outputMode, .groupedResult)
     }
 
     func testAssemblyCategorySeedsSpadesAsDefaultTool() {
@@ -56,5 +126,96 @@ final class FASTQOperationDialogRoutingTests: XCTestCase {
         )
 
         XCTAssertEqual(state.datasetLabel, "3 FASTQ datasets")
+    }
+
+    func testToolPaneFileRoutesSpecialToolsThroughEmbeddedSheets() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = root
+            .appendingPathComponent("Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        XCTAssertTrue(source.contains("MapReadsWizardSheet("))
+        XCTAssertTrue(source.contains("AssemblyWizardSheet("))
+        XCTAssertTrue(source.contains("ClassificationWizardSheet("))
+        XCTAssertTrue(source.contains("embeddedInOperationsDialog: true"))
+    }
+
+    func testDerivativeToolPaneProvidesAuxiliaryInputChooser() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = root
+            .appendingPathComponent("Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        XCTAssertTrue(source.contains(".fileImporter("))
+        XCTAssertTrue(source.contains("state.setAuxiliaryInput(url, for: browsingInputKind)"))
+        XCTAssertTrue(source.contains(#"Button(state.auxiliaryInputURL(for: kind) == nil ? "Choose…" : "Replace…")"#))
+    }
+
+    func testDialogRunButtonWiresEmbeddedRunTriggerIntoSpecialToolPanes() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let toolPanesSource = try String(
+            contentsOf: root.appendingPathComponent("Sources/LungfishApp/Views/FASTQ/FASTQOperationToolPanes.swift"),
+            encoding: .utf8
+        )
+        let dialogSource = try String(
+            contentsOf: root.appendingPathComponent("Sources/LungfishApp/Views/FASTQ/FASTQOperationDialog.swift"),
+            encoding: .utf8
+        )
+        let stateSource = try String(
+            contentsOf: root.appendingPathComponent("Sources/LungfishApp/Views/FASTQ/FASTQOperationDialogState.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(toolPanesSource.contains("embeddedRunTrigger: state.embeddedRunTrigger"))
+        XCTAssertTrue(dialogSource.contains("state.prepareForRun()"))
+        XCTAssertTrue(stateSource.contains("var embeddedRunTrigger"))
+    }
+
+    func testClassificationCapturePreservesAllBatchInputs() {
+        let databaseURL = URL(fileURLWithPath: "/tmp/kraken-db")
+        let outputURL = URL(fileURLWithPath: "/tmp/classification")
+        let state = FASTQOperationDialogState(
+            initialCategory: .classification,
+            selectedInputURLs: [URL(fileURLWithPath: "/tmp/sample-1.fastq")]
+        )
+
+        state.captureClassificationConfigs([
+            ClassificationConfig(
+                inputFiles: [URL(fileURLWithPath: "/tmp/sample-1.fastq")],
+                isPairedEnd: false,
+                databaseName: "standard",
+                databasePath: databaseURL,
+                outputDirectory: outputURL
+            ),
+            ClassificationConfig(
+                inputFiles: [URL(fileURLWithPath: "/tmp/sample-2.fastq")],
+                isPairedEnd: false,
+                databaseName: "standard",
+                databasePath: databaseURL,
+                outputDirectory: outputURL
+            ),
+        ])
+
+        XCTAssertEqual(state.pendingClassificationConfigs.count, 2)
+        XCTAssertEqual(
+            state.pendingLaunchRequest,
+            .classify(
+                tool: .kraken2,
+                inputURLs: [
+                    URL(fileURLWithPath: "/tmp/sample-1.fastq"),
+                    URL(fileURLWithPath: "/tmp/sample-2.fastq"),
+                ],
+                databaseName: "standard"
+            )
+        )
     }
 }

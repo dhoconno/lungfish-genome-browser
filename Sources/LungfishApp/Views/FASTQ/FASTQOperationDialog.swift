@@ -16,9 +16,16 @@ struct FASTQOperationDialog: View {
             isRunEnabled: state.isRunEnabled,
             onSelectTool: selectTool(named:),
             onCancel: onCancel,
-            onRun: onRun
+            onRun: handleRun
         ) {
-            placeholderDetail
+            FASTQOperationToolPanes(state: state)
+        }
+        .onChange(of: state.pendingLaunchRequest) { _, request in
+            guard state.selectedToolID.usesEmbeddedConfiguration, request != nil else {
+                return
+            }
+
+            onRun()
         }
     }
 
@@ -27,44 +34,17 @@ struct FASTQOperationDialog: View {
     }
 
     private var statusText: String {
-        guard !state.selectedInputURLs.isEmpty else {
-            return "Select at least one FASTQ dataset."
-        }
-
-        guard state.isRunEnabled else {
-            return "Add the remaining required inputs before running."
-        }
-
-        if state.showsOutputStrategyPicker {
-            return "Ready to configure output."
-        } else {
-            return "Batch output is fixed for this tool."
-        }
+        state.readinessText
     }
 
-    @ViewBuilder
-    private var placeholderDetail: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(state.selectedToolID.title)
-                .font(.title3.weight(.semibold))
-            Text(state.selectedToolID.subtitle)
-                .foregroundStyle(.secondary)
-            Text("Detail pane placeholder.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text("Required inputs: \(requiredInputSummary)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text("Output mode: \(state.outputMode.rawValue)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
+    private func handleRun() {
+        state.prepareForRun()
 
-    private var requiredInputSummary: String {
-        state.requiredInputKinds
-            .map { $0.rawValue }
-            .joined(separator: ", ")
+        guard !state.selectedToolID.usesEmbeddedConfiguration else {
+            return
+        }
+
+        onRun()
     }
 
     private func selectTool(named rawValue: String) {

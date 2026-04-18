@@ -448,6 +448,25 @@ final class FASTQDashboardTests: XCTestCase {
         XCTAssertEqual(launchedCategory, .qcReporting)
     }
 
+    func testFASTQDatasetViewControllerLaunchPathRemovesDrawerFirstOperationsFlow() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = root
+            .appendingPathComponent("Sources/LungfishApp/Views/Viewer/FASTQDatasetViewController.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        let launchRange = try XCTUnwrap(source.range(of: "private func launchFASTQOperationCategory"))
+        let launchSuffix = source[launchRange.lowerBound...]
+        let launchBody = launchSuffix.prefix(500)
+
+        XCTAssertFalse(launchBody.localizedCaseInsensitiveContains("drawer"))
+        XCTAssertFalse(launchBody.contains("updateParameterBar()"))
+        XCTAssertTrue(launchBody.contains("selectedOperation = nil"))
+        XCTAssertTrue(launchBody.contains("onLaunchFASTQOperationCategory?(category)"))
+    }
+
     @MainActor
     func testFASTQOperationInputResolutionPrefersExplicitDisplayedDataset() {
         let displayedBundleURL = URL(fileURLWithPath: "/tmp/displayed.lungfishfastq")
