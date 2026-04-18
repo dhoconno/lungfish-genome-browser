@@ -181,6 +181,18 @@ final class WelcomeSetupTests: XCTestCase {
         XCTAssertTrue(source.contains("Text(status.pack.name)"))
     }
 
+    func testWelcomeViewSourceIncludesAlternateStorageAction() throws {
+        let source = try String(
+            contentsOf: repositoryRoot()
+                .appendingPathComponent("Sources/LungfishApp/Views/Welcome/WelcomeWindowController.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("Need more space? Choose another storage location…"))
+        XCTAssertTrue(source.contains("Button(\"Use This Location\")"))
+        XCTAssertTrue(source.contains(".disabled(!viewModel.canConfirmStorageSelection)"))
+    }
+
     func testWelcomeViewSourceUsesWarmPaletteAndNoVerticalFixedSize() throws {
         let source = try String(
             contentsOf: repositoryRoot()

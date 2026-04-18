@@ -439,7 +439,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     // MARK: - Welcome Window
 
     private func showWelcomeWindow() {
-        welcomeWindowController = WelcomeWindowController()
+        let storageConfigStore = ManagedStorageConfigStore.shared
+        welcomeWindowController = WelcomeWindowController(
+            storageConfigStore: storageConfigStore,
+            storageCoordinator: ManagedStorageCoordinator(configStore: storageConfigStore)
+        )
 
         welcomeWindowController?.onProjectSelected = { [weak self] projectURL in
             self?.showMainWindowWithProject(projectURL)

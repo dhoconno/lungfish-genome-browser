@@ -141,21 +141,77 @@ final class WelcomeViewModel: ObservableObject {
     @Published private(set) var optionalPackStatuses: [PluginPackStatus] = []
     @Published var setupErrorMessage: String?
     @Published var showingSetupDetails = false
+    @Published var showingStorageChooser = false
+    @Published var pendingStorageSelection: URL?
+    @Published var storageValidationResult: ManagedStorageLocation.ValidationResult = .valid
 
     let recentProjects = RecentProjectsManager.shared
     private let statusProvider: any PluginPackStatusProviding
+    private let storageCoordinator: ManagedStorageCoordinator
+    private let storageConfigStore: ManagedStorageConfigStore
 
     var onCreateProject: ((URL) -> Void)?
     var onOpenProject: ((URL) -> Void)?
     var onOpenOptionalPack: ((String) -> Void)?
     var onDismiss: (() -> Void)?
 
-    init(statusProvider: any PluginPackStatusProviding = PluginPackStatusService.shared) {
+    init(
+        statusProvider: any PluginPackStatusProviding = PluginPackStatusService.shared,
+        storageCoordinator: ManagedStorageCoordinator? = nil,
+        storageConfigStore: ManagedStorageConfigStore? = nil
+    ) {
+        let resolvedStorageConfigStore = storageConfigStore ?? ManagedStorageConfigStore.shared
         self.statusProvider = statusProvider
+        self.storageConfigStore = resolvedStorageConfigStore
+        self.storageCoordinator = storageCoordinator ?? ManagedStorageCoordinator(configStore: resolvedStorageConfigStore)
     }
 
     var canLaunch: Bool {
         requiredSetupStatus?.state == .ready && !isInstallingRequiredSetup
+    }
+
+    var currentStorageRootURL: URL {
+        storageConfigStore.currentLocation().rootURL
+    }
+
+    var defaultStorageRootURL: URL {
+        storageConfigStore.defaultLocation.rootURL
+    }
+
+    var canConfirmStorageSelection: Bool {
+        guard let pendingStorageSelection else {
+            return false
+        }
+        guard case .valid = storageValidationResult else {
+            return false
+        }
+        return pendingStorageSelection.standardizedFileURL != currentStorageRootURL.standardizedFileURL
+    }
+
+    var pendingStorageSelectionPath: String {
+        pendingStorageSelection?.path ?? "No alternate storage location selected yet."
+    }
+
+    var storageValidationMessage: String? {
+        switch storageValidationResult {
+        case .valid:
+            return nil
+        case .invalid(let error):
+            switch error {
+            case .containsSpaces:
+                return "Storage locations cannot contain spaces in their resolved path."
+            case .nestedInsideProject:
+                return "Choose a location outside any .lungfish project folder."
+            case .nestedInsideAppBundle:
+                return "Choose a location outside the Lungfish app bundle."
+            case .notWritable:
+                return "The selected location is not writable."
+            case .unsupportedFilesystem:
+                return "The selected location uses an unsupported filesystem."
+            case .unreachable:
+                return "The selected location is not reachable right now."
+            }
+        }
     }
 
     func refreshSetup() async {
@@ -205,6 +261,45 @@ final class WelcomeViewModel: ObservableObject {
                 setupErrorMessage = error.localizedDescription
             }
         }
+    }
+
+    func validateStorageSelection(_ url: URL) -> ManagedStorageLocation.ValidationResult {
+        ManagedStorageLocation.validateSelection(url)
+    }
+
+    func chooseAlternateStorageLocation() {
+        pendingStorageSelection = nil
+        storageValidationResult = .valid
+        showingStorageChooser = true
+    }
+
+    func updatePendingStorageSelection(_ url: URL) {
+        let selection = url.standardizedFileURL
+        pendingStorageSelection = selection
+        storageValidationResult = validateStorageSelection(selection)
+    }
+
+    func dismissStorageChooser() {
+        showingStorageChooser = false
+        pendingStorageSelection = nil
+        storageValidationResult = .valid
+    }
+
+    func confirmAlternateStorageLocation() async throws {
+        guard case .valid = storageValidationResult, let selection = pendingStorageSelection else {
+            return
+        }
+        guard selection.standardizedFileURL != currentStorageRootURL.standardizedFileURL else {
+            return
+        }
+
+        try await storageCoordinator.changeLocation(to: selection)
+        await statusProvider.invalidateVisibleStatusesCache()
+        NotificationCenter.default.post(name: .databaseStorageLocationChanged, object: nil)
+        showingStorageChooser = false
+        pendingStorageSelection = nil
+        storageValidationResult = .valid
+        await refreshSetup()
     }
 }
 
@@ -301,6 +396,16 @@ struct WelcomeView: View {
             }
         } message: {
             Text(viewModel.setupErrorMessage ?? "")
+        }
+        .sheet(
+            isPresented: $viewModel.showingStorageChooser,
+            onDismiss: { viewModel.dismissStorageChooser() }
+        ) {
+            WelcomeStorageChooserSheet(viewModel: viewModel) {
+                Task { @MainActor in
+                    await showStorageLocationPanel()
+                }
+            }
         }
     }
 
@@ -411,7 +516,8 @@ struct WelcomeView: View {
                         itemProgress: viewModel.requiredSetupItemProgress,
                         activeItemID: viewModel.requiredSetupActiveItemID,
                         showingDetails: $viewModel.showingSetupDetails,
-                        onInstall: { viewModel.installRequiredSetup() }
+                        onInstall: { viewModel.installRequiredSetup() },
+                        onChooseAlternateStorage: { viewModel.chooseAlternateStorageLocation() }
                     )
                 }
             }
@@ -464,7 +570,8 @@ struct WelcomeView: View {
                     itemProgress: viewModel.requiredSetupItemProgress,
                     activeItemID: viewModel.requiredSetupActiveItemID,
                     showingDetails: $viewModel.showingSetupDetails,
-                    onInstall: { viewModel.installRequiredSetup() }
+                    onInstall: { viewModel.installRequiredSetup() },
+                    onChooseAlternateStorage: { viewModel.chooseAlternateStorageLocation() }
                 )
             }
 
@@ -615,6 +722,23 @@ struct WelcomeView: View {
             viewModel.onOpenProject?(url)
         }
     }
+
+    private func showStorageLocationPanel() async {
+        let openPanel = NSOpenPanel()
+        openPanel.title = "Choose Storage Location"
+        openPanel.message = "Select a storage location for managed tools and databases"
+        openPanel.canChooseFiles = false
+        openPanel.canChooseDirectories = true
+        openPanel.allowsMultipleSelection = false
+        openPanel.canCreateDirectories = true
+        openPanel.prompt = "Choose"
+
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
+        let response = await openPanel.beginSheetModal(for: window)
+        if response == .OK, let url = openPanel.url {
+            viewModel.updatePendingStorageSelection(url)
+        }
+    }
 }
 
 // MARK: - Welcome Components
@@ -730,6 +854,7 @@ private struct RequiredSetupCard: View {
     let activeItemID: String?
     @Binding var showingDetails: Bool
     let onInstall: () -> Void
+    let onChooseAlternateStorage: () -> Void
 
     private var isReady: Bool {
         status.state == .ready
@@ -783,6 +908,13 @@ private struct RequiredSetupCard: View {
                 .buttonStyle(.bordered)
                 .controlSize(.large)
                 .tint(.lungfishCreamsicleFallback)
+            }
+
+            if !isReady {
+                Button("Need more space? Choose another storage location…") {
+                    onChooseAlternateStorage()
+                }
+                .buttonStyle(.link)
             }
 
             if isInstalling {
@@ -897,6 +1029,99 @@ private struct RequiredSetupCard: View {
             return "Waiting…"
         }
         return toolStatus.statusText
+    }
+}
+
+private struct WelcomeStorageChooserSheet: View {
+    @ObservedObject var viewModel: WelcomeViewModel
+    let onChooseFolder: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Choose Another Storage Location")
+                .font(.title2.weight(.semibold))
+
+            Text("Lungfish installs managed tools and databases in the default storage root unless you choose a different location before setup.")
+                .font(.subheadline)
+                .foregroundStyle(Color.lungfishWelcomeSecondaryText)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Default location", systemImage: "checkmark.circle.fill")
+                    .font(.headline)
+                    .foregroundStyle(Color.lungfishSageFallback)
+                Text(viewModel.defaultStorageRootURL.path)
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+                Text("Close this sheet to keep using the default location.")
+                    .font(.caption)
+                    .foregroundStyle(Color.lungfishWelcomeSecondaryText)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.lungfishWelcomeBackground)
+            )
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Alternate location")
+                    .font(.headline)
+
+                Text(viewModel.pendingStorageSelectionPath)
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(
+                        viewModel.pendingStorageSelection == nil
+                            ? Color.lungfishWelcomeSecondaryText
+                            : Color.primary
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(Color.lungfishWelcomeStroke, lineWidth: 1)
+                    )
+
+                if let validationMessage = viewModel.storageValidationMessage {
+                    Text(validationMessage)
+                        .font(.caption)
+                        .foregroundStyle(Color.lungfishCreamsicleFallback)
+                }
+
+                Button("Choose Folder…") {
+                    onChooseFolder()
+                }
+                .buttonStyle(.bordered)
+                .tint(.lungfishCreamsicleFallback)
+            }
+
+            HStack {
+                Spacer()
+
+                Button("Cancel") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Button("Use This Location") {
+                    Task { @MainActor in
+                        do {
+                            try await viewModel.confirmAlternateStorageLocation()
+                            dismiss()
+                        } catch {
+                            viewModel.setupErrorMessage = error.localizedDescription
+                        }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.lungfishCreamsicleFallback)
+                .disabled(!viewModel.canConfirmStorageSelection)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 560)
+        .background(Color.lungfishWelcomeCardBackground)
     }
 }
 
@@ -1023,12 +1248,24 @@ private struct RecentProjectCard: View {
 public final class WelcomeWindowController: NSWindowController {
 
     private var viewModel: WelcomeViewModel!
+    private let statusProvider: any PluginPackStatusProviding
+    private let storageConfigStore: ManagedStorageConfigStore
+    private let storageCoordinator: ManagedStorageCoordinator
 
     /// Completion handler called when user makes a selection
     public var onProjectSelected: ((URL) -> Void)?
     public var onOptionalPackSelected: ((String) -> Void)?
 
-    public init() {
+    public init(
+        statusProvider: any PluginPackStatusProviding = PluginPackStatusService.shared,
+        storageConfigStore: ManagedStorageConfigStore? = nil,
+        storageCoordinator: ManagedStorageCoordinator? = nil
+    ) {
+        let resolvedStorageConfigStore = storageConfigStore ?? ManagedStorageConfigStore.shared
+        self.statusProvider = statusProvider
+        self.storageConfigStore = resolvedStorageConfigStore
+        self.storageCoordinator = storageCoordinator ?? ManagedStorageCoordinator(configStore: resolvedStorageConfigStore)
+
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1080, height: 680),
             styleMask: [.titled, .closable],
@@ -1052,7 +1289,11 @@ public final class WelcomeWindowController: NSWindowController {
     }
 
     private func setupContent() {
-        viewModel = WelcomeViewModel()
+        viewModel = WelcomeViewModel(
+            statusProvider: statusProvider,
+            storageCoordinator: storageCoordinator,
+            storageConfigStore: storageConfigStore
+        )
 
         viewModel.onCreateProject = { [weak self] url in
             logger.info("Creating project at: \(url.path, privacy: .public)")
