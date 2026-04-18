@@ -6,12 +6,26 @@ public struct ManagedToolLock: Sendable, Codable, Hashable {
         public let environment: String
         public let packageSpec: String
         public let executables: [String]
+        public let version: String?
+        public let license: String?
+        public let sourceUrl: String?
 
-        public init(id: String, environment: String, packageSpec: String, executables: [String]) {
+        public init(
+            id: String,
+            environment: String,
+            packageSpec: String,
+            executables: [String],
+            version: String? = nil,
+            license: String? = nil,
+            sourceUrl: String? = nil
+        ) {
             self.id = id
             self.environment = environment
             self.packageSpec = packageSpec
             self.executables = executables
+            self.version = version
+            self.license = license
+            self.sourceUrl = sourceUrl
         }
 
         public var displayName: String {
@@ -44,7 +58,10 @@ public struct ManagedToolLock: Sendable, Codable, Hashable {
                 installPackages: [packageSpec],
                 executables: executables,
                 fallbackExecutablePaths: fallbackExecutablePaths,
-                smokeTest: smokeTest
+                smokeTest: smokeTest,
+                version: version,
+                license: license,
+                sourceURL: sourceUrl
             )
         }
 

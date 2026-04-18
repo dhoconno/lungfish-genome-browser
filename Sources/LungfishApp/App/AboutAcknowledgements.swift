@@ -55,9 +55,9 @@ struct AboutAcknowledgements {
             return Entry(
                 id: requirement.id,
                 displayName: requirement.displayName,
-                detail: packageDetail(for: requirement),
-                secondaryDetail: nil,
-                sourceURL: nil
+                detail: requirement.version ?? packageDetail(for: requirement),
+                secondaryDetail: requirement.license,
+                sourceURL: requirement.sourceURL
             )
         }
     }

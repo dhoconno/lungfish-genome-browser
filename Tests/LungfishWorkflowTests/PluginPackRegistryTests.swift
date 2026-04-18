@@ -60,13 +60,54 @@ final class PluginPackRegistryTests: XCTestCase {
         XCTAssertEqual(lock.managedData.count, 1)
     }
 
+    func testRequiredSetupPackExposesPinnedAboutMetadata() throws {
+        let pack = PluginPack.requiredSetupPack
+
+        let nextflow = try XCTUnwrap(pack.toolRequirements.first(where: { $0.id == "nextflow" }))
+        XCTAssertEqual(nextflow.version, "25.10.4")
+        XCTAssertEqual(nextflow.license, "Apache-2.0")
+        XCTAssertEqual(nextflow.sourceURL, "https://github.com/nextflow-io/nextflow")
+
+        let bcftools = try XCTUnwrap(pack.toolRequirements.first(where: { $0.id == "bcftools" }))
+        XCTAssertEqual(bcftools.version, "1.23.1")
+        XCTAssertEqual(bcftools.license, "GPL")
+        XCTAssertEqual(bcftools.sourceURL, "https://github.com/samtools/bcftools")
+
+        let ucscBedToBigBed = try XCTUnwrap(pack.toolRequirements.first(where: { $0.id == "ucsc-bedtobigbed" }))
+        XCTAssertEqual(ucscBedToBigBed.version, "482")
+        XCTAssertEqual(ucscBedToBigBed.license, "Varies; see https://genome.ucsc.edu/license")
+        XCTAssertEqual(ucscBedToBigBed.sourceURL, "https://genome.ucsc.edu/goldenPath/help/bigBed.html")
+    }
+
     func testMetagenomicsPackDefinesSmokeChecksForVisibleTools() {
         let pack = try! XCTUnwrap(PluginPack.activeOptionalPacks.first(where: { $0.id == "metagenomics" }))
         let environments = pack.toolRequirements.map(\.environment)
 
         XCTAssertEqual(environments, ["kraken2", "bracken", "esviritu"])
         XCTAssertTrue(pack.toolRequirements.allSatisfy { $0.smokeTest != nil })
-        XCTAssertEqual(pack.toolRequirements.first(where: { $0.environment == "esviritu" })?.executables, ["esviritu"])
+        XCTAssertEqual(pack.toolRequirements.first(where: { $0.environment == "esviritu" })?.executables, ["EsViritu"])
+    }
+
+    func testMetagenomicsPackPinsExactToolMetadata() throws {
+        let pack = try XCTUnwrap(PluginPack.activeOptionalPacks.first(where: { $0.id == "metagenomics" }))
+
+        let kraken2 = try XCTUnwrap(pack.toolRequirements.first(where: { $0.id == "kraken2" }))
+        XCTAssertEqual(kraken2.installPackages, ["bioconda::kraken2=2.17.1"])
+        XCTAssertEqual(kraken2.version, "2.17.1")
+        XCTAssertEqual(kraken2.license, "GPL-3.0-or-later")
+        XCTAssertEqual(kraken2.sourceURL, "https://github.com/DerrickWood/kraken2")
+
+        let bracken = try XCTUnwrap(pack.toolRequirements.first(where: { $0.id == "bracken" }))
+        XCTAssertEqual(bracken.installPackages, ["bioconda::bracken=1.0.0"])
+        XCTAssertEqual(bracken.version, "1.0.0")
+        XCTAssertEqual(bracken.license, "GPL-3.0")
+        XCTAssertEqual(bracken.sourceURL, "https://github.com/jenniferlu717/Bracken")
+
+        let esviritu = try XCTUnwrap(pack.toolRequirements.first(where: { $0.id == "esviritu" }))
+        XCTAssertEqual(esviritu.installPackages, ["bioconda::esviritu=1.2.0"])
+        XCTAssertEqual(esviritu.version, "1.2.0")
+        XCTAssertEqual(esviritu.license, "MIT")
+        XCTAssertEqual(esviritu.sourceURL, "https://github.com/cmmr/EsViritu")
     }
 
     func testRequiredSetupPackUsesLighterSnakemakeSmokeProbe() {

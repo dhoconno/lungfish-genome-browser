@@ -102,6 +102,9 @@ public struct PackToolRequirement: Sendable, Codable, Hashable, Identifiable {
     public let fallbackExecutablePaths: [String: [String]]
     public let smokeTest: PackToolSmokeTest?
     public let managedDatabaseID: String?
+    public let version: String?
+    public let license: String?
+    public let sourceURL: String?
 
     public init(
         id: String,
@@ -111,7 +114,10 @@ public struct PackToolRequirement: Sendable, Codable, Hashable, Identifiable {
         executables: [String],
         fallbackExecutablePaths: [String: [String]] = [:],
         smokeTest: PackToolSmokeTest? = nil,
-        managedDatabaseID: String? = nil
+        managedDatabaseID: String? = nil,
+        version: String? = nil,
+        license: String? = nil,
+        sourceURL: String? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -121,6 +127,9 @@ public struct PackToolRequirement: Sendable, Codable, Hashable, Identifiable {
         self.fallbackExecutablePaths = fallbackExecutablePaths
         self.smokeTest = smokeTest
         self.managedDatabaseID = managedDatabaseID
+        self.version = version
+        self.license = license
+        self.sourceURL = sourceURL
     }
 
     public static func package(
@@ -314,9 +323,39 @@ public extension PluginPack {
             category: "Metagenomics",
             isActive: true,
             requirements: [
-                .package("kraken2", displayName: "Kraken 2", smokeTest: .command(arguments: ["--version"])),
-                .package("bracken", displayName: "Bracken", smokeTest: .command(arguments: ["--help"])),
-                .package("esviritu", displayName: "EsViritu", smokeTest: .command(arguments: ["--help"])),
+                PackToolRequirement(
+                    id: "kraken2",
+                    displayName: "Kraken 2",
+                    environment: "kraken2",
+                    installPackages: ["bioconda::kraken2=2.17.1"],
+                    executables: ["kraken2"],
+                    smokeTest: .command(arguments: ["--version"]),
+                    version: "2.17.1",
+                    license: "GPL-3.0-or-later",
+                    sourceURL: "https://github.com/DerrickWood/kraken2"
+                ),
+                PackToolRequirement(
+                    id: "bracken",
+                    displayName: "Bracken",
+                    environment: "bracken",
+                    installPackages: ["bioconda::bracken=1.0.0"],
+                    executables: ["bracken"],
+                    smokeTest: .command(arguments: ["--help"]),
+                    version: "1.0.0",
+                    license: "GPL-3.0",
+                    sourceURL: "https://github.com/jenniferlu717/Bracken"
+                ),
+                PackToolRequirement(
+                    id: "esviritu",
+                    displayName: "EsViritu",
+                    environment: "esviritu",
+                    installPackages: ["bioconda::esviritu=1.2.0"],
+                    executables: ["EsViritu"],
+                    smokeTest: .command(arguments: ["--help"]),
+                    version: "1.2.0",
+                    license: "MIT",
+                    sourceURL: "https://github.com/cmmr/EsViritu"
+                ),
             ],
             estimatedSizeMB: 1200
         ),
