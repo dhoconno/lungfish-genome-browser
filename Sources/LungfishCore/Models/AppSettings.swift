@@ -185,7 +185,11 @@ public final class AppSettings: Sendable {
     public var managedStorageRootURL: URL {
         get { ManagedStorageConfigStore.shared.currentLocation().rootURL }
         set {
-            try? ManagedStorageConfigStore.shared.setActiveRoot(newValue)
+            do {
+                try ManagedStorageConfigStore.shared.setActiveRoot(newValue)
+            } catch {
+                settingsLogger.warning("Failed to update managed storage root: \(String(describing: error), privacy: .public)")
+            }
         }
     }
 
@@ -474,6 +478,7 @@ public final class AppSettings: Sendable {
     public func resetToDefaults() {
         let fresh = AppSettings()
         apply(fresh.makeSnapshot())
+        resetManagedStorageState()
         settingsLogger.info("All settings reset to defaults")
     }
 
@@ -509,10 +514,19 @@ public final class AppSettings: Sendable {
             geminiModel = fresh.geminiModel
             preferredAIProvider = fresh.preferredAIProvider
         case .storage:
-            UserDefaults.standard.removeObject(forKey: Self.databaseStorageLocationKey)
-            NotificationCenter.default.post(name: .databaseStorageLocationChanged, object: nil)
+            resetManagedStorageState()
         }
         settingsLogger.info("Section '\(section.rawValue)' reset to defaults")
+    }
+
+    private func resetManagedStorageState() {
+        do {
+            try ManagedStorageConfigStore.shared.resetToDefaultLocation()
+        } catch {
+            settingsLogger.warning("Failed to reset managed storage state: \(String(describing: error), privacy: .public)")
+        }
+        UserDefaults.standard.removeObject(forKey: Self.databaseStorageLocationKey)
+        NotificationCenter.default.post(name: .databaseStorageLocationChanged, object: nil)
     }
 
     // MARK: - Color Helpers

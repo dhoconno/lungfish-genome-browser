@@ -121,6 +121,20 @@ final class AppSettingsTests: XCTestCase {
     }
 
     @MainActor
+    func testResetToDefaultsClearsManagedStorageBootstrapAndLegacyFallback() throws {
+        let customRoot = URL(fileURLWithPath: "/tmp/custom-lungfish", isDirectory: true)
+        let legacyKey = "DatabaseStorageLocation"
+        UserDefaults.standard.set("/tmp/legacy-lungfish", forKey: legacyKey)
+        try ManagedStorageConfigStore.shared.setActiveRoot(customRoot)
+
+        AppSettings.shared.resetToDefaults()
+
+        XCTAssertEqual(ManagedStorageConfigStore.shared.bootstrapConfigLoadState(), .missing)
+        XCTAssertEqual(ManagedStorageConfigStore.shared.currentLocation().rootURL.standardizedFileURL.path, ManagedStorageConfigStore.shared.defaultLocation.rootURL.standardizedFileURL.path)
+        XCTAssertNil(UserDefaults.standard.string(forKey: legacyKey))
+    }
+
+    @MainActor
     func testResetSection() {
         let settings = AppSettings.shared
 
@@ -142,6 +156,20 @@ final class AppSettingsTests: XCTestCase {
         // Reset appearance section
         settings.resetSection(.appearance)
         XCTAssertEqual(settings.annotationTypeColorHexes["gene"], "#339933", "Appearance section should be reset")
+    }
+
+    @MainActor
+    func testResetStorageSectionClearsManagedStorageBootstrapAndLegacyFallback() throws {
+        let customRoot = URL(fileURLWithPath: "/tmp/custom-lungfish", isDirectory: true)
+        let legacyKey = "DatabaseStorageLocation"
+        UserDefaults.standard.set("/tmp/legacy-lungfish", forKey: legacyKey)
+        try ManagedStorageConfigStore.shared.setActiveRoot(customRoot)
+
+        AppSettings.shared.resetSection(.storage)
+
+        XCTAssertEqual(ManagedStorageConfigStore.shared.bootstrapConfigLoadState(), .missing)
+        XCTAssertEqual(ManagedStorageConfigStore.shared.currentLocation().rootURL.standardizedFileURL.path, ManagedStorageConfigStore.shared.defaultLocation.rootURL.standardizedFileURL.path)
+        XCTAssertNil(UserDefaults.standard.string(forKey: legacyKey))
     }
 
     // MARK: - Decode Robustness

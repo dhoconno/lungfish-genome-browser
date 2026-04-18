@@ -25,6 +25,12 @@ public final class ManagedStorageConfigStore: @unchecked Sendable {
     @MainActor public static var shared = ManagedStorageConfigStore()
     private static let legacyDatabaseStorageLocationKey = "DatabaseStorageLocation"
 
+    public enum BootstrapConfigLoadState: Sendable, Equatable {
+        case missing
+        case malformed
+        case loaded(ManagedStorageBootstrapConfig)
+    }
+
     public let configURL: URL
 
     private let fileManager: FileManager
@@ -46,13 +52,36 @@ public final class ManagedStorageConfigStore: @unchecked Sendable {
         ManagedStorageLocation.defaultLocation(homeDirectory: homeDirectory)
     }
 
-    public func currentLocation() -> ManagedStorageLocation {
-        guard let config = loadBootstrapConfig(),
-              !config.activeRootPath.isEmpty else {
-            return legacyLocation() ?? defaultLocation
+    public func bootstrapConfigLoadState() -> BootstrapConfigLoadState {
+        guard fileManager.fileExists(atPath: configURL.path) else {
+            return .missing
         }
 
-        return ManagedStorageLocation(rootURL: URL(fileURLWithPath: config.activeRootPath, isDirectory: true))
+        do {
+            let data = try Data(contentsOf: configURL)
+            let config = try JSONDecoder().decode(ManagedStorageBootstrapConfig.self, from: data)
+            return .loaded(config)
+        } catch {
+            return .malformed
+        }
+    }
+
+    public func currentLocation() -> ManagedStorageLocation {
+        switch bootstrapConfigLoadState() {
+        case .loaded(let config) where !config.activeRootPath.isEmpty:
+            return ManagedStorageLocation(rootURL: URL(fileURLWithPath: config.activeRootPath, isDirectory: true))
+        case .missing:
+            return legacyLocation() ?? defaultLocation
+        case .malformed:
+            return defaultLocation
+        case .loaded:
+            return defaultLocation
+        }
+    }
+
+    public func resetToDefaultLocation() throws {
+        try removeBootstrapConfigIfPresent()
+        UserDefaults.standard.removeObject(forKey: Self.legacyDatabaseStorageLocationKey)
     }
 
     public func setActiveRoot(_ rootURL: URL) throws {
@@ -73,26 +102,17 @@ public final class ManagedStorageConfigStore: @unchecked Sendable {
         try saveBootstrapConfig(config)
     }
 
-    private func loadBootstrapConfig() -> ManagedStorageBootstrapConfig? {
-        guard fileManager.fileExists(atPath: configURL.path) else {
-            return nil
-        }
-
-        do {
-            let data = try Data(contentsOf: configURL)
-            return try JSONDecoder().decode(ManagedStorageBootstrapConfig.self, from: data)
-        } catch {
-            return nil
-        }
-    }
-
     private func legacyLocation() -> ManagedStorageLocation? {
         guard let path = UserDefaults.standard.string(forKey: Self.legacyDatabaseStorageLocationKey),
               !path.isEmpty else {
             return nil
         }
 
-        return ManagedStorageLocation(rootURL: URL(fileURLWithPath: path, isDirectory: true))
+        let location = ManagedStorageLocation(rootURL: URL(fileURLWithPath: path, isDirectory: true))
+        guard case .valid = ManagedStorageLocation.validateSelection(location.rootURL) else {
+            return nil
+        }
+        return location
     }
 
     private func saveBootstrapConfig(_ config: ManagedStorageBootstrapConfig) throws {

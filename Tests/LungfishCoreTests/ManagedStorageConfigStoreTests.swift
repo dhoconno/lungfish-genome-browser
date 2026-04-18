@@ -24,12 +24,41 @@ final class ManagedStorageConfigStoreTests: XCTestCase {
         XCTAssertEqual(config.migrationState, .pending)
     }
 
+    func testBootstrapConfigLoadStateDistinguishesMissingAndMalformedBootstrap() throws {
+        let home = try makeTemporaryHomeDirectory()
+        let store = ManagedStorageConfigStore(homeDirectory: home)
+
+        XCTAssertEqual(store.bootstrapConfigLoadState(), .missing)
+
+        try FileManager.default.createDirectory(
+            at: store.configURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("not-json".utf8).write(to: store.configURL, options: [.atomic])
+
+        XCTAssertEqual(store.bootstrapConfigLoadState(), .malformed)
+    }
+
     func testCurrentLocationDefaultsToDotLungfishUnderHome() throws {
         let home = try makeTemporaryHomeDirectory()
         let store = ManagedStorageConfigStore(homeDirectory: home)
 
         XCTAssertEqual(store.configURL.path, home.appendingPathComponent(".config/lungfish/storage-location.json").path)
         XCTAssertEqual(store.currentLocation().rootURL.path, home.appendingPathComponent(".lungfish").path)
+    }
+
+    func testCurrentLocationFallsBackToDefaultWhenLegacyDatabaseStorageLocationIsInvalid() throws {
+        let home = try makeTemporaryHomeDirectory()
+        let legacyRoot = URL(fileURLWithPath: "/Volumes/My SSD/Lungfish", isDirectory: true)
+        let legacyKey = "DatabaseStorageLocation"
+
+        UserDefaults.standard.set(legacyRoot.path, forKey: legacyKey)
+        addTeardownBlock {
+            UserDefaults.standard.removeObject(forKey: legacyKey)
+        }
+
+        let store = ManagedStorageConfigStore(homeDirectory: home)
+        XCTAssertEqual(store.currentLocation().rootURL.standardizedFileURL.path, home.appendingPathComponent(".lungfish").standardizedFileURL.path)
     }
 
     func testCurrentLocationFallsBackToLegacyDatabaseStorageLocationWhenBootstrapMissing() throws {
