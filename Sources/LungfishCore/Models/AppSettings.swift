@@ -34,6 +34,13 @@ public enum ScrollDirectionPreference: String, Sendable, CaseIterable, Codable {
     }
 }
 
+/// High-level presentation state for the shared managed storage configuration.
+public enum ManagedStorageDisplayState: Sendable, Equatable {
+    case defaultRoot
+    case customRoot(ManagedStorageLocation)
+    case malformedBootstrap
+}
+
 // MARK: - AppSettings
 
 /// Centralized, observable application preferences.
@@ -193,9 +200,32 @@ public final class AppSettings: Sendable {
         }
     }
 
+    /// Presentation state for the shared managed storage configuration.
+    public var managedStorageDisplayState: ManagedStorageDisplayState {
+        switch ManagedStorageConfigStore.shared.bootstrapConfigLoadState() {
+        case .malformed:
+            return .malformedBootstrap
+        case .loaded(let config):
+            let location = ManagedStorageLocation(rootURL: URL(fileURLWithPath: config.activeRootPath, isDirectory: true))
+            if location.rootURL.standardizedFileURL == ManagedStorageConfigStore.shared.defaultLocation.rootURL.standardizedFileURL {
+                return .defaultRoot
+            }
+            return .customRoot(location)
+        case .missing:
+            let location = ManagedStorageConfigStore.shared.currentLocation()
+            if location.rootURL.standardizedFileURL == ManagedStorageConfigStore.shared.defaultLocation.rootURL.standardizedFileURL {
+                return .defaultRoot
+            }
+            return .customRoot(location)
+        }
+    }
+
     /// Whether shared managed storage is still using its default root.
     public var isManagedStorageDefault: Bool {
-        managedStorageRootURL.standardizedFileURL == ManagedStorageConfigStore.shared.defaultLocation.rootURL.standardizedFileURL
+        if case .defaultRoot = managedStorageDisplayState {
+            return true
+        }
+        return false
     }
 
     // MARK: - Defaults

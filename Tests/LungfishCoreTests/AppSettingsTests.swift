@@ -64,12 +64,14 @@ final class AppSettingsTests: XCTestCase {
         let settings = AppSettings.shared
         let expectedDefaultRoot = ManagedStorageConfigStore.shared.defaultLocation.rootURL.standardizedFileURL
 
+        XCTAssertEqual(settings.managedStorageDisplayState, .defaultRoot)
         XCTAssertEqual(settings.managedStorageRootURL.standardizedFileURL.path, expectedDefaultRoot.path)
         XCTAssertTrue(settings.isManagedStorageDefault)
 
         let customRoot = URL(fileURLWithPath: "/tmp/custom-lungfish", isDirectory: true)
         try ManagedStorageConfigStore.shared.setActiveRoot(customRoot)
 
+        XCTAssertEqual(settings.managedStorageDisplayState, .customRoot(ManagedStorageLocation(rootURL: customRoot)))
         XCTAssertEqual(settings.managedStorageRootURL.standardizedFileURL.path, customRoot.standardizedFileURL.path)
         XCTAssertFalse(settings.isManagedStorageDefault)
     }
@@ -170,6 +172,30 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(ManagedStorageConfigStore.shared.bootstrapConfigLoadState(), .missing)
         XCTAssertEqual(ManagedStorageConfigStore.shared.currentLocation().rootURL.standardizedFileURL.path, ManagedStorageConfigStore.shared.defaultLocation.rootURL.standardizedFileURL.path)
         XCTAssertNil(UserDefaults.standard.string(forKey: legacyKey))
+    }
+
+    @MainActor
+    func testMalformedBootstrapIsSurfacedInManagedStorageDisplayState() throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        let store = ManagedStorageConfigStore(homeDirectory: home)
+        try FileManager.default.createDirectory(
+            at: store.configURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("not-json".utf8).write(to: store.configURL, options: [.atomic])
+
+        let originalStore = ManagedStorageConfigStore.shared
+        ManagedStorageConfigStore.shared = store
+        defer { ManagedStorageConfigStore.shared = originalStore }
+
+        let settings = AppSettings.shared
+        XCTAssertEqual(settings.managedStorageDisplayState, .malformedBootstrap)
+        XCTAssertFalse(settings.isManagedStorageDefault)
+        XCTAssertEqual(settings.managedStorageRootURL.standardizedFileURL.path, store.defaultLocation.rootURL.standardizedFileURL.path)
     }
 
     // MARK: - Decode Robustness

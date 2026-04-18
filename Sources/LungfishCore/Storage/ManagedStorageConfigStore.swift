@@ -93,13 +93,7 @@ public final class ManagedStorageConfigStore: @unchecked Sendable {
             throw error
         }
 
-        if location.rootURL.standardizedFileURL == defaultLocation.rootURL.standardizedFileURL {
-            try removeBootstrapConfigIfPresent()
-            return
-        }
-
-        let config = ManagedStorageBootstrapConfig(activeRootPath: location.rootURL.path)
-        try saveBootstrapConfig(config)
+        try saveBootstrapConfig(ManagedStorageBootstrapConfig(activeRootPath: location.rootURL.path))
     }
 
     private func legacyLocation() -> ManagedStorageLocation? {

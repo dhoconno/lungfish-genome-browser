@@ -75,6 +75,29 @@ final class ManagedStorageConfigStoreTests: XCTestCase {
         XCTAssertEqual(store.currentLocation().rootURL.standardizedFileURL.path, legacyRoot.standardizedFileURL.path)
     }
 
+    func testSettingDefaultRootOverridesLegacyDatabaseFallback() throws {
+        let home = try makeTemporaryHomeDirectory()
+        let legacyRoot = URL(fileURLWithPath: "/tmp/legacy-lungfish", isDirectory: true)
+        let legacyKey = "DatabaseStorageLocation"
+
+        UserDefaults.standard.set(legacyRoot.path, forKey: legacyKey)
+        addTeardownBlock {
+            UserDefaults.standard.removeObject(forKey: legacyKey)
+        }
+
+        let store = ManagedStorageConfigStore(homeDirectory: home)
+        try store.setActiveRoot(home.appendingPathComponent(".lungfish", isDirectory: true))
+
+        XCTAssertEqual(store.currentLocation().rootURL.standardizedFileURL.path, home.appendingPathComponent(".lungfish").standardizedFileURL.path)
+
+        switch store.bootstrapConfigLoadState() {
+        case .loaded(let config):
+            XCTAssertEqual(config.activeRootPath, home.appendingPathComponent(".lungfish").path)
+        default:
+            XCTFail("Expected explicit default bootstrap config to override legacy fallback")
+        }
+    }
+
     func testSetActiveRootPersistsBootstrapConfig() throws {
         let home = try makeTemporaryHomeDirectory()
         let customRoot = URL(fileURLWithPath: "/tmp/custom-lungfish", isDirectory: true)
