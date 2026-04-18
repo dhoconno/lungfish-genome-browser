@@ -12,7 +12,17 @@ import LungfishWorkflow
 /// Allows the user to choose where Lungfish stores managed third-party tools
 /// and databases, and to clean up old local copies after a successful move.
 struct StorageSettingsTab: View {
-    @State private var settings = AppSettings.shared
+    struct ViewState: Equatable {
+        let displayPath: String
+        let displayState: ManagedStorageDisplayState
+        let previousRootPath: String?
+        let locationBadgeText: String
+        let locationStatusDescription: String
+        let showsMalformedBootstrapWarning: Bool
+        let showsCleanupAction: Bool
+        let canRevealCurrentLocation: Bool
+    }
+
     @State private var displayPath: String = ""
     @State private var displayState: ManagedStorageDisplayState = .defaultRoot
     @State private var previousRootPath: String?
@@ -26,6 +36,76 @@ struct StorageSettingsTab: View {
 
     init(storageCoordinator: ManagedStorageCoordinator = ManagedStorageCoordinator()) {
         self.storageCoordinator = storageCoordinator
+    }
+
+    @MainActor
+    static func makeViewState(
+        configStore: ManagedStorageConfigStore = ManagedStorageConfigStore.shared,
+        fileManager: FileManager = .default
+    ) -> ViewState {
+        let displayState: ManagedStorageDisplayState
+        switch configStore.bootstrapConfigLoadState() {
+        case .malformed:
+            displayState = .malformedBootstrap
+        case .loaded(let config):
+            let location = ManagedStorageLocation(
+                rootURL: URL(fileURLWithPath: config.activeRootPath, isDirectory: true)
+            )
+            displayState = location.rootURL.standardizedFileURL == configStore.defaultLocation.rootURL.standardizedFileURL
+                ? .defaultRoot
+                : .customRoot(location)
+        case .missing:
+            let location = configStore.currentLocation()
+            displayState = location.rootURL.standardizedFileURL == configStore.defaultLocation.rootURL.standardizedFileURL
+                ? .defaultRoot
+                : .customRoot(location)
+        }
+
+        let displayPath = switch displayState {
+        case .defaultRoot, .malformedBootstrap:
+            configStore.defaultLocation.rootURL.path
+        case .customRoot(let location):
+            location.rootURL.path
+        }
+
+        let previousRootPath: String?
+        if case .loaded(let config) = configStore.bootstrapConfigLoadState(),
+           config.migrationState == .completed,
+           let candidatePath = config.previousRootPath,
+           !candidatePath.isEmpty {
+            previousRootPath = candidatePath
+        } else {
+            previousRootPath = nil
+        }
+
+        let locationBadgeText = switch displayState {
+        case .defaultRoot:
+            "Recommended"
+        case .customRoot:
+            "Custom"
+        case .malformedBootstrap:
+            "Needs Attention"
+        }
+
+        let locationStatusDescription = switch displayState {
+        case .defaultRoot:
+            "Lungfish is using the default shared storage root."
+        case .customRoot(let location):
+            "Managed tools and databases are being stored under \(location.rootURL.lastPathComponent)."
+        case .malformedBootstrap:
+            "The bootstrap config needs attention. The default shared storage root is being used right now."
+        }
+
+        return ViewState(
+            displayPath: displayPath,
+            displayState: displayState,
+            previousRootPath: previousRootPath,
+            locationBadgeText: locationBadgeText,
+            locationStatusDescription: locationStatusDescription,
+            showsMalformedBootstrapWarning: displayState == .malformedBootstrap,
+            showsCleanupAction: previousRootPath != nil,
+            canRevealCurrentLocation: fileManager.fileExists(atPath: displayPath)
+        )
     }
 
     var body: some View {
@@ -100,7 +180,7 @@ struct StorageSettingsTab: View {
                         }
                         .disabled(!canRevealCurrentLocation || isWorking)
 
-                        if !settings.isManagedStorageDefault {
+                        if displayState != .defaultRoot {
                             Button("Use Default Location") {
                                 moveToDefaultLocation()
                             }
@@ -158,7 +238,7 @@ struct StorageSettingsTab: View {
     }
 
     private var canRevealCurrentLocation: Bool {
-        FileManager.default.fileExists(atPath: settings.managedStorageRootURL.path)
+        FileManager.default.fileExists(atPath: displayPath)
     }
 
     private var locationBadgeText: String {
@@ -229,7 +309,9 @@ struct StorageSettingsTab: View {
     }
 
     private func revealCurrentLocation() {
-        NSWorkspace.shared.activateFileViewerSelecting([settings.managedStorageRootURL])
+        NSWorkspace.shared.activateFileViewerSelecting([
+            URL(fileURLWithPath: displayPath, isDirectory: true)
+        ])
     }
 
     private func updateManagedStorageLocation(to url: URL) {
@@ -292,19 +374,9 @@ struct StorageSettingsTab: View {
     }
 
     private func refreshDisplay() {
-        displayPath = settings.managedStorageRootURL.path
-        displayState = settings.managedStorageDisplayState
-        previousRootPath = cleanupCandidatePath()
-    }
-
-    private func cleanupCandidatePath() -> String? {
-        guard case .loaded(let config) = ManagedStorageConfigStore.shared.bootstrapConfigLoadState(),
-              config.migrationState == .completed,
-              let previousRootPath = config.previousRootPath,
-              !previousRootPath.isEmpty else {
-            return nil
-        }
-
-        return previousRootPath
+        let viewState = Self.makeViewState()
+        displayPath = viewState.displayPath
+        displayState = viewState.displayState
+        previousRootPath = viewState.previousRootPath
     }
 }

@@ -1,35 +1,87 @@
-// StorageSettingsTabTests.swift - Tests for the shared storage settings tab
+// StorageSettingsTabTests.swift - Behavioral tests for the shared storage settings tab
 // Copyright (c) 2026 Lungfish Contributors
 // SPDX-License-Identifier: MIT
 
 import XCTest
+@testable import LungfishApp
+@testable import LungfishCore
+
+@MainActor private var storageSettingsTabTestsOriginalManagedStorageStore: ManagedStorageConfigStore?
 
 final class StorageSettingsTabTests: XCTestCase {
-    func testStorageSettingsSourceUsesSharedManagedStorageCopy() throws {
-        let source = try String(
-            contentsOf: repositoryRoot()
-                .appendingPathComponent("Sources/LungfishApp/Views/Settings/StorageSettingsTab.swift"),
-            encoding: .utf8
-        )
+    private var tempHome: URL!
 
-        XCTAssertTrue(source.contains("Third-Party Tools and Databases"))
-        XCTAssertFalse(source.contains("Section(\"Database Storage\")"))
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        tempHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("storage-settings-tab-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempHome, withIntermediateDirectories: true)
+
+        MainActor.assumeIsolated {
+            storageSettingsTabTestsOriginalManagedStorageStore = ManagedStorageConfigStore.shared
+        }
     }
 
-    func testStorageSettingsSourceIncludesCleanupAction() throws {
-        let source = try String(
-            contentsOf: repositoryRoot()
-                .appendingPathComponent("Sources/LungfishApp/Views/Settings/StorageSettingsTab.swift"),
-            encoding: .utf8
-        )
+    override func tearDownWithError() throws {
+        MainActor.assumeIsolated {
+            ManagedStorageConfigStore.shared = storageSettingsTabTestsOriginalManagedStorageStore ?? ManagedStorageConfigStore()
+            storageSettingsTabTestsOriginalManagedStorageStore = nil
+        }
 
-        XCTAssertTrue(source.contains("Remove old local copies"))
+        if let tempHome {
+            try? FileManager.default.removeItem(at: tempHome)
+        }
+        tempHome = nil
+
+        try super.tearDownWithError()
     }
 
-    private func repositoryRoot() -> URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
+    @MainActor
+    func testViewStateShowsMalformedBootstrapWarningAndDefaultPath() throws {
+        let store = ManagedStorageConfigStore(homeDirectory: tempHome)
+        try FileManager.default.createDirectory(
+            at: store.configURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("not-json".utf8).write(to: store.configURL, options: [.atomic])
+        ManagedStorageConfigStore.shared = store
+
+        let state = StorageSettingsTab.makeViewState(configStore: store, fileManager: .default)
+
+        XCTAssertEqual(state.displayPath, store.defaultLocation.rootURL.path)
+        XCTAssertEqual(state.displayState, .malformedBootstrap)
+        XCTAssertEqual(state.locationBadgeText, "Needs Attention")
+        XCTAssertTrue(state.showsMalformedBootstrapWarning)
+        XCTAssertFalse(state.showsCleanupAction)
+    }
+
+    @MainActor
+    func testViewStateShowsCleanupActionAfterCompletedMigration() throws {
+        let store = ManagedStorageConfigStore(homeDirectory: tempHome)
+        let activeRoot = tempHome.appendingPathComponent("managed-root", isDirectory: true)
+        let previousRoot = tempHome.appendingPathComponent("old-root", isDirectory: true)
+        try FileManager.default.createDirectory(at: activeRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: previousRoot, withIntermediateDirectories: true)
+
+        let config = ManagedStorageBootstrapConfig(
+            activeRootPath: activeRoot.path,
+            previousRootPath: previousRoot.path,
+            migrationState: .completed
+        )
+        try FileManager.default.createDirectory(
+            at: store.configURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let data = try JSONEncoder().encode(config)
+        try data.write(to: store.configURL, options: [.atomic])
+        ManagedStorageConfigStore.shared = store
+
+        let state = StorageSettingsTab.makeViewState(configStore: store, fileManager: .default)
+
+        XCTAssertEqual(state.displayPath, activeRoot.path)
+        XCTAssertEqual(state.displayState, .customRoot(ManagedStorageLocation(rootURL: activeRoot)))
+        XCTAssertEqual(state.previousRootPath, previousRoot.path)
+        XCTAssertTrue(state.showsCleanupAction)
+        XCTAssertFalse(state.showsMalformedBootstrapWarning)
     }
 }

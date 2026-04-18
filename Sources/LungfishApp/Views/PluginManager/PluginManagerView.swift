@@ -681,7 +681,7 @@ struct DatabasesTabView: View {
     private var storageFooter: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(viewModel.databaseStorageStatusText)
+                Text(viewModel.storageLocationStatusText)
                     .font(.caption)
                     .foregroundStyle(Color.lungfishSecondaryText)
 

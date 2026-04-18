@@ -34,6 +34,7 @@ final class DatabasesTabTests: XCTestCase {
         MainActor.assumeIsolated {
             ManagedStorageConfigStore.shared = databasesTabTestsOriginalManagedStorageStore ?? ManagedStorageConfigStore()
             databasesTabTestsOriginalManagedStorageStore = nil
+            SettingsNavigationState.shared.selectedTab = .general
         }
     }
 
@@ -329,21 +330,44 @@ final class DatabasesTabTests: XCTestCase {
         try store.setActiveRoot(customRoot)
         ManagedStorageConfigStore.shared = store
 
-        let vm = PluginManagerViewModel()
+        let vm = PluginManagerViewModel(automaticallyRefresh: false)
         let path = vm.storageLocationPath
 
         XCTAssertEqual(path, customRoot.path)
+        XCTAssertEqual(vm.storageLocationDisplayState, .customRoot(ManagedStorageLocation(rootURL: customRoot)))
+        XCTAssertEqual(vm.storageLocationStatusText, "Custom shared storage")
     }
 
-    func testDatabasesFooterSourceUsesStorageSettingsAction() throws {
-        let source = try String(
-            contentsOf: repositoryRoot()
-                .appendingPathComponent("Sources/LungfishApp/Views/PluginManager/PluginManagerView.swift"),
-            encoding: .utf8
-        )
+    func testDatabaseStorageFooterRefreshesAfterStorageChangeNotification() throws {
+        databasesTabTestsOriginalManagedStorageStore = ManagedStorageConfigStore.shared
+        let home = tempDir.appendingPathComponent("managed-storage-notification-home", isDirectory: true)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
 
-        XCTAssertTrue(source.contains("Storage Settings..."))
-        XCTAssertFalse(source.contains("Change Location..."))
+        let store = ManagedStorageConfigStore(homeDirectory: home)
+        ManagedStorageConfigStore.shared = store
+
+        let vm = PluginManagerViewModel(automaticallyRefresh: false)
+        let defaultPath = store.defaultLocation.rootURL.path
+        let customRoot = home.appendingPathComponent("External/Lungfish", isDirectory: true)
+        try store.setActiveRoot(customRoot)
+
+        XCTAssertEqual(vm.storageLocationPath, defaultPath)
+        XCTAssertEqual(vm.storageLocationDisplayState, .defaultRoot)
+
+        NotificationCenter.default.post(name: .databaseStorageLocationChanged, object: nil)
+
+        XCTAssertEqual(vm.storageLocationPath, customRoot.path)
+        XCTAssertEqual(vm.storageLocationDisplayState, .customRoot(ManagedStorageLocation(rootURL: customRoot)))
+        XCTAssertEqual(vm.storageLocationStatusText, "Custom shared storage")
+    }
+
+    func testOpenStorageSettingsSelectsStorageTab() {
+        SettingsNavigationState.shared.selectedTab = .general
+        let vm = PluginManagerViewModel(automaticallyRefresh: false)
+
+        vm.openStorageSettings()
+
+        XCTAssertEqual(SettingsNavigationState.shared.selectedTab, .storage)
     }
 
     // MARK: - Database Collection Tests
@@ -410,12 +434,5 @@ final class DatabasesTabTests: XCTestCase {
             viral?.description.lowercased().contains("viral") ?? false,
             "Viral description should mention viral"
         )
-    }
-
-    private func repositoryRoot() -> URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
     }
 }

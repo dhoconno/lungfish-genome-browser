@@ -11,6 +11,33 @@ import LungfishCore
 /// Logger for the Plugin Manager view model.
 private let logger = Logger(subsystem: LogSubsystem.app, category: "PluginManagerVM")
 
+private final class StorageLocationChangeObserver {
+    private let notificationCenter: NotificationCenter
+    private var token: NSObjectProtocol?
+
+    init(
+        notificationCenter: NotificationCenter = .default,
+        onChange: @escaping @MainActor () -> Void
+    ) {
+        self.notificationCenter = notificationCenter
+        self.token = notificationCenter.addObserver(
+            forName: .databaseStorageLocationChanged,
+            object: nil,
+            queue: nil
+        ) { _ in
+            Task { @MainActor in
+                onChange()
+            }
+        }
+    }
+
+    deinit {
+        if let token {
+            notificationCenter.removeObserver(token)
+        }
+    }
+}
+
 /// View model for the Plugin Manager window.
 ///
 /// Bridges between the ``CondaManager`` actor and the SwiftUI view layer.
@@ -157,21 +184,15 @@ final class PluginManagerViewModel {
     }
 
     /// The shared managed storage root shown in the Databases footer.
-    var storageLocationPath: String {
-        AppSettings.shared.managedStorageRootURL.path
-    }
+    var storageLocationPath: String = ""
+
+    /// Current shared storage display state surfaced to the footer.
+    var storageLocationDisplayState: ManagedStorageDisplayState = .defaultRoot
 
     /// Describes the current shared storage state for footer copy.
-    var databaseStorageStatusText: String {
-        switch AppSettings.shared.managedStorageDisplayState {
-        case .defaultRoot:
-            return "Default shared storage"
-        case .customRoot:
-            return "Custom shared storage"
-        case .malformedBootstrap:
-            return "Using default shared storage (config needs attention)"
-        }
-    }
+    var storageLocationStatusText: String = ""
+
+    @ObservationIgnored private var storageLocationChangeObserver: StorageLocationChangeObserver?
 
     /// Opens the Storage tab in Settings.
     func openStorageSettings() {
@@ -183,10 +204,23 @@ final class PluginManagerViewModel {
 
     // MARK: - Lifecycle
 
-    init(packStatusProvider: any PluginPackStatusProviding = PluginPackStatusService.shared) {
+    init(
+        packStatusProvider: any PluginPackStatusProviding = PluginPackStatusService.shared,
+        notificationCenter: NotificationCenter = .default,
+        automaticallyRefresh: Bool = true
+    ) {
         self.packStatusProvider = packStatusProvider
-        refreshInstalled()
-        refreshPackStatuses()
+        refreshStorageLocationState()
+        self.storageLocationChangeObserver = StorageLocationChangeObserver(
+            notificationCenter: notificationCenter
+        ) { [weak self] in
+            self?.refreshStorageLocationState()
+        }
+
+        if automaticallyRefresh {
+            refreshInstalled()
+            refreshPackStatuses()
+        }
     }
 
     // MARK: - Installed Tab Actions
@@ -452,6 +486,19 @@ final class PluginManagerViewModel {
     }
 
     // MARK: - Helpers
+
+    private func refreshStorageLocationState() {
+        storageLocationPath = AppSettings.shared.managedStorageRootURL.path
+        storageLocationDisplayState = AppSettings.shared.managedStorageDisplayState
+        storageLocationStatusText = switch storageLocationDisplayState {
+        case .defaultRoot:
+            "Default shared storage"
+        case .customRoot:
+            "Custom shared storage"
+        case .malformedBootstrap:
+            "Using default shared storage (config needs attention)"
+        }
+    }
 
     private func handleError(_ error: Error, context: String) {
         let message = "Error \(context): \(error.localizedDescription)"
