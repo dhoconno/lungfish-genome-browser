@@ -4132,99 +4132,139 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
     // MARK: - ToolsMenuActions
 
-
-    @objc func runSPAdes(_ sender: Any?) {
-        guard let window = mainWindowController?.window else {
-            debugLog("runSPAdes: No main window available")
-            return
-        }
-
-        // Get selected FASTQ files from sidebar
-        let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController
-        let selectedItems = sidebarController?.selectedItems() ?? []
-        let inputFiles = selectedItems.compactMap { item -> URL? in
-            guard let url = item.url else { return nil }
-            return FASTQBundle.resolvePrimaryFASTQURL(for: url)
-        }
-
-        if inputFiles.isEmpty {
-            let alert = NSAlert()
-            alert.alertStyle = .informational
-            alert.messageText = "No FASTQ Files Selected"
-            alert.informativeText = "Select one or more FASTQ files or FASTQ bundles in the sidebar, then choose Assemble with SPAdes."
-            alert.addButton(withTitle: "OK")
-            if let window = mainWindowController?.window ?? NSApp.keyWindow {
-                alert.beginSheetModal(for: window)
-            }
-            return
-        }
-
-        // Output goes to project-level Analyses/ folder when a project is open.
-        let outputDirectory: URL?
-        if let projectURL = sidebarController?.currentProjectURL,
-           let analysisDir = try? AnalysesFolder.createAnalysisDirectory(tool: "spades", in: projectURL) {
-            outputDirectory = analysisDir
-        } else if let workingURL = workingDirectoryURL {
-            outputDirectory = workingURL.appendingPathComponent("Assemblies", isDirectory: true)
-        } else {
-            let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-            outputDirectory = documentsURL.appendingPathComponent("Lungfish-Assemblies", isDirectory: true)
-        }
-
-        debugLog("runSPAdes: \(inputFiles.count) files, output=\(outputDirectory?.path ?? "nil")")
-
-        AssemblySheetPresenter.present(
-            from: window,
-            inputFiles: inputFiles,
-            outputDirectory: outputDirectory,
-            onCancel: {
-                debugLog("Assembly configuration cancelled")
-            }
-        )
+    @objc func showFASTQQCReportingOperations(_ sender: Any?) {
+        showFASTQOperationsDialog(sender, initialCategory: .qcReporting)
     }
 
-    @objc func launchMinimap2Mapping(_ sender: Any?) {
+    @objc func showFASTQDemultiplexingOperations(_ sender: Any?) {
+        showFASTQOperationsDialog(sender, initialCategory: .demultiplexing)
+    }
+
+    @objc func showFASTQTrimmingFilteringOperations(_ sender: Any?) {
+        showFASTQOperationsDialog(sender, initialCategory: .trimmingFiltering)
+    }
+
+    @objc func showFASTQDecontaminationOperations(_ sender: Any?) {
+        showFASTQOperationsDialog(sender, initialCategory: .decontamination)
+    }
+
+    @objc func showFASTQReadProcessingOperations(_ sender: Any?) {
+        showFASTQOperationsDialog(sender, initialCategory: .readProcessing)
+    }
+
+    @objc func showFASTQSearchSubsettingOperations(_ sender: Any?) {
+        showFASTQOperationsDialog(sender, initialCategory: .searchSubsetting)
+    }
+
+    @objc func showFASTQMappingOperations(_ sender: Any?) {
+        showFASTQOperationsDialog(sender, initialCategory: .mapping)
+    }
+
+    @objc func showFASTQAssemblyOperations(_ sender: Any?) {
+        showFASTQOperationsDialog(sender, initialCategory: .assembly)
+    }
+
+    @objc func showFASTQClassificationOperations(_ sender: Any?) {
+        showFASTQOperationsDialog(sender, initialCategory: .classification)
+    }
+
+    func showFASTQOperationsDialog(
+        _ sender: Any?,
+        initialCategory: FASTQOperationCategoryID,
+        preferredInputURLs: [URL] = []
+    ) {
         guard let window = mainWindowController?.window else {
-            debugLog("launchMinimap2Mapping: No main window available")
+            debugLog("showFASTQOperationsDialog: No main window available")
             return
         }
 
-        let sidebarController = mainWindowController?.mainSplitViewController?.sidebarController
-        let selectedItems = sidebarController?.selectedItems() ?? []
-        let inputFiles = selectedItems.compactMap { item -> URL? in
-            guard let url = item.url else { return nil }
-            return FASTQBundle.resolvePrimaryFASTQURL(for: url)
-        }
-
-        if inputFiles.isEmpty {
+        let selectedInputURLs = gatherFASTQOperationInputURLs(preferredInputURLs: preferredInputURLs)
+        guard !selectedInputURLs.isEmpty else {
             let alert = NSAlert()
             alert.alertStyle = .informational
             alert.messageText = "No FASTQ Files Selected"
-            alert.informativeText = "Select one or more FASTQ files in the sidebar, then choose Map Reads."
+            alert.informativeText = "Select one or more FASTQ files or FASTQ bundles in the sidebar, then choose Tools > FASTQ Operations."
             alert.addButton(withTitle: "OK")
             alert.beginSheetModal(for: window)
             return
         }
 
-        let projectURL = sidebarController?.currentProjectURL
+        FASTQOperationsDialogPresenter.present(
+            from: window,
+            selectedInputURLs: selectedInputURLs,
+            initialCategory: initialCategory,
+            onRun: { state in
+                debugLog("showFASTQOperationsDialog: confirmed \(state.selectedToolID.rawValue) for \(state.selectedInputURLs.count) input(s)")
+            }
+        )
+    }
 
-        let wizardPanel = NSPanel(contentRect: .zero, styleMask: [.titled, .closable], backing: .buffered, defer: true)
-        wizardPanel.title = "Map Reads"
-        wizardPanel.isReleasedWhenClosed = false
+    private func gatherFASTQOperationInputURLs(preferredInputURLs: [URL]) -> [URL] {
+        let selectedURLs = mainWindowController?.mainSplitViewController?.sidebarController.selectedFileURLs() ?? []
+        let currentFASTQURL = mainWindowController?.mainSplitViewController?.viewerController?.currentFASTQDatasetURL
+        return Self.resolveFASTQOperationInputURLs(
+            preferredInputURLs: preferredInputURLs,
+            selectedURLs: selectedURLs,
+            currentFASTQURL: currentFASTQURL
+        )
+    }
 
-        var sheet = MapReadsWizardSheet(inputFiles: inputFiles, projectURL: projectURL)
-        sheet.onRun = { [weak self] config in
-            window.endSheet(wizardPanel)
-            self?.runMinimap2Mapping(config: config)
+    static func resolveFASTQOperationInputURLs(
+        preferredInputURLs: [URL] = [],
+        selectedURLs: [URL],
+        currentFASTQURL: URL?
+    ) -> [URL] {
+        let preferred = preferredInputURLs.compactMap(resolveFASTQOperationInputURL(from:))
+        if !preferred.isEmpty {
+            return deduplicatedFASTQOperationInputURLs(preferred)
         }
-        sheet.onCancel = {
-            window.endSheet(wizardPanel)
+
+        let selected = selectedURLs.compactMap(resolveFASTQOperationInputURL(from:))
+        if !selected.isEmpty {
+            return deduplicatedFASTQOperationInputURLs(selected)
         }
 
-        let hostingController = NSHostingController(rootView: sheet)
-        wizardPanel.contentViewController = hostingController
-        wizardPanel.setContentSize(NSSize(width: 520, height: 520))
-        window.beginSheet(wizardPanel)
+        if let currentFASTQURL,
+           let resolvedCurrent = resolveFASTQOperationInputURL(from: currentFASTQURL) {
+            return [resolvedCurrent]
+        }
+
+        return []
+    }
+
+    static func resolveFASTQOperationInputURL(from url: URL) -> URL? {
+        let standardizedURL = url.standardizedFileURL
+        if standardizedURL.pathExtension.lowercased() == FASTQBundle.directoryExtension {
+            return standardizedURL
+        }
+
+        let parentURL = standardizedURL.deletingLastPathComponent().standardizedFileURL
+        if parentURL.pathExtension.lowercased() == FASTQBundle.directoryExtension {
+            return parentURL
+        }
+
+        let ext = standardizedURL.pathExtension.lowercased()
+        let baseExt = standardizedURL.deletingPathExtension().pathExtension.lowercased()
+        if ext == "fastq" || ext == "fq" || (ext == "gz" && (baseExt == "fastq" || baseExt == "fq")) {
+            return standardizedURL
+        }
+
+        return nil
+    }
+
+    private static func deduplicatedFASTQOperationInputURLs(_ inputURLs: [URL]) -> [URL] {
+        var seenPaths = Set<String>()
+        return inputURLs.filter { url in
+            seenPaths.insert(url.standardizedFileURL.path).inserted
+        }
+    }
+
+    @objc func runSPAdes(_ sender: Any?) {
+        showFASTQOperationsDialog(sender, initialCategory: .assembly)
+    }
+
+    @objc func launchMinimap2Mapping(_ sender: Any?) {
+        showFASTQOperationsDialog(sender, initialCategory: .mapping)
     }
 
     @objc func launchNaoMgsImport(_ sender: Any?) {
@@ -4945,56 +4985,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     }
 
     @objc func classifyReads(_ sender: Any?) {
-        guard let viewerController = mainWindowController?.mainSplitViewController?.viewerController else {
-            return
-        }
-        guard let window = mainWindowController?.window else { return }
-
-        let bundleURLs = gatherClassificationBundleURLs()
-        guard !bundleURLs.isEmpty else {
-            let alert = NSAlert()
-            alert.messageText = "No FASTQ Selected"
-            alert.informativeText = "Select a FASTQ file in the sidebar, then use Tools > Classify Reads to run metagenomic classification."
-            alert.alertStyle = .informational
-            alert.addButton(withTitle: "OK")
-            alert.beginSheetModal(for: window)
-            return
-        }
-
-        // Pass bundle URLs directly — display shows bundle names, not "preview.fastq".
-        let wizardPanel = NSPanel(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: true)
-        wizardPanel.title = "Classify Reads"
-
-        var wizardView = UnifiedMetagenomicsWizard(inputFiles: bundleURLs)
-
-        wizardView.onRunClassification = { [weak self] configs in
-            window.endSheet(wizardPanel)
-            guard let self else { return }
-            self.runClassification(configs: configs, viewerController: viewerController)
-        }
-
-        wizardView.onRunEsViritu = { [weak self] configs in
-            window.endSheet(wizardPanel)
-            guard let self else { return }
-            self.runEsViritu(configs: configs, viewerController: viewerController)
-        }
-
-        wizardView.onRunTaxTriage = { [weak self] config in
-            window.endSheet(wizardPanel)
-            guard let self else { return }
-            self.runTaxTriage(config: config, viewerController: viewerController)
-        }
-
-        wizardView.onCancel = {
-            window.endSheet(wizardPanel)
-        }
-
-        let hostingController = NSHostingController(rootView: wizardView)
-        wizardPanel.contentViewController = hostingController
-        wizardPanel.setContentSize(UnifiedMetagenomicsWizard.preferredContentSize)
-        Task { @MainActor in
-            await window.beginSheet(wizardPanel)
-        }
+        showFASTQOperationsDialog(sender, initialCategory: .classification)
     }
 
     // MARK: - Direct-Launch Classification Methods
@@ -5041,45 +5032,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     ///
     /// Called from the sidebar's "Run" button when the Classify Reads operation is selected.
     @objc func launchKraken2Classification(_ sender: Any?) {
-        guard let viewerController = mainWindowController?.mainSplitViewController?.viewerController else { return }
-        guard let window = mainWindowController?.window else { return }
-
-        let bundleURLs = gatherClassificationBundleURLs()
-        guard !bundleURLs.isEmpty else {
-            let alert = NSAlert()
-            alert.messageText = "No FASTQ Selected"
-            alert.informativeText = "Select a FASTQ file in the sidebar, then run classification."
-            alert.alertStyle = .informational
-            alert.addButton(withTitle: "OK")
-            alert.beginSheetModal(for: window)
-            return
-        }
-
-        // Pass bundle URLs directly — the sheet displays bundle names (not "preview.fastq").
-        // Materialization of virtual FASTQs happens later in runClassification().
-        let wizardPanel = makeUnifiedClassifierPanel(title: "Kraken2")
-
-        var wizardView = UnifiedMetagenomicsWizard(inputFiles: bundleURLs, initialSelection: .classification)
-        wizardView.onRunClassification = { [weak self] configs in
-            window.endSheet(wizardPanel)
-            guard let self else { return }
-            self.runClassification(configs: configs, viewerController: viewerController)
-        }
-        wizardView.onRunEsViritu = { [weak self] configs in
-            window.endSheet(wizardPanel)
-            guard let self else { return }
-            self.runEsViritu(configs: configs, viewerController: viewerController)
-        }
-        wizardView.onRunTaxTriage = { [weak self] config in
-            window.endSheet(wizardPanel)
-            guard let self else { return }
-            self.runTaxTriage(config: config, viewerController: viewerController)
-        }
-        wizardView.onCancel = {
-            window.endSheet(wizardPanel)
-        }
-
-        presentUnifiedClassifierPanel(window: window, wizardPanel: wizardPanel, wizardView: wizardView)
+        showFASTQOperationsDialog(sender, initialCategory: .classification)
     }
 
     /// Launches EsViritu viral detection directly (skipping the wizard chooser step).

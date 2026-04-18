@@ -127,7 +127,7 @@ public final class FASTQDatasetViewController: NSViewController {
         let category: String
     }
 
-    private enum OperationKind: Int, CaseIterable {
+    private enum LegacyOperationKind: Int, CaseIterable {
         case qualityReport
         case subsampleProportion
         case subsampleCount
@@ -315,11 +315,13 @@ public final class FASTQDatasetViewController: NSViewController {
         }
     }
 
+    private typealias OperationKind = LegacyOperationKind
+
     // MARK: - Sidebar Data
 
     /// Category headers + operation items for the source list sidebar.
     /// Ordered to match a typical FASTQ preprocessing workflow.
-    private static let categories: [(header: String, items: [OperationKind])] = [
+    private static let legacyOperationSections: [(header: String, items: [OperationKind])] = [
         ("REPORTS", [.qualityReport]),
         ("DEMULTIPLEXING", [.demultiplex]),
         ("TRIMMING", [.qualityTrim, .adapterTrim, .primerRemoval, .fixedTrim, .lengthFilter]),
@@ -330,6 +332,8 @@ public final class FASTQDatasetViewController: NSViewController {
         ("ASSEMBLY", [.assembleReads]),
         ("CLASSIFICATION", [.classifyReads, .detectViruses, .comprehensiveTriage]),
     ]
+
+    private static let operationCategoryLaunchers: [FASTQOperationCategoryID] = FASTQOperationCategoryID.allCases
 
 
     // MARK: - Sidebar Expansion State
@@ -348,7 +352,7 @@ public final class FASTQDatasetViewController: NSViewController {
     /// Persists the current expansion state to UserDefaults.
     private func saveExpansionState() {
         var dict: [String: Bool] = [:]
-        for (header, _) in Self.categories {
+        for (header, _) in Self.legacyOperationSections {
             dict[header] = expandedCategories.contains(header)
         }
         UserDefaults.standard.set(dict, forKey: Self.expansionDefaultsKey)
@@ -368,6 +372,7 @@ public final class FASTQDatasetViewController: NSViewController {
     public var onStatisticsUpdated: ((FASTQDatasetStatistics) -> Void)?
     public var onRunOperation: ((FASTQDerivativeRequest) async throws -> Void)?
     public var onInstallHumanScrubberDatabase: (() async throws -> Void)?
+    var onLaunchFASTQOperationCategory: ((FASTQOperationCategoryID) -> Void)?
     var alertPresenter: FASTQOperationAlertPresenting = DefaultFASTQOperationAlertPresenter()
     var humanScrubberInstaller: HumanScrubberDatabaseInstalling = DefaultHumanScrubberDatabaseInstaller.shared
 
@@ -550,6 +555,7 @@ public final class FASTQDatasetViewController: NSViewController {
         previewCanvas.update(operation: selectedOperation?.previewKind ?? .none, statistics: statistics)
         loadFASTAPreview(fastqURL: fastqURL, fallbackRecords: records)
         updateQualityReportButton()
+        updateParameterBar()
         setStatus("Loaded: \(statistics.readCount) reads")
         if let derivativeManifest {
             setStatus("Derived: \(derivativeManifest.operation.displaySummary)")
@@ -597,7 +603,7 @@ public final class FASTQDatasetViewController: NSViewController {
 
         sparklineStrip.translatesAutoresizingMaskIntoConstraints = false
         sparklineStrip.onComputeQualityReport = { [weak self] in
-            self?.selectAndRunQualityReport()
+            self?.launchFASTQOperationCategory(.qcReporting)
         }
         topPane.addSubview(sparklineStrip)
 
@@ -1044,7 +1050,7 @@ public final class FASTQDatasetViewController: NSViewController {
         }
 
         guard let kind = selectedOperation else {
-            let label = NSTextField(labelWithString: "Select an operation from the list")
+            let label = NSTextField(labelWithString: "Choose a FASTQ operations category to open the dialog.")
             label.font = .systemFont(ofSize: 11)
             label.textColor = .tertiaryLabelColor
             parameterBar.addArrangedSubview(label)
@@ -1727,31 +1733,6 @@ public final class FASTQDatasetViewController: NSViewController {
 
     /// Selects the Quality Report operation in the sidebar and immediately runs it.
     private func selectAndRunQualityReport() {
-        // Ensure the REPORTS category is expanded so the row is visible
-        if !expandedCategories.contains("REPORTS") {
-            expandedCategories.insert("REPORTS")
-            saveExpansionState()
-            operationSidebar.reloadData()
-        }
-
-        // Find the row index for .qualityReport in the sidebar (collapse-aware)
-        var targetRow = -1
-        var currentRow = 0
-        for (header, items) in Self.categories {
-            currentRow += 1 // header
-            guard expandedCategories.contains(header) else { continue }
-            for item in items {
-                if item == .qualityReport {
-                    targetRow = currentRow
-                    break
-                }
-                currentRow += 1
-            }
-            if targetRow >= 0 { break }
-        }
-
-        guard targetRow >= 0 else { return }
-        operationSidebar.selectRowIndexes(IndexSet(integer: targetRow), byExtendingSelection: false)
         selectedOperation = .qualityReport
         updateParameterBar()
 
@@ -2295,11 +2276,85 @@ public final class FASTQDatasetViewController: NSViewController {
 
     // MARK: - Sidebar Row Mapping
 
+    private func operationCategoryForRow(_ row: Int) -> FASTQOperationCategoryID? {
+        guard row >= 0, row < Self.operationCategoryLaunchers.count else { return nil }
+        return Self.operationCategoryLaunchers[row]
+    }
+
+    private func titleForOperationCategory(_ category: FASTQOperationCategoryID) -> String {
+        switch category {
+        case .qcReporting:
+            return "QC & Reporting"
+        case .demultiplexing:
+            return "Demultiplexing"
+        case .trimmingFiltering:
+            return "Trimming & Filtering"
+        case .decontamination:
+            return "Decontamination"
+        case .readProcessing:
+            return "Read Processing"
+        case .searchSubsetting:
+            return "Search & Subsetting"
+        case .mapping:
+            return "Mapping"
+        case .assembly:
+            return "Assembly"
+        case .classification:
+            return "Classification"
+        }
+    }
+
+    private func symbolForOperationCategory(_ category: FASTQOperationCategoryID) -> String {
+        switch category {
+        case .qcReporting:
+            return "chart.bar.doc.horizontal"
+        case .demultiplexing:
+            return "barcode"
+        case .trimmingFiltering:
+            return "scissors"
+        case .decontamination:
+            return "shield.slash"
+        case .readProcessing:
+            return "arrow.trianglehead.2.clockwise.rotate.90"
+        case .searchSubsetting:
+            return "line.3.horizontal.decrease.circle"
+        case .mapping:
+            return "arrow.left.and.right.text.vertical"
+        case .assembly:
+            return "puzzlepiece.extension"
+        case .classification:
+            return "square.stack.3d.up"
+        }
+    }
+
+    private func tooltipForOperationCategory(_ category: FASTQOperationCategoryID) -> String {
+        switch category {
+        case .qcReporting:
+            return "Open the FASTQ operations dialog with QC and reporting tools selected."
+        case .demultiplexing:
+            return "Open the FASTQ operations dialog with demultiplexing tools selected."
+        case .trimmingFiltering:
+            return "Open the FASTQ operations dialog with trimming and filtering tools selected."
+        case .decontamination:
+            return "Open the FASTQ operations dialog with decontamination tools selected."
+        case .readProcessing:
+            return "Open the FASTQ operations dialog with read processing tools selected."
+        case .searchSubsetting:
+            return "Open the FASTQ operations dialog with search and subsetting tools selected."
+        case .mapping:
+            return "Open the FASTQ operations dialog with mapping tools selected."
+        case .assembly:
+            return "Open the FASTQ operations dialog with assembly tools selected."
+        case .classification:
+            return "Open the FASTQ operations dialog with classification tools selected."
+        }
+    }
+
     /// Maps a flat table row index to an OperationKind, accounting for category
     /// headers and collapsed categories.
     private func operationKindForRow(_ row: Int) -> OperationKind? {
         var currentRow = 0
-        for (header, items) in Self.categories {
+        for (header, items) in Self.legacyOperationSections {
             if currentRow == row { return nil } // header row
             currentRow += 1 // header
             guard expandedCategories.contains(header) else { continue }
@@ -2313,111 +2368,34 @@ public final class FASTQDatasetViewController: NSViewController {
 
     /// Total number of rows in the sidebar (headers + visible items).
     private var sidebarRowCount: Int {
-        Self.categories.reduce(0) { total, cat in
-            let itemCount = expandedCategories.contains(cat.header) ? cat.items.count : 0
-            return total + 1 + itemCount
-        }
+        Self.operationCategoryLaunchers.count
     }
 
     /// Returns whether a row is a group header.
     private func isGroupRow(_ row: Int) -> Bool {
-        var currentRow = 0
-        for (header, items) in Self.categories {
-            if currentRow == row { return true }
-            currentRow += 1
-            if expandedCategories.contains(header) {
-                currentRow += items.count
-            }
-        }
-        return false
+        false
     }
 
     /// Returns the category header name for a group row, or nil if not a group row.
     private func categoryHeaderForRow(_ row: Int) -> String? {
-        var currentRow = 0
-        for (header, items) in Self.categories {
-            if currentRow == row { return header }
-            currentRow += 1
-            if expandedCategories.contains(header) {
-                currentRow += items.count
-            }
-        }
-        return nil
+        nil
     }
 
     /// Returns the category header or operation title for a row.
     private func titleForRow(_ row: Int) -> String {
-        var currentRow = 0
-        for (header, items) in Self.categories {
-            if currentRow == row { return header }
-            currentRow += 1
-            guard expandedCategories.contains(header) else { continue }
-            for item in items {
-                if currentRow == row { return item.title }
-                currentRow += 1
-            }
-        }
-        return ""
+        guard let category = operationCategoryForRow(row) else { return "" }
+        return titleForOperationCategory(category)
     }
 
     /// Returns the SF Symbol name for an operation row.
     private func sfSymbolForRow(_ row: Int) -> String? {
-        operationKindForRow(row)?.sfSymbol
+        guard let category = operationCategoryForRow(row) else { return nil }
+        return symbolForOperationCategory(category)
     }
 
     /// Toggles expansion of a category, animating row insertion or removal.
     private func toggleCategory(_ header: String) {
-        guard let catIndex = Self.categories.firstIndex(where: { $0.header == header }) else { return }
-        let items = Self.categories[catIndex].items
-        guard !items.isEmpty else { return }
-
-        // Calculate the row index of this header
-        var headerRow = 0
-        for i in 0..<catIndex {
-            headerRow += 1
-            if expandedCategories.contains(Self.categories[i].header) {
-                headerRow += Self.categories[i].items.count
-            }
-        }
-
-        let wasExpanded = expandedCategories.contains(header)
-
-        if wasExpanded {
-            // Collapse: remove item rows
-            let firstItemRow = headerRow + 1
-            let rowRange = IndexSet(integersIn: firstItemRow..<(firstItemRow + items.count))
-
-            // Deselect any selected row that will be removed
-            let selectedRow = operationSidebar.selectedRow
-            if selectedRow >= firstItemRow && selectedRow < firstItemRow + items.count {
-                selectedOperation = nil
-                updateParameterBar()
-            }
-
-            expandedCategories.remove(header)
-            operationSidebar.beginUpdates()
-            operationSidebar.removeRows(at: rowRange, withAnimation: .slideUp)
-            operationSidebar.endUpdates()
-
-            // Reload the header row to update disclosure triangle rotation
-            operationSidebar.reloadData(forRowIndexes: IndexSet(integer: headerRow),
-                                         columnIndexes: IndexSet(integersIn: 0..<operationSidebar.numberOfColumns))
-        } else {
-            // Expand: insert item rows
-            expandedCategories.insert(header)
-            let firstItemRow = headerRow + 1
-            let rowRange = IndexSet(integersIn: firstItemRow..<(firstItemRow + items.count))
-
-            operationSidebar.beginUpdates()
-            operationSidebar.insertRows(at: rowRange, withAnimation: .slideDown)
-            operationSidebar.endUpdates()
-
-            // Reload the header row to update disclosure triangle rotation
-            operationSidebar.reloadData(forRowIndexes: IndexSet(integer: headerRow),
-                                         columnIndexes: IndexSet(integersIn: 0..<operationSidebar.numberOfColumns))
-        }
-
-        saveExpansionState()
+        _ = header
     }
 
     // MARK: - Request Building
@@ -2811,6 +2789,14 @@ public final class FASTQDatasetViewController: NSViewController {
         if count >= 1_000 { return String(format: "%.1fK", Double(count) / 1_000) }
         return "\(count)"
     }
+
+    private func launchFASTQOperationCategory(_ category: FASTQOperationCategoryID) {
+        selectedOperation = nil
+        updateParameterBar()
+        dismissErrorBanner()
+        setStatus("Open \(titleForOperationCategory(category)) tools in the FASTQ operations dialog.")
+        onLaunchFASTQOperationCategory?(category)
+    }
 }
 
 // MARK: - NSTableViewDataSource & Delegate (Operation Sidebar + Read Preview)
@@ -2871,8 +2857,8 @@ extension FASTQDatasetViewController: NSTableViewDataSource, NSTableViewDelegate
         cell.font = .systemFont(ofSize: 12)
         cell.textColor = .labelColor
         cell.lineBreakMode = .byTruncatingTail
-        if let kind = operationKindForRow(row) {
-            cell.toolTip = kind.tooltip
+        if let category = operationCategoryForRow(row) {
+            cell.toolTip = tooltipForOperationCategory(category)
         }
         return cell
     }
@@ -2899,18 +2885,10 @@ extension FASTQDatasetViewController: NSTableViewDataSource, NSTableViewDelegate
               tableView === operationSidebar else { return }
         let row = tableView.selectedRow
         guard row >= 0 else { return }
-        selectedOperation = operationKindForRow(row)
-        updateParameterBar()
-        // Clear stale error status/banner from previous operation
-        dismissErrorBanner()
-        if let stats = statistics {
-            setStatus("Loaded: \(stats.readCount) reads")
-        } else {
-            setStatus("")
-        }
-        if selectedOperation == .demultiplex { onOpenDemuxDrawer?() }
-        if selectedOperation == .primerRemoval { onOpenPrimerTrimDrawer?() }
-        if selectedOperation == .deduplicate { onOpenDedupDrawer?() }
+
+        guard let category = operationCategoryForRow(row) else { return }
+        launchFASTQOperationCategory(category)
+        tableView.deselectRow(row)
     }
 
     // MARK: - Read Preview Cell Views

@@ -578,22 +578,55 @@ public final class MainMenu {
         let toolsMenuItem = NSMenuItem(title: "Tools", action: nil, keyEquivalent: "")
         let toolsMenu = NSMenu(title: "Tools")
 
-        // Metagenomics Classification
-        let classifyItem = toolsMenu.addItem(
-            withTitle: "Classify \u{0026} Profile Reads\u{2026}",
-            action: #selector(ToolsMenuActions.classifyReads(_:)),
-            keyEquivalent: "k"
-        )
-        classifyItem.keyEquivalentModifierMask = [.command, .shift]
-
-        toolsMenu.addItem(.separator())
-
-        // Assembly
-        toolsMenu.addItem(
-            withTitle: "Assemble with SPAdes...",
-            action: #selector(ToolsMenuActions.runSPAdes(_:)),
+        let fastqOperationsItem = NSMenuItem(title: "FASTQ Operations", action: nil, keyEquivalent: "")
+        let fastqOperationsMenu = NSMenu(title: "FASTQ Operations")
+        fastqOperationsMenu.addItem(
+            withTitle: "QC & Reporting…",
+            action: #selector(ToolsMenuActions.showFASTQQCReportingOperations(_:)),
             keyEquivalent: ""
         )
+        fastqOperationsMenu.addItem(
+            withTitle: "Demultiplexing…",
+            action: #selector(ToolsMenuActions.showFASTQDemultiplexingOperations(_:)),
+            keyEquivalent: ""
+        )
+        fastqOperationsMenu.addItem(
+            withTitle: "Trimming & Filtering…",
+            action: #selector(ToolsMenuActions.showFASTQTrimmingFilteringOperations(_:)),
+            keyEquivalent: ""
+        )
+        fastqOperationsMenu.addItem(
+            withTitle: "Decontamination…",
+            action: #selector(ToolsMenuActions.showFASTQDecontaminationOperations(_:)),
+            keyEquivalent: ""
+        )
+        fastqOperationsMenu.addItem(
+            withTitle: "Read Processing…",
+            action: #selector(ToolsMenuActions.showFASTQReadProcessingOperations(_:)),
+            keyEquivalent: ""
+        )
+        fastqOperationsMenu.addItem(
+            withTitle: "Search & Subsetting…",
+            action: #selector(ToolsMenuActions.showFASTQSearchSubsettingOperations(_:)),
+            keyEquivalent: ""
+        )
+        fastqOperationsMenu.addItem(
+            withTitle: "Mapping…",
+            action: #selector(ToolsMenuActions.showFASTQMappingOperations(_:)),
+            keyEquivalent: ""
+        )
+        fastqOperationsMenu.addItem(
+            withTitle: "Assembly…",
+            action: #selector(ToolsMenuActions.showFASTQAssemblyOperations(_:)),
+            keyEquivalent: ""
+        )
+        fastqOperationsMenu.addItem(
+            withTitle: "Classification…",
+            action: #selector(ToolsMenuActions.showFASTQClassificationOperations(_:)),
+            keyEquivalent: ""
+        )
+        fastqOperationsItem.submenu = fastqOperationsMenu
+        toolsMenu.addItem(fastqOperationsItem)
 
         toolsMenu.addItem(.separator())
 
@@ -834,9 +867,15 @@ public final class MainMenu {
 /// Tools menu action handlers.
 @MainActor
 @objc protocol ToolsMenuActions {
-    /// Opens the classification wizard for the currently selected FASTQ.
-    func classifyReads(_ sender: Any?)
-    func runSPAdes(_ sender: Any?)
+    func showFASTQQCReportingOperations(_ sender: Any?)
+    func showFASTQDemultiplexingOperations(_ sender: Any?)
+    func showFASTQTrimmingFilteringOperations(_ sender: Any?)
+    func showFASTQDecontaminationOperations(_ sender: Any?)
+    func showFASTQReadProcessingOperations(_ sender: Any?)
+    func showFASTQSearchSubsettingOperations(_ sender: Any?)
+    func showFASTQMappingOperations(_ sender: Any?)
+    func showFASTQAssemblyOperations(_ sender: Any?)
+    func showFASTQClassificationOperations(_ sender: Any?)
     func searchNCBI(_ sender: Any?)
     func searchSRA(_ sender: Any?)
     func searchPathoplexus(_ sender: Any?)

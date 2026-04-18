@@ -385,6 +385,94 @@ final class FASTQDashboardTests: XCTestCase {
     }
 
     @MainActor
+    private func allTableViews(in view: NSView) -> [NSTableView] {
+        var results: [NSTableView] = []
+        if let tableView = view as? NSTableView {
+            results.append(tableView)
+        }
+        for subview in view.subviews {
+            results.append(contentsOf: allTableViews(in: subview))
+        }
+        return results
+    }
+
+    @MainActor
+    private func operationSidebar(in view: NSView) -> NSTableView? {
+        allTableViews(in: view).first { tableView in
+            let identifiers = Set(tableView.tableColumns.map(\.identifier.rawValue))
+            return identifiers.contains("icon") && identifiers.contains("name")
+        }
+    }
+
+    @MainActor
+    private func labelText(in view: NSView?) -> String? {
+        if let textField = view as? NSTextField {
+            return textField.stringValue
+        }
+
+        for subview in view?.subviews ?? [] {
+            if let text = labelText(in: subview) {
+                return text
+            }
+        }
+
+        return nil
+    }
+
+    @MainActor
+    func testFASTQDatasetSidebarLaunchesOperationCategories() {
+        let controller = FASTQDatasetViewController()
+        let rootView = controller.view
+        rootView.layoutSubtreeIfNeeded()
+
+        guard let sidebar = operationSidebar(in: rootView) else {
+            XCTFail("Expected FASTQ operation sidebar table")
+            return
+        }
+
+        XCTAssertEqual(controller.numberOfRows(in: sidebar), FASTQOperationCategoryID.allCases.count)
+        XCTAssertFalse(controller.tableView(sidebar, isGroupRow: 0))
+
+        let nameColumn = sidebar.tableColumns.first { $0.identifier.rawValue == "name" }
+        let firstRowView = controller.tableView(sidebar, viewFor: nameColumn, row: 0)
+        XCTAssertEqual(labelText(in: firstRowView), "QC & Reporting")
+
+        var launchedCategory: FASTQOperationCategoryID?
+        controller.onLaunchFASTQOperationCategory = { launchedCategory = $0 }
+
+        sidebar.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        controller.tableViewSelectionDidChange(
+            Notification(name: NSTableView.selectionDidChangeNotification, object: sidebar)
+        )
+
+        XCTAssertEqual(launchedCategory, .qcReporting)
+    }
+
+    @MainActor
+    func testFASTQOperationInputResolutionPrefersExplicitDisplayedDataset() {
+        let displayedBundleURL = URL(fileURLWithPath: "/tmp/displayed.lungfishfastq")
+        let sidebarFASTQURL = URL(fileURLWithPath: "/tmp/other.fastq.gz")
+
+        let resolved = AppDelegate.resolveFASTQOperationInputURLs(
+            preferredInputURLs: [displayedBundleURL],
+            selectedURLs: [sidebarFASTQURL],
+            currentFASTQURL: nil
+        )
+
+        XCTAssertEqual(resolved, [displayedBundleURL.standardizedFileURL])
+    }
+
+    @MainActor
+    func testFASTQOperationInputResolutionReturnsEmptyWithoutSelectionOrDisplayedFASTQ() {
+        let resolved = AppDelegate.resolveFASTQOperationInputURLs(
+            selectedURLs: [],
+            currentFASTQURL: nil
+        )
+
+        XCTAssertTrue(resolved.isEmpty)
+    }
+
+    @MainActor
     func testHumanScrubberInstallPromptRetriesOperationAfterInstall() async throws {
         let controller = FASTQDatasetViewController()
         _ = controller.view

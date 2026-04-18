@@ -19,6 +19,52 @@ import XCTest
 @testable import LungfishIO
 @testable import LungfishWorkflow
 
+@MainActor
+final class GUIRegressionTests: XCTestCase {
+
+    func testToolsMenuContainsFASTQOperationsSubmenu() throws {
+        let mainMenu = MainMenu.createMainMenu()
+        let toolsMenu = try XCTUnwrap(mainMenu.items.first { $0.title == "Tools" }?.submenu)
+        let fastqOperationsItem = try XCTUnwrap(toolsMenu.items.first { $0.title == "FASTQ Operations" })
+        let fastqOperationsMenu = try XCTUnwrap(fastqOperationsItem.submenu)
+
+        XCTAssertEqual(fastqOperationsMenu.items.map(\.title), [
+            "QC & Reporting…",
+            "Demultiplexing…",
+            "Trimming & Filtering…",
+            "Decontamination…",
+            "Read Processing…",
+            "Search & Subsetting…",
+            "Mapping…",
+            "Assembly…",
+            "Classification…",
+        ])
+
+        let toolTitles = toolsMenu.items.map(\.title)
+        XCTAssertFalse(toolTitles.contains("Classify & Profile Reads…"))
+        XCTAssertFalse(toolTitles.contains("Assemble with SPAdes..."))
+    }
+
+    func testFASTQDatasetViewUsesCategoryOnlyLaunchers() throws {
+        let source = try String(
+            contentsOf: repositoryRoot()
+                .appendingPathComponent("Sources/LungfishApp/Views/Viewer/FASTQDatasetViewController.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("FASTQOperationCategoryID"))
+        XCTAssertTrue(source.contains("onLaunchFASTQOperationCategory"))
+        XCTAssertFalse(source.contains("private enum OperationKind"))
+    }
+
+    private func repositoryRoot() -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+}
+
 // MARK: - Test Fixtures
 
 @MainActor

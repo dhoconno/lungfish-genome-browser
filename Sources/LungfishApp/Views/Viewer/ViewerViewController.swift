@@ -967,6 +967,14 @@ public class ViewerViewController: NSViewController {
             derivativeManifest: fastqDerivativeManifest
         )
         controller.onRunOperation = onRunOperation
+        controller.onLaunchFASTQOperationCategory = { category in
+            let preferredInputURLs = [fastqSourceURL ?? fastqURL].compactMap { $0 }
+            AppDelegate.shared?.showFASTQOperationsDialog(
+                nil,
+                initialCategory: category,
+                preferredInputURLs: preferredInputURLs
+            )
+        }
         controller.onOpenDemuxDrawer = { [weak self] in
             self?.openDemuxSetupDrawer()
         }
