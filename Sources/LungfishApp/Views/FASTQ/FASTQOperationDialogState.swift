@@ -117,11 +117,15 @@ final class FASTQOperationDialogState {
         pendingClassificationConfigs = []
         pendingEsVirituConfigs = []
         pendingTaxTriageConfig = nil
-        pendingLaunchRequest = .derivative(
-            tool: selectedToolID,
-            inputURLs: selectedInputURLs,
-            outputMode: outputMode
-        )
+        if selectedToolID == .refreshQCSummary {
+            pendingLaunchRequest = .refreshQCSummary(inputURLs: selectedInputURLs)
+        } else {
+            pendingLaunchRequest = .derivative(
+                tool: selectedToolID,
+                inputURLs: selectedInputURLs,
+                outputMode: outputMode
+            )
+        }
     }
 
     func captureMinimap2Config(_ config: Minimap2Config) {
@@ -638,6 +642,7 @@ enum FASTQOperationOutputMode: String, CaseIterable, Sendable {
 }
 
 enum FASTQOperationLaunchRequest: Sendable, Equatable {
+    case refreshQCSummary(inputURLs: [URL])
     case derivative(tool: FASTQOperationToolID, inputURLs: [URL], outputMode: FASTQOperationOutputMode)
     case map(inputURLs: [URL], referenceURL: URL, outputMode: FASTQOperationOutputMode)
     case assemble(inputURLs: [URL], outputMode: FASTQOperationOutputMode)
