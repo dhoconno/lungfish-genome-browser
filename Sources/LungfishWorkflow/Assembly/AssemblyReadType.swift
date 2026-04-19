@@ -33,7 +33,7 @@ public enum AssemblyReadType: String, CaseIterable, Codable, Sendable {
     }
 
     /// Maps sequencing-platform detection onto the supported v1 assembly classes.
-    public static func detect(from platform: SequencingPlatform) -> Self? {
+    public static func detect(from platform: LungfishIO.SequencingPlatform) -> Self? {
         switch platform {
         case .illumina: return .illuminaShortReads
         case .oxfordNanopore: return .ontReads
@@ -42,9 +42,19 @@ public enum AssemblyReadType: String, CaseIterable, Codable, Sendable {
         }
     }
 
+    /// Maps the workflow-level ingestion platform model onto v1 assembly classes.
+    public static func detect(fromWorkflowPlatform platform: SequencingPlatform) -> Self? {
+        switch platform {
+        case .illumina: return .illuminaShortReads
+        case .ont: return .ontReads
+        case .pacbio: return .pacBioHiFi
+        default: return nil
+        }
+    }
+
     /// Best-effort FASTQ-based read-type detection.
     public static func detect(fromFASTQ url: URL) -> Self? {
-        guard let platform = SequencingPlatform.detect(fromFASTQ: url) else {
+        guard let platform = LungfishIO.SequencingPlatform.detect(fromFASTQ: url) else {
             return nil
         }
         return detect(from: platform)
