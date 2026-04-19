@@ -16,12 +16,14 @@ This rollout covers:
 - Keeping NCBI submodes such as `Nucleotide`, `Genome`, and `Virus` inside the right pane for `GenBank & Genomes`.
 - Removing purely decorative glyphs from the database search UI.
 - Preserving the existing search services, result parsing, and background download/import pipeline.
+- Establishing the first reusable XCUI foundation for menu-driven GUI testing of the app.
 
 This rollout does not cover:
 
 - Changing the underlying NCBI, ENA, or Pathoplexus service implementations.
 - Redesigning download/import behavior beyond what is required to fit the shared dialog shell.
 - Renaming underlying service types or external API concepts outside the dialog surface.
+- Converting the entire app to XCUI in one pass.
 
 ## Requirements
 
@@ -71,6 +73,16 @@ This rollout does not cover:
   - `Pathoplexus`: consent flow, organism selection, filters, results, and downloads
 - Existing search progress, pagination, result filtering, selection, and download progress must continue to work after the UI refactor.
 - The sheet must still dismiss when a download is launched, with background processing continuing through the existing import path.
+
+### XCUI Foundation Requirements
+
+- This rollout must add a real Xcode UI-test harness for the app, not just package-level unit tests with UI-facing names.
+- The first GUI tests must drive the real menu path for opening online database searches rather than relying on direct controller injection.
+- UI-test launches must support a deterministic test mode enabled by launch arguments or environment, so GUI tests do not depend on live NCBI, ENA, or Pathoplexus responses.
+- The test-mode hook must be designed as reusable app infrastructure rather than a database-search-specific hack.
+- Database search must become the first consumer of that infrastructure, not its only intended consumer.
+- The database-search surface must expose stable accessibility identifiers for XCUI, following a naming convention that can be reused throughout the app.
+- The test fixture and scenario mechanism must support named scenarios so later app features can add their own GUI fixtures without rewriting the harness.
 
 ## Architecture
 
@@ -139,6 +151,34 @@ It must be responsible for:
 
 It must stop owning a giant all-in-one SwiftUI implementation.
 
+### 5. UI-Test Configuration Layer
+
+Add a small app-level UI-test configuration surface that reads launch arguments and environment at startup.
+
+This layer must:
+
+- detect whether the app is running under XCUI
+- expose a stable way to select named test scenarios
+- remain inert during normal launches
+- be reusable by future app features that need deterministic GUI fixtures
+
+The first use of this layer is database search, but it must be framed as shared app infrastructure.
+
+### 6. Search Backend Injection
+
+Replace direct construction of remote database services inside the browser flow with a small backend or provider abstraction.
+
+The default implementation must keep using the real NCBI, ENA, and Pathoplexus services.
+
+The UI-test implementation must:
+
+- return deterministic search results for named scenarios
+- support consent-gated Pathoplexus behavior
+- provide predictable selection and download-ready transitions
+- avoid real network calls and real background downloads during XCUI
+
+This abstraction should be scoped so future GUI-tested app surfaces can follow the same pattern: production backend by default, deterministic test backend when UI-test mode is enabled.
+
 ## Components
 
 ### Sidebar Items
@@ -184,6 +224,25 @@ This keeps the search experiences recognizable as siblings even when their actua
   - organism selector
   - Pathoplexus-specific filters
 
+### XCUI Identifier Surface
+
+The database-search dialog must define stable identifiers for the first XCUI flows, including:
+
+- sheet root
+- sidebar container
+- `GenBank & Genomes` destination row
+- `SRA Runs` destination row
+- `Pathoplexus` destination row
+- shared search field
+- shared primary footer button
+- shared status text
+- results list
+- Pathoplexus consent accept button
+- Pathoplexus consent cancel button
+- any destination-specific controls needed for the initial flows, such as the NCBI mode selector
+
+Identifier names should follow a consistent app-wide convention so later XCUI expansion does not create feature-by-feature naming drift.
+
 ## Data Flow
 
 ### Search
@@ -227,6 +286,22 @@ Add or update coverage for:
 - continued support for Pathoplexus consent gating
 - footer status and primary action behavior across searching, idle, and download-ready states
 - regression checks ensuring decorative, non-semantic glyphs are not reintroduced into the shared search shell
+- app-driven XCUI launch of the real menu path to `Search Online Databases`
+- menu-driven opening of each top-level search destination
+- Pathoplexus consent gating in XCUI
+- a deterministic end-to-end search flow in XCUI that transitions from `Search` to `Download Selected`
+- preservation of per-destination query state when switching sidebar destinations in XCUI
+
+XCUI tests in this rollout should prioritize stable user-journey coverage over exhaustive permutation testing.
+
+The first XCUI slice should prove the harness is reusable:
+
+- shared launch helper
+- shared menu-navigation helper
+- named fixture or scenario selection
+- stable accessibility identifiers
+
+This rollout does not need to add GUI coverage for the whole app, but it must leave behind the reusable foundation for doing so.
 
 ## Rollout Notes
 
@@ -235,3 +310,4 @@ Add or update coverage for:
 - Keep the current search services and import pipeline stable while the UI shell changes.
 - Match the existing operations dialog and welcome-splash visual language so the search browser no longer reads as a special-case surface.
 - Treat this refactor as an opportunity to strengthen shared launcher-style UI infrastructure: reuse existing framework pieces first, then extract missing ones into reusable components or styling primitives rather than hard-coding them inside the database search dialog.
+- Treat the XCUI work the same way: prefer reusable app-wide test infrastructure, reusable identifiers, and reusable scenario plumbing over database-search-only shortcuts.
