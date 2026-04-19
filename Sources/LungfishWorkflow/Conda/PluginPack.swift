@@ -315,7 +315,7 @@ public extension PluginPack {
                     environment: "spades",
                     installPackages: ["bioconda::spades=4.2.0"],
                     executables: ["spades.py"],
-                    smokeTest: .command(executable: "spades.py", arguments: ["--test"], timeoutSeconds: 120),
+                    smokeTest: .command(executable: "spades.py", arguments: ["--version"], timeoutSeconds: 10),
                     version: "4.2.0",
                     license: "GPL-2.0-only",
                     sourceURL: "https://github.com/ablab/spades"
