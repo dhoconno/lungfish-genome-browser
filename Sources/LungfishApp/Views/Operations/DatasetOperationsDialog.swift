@@ -8,10 +8,43 @@ struct DatasetOperationsDialog<Detail: View>: View {
     let selectedToolID: String
     let statusText: String
     let isRunEnabled: Bool
+    let primaryActionTitle: String
+    let accessibilityNamespace: String?
     let onSelectTool: (String) -> Void
     let onCancel: () -> Void
     let onRun: () -> Void
     @ViewBuilder let detail: () -> Detail
+
+    @MainActor
+    init(
+        title: String,
+        subtitle: String,
+        datasetLabel: String,
+        tools: [DatasetOperationToolSidebarItem],
+        selectedToolID: String,
+        statusText: String,
+        isRunEnabled: Bool,
+        primaryActionTitle: String = "Run",
+        accessibilityNamespace: String? = nil,
+        onSelectTool: @escaping (String) -> Void,
+        onCancel: @escaping () -> Void,
+        onRun: @escaping () -> Void,
+        @ViewBuilder detail: @escaping () -> Detail
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.datasetLabel = datasetLabel
+        self.tools = tools
+        self.selectedToolID = selectedToolID
+        self.statusText = statusText
+        self.isRunEnabled = isRunEnabled
+        self.primaryActionTitle = primaryActionTitle
+        self.accessibilityNamespace = accessibilityNamespace
+        self.onSelectTool = onSelectTool
+        self.onCancel = onCancel
+        self.onRun = onRun
+        self.detail = detail
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -26,6 +59,8 @@ struct DatasetOperationsDialog<Detail: View>: View {
             }
             .background(Color.lungfishCanvasBackground)
         }
+        .accessibilityElement(children: .contain)
+        .lungfishAccessibilityIdentifier(scopedID("dialog"))
         .background(Color.lungfishCanvasBackground)
     }
 
@@ -67,12 +102,14 @@ struct DatasetOperationsDialog<Detail: View>: View {
                         .background(sidebarCardBackground(for: tool))
                         .overlay(sidebarCardBorder(for: tool))
                     }
+                    .lungfishAccessibilityIdentifier(scopedID("tool-\(accessibilitySlug(for: tool.title))"))
                     .buttonStyle(.plain)
                     .disabled(!canSelect(tool))
                 }
             }
             .padding(16)
         }
+        .lungfishAccessibilityIdentifier(scopedID("sidebar"))
     }
 
     private var detailPane: some View {
@@ -84,17 +121,32 @@ struct DatasetOperationsDialog<Detail: View>: View {
     private var footerBar: some View {
         HStack(spacing: 12) {
             Text(statusText)
+                .lungfishAccessibilityIdentifier(scopedID("status-text"))
                 .font(.caption)
                 .foregroundStyle(isRunEnabled ? Color.lungfishSecondaryText : Color.lungfishOrangeFallback)
             Spacer()
             Button("Cancel", action: onCancel)
-            Button("Run", action: runIfEnabled)
+                .lungfishAccessibilityIdentifier(scopedID("cancel"))
+            Button(primaryActionTitle, action: runIfEnabled)
+                .lungfishAccessibilityIdentifier(scopedID("primary-action"))
                 .buttonStyle(.borderedProminent)
                 .tint(.lungfishCreamsicleFallback)
                 .disabled(!isRunEnabled)
         }
         .padding(16)
         .background(Color.lungfishCanvasBackground)
+    }
+
+    private func scopedID(_ suffix: String) -> String? {
+        accessibilityNamespace.map { "\($0)-\(suffix)" }
+    }
+
+    private func accessibilitySlug(for value: String) -> String {
+        value
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: "-")
     }
 
     func canSelect(_ tool: DatasetOperationToolSidebarItem) -> Bool {
@@ -128,5 +180,16 @@ struct DatasetOperationsDialog<Detail: View>: View {
                 : Color.lungfishStroke,
                 lineWidth: 1
             )
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func lungfishAccessibilityIdentifier(_ identifier: String?) -> some View {
+        if let identifier {
+            accessibilityIdentifier(identifier)
+        } else {
+            self
+        }
     }
 }
