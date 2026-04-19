@@ -43,6 +43,7 @@ enum FASTQOperationExecutionError: Error, LocalizedError {
     case unsupportedPrimerRemoval(String)
     case unsupportedDemultiplex(String)
     case unsupportedOrient(String)
+    case unsupportedAssembly(String)
 
     var errorDescription: String? {
         switch self {
@@ -54,6 +55,8 @@ enum FASTQOperationExecutionError: Error, LocalizedError {
             return "FASTQ demultiplex request is not supported by the CLI builder: \(reason)"
         case .unsupportedOrient(let reason):
             return "FASTQ orient request is not supported by the CLI builder: \(reason)"
+        case .unsupportedAssembly(let reason):
+            return "FASTQ assembly request is not supported by the CLI builder: \(reason)"
         }
     }
 }
@@ -249,17 +252,25 @@ struct FASTQOperationExecutionService {
             }
 
         case (
-            .assemble(let originalInputURLs, let outputMode),
-            .assemble(let resolvedInputURLs, let resolvedOutputMode)
+            .assemble(let originalAssemblyRequest, let outputMode),
+            .assemble(let resolvedAssemblyRequest, let resolvedOutputMode)
         )
             where outputMode == .perInput &&
                   resolvedOutputMode == .perInput &&
-                  originalInputURLs.count > 1 &&
-                  originalInputURLs.count == resolvedInputURLs.count:
-            return zip(originalInputURLs, resolvedInputURLs).map { originalInputURL, resolvedInputURL in
+                  !originalAssemblyRequest.pairedEnd &&
+                  !resolvedAssemblyRequest.pairedEnd &&
+                  originalAssemblyRequest.inputURLs.count > 1 &&
+                  originalAssemblyRequest.inputURLs.count == resolvedAssemblyRequest.inputURLs.count:
+            return zip(originalAssemblyRequest.inputURLs, resolvedAssemblyRequest.inputURLs).map { originalInputURL, resolvedInputURL in
                 (
-                    .assemble(inputURLs: [originalInputURL], outputMode: outputMode),
-                    .assemble(inputURLs: [resolvedInputURL], outputMode: resolvedOutputMode)
+                    .assemble(
+                        request: originalAssemblyRequest.replacingInputURLs(with: [originalInputURL]),
+                        outputMode: outputMode
+                    ),
+                    .assemble(
+                        request: resolvedAssemblyRequest.replacingInputURLs(with: [resolvedInputURL]),
+                        outputMode: resolvedOutputMode
+                    )
                 )
             }
 
@@ -364,10 +375,29 @@ struct FASTQOperationExecutionService {
             }
             return CLIInvocation(subcommand: "map", arguments: arguments)
 
-        case .assemble(let inputURLs, _):
-            var arguments = inputURLs.map(\.path)
-            if inputURLs.count == 2 {
+        case .assemble(let request, _):
+            var arguments = request.inputURLs.map(\.path)
+            if request.pairedEnd {
                 arguments.append("--paired")
+            }
+            arguments += [
+                "--assembler", request.tool.rawValue,
+                "--read-type", request.readType.cliArgument,
+                "--project-name", request.projectName,
+                "--threads", "\(request.threads)",
+                "--output", outputTargetPath,
+            ]
+            if let memoryGB = request.memoryGB {
+                arguments += ["--memory-gb", "\(memoryGB)"]
+            }
+            if let minContigLength = request.minContigLength {
+                arguments += ["--min-contig-length", "\(minContigLength)"]
+            }
+            if let selectedProfileID = request.selectedProfileID {
+                arguments += ["--profile", selectedProfileID]
+            }
+            for extraArgument in request.extraArguments {
+                arguments += ["--extra-arg", extraArgument]
             }
             return CLIInvocation(subcommand: "assemble", arguments: arguments)
 
@@ -1171,8 +1201,8 @@ private extension FASTQOperationLaunchRequest {
             return inputURLs
         case .map(let inputURLs, _, _):
             return inputURLs
-        case .assemble(let inputURLs, _):
-            return inputURLs
+        case .assemble(let request, _):
+            return request.inputURLs
         case .classify(_, let inputURLs, _):
             return inputURLs
         }
@@ -1205,8 +1235,8 @@ private extension FASTQOperationLaunchRequest {
             return .derivative(request: request, inputURLs: inputURLs, outputMode: outputMode)
         case .map(_, let referenceURL, let outputMode):
             return .map(inputURLs: inputURLs, referenceURL: referenceURL, outputMode: outputMode)
-        case .assemble(_, let outputMode):
-            return .assemble(inputURLs: inputURLs, outputMode: outputMode)
+        case .assemble(let request, let outputMode):
+            return .assemble(request: request.replacingInputURLs(with: inputURLs), outputMode: outputMode)
         case .classify(let tool, _, let databaseName):
             return .classify(tool: tool, inputURLs: inputURLs, databaseName: databaseName)
         }
@@ -1220,8 +1250,8 @@ private extension FASTQOperationLaunchRequest {
             return request.batchLabel
         case .map:
             return "Map Reads"
-        case .assemble:
-            return "Assemble Reads"
+        case .assemble(let request, _):
+            return request.tool.displayName
         case .classify(let tool, _, _):
             return tool.title
         }
@@ -1250,8 +1280,11 @@ private extension FASTQOperationLaunchRequest {
             return request.batchParameters
         case .map(_, let referenceURL, _):
             return ["reference": referenceURL.lastPathComponent]
-        case .assemble:
-            return [:]
+        case .assemble(let request, _):
+            return [
+                "assembler": request.tool.rawValue,
+                "readType": request.readType.rawValue,
+            ]
         case .classify(_, _, let databaseName):
             return ["database": databaseName]
         }
@@ -1272,8 +1305,8 @@ private extension FASTQOperationLaunchRequest {
             return request.operationKindString
         case .map:
             return "mapping"
-        case .assemble:
-            return "assembly"
+        case .assemble(let request, _):
+            return "assembly-\(request.tool.rawValue)"
         case .classify(let tool, _, _):
             return tool.title.lowercased()
         }
@@ -1286,6 +1319,24 @@ private extension FASTQOperationLaunchRequest {
         case .map, .assemble, .classify:
             return false
         }
+    }
+}
+
+private extension AssemblyRunRequest {
+    func replacingInputURLs(with inputURLs: [URL]) -> AssemblyRunRequest {
+        AssemblyRunRequest(
+            tool: tool,
+            readType: readType,
+            inputURLs: inputURLs,
+            projectName: projectName,
+            outputDirectory: outputDirectory,
+            pairedEnd: pairedEnd,
+            threads: threads,
+            memoryGB: memoryGB,
+            minContigLength: minContigLength,
+            selectedProfileID: selectedProfileID,
+            extraArguments: extraArguments
+        )
     }
 }
 

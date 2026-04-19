@@ -112,7 +112,7 @@ final class CondaManagerTests: XCTestCase {
     func testBuiltInPacksExist() {
         XCTAssertFalse(PluginPack.builtIn.isEmpty)
         XCTAssertEqual(PluginPack.builtIn.count, 14, "Should include the required setup pack plus 13 optional packs")
-        XCTAssertEqual(PluginPack.activeOptionalPacks.count, 1, "Only metagenomics should be active in this branch")
+        XCTAssertEqual(PluginPack.activeOptionalPacks.map(\.id), ["assembly", "metagenomics"])
     }
 
     func testReinstallRemovesExistingEnvironmentBeforeCreate() async throws {

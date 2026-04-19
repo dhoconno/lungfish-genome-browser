@@ -17,13 +17,14 @@ struct FASTQOperationToolPanes: View {
                 onRun: state.captureMinimap2Config(_:),
                 onRunnerAvailabilityChange: state.updateEmbeddedReadiness(_:)
             )
-        case .spades:
+        case .spades, .megahit, .skesa, .flye, .hifiasm:
             AssemblyWizardSheet(
                 inputFiles: state.selectedInputURLs,
                 outputDirectory: state.outputDirectoryURL,
+                initialTool: state.selectedToolID.assemblyTool ?? .spades,
                 embeddedInOperationsDialog: true,
                 embeddedRunTrigger: state.embeddedRunTrigger,
-                onRun: state.captureSPAdesConfig(_:),
+                onRun: state.captureAssemblyRequest(_:),
                 onRunnerAvailabilityChange: state.updateEmbeddedReadiness(_:)
             )
         case .kraken2:
@@ -366,7 +367,7 @@ private struct FASTQOperationPrimarySettingsSection: View {
                     Toggle("Trim Barcodes", isOn: $state.demultiplexTrimBarcodes)
                 }
 
-            case .removeHumanReads, .minimap2, .spades, .kraken2, .esViritu, .taxTriage:
+            case .removeHumanReads, .minimap2, .spades, .megahit, .skesa, .flye, .hifiasm, .kraken2, .esViritu, .taxTriage:
                 Text("This tool uses the dedicated embedded workflow pane or the fixed database chooser above.")
                     .foregroundStyle(.secondary)
             }
@@ -492,7 +493,7 @@ private struct FASTQOperationAdvancedSettingsSection: View {
             case .removeHumanReads:
                 Text("Human read removal stays fixed to the selected database input.")
                     .foregroundStyle(.secondary)
-            case .refreshQCSummary, .minimap2, .spades, .kraken2, .esViritu, .taxTriage:
+            case .refreshQCSummary, .minimap2, .spades, .megahit, .skesa, .flye, .hifiasm, .kraken2, .esViritu, .taxTriage:
                 Text("This tool uses the embedded workflow pane.")
                     .foregroundStyle(.secondary)
             }

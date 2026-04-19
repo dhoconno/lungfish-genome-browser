@@ -6,6 +6,9 @@ import LungfishWorkflow
 @MainActor
 @Observable
 final class FASTQOperationDialogState {
+    private static let mixedDetectedAndUnclassifiedAssemblyInputsMessage =
+        "Selected FASTQ inputs mix detected and unclassified read classes. Select one read class per run."
+
     var selectedCategory: FASTQOperationCategoryID {
         didSet {
             if selectedToolID.categoryID != selectedCategory {
@@ -40,7 +43,7 @@ final class FASTQOperationDialogState {
     var outputDirectoryURL: URL?
     var pendingLaunchRequest: FASTQOperationLaunchRequest?
     var pendingMinimap2Config: Minimap2Config?
-    var pendingSPAdesConfig: SPAdesAssemblyConfig?
+    var pendingAssemblyRequest: AssemblyRunRequest?
     var pendingClassificationConfigs: [ClassificationConfig]
     var pendingEsVirituConfigs: [EsVirituConfig]
     var pendingTaxTriageConfig: TaxTriageConfig?
@@ -130,7 +133,7 @@ final class FASTQOperationDialogState {
         )
         self.pendingLaunchRequest = nil
         self.pendingMinimap2Config = nil
-        self.pendingSPAdesConfig = nil
+        self.pendingAssemblyRequest = nil
         self.pendingClassificationConfigs = []
         self.pendingEsVirituConfigs = []
         self.pendingTaxTriageConfig = nil
@@ -226,7 +229,7 @@ final class FASTQOperationDialogState {
         }
 
         pendingMinimap2Config = nil
-        pendingSPAdesConfig = nil
+        pendingAssemblyRequest = nil
         pendingClassificationConfigs = []
         pendingEsVirituConfigs = []
         pendingTaxTriageConfig = nil
@@ -465,7 +468,7 @@ final class FASTQOperationDialogState {
                 outputMode: outputMode
             )
 
-        case .minimap2, .spades, .kraken2, .esViritu, .taxTriage:
+        case .minimap2, .spades, .megahit, .skesa, .flye, .hifiasm, .kraken2, .esViritu, .taxTriage:
             return nil
         }
     }
@@ -473,7 +476,7 @@ final class FASTQOperationDialogState {
     func captureMinimap2Config(_ config: Minimap2Config) {
         setAuxiliaryInput(config.referenceURL, for: .referenceSequence)
         pendingMinimap2Config = config
-        pendingSPAdesConfig = nil
+        pendingAssemblyRequest = nil
         pendingClassificationConfigs = []
         pendingEsVirituConfigs = []
         pendingTaxTriageConfig = nil
@@ -485,25 +488,30 @@ final class FASTQOperationDialogState {
         embeddedToolReady = true
     }
 
-    func captureSPAdesConfig(_ config: SPAdesAssemblyConfig) {
-        outputDirectoryURL = config.outputDirectory
+    func captureAssemblyRequest(_ request: AssemblyRunRequest) {
+        outputDirectoryURL = request.outputDirectory
         pendingMinimap2Config = nil
-        pendingSPAdesConfig = config
+        pendingAssemblyRequest = request
         pendingClassificationConfigs = []
         pendingEsVirituConfigs = []
         pendingTaxTriageConfig = nil
         pendingLaunchRequest = .assemble(
-            inputURLs: config.allInputFiles,
+            request: request,
             outputMode: outputMode
         )
         embeddedToolReady = true
+    }
+
+    func captureAssemblyWizardConfig(_ config: SPAdesAssemblyConfig) {
+        guard let request = assemblyRequest(from: config) else { return }
+        captureAssemblyRequest(request)
     }
 
     func captureClassificationConfigs(_ configs: [ClassificationConfig]) {
         guard let first = configs.first else { return }
         setAuxiliaryInput(first.databasePath, for: .database)
         pendingMinimap2Config = nil
-        pendingSPAdesConfig = nil
+        pendingAssemblyRequest = nil
         pendingClassificationConfigs = configs
         pendingEsVirituConfigs = []
         pendingTaxTriageConfig = nil
@@ -519,7 +527,7 @@ final class FASTQOperationDialogState {
         guard let first = configs.first else { return }
         setAuxiliaryInput(first.databasePath, for: .database)
         pendingMinimap2Config = nil
-        pendingSPAdesConfig = nil
+        pendingAssemblyRequest = nil
         pendingClassificationConfigs = []
         pendingEsVirituConfigs = configs
         pendingTaxTriageConfig = nil
@@ -536,7 +544,7 @@ final class FASTQOperationDialogState {
             setAuxiliaryInput(databasePath, for: .database)
         }
         pendingMinimap2Config = nil
-        pendingSPAdesConfig = nil
+        pendingAssemblyRequest = nil
         pendingClassificationConfigs = []
         pendingEsVirituConfigs = []
         pendingTaxTriageConfig = config
@@ -618,6 +626,14 @@ final class FASTQOperationDialogState {
         }
     }
 
+    var detectedAssemblyReadType: AssemblyReadType? {
+        assemblyCompatibilityEvaluation.resolvedReadType
+    }
+
+    var assemblyReadClassMismatchMessage: String? {
+        assemblyCompatibilityEvaluation.blockingMessage
+    }
+
     var isRunEnabled: Bool {
         !selectedInputURLs.isEmpty
         && missingRequiredAuxiliaryInputKinds.isEmpty
@@ -684,6 +700,14 @@ final class FASTQOperationDialogState {
             return "Configure minimap2 mapping against a reference sequence."
         case .spades:
             return "Configure a SPAdes assembly run."
+        case .megahit:
+            return "Configure a MEGAHIT assembly run."
+        case .skesa:
+            return "Configure a SKESA assembly run."
+        case .flye:
+            return "Configure a Flye assembly run."
+        case .hifiasm:
+            return "Configure a Hifiasm assembly run."
         case .kraken2:
             return "Configure Kraken2 classification."
         case .esViritu:
@@ -710,7 +734,7 @@ final class FASTQOperationDialogState {
         case .mapping:
             return [.minimap2]
         case .assembly:
-            return [.spades]
+            return [.spades, .megahit, .skesa, .flye, .hifiasm]
         case .classification:
             return [.kraken2, .esViritu, .taxTriage]
         }
@@ -825,7 +849,18 @@ final class FASTQOperationDialogState {
             }
             return nil
 
-        case .refreshQCSummary, .minimap2, .spades, .kraken2, .esViritu, .taxTriage, .removeHumanReads:
+        case .spades, .megahit, .skesa, .flye, .hifiasm:
+            if let mismatchMessage = assemblyReadClassMismatchMessage {
+                return mismatchMessage
+            }
+            if let assemblyTool = selectedToolID.assemblyTool,
+               let detectedAssemblyReadType,
+               !AssemblyCompatibility.isSupported(tool: assemblyTool, for: detectedAssemblyReadType) {
+                return "\(assemblyTool.displayName) is not available for \(detectedAssemblyReadType.displayName) in v1."
+            }
+            return nil
+
+        case .refreshQCSummary, .minimap2, .kraken2, .esViritu, .taxTriage, .removeHumanReads:
             return nil
         }
     }
@@ -835,7 +870,7 @@ final class FASTQOperationDialogState {
         embeddedRunTrigger = 0
         pendingLaunchRequest = nil
         pendingMinimap2Config = nil
-        pendingSPAdesConfig = nil
+        pendingAssemblyRequest = nil
         pendingClassificationConfigs = []
         pendingEsVirituConfigs = []
         pendingTaxTriageConfig = nil
@@ -872,6 +907,48 @@ final class FASTQOperationDialogState {
 
     private var selectedBarcodeDefinitionPath: String? {
         auxiliaryInputURL(for: .barcodeDefinition)?.path
+    }
+
+    private var assemblyCompatibilityEvaluation: AssemblyCompatibilityEvaluation {
+        let detectedReadTypes = selectedInputURLs.compactMap(AssemblyReadType.detect(fromFASTQ:))
+        let evaluation = AssemblyCompatibility.evaluate(detectedReadTypes: detectedReadTypes)
+
+        let hasKnownAndUnknownMix =
+            !detectedReadTypes.isEmpty && detectedReadTypes.count < selectedInputURLs.count
+        guard !evaluation.isBlocked, hasKnownAndUnknownMix else {
+            return evaluation
+        }
+
+        return AssemblyCompatibilityEvaluation(
+            detectedReadTypes: evaluation.detectedReadTypes,
+            resolvedReadType: nil,
+            supportedTools: [],
+            blockingMessage: Self.mixedDetectedAndUnclassifiedAssemblyInputsMessage
+        )
+    }
+
+    private func assemblyRequest(from config: SPAdesAssemblyConfig) -> AssemblyRunRequest? {
+        guard let tool = selectedToolID.assemblyTool, tool == .spades else { return nil }
+        guard let readType = detectedAssemblyReadType else { return nil }
+        guard AssemblyCompatibility.isSupported(tool: tool, for: readType) else {
+            return nil
+        }
+
+        return AssemblyRunRequest(
+            tool: tool,
+            readType: readType,
+            inputURLs: config.allInputFiles,
+            projectName: config.projectName,
+            outputDirectory: config.outputDirectory,
+            pairedEnd: !config.forwardReads.isEmpty
+                && config.forwardReads.count == config.reverseReads.count
+                && config.unpairedReads.isEmpty,
+            threads: config.threads,
+            memoryGB: config.memoryGB,
+            minContigLength: config.minContigLength,
+            selectedProfileID: config.mode.rawValue,
+            extraArguments: config.customArgs
+        )
     }
 
     private func resolvedDeduplicateParameters() -> (substitutions: Int, optical: Bool, opticalDistance: Int) {
@@ -927,6 +1004,10 @@ enum FASTQOperationToolID: String, CaseIterable, Sendable {
     case selectReadsBySequence
     case minimap2
     case spades
+    case megahit
+    case skesa
+    case flye
+    case hifiasm
     case kraken2
     case esViritu
     case taxTriage
@@ -954,6 +1035,10 @@ enum FASTQOperationToolID: String, CaseIterable, Sendable {
         case .selectReadsBySequence: return "Select Reads by Sequence"
         case .minimap2: return "minimap2"
         case .spades: return "SPAdes"
+        case .megahit: return "MEGAHIT"
+        case .skesa: return "SKESA"
+        case .flye: return "Flye"
+        case .hifiasm: return "Hifiasm"
         case .kraken2: return "Kraken2"
         case .esViritu: return "EsViritu"
         case .taxTriage: return "TaxTriage"
@@ -983,6 +1068,10 @@ enum FASTQOperationToolID: String, CaseIterable, Sendable {
         case .selectReadsBySequence: return "Select reads matching a sequence."
         case .minimap2: return "Map reads to a reference sequence."
         case .spades: return "Assemble reads into contigs."
+        case .megahit: return "Assemble short reads with a compact de Bruijn graph."
+        case .skesa: return "Assemble isolate-focused short reads conservatively."
+        case .flye: return "Assemble ONT long reads into contigs."
+        case .hifiasm: return "Assemble PacBio HiFi reads into phased contigs."
         case .kraken2: return "Classify reads taxonomically."
         case .esViritu: return "Detect viruses and report coverage."
         case .taxTriage: return "Run the TaxTriage pathogen workflow."
@@ -1005,7 +1094,7 @@ enum FASTQOperationToolID: String, CaseIterable, Sendable {
             return .searchSubsetting
         case .minimap2:
             return .mapping
-        case .spades:
+        case .spades, .megahit, .skesa, .flye, .hifiasm:
             return .assembly
         case .kraken2, .esViritu, .taxTriage:
             return .classification
@@ -1021,7 +1110,8 @@ enum FASTQOperationToolID: String, CaseIterable, Sendable {
         case .qualityTrim, .adapterRemoval, .trimFixedBases, .filterByReadLength,
              .removeDuplicates, .mergeOverlappingPairs, .repairPairedEndFiles,
              .correctSequencingErrors, .subsampleByProportion, .subsampleByCount,
-             .extractReadsByID, .extractReadsByMotif, .selectReadsBySequence, .spades:
+             .extractReadsByID, .extractReadsByMotif, .selectReadsBySequence,
+             .spades, .megahit, .skesa, .flye, .hifiasm:
             return [.fastqDataset]
         case .primerTrimming:
             return [.fastqDataset, .primerSource]
@@ -1049,7 +1139,7 @@ enum FASTQOperationToolID: String, CaseIterable, Sendable {
 
     var usesEmbeddedConfiguration: Bool {
         switch self {
-        case .minimap2, .spades, .kraken2, .esViritu, .taxTriage:
+        case .minimap2, .spades, .megahit, .skesa, .flye, .hifiasm, .kraken2, .esViritu, .taxTriage:
             return true
         default:
             return false
@@ -1062,7 +1152,7 @@ enum FASTQOperationToolID: String, CaseIterable, Sendable {
 
     var defaultEmbeddedReadiness: Bool {
         switch self {
-        case .minimap2, .kraken2, .esViritu, .taxTriage:
+        case .minimap2, .spades, .megahit, .skesa, .flye, .hifiasm, .kraken2, .esViritu, .taxTriage:
             return false
         default:
             return true
@@ -1075,10 +1165,21 @@ enum FASTQOperationToolID: String, CaseIterable, Sendable {
             return "Select a reference sequence to continue."
         case .kraken2, .esViritu, .taxTriage:
             return "Complete the classifier settings to continue."
-        case .spades:
+        case .spades, .megahit, .skesa, .flye, .hifiasm:
             return "Complete the assembly settings to continue."
         default:
             return "Complete the required tool settings to continue."
+        }
+    }
+
+    var assemblyTool: AssemblyTool? {
+        switch self {
+        case .spades: return .spades
+        case .megahit: return .megahit
+        case .skesa: return .skesa
+        case .flye: return .flye
+        case .hifiasm: return .hifiasm
+        default: return nil
         }
     }
 }
@@ -1160,8 +1261,21 @@ enum FASTQOperationLaunchRequest: Sendable, Equatable {
     case refreshQCSummary(inputURLs: [URL])
     case derivative(request: FASTQDerivativeRequest, inputURLs: [URL], outputMode: FASTQOperationOutputMode)
     case map(inputURLs: [URL], referenceURL: URL, outputMode: FASTQOperationOutputMode)
-    case assemble(inputURLs: [URL], outputMode: FASTQOperationOutputMode)
+    case assemble(request: AssemblyRunRequest, outputMode: FASTQOperationOutputMode)
     case classify(tool: FASTQOperationToolID, inputURLs: [URL], databaseName: String)
+}
+
+private extension AssemblyTool {
+    var defaultReadType: AssemblyReadType {
+        switch self {
+        case .spades, .megahit, .skesa:
+            return .illuminaShortReads
+        case .flye:
+            return .ontReads
+        case .hifiasm:
+            return .pacBioHiFi
+        }
+    }
 }
 
 extension FASTQOperationCategoryID {

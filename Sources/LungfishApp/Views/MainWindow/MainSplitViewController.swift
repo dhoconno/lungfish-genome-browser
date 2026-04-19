@@ -30,8 +30,8 @@ private extension FASTQOperationLaunchRequest {
             return inputURLs.first
         case .map(let inputURLs, _, _):
             return inputURLs.first
-        case .assemble(let inputURLs, _):
-            return inputURLs.first
+        case .assemble(let request, _):
+            return request.inputURLs.first
         case .classify(_, let inputURLs, _):
             return inputURLs.first
         }
@@ -67,8 +67,8 @@ private extension FASTQOperationLaunchRequest {
             return request.operationLabel
         case .map:
             return "Map Reads"
-        case .assemble:
-            return "Assemble Reads"
+        case .assemble(let request, _):
+            return request.tool.displayName
         case .classify(let tool, _, _):
             return tool.title
         }
@@ -2233,13 +2233,21 @@ extension MainSplitViewController: SidebarSelectionDelegate {
             }
             // Determine tool: check metadata first (works for renamed dirs), then prefix.
             let dirName = url.lastPathComponent
-            let toolId = AnalysesFolder.readAnalysisMetadata(from: url)?.tool ?? dirName
+            let toolId = item.userInfo["analysisTool"]
+                ?? AnalysesFolder.readAnalysisMetadata(from: url)?.tool
+                ?? dirName
             if toolId.hasPrefix("naomgs") {
                 displayNaoMgsResultFromSidebar(at: url)
             } else if toolId.hasPrefix("nvd") {
                 displayNvdResultFromSidebar(at: url)
-            } else if toolId.hasPrefix("spades") || toolId.hasPrefix("megahit") || toolId.hasPrefix("minimap2") {
-                logger.info("displayContent: Assembly/alignment viewer not yet available for '\(dirName, privacy: .public)'")
+            } else if toolId.hasPrefix("spades")
+                || toolId.hasPrefix("megahit")
+                || toolId.hasPrefix("skesa")
+                || toolId.hasPrefix("flye")
+                || toolId.hasPrefix("hifiasm") {
+                displayAssemblyAnalysisFromSidebar(at: url)
+            } else if toolId.hasPrefix("minimap2") {
+                logger.info("displayContent: Alignment viewer not yet available for '\(dirName, privacy: .public)'")
                 viewerController.clearViewport(statusMessage: "Viewer for this analysis type is not yet available.")
             } else {
                 logger.warning("displayContent: Unknown analysis type for '\(dirName, privacy: .public)'")
@@ -2305,6 +2313,20 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                     }
                 }
             }
+        }
+    }
+
+    private func displayAssemblyAnalysisFromSidebar(at url: URL) {
+        logger.info("displayAssemblyAnalysis: Opening '\(url.lastPathComponent, privacy: .public)'")
+
+        do {
+            let result = try AssemblyResult.load(from: url)
+            viewerController.displayAssemblyResult(result)
+        } catch {
+            logger.error(
+                "displayAssemblyAnalysis: Failed to load result from \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            viewerController.clearViewport(statusMessage: "Unable to load assembly result.")
         }
     }
 

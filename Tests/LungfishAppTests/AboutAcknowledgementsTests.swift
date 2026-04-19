@@ -7,13 +7,16 @@ final class AboutAcknowledgementsTests: XCTestCase {
     func testCurrentSectionsMatchBundledAndVisiblePackTools() throws {
         let sections = AboutAcknowledgements.currentSections()
 
-        XCTAssertEqual(sections.map(\.title), ["Bundled Bootstrap", "Third-Party Tools", "Metagenomics"])
+        XCTAssertEqual(sections.map(\.title), ["Bundled Bootstrap", "Third-Party Tools", "Genome Assembly", "Metagenomics"])
 
         let bundled = try XCTUnwrap(sections.first(where: { $0.title == "Bundled Bootstrap" }))
         XCTAssertEqual(bundled.entries.map(\.id), ["micromamba"])
 
         let required = try XCTUnwrap(sections.first(where: { $0.title == PluginPack.requiredSetupPack.name }))
         XCTAssertEqual(required.entries.map(\.id), try ManagedToolLock.loadFromBundle().tools.map(\.id))
+
+        let assembly = try XCTUnwrap(sections.first(where: { $0.title == "Genome Assembly" }))
+        XCTAssertEqual(assembly.entries.map(\.id), ["spades", "megahit", "skesa", "flye", "hifiasm"])
 
         let metagenomics = try XCTUnwrap(sections.first(where: { $0.title == "Metagenomics" }))
         XCTAssertEqual(metagenomics.entries.map(\.id), ["kraken2", "bracken", "esviritu"])
@@ -33,6 +36,17 @@ final class AboutAcknowledgementsTests: XCTestCase {
         XCTAssertEqual(bcftools.secondaryDetail, "GPL")
         XCTAssertEqual(bcftools.sourceURL, "https://github.com/samtools/bcftools")
 
+        let assembly = try XCTUnwrap(sections.first(where: { $0.title == "Genome Assembly" }))
+        let spades = try XCTUnwrap(assembly.entries.first(where: { $0.id == "spades" }))
+        XCTAssertEqual(spades.detail, "4.2.0")
+        XCTAssertEqual(spades.secondaryDetail, "GPL-2.0-only")
+        XCTAssertEqual(spades.sourceURL, "https://github.com/ablab/spades")
+
+        let hifiasm = try XCTUnwrap(assembly.entries.first(where: { $0.id == "hifiasm" }))
+        XCTAssertEqual(hifiasm.detail, "0.25.0")
+        XCTAssertEqual(hifiasm.secondaryDetail, "MIT")
+        XCTAssertEqual(hifiasm.sourceURL, "https://github.com/chhylp123/hifiasm")
+
         let metagenomics = try XCTUnwrap(sections.first(where: { $0.title == "Metagenomics" }))
         let kraken2 = try XCTUnwrap(metagenomics.entries.first(where: { $0.id == "kraken2" }))
         XCTAssertEqual(kraken2.detail, "2.17.1")
@@ -50,7 +64,7 @@ final class AboutAcknowledgementsTests: XCTestCase {
 
         XCTAssertFalse(entryIDs.contains("metaphlan"))
         XCTAssertFalse(entryIDs.contains("bwa-mem2"))
-        XCTAssertFalse(entryIDs.contains("spades"))
+        XCTAssertFalse(entryIDs.contains("quast"))
         XCTAssertFalse(entryIDs.contains("taxtriage"))
         XCTAssertFalse(entryIDs.contains("nao-mgs"))
     }

@@ -1,6 +1,7 @@
 import XCTest
 @testable import LungfishApp
 @testable import LungfishIO
+import LungfishWorkflow
 
 final class FASTQOperationExecutionServiceTests: XCTestCase {
     func testExecuteDerivativeDiscoversStagedFASTQFileAndImportsIt() async throws {
@@ -438,6 +439,196 @@ final class FASTQOperationExecutionServiceTests: XCTestCase {
             "/tmp/ref.fasta",
             "--paired",
         ])
+    }
+
+    func testAssemblyLaunchBuildsAssemblerAwareInvocation() throws {
+        let request = FASTQOperationLaunchRequest.assemble(
+            request: AssemblyRunRequest(
+                tool: .spades,
+                readType: .illuminaShortReads,
+                inputURLs: [URL(fileURLWithPath: "/tmp/sample.fastq.gz")],
+                projectName: "Demo",
+                outputDirectory: URL(fileURLWithPath: "/tmp/assembly-out"),
+                threads: 8,
+                memoryGB: nil,
+                minContigLength: nil,
+                selectedProfileID: nil,
+                extraArguments: []
+            ),
+            outputMode: .groupedResult
+        )
+
+        let invocation = try FASTQOperationExecutionService().buildInvocation(for: request)
+
+        XCTAssertEqual(
+            invocation,
+            CLIInvocation(
+                subcommand: "assemble",
+                arguments: [
+                    "/tmp/sample.fastq.gz",
+                    "--assembler", "spades",
+                    "--read-type", "illumina-short-reads",
+                    "--project-name", "Demo",
+                    "--threads", "8",
+                    "--output", "<derived>",
+                ]
+            )
+        )
+    }
+
+    func testAssemblyLaunchPreservesExplicitPairedTopology() throws {
+        let request = FASTQOperationLaunchRequest.assemble(
+            request: AssemblyRunRequest(
+                tool: .spades,
+                readType: .illuminaShortReads,
+                inputURLs: [
+                    URL(fileURLWithPath: "/tmp/sample_R1.fastq.gz"),
+                    URL(fileURLWithPath: "/tmp/sample_R2.fastq.gz"),
+                ],
+                projectName: "Demo",
+                outputDirectory: URL(fileURLWithPath: "/tmp/assembly-out"),
+                pairedEnd: true,
+                threads: 8,
+                memoryGB: nil,
+                minContigLength: nil,
+                selectedProfileID: nil,
+                extraArguments: []
+            ),
+            outputMode: .groupedResult
+        )
+
+        let invocation = try FASTQOperationExecutionService().buildInvocation(for: request)
+
+        XCTAssertEqual(
+            invocation.arguments,
+            [
+                "/tmp/sample_R1.fastq.gz",
+                "/tmp/sample_R2.fastq.gz",
+                "--paired",
+                "--assembler", "spades",
+                "--read-type", "illumina-short-reads",
+                "--project-name", "Demo",
+                "--threads", "8",
+                "--output", "<derived>",
+            ]
+        )
+    }
+
+    func testAssemblyLaunchDoesNotInferPairedFromTwoInputFilesAlone() throws {
+        let request = FASTQOperationLaunchRequest.assemble(
+            request: AssemblyRunRequest(
+                tool: .spades,
+                readType: .illuminaShortReads,
+                inputURLs: [
+                    URL(fileURLWithPath: "/tmp/chunk-a.fastq.gz"),
+                    URL(fileURLWithPath: "/tmp/chunk-b.fastq.gz"),
+                ],
+                projectName: "Demo",
+                outputDirectory: URL(fileURLWithPath: "/tmp/assembly-out"),
+                pairedEnd: false,
+                threads: 8,
+                memoryGB: nil,
+                minContigLength: nil,
+                selectedProfileID: nil,
+                extraArguments: []
+            ),
+            outputMode: .groupedResult
+        )
+
+        let invocation = try FASTQOperationExecutionService().buildInvocation(for: request)
+
+        XCTAssertFalse(invocation.arguments.contains("--paired"))
+    }
+
+    func testAssemblyLaunchBuildsGenericManagedInvocationForMegahit() throws {
+        let request = FASTQOperationLaunchRequest.assemble(
+            request: AssemblyRunRequest(
+                tool: .megahit,
+                readType: .illuminaShortReads,
+                inputURLs: [URL(fileURLWithPath: "/tmp/sample.fastq.gz")],
+                projectName: "Demo",
+                outputDirectory: URL(fileURLWithPath: "/tmp/assembly-out"),
+                threads: 8,
+                memoryGB: 24,
+                minContigLength: 1000,
+                selectedProfileID: "meta-sensitive",
+                extraArguments: ["--k-min", "21"]
+            ),
+            outputMode: .groupedResult
+        )
+
+        let invocation = try FASTQOperationExecutionService().buildInvocation(for: request)
+
+        XCTAssertEqual(
+            invocation.arguments,
+            [
+                "/tmp/sample.fastq.gz",
+                "--assembler", "megahit",
+                "--read-type", "illumina-short-reads",
+                "--project-name", "Demo",
+                "--threads", "8",
+                "--output", "<derived>",
+                "--memory-gb", "24",
+                "--min-contig-length", "1000",
+                "--profile", "meta-sensitive",
+                "--extra-arg", "--k-min",
+                "--extra-arg", "21",
+            ]
+        )
+    }
+
+    func testExecuteKeepsPairedAssemblyAsSinglePerInputPlan() async throws {
+        let tempDir = try FASTQOperationTestHelper.makeTempDir(prefix: "FASTQExecService")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let assemblyRequest = FASTQOperationLaunchRequest.assemble(
+            request: AssemblyRunRequest(
+                tool: .spades,
+                readType: .illuminaShortReads,
+                inputURLs: [
+                    URL(fileURLWithPath: "/tmp/sample_R1.fastq.gz"),
+                    URL(fileURLWithPath: "/tmp/sample_R2.fastq.gz"),
+                ],
+                projectName: "Demo",
+                outputDirectory: URL(fileURLWithPath: "/tmp/assembly-out"),
+                pairedEnd: true,
+                threads: 8,
+                memoryGB: nil,
+                minContigLength: nil,
+                selectedProfileID: nil,
+                extraArguments: []
+            ),
+            outputMode: .perInput
+        )
+
+        let resolver = SpyInputResolver(resolvedRequest: assemblyRequest)
+        let runner = SpyCommandRunner { invocation, outputDirectory in
+            let reportedOutput = outputDirectory.appendingPathComponent("assembly-result")
+            try FileManager.default.createDirectory(at: reportedOutput, withIntermediateDirectories: true)
+            return FASTQCLIExecutionResult(outputURLs: [reportedOutput])
+        }
+        let importer = SpyDirectImporter()
+        importer.resultURLs = [tempDir.appendingPathComponent("imported-result")]
+        let service = FASTQOperationExecutionService(
+            inputResolver: resolver,
+            commandRunner: runner,
+            directImporter: importer
+        )
+
+        _ = try await service.execute(
+            request: assemblyRequest,
+            workingDirectory: tempDir
+        )
+
+        XCTAssertEqual(runner.invocations.count, 1)
+        XCTAssertEqual(
+            runner.invocations[0].arguments.prefix(3),
+            [
+                "/tmp/sample_R1.fastq.gz",
+                "/tmp/sample_R2.fastq.gz",
+                "--paired",
+            ]
+        )
     }
 
     func testRefreshQCSummaryLaunchBuildsFastqQCSummaryInvocation() throws {

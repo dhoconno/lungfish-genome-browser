@@ -80,7 +80,10 @@ final class PluginPackRegistryTests: XCTestCase {
     }
 
     func testMetagenomicsPackDefinesSmokeChecksForVisibleTools() {
-        let pack = try! XCTUnwrap(PluginPack.activeOptionalPacks.first(where: { $0.id == "metagenomics" }))
+        guard let pack = PluginPack.activeOptionalPacks.first(where: { $0.id == "metagenomics" }) else {
+            XCTFail("Expected active metagenomics pack")
+            return
+        }
         let environments = pack.toolRequirements.map(\.environment)
 
         XCTAssertEqual(environments, ["kraken2", "bracken", "esviritu"])
@@ -110,6 +113,52 @@ final class PluginPackRegistryTests: XCTestCase {
         XCTAssertEqual(esviritu.sourceURL, "https://github.com/cmmr/EsViritu")
     }
 
+    func testAssemblyPackDefinesSmokeChecksForVisibleTools() {
+        guard let pack = PluginPack.activeOptionalPacks.first(where: { $0.id == "assembly" }) else {
+            XCTFail("Expected active assembly pack")
+            return
+        }
+        let environments = pack.toolRequirements.map(\.environment)
+
+        XCTAssertEqual(environments, ["spades", "megahit", "skesa", "flye", "hifiasm"])
+        XCTAssertTrue(pack.toolRequirements.allSatisfy { $0.smokeTest != nil })
+        XCTAssertEqual(pack.toolRequirements.first(where: { $0.environment == "spades" })?.executables, ["spades.py"])
+    }
+
+    func testAssemblyPackPinsExactToolMetadata() throws {
+        let pack = try XCTUnwrap(PluginPack.activeOptionalPacks.first(where: { $0.id == "assembly" }))
+
+        let spades = try XCTUnwrap(pack.toolRequirements.first(where: { $0.id == "spades" }))
+        XCTAssertEqual(spades.installPackages, ["bioconda::spades=4.2.0"])
+        XCTAssertEqual(spades.version, "4.2.0")
+        XCTAssertEqual(spades.license, "GPL-2.0-only")
+        XCTAssertEqual(spades.sourceURL, "https://github.com/ablab/spades")
+
+        let megahit = try XCTUnwrap(pack.toolRequirements.first(where: { $0.id == "megahit" }))
+        XCTAssertEqual(megahit.installPackages, ["bioconda::megahit=1.2.9"])
+        XCTAssertEqual(megahit.version, "1.2.9")
+        XCTAssertEqual(megahit.license, "GPL-3.0")
+        XCTAssertEqual(megahit.sourceURL, "https://github.com/voutcn/megahit")
+
+        let skesa = try XCTUnwrap(pack.toolRequirements.first(where: { $0.id == "skesa" }))
+        XCTAssertEqual(skesa.installPackages, ["bioconda::skesa=2.5.1"])
+        XCTAssertEqual(skesa.version, "2.5.1")
+        XCTAssertEqual(skesa.license, "Public Domain")
+        XCTAssertEqual(skesa.sourceURL, "https://github.com/ncbi/SKESA")
+
+        let flye = try XCTUnwrap(pack.toolRequirements.first(where: { $0.id == "flye" }))
+        XCTAssertEqual(flye.installPackages, ["bioconda::flye=2.9.6"])
+        XCTAssertEqual(flye.version, "2.9.6")
+        XCTAssertEqual(flye.license, "BSD")
+        XCTAssertEqual(flye.sourceURL, "https://github.com/mikolmogorov/Flye")
+
+        let hifiasm = try XCTUnwrap(pack.toolRequirements.first(where: { $0.id == "hifiasm" }))
+        XCTAssertEqual(hifiasm.installPackages, ["bioconda::hifiasm=0.25.0"])
+        XCTAssertEqual(hifiasm.version, "0.25.0")
+        XCTAssertEqual(hifiasm.license, "MIT")
+        XCTAssertEqual(hifiasm.sourceURL, "https://github.com/chhylp123/hifiasm")
+    }
+
     func testRequiredSetupPackUsesLighterSnakemakeSmokeProbe() {
         let pack = PluginPack.requiredSetupPack
 
@@ -130,8 +179,8 @@ final class PluginPackRegistryTests: XCTestCase {
         }
     }
 
-    func testActiveOptionalPacksOnlyExposeMetagenomics() {
-        XCTAssertEqual(PluginPack.activeOptionalPacks.map(\.id), ["metagenomics"])
+    func testActiveOptionalPacksExposeAssemblyAndMetagenomics() {
+        XCTAssertEqual(PluginPack.activeOptionalPacks.map(\.id), ["assembly", "metagenomics"])
     }
 
     func testActiveMetagenomicsPackUsesUnifiedClassifierDescription() throws {
@@ -144,6 +193,6 @@ final class PluginPackRegistryTests: XCTestCase {
     }
 
     func testVisibleCLIPacksIncludeRequiredAndActiveOptional() {
-        XCTAssertEqual(PluginPack.visibleForCLI.map(\.id), ["lungfish-tools", "metagenomics"])
+        XCTAssertEqual(PluginPack.visibleForCLI.map(\.id), ["lungfish-tools", "assembly", "metagenomics"])
     }
 }
