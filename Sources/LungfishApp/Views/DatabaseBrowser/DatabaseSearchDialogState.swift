@@ -50,16 +50,25 @@ enum DatabaseSearchDestination: String, CaseIterable, Identifiable, Sendable {
 final class DatabaseSearchDialogState {
     var selectedDestination: DatabaseSearchDestination
 
-    let genBankGenomesViewModel = DatabaseBrowserViewModel(source: .ncbi)
-    let sraRunsViewModel = DatabaseBrowserViewModel(source: .ena)
-    let pathoplexusViewModel = DatabaseBrowserViewModel(source: .pathoplexus)
+    let genBankGenomesViewModel: DatabaseBrowserViewModel
+    let sraRunsViewModel: DatabaseBrowserViewModel
+    let pathoplexusViewModel: DatabaseBrowserViewModel
 
-    init(initialDestination: DatabaseSearchDestination = .genBankGenomes) {
+    init(
+        initialDestination: DatabaseSearchDestination = .genBankGenomes,
+        automationBackend: DatabaseSearchAutomationBackend? = nil
+    ) {
         self.selectedDestination = initialDestination
+        self.genBankGenomesViewModel = DatabaseBrowserViewModel(source: .ncbi, automationBackend: automationBackend)
+        self.sraRunsViewModel = DatabaseBrowserViewModel(source: .ena, automationBackend: automationBackend)
+        self.pathoplexusViewModel = DatabaseBrowserViewModel(source: .pathoplexus, automationBackend: automationBackend)
     }
 
-    convenience init(selectedDestination: DatabaseSearchDestination = .genBankGenomes) {
-        self.init(initialDestination: selectedDestination)
+    convenience init(
+        selectedDestination: DatabaseSearchDestination = .genBankGenomes,
+        automationBackend: DatabaseSearchAutomationBackend? = nil
+    ) {
+        self.init(initialDestination: selectedDestination, automationBackend: automationBackend)
     }
 
     var dialogTitle: String {

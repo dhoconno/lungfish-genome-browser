@@ -189,8 +189,11 @@ public class DatabaseBrowserViewController: NSViewController {
     // MARK: - Lifecycle
 
     public override func loadView() {
+        let automationBackend = DatabaseSearchAutomationBackend(configuration: AppUITestConfiguration.current)
+
         dialogState = DatabaseSearchDialogState(
-            initialDestination: DatabaseSearchDestination(databaseSource: databaseSource)
+            initialDestination: DatabaseSearchDestination(databaseSource: databaseSource),
+            automationBackend: automationBackend
         )
 
         if let searchType = initialSearchType {
@@ -982,6 +985,7 @@ public class DatabaseBrowserViewModel: ObservableObject {
 
     private let ncbiService = NCBIService()
     private let enaService = ENAService()
+    private let automationBackend: DatabaseSearchAutomationBackend?
 
     /// View model for genome assembly downloads (FASTA + GFF3 + bundle building).
     private lazy var genomeDownloadViewModel = GenomeDownloadViewModel(ncbiService: ncbiService)
@@ -991,8 +995,9 @@ public class DatabaseBrowserViewModel: ObservableObject {
 
     // MARK: - Initialization
 
-    init(source: DatabaseSource) {
+    init(source: DatabaseSource, automationBackend: DatabaseSearchAutomationBackend? = nil) {
         self.source = source
+        self.automationBackend = automationBackend
         loadSearchHistory()
     }
 
@@ -1138,6 +1143,40 @@ public class DatabaseBrowserViewModel: ObservableObject {
         errorMessage = nil
         results = []
         selectedRecords = []
+
+        if let automationBackend {
+            currentSearchTask = Task { [weak self] in
+                guard let self else { return }
+
+                do {
+                    let response = try await automationBackend.search(
+                        DatabaseSearchAutomationRequest(
+                            source: self.source,
+                            ncbiSearchType: self.ncbiSearchType,
+                            searchText: self.searchText
+                        )
+                    )
+
+                    await MainActor.run {
+                        self.errorMessage = nil
+                        self.results = response.records
+                        self.selectedRecord = nil
+                        self.selectedRecords = []
+                        self.totalResultCount = response.totalCount
+                        self.hasMoreResults = response.hasMore
+                        self.searchPhase = .complete(count: response.records.count)
+                        self.currentSearchTask = nil
+                    }
+                } catch {
+                    await MainActor.run {
+                        self.errorMessage = error.localizedDescription
+                        self.searchPhase = .failed(error.localizedDescription)
+                        self.currentSearchTask = nil
+                    }
+                }
+            }
+            return
+        }
 
         logger.info("performSearch: Starting search task")
 
@@ -1930,6 +1969,23 @@ public class DatabaseBrowserViewModel: ObservableObject {
             recordsToDownload = [single]
         } else {
             errorMessage = "No records selected"
+            return
+        }
+
+        if let automationBackend {
+            onDownloadStarted?()
+            Task { [weak self] in
+                do {
+                    try await automationBackend.simulateDownload(
+                        records: recordsToDownload,
+                        source: self?.source ?? .ncbi
+                    )
+                } catch {
+                    await MainActor.run {
+                        self?.errorMessage = error.localizedDescription
+                    }
+                }
+            }
             return
         }
 
