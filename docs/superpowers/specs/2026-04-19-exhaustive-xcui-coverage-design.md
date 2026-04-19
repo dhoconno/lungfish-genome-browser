@@ -29,6 +29,7 @@ That pilot should validate not just launch gating, but end-to-end behavior throu
 - Exercise real Lungfish workflows after data enters the app, rather than shortcutting directly into preloaded UI state.
 - Cover both pointer-driven and keyboard-driven interaction paths for important workflows.
 - Improve accessibility at the same time as automation by standardizing identifiers, labels, values, and focus behavior.
+- Make the UI action model automation-ready for future AppleScript and Shortcuts work.
 - Preserve real macOS open/save panel coverage for critical entry and export paths.
 - Add a small separate live-service smoke layer for remote integrations.
 - Use the assembly tool batch as the first feature-specific pilot on top of the shared harness.
@@ -41,6 +42,7 @@ That pilot should validate not just launch gating, but end-to-end behavior throu
 - Do not claim exhaustive coverage by counting generic smoke tests as subsystem completion.
 - Do not hide unfinished product surfaces behind vague test exclusions.
 - Do not create multiple incompatible harness patterns for different subsystems.
+- Do not implement full AppleScript or Shortcuts support in this rollout.
 
 ## Current State
 
@@ -244,6 +246,56 @@ Each tested surface should expose:
 - both keyboard and pointer paths for important workflows
 
 The goal is not only to make XCUI find controls, but to make the UI operable and inspectable for assistive technology users.
+
+## Automation Readiness
+
+This rollout should prepare Lungfish for future AppleScript and Shortcuts support without attempting to ship those automation surfaces yet.
+
+### Current Boundary
+
+The current repository does not expose an established AppleScript or Shortcuts integration surface. The exhaustive XCUI and accessibility rollout should therefore treat automation-readiness as a design constraint, not as a first-pass deliverable.
+
+### What This Rollout Should Do
+
+Use the XCUI and accessibility effort to standardize the pieces that future automation will need anyway:
+
+- explicit user-action inventory
+- stable semantic action names
+- clear feature ownership for actions and parameters
+- predictable state and validation models
+- narrow external-boundary adapters
+- reusable launch and scenario plumbing for deterministic automation
+
+### What This Rollout Should Not Do
+
+Do not add:
+
+- AppleScript dictionary and scriptability plumbing
+- App Intents or Shortcuts actions
+- new automation-only command surfaces that bypass the normal UI and workflow model
+
+Those belong in a later dedicated automation phase once the app's action inventory and accessibility contract are stable.
+
+### Action Inventory Extension
+
+The UI action inventory should include an additional automation-readiness field for each action:
+
+- `candidate for future automation`
+- `not appropriate for automation`
+- `blocked by unfinished product model`
+
+Where useful, the inventory should also record likely future automation semantics, such as:
+
+- action name
+- required parameters
+- required project or selection context
+- expected result or side effect
+
+This allows the XCUI/accessibility program to shape the app around stable actions now, without forcing immediate AppleScript or Shortcuts implementation.
+
+### Design Principle
+
+Future automation should reuse the same action model the app exposes to users and tests. The XCUI and accessibility program should therefore avoid ad hoc state or one-off UI wiring that would make eventual scriptable actions inconsistent with normal user behavior.
 
 ## UI Action Inventory
 
