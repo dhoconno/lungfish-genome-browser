@@ -195,6 +195,134 @@ final class WorkspaceShellLayoutTests: XCTestCase {
         XCTAssertEqual(controller.testingSidebarWidth, 320, accuracy: 2)
     }
 
+    func testControllerReappliesPersistedInspectorWidthAfterHideThenShow() {
+        UserDefaults.standard.set(340, forKey: MainSplitViewController.inspectorWidthDefaultsKey)
+
+        let (controller, window) = makeController()
+        controller.testingSetShellFrames(sidebarWidth: 240, inspectorWidth: 280, totalWidth: 1500)
+        window.layoutIfNeeded()
+        controller.view.layoutSubtreeIfNeeded()
+        controller.testingRestorePersistedShellLayout()
+        window.layoutIfNeeded()
+        controller.view.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(controller.testingShellLayoutState.lastUserInspectorWidth, 340)
+        XCTAssertEqual(controller.testingInspectorWidth, 340, accuracy: 2)
+
+        controller.setInspectorVisible(false, animated: false)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertFalse(controller.isInspectorVisible)
+        XCTAssertEqual(storedCGFloat(forKey: MainSplitViewController.inspectorWidthDefaultsKey), 340)
+
+        controller.setInspectorVisible(true, animated: false)
+        window.layoutIfNeeded()
+        controller.view.layoutSubtreeIfNeeded()
+        controller.testingProcessShellResize()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        window.layoutIfNeeded()
+        controller.view.layoutSubtreeIfNeeded()
+
+        XCTAssertTrue(controller.isInspectorVisible)
+        XCTAssertEqual(controller.testingInspectorWidth, 340, accuracy: 2)
+    }
+
+    func testControllerQueuedAnimatedInspectorToggleDoesNotOverwriteStoredWidth() {
+        UserDefaults.standard.set(340, forKey: MainSplitViewController.inspectorWidthDefaultsKey)
+
+        let (controller, window) = makeController()
+        controller.testingRestorePersistedShellLayout()
+        window.layoutIfNeeded()
+        controller.view.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(controller.testingShellLayoutState.lastUserInspectorWidth, 340)
+
+        controller.setInspectorVisible(false, animated: true, source: "test.queue.hide")
+        controller.setInspectorVisible(true, animated: true, source: "test.queue.show")
+
+        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+        window.layoutIfNeeded()
+        controller.view.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+
+        XCTAssertEqual(controller.testingShellLayoutState.lastUserInspectorWidth, 340)
+        XCTAssertEqual(storedCGFloat(forKey: MainSplitViewController.inspectorWidthDefaultsKey), 340)
+    }
+
+    func testControllerStaleInspectorRecoveryDoesNotBlockLaterUserDragPersistence() {
+        let (controller, window) = makeController()
+        window.layoutIfNeeded()
+        controller.view.layoutSubtreeIfNeeded()
+
+        controller.testingForceStaleInspectorTransitionSuppression()
+        controller.setInspectorVisible(true, animated: false, source: "test.stale.recovery")
+
+        controller.testingSetShellFrames(sidebarWidth: 310, inspectorWidth: 280, totalWidth: 1500)
+        _ = controller.splitView(controller.splitView, constrainSplitPosition: 310, ofSubviewAt: 0)
+        controller.testingProcessShellResize()
+
+        XCTAssertEqual(storedCGFloat(forKey: MainSplitViewController.sidebarWidthDefaultsKey), 310)
+    }
+
+    func testCoordinatorRestoresStoredSidebarWidthWhenInspectorBecomesHidden() {
+        let coordinator = WorkspaceShellLayoutCoordinator(
+            sidebarMinWidth: 180,
+            sidebarMaxWidth: 720,
+            inspectorMinWidth: 200,
+            inspectorMaxWidth: 450,
+            viewerMinWidth: 400
+        )
+
+        coordinator.recordUserSidebarWidth(500)
+        coordinator.recordUserInspectorWidth(430)
+        coordinator.setSidebarVisible(true)
+        coordinator.setInspectorVisible(true)
+
+        let clampedWidths = coordinator.resolvedShellWidths(
+            currentSidebarWidth: 240,
+            currentInspectorWidth: 280,
+            totalWidth: 1000
+        )
+
+        XCTAssertLessThan(clampedWidths.sidebarWidth, 500)
+        XCTAssertLessThan(clampedWidths.inspectorWidth, 430)
+
+        coordinator.setInspectorVisible(false)
+        let sidebarOnlyWidths = coordinator.resolvedShellWidths(
+            currentSidebarWidth: clampedWidths.sidebarWidth,
+            currentInspectorWidth: 0,
+            totalWidth: 1000
+        )
+
+        XCTAssertEqual(sidebarOnlyWidths.sidebarWidth, 500, accuracy: 0.5)
+        XCTAssertEqual(sidebarOnlyWidths.inspectorWidth, 0, accuracy: 0.5)
+    }
+
+    func testControllerDeferredSidebarRecommendationDoesNotOverwriteFreshUserDrag() {
+        let (controller, window) = makeController()
+        window.layoutIfNeeded()
+        controller.view.layoutSubtreeIfNeeded()
+
+        controller.testingSetShellFrames(sidebarWidth: 240, inspectorWidth: 280, totalWidth: 1500)
+        NotificationCenter.default.post(
+            name: .sidebarPreferredWidthRecommended,
+            object: self,
+            userInfo: ["width": CGFloat(320)]
+        )
+
+        controller.testingSetShellFrames(sidebarWidth: 260, inspectorWidth: 280, totalWidth: 1500)
+        _ = controller.splitView(controller.splitView, constrainSplitPosition: 260, ofSubviewAt: 0)
+        controller.testingProcessShellResize()
+
+        XCTAssertEqual(storedCGFloat(forKey: MainSplitViewController.sidebarWidthDefaultsKey), 260)
+
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        window.layoutIfNeeded()
+        controller.view.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(storedCGFloat(forKey: MainSplitViewController.sidebarWidthDefaultsKey), 260)
+        XCTAssertEqual(controller.testingSidebarConstraintWidth, 260, accuracy: 2)
+    }
+
     private func makeController() -> (MainSplitViewController, NSWindow) {
         let controller = MainSplitViewController()
         let window = NSWindow(
@@ -204,6 +332,9 @@ final class WorkspaceShellLayoutTests: XCTestCase {
             defer: false
         )
         window.contentViewController = controller
+        window.layoutIfNeeded()
+        controller.view.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         window.layoutIfNeeded()
         controller.view.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
