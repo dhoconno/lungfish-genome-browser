@@ -1333,6 +1333,7 @@ private extension AssemblyRunRequest {
             inputURLs: inputURLs,
             projectName: projectName,
             outputDirectory: outputDirectory,
+            pairedEnd: pairedEnd,
             threads: threads,
             memoryGB: memoryGB,
             minContigLength: minContigLength,
