@@ -48,7 +48,7 @@ public enum AssemblyReadType: String, CaseIterable, Codable, Sendable {
         switch platform {
         case .illumina: return .illuminaShortReads
         case .ont: return .ontReads
-        case .pacbio: return .pacBioHiFi
+        case .pacbio: return nil
         default: return nil
         }
     }

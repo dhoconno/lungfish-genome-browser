@@ -114,6 +114,15 @@ final class AssemblyCompatibilityTests: XCTestCase {
         XCTAssertEqual(AssemblyReadType.detect(fromFASTQ: fixtureURL), .pacBioHiFi)
     }
 
+    func testWorkflowPlatformPacBioDoesNotAutoClassifyAsHiFi() {
+        XCTAssertNil(AssemblyReadType.detect(fromWorkflowPlatform: .pacbio))
+    }
+
+    func testWorkflowPlatformsStillMapIlluminaAndONT() {
+        XCTAssertEqual(AssemblyReadType.detect(fromWorkflowPlatform: .illumina), .illuminaShortReads)
+        XCTAssertEqual(AssemblyReadType.detect(fromWorkflowPlatform: .ont), .ontReads)
+    }
+
     func testGzippedIlluminaFixtureStillClassifiesAsShortReads() {
         let fixtureURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
