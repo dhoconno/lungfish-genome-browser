@@ -20,12 +20,14 @@ private class SplitPaneContainerView: NSView {
         }
     }
 
-    override var intrinsicContentSize: NSSize {
-        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        syncFillSubviewFrameIfNeeded()
     }
 
-    override var fittingSize: NSSize {
-        .zero
+    override func setFrameOrigin(_ newOrigin: NSPoint) {
+        super.setFrameOrigin(newOrigin)
+        syncFillSubviewFrameIfNeeded()
     }
 
     override func layout() {
@@ -44,6 +46,8 @@ private class SplitPaneContainerView: NSView {
                 || abs(fillSubview.frame.height - bounds.height) > 0.5
         else { return }
         fillSubview.frame = bounds
+        fillSubview.needsLayout = true
+        fillSubview.layoutSubtreeIfNeeded()
     }
 }
 
@@ -390,6 +394,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     private var pendingInitialSplitValidation = false
     private var pendingInitialValidationLeadingExtent: CGFloat?
     private var isSynchronizingTrackedSplitPosition = false
+    private var isApplyingDefaultSplitResize = false
 
     // MARK: - Callbacks
 
@@ -642,8 +647,9 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
             let requestedDividerPosition = self.splitView.requestedDividerPosition(at: 0)
             guard self.view.window != nil else { return }
             guard self.needsInitialSplitValidation else { return }
-            if requestedDividerPosition != nil,
+            if let requestedDividerPosition,
                let scheduledLeadingExtent,
+               abs(requestedDividerPosition - scheduledLeadingExtent) > 2,
                self.splitView.arrangedSubviews.count == 2 {
                 let currentLeadingExtent = self.splitView.isVertical
                     ? self.splitView.arrangedSubviews[0].frame.width
@@ -663,6 +669,41 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
                 self.applyInitialSplitPositionIfNeeded()
             }
             self.needsInitialSplitValidation = !self.hasValidInitialSplitPosition()
+        }
+    }
+
+    private func applySplitFrames(for leadingExtent: CGFloat) {
+        guard splitView.arrangedSubviews.count == 2 else { return }
+
+        let dividerThickness = splitView.dividerThickness
+        let firstView = splitView.arrangedSubviews[0]
+        let secondView = splitView.arrangedSubviews[1]
+
+        if splitView.isVertical {
+            let totalWidth = splitView.bounds.width
+            let trailingWidth = max(0, totalWidth - leadingExtent - dividerThickness)
+            firstView.frame = NSRect(x: 0, y: 0, width: leadingExtent, height: splitView.bounds.height)
+            secondView.frame = NSRect(
+                x: leadingExtent + dividerThickness,
+                y: 0,
+                width: trailingWidth,
+                height: splitView.bounds.height
+            )
+        } else {
+            let totalHeight = splitView.bounds.height
+            let trailingHeight = max(0, totalHeight - leadingExtent - dividerThickness)
+            firstView.frame = NSRect(
+                x: 0,
+                y: totalHeight - leadingExtent,
+                width: splitView.bounds.width,
+                height: leadingExtent
+            )
+            secondView.frame = NSRect(
+                x: 0,
+                y: 0,
+                width: splitView.bounds.width,
+                height: trailingHeight
+            )
         }
     }
 
@@ -3190,10 +3231,50 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         )
     }
 
+    public func splitView(_ splitView: NSSplitView, resizeSubviewsWithOldSize oldSize: NSSize) {
+        guard splitView === self.splitView, splitView.arrangedSubviews.count == 2 else { return }
+
+        if !splitView.isVertical {
+            guard !isApplyingDefaultSplitResize else { return }
+            isApplyingDefaultSplitResize = true
+            let originalDelegate = splitView.delegate
+            splitView.delegate = nil
+            splitView.adjustSubviews()
+            splitView.delegate = originalDelegate
+            isApplyingDefaultSplitResize = false
+            return
+        }
+
+        let totalExtent = splitContainerExtent()
+        guard totalExtent > 0 else { return }
+
+        let targetLeadingExtent: CGFloat
+        if leftPaneContainer.isHidden {
+            targetLeadingExtent = collapsedSplitPositionForHiddenDetail(containerExtent: totalExtent)
+        } else if didSetInitialSplitPosition, !needsInitialSplitValidation {
+            let proposedLeadingExtent = self.splitView.requestedDividerPosition(at: 0) ?? currentDividerPosition()
+            targetLeadingExtent = clampedCurrentDividerPosition(for: proposedLeadingExtent ?? 0)
+        } else {
+            let layout = MetagenomicsPanelLayout.current()
+            let minimumExtents = minimumExtents(for: layout)
+            targetLeadingExtent = MetagenomicsPaneSizing.clampedDividerPosition(
+                proposed: round(totalExtent * defaultLeadingFraction(for: layout)),
+                containerExtent: totalExtent,
+                minimumLeadingExtent: minimumExtents.leading,
+                minimumTrailingExtent: minimumExtents.trailing
+            )
+        }
+
+        applySplitFrames(for: targetLeadingExtent)
+    }
+
     public func splitViewDidResizeSubviews(_ notification: Notification) {
         guard notification.object as? NSSplitView === splitView else { return }
-        if !isSynchronizingTrackedSplitPosition {
-            synchronizeTrackedSplitPositionIfNeeded()
+        if !isSynchronizingTrackedSplitPosition,
+           didSetInitialSplitPosition,
+           !needsInitialSplitValidation,
+           let currentPosition = currentDividerPosition() {
+            splitView.recordObservedDividerPosition(currentPosition)
         }
         if hasValidInitialSplitPosition() {
             didSetInitialSplitPosition = true

@@ -15,6 +15,10 @@ final class TrackedDividerSplitView: NSSplitView {
         requestedDividerPositions[dividerIndex]
     }
 
+    func recordObservedDividerPosition(_ position: CGFloat, at dividerIndex: Int = 0) {
+        requestedDividerPositions[dividerIndex] = position
+    }
+
     func clearRequestedDividerPosition(at dividerIndex: Int = 0) {
         requestedDividerPositions.removeValue(forKey: dividerIndex)
     }

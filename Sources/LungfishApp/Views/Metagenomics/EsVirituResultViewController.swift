@@ -1337,8 +1337,9 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
             let requestedDividerPosition = self.splitView.requestedDividerPosition(at: 0)
             guard self.view.window != nil else { return }
             guard self.needsInitialSplitValidation else { return }
-            if requestedDividerPosition != nil,
+            if let requestedDividerPosition,
                let scheduledLeadingExtent,
+               abs(requestedDividerPosition - scheduledLeadingExtent) > 2,
                self.splitView.arrangedSubviews.count == 2 {
                 let currentLeadingExtent = self.splitView.isVertical
                     ? self.splitView.arrangedSubviews[0].frame.width
@@ -1569,8 +1570,11 @@ public final class EsVirituResultViewController: NSViewController, NSSplitViewDe
 
     public func splitViewDidResizeSubviews(_ notification: Notification) {
         guard notification.object as? NSSplitView === splitView else { return }
-        if !isSynchronizingTrackedSplitPosition {
-            synchronizeTrackedSplitPositionIfNeeded()
+        if !isSynchronizingTrackedSplitPosition,
+           didSetInitialSplitPosition,
+           !needsInitialSplitValidation,
+           let currentPosition = currentDividerPosition() {
+            splitView.recordObservedDividerPosition(currentPosition)
         }
         if hasValidInitialSplitPosition() {
             didSetInitialSplitPosition = true

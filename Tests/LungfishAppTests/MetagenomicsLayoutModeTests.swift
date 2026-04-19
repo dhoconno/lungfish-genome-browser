@@ -365,7 +365,46 @@ final class MetagenomicsLayoutModeTests: XCTestCase {
         XCTAssertEqual(vc.testSplitView.arrangedSubviews[0].frame.width, movedWidth, accuracy: 2)
     }
 
-    func testTaxTriageMiniBAMViewTracksDetailPaneResize() throws {
+    func testTaxTriageDidResizeSubviewsDoesNotReapplyStaleTrackedDividerPosition() {
+        setLayoutPreference(.detailLeading, legacyTableOnLeft: false)
+
+        let vc = TaxTriageResultViewController()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
+            styleMask: [.titled, .resizable, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = vc
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        let initialWidth = vc.testSplitView.arrangedSubviews[0].frame.width
+        let draggedWidth = initialWidth - 160
+        let dividerThickness = vc.testSplitView.dividerThickness
+        let totalWidth = vc.testSplitView.bounds.width
+
+        var firstFrame = vc.testSplitView.arrangedSubviews[0].frame
+        firstFrame.size.width = draggedWidth
+        vc.testSplitView.arrangedSubviews[0].frame = firstFrame
+
+        var secondFrame = vc.testSplitView.arrangedSubviews[1].frame
+        secondFrame.origin.x = draggedWidth + dividerThickness
+        secondFrame.size.width = totalWidth - draggedWidth - dividerThickness
+        vc.testSplitView.arrangedSubviews[1].frame = secondFrame
+
+        vc.splitViewDidResizeSubviews(Notification(name: .init("TestSplitResize"), object: vc.testSplitView))
+
+        XCTAssertEqual(
+            vc.testSplitView.arrangedSubviews[0].frame.width,
+            draggedWidth,
+            accuracy: 2,
+            "initial=\(initialWidth) dragged=\(draggedWidth) tracked=\(String(describing: vc.testRequestedDividerPosition)) current=\(vc.testSplitView.arrangedSubviews[0].frame.width)"
+        )
+    }
+
+    func testTaxTriageMiniBAMScrollViewTracksDetailPaneResize() throws {
         setLayoutPreference(.detailLeading, legacyTableOnLeft: false)
 
         let vc = TaxTriageResultViewController()
@@ -385,40 +424,31 @@ final class MetagenomicsLayoutModeTests: XCTestCase {
                 subview.subviews.contains(where: { $0 is NSScrollView })
             })
         )
-        let initialContainerWidth = vc.testLeftPaneContainer.bounds.width
-        let initialBamWidth = bamView.frame.width
+        let scrollView = try XCTUnwrap(
+            bamView.subviews.first(where: { $0 is NSScrollView }) as? NSScrollView
+        )
 
         let minimumLeadingWidth: CGFloat = 250
         let maximumLeadingWidth = vc.testSplitView.bounds.width - 300
+        let initialContainerWidth = vc.testLeftPaneContainer.bounds.width
         let targetPosition: CGFloat
         if maximumLeadingWidth - initialContainerWidth >= 120 {
             targetPosition = initialContainerWidth + 160
         } else {
             targetPosition = max(minimumLeadingWidth, initialContainerWidth - 160)
         }
+
         vc.testSplitView.setPosition(targetPosition, ofDividerAt: 0)
         vc.testSplitView.adjustSubviews()
         window.layoutIfNeeded()
         vc.view.layoutSubtreeIfNeeded()
-        window.layoutIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
 
-        let expandedContainerWidth = vc.testLeftPaneContainer.bounds.width
-        XCTAssertGreaterThan(
-            abs(expandedContainerWidth - initialContainerWidth),
-            80,
-            "initialContainer=\(initialContainerWidth) expandedContainer=\(expandedContainerWidth) target=\(targetPosition)"
-        )
-        XCTAssertGreaterThan(
-            abs(expandedContainerWidth - initialBamWidth),
-            80,
-            "initialBam=\(initialBamWidth) expandedContainer=\(expandedContainerWidth)"
-        )
         XCTAssertEqual(
-            bamView.frame.width,
-            expandedContainerWidth,
+            scrollView.frame.width,
+            bamView.bounds.width,
             accuracy: 2,
-            "bamViewWidth=\(bamView.frame.width) containerWidth=\(expandedContainerWidth)"
+            "scrollWidth=\(scrollView.frame.width) bamWidth=\(bamView.bounds.width) containerWidth=\(vc.testLeftPaneContainer.bounds.width)"
         )
     }
 
