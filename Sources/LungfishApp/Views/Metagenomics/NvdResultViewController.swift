@@ -309,6 +309,7 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
     private var detailContainer: NvdDetailContainer?
     private var outlineContainer: NSView?
     private var didSetInitialSplitPosition = false
+    private var needsInitialSplitValidation = true
     private var pendingInitialSplitValidation = false
     private var splitViewBottomConstraint: NSLayoutConstraint?
 
@@ -343,6 +344,7 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
 
     public override func viewDidLayout() {
         super.viewDidLayout()
+        guard needsInitialSplitValidation else { return }
         resetInitialSplitPositionIfNeeded()
         scheduleInitialSplitValidationIfNeeded()
     }
@@ -1287,16 +1289,40 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
         }
     }
 
+    private func hasValidInitialSplitPosition() -> Bool {
+        guard splitView.arrangedSubviews.count == 2 else { return false }
+
+        let totalExtent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+        guard totalExtent > 0 else { return false }
+
+        let minimumExtents: (leading: CGFloat, trailing: CGFloat) = splitView.arrangedSubviews.first === detailContainer
+            ? (250, 300)
+            : (300, 250)
+        let minimumRequiredExtent = minimumExtents.leading + minimumExtents.trailing + splitView.dividerThickness
+        guard totalExtent >= minimumRequiredExtent else { return false }
+
+        let leadingExtent = splitView.isVertical
+            ? splitView.arrangedSubviews[0].frame.width
+            : splitView.arrangedSubviews[0].frame.height
+        let trailingExtent = splitView.isVertical
+            ? splitView.arrangedSubviews[1].frame.width
+            : splitView.arrangedSubviews[1].frame.height
+
+        return leadingExtent >= minimumExtents.leading && trailingExtent >= minimumExtents.trailing
+    }
+
     private func scheduleInitialSplitValidationIfNeeded() {
-        guard view.window != nil, !pendingInitialSplitValidation else { return }
+        guard needsInitialSplitValidation, view.window != nil, !pendingInitialSplitValidation else { return }
         pendingInitialSplitValidation = true
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.pendingInitialSplitValidation = false
             guard self.view.window != nil else { return }
+            guard self.needsInitialSplitValidation else { return }
             self.resetInitialSplitPositionIfNeeded()
             self.applyInitialSplitPositionIfNeeded()
+            self.needsInitialSplitValidation = !self.hasValidInitialSplitPosition()
         }
     }
 
@@ -1319,6 +1345,7 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
         )
         splitView.setPosition(clampedPosition, ofDividerAt: 0)
         didSetInitialSplitPosition = true
+        needsInitialSplitValidation = false
         resizeDetailContentToFit()
     }
 
@@ -1374,11 +1401,13 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
         let totalExtent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
         guard totalExtent > 0 else {
             didSetInitialSplitPosition = false
+            needsInitialSplitValidation = true
             return
         }
 
         guard view.window != nil else {
             didSetInitialSplitPosition = false
+            needsInitialSplitValidation = true
             return
         }
 
@@ -1396,6 +1425,7 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
         )
         splitView.setPosition(clampedPosition, ofDividerAt: 0)
         didSetInitialSplitPosition = true
+        needsInitialSplitValidation = false
         resizeDetailContentToFit()
     }
 
@@ -1490,6 +1520,14 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
             minimumLeadingExtent: minimumExtents.leading,
             minimumTrailingExtent: minimumExtents.trailing
         )
+    }
+
+    public func splitViewDidResizeSubviews(_ notification: Notification) {
+        guard notification.object as? NSSplitView === splitView else { return }
+        if hasValidInitialSplitPosition() {
+            didSetInitialSplitPosition = true
+            needsInitialSplitValidation = false
+        }
     }
 
     // MARK: - BLAST Verification

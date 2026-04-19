@@ -110,6 +110,50 @@ final class MetagenomicsLayoutModeTests: XCTestCase {
         XCTAssertGreaterThan(vc.testSplitView.arrangedSubviews[1].frame.width, 180)
     }
 
+    func testNaoMgsLiveWindowPreservesUserMovedVerticalDivider() {
+        setLayoutPreference(.listLeading, legacyTableOnLeft: true)
+
+        let vc = NaoMgsResultViewController()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
+            styleMask: [.titled, .resizable, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = vc
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        let initialWidth = vc.testSplitView.arrangedSubviews[0].frame.width
+        let minimumLeadingWidth: CGFloat = 320
+        let maximumLeadingWidth = vc.testSplitView.bounds.width - 320
+        let targetPosition: CGFloat
+        if maximumLeadingWidth - initialWidth >= 120 {
+            targetPosition = initialWidth + 160
+        } else {
+            targetPosition = max(minimumLeadingWidth, initialWidth - 160)
+        }
+        XCTAssertGreaterThan(abs(targetPosition - initialWidth), 80)
+
+        vc.testSplitView.setPosition(targetPosition, ofDividerAt: 0)
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+
+        let movedWidth = vc.testSplitView.arrangedSubviews[0].frame.width
+        XCTAssertGreaterThan(
+            abs(movedWidth - initialWidth),
+            80,
+            "initial=\(initialWidth) target=\(targetPosition) moved=\(movedWidth) bounds=\(vc.testSplitView.bounds.width)"
+        )
+
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(vc.testSplitView.arrangedSubviews[0].frame.width, movedWidth, accuracy: 2)
+    }
+
     func testNvdViewStacksOutlineAboveDetailWhenLayoutIsStacked() {
         setLayoutPreference(.stacked, legacyTableOnLeft: false)
 
@@ -138,6 +182,50 @@ final class MetagenomicsLayoutModeTests: XCTestCase {
 
         XCTAssertGreaterThan(vc.testSplitView.arrangedSubviews[0].frame.width, 180)
         XCTAssertGreaterThan(vc.testSplitView.arrangedSubviews[1].frame.width, 180)
+    }
+
+    func testNvdLiveWindowPreservesUserMovedVerticalDivider() {
+        setLayoutPreference(.listLeading, legacyTableOnLeft: true)
+
+        let vc = NvdResultViewController()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
+            styleMask: [.titled, .resizable, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = vc
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        let initialWidth = vc.testSplitView.arrangedSubviews[0].frame.width
+        let minimumLeadingWidth: CGFloat = 320
+        let maximumLeadingWidth = vc.testSplitView.bounds.width - 320
+        let targetPosition: CGFloat
+        if maximumLeadingWidth - initialWidth >= 120 {
+            targetPosition = initialWidth + 160
+        } else {
+            targetPosition = max(minimumLeadingWidth, initialWidth - 160)
+        }
+        XCTAssertGreaterThan(abs(targetPosition - initialWidth), 80)
+
+        vc.testSplitView.setPosition(targetPosition, ofDividerAt: 0)
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+
+        let movedWidth = vc.testSplitView.arrangedSubviews[0].frame.width
+        XCTAssertGreaterThan(
+            abs(movedWidth - initialWidth),
+            80,
+            "initial=\(initialWidth) target=\(targetPosition) moved=\(movedWidth) bounds=\(vc.testSplitView.bounds.width)"
+        )
+
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(vc.testSplitView.arrangedSubviews[0].frame.width, movedWidth, accuracy: 2)
     }
 
     func testTaxTriageViewStacksListAboveDetailWhenLayoutIsStacked() {
@@ -170,6 +258,113 @@ final class MetagenomicsLayoutModeTests: XCTestCase {
         XCTAssertGreaterThan(vc.testSplitView.arrangedSubviews[1].frame.width, 180)
     }
 
+    func testTaxTriageLiveWindowHonorsListLeadingMinimumPaneWidths() {
+        setLayoutPreference(.listLeading, legacyTableOnLeft: true)
+
+        let vc = TaxTriageResultViewController()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
+            styleMask: [.titled, .resizable, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = vc
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        let debugContext = "left=\(vc.testSplitView.arrangedSubviews[0].frame.width) right=\(vc.testSplitView.arrangedSubviews[1].frame.width) leftFit=\(vc.testRightPaneContainer.fittingSize.width) rightFit=\(vc.testLeftPaneContainer.fittingSize.width) min=\(vc.testSplitView.minPossiblePositionOfDivider(at: 0)) max=\(vc.testSplitView.maxPossiblePositionOfDivider(at: 0)) requested=\(String(describing: vc.testRequestedDividerPosition)) needsValidation=\(vc.testNeedsInitialSplitValidation)"
+        XCTAssertGreaterThanOrEqual(vc.testSplitView.arrangedSubviews[0].frame.width, 298, debugContext)
+        XCTAssertGreaterThanOrEqual(vc.testSplitView.arrangedSubviews[1].frame.width, 248, debugContext)
+    }
+
+    func testTaxTriageLiveWindowPreservesUserMovedVerticalDivider() {
+        setLayoutPreference(.listLeading, legacyTableOnLeft: true)
+
+        let vc = TaxTriageResultViewController()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
+            styleMask: [.titled, .resizable, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = vc
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        let initialWidth = vc.testSplitView.arrangedSubviews[0].frame.width
+        let minimumLeadingWidth: CGFloat = 320
+        let maximumLeadingWidth = vc.testSplitView.bounds.width - 320
+        let targetPosition: CGFloat
+        if maximumLeadingWidth - initialWidth >= 120 {
+            targetPosition = initialWidth + 160
+        } else {
+            targetPosition = max(minimumLeadingWidth, initialWidth - 160)
+        }
+        XCTAssertGreaterThan(abs(targetPosition - initialWidth), 80)
+
+        vc.testSplitView.setPosition(targetPosition, ofDividerAt: 0)
+        vc.testSplitView.adjustSubviews()
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+
+        let movedWidth = vc.testSplitView.arrangedSubviews[0].frame.width
+        XCTAssertGreaterThan(
+            abs(movedWidth - initialWidth),
+            80,
+            "initial=\(initialWidth) target=\(targetPosition) moved=\(movedWidth) bounds=\(vc.testSplitView.bounds.width) leftFit=\(vc.testRightPaneContainer.fittingSize.width) rightFit=\(vc.testLeftPaneContainer.fittingSize.width) min=\(vc.testSplitView.minPossiblePositionOfDivider(at: 0)) max=\(vc.testSplitView.maxPossiblePositionOfDivider(at: 0))"
+        )
+
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(vc.testSplitView.arrangedSubviews[0].frame.width, movedWidth, accuracy: 2)
+    }
+
+    func testTaxTriageImmediateUserDividerMoveSurvivesDeferredValidation() {
+        setLayoutPreference(.listLeading, legacyTableOnLeft: true)
+
+        let vc = TaxTriageResultViewController()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
+            styleMask: [.titled, .resizable, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = vc
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+
+        let initialWidth = vc.testSplitView.arrangedSubviews[0].frame.width
+        let minimumLeadingWidth: CGFloat = 320
+        let maximumLeadingWidth = vc.testSplitView.bounds.width - 320
+        let targetPosition: CGFloat
+        if maximumLeadingWidth - initialWidth >= 120 {
+            targetPosition = initialWidth + 160
+        } else {
+            targetPosition = max(minimumLeadingWidth, initialWidth - 160)
+        }
+        vc.testSplitView.setPosition(targetPosition, ofDividerAt: 0)
+        vc.testSplitView.adjustSubviews()
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+
+        let movedWidth = vc.testSplitView.arrangedSubviews[0].frame.width
+        XCTAssertGreaterThan(
+            abs(movedWidth - initialWidth),
+            80,
+            "initial=\(initialWidth) target=\(targetPosition) moved=\(movedWidth) bounds=\(vc.testSplitView.bounds.width)"
+        )
+
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(vc.testSplitView.arrangedSubviews[0].frame.width, movedWidth, accuracy: 2)
+    }
+
     func testEsVirituLiveWindowKeepsBothPanesVisibleInListLeadingMode() {
         setLayoutPreference(.listLeading, legacyTableOnLeft: true)
 
@@ -187,6 +382,111 @@ final class MetagenomicsLayoutModeTests: XCTestCase {
 
         XCTAssertGreaterThan(vc.testSplitView.arrangedSubviews[0].frame.width, 180)
         XCTAssertGreaterThan(vc.testSplitView.arrangedSubviews[1].frame.width, 180)
+    }
+
+    func testEsVirituLiveWindowHonorsListLeadingMinimumPaneWidths() {
+        setLayoutPreference(.listLeading, legacyTableOnLeft: true)
+
+        let vc = EsVirituResultViewController()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
+            styleMask: [.titled, .resizable, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = vc
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        let debugContext = "left=\(vc.testSplitView.arrangedSubviews[0].frame.width) right=\(vc.testSplitView.arrangedSubviews[1].frame.width) requested=\(String(describing: vc.testRequestedDividerPosition)) needsValidation=\(vc.testNeedsInitialSplitValidation)"
+        XCTAssertGreaterThanOrEqual(vc.testSplitView.arrangedSubviews[0].frame.width, 248, debugContext)
+        XCTAssertGreaterThanOrEqual(vc.testSplitView.arrangedSubviews[1].frame.width, 248, debugContext)
+    }
+
+    func testEsVirituLiveWindowPreservesUserMovedVerticalDivider() {
+        setLayoutPreference(.listLeading, legacyTableOnLeft: true)
+
+        let vc = EsVirituResultViewController()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
+            styleMask: [.titled, .resizable, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = vc
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        let initialWidth = vc.testSplitView.arrangedSubviews[0].frame.width
+        let minimumLeadingWidth: CGFloat = 320
+        let maximumLeadingWidth = vc.testSplitView.bounds.width - 320
+        let targetPosition: CGFloat
+        if maximumLeadingWidth - initialWidth >= 120 {
+            targetPosition = initialWidth + 160
+        } else {
+            targetPosition = max(minimumLeadingWidth, initialWidth - 160)
+        }
+        XCTAssertGreaterThan(abs(targetPosition - initialWidth), 80)
+
+        vc.testSplitView.setPosition(targetPosition, ofDividerAt: 0)
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+
+        let movedWidth = vc.testSplitView.arrangedSubviews[0].frame.width
+        XCTAssertGreaterThan(
+            abs(movedWidth - initialWidth),
+            80,
+            "initial=\(initialWidth) target=\(targetPosition) moved=\(movedWidth) bounds=\(vc.testSplitView.bounds.width)"
+        )
+
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(vc.testSplitView.arrangedSubviews[0].frame.width, movedWidth, accuracy: 2)
+    }
+
+    func testEsVirituImmediateUserDividerMoveSurvivesDeferredValidation() {
+        setLayoutPreference(.listLeading, legacyTableOnLeft: true)
+
+        let vc = EsVirituResultViewController()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
+            styleMask: [.titled, .resizable, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = vc
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+
+        let initialWidth = vc.testSplitView.arrangedSubviews[0].frame.width
+        let minimumLeadingWidth: CGFloat = 320
+        let maximumLeadingWidth = vc.testSplitView.bounds.width - 320
+        let targetPosition: CGFloat
+        if maximumLeadingWidth - initialWidth >= 120 {
+            targetPosition = initialWidth + 160
+        } else {
+            targetPosition = max(minimumLeadingWidth, initialWidth - 160)
+        }
+        vc.testSplitView.setPosition(targetPosition, ofDividerAt: 0)
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+
+        let movedWidth = vc.testSplitView.arrangedSubviews[0].frame.width
+        XCTAssertGreaterThan(
+            abs(movedWidth - initialWidth),
+            80,
+            "initial=\(initialWidth) target=\(targetPosition) moved=\(movedWidth) bounds=\(vc.testSplitView.bounds.width)"
+        )
+
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(vc.testSplitView.arrangedSubviews[0].frame.width, movedWidth, accuracy: 2)
     }
 
     func testTaxonomyViewDidLayoutDoesNotApplyNewPreferenceWithoutNotification() {

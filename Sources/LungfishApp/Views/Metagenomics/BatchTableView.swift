@@ -162,6 +162,9 @@ class BatchTableView<Row>: NSView, NSTableViewDataSource, NSTableViewDelegate {
     // MARK: - Setup
 
     private func setupTableView() {
+        setContentHuggingPriority(.defaultLow, for: .horizontal)
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
         // Search field above the table.
         let sf = NSSearchField()
         sf.translatesAutoresizingMaskIntoConstraints = false
@@ -179,6 +182,8 @@ class BatchTableView<Row>: NSView, NSTableViewDataSource, NSTableViewDelegate {
         sv.hasVerticalScroller   = true
         sv.hasHorizontalScroller = true
         sv.autohidesScrollers    = true
+        sv.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        sv.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addSubview(sv)
         self.scrollView = sv
 
@@ -204,6 +209,8 @@ class BatchTableView<Row>: NSView, NSTableViewDataSource, NSTableViewDelegate {
         tv.delegate                = self
         tv.dataSource              = self
         tv.columnAutoresizingStyle = .noColumnAutoresizing
+        tv.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        tv.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         self.tableView = tv
 
         addFixedColumns()

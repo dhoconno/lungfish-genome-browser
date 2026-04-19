@@ -11,8 +11,20 @@ import os.log
 
 private let logger = Logger(subsystem: "com.lungfish.app", category: "TaxTriageResultVC")
 
+/// Split-pane shells should let the divider, not Auto Layout fitting size,
+/// determine their width inside raw `NSSplitView` layouts.
+private class SplitPaneContainerView: NSView {
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+    }
+
+    override var fittingSize: NSSize {
+        .zero
+    }
+}
+
 /// Flipped container so Auto Layout `topAnchor` maps to visual top in AppKit.
-private final class FlippedPaneContainerView: NSView {
+private final class FlippedPaneContainerView: SplitPaneContainerView {
     override var isFlipped: Bool { true }
 }
 
@@ -220,13 +232,13 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
 
     /// Container for the right pane content (organism table, batch overview, or batch flat table).
     /// Stored as an instance property so `setupBatchFlatTableView()` can add to it.
-    private var rightPaneContainer = NSView()
+    private let rightPaneContainer = SplitPaneContainerView()
 
     // MARK: - Child Views
 
     private let summaryBar = TaxTriageSummaryBar()
     private let sampleFilterControl = NSSegmentedControl()
-    let splitView = NSSplitView()
+    let splitView = TrackedDividerSplitView()
     private let leftPaneContainer = FlippedPaneContainerView()
     private var miniBAMController: MiniBAMViewController?
     private let organismTableView = TaxTriageOrganismTableView()
@@ -350,7 +362,10 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
 
     /// Whether the initial divider position has been applied.
     private var didSetInitialSplitPosition = false
+    private var needsInitialSplitValidation = true
     private var pendingInitialSplitValidation = false
+    private var pendingInitialValidationLeadingExtent: CGFloat?
+    private var isSynchronizingTrackedSplitPosition = false
 
     // MARK: - Callbacks
 
@@ -460,6 +475,37 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
     }
 
+    private func currentDividerPosition() -> CGFloat? {
+        guard splitView.arrangedSubviews.count == 2 else { return nil }
+        return splitView.isVertical
+            ? splitView.arrangedSubviews[0].frame.width
+            : splitView.arrangedSubviews[0].frame.height
+    }
+
+    private func clampedCurrentDividerPosition(for proposedPosition: CGFloat) -> CGFloat {
+        let minimumExtents = currentMinimumExtents()
+        return MetagenomicsPaneSizing.clampedDividerPosition(
+            proposed: proposedPosition,
+            containerExtent: splitContainerExtent(),
+            minimumLeadingExtent: minimumExtents.leading,
+            minimumTrailingExtent: minimumExtents.trailing
+        )
+    }
+
+    private func synchronizeTrackedSplitPositionIfNeeded() {
+        guard !isSynchronizingTrackedSplitPosition,
+              let requestedPosition = splitView.requestedDividerPosition(at: 0),
+              let currentPosition = currentDividerPosition()
+        else { return }
+
+        let clampedPosition = clampedCurrentDividerPosition(for: requestedPosition)
+        guard abs(currentPosition - clampedPosition) > 1 else { return }
+
+        isSynchronizingTrackedSplitPosition = true
+        splitView.setPosition(clampedPosition, ofDividerAt: 0)
+        isSynchronizingTrackedSplitPosition = false
+    }
+
     private func collapsedSplitPositionForHiddenDetail(containerExtent: CGFloat? = nil) -> CGFloat {
         let totalExtent = containerExtent ?? splitContainerExtent()
         guard totalExtent > 0 else { return 0 }
@@ -473,6 +519,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         let totalExtent = splitContainerExtent()
         guard totalExtent > 0 else {
             didSetInitialSplitPosition = false
+            needsInitialSplitValidation = true
             return
         }
 
@@ -480,6 +527,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         let minimumRequiredExtent = minimumExtents.leading + minimumExtents.trailing + splitView.dividerThickness
         guard totalExtent >= minimumRequiredExtent else {
             didSetInitialSplitPosition = false
+            needsInitialSplitValidation = true
             return
         }
 
@@ -491,17 +539,21 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         )
         splitView.setPosition(position, ofDividerAt: 0)
         didSetInitialSplitPosition = true
+        needsInitialSplitValidation = false
     }
 
     private func collapseHiddenDetailPaneIfNeeded() {
         guard splitView.arrangedSubviews.count > 1 else { return }
 
         let totalExtent = splitContainerExtent()
-        guard totalExtent > 0 else { return }
+        guard totalExtent > 0 else {
+            needsInitialSplitValidation = true
+            return
+        }
 
         splitView.setPosition(collapsedSplitPositionForHiddenDetail(containerExtent: totalExtent), ofDividerAt: 0)
-        splitView.adjustSubviews()
         didSetInitialSplitPosition = true
+        needsInitialSplitValidation = false
     }
 
     private func applyInitialSplitPositionIfNeeded() {
@@ -528,18 +580,65 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         )
         splitView.setPosition(clampedPosition, ofDividerAt: 0)
         didSetInitialSplitPosition = true
+        needsInitialSplitValidation = false
+    }
+
+    private func hasValidInitialSplitPosition() -> Bool {
+        guard splitView.arrangedSubviews.count == 2 else { return false }
+
+        let totalExtent = splitContainerExtent()
+        guard totalExtent > 0 else { return false }
+
+        let minimumExtents = currentMinimumExtents()
+        let minimumRequiredExtent = minimumExtents.leading + minimumExtents.trailing + splitView.dividerThickness
+        guard totalExtent >= minimumRequiredExtent else { return false }
+
+        let leadingExtent = splitView.isVertical
+            ? splitView.arrangedSubviews[0].frame.width
+            : splitView.arrangedSubviews[0].frame.height
+        let trailingExtent = splitView.isVertical
+            ? splitView.arrangedSubviews[1].frame.width
+            : splitView.arrangedSubviews[1].frame.height
+
+        return leadingExtent >= minimumExtents.leading && trailingExtent >= minimumExtents.trailing
     }
 
     private func scheduleInitialSplitValidationIfNeeded() {
-        guard view.window != nil, !pendingInitialSplitValidation else { return }
+        guard needsInitialSplitValidation, view.window != nil, !pendingInitialSplitValidation else { return }
         pendingInitialSplitValidation = true
+        pendingInitialValidationLeadingExtent = splitView.arrangedSubviews.count == 2
+            ? (splitView.isVertical ? splitView.arrangedSubviews[0].frame.width : splitView.arrangedSubviews[0].frame.height)
+            : nil
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.pendingInitialSplitValidation = false
+            let scheduledLeadingExtent = self.pendingInitialValidationLeadingExtent
+            self.pendingInitialValidationLeadingExtent = nil
+            let requestedDividerPosition = self.splitView.requestedDividerPosition(at: 0)
             guard self.view.window != nil else { return }
+            guard self.needsInitialSplitValidation else { return }
+            if requestedDividerPosition != nil,
+               let scheduledLeadingExtent,
+               self.splitView.arrangedSubviews.count == 2 {
+                let currentLeadingExtent = self.splitView.isVertical
+                    ? self.splitView.arrangedSubviews[0].frame.width
+                    : self.splitView.arrangedSubviews[0].frame.height
+                if abs(currentLeadingExtent - scheduledLeadingExtent) > 2 {
+                    self.didSetInitialSplitPosition = true
+                    self.needsInitialSplitValidation = false
+                    return
+                }
+            }
             self.resetInitialSplitPositionIfNeeded()
-            self.applyInitialSplitPositionIfNeeded()
+            if self.leftPaneContainer.isHidden {
+                self.collapseHiddenDetailPaneIfNeeded()
+            } else if !self.hasValidInitialSplitPosition() {
+                self.restoreDefaultSplitPosition()
+            } else {
+                self.applyInitialSplitPositionIfNeeded()
+            }
+            self.needsInitialSplitValidation = !self.hasValidInitialSplitPosition()
         }
     }
 
@@ -581,18 +680,20 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         let totalExtent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
         guard totalExtent > 0 else {
             didSetInitialSplitPosition = false
+            needsInitialSplitValidation = true
             return
         }
 
         guard view.window != nil else {
             didSetInitialSplitPosition = false
+            needsInitialSplitValidation = true
             return
         }
 
         if leftPaneContainer.isHidden {
             splitView.setPosition(collapsedSplitPositionForHiddenDetail(containerExtent: totalExtent), ofDividerAt: 0)
-            splitView.adjustSubviews()
             didSetInitialSplitPosition = true
+            needsInitialSplitValidation = false
             return
         }
 
@@ -610,6 +711,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         )
         splitView.setPosition(clampedPosition, ofDividerAt: 0)
         didSetInitialSplitPosition = true
+        needsInitialSplitValidation = false
     }
 
     // MARK: - Keyboard Shortcuts
@@ -702,20 +804,17 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         miniBAMController = bamVC
 
         let bamView = bamVC.view
-        bamView.translatesAutoresizingMaskIntoConstraints = false
+        bamView.frame = leftPaneContainer.bounds
+        bamView.autoresizingMask = [.width, .height]
         bamView.isHidden = false
+        bamView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        bamView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         leftPaneContainer.addSubview(bamView)
-
-        NSLayoutConstraint.activate([
-            bamView.topAnchor.constraint(equalTo: leftPaneContainer.topAnchor),
-            bamView.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor),
-            bamView.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor),
-            bamView.bottomAnchor.constraint(equalTo: leftPaneContainer.bottomAnchor),
-        ])
     }
 
     public override func viewDidLayout() {
         super.viewDidLayout()
+        guard needsInitialSplitValidation else { return }
         resetInitialSplitPositionIfNeeded()
         scheduleInitialSplitValidationIfNeeded()
     }
@@ -1100,6 +1199,10 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         splitView.isVertical = MetagenomicsPanelLayout.current() != .stacked
         splitView.dividerStyle = .thin
         splitView.delegate = self
+        leftPaneContainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        leftPaneContainer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        rightPaneContainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        rightPaneContainer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         // Left pane: mini BAM alignment viewer (populated on organism selection)
         // The BAM viewer is added in setupMiniBAMViewer() with constraints.
@@ -3057,6 +3160,22 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         )
     }
 
+    public func splitViewDidResizeSubviews(_ notification: Notification) {
+        guard notification.object as? NSSplitView === splitView else { return }
+        if !isSynchronizingTrackedSplitPosition {
+            synchronizeTrackedSplitPositionIfNeeded()
+        }
+        if hasValidInitialSplitPosition() {
+            didSetInitialSplitPosition = true
+            needsInitialSplitValidation = false
+            return
+        }
+
+        guard didSetInitialSplitPosition, !pendingInitialSplitValidation else { return }
+        needsInitialSplitValidation = true
+        scheduleInitialSplitValidationIfNeeded()
+    }
+
     // MARK: - Multi-Selection Helpers
 
     private func showMultiSelectionPlaceholder(count: Int) {
@@ -3419,6 +3538,12 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     /// Returns the sample filter segmented control for testing.
     var testSampleFilterControl: NSSegmentedControl { sampleFilterControl }
 
+    /// Returns the last requested divider position for testing.
+    var testRequestedDividerPosition: CGFloat? { splitView.requestedDividerPosition(at: 0) }
+
+    /// Returns whether initial split validation is still pending for testing.
+    var testNeedsInitialSplitValidation: Bool { needsInitialSplitValidation }
+
     /// Returns per-sample deduplicated read counts for testing.
     var testPerSampleDeduplicatedReadCounts: [String: [String: Int]] { perSampleDeduplicatedReadCounts }
 
@@ -3641,7 +3766,10 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
     }
 
     private func commonInit() {
+        setContentHuggingPriority(.defaultLow, for: .horizontal)
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         setupTableView()
+        setupLayout()
         setupContextMenu()
     }
 
@@ -3713,11 +3841,17 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
         tableView.headerView = NSTableHeaderView()
         tableView.style = .inset
         tableView.rowHeight = 24
+        tableView.columnAutoresizingStyle = .noColumnAutoresizing
+        tableView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        tableView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.autoresizingMask = [.width, .height]
+        scrollView.hasHorizontalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        scrollView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         addSubview(scrollView)
 
@@ -3729,6 +3863,15 @@ final class TaxTriageOrganismTableView: NSView, NSTableViewDataSource, NSTableVi
             "Organism", "TASS Score", "Reads", "Unique Reads", "Coverage", "Confidence",
         ]
         metadataColumns.install(on: tableView)
+    }
+
+    private func setupLayout() {
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
     }
 
     private func setupContextMenu() {
