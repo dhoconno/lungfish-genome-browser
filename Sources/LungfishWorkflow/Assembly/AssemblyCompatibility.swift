@@ -31,8 +31,12 @@ public enum AssemblyCompatibility {
     public static func evaluate(
         detectedReadTypes: some Sequence<AssemblyReadType>
     ) -> AssemblyCompatibilityEvaluation {
-        let uniqueReadTypes = AssemblyReadType.allCases.filter { readType in
-            detectedReadTypes.contains(readType)
+        let uniqueReadTypes = Array(Set(detectedReadTypes)).sorted { lhs, rhs in
+            guard let lhsIndex = AssemblyReadType.allCases.firstIndex(of: lhs),
+                  let rhsIndex = AssemblyReadType.allCases.firstIndex(of: rhs) else {
+                return lhs.rawValue < rhs.rawValue
+            }
+            return lhsIndex < rhsIndex
         }
 
         guard uniqueReadTypes.count <= 1 else {

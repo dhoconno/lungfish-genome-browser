@@ -51,4 +51,76 @@ final class AssemblyCompatibilityTests: XCTestCase {
         )
         XCTAssertEqual(evaluation.supportedTools, [])
     }
+
+    func testMixedSinglePassSequenceStillBlocksHybridInput() {
+        let singlePassSequence = IteratorSequence(
+            AnyIterator([AssemblyReadType.ontReads, .illuminaShortReads].makeIterator())
+        )
+
+        let evaluation = AssemblyCompatibility.evaluate(detectedReadTypes: singlePassSequence)
+
+        XCTAssertTrue(evaluation.isBlocked)
+        XCTAssertEqual(
+            evaluation.blockingMessage,
+            "Hybrid assembly is not supported in v1. Select one read class per run."
+        )
+    }
+
+    func testPacBioSubreadsDoNotAutoClassifyAsHiFi() throws {
+        let fixtureURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("assembly-read-type-\(UUID().uuidString).fastq")
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+
+        let fastq = """
+        @m64001_190101_000000/123/subreads
+        ACGT
+        +
+        !!!!
+        """
+        try Data(fastq.utf8).write(to: fixtureURL)
+
+        XCTAssertNil(AssemblyReadType.detect(fromFASTQ: fixtureURL))
+    }
+
+    func testGenericPacBioZMWHeadersDoNotAutoClassifyAsHiFi() throws {
+        let fixtureURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("assembly-read-type-\(UUID().uuidString).fastq")
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+
+        let fastq = """
+        @m64001_190101_000000/12345/0_1000 zmw=12345
+        ACGT
+        +
+        !!!!
+        """
+        try Data(fastq.utf8).write(to: fixtureURL)
+
+        XCTAssertNil(AssemblyReadType.detect(fromFASTQ: fixtureURL))
+    }
+
+    func testPacBioCCSHeadersClassifyAsHiFi() throws {
+        let fixtureURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("assembly-read-type-\(UUID().uuidString).fastq")
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+
+        let fastq = """
+        @m64001_190101_000000/123/ccs
+        ACGT
+        +
+        !!!!
+        """
+        try Data(fastq.utf8).write(to: fixtureURL)
+
+        XCTAssertEqual(AssemblyReadType.detect(fromFASTQ: fixtureURL), .pacBioHiFi)
+    }
+
+    func testGzippedIlluminaFixtureStillClassifiesAsShortReads() {
+        let fixtureURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/sarscov2/test_1.fastq.gz")
+
+        XCTAssertEqual(AssemblyReadType.detect(fromFASTQ: fixtureURL), .illuminaShortReads)
+    }
 }
