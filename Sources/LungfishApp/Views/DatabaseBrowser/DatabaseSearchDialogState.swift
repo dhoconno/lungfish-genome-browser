@@ -77,13 +77,13 @@ final class DatabaseSearchDialogState {
         activeViewModel.source.displayName
     }
 
-    var sidebarItems: [DatabaseSearchSidebarItem] {
+    var sidebarItems: [DatasetOperationToolSidebarItem] {
         DatabaseSearchDestination.allCases.map {
-            DatabaseSearchSidebarItem(
+            DatasetOperationToolSidebarItem(
                 id: $0.id,
                 title: $0.title,
                 subtitle: $0.subtitle,
-                destination: $0
+                availability: .available
             )
         }
     }
