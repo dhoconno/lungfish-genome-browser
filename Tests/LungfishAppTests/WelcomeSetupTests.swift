@@ -296,26 +296,40 @@ final class WelcomeSetupTests: XCTestCase {
     }
 
     func testLaunchRemainsDisabledUntilRequiredSetupIsReady() async {
+        guard let assembly = PluginPack.activeOptionalPacks.first(where: { $0.id == "assembly" }) else {
+            XCTFail("Expected active assembly pack")
+            return
+        }
+        guard let metagenomics = PluginPack.activeOptionalPacks.first(where: { $0.id == "metagenomics" }) else {
+            XCTFail("Expected active metagenomics pack")
+            return
+        }
         let required = PluginPackStatus(
             pack: .requiredSetupPack,
             state: .needsInstall,
             toolStatuses: [],
             failureMessage: nil
         )
-        let optional = PluginPackStatus(
-            pack: PluginPack.activeOptionalPacks[0],
+        let assemblyStatus = PluginPackStatus(
+            pack: assembly,
+            state: .needsInstall,
+            toolStatuses: [],
+            failureMessage: nil
+        )
+        let metagenomicsStatus = PluginPackStatus(
+            pack: metagenomics,
             state: .needsInstall,
             toolStatuses: [],
             failureMessage: nil
         )
 
         let viewModel = WelcomeViewModel(
-            statusProvider: StubWelcomePackStatusProvider(statuses: [required, optional])
+            statusProvider: StubWelcomePackStatusProvider(statuses: [required, assemblyStatus, metagenomicsStatus])
         )
         await viewModel.refreshSetup()
 
         XCTAssertFalse(viewModel.canLaunch)
-        XCTAssertEqual(viewModel.optionalPackStatuses.map(\.pack.id), ["metagenomics"])
+        XCTAssertEqual(viewModel.optionalPackStatuses.map(\.pack.id), ["assembly", "metagenomics"])
     }
 
     func testLaunchEnablesWhenRequiredSetupIsReady() async {
@@ -359,28 +373,42 @@ final class WelcomeSetupTests: XCTestCase {
     }
 
     func testRefreshSetupClearsLoadedStatusesWhileReloading() async {
+        guard let assembly = PluginPack.activeOptionalPacks.first(where: { $0.id == "assembly" }) else {
+            XCTFail("Expected active assembly pack")
+            return
+        }
+        guard let metagenomics = PluginPack.activeOptionalPacks.first(where: { $0.id == "metagenomics" }) else {
+            XCTFail("Expected active metagenomics pack")
+            return
+        }
         let required = PluginPackStatus(
             pack: .requiredSetupPack,
             state: .ready,
             toolStatuses: [],
             failureMessage: nil
         )
-        let optional = PluginPackStatus(
-            pack: PluginPack.activeOptionalPacks[0],
+        let assemblyStatus = PluginPackStatus(
+            pack: assembly,
+            state: .ready,
+            toolStatuses: [],
+            failureMessage: nil
+        )
+        let metagenomicsStatus = PluginPackStatus(
+            pack: metagenomics,
             state: .ready,
             toolStatuses: [],
             failureMessage: nil
         )
 
         let provider = StatefulWelcomePackStatusProvider(
-            initialStatuses: [required, optional],
-            loadingStatuses: [required, optional]
+            initialStatuses: [required, assemblyStatus, metagenomicsStatus],
+            loadingStatuses: [required, assemblyStatus, metagenomicsStatus]
         )
         let viewModel = WelcomeViewModel(statusProvider: provider)
 
         await viewModel.refreshSetup()
         XCTAssertEqual(viewModel.requiredSetupStatus?.state, .ready)
-        XCTAssertEqual(viewModel.optionalPackStatuses.map(\.pack.id), ["metagenomics"])
+        XCTAssertEqual(viewModel.optionalPackStatuses.map(\.pack.id), ["assembly", "metagenomics"])
 
         let refreshTask = Task { await viewModel.refreshSetup() }
         await Task.yield()
@@ -389,11 +417,16 @@ final class WelcomeSetupTests: XCTestCase {
         XCTAssertNil(viewModel.requiredSetupStatus)
         XCTAssertTrue(viewModel.optionalPackStatuses.isEmpty)
 
+        for _ in 0..<20 where !viewModel.isRefreshingSetup {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(viewModel.isRefreshingSetup)
+
         provider.release()
         await refreshTask.value
 
         XCTAssertEqual(viewModel.requiredSetupStatus?.state, .ready)
-        XCTAssertEqual(viewModel.optionalPackStatuses.map(\.pack.id), ["metagenomics"])
+        XCTAssertEqual(viewModel.optionalPackStatuses.map(\.pack.id), ["assembly", "metagenomics"])
     }
 
     func testManagedResourcesChangeRefreshesSetupInPlace() async {

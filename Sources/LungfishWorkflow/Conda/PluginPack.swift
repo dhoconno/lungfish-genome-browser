@@ -305,8 +305,66 @@ public extension PluginPack {
             name: "Genome Assembly",
             description: "De novo genome assembly from short and long reads",
             sfSymbol: "puzzlepiece.extension.fill",
-            packages: ["spades", "megahit", "flye", "quast"],
+            packages: ["spades", "megahit", "skesa", "flye", "hifiasm"],
             category: "Assembly",
+            isActive: true,
+            requirements: [
+                PackToolRequirement(
+                    id: "spades",
+                    displayName: "SPAdes",
+                    environment: "spades",
+                    installPackages: ["bioconda::spades=4.2.0"],
+                    executables: ["spades.py"],
+                    smokeTest: .command(executable: "spades.py", arguments: ["--test"], timeoutSeconds: 120),
+                    version: "4.2.0",
+                    license: "GPL-2.0-only",
+                    sourceURL: "https://github.com/ablab/spades"
+                ),
+                PackToolRequirement(
+                    id: "megahit",
+                    displayName: "MEGAHIT",
+                    environment: "megahit",
+                    installPackages: ["bioconda::megahit=1.2.9"],
+                    executables: ["megahit"],
+                    smokeTest: .command(executable: "megahit", arguments: ["--help"], timeoutSeconds: 10),
+                    version: "1.2.9",
+                    license: "GPL-3.0",
+                    sourceURL: "https://github.com/voutcn/megahit"
+                ),
+                PackToolRequirement(
+                    id: "skesa",
+                    displayName: "SKESA",
+                    environment: "skesa",
+                    installPackages: ["bioconda::skesa=2.5.1"],
+                    executables: ["skesa"],
+                    smokeTest: .command(executable: "skesa", arguments: ["--help"], timeoutSeconds: 10),
+                    version: "2.5.1",
+                    license: "Public Domain",
+                    sourceURL: "https://github.com/ncbi/SKESA"
+                ),
+                PackToolRequirement(
+                    id: "flye",
+                    displayName: "Flye",
+                    environment: "flye",
+                    installPackages: ["bioconda::flye=2.9.6"],
+                    executables: ["flye"],
+                    smokeTest: .command(executable: "flye", arguments: ["--help"], timeoutSeconds: 10),
+                    version: "2.9.6",
+                    license: "BSD",
+                    sourceURL: "https://github.com/mikolmogorov/Flye"
+                ),
+                PackToolRequirement(
+                    id: "hifiasm",
+                    displayName: "hifiasm",
+                    environment: "hifiasm",
+                    installPackages: ["bioconda::hifiasm=0.25.0"],
+                    executables: ["hifiasm"],
+                    smokeTest: .command(executable: "hifiasm", arguments: ["-h"], timeoutSeconds: 10),
+                    version: "0.25.0",
+                    license: "MIT",
+                    sourceURL: "https://github.com/chhylp123/hifiasm"
+                ),
+            ],
             estimatedSizeMB: 950
         ),
         PluginPack(
