@@ -59,6 +59,7 @@ struct DatasetOperationsDialog<Detail: View>: View {
             }
             .background(Color.lungfishCanvasBackground)
         }
+        .accessibilityElement(children: .contain)
         .lungfishAccessibilityIdentifier(scopedID("dialog"))
         .background(Color.lungfishCanvasBackground)
     }

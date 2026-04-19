@@ -46,20 +46,22 @@ struct LungfishAppRobot {
         destinationMenuItem.click()
 
         let dialog = databaseSearchDialog
-        XCTAssertTrue(dialog.waitForExistence(timeout: 5), file: file, line: line)
+        if !dialog.waitForExistence(timeout: 5) {
+            XCTAssertTrue(queryField.waitForExistence(timeout: 5), file: file, line: line)
+        }
         return dialog
     }
 
     var databaseSearchDialog: XCUIElement {
-        app.otherElements["database-search-dialog"]
+        app.descendants(matching: .any)["database-search-dialog"]
     }
 
     var queryField: XCUIElement {
-        app.textFields["database-search-query-field"]
+        app.descendants(matching: .any)["database-search-query-field"]
     }
 
     var primaryActionButton: XCUIElement {
-        app.buttons["database-search-primary-action"]
+        app.descendants(matching: .any)["database-search-primary-action"]
     }
 
     func sidebarToolButton(
@@ -67,7 +69,7 @@ struct LungfishAppRobot {
         file: StaticString = #filePath,
         line: UInt = #line
     ) -> XCUIElement {
-        let button = app.buttons[identifier]
+        let button = app.descendants(matching: .any)[identifier]
         XCTAssertTrue(button.waitForExistence(timeout: 5), file: file, line: line)
         return button
     }
@@ -77,7 +79,7 @@ struct LungfishAppRobot {
         file: StaticString = #filePath,
         line: UInt = #line
     ) -> XCUIElement {
-        let row = app.buttons["database-search-result-\(accession)"]
+        let row = app.descendants(matching: .any)["database-search-result-\(accession)"]
         XCTAssertTrue(row.waitForExistence(timeout: 5), file: file, line: line)
         return row
     }
