@@ -365,6 +365,63 @@ final class MetagenomicsLayoutModeTests: XCTestCase {
         XCTAssertEqual(vc.testSplitView.arrangedSubviews[0].frame.width, movedWidth, accuracy: 2)
     }
 
+    func testTaxTriageMiniBAMViewTracksDetailPaneResize() throws {
+        setLayoutPreference(.detailLeading, legacyTableOnLeft: false)
+
+        let vc = TaxTriageResultViewController()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
+            styleMask: [.titled, .resizable, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = vc
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        let bamView = try XCTUnwrap(
+            vc.testLeftPaneContainer.subviews.first(where: { subview in
+                subview.subviews.contains(where: { $0 is NSScrollView })
+            })
+        )
+        let initialContainerWidth = vc.testLeftPaneContainer.bounds.width
+        let initialBamWidth = bamView.frame.width
+
+        let minimumLeadingWidth: CGFloat = 250
+        let maximumLeadingWidth = vc.testSplitView.bounds.width - 300
+        let targetPosition: CGFloat
+        if maximumLeadingWidth - initialContainerWidth >= 120 {
+            targetPosition = initialContainerWidth + 160
+        } else {
+            targetPosition = max(minimumLeadingWidth, initialContainerWidth - 160)
+        }
+        vc.testSplitView.setPosition(targetPosition, ofDividerAt: 0)
+        vc.testSplitView.adjustSubviews()
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+        window.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        let expandedContainerWidth = vc.testLeftPaneContainer.bounds.width
+        XCTAssertGreaterThan(
+            abs(expandedContainerWidth - initialContainerWidth),
+            80,
+            "initialContainer=\(initialContainerWidth) expandedContainer=\(expandedContainerWidth) target=\(targetPosition)"
+        )
+        XCTAssertGreaterThan(
+            abs(expandedContainerWidth - initialBamWidth),
+            80,
+            "initialBam=\(initialBamWidth) expandedContainer=\(expandedContainerWidth)"
+        )
+        XCTAssertEqual(
+            bamView.frame.width,
+            expandedContainerWidth,
+            accuracy: 2,
+            "bamViewWidth=\(bamView.frame.width) containerWidth=\(expandedContainerWidth)"
+        )
+    }
+
     func testEsVirituLiveWindowKeepsBothPanesVisibleInListLeadingMode() {
         setLayoutPreference(.listLeading, legacyTableOnLeft: true)
 

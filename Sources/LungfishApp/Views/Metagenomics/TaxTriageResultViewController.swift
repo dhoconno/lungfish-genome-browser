@@ -14,12 +14,36 @@ private let logger = Logger(subsystem: "com.lungfish.app", category: "TaxTriageR
 /// Split-pane shells should let the divider, not Auto Layout fitting size,
 /// determine their width inside raw `NSSplitView` layouts.
 private class SplitPaneContainerView: NSView {
+    var fillSubview: NSView? {
+        didSet {
+            syncFillSubviewFrameIfNeeded()
+        }
+    }
+
     override var intrinsicContentSize: NSSize {
         NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
     }
 
     override var fittingSize: NSSize {
         .zero
+    }
+
+    override func layout() {
+        super.layout()
+        syncFillSubviewFrameIfNeeded()
+    }
+
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        super.resizeSubviews(withOldSize: oldSize)
+        syncFillSubviewFrameIfNeeded()
+    }
+
+    private func syncFillSubviewFrameIfNeeded() {
+        guard let fillSubview else { return }
+        guard abs(fillSubview.frame.width - bounds.width) > 0.5
+                || abs(fillSubview.frame.height - bounds.height) > 0.5
+        else { return }
+        fillSubview.frame = bounds
     }
 }
 
@@ -804,12 +828,18 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
         miniBAMController = bamVC
 
         let bamView = bamVC.view
-        bamView.frame = leftPaneContainer.bounds
-        bamView.autoresizingMask = [.width, .height]
+        bamView.translatesAutoresizingMaskIntoConstraints = false
         bamView.isHidden = false
         bamView.setContentHuggingPriority(.defaultLow, for: .horizontal)
         bamView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         leftPaneContainer.addSubview(bamView)
+        leftPaneContainer.fillSubview = bamView
+        NSLayoutConstraint.activate([
+            bamView.topAnchor.constraint(equalTo: leftPaneContainer.topAnchor),
+            bamView.bottomAnchor.constraint(equalTo: leftPaneContainer.bottomAnchor),
+            bamView.leadingAnchor.constraint(equalTo: leftPaneContainer.leadingAnchor),
+            bamView.trailingAnchor.constraint(equalTo: leftPaneContainer.trailingAnchor),
+        ])
     }
 
     public override func viewDidLayout() {
