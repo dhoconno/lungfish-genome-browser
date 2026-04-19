@@ -24,6 +24,7 @@ public class MainWindowController: NSWindowController {
     /// Toolbar item identifiers
     private enum ToolbarIdentifier {
         static let toolbar = NSToolbar.Identifier("MainToolbarMinimal")
+        static let toggleSidebar = NSToolbarItem.Identifier("ToggleSidebar")
         static let toggleInspector = NSToolbarItem.Identifier("ToggleInspector")
         static let toggleChromosomeDrawer = NSToolbarItem.Identifier("ToggleChromosomeDrawer")
         static let toggleAnnotationDrawer = NSToolbarItem.Identifier("ToggleAnnotationDrawer")
@@ -427,6 +428,21 @@ extension MainWindowController: NSToolbarDelegate {
     ) -> NSToolbarItem? {
 
         switch itemIdentifier {
+        case ToolbarIdentifier.toggleSidebar:
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.label = "Sidebar"
+            item.paletteLabel = "Toggle Sidebar"
+            item.toolTip = "Show or hide the sidebar"
+            let button = makeToolbarButton(
+                symbolName: "sidebar.leading",
+                fallbacks: ["sidebar.left", "sidebar.squares.leading"],
+                accessibilityLabel: "Toggle Sidebar"
+            )
+            button.target = self
+            button.action = #selector(toggleSidebar(_:))
+            item.view = button
+            return item
+
         case ToolbarIdentifier.toggleInspector:
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
             item.label = "Inspector"
@@ -511,6 +527,7 @@ extension MainWindowController: NSToolbarDelegate {
 
     public func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
+            ToolbarIdentifier.toggleSidebar,
             ToolbarIdentifier.toggleChromosomeDrawer,
             ToolbarIdentifier.flexibleSpace,
             ToolbarIdentifier.translateTool,
@@ -525,6 +542,7 @@ extension MainWindowController: NSToolbarDelegate {
 
     public func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
+            ToolbarIdentifier.toggleSidebar,
             ToolbarIdentifier.toggleInspector,
             ToolbarIdentifier.toggleChromosomeDrawer,
             ToolbarIdentifier.toggleAnnotationDrawer,
