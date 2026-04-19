@@ -6,16 +6,31 @@
 	objectVersion = 60;
 	objects = {
 
+/* Begin PBXContainerItemProxy section */
+		F1E2D3C4B5A6978877665570 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = F1E2D3C4B5A6978877665544 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F1E2D3C4B5A6978877665550;
+			remoteInfo = Lungfish;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXBuildFile section */
 		F1E2D3C4B5A6978877665554 /* Sources/Lungfish/main.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1E2D3C4B5A6978877665548 /* Sources/Lungfish/main.swift */; };
 		F1E2D3C4B5A6978877665555 /* LungfishApp in Frameworks */ = {isa = PBXBuildFile; productRef = F1E2D3C4B5A6978877665563 /* LungfishApp */; };
 		F1E2D3C4B5A6978877665564 /* Lungfish.help in Resources */ = {isa = PBXBuildFile; fileRef = F1E2D3C4B5A6978877665565 /* Lungfish.help */; };
+		F1E2D3C4B5A6978877665571 /* DatabaseSearchXCUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1E2D3C4B5A6978877665573 /* DatabaseSearchXCUITests.swift */; };
+		F1E2D3C4B5A6978877665572 /* LungfishAppRobot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1E2D3C4B5A6978877665574 /* LungfishAppRobot.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		F1E2D3C4B5A6978877665548 /* Sources/Lungfish/main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/Lungfish/main.swift; sourceTree = SOURCE_ROOT; };
 		F1E2D3C4B5A6978877665549 /* Lungfish.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Lungfish.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F1E2D3C4B5A6978877665565 /* Lungfish.help */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Lungfish.help; path = Sources/LungfishApp/Resources/HelpBook/Lungfish.help; sourceTree = SOURCE_ROOT; };
+		F1E2D3C4B5A6978877665573 /* DatabaseSearchXCUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/LungfishXCUITests/DatabaseSearchXCUITests.swift; sourceTree = SOURCE_ROOT; };
+		F1E2D3C4B5A6978877665574 /* LungfishAppRobot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/LungfishXCUITests/TestSupport/LungfishAppRobot.swift; sourceTree = SOURCE_ROOT; };
+		F1E2D3C4B5A6978877665575 /* LungfishXCUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LungfishXCUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -27,6 +42,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F1E2D3C4B5A6978877665576 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -34,6 +56,7 @@
 			isa = PBXGroup;
 			children = (
 				F1E2D3C4B5A6978877665546 /* App */,
+				F1E2D3C4B5A6978877665577 /* Tests */,
 				F1E2D3C4B5A6978877665547 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -51,8 +74,34 @@
 			isa = PBXGroup;
 			children = (
 				F1E2D3C4B5A6978877665549 /* Lungfish.app */,
+				F1E2D3C4B5A6978877665575 /* LungfishXCUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		F1E2D3C4B5A6978877665577 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				F1E2D3C4B5A6978877665578 /* LungfishXCUITests */,
+			);
+			name = Tests;
+			sourceTree = "<group>";
+		};
+		F1E2D3C4B5A6978877665578 /* LungfishXCUITests */ = {
+			isa = PBXGroup;
+			children = (
+				F1E2D3C4B5A6978877665573 /* DatabaseSearchXCUITests.swift */,
+				F1E2D3C4B5A6978877665579 /* TestSupport */,
+			);
+			path = LungfishXCUITests;
+			sourceTree = "<group>";
+		};
+		F1E2D3C4B5A6978877665579 /* TestSupport */ = {
+			isa = PBXGroup;
+			children = (
+				F1E2D3C4B5A6978877665574 /* LungfishAppRobot.swift */,
+			);
+			path = TestSupport;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -82,6 +131,25 @@
 			productReference = F1E2D3C4B5A6978877665549 /* Lungfish.app */;
 			productType = "com.apple.product-type.application";
 		};
+		F1E2D3C4B5A6978877665580 /* LungfishXCUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F1E2D3C4B5A6978877665583 /* Build configuration list for PBXNativeTarget "LungfishXCUITests" */;
+			buildPhases = (
+				F1E2D3C4B5A6978877665581 /* Sources */,
+				F1E2D3C4B5A6978877665576 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				F1E2D3C4B5A6978877665582 /* PBXTargetDependency */,
+			);
+			name = LungfishXCUITests;
+			packageProductDependencies = (
+			);
+			productName = LungfishXCUITests;
+			productReference = F1E2D3C4B5A6978877665575 /* LungfishXCUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -94,6 +162,10 @@
 				TargetAttributes = {
 					F1E2D3C4B5A6978877665550 = {
 						CreatedOnToolsVersion = 16.0;
+					};
+					F1E2D3C4B5A6978877665580 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = F1E2D3C4B5A6978877665550;
 					};
 				};
 			};
@@ -114,6 +186,7 @@
 			projectRoot = "";
 			targets = (
 				F1E2D3C4B5A6978877665550 /* Lungfish */,
+				F1E2D3C4B5A6978877665580 /* LungfishXCUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -224,7 +297,24 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F1E2D3C4B5A6978877665581 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F1E2D3C4B5A6978877665571 /* DatabaseSearchXCUITests.swift in Sources */,
+				F1E2D3C4B5A6978877665572 /* LungfishAppRobot.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		F1E2D3C4B5A6978877665582 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F1E2D3C4B5A6978877665550 /* Lungfish */;
+			targetProxy = F1E2D3C4B5A6978877665570 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		F1E2D3C4B5A6978877665558 /* Debug */ = {
@@ -332,6 +422,48 @@
 			};
 			name = Release;
 		};
+		F1E2D3C4B5A6978877665584 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 13;
+				DEVELOPMENT_TEAM = 29G3WN2GSA;
+				EXCLUDED_ARCHS = x86_64;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0.4;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lungfish.browser.xcuitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+				TEST_TARGET_NAME = Lungfish;
+			};
+			name = Debug;
+		};
+		F1E2D3C4B5A6978877665585 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 13;
+				DEVELOPMENT_TEAM = 29G3WN2GSA;
+				EXCLUDED_ARCHS = x86_64;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0.4;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lungfish.browser.xcuitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+				TEST_TARGET_NAME = Lungfish;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -349,6 +481,15 @@
 			buildConfigurations = (
 				F1E2D3C4B5A6978877665560 /* Debug */,
 				F1E2D3C4B5A6978877665561 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F1E2D3C4B5A6978877665583 /* Build configuration list for PBXNativeTarget "LungfishXCUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F1E2D3C4B5A6978877665584 /* Debug */,
+				F1E2D3C4B5A6978877665585 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
