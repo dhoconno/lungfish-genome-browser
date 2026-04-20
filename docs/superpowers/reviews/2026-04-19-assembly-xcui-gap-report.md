@@ -35,7 +35,7 @@ Real managed-assembler runs were audited against checked-in fixtures and the cur
 - `Hifiasm`
   - Fixture: `Tests/Fixtures/assembly-ui/pacbio-hifi/reads.fastq`
   - Result: run completes, but produces zero contigs.
-  - Gap: add a HiFi fixture that yields a non-empty assembly result so the viewport and sidebar behavior are tested against a meaningful outcome.
+  - Gap: add a HiFi/CCS fixture that yields a non-empty assembly result so the viewport and sidebar behavior are tested against a meaningful outcome.
 
 ## XCUI Status
 
@@ -46,7 +46,7 @@ The pilot surfaced a product-side gating issue that should be addressed before i
 - Deterministic assembly dialog coverage for:
   - assembler switching across `SPAdes`, `MEGAHIT`, `SKESA`, `Flye`, and `Hifiasm`
   - assembly-specific accessibility identifiers
-  - raw FASTQ project fixtures for Illumina, ONT, and PacBio HiFi selection flows
+  - raw FASTQ project fixtures for Illumina, ONT, and PacBio HiFi/CCS selection flows
 
 - Live-smoke target coverage for:
   - `MEGAHIT`
@@ -55,8 +55,11 @@ The pilot surfaced a product-side gating issue that should be addressed before i
 ### App-side fixes already required by the pilot
 
 - `ManagedAssemblyPipeline.buildSpadesCommand(for:)` now emits `--isolate` for the default SPAdes profile.
+- FASTQ datasets now support a persisted dataset-level assembly read type in the Document Inspector.
+- Assembly tool availability now honors the effective dataset read type, disabling incompatible assemblers in the assembly tool picker/sidebar.
+- PacBio assembly support remains intentionally scoped to HiFi/CCS datasets; CLR/subreads are not exposed as a supported assembly read class in this phase.
 - Assembly read-type detection now resolves `.lungfishfastq` bundle selections to their primary FASTQ payload before evaluating assembly compatibility.
-- Assembly read-type detection now falls back to persisted FASTQ-sidecar sequencing-platform metadata when header sniffing is inconclusive.
+- Assembly read-type detection now honors the persisted dataset read type first and falls back to FASTQ-sidecar sequencing-platform metadata when header sniffing is inconclusive.
 - `FASTQOperationExecutionService` now treats assembly as a directory-output workflow and discovers assembly results from the actual CLI output directory.
 - Embedded assembly runs now create timestamped analysis directories under `Analyses/` instead of writing directly into the container root.
 - FASTQ assembly dialog and assembly result viewport now expose stable XCUI/accessibility identifiers for the shared harness.
@@ -81,10 +84,6 @@ The pilot surfaced a product-side gating issue that should be addressed before i
 - Continue exercising assembly workflows end-to-end with real fixtures wherever the underlying tool and fixture pair is viable.
 
 ### Dataset metadata and readiness gaps
-
-- There is still no persistent dataset-level assembly read-type override.
-  - Current behavior: the assembly sheet exposes a transient `Read Type` picker per run.
-  - Missing behavior: a dataset-level read-type field that can be reviewed and corrected once, then reused across assembly flows.
 
 - Current code inspection shows that local FASTQ import does not clearly persist the user-confirmed platform into the FASTQ sidecar metadata, while the download/import path does.
   - Impact: the new metadata fallback improves assembly readiness when sequencing-platform sidecar metadata exists, but that path is not yet uniformly populated across import routes.
@@ -123,12 +122,11 @@ The current `AssemblyResultViewController` is still a stub and does not match th
 
 ## Recommended Next Steps
 
-1. Add a persistent dataset-level assembly read-type or platform-correction surface and make the assembly readiness path consume it.
-2. Audit and, if needed, fix paired-end/interleaved topology derivation for bundle-backed assembly inputs.
-3. Resume assembly deterministic XCUI stabilization only after those product-side readiness paths are green.
-4. Verify live-smoke `MEGAHIT` and `SKESA` runs in XCUI against the per-run analysis-directory routing.
-5. Add viable real fixtures for `SPAdes`, `Flye`, and `Hifiasm`.
-6. Replace the assembly result stub with a classifier-style multi-part viewport:
+1. Audit and, if needed, fix paired-end/interleaved topology derivation for bundle-backed assembly inputs.
+2. Resume assembly deterministic XCUI stabilization only after those product-side readiness paths are green.
+3. Verify live-smoke `MEGAHIT` and `SKESA` runs in XCUI against the per-run analysis-directory routing.
+4. Add viable real fixtures for `SPAdes`, `Flye`, and `Hifiasm`.
+5. Replace the assembly result stub with a classifier-style multi-part viewport:
    - summary bar
    - split list/detail shell
    - action bar

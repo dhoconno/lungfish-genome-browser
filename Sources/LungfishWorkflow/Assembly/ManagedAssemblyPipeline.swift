@@ -276,7 +276,7 @@ public struct ManagedAssemblyPipeline: Sendable {
     private static func buildHifiasmCommand(for request: AssemblyRunRequest) throws -> ManagedAssemblyCommand {
         guard request.inputURLs.count == 1, let inputURL = request.inputURLs.first else {
             throw ManagedAssemblyPipelineError.unsupportedInputTopology(
-                "Hifiasm expects a single PacBio HiFi FASTQ input in v1."
+                "Hifiasm expects a single PacBio HiFi/CCS FASTQ input in v1."
             )
         }
         try FileManager.default.createDirectory(

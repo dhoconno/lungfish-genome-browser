@@ -41,6 +41,10 @@ final class AssemblyCompatibilityTests: XCTestCase {
         XCTAssertFalse(AssemblyCompatibility.isSupported(tool: .skesa, for: .pacBioHiFi))
     }
 
+    func testPacBioHiFiDisplayNameUsesHiFiCCSLabel() {
+        XCTAssertEqual(AssemblyReadType.pacBioHiFi.displayName, "PacBio HiFi/CCS")
+    }
+
     func testMixedDetectedReadTypesAreBlockedInV1() {
         let evaluation = AssemblyCompatibility.evaluate(detectedReadTypes: [.illuminaShortReads, .ontReads])
 
@@ -164,6 +168,27 @@ final class AssemblyCompatibilityTests: XCTestCase {
         let primaryFASTQURL = try XCTUnwrap(FASTQBundle.resolvePrimaryFASTQURL(for: bundleURL))
         FASTQMetadataStore.save(
             PersistedFASTQMetadata(sequencingPlatform: .oxfordNanopore),
+            for: primaryFASTQURL
+        )
+
+        XCTAssertEqual(AssemblyReadType.detect(fromInputURL: bundleURL), .ontReads)
+    }
+
+    func testPersistedAssemblyReadTypeOverridesHeaderDetection() throws {
+        let bundleURL = try makeFASTQBundle(
+            fastqName: "reads.fastq",
+            fastqContents: """
+            @A00488:17:H7WFLDMXX:1:1101:10000:1000 1:N:0:ATCACG
+            ACGT
+            +
+            !!!!
+            """
+        )
+        defer { try? FileManager.default.removeItem(at: bundleURL.deletingLastPathComponent()) }
+
+        let primaryFASTQURL = try XCTUnwrap(FASTQBundle.resolvePrimaryFASTQURL(for: bundleURL))
+        FASTQMetadataStore.save(
+            PersistedFASTQMetadata(assemblyReadType: .ontReads),
             for: primaryFASTQURL
         )
 

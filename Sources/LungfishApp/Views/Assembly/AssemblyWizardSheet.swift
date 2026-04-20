@@ -157,6 +157,15 @@ struct AssemblyWizardSheet: View {
         }
     }
 
+    private var availableTools: [AssemblyTool] {
+        guard let readType = compatibilityEvaluation.resolvedReadType,
+              compatibilityBlockingMessage == nil else {
+            return AssemblyTool.allCases
+        }
+
+        return AssemblyCompatibility.supportedTools(for: readType)
+    }
+
     private var compatibilityBlockingMessage: String? {
         if let message = compatibilityEvaluation.blockingMessage {
             return message
@@ -250,10 +259,14 @@ struct AssemblyWizardSheet: View {
             packStatus = await PluginPackStatusService.shared.status(forPackID: "assembly")
         }
         .onAppear {
+            syncSelectedToolToAvailableTools()
             onRunnerAvailabilityChange?(canRun)
         }
         .onChange(of: canRun) { _, newValue in
             onRunnerAvailabilityChange?(newValue)
+        }
+        .onChange(of: availableTools) { _, _ in
+            syncSelectedToolToAvailableTools()
         }
         .onChange(of: embeddedRunTrigger) { _, _ in
             guard embeddedInOperationsDialog else { return }
@@ -389,7 +402,7 @@ struct AssemblyWizardSheet: View {
 
             labeledRow("Assembler") {
                 Picker("Assembler", selection: $selectedTool) {
-                    ForEach(AssemblyTool.allCases, id: \.self) { tool in
+                    ForEach(availableTools, id: \.self) { tool in
                         Text(tool.displayName).tag(tool)
                     }
                 }
@@ -787,6 +800,12 @@ struct AssemblyWizardSheet: View {
         flyeMetagenomeMode = false
         hifiasmPrimaryOnly = false
         extraArgumentsText = ""
+    }
+
+    private func syncSelectedToolToAvailableTools() {
+        guard !availableTools.isEmpty else { return }
+        guard !availableTools.contains(selectedTool) else { return }
+        selectedTool = availableTools[0]
     }
 }
 

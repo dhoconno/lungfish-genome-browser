@@ -170,6 +170,31 @@ final class ManagedAssemblyPipelineTests: XCTestCase {
         }
     }
 
+    func testHifiasmTopologyErrorUsesHiFiCCSLabel() {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("managed-assembly-hifiasm-invalid-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let request = AssemblyRunRequest(
+            tool: .hifiasm,
+            readType: .pacBioHiFi,
+            inputURLs: [
+                URL(fileURLWithPath: "/tmp/sample-1.fastq.gz"),
+                URL(fileURLWithPath: "/tmp/sample-2.fastq.gz"),
+            ],
+            projectName: "bad-hifiasm-demo",
+            outputDirectory: tempDir,
+            threads: 8
+        )
+
+        XCTAssertThrowsError(try ManagedAssemblyPipeline.buildCommand(for: request)) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "Hifiasm expects a single PacBio HiFi/CCS FASTQ input in v1."
+            )
+        }
+    }
+
     func testRunStagesSpaceSensitiveSpadesPathsThroughSpaceFreeWorkspace() async throws {
         let tempRoot = try makeTempDirectory(prefix: "managed assembly space")
         defer { try? FileManager.default.removeItem(at: tempRoot) }

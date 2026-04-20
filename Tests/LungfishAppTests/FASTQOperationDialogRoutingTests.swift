@@ -564,6 +564,63 @@ final class FASTQOperationDialogRoutingTests: XCTestCase {
         XCTAssertNil(state.assemblyReadClassMismatchMessage)
     }
 
+    func testAssemblySidebarDisablesIncompatibleToolsForPersistedReadType() throws {
+        let bundleURL = try makeFASTQBundle(
+            fastqName: "reads.fastq",
+            fastqContents: """
+            @unknown-read
+            ACGT
+            +
+            !!!!
+            """
+        )
+        defer { try? FileManager.default.removeItem(at: bundleURL.deletingLastPathComponent()) }
+
+        let primaryFASTQURL = try XCTUnwrap(FASTQBundle.resolvePrimaryFASTQURL(for: bundleURL))
+        FASTQMetadataStore.save(
+            PersistedFASTQMetadata(assemblyReadType: .ontReads),
+            for: primaryFASTQURL
+        )
+
+        let state = FASTQOperationDialogState(
+            initialCategory: .assembly,
+            selectedInputURLs: [bundleURL]
+        )
+
+        let items = Dictionary(uniqueKeysWithValues: state.sidebarItems.map { ($0.id, $0.availability) })
+        XCTAssertEqual(items[FASTQOperationToolID.flye.rawValue], .available)
+        XCTAssertEqual(items[FASTQOperationToolID.spades.rawValue], .disabled(reason: "Requires Illumina"))
+        XCTAssertEqual(items[FASTQOperationToolID.megahit.rawValue], .disabled(reason: "Requires Illumina"))
+        XCTAssertEqual(items[FASTQOperationToolID.skesa.rawValue], .disabled(reason: "Requires Illumina"))
+        XCTAssertEqual(items[FASTQOperationToolID.hifiasm.rawValue], .disabled(reason: "Requires HiFi/CCS"))
+    }
+
+    func testAssemblyCategorySeedsCompatibleDefaultToolForPersistedReadType() throws {
+        let bundleURL = try makeFASTQBundle(
+            fastqName: "reads.fastq",
+            fastqContents: """
+            @unknown-read
+            ACGT
+            +
+            !!!!
+            """
+        )
+        defer { try? FileManager.default.removeItem(at: bundleURL.deletingLastPathComponent()) }
+
+        let primaryFASTQURL = try XCTUnwrap(FASTQBundle.resolvePrimaryFASTQURL(for: bundleURL))
+        FASTQMetadataStore.save(
+            PersistedFASTQMetadata(assemblyReadType: .pacBioHiFi),
+            for: primaryFASTQURL
+        )
+
+        let state = FASTQOperationDialogState(
+            initialCategory: .assembly,
+            selectedInputURLs: [bundleURL]
+        )
+
+        XCTAssertEqual(state.selectedToolID, .hifiasm)
+    }
+
     func testMixedAssemblyReadTypesExposeHybridBlockMessage() throws {
         let ontFASTQ = FileManager.default.temporaryDirectory
             .appendingPathComponent("FASTQOperationDialogRoutingTests-\(UUID().uuidString).fastq")

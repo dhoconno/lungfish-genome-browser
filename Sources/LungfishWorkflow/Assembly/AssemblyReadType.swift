@@ -17,7 +17,7 @@ public enum AssemblyReadType: String, CaseIterable, Codable, Sendable {
         switch self {
         case .illuminaShortReads: return "Illumina short reads"
         case .ontReads: return "ONT reads"
-        case .pacBioHiFi: return "PacBio HiFi"
+        case .pacBioHiFi: return "PacBio HiFi/CCS"
         }
     }
 
@@ -29,7 +29,7 @@ public enum AssemblyReadType: String, CaseIterable, Codable, Sendable {
         case .ontReads:
             return "Single-file Oxford Nanopore long reads."
         case .pacBioHiFi:
-            return "Single-file PacBio HiFi long reads."
+            return "Single-file PacBio HiFi/CCS long reads."
         }
     }
 
@@ -71,11 +71,17 @@ public enum AssemblyReadType: String, CaseIterable, Codable, Sendable {
             return nil
         }
 
+        let persistedMetadata = FASTQMetadataStore.load(for: fastqURL)
+
+        if let explicitReadType = persistedMetadata?.assemblyReadType.flatMap(Self.init(persistedReadType:)) {
+            return explicitReadType
+        }
+
         if let detected = detect(fromFASTQ: fastqURL) {
             return detected
         }
 
-        if let platform = FASTQMetadataStore.load(for: fastqURL)?.sequencingPlatform {
+        if let platform = persistedMetadata?.sequencingPlatform {
             return detect(from: platform)
         }
 
@@ -111,6 +117,17 @@ public enum AssemblyReadType: String, CaseIterable, Codable, Sendable {
             self = .pacBioHiFi
         default:
             return nil
+        }
+    }
+
+    public init?(persistedReadType: FASTQAssemblyReadType) {
+        switch persistedReadType {
+        case .illuminaShortReads:
+            self = .illuminaShortReads
+        case .ontReads:
+            self = .ontReads
+        case .pacBioHiFi:
+            self = .pacBioHiFi
         }
     }
 
