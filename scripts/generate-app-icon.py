@@ -1,240 +1,154 @@
 #!/usr/bin/env python3
 """
-Generate Lungfish Genome Browser app icon.
-Creates all required PNG sizes and assembles into .icns file.
-
-Based on APP-ICON-DESIGN-SPECIFICATION.md
+Generate Lungfish app icon assets from the current orange-on-cream brand mark.
 """
 
+from __future__ import annotations
+
 import os
-import math
+import shutil
+import subprocess
+from pathlib import Path
+
 from PIL import Image, ImageDraw, ImageFilter
 
-# Color palette from design spec
-COLORS = {
-    'teal_dark': (0, 122, 140),       # #007A8C
-    'teal': (0, 160, 176),            # #00A0B0
-    'teal_light': (0, 196, 217),      # #00C4D9
-    'teal_bright': (77, 217, 230),    # #4DD9E6
-    'background_dark': (26, 47, 58),  # #1A2F3A
-    'background_neutral': (46, 74, 90), # #2E4A5A
-    'gear_silver': (139, 163, 176),   # #8BA3B0
-    'white': (255, 255, 255),
+
+BRAND_COLORS = {
+    "orange": (212, 123, 58),   # #D47B3A
+    "cream": (250, 244, 234),   # #FAF4EA
+    "warm_grey": (138, 132, 122),
+    "deep_ink": (31, 26, 23),
 }
 
-def create_gradient_background(size, color1, color2):
-    """Create a vertical gradient background."""
-    img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
+DEFAULT_BACKGROUND = (252, 252, 252)
+DEFAULT_FOREGROUND = (238, 139, 79)
+ABOUT_LOGO_SIZE = 2048
 
-    for y in range(size):
-        # Interpolate between colors
-        ratio = y / size
-        r = int(color1[0] * (1 - ratio) + color2[0] * ratio)
-        g = int(color1[1] * (1 - ratio) + color2[1] * ratio)
-        b = int(color1[2] * (1 - ratio) + color2[2] * ratio)
-        draw.line([(0, y), (size, y)], fill=(r, g, b, 255))
 
-    return img
+def project_root() -> Path:
+    return Path(__file__).resolve().parent.parent
 
-def draw_rounded_rect(draw, bounds, radius, fill):
-    """Draw a rounded rectangle."""
+
+def default_source_logo_path() -> Path:
+    return project_root() / "scripts" / "app-icon-source.png"
+
+
+def load_source_logo(source_path: Path | None = None) -> Image.Image:
+    path = source_path or default_source_logo_path()
+    return Image.open(path).convert("RGBA")
+
+
+def iter_pixels(image: Image.Image):
+    data = image.tobytes()
+    for index in range(0, len(data), 4):
+        yield data[index], data[index + 1], data[index + 2], data[index + 3]
+
+
+def estimate_source_background(source: Image.Image) -> tuple[int, int, int]:
+    samples: list[tuple[int, int, int]] = []
+    for r, g, b, a in iter_pixels(source.resize((256, 256), Image.Resampling.LANCZOS)):
+        if a == 0:
+            continue
+        spread = max(r, g, b) - min(r, g, b)
+        if max(r, g, b) >= 235 and spread <= 12:
+            samples.append((r, g, b))
+    if not samples:
+        return DEFAULT_BACKGROUND
+    return tuple(round(sum(pixel[index] for pixel in samples) / len(samples)) for index in range(3))
+
+
+def estimate_source_foreground(source: Image.Image) -> tuple[int, int, int]:
+    samples: list[tuple[int, int, int]] = []
+    for r, g, b, a in iter_pixels(source.resize((256, 256), Image.Resampling.LANCZOS)):
+        if a == 0:
+            continue
+        spread = max(r, g, b) - min(r, g, b)
+        if spread >= 28 and r > g > b:
+            samples.append((r, g, b))
+    if not samples:
+        return DEFAULT_FOREGROUND
+    return tuple(round(sum(pixel[index] for pixel in samples) / len(samples)) for index in range(3))
+
+
+def color_distance_squared(left: tuple[int, int, int], right: tuple[int, int, int]) -> int:
+    return sum((left[index] - right[index]) ** 2 for index in range(3))
+
+
+def extract_brand_mark(source: Image.Image) -> Image.Image:
+    background = estimate_source_background(source)
+    foreground = estimate_source_foreground(source)
+
+    mark = Image.new("RGBA", source.size, (0, 0, 0, 0))
+    mark_pixels = mark.load()
+    source_pixels = source.load()
+
+    for y in range(source.height):
+        for x in range(source.width):
+            r, g, b, a = source_pixels[x, y]
+            if a == 0:
+                continue
+
+            observed = (r, g, b)
+            foreground_distance = color_distance_squared(observed, foreground)
+            background_distance = color_distance_squared(observed, background)
+            if foreground_distance * 1.15 >= background_distance:
+                continue
+
+            mark_pixels[x, y] = (*BRAND_COLORS["orange"], a)
+
+    return mark
+
+
+def add_drop_shadow(canvas: Image.Image, bounds: tuple[int, int, int, int], radius: int) -> None:
+    shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    shadow_draw = ImageDraw.Draw(shadow)
     x1, y1, x2, y2 = bounds
-    draw.rounded_rectangle(bounds, radius=radius, fill=fill)
-
-def draw_circle(draw, center, radius, fill=None, outline=None, width=1):
-    """Draw a circle."""
-    x, y = center
-    draw.ellipse(
-        [x - radius, y - radius, x + radius, y + radius],
-        fill=fill,
-        outline=outline,
-        width=width
+    shadow_draw.rounded_rectangle(
+        (x1, y1 + max(2, radius // 12), x2, y2 + max(2, radius // 12)),
+        radius=radius,
+        fill=(*BRAND_COLORS["deep_ink"], 28),
     )
+    shadow = shadow.filter(ImageFilter.GaussianBlur(max(2, radius // 8)))
+    canvas.alpha_composite(shadow)
 
-def draw_lungfish_silhouette(draw, center, size, color):
-    """
-    Draw a stylized lungfish silhouette.
-    The lungfish is depicted as an elegant curved fish shape.
-    """
-    cx, cy = center
-    scale = size / 100  # Base design at 100px
 
-    # Lungfish body - elegant elongated S-curve shape
-    # The lungfish has a distinctive elongated body with lobed fins
+def compose_icon(size: int, brand_mark: Image.Image) -> Image.Image:
+    icon = Image.new("RGBA", (size, size), (0, 0, 0, 0))
 
-    # Main body curve points (scaled)
-    body_points = [
-        # Head (left side, rounded)
-        (cx - 35*scale, cy),
-        (cx - 38*scale, cy - 8*scale),
-        (cx - 35*scale, cy - 15*scale),
-        (cx - 25*scale, cy - 18*scale),
-        # Upper body curve
-        (cx - 10*scale, cy - 15*scale),
-        (cx + 5*scale, cy - 12*scale),
-        (cx + 20*scale, cy - 8*scale),
-        # Tail section (upper)
-        (cx + 35*scale, cy - 5*scale),
-        (cx + 42*scale, cy - 15*scale),  # Tail tip upper
-        (cx + 38*scale, cy),              # Tail center
-        # Tail section (lower)
-        (cx + 42*scale, cy + 15*scale),  # Tail tip lower
-        (cx + 35*scale, cy + 5*scale),
-        # Lower body curve
-        (cx + 20*scale, cy + 8*scale),
-        (cx + 5*scale, cy + 12*scale),
-        (cx - 10*scale, cy + 15*scale),
-        (cx - 25*scale, cy + 18*scale),
-        # Back to head
-        (cx - 35*scale, cy + 15*scale),
-        (cx - 38*scale, cy + 8*scale),
-        (cx - 35*scale, cy),
-    ]
+    tile_inset = round(size * 0.085)
+    tile_bounds = (tile_inset, tile_inset, size - tile_inset, size - tile_inset)
+    tile_radius = round((tile_bounds[2] - tile_bounds[0]) * 0.28)
 
-    # Draw the body as a polygon
-    draw.polygon(body_points, fill=color)
+    add_drop_shadow(icon, tile_bounds, tile_radius)
 
-    # Eye position - will be filled with virus outline later
-    # Store eye coordinates for external use
-    eye_x = cx - 28*scale
-    eye_y = cy - 5*scale
-    eye_radius = 3*scale
+    tile = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    tile_draw = ImageDraw.Draw(tile)
+    tile_draw.rounded_rectangle(tile_bounds, radius=tile_radius, fill=(*BRAND_COLORS["cream"], 255))
+    tile_draw.rounded_rectangle(tile_bounds, radius=tile_radius, outline=(*BRAND_COLORS["warm_grey"], 48), width=max(1, size // 128))
+    icon.alpha_composite(tile)
 
-    # Draw white background for eye
-    draw_circle(draw, (eye_x, eye_y), eye_radius, fill=COLORS['white'])
+    cropped_mark = brand_mark.crop(brand_mark.getbbox())
+    mark_max_extent = tile_bounds[2] - tile_bounds[0]
+    mark_scale = 0.78 if size <= 32 else 0.74
+    mark_target = round(mark_max_extent * mark_scale)
+    resized_mark = cropped_mark.resize((mark_target, mark_target), Image.Resampling.LANCZOS)
 
-    # Pectoral fin (lobed fin characteristic of lungfish)
-    fin_points = [
-        (cx - 15*scale, cy + 5*scale),
-        (cx - 20*scale, cy + 18*scale),
-        (cx - 8*scale, cy + 15*scale),
-        (cx - 5*scale, cy + 8*scale),
-    ]
-    draw.polygon(fin_points, fill=color)
+    mark_layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    mark_position = ((size - resized_mark.width) // 2, (size - resized_mark.height) // 2)
+    mark_layer.alpha_composite(resized_mark, dest=mark_position)
+    icon.alpha_composite(mark_layer)
+    return icon
 
-def draw_virus_outline(draw, center, radius, color, spikes=12):
-    """Draw a stylized virus outline with spike proteins."""
-    cx, cy = center
-    inner_radius = radius * 0.5
-    spike_length = radius * 0.5
-    spike_ball_radius = radius * 0.15
 
-    # Draw spike proteins radiating outward
-    for i in range(spikes):
-        angle = (2 * math.pi * i) / spikes
-        # Spike line from inner circle to outer ball
-        inner_x = cx + inner_radius * math.cos(angle)
-        inner_y = cy + inner_radius * math.sin(angle)
-        outer_x = cx + (inner_radius + spike_length) * math.cos(angle)
-        outer_y = cy + (inner_radius + spike_length) * math.sin(angle)
+def create_icon(size: int, source_logo: Image.Image | None = None) -> Image.Image:
+    source = source_logo or load_source_logo()
+    brand_mark = extract_brand_mark(source)
+    return compose_icon(size, brand_mark)
 
-        # Draw spike line
-        draw.line([(inner_x, inner_y), (outer_x, outer_y)], fill=color, width=max(1, int(radius * 0.08)))
 
-        # Draw spike ball at end
-        draw_circle(draw, (outer_x, outer_y), spike_ball_radius, fill=color)
+def generate_all_icons(output_dir: Path, source_logo: Image.Image) -> list[Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Draw central virus body (circle outline)
-    draw_circle(draw, center, inner_radius, outline=color, width=max(1, int(radius * 0.1)))
-
-def create_icon(size, include_virus_eye=True, simplified=False):
-    """
-    Create the app icon at the specified size.
-
-    Args:
-        size: Output size in pixels
-        include_virus_eye: Whether to include the virus outline in the eye
-        simplified: Use simplified design for small sizes
-    """
-    # Create canvas with transparency
-    img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-
-    # Calculate dimensions
-    padding = size * 0.05
-    icon_size = size - (2 * padding)
-    center = size / 2
-
-    # Background: rounded rectangle with gradient
-    corner_radius = size * 0.22  # macOS squircle corner radius
-
-    # Create gradient background
-    bg = create_gradient_background(size, COLORS['background_dark'], COLORS['background_neutral'])
-
-    # Apply rounded corners by masking
-    mask = Image.new('L', (size, size), 0)
-    mask_draw = ImageDraw.Draw(mask)
-    mask_draw.rounded_rectangle([0, 0, size-1, size-1], radius=corner_radius, fill=255)
-
-    # Apply mask to background
-    bg.putalpha(mask)
-    img = Image.alpha_composite(img, bg)
-    draw = ImageDraw.Draw(img)
-
-    # Draw circular container for the logo
-    circle_radius = icon_size * 0.38
-    circle_center = (center, center)
-
-    # Circle background with gradient effect
-    # Outer glow
-    glow_color = (*COLORS['teal_dark'], 100)
-    for i in range(3):
-        r = circle_radius + (3 - i) * (size * 0.01)
-        draw_circle(draw, circle_center, r, fill=(*COLORS['teal_dark'], 30 + i * 20))
-
-    # Main circle with teal gradient
-    draw_circle(draw, circle_center, circle_radius, fill=COLORS['teal'])
-
-    # Inner highlight (top)
-    highlight_y_offset = -circle_radius * 0.15
-    highlight_radius = circle_radius * 0.85
-    # Create a subtle highlight arc at top
-
-    # Draw lungfish silhouette
-    fish_size = circle_radius * 1.6
-    if simplified:
-        fish_size = circle_radius * 1.8
-    draw_lungfish_silhouette(draw, circle_center, fish_size, COLORS['teal_bright'])
-
-    # Draw virus outline in the eye (only for larger sizes where it's visible)
-    if include_virus_eye and size >= 64:
-        # Calculate eye position based on fish position
-        scale = fish_size / 100
-        eye_x = center - 28 * scale
-        eye_y = center - 5 * scale
-        eye_radius = 3 * scale
-
-        # Draw virus outline in a dark teal color for contrast against white eye
-        virus_radius = eye_radius * 0.8
-        virus_color = COLORS['teal_dark']
-        draw_virus_outline(draw, (eye_x, eye_y), virus_radius, virus_color, spikes=8)
-
-    # Add subtle highlight on circle edge (top-left)
-    if size >= 128:
-        # Top-left arc highlight
-        highlight_start = center - circle_radius * 0.9
-        arc_bounds = [
-            center - circle_radius + size * 0.02,
-            center - circle_radius + size * 0.02,
-            center + circle_radius - size * 0.02,
-            center + circle_radius - size * 0.02
-        ]
-        # Simple highlight dot
-        draw_circle(
-            draw,
-            (center - circle_radius * 0.5, center - circle_radius * 0.5),
-            size * 0.03,
-            fill=(*COLORS['white'], 80)
-        )
-
-    return img
-
-def generate_all_icons(output_dir):
-    """Generate all required icon sizes."""
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Icon size specifications (pt, scale, pixels)
     sizes = [
         (16, 1, 16),
         (16, 2, 32),
@@ -248,100 +162,59 @@ def generate_all_icons(output_dir):
         (512, 2, 1024),
     ]
 
-    generated_files = []
-
-    for pt, scale, pixels in sizes:
-        # Determine if we need simplified version
-        simplified = pixels <= 32
-        include_virus_eye = pixels >= 64
-
-        print(f"Generating {pixels}x{pixels} icon (simplified={simplified}, virus_eye={include_virus_eye})...")
-
-        icon = create_icon(pixels, include_virus_eye=include_virus_eye, simplified=simplified)
-
-        # Generate filename
-        if scale == 1:
-            filename = f"icon_{pt}x{pt}.png"
-        else:
-            filename = f"icon_{pt}x{pt}@2x.png"
-
-        filepath = os.path.join(output_dir, filename)
-        icon.save(filepath, 'PNG')
-        generated_files.append(filepath)
-        print(f"  Saved: {filepath}")
-
+    generated_files: list[Path] = []
+    brand_mark = extract_brand_mark(source_logo)
+    for points, scale, pixels in sizes:
+        filename = f"icon_{points}x{points}.png" if scale == 1 else f"icon_{points}x{points}@2x.png"
+        icon = compose_icon(pixels, brand_mark)
+        destination = output_dir / filename
+        icon.save(destination, "PNG")
+        generated_files.append(destination)
+        print(f"Saved {destination}")
     return generated_files
 
-def create_icns(png_dir, output_path):
-    """
-    Create .icns file from PNG icons using iconutil.
-    """
-    import subprocess
-    import shutil
 
-    # Create .iconset directory
-    iconset_dir = output_path.replace('.icns', '.iconset')
-    os.makedirs(iconset_dir, exist_ok=True)
+def write_about_logo(output_path: Path, source_logo: Image.Image) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    create_icon(ABOUT_LOGO_SIZE, source_logo).save(output_path, "PNG")
+    print(f"Saved {output_path}")
 
-    # Copy PNGs to iconset with correct naming
-    png_files = [f for f in os.listdir(png_dir) if f.endswith('.png')]
 
-    for png in png_files:
-        src = os.path.join(png_dir, png)
-        dst = os.path.join(iconset_dir, png)
-        shutil.copy2(src, dst)
+def create_icns(png_dir: Path, output_path: Path) -> None:
+    iconset_dir = output_path.with_suffix(".iconset")
+    if iconset_dir.exists():
+        shutil.rmtree(iconset_dir)
+    iconset_dir.mkdir(parents=True, exist_ok=True)
 
-    # Run iconutil to create .icns
+    for png_path in png_dir.glob("*.png"):
+        shutil.copy2(png_path, iconset_dir / png_path.name)
+
     try:
         subprocess.run(
-            ['iconutil', '-c', 'icns', iconset_dir, '-o', output_path],
-            check=True
+            ["iconutil", "-c", "icns", str(iconset_dir), "-o", str(output_path)],
+            check=True,
         )
-        print(f"\nCreated: {output_path}")
+        print(f"Saved {output_path}")
+    finally:
+        shutil.rmtree(iconset_dir, ignore_errors=True)
 
-        # Cleanup iconset
-        shutil.rmtree(iconset_dir)
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"Error creating .icns: {e}")
-        return False
-    except FileNotFoundError:
-        print("iconutil not found - .icns creation requires macOS")
-        return False
 
-def main():
-    # Paths
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(script_dir)
+def main() -> None:
+    root = project_root()
+    source_logo = load_source_logo()
 
-    # Output directories
-    png_output_dir = os.path.join(project_root, 'Sources', 'LungfishApp', 'Resources',
-                                   'Assets.xcassets', 'AppIcon.appiconset')
-    resources_dir = os.path.join(project_root, 'Resources')
-    icns_output = os.path.join(resources_dir, 'AppIcon.icns')
+    png_output_dir = root / "Sources" / "LungfishApp" / "Resources" / "Assets.xcassets" / "AppIcon.appiconset"
+    about_logo_output = root / "Sources" / "LungfishApp" / "Resources" / "Images" / "about-logo.png"
+    icns_output = root / "Resources" / "AppIcon.icns"
+    swiftpm_icns_output = root / "Sources" / "Lungfish" / "AppIcon.icns"
 
-    # Create Resources directory if needed
-    os.makedirs(resources_dir, exist_ok=True)
-
-    print("=" * 60)
-    print("Lungfish Genome Browser - App Icon Generator")
-    print("=" * 60)
-    print()
-
-    # Generate PNG icons
-    print("Generating PNG icons...")
-    generate_all_icons(png_output_dir)
-
-    print()
-    print("Creating .icns file...")
+    print("Generating Lungfish app icon assets...")
+    generate_all_icons(png_output_dir, source_logo)
+    write_about_logo(about_logo_output, source_logo)
     create_icns(png_output_dir, icns_output)
+    shutil.copy2(icns_output, swiftpm_icns_output)
+    print(f"Saved {swiftpm_icns_output}")
 
-    print()
-    print("=" * 60)
-    print("Icon generation complete!")
-    print(f"PNG icons: {png_output_dir}")
-    print(f"ICNS file: {icns_output}")
-    print("=" * 60)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
