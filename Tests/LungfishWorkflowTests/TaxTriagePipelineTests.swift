@@ -56,6 +56,9 @@ final class TaxTriagePipelineTests: XCTestCase {
         try FileManager.default.createDirectory(at: repoURL.appendingPathComponent("workflows", isDirectory: true), withIntermediateDirectories: true)
 
         let downloadScript = """
+        def normalize(line):
+            return line.rstrip()
+
         def get_url(utl, id):
             bb = os.path.basename(utl)
             return utl+"/"+bb+"_genomic.fna.gz"
@@ -1071,6 +1074,33 @@ final class TaxTriagePipelineTests: XCTestCase {
             encoding: .utf8
         )
         XCTAssertTrue(cachedWorkflow.contains("!params.skip_refpull"))
+
+        let exportedDownloadScript = try String(
+            contentsOf: exportedProject.appendingPathComponent("bin/download_fastas.py"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(exportedDownloadScript.contains("return line.rstrip()"))
+        XCTAssertTrue(exportedDownloadScript.contains("bb = os.path.basename(utl.rstrip('/'))"))
+        XCTAssertTrue(exportedDownloadScript.contains("return utl.rstrip('/')+\"/\"+bb+\"_genomic.fna.gz\""))
+    }
+
+    func testPatchedTaxTriageDownloadScriptContentIgnoresUnrelatedRstripUsage() {
+        let content = """
+        def normalize(line):
+            return line.rstrip()
+
+        def get_url(utl, id):
+            bb = os.path.basename(utl)
+            return utl+"/"+bb+"_genomic.fna.gz"
+        """
+
+        let pipeline = TaxTriagePipeline()
+        let patched = pipeline.patchedTaxTriageDownloadScriptContent(from: content)
+
+        XCTAssertNotNil(patched)
+        XCTAssertTrue(patched?.contains("return line.rstrip()") == true)
+        XCTAssertTrue(patched?.contains("bb = os.path.basename(utl.rstrip('/'))") == true)
+        XCTAssertTrue(patched?.contains("return utl.rstrip('/')+\"/\"+bb+\"_genomic.fna.gz\"") == true)
     }
 
     func testSanitizeIgnoredFailuresSuppressesBenignEmptyReferenceAlignmentWarning() throws {

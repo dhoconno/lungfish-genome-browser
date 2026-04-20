@@ -729,31 +729,41 @@ public actor TaxTriagePipeline {
         guard FileManager.default.fileExists(atPath: scriptPath.path) else { return }
 
         do {
-            var content = try String(contentsOf: scriptPath, encoding: .utf8)
+            let content = try String(contentsOf: scriptPath, encoding: .utf8)
+            guard let patchedContent = patchedTaxTriageDownloadScriptContent(from: content) else {
+                return
+            }
 
-            // Check if already patched
-            if content.contains("rstrip") { return }
-
-            // Patch the get_url function
-            let oldLine = "bb = os.path.basename(utl)"
-            let newLine = "bb = os.path.basename(utl.rstrip('/'))"
-
-            guard content.contains(oldLine) else { return }
-
-            content = content.replacingOccurrences(of: oldLine, with: newLine)
-
-            // Also fix the URL construction to strip trailing slash
-            content = content.replacingOccurrences(
-                of: "return utl+\"/\"+bb+\"_genomic.fna.gz\"",
-                with: "return utl.rstrip('/')+\"/\"+bb+\"_genomic.fna.gz\""
-            )
-
-            try content.write(to: scriptPath, atomically: true, encoding: .utf8)
+            try patchedContent.write(to: scriptPath, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptPath.path)
             logger.info("Patched TaxTriage download_fastas.py to fix trailing-slash URL bug")
         } catch {
             logger.warning("Failed to patch TaxTriage download script: \(error.localizedDescription)")
         }
+    }
+
+    nonisolated func patchedTaxTriageDownloadScriptContent(from content: String) -> String? {
+        let oldBasenameLine = "bb = os.path.basename(utl)"
+        let newBasenameLine = "bb = os.path.basename(utl.rstrip('/'))"
+        let oldReturnLine = "return utl+\"/\"+bb+\"_genomic.fna.gz\""
+        let newReturnLine = "return utl.rstrip('/')+\"/\"+bb+\"_genomic.fna.gz\""
+
+        let needsBasenamePatch = content.contains(oldBasenameLine)
+        let needsReturnPatch = content.contains(oldReturnLine)
+
+        guard needsBasenamePatch || needsReturnPatch else {
+            return nil
+        }
+
+        var patched = content
+        if needsBasenamePatch {
+            patched = patched.replacingOccurrences(of: oldBasenameLine, with: newBasenameLine)
+        }
+        if needsReturnPatch {
+            patched = patched.replacingOccurrences(of: oldReturnLine, with: newReturnLine)
+        }
+
+        return patched == content ? nil : patched
     }
 
     func buildNextflowArguments(config: TaxTriageConfig) -> [String] {
