@@ -69,8 +69,6 @@ struct ExtractContigsSubcommand: AsyncParsableCommand {
             guard projectRoot != nil else {
                 throw ValidationError("--project-root is required with --bundle")
             }
-        } else if output == nil {
-            throw ValidationError("--output is required unless --bundle is used")
         }
     }
 
@@ -86,19 +84,23 @@ struct ExtractContigsSubcommand: AsyncParsableCommand {
                 selectedContigs: selectedContigs,
                 projectRootURL: projectRootURL
             )
+            FileHandle.standardOutput.write(Data("\(bundleURL.path)\n".utf8))
             if !globalOptions.quiet {
                 let formatter = TerminalFormatter(useColors: globalOptions.useColors)
-                print(formatter.success("Created bundle \(bundleURL.lastPathComponent)"))
+                FileHandle.standardError.write(
+                    Data("\(formatter.success("Created bundle \(bundleURL.lastPathComponent)"))\n".utf8)
+                )
             }
             return
         }
 
-        let outputURL = URL(fileURLWithPath: output ?? "")
-        try await writeSelectedContigs(
-            selectedContigs,
-            from: source.catalog,
-            to: outputURL
-        )
+        let fasta = try await selectedContigsFASTA(selectedContigs, from: source.catalog)
+        if let output {
+            let outputURL = URL(fileURLWithPath: output)
+            try fasta.write(to: outputURL, atomically: true, encoding: .utf8)
+        } else {
+            FileHandle.standardOutput.write(Data(fasta.utf8))
+        }
     }
 
     private func requestedContigs() throws -> [String] {
@@ -201,8 +203,16 @@ struct ExtractContigsSubcommand: AsyncParsableCommand {
         from catalog: AssemblyContigCatalog,
         to outputURL: URL
     ) async throws {
+        let fasta = try await selectedContigsFASTA(selectedContigs, from: catalog)
+        try fasta.write(to: outputURL, atomically: true, encoding: .utf8)
+    }
+
+    private func selectedContigsFASTA(
+        _ selectedContigs: [String],
+        from catalog: AssemblyContigCatalog
+    ) async throws -> String {
         let fastas = try await catalog.sequenceFASTAs(for: selectedContigs, lineWidth: lineWidth)
-        try fastas.joined().write(to: outputURL, atomically: true, encoding: .utf8)
+        return fastas.joined()
     }
 
     private func buildBundle(

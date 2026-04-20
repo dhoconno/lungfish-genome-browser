@@ -1,5 +1,6 @@
 import XCTest
 import ArgumentParser
+import Darwin
 import LungfishWorkflow
 @testable import LungfishCLI
 @testable import LungfishCore
@@ -134,6 +135,30 @@ final class ExtractContigsCommandTests: XCTestCase {
         )
     }
 
+    func testRunWritesSelectedContigsToStdoutWhenOutputIsOmitted() async throws {
+        let fixture = try makeAssemblyFixture()
+        let command = try ExtractContigsSubcommand.parse([
+            "--assembly", fixture.root.path,
+            "--contig", "beta",
+            "--line-width", "4",
+            "--quiet",
+        ])
+
+        let output = try await captureStandardOutput {
+            try await command.run()
+        }
+
+        XCTAssertEqual(
+            output,
+            """
+            >beta secondary contig
+            ACGT
+            AC
+
+            """
+        )
+    }
+
     private func makeAssemblyFixture() throws -> (root: URL, result: AssemblyResult) {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ExtractContigsCommandTests-\(UUID().uuidString)", isDirectory: true)
@@ -168,5 +193,28 @@ final class ExtractContigsCommandTests: XCTestCase {
         )
         try result.save(to: root)
         return (root, result)
+    }
+
+    private func captureStandardOutput(_ operation: () async throws -> Void) async throws -> String {
+        let pipe = Pipe()
+        let originalStdout = dup(STDOUT_FILENO)
+        dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
+
+        do {
+            try await operation()
+            fflush(stdout)
+        } catch {
+            fflush(stdout)
+            dup2(originalStdout, STDOUT_FILENO)
+            close(originalStdout)
+            pipe.fileHandleForWriting.closeFile()
+            throw error
+        }
+
+        dup2(originalStdout, STDOUT_FILENO)
+        close(originalStdout)
+        pipe.fileHandleForWriting.closeFile()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        return String(data: data, encoding: .utf8) ?? ""
     }
 }
