@@ -8,6 +8,17 @@ import LungfishCore
 import LungfishIO
 import LungfishWorkflow
 
+enum AssembleInputResolutionError: LocalizedError {
+    case unreadableBundlePayload(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .unreadableBundlePayload(let path):
+            return "FASTQ bundle does not contain a readable FASTQ payload: \(path)"
+        }
+    }
+}
+
 struct AssembleCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "assemble",
@@ -64,6 +75,14 @@ struct AssembleCommand: AsyncParsableCommand {
             throw ExitCode.failure
         }
 
+        let executionInputURLs: [URL]
+        do {
+            executionInputURLs = try Self.resolveExecutionInputURLs(for: inputURLs)
+        } catch {
+            print(formatter.error(error.localizedDescription))
+            throw ExitCode.failure
+        }
+
         if pairedEnd && inputURLs.count != 2 {
             print(formatter.error("Paired-end assembly requires exactly two FASTQ inputs."))
             throw ExitCode.failure
@@ -80,7 +99,7 @@ struct AssembleCommand: AsyncParsableCommand {
         let request = AssemblyRunRequest(
             tool: tool,
             readType: readType,
-            inputURLs: inputURLs,
+            inputURLs: executionInputURLs,
             projectName: projectName,
             outputDirectory: outputDirectory,
             pairedEnd: pairedEnd,
@@ -209,5 +228,19 @@ struct AssembleCommand: AsyncParsableCommand {
 
         return URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("assembly-\(projectName)")
+    }
+
+    static func resolveExecutionInputURLs(for inputURLs: [URL]) throws -> [URL] {
+        try inputURLs.map { inputURL in
+            let standardizedInputURL = inputURL.standardizedFileURL
+            guard FASTQBundle.isBundleURL(standardizedInputURL) else {
+                return standardizedInputURL
+            }
+
+            guard let resolvedFASTQURL = FASTQBundle.resolvePrimaryFASTQURL(for: standardizedInputURL) else {
+                throw AssembleInputResolutionError.unreadableBundlePayload(standardizedInputURL.path)
+            }
+            return resolvedFASTQURL
+        }
     }
 }

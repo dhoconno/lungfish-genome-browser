@@ -318,6 +318,53 @@ final class ManagedAssemblyPipelineTests: XCTestCase {
         }
     }
 
+    func testRunPrefersSpecificSpadesLogErrorOverGenericAbnormalExitLine() async throws {
+        let tempRoot = try makeTempDirectory(prefix: "managed assembly spades log failure")
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let bundledMicromamba = tempRoot.appendingPathComponent("bundled-micromamba")
+        try writeExecutableScript(
+            at: bundledMicromamba,
+            body: micromambaScript(
+                shouldFail: true,
+                spadesLogBody: """
+                0:00:00.690 ERROR General Invalid kmer coverage histogram, make sure that the coverage is indeed uniform
+                == Error == system call for: \"['spades-core']\" finished abnormally, OS return value: 255
+                """
+            )
+        )
+
+        let pipeline = ManagedAssemblyPipeline(
+            condaManager: CondaManager(
+                rootPrefix: tempRoot.appendingPathComponent("conda-root", isDirectory: true),
+                bundledMicromambaProvider: { bundledMicromamba },
+                bundledMicromambaVersionProvider: { "2.0.0" }
+            )
+        )
+
+        let outputDir = tempRoot.appendingPathComponent("output", isDirectory: true)
+        let request = AssemblyRunRequest(
+            tool: .spades,
+            readType: .illuminaShortReads,
+            inputURLs: [URL(fileURLWithPath: "/tmp/reads.fastq.gz")],
+            projectName: "spades-log-detail-demo",
+            outputDirectory: outputDir,
+            threads: 4
+        )
+
+        do {
+            _ = try await pipeline.run(request: request)
+            XCTFail("Expected managed assembly to throw on non-zero exit")
+        } catch let error as ManagedAssemblyPipelineError {
+            guard case .executionFailed(_, _, let detail) = error else {
+                XCTFail("Expected executionFailed error, got \(error)")
+                return
+            }
+            XCTAssertTrue(detail.contains("Invalid kmer coverage histogram"))
+            XCTAssertFalse(detail.contains("finished abnormally"))
+        }
+    }
+
     private func makeTempDirectory(prefix: String) throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true)
@@ -330,10 +377,26 @@ final class ManagedAssemblyPipelineTests: XCTestCase {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
     }
 
-    private func micromambaScript(argsLog: URL? = nil, shouldFail: Bool) -> String {
+    private func micromambaScript(
+        argsLog: URL? = nil,
+        shouldFail: Bool,
+        spadesLogBody: String? = nil
+    ) -> String {
         let argsLogPath = argsLog?.path ?? "/dev/null"
+        let spadesLogSection: String
+        if let spadesLogBody, !spadesLogBody.isEmpty {
+            spadesLogSection = """
+            cat <<'EOF' > "$outdir/spades.log"
+            \(spadesLogBody)
+            EOF
+            """
+        } else {
+            spadesLogSection = ""
+        }
         let failureBody = shouldFail
             ? """
+            mkdir -p "$outdir"
+            \(spadesLogSection)
             printf '%s\n' 'Exception caught conversion of data to type "std::__fs::filesystem::path" failed' >&2
             exit 1
             """

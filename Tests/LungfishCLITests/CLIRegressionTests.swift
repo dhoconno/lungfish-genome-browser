@@ -606,6 +606,23 @@ final class AssembleCommandRegressionTests: XCTestCase {
         XCTAssertEqual(command.extraArg, ["--meta"])
     }
 
+    func testBundleInputResolvesToContainedFASTQForExecution() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("assemble-bundle-input-\(UUID().uuidString)", isDirectory: true)
+        let bundleURL = tempDir.appendingPathComponent("sample.lungfishfastq", isDirectory: true)
+        let fastqURL = bundleURL.appendingPathComponent("reads.fastq.gz")
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+        try Data("fake-fastq".utf8).write(to: fastqURL)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let resolved = try AssembleCommand.resolveExecutionInputURLs(for: [bundleURL])
+
+        XCTAssertEqual(
+            resolved.map(\.standardizedFileURL),
+            [fastqURL.standardizedFileURL]
+        )
+    }
+
     func testInvalidReadTypeIsRejectedBeforeFallbackInference() async {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("assemble-invalid-read-type-\(UUID().uuidString)")

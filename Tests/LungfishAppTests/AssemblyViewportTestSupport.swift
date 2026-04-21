@@ -95,6 +95,10 @@ func waitUntil(
 }
 
 func makeAssemblyResult() throws -> AssemblyResult {
+    try makeAssemblyResult(writeFASTAIndex: true)
+}
+
+func makeAssemblyResult(writeFASTAIndex: Bool) throws -> AssemblyResult {
     let projectRoot = FileManager.default.temporaryDirectory
         .appendingPathComponent("assembly-viewport-test-\(UUID().uuidString).lungfish", isDirectory: true)
     let root = projectRoot
@@ -109,7 +113,9 @@ func makeAssemblyResult() throws -> AssemblyResult {
     >contig_9 secondary header
     ATATAT
     """.write(to: contigsURL, atomically: true, encoding: .utf8)
-    try FASTAIndexBuilder.buildAndWrite(for: contigsURL)
+    if writeFASTAIndex {
+        try FASTAIndexBuilder.buildAndWrite(for: contigsURL)
+    }
 
     let result = AssemblyResult(
         tool: .spades,

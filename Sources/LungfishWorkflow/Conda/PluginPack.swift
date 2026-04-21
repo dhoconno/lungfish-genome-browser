@@ -316,9 +316,10 @@ public extension PluginPack {
                     executables: ["bwa-mem2"],
                     smokeTest: .command(
                         executable: "bwa-mem2",
-                        arguments: ["version"],
+                        arguments: [],
                         timeoutSeconds: 10,
-                        requiredOutputSubstring: "bwa-mem2"
+                        acceptedExitCodes: [1],
+                        requiredOutputSubstring: "Usage: bwa-mem2"
                     ),
                     version: "2.3",
                     license: "MIT",
@@ -359,7 +360,10 @@ public extension PluginPack {
                     environment: "lofreq",
                     installPackages: ["bioconda::lofreq=2.1.5"],
                     executables: ["lofreq"],
-                    smokeTest: .command(arguments: ["--help"]),
+                    smokeTest: .command(
+                        arguments: ["version"],
+                        requiredOutputSubstring: "version:"
+                    ),
                     version: "2.1.5",
                     license: "MIT",
                     sourceURL: "https://csb5.github.io/lofreq/"

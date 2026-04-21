@@ -190,6 +190,16 @@ final class PluginPackRegistryTests: XCTestCase {
         XCTAssertFalse(pack.toolRequirements.contains(where: { $0.id == "hisat2" }))
     }
 
+    func testReadMappingPackUsesUsageProbeForBwaMem2() throws {
+        let pack = try XCTUnwrap(PluginPack.activeOptionalPacks.first(where: { $0.id == "read-mapping" }))
+        let bwaMem2 = try XCTUnwrap(pack.toolRequirements.first(where: { $0.id == "bwa-mem2" }))
+
+        XCTAssertEqual(bwaMem2.smokeTest?.executable, "bwa-mem2")
+        XCTAssertEqual(bwaMem2.smokeTest?.arguments, [])
+        XCTAssertEqual(bwaMem2.smokeTest?.acceptedExitCodes, [1])
+        XCTAssertEqual(bwaMem2.smokeTest?.requiredOutputSubstring, "Usage: bwa-mem2")
+    }
+
     func testVariantCallingPackDefinesViralToolMetadata() throws {
         let pack = try XCTUnwrap(PluginPack.activeOptionalPacks.first(where: { $0.id == "variant-calling" }))
 
@@ -214,6 +224,15 @@ final class PluginPackRegistryTests: XCTestCase {
         XCTAssertEqual(medaka.version, "2.1.1")
         XCTAssertEqual(medaka.license, "MPL-2.0")
         XCTAssertEqual(medaka.sourceURL, "https://github.com/nanoporetech/medaka")
+    }
+
+    func testVariantCallingPackUsesVersionProbeForLofreq() throws {
+        let pack = try XCTUnwrap(PluginPack.activeOptionalPacks.first(where: { $0.id == "variant-calling" }))
+        let lofreq = try XCTUnwrap(pack.toolRequirements.first(where: { $0.id == "lofreq" }))
+
+        XCTAssertEqual(lofreq.smokeTest?.arguments, ["version"])
+        XCTAssertEqual(lofreq.smokeTest?.acceptedExitCodes, [0])
+        XCTAssertEqual(lofreq.smokeTest?.requiredOutputSubstring, "version:")
     }
 
     func testActiveOptionalPacksExposeReadMappingVariantCallingAssemblyAndMetagenomics() {

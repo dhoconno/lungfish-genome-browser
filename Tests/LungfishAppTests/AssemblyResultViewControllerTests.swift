@@ -128,6 +128,19 @@ final class AssemblyResultViewControllerTests: XCTestCase {
         XCTAssertEqual(vc.testContextMenuTitles, ["BLAST Selected", "Copy FASTA", "Export FASTA…", "Create Bundle…"])
     }
 
+    func testConfigureLoadsContigsWhenResultIsMissingFASTAIndex() async throws {
+        let vc = AssemblyResultViewController()
+        _ = vc.view
+        let result = try makeAssemblyResult(writeFASTAIndex: false)
+        let indexURL = result.contigsPath.appendingPathExtension("fai")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: indexURL.path))
+
+        try await vc.configureForTesting(result: result)
+
+        XCTAssertEqual(vc.testContigTableView.record(at: 0)?.name, "contig_7")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: indexURL.path))
+    }
+
     func testConfigureIgnoresCancelledLoadThatFinishesLater() async throws {
         let delayedGate = AsyncGate()
         let firstResult = try makeAssemblyResult()

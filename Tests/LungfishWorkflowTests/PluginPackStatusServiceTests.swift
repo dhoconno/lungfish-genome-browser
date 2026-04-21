@@ -320,6 +320,101 @@ final class PluginPackStatusServiceTests: XCTestCase {
         XCTAssertEqual(callCount, 1)
     }
 
+    func testStatusForPackUsesPersistedSnapshotBeyondTTLWhenFingerprintUnchanged() async throws {
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pack-fingerprint-stable-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        let micromamba = try makeFakeMicromamba(
+            at: sandbox.appendingPathComponent("micromamba"),
+            version: "2.0.5-0"
+        )
+        let manager = CondaManager(
+            rootPrefix: sandbox.appendingPathComponent("conda"),
+            bundledMicromambaProvider: { micromamba },
+            bundledMicromambaVersionProvider: { "2.0.5-0" }
+        )
+        _ = try await manager.ensureMicromamba()
+
+        let toolLogURL = sandbox.appendingPathComponent("smoke.log")
+        let pack = try await makeSmokeCountingPack(
+            manager: manager,
+            toolID: "fingerprint-stable",
+            toolLogURL: toolLogURL
+        )
+
+        let firstService = PluginPackStatusService(
+            condaManager: manager,
+            cacheLifetime: 0
+        )
+        _ = await firstService.status(for: pack)
+        XCTAssertEqual(try smokeInvocationCount(at: toolLogURL), 1)
+
+        let secondService = PluginPackStatusService(
+            condaManager: manager,
+            cacheLifetime: 0
+        )
+        _ = await secondService.status(for: pack)
+        try? await Task.sleep(for: .milliseconds(200))
+
+        XCTAssertEqual(try smokeInvocationCount(at: toolLogURL), 1)
+    }
+
+    func testStatusForPackRefreshesPersistedSnapshotWhenFingerprintChanges() async throws {
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pack-fingerprint-change-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        let micromamba = try makeFakeMicromamba(
+            at: sandbox.appendingPathComponent("micromamba"),
+            version: "2.0.5-0"
+        )
+        let manager = CondaManager(
+            rootPrefix: sandbox.appendingPathComponent("conda"),
+            bundledMicromambaProvider: { micromamba },
+            bundledMicromambaVersionProvider: { "2.0.5-0" }
+        )
+        _ = try await manager.ensureMicromamba()
+
+        let toolLogURL = sandbox.appendingPathComponent("smoke.log")
+        let pack = try await makeSmokeCountingPack(
+            manager: manager,
+            toolID: "fingerprint-change",
+            toolLogURL: toolLogURL
+        )
+
+        let firstService = PluginPackStatusService(
+            condaManager: manager,
+            cacheLifetime: 0
+        )
+        _ = await firstService.status(for: pack)
+        XCTAssertEqual(try smokeInvocationCount(at: toolLogURL), 1)
+
+        let executableURL = await manager.environmentURL(named: "fingerprint-change")
+            .appendingPathComponent("bin/fingerprint-change")
+        let updatedScript = """
+        #!/bin/sh
+        printf 'smoke\\n' >> "\(toolLogURL.path)"
+        if [ "$1" = "--help" ]; then
+            printf 'usage: fingerprint-change v2\\n'
+        fi
+        exit 0
+        """
+        try updatedScript.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+
+        let secondService = PluginPackStatusService(
+            condaManager: manager,
+            cacheLifetime: 0
+        )
+        _ = await secondService.status(for: pack)
+        try? await Task.sleep(for: .milliseconds(200))
+
+        XCTAssertEqual(try smokeInvocationCount(at: toolLogURL), 2)
+    }
+
     func testRequiredPackNeedsInstallWhenBBToolsExecutablesAreMissing() async throws {
         let sandbox = FileManager.default.temporaryDirectory
             .appendingPathComponent("pack-status-\(UUID().uuidString)", isDirectory: true)
@@ -707,7 +802,7 @@ final class PluginPackStatusServiceTests: XCTestCase {
         XCTAssertEqual(snapshot.1, 0)
     }
 
-    func testInstallPackUsesReinstallWhenRequested() async throws {
+    func testInstallPackReinstallsOnlyRequirementsThatAreNotReady() async throws {
         actor InstallRecorder {
             var calls: [(packages: [String], environment: String, reinstall: Bool)] = []
             func record(_ packages: [String], _ environment: String, _ reinstall: Bool) {
@@ -724,13 +819,40 @@ final class PluginPackStatusServiceTests: XCTestCase {
             func recordedCalls() -> [(databaseID: String, reinstall: Bool)] { calls }
         }
 
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("targeted-reinstall-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        let micromamba = try makeFakeMicromamba(
+            at: sandbox.appendingPathComponent("micromamba"),
+            version: "2.0.5-0"
+        )
         let recorder = InstallRecorder()
         let databaseRecorder = DatabaseRecorder()
         let manager = CondaManager(
-            rootPrefix: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),
-            bundledMicromambaProvider: { nil },
-            bundledMicromambaVersionProvider: { nil }
+            rootPrefix: sandbox.appendingPathComponent("conda"),
+            bundledMicromambaProvider: { micromamba },
+            bundledMicromambaVersionProvider: { "2.0.5-0" }
         )
+        _ = try await manager.ensureMicromamba()
+
+        for requirement in PluginPack.requiredSetupPack.toolRequirements where requirement.managedDatabaseID == nil {
+            let binDir = await manager.environmentURL(named: requirement.environment).appendingPathComponent("bin")
+            try FileManager.default.createDirectory(at: binDir, withIntermediateDirectories: true)
+            if requirement.environment == "bcftools" {
+                continue
+            }
+
+            for executable in requirement.executables {
+                let path = binDir.appendingPathComponent(executable)
+                try writeSmokeReadyExecutable(
+                    for: requirement,
+                    executable: executable,
+                    at: path
+                )
+            }
+        }
 
         let service = PluginPackStatusService(
             condaManager: manager,
@@ -740,21 +862,21 @@ final class PluginPackStatusServiceTests: XCTestCase {
             databaseInstallAction: { databaseID, reinstall, _ in
                 await databaseRecorder.record(databaseID, reinstall)
                 return URL(fileURLWithPath: "/tmp/\(databaseID)")
-            }
+            },
+            databaseInstalledCheck: { _ in true }
         )
+
+        let status = await service.status(for: .requiredSetupPack)
+        XCTAssertTrue(status.shouldReinstall)
 
         try await service.install(pack: .requiredSetupPack, reinstall: true, progress: nil)
 
         let calls = await recorder.recordedCalls()
-        XCTAssertEqual(calls.map(\.environment), PluginPack.requiredSetupPack.toolRequirements
-            .compactMap { $0.managedDatabaseID == nil ? $0.environment : nil }
-        )
+        XCTAssertEqual(calls.map(\.environment), ["bcftools"])
         XCTAssertTrue(calls.allSatisfy(\.reinstall))
 
         let databaseCalls = await databaseRecorder.recordedCalls()
-        XCTAssertEqual(databaseCalls.count, 1)
-        XCTAssertEqual(databaseCalls.first?.databaseID, "deacon-panhuman")
-        XCTAssertTrue(databaseCalls.first?.reinstall ?? false)
+        XCTAssertTrue(databaseCalls.isEmpty)
     }
 
     func testRequiredPackInstallsBBToolsEnvironmentFromBBMapPackage() async throws {
@@ -838,7 +960,8 @@ final class PluginPackStatusServiceTests: XCTestCase {
                 progress?(0.55, "Downloading Human Read Removal Data…")
                 await recorder.recordProgress(0.55)
                 return URL(fileURLWithPath: "/tmp/\(databaseID)")
-            }
+            },
+            databaseInstalledCheck: { _ in false }
         )
 
         try await service.install(pack: .requiredSetupPack, reinstall: false) { event in
@@ -855,39 +978,6 @@ final class PluginPackStatusServiceTests: XCTestCase {
                 && $0.requirementDisplayName == "Human Read Removal Data"
                 && abs($0.itemFraction - 0.55) < 0.0001
         })
-    }
-
-    func testInstallPackPropagatesReinstallToManagedDatabaseRequirements() async throws {
-        actor DatabaseRecorder {
-            var calls: [(databaseID: String, reinstall: Bool)] = []
-            func record(_ databaseID: String, _ reinstall: Bool) {
-                calls.append((databaseID, reinstall))
-            }
-            func recordedCalls() -> [(databaseID: String, reinstall: Bool)] { calls }
-        }
-
-        let recorder = DatabaseRecorder()
-        let manager = CondaManager(
-            rootPrefix: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),
-            bundledMicromambaProvider: { nil },
-            bundledMicromambaVersionProvider: { nil }
-        )
-
-        let service = PluginPackStatusService(
-            condaManager: manager,
-            installAction: { _, _, _, _ in },
-            databaseInstallAction: { databaseID, reinstall, _ in
-                await recorder.record(databaseID, reinstall)
-                return URL(fileURLWithPath: "/tmp/\(databaseID)")
-            }
-        )
-
-        try await service.install(pack: .requiredSetupPack, reinstall: true, progress: nil)
-
-        let calls = await recorder.recordedCalls()
-        XCTAssertEqual(calls.count, 1)
-        XCTAssertEqual(calls.first?.databaseID, "deacon-panhuman")
-        XCTAssertEqual(calls.first?.reinstall, true)
     }
 
     func testInstallPackRunsPostInstallHooksAfterPackageInstalls() async throws {
@@ -907,24 +997,32 @@ final class PluginPackStatusServiceTests: XCTestCase {
         )
 
         let pack = PluginPack.builtIn.first { $0.id == "wastewater-surveillance" }!
-        let hookLog = await manager.rootPrefix.appendingPathComponent("hook-log.txt")
-
-        for hook in pack.postInstallHooks {
-            let envBin = await manager.environmentURL(named: hook.environment).appendingPathComponent("bin")
-            try FileManager.default.createDirectory(at: envBin, withIntermediateDirectories: true)
-            let script = """
-            #!/bin/sh
-            printf '%s %s\n' "$0" "$*" >> "$MAMBA_ROOT_PREFIX/hook-log.txt"
-            exit 0
-            """
-            let executable = envBin.appendingPathComponent(hook.command[0])
-            try script.write(to: executable, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
-        }
+        let hookLog = manager.rootPrefix.appendingPathComponent("hook-log.txt")
 
         let service = PluginPackStatusService(
             condaManager: manager,
-            installAction: { _, _, _, _ in }
+            installAction: { _, environment, _, _ in
+                let requirement = try XCTUnwrap(
+                    pack.toolRequirements.first(where: { $0.environment == environment })
+                )
+                let envBin = await manager.environmentURL(named: environment).appendingPathComponent("bin")
+                try FileManager.default.createDirectory(at: envBin, withIntermediateDirectories: true)
+                for executable in requirement.executables {
+                    let script: String
+                    if environment == "freyja" || environment == "pangolin" {
+                        script = """
+                        #!/bin/sh
+                        printf '%s %s\n' "$0" "$*" >> "$MAMBA_ROOT_PREFIX/hook-log.txt"
+                        exit 0
+                        """
+                    } else {
+                        script = "#!/bin/sh\nexit 0\n"
+                    }
+                    let path = envBin.appendingPathComponent(executable)
+                    try script.write(to: path, atomically: true, encoding: .utf8)
+                    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
+                }
+            }
         )
 
         try await service.install(pack: pack, reinstall: false, progress: nil)
@@ -936,6 +1034,107 @@ final class PluginPackStatusServiceTests: XCTestCase {
             log.range(of: "freyja update")!.lowerBound,
             log.range(of: "pangolin --update-data")!.lowerBound
         )
+    }
+
+    func testInstallPackRunsHooksOnlyForEnvironmentsInstalledInCurrentOperation() async throws {
+        actor InstallRecorder {
+            var calls: [String] = []
+
+            func record(_ environment: String) {
+                calls.append(environment)
+            }
+
+            func recordedCalls() -> [String] { calls }
+        }
+
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("targeted-hook-install-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        let micromamba = try makeFakeMicromamba(
+            at: sandbox.appendingPathComponent("micromamba"),
+            version: "2.0.5-0"
+        )
+        let manager = CondaManager(
+            rootPrefix: sandbox.appendingPathComponent("conda"),
+            bundledMicromambaProvider: { micromamba },
+            bundledMicromambaVersionProvider: { "2.0.5-0" }
+        )
+        _ = try await manager.ensureMicromamba()
+
+        let pack = try XCTUnwrap(PluginPack.builtIn.first(where: { $0.id == "wastewater-surveillance" }))
+        let hookLog = manager.rootPrefix.appendingPathComponent("hook-log.txt")
+        let installRecorder = InstallRecorder()
+
+        for requirement in pack.toolRequirements where requirement.environment != "pangolin" {
+            let binDir = await manager.environmentURL(named: requirement.environment).appendingPathComponent("bin")
+            try FileManager.default.createDirectory(at: binDir, withIntermediateDirectories: true)
+            for executable in requirement.executables {
+                let path = binDir.appendingPathComponent(executable)
+                try writeSmokeReadyExecutable(
+                    for: requirement,
+                    executable: executable,
+                    at: path
+                )
+            }
+        }
+
+        if let freyjaRequirement = pack.toolRequirements.first(where: { $0.environment == "freyja" }) {
+            let envBin = await manager.environmentURL(named: freyjaRequirement.environment).appendingPathComponent("bin")
+            try FileManager.default.createDirectory(at: envBin, withIntermediateDirectories: true)
+            for executable in freyjaRequirement.executables {
+                let script = """
+                #!/bin/sh
+                printf '%s %s\n' "$0" "$*" >> "$MAMBA_ROOT_PREFIX/hook-log.txt"
+                exit 0
+                """
+                let path = envBin.appendingPathComponent(executable)
+                try script.write(to: path, atomically: true, encoding: .utf8)
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
+            }
+        }
+
+        let service = PluginPackStatusService(
+            condaManager: manager,
+            installAction: { packages, environment, reinstall, _ in
+                await installRecorder.record(environment)
+                XCTAssertEqual(environment, "pangolin")
+                XCTAssertFalse(reinstall)
+
+                let requirement = try XCTUnwrap(
+                    pack.toolRequirements.first(where: { $0.environment == environment })
+                )
+                let binDir = await manager.environmentURL(named: environment).appendingPathComponent("bin")
+                try FileManager.default.createDirectory(at: binDir, withIntermediateDirectories: true)
+                for executable in requirement.executables {
+                    let path = binDir.appendingPathComponent(executable)
+                    let script: String
+                    if environment == "pangolin" {
+                        script = """
+                        #!/bin/sh
+                        printf '%s %s\n' "$0" "$*" >> "$MAMBA_ROOT_PREFIX/hook-log.txt"
+                        exit 0
+                        """
+                    } else {
+                        script = "#!/bin/sh\nexit 0\n"
+                    }
+                    try script.write(to: path, atomically: true, encoding: .utf8)
+                    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
+                }
+                XCTAssertEqual(packages, requirement.installPackages)
+            }
+        )
+
+        _ = await service.status(for: pack)
+        try await service.install(pack: pack, reinstall: false, progress: nil)
+
+        let installCalls = await installRecorder.recordedCalls()
+        XCTAssertEqual(installCalls, ["pangolin"])
+
+        let log = try String(contentsOf: hookLog, encoding: .utf8)
+        XCTAssertFalse(log.contains("freyja update"))
+        XCTAssertTrue(log.contains("pangolin --update-data"))
     }
 
     func testInstallPackSkipsMissingHookEnvironmentsAndContinuesAfterFailure() async throws {
@@ -954,7 +1153,7 @@ final class PluginPackStatusServiceTests: XCTestCase {
             bundledMicromambaVersionProvider: { "2.0.5-0" }
         )
 
-        let logURL = await manager.rootPrefix.appendingPathComponent("hook-log.txt")
+        let logURL = manager.rootPrefix.appendingPathComponent("hook-log.txt")
         let missingHook = PostInstallHook(
             description: "Missing hook environment",
             environment: "missing-env",
@@ -977,28 +1176,39 @@ final class PluginPackStatusServiceTests: XCTestCase {
             sfSymbol: "wrench.and.screwdriver",
             packages: [],
             category: "Testing",
+            requirements: [
+                PackToolRequirement(
+                    id: "failing-tool",
+                    displayName: "Failing Tool",
+                    environment: "failing-env",
+                    executables: ["failing-tool"]
+                ),
+                PackToolRequirement(
+                    id: "succeeding-tool",
+                    displayName: "Succeeding Tool",
+                    environment: "succeeding-env",
+                    executables: ["succeeding-tool"]
+                ),
+            ],
             postInstallHooks: [missingHook, failingHook, succeedingHook]
         )
 
-        for (environment, command, shouldFail) in [
-            ("failing-env", "failing-tool", true),
-            ("succeeding-env", "succeeding-tool", false),
-        ] {
-            let envBin = await manager.environmentURL(named: environment).appendingPathComponent("bin")
-            try FileManager.default.createDirectory(at: envBin, withIntermediateDirectories: true)
-            let script = """
-            #!/bin/sh
-            printf '%s %s\n' "$0" "$*" >> "$MAMBA_ROOT_PREFIX/hook-log.txt"
-            \(shouldFail ? "exit 1" : "exit 0")
-            """
-            let executable = envBin.appendingPathComponent(command)
-            try script.write(to: executable, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
-        }
-
         let service = PluginPackStatusService(
             condaManager: manager,
-            installAction: { _, _, _, _ in }
+            installAction: { _, environment, _, _ in
+                let envBin = await manager.environmentURL(named: environment).appendingPathComponent("bin")
+                try FileManager.default.createDirectory(at: envBin, withIntermediateDirectories: true)
+                let command = environment == "failing-env" ? "failing-tool" : "succeeding-tool"
+                let shouldFail = environment == "failing-env"
+                let script = """
+                #!/bin/sh
+                printf '%s %s\n' "$0" "$*" >> "$MAMBA_ROOT_PREFIX/hook-log.txt"
+                \(shouldFail ? "exit 1" : "exit 0")
+                """
+                let executable = envBin.appendingPathComponent(command)
+                try script.write(to: executable, atomically: true, encoding: .utf8)
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+            }
         )
 
         try await service.install(pack: pack, reinstall: false, progress: nil)
@@ -1111,5 +1321,59 @@ final class PluginPackStatusServiceTests: XCTestCase {
 
         try script.write(to: url, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+    }
+
+    private func makeSmokeCountingPack(
+        manager: CondaManager,
+        toolID: String,
+        toolLogURL: URL
+    ) async throws -> PluginPack {
+        let executableURL = await manager.environmentURL(named: toolID)
+            .appendingPathComponent("bin/\(toolID)")
+        try FileManager.default.createDirectory(
+            at: executableURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        let script = """
+        #!/bin/sh
+        printf 'smoke\\n' >> "\(toolLogURL.path)"
+        if [ "$1" = "--help" ]; then
+            printf 'usage: \(toolID)\\n'
+        fi
+        exit 0
+        """
+        try script.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+
+        return PluginPack(
+            id: "\(toolID)-pack",
+            name: "\(toolID) Pack",
+            description: "Test pack for fingerprinted status caching",
+            sfSymbol: "hammer",
+            packages: [toolID],
+            category: "Testing",
+            requirements: [
+                PackToolRequirement(
+                    id: toolID,
+                    displayName: toolID,
+                    environment: toolID,
+                    executables: [toolID],
+                    smokeTest: .command(
+                        arguments: ["--help"],
+                        timeoutSeconds: 5,
+                        requiredOutputSubstring: "usage:"
+                    )
+                )
+            ]
+        )
+    }
+
+    private func smokeInvocationCount(at logURL: URL) throws -> Int {
+        guard FileManager.default.fileExists(atPath: logURL.path) else { return 0 }
+        let contents = try String(contentsOf: logURL, encoding: .utf8)
+        return contents
+            .split(whereSeparator: \.isNewline)
+            .count
     }
 }

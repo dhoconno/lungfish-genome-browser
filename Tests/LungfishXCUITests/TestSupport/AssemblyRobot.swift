@@ -175,6 +175,20 @@ struct AssemblyRobot {
         XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: timeout), .completed, file: file, line: line)
     }
 
+    func waitForContigRow(
+        named name: String,
+        timeout: TimeInterval = 10,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let row = resultTable.staticTexts[name].firstMatch
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true"),
+            object: row
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: timeout), .completed, file: file, line: line)
+    }
+
     var assemblyDialog: XCUIElement {
         app.descendants(matching: .any)["fastq-operations-assembly-dialog"]
     }

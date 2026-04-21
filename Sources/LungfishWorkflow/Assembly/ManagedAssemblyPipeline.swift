@@ -432,6 +432,10 @@ public struct ManagedAssemblyPipeline: Sendable {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
+        if let line = lines.reversed().first(where: isSpecificSPAdesErrorLine) {
+            return normalizeSPAdesErrorLine(line)
+        }
+
         for phrase in ["Exception caught", "== Error ==", "finished abnormally"] {
             if let line = lines.reversed().first(where: { $0.localizedCaseInsensitiveContains(phrase) }) {
                 return line
@@ -439,6 +443,31 @@ public struct ManagedAssemblyPipeline: Sendable {
         }
 
         return lines.last
+    }
+
+    private static func isSpecificSPAdesErrorLine(_ line: String) -> Bool {
+        guard line.localizedCaseInsensitiveContains("ERROR") else {
+            return false
+        }
+
+        let excludedPhrases = [
+            "== ERRORs:",
+            "== Error ==",
+            "finished abnormally",
+            "system call for:"
+        ]
+        return !excludedPhrases.contains(where: { line.localizedCaseInsensitiveContains($0) })
+    }
+
+    private static func normalizeSPAdesErrorLine(_ line: String) -> String {
+        let marker = ")   "
+        if let range = line.range(of: marker, options: .backwards) {
+            let suffix = line[range.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !suffix.isEmpty {
+                return suffix
+            }
+        }
+        return line.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func lastNonEmptyLine(in text: String) -> String? {

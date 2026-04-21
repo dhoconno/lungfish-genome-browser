@@ -38,7 +38,8 @@ public struct AssemblyContigCatalog: Sendable {
     private let rankedRecords: [AssemblyContigRecord]
 
     public init(result: AssemblyResult) async throws {
-        self.reader = try IndexedFASTAReader(url: result.contigsPath)
+        let indexURL = try Self.ensureFASTAIndexExists(for: result.contigsPath)
+        self.reader = try IndexedFASTAReader(url: result.contigsPath, indexURL: indexURL)
         try Self.validateUniqueSequenceNames(reader.sequenceNames)
 
         let headersByName = try Self.parseHeaders(from: result.contigsPath)
@@ -101,6 +102,14 @@ public struct AssemblyContigCatalog: Sendable {
                 shareOfAssemblyPercent: contig.shareOfAssemblyPercent
             )
         }
+    }
+
+    private static func ensureFASTAIndexExists(for fastaURL: URL) throws -> URL {
+        let indexURL = fastaURL.appendingPathExtension("fai")
+        if !FileManager.default.fileExists(atPath: indexURL.path) {
+            try FASTAIndexBuilder.buildAndWrite(for: fastaURL, outputURL: indexURL)
+        }
+        return indexURL
     }
 
     public func records() async throws -> [AssemblyContigRecord] {

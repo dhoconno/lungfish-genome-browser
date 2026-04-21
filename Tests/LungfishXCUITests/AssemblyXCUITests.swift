@@ -108,6 +108,7 @@ final class AssemblyXCUITests: XCTestCase {
         robot.waitForAnalysisRow(prefix: "megahit-", timeout: 30)
         XCTAssertTrue(robot.resultView.waitForExistence(timeout: 10))
         XCTAssertTrue(robot.resultTable.waitForExistence(timeout: 10))
+        robot.waitForContigRow(named: "megahit_contig_1")
     }
 
     @MainActor
@@ -148,6 +149,7 @@ final class AssemblyXCUITests: XCTestCase {
         robot.waitForAnalysisRow(prefix: "spades-", timeout: 30)
         XCTAssertTrue(robot.resultView.waitForExistence(timeout: 10))
         XCTAssertTrue(robot.resultTable.waitForExistence(timeout: 10))
+        robot.waitForContigRow(named: "spades_contig_1")
     }
 
     @MainActor
@@ -168,6 +170,7 @@ final class AssemblyXCUITests: XCTestCase {
         robot.waitForAnalysisRow(prefix: "skesa-", timeout: 30)
         XCTAssertTrue(robot.resultView.waitForExistence(timeout: 10))
         XCTAssertTrue(robot.resultTable.waitForExistence(timeout: 10))
+        robot.waitForContigRow(named: "skesa_contig_1")
     }
 
     @MainActor
@@ -188,6 +191,7 @@ final class AssemblyXCUITests: XCTestCase {
         robot.waitForAnalysisRow(prefix: "flye-", timeout: 30)
         XCTAssertTrue(robot.resultView.waitForExistence(timeout: 10))
         XCTAssertTrue(robot.resultTable.waitForExistence(timeout: 10))
+        robot.waitForContigRow(named: "flye_contig_1")
     }
 
     @MainActor
@@ -208,5 +212,6 @@ final class AssemblyXCUITests: XCTestCase {
         robot.waitForAnalysisRow(prefix: "hifiasm-", timeout: 30)
         XCTAssertTrue(robot.resultView.waitForExistence(timeout: 10))
         XCTAssertTrue(robot.resultTable.waitForExistence(timeout: 10))
+        robot.waitForContigRow(named: "hifiasm_contig_1")
     }
 }

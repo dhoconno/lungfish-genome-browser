@@ -2458,6 +2458,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
         do {
             let result = try AssemblyResult.load(from: url)
+            inspectorController.clearSelection()
             viewerController.displayAssemblyResult(result)
             recordUITestEvent(
                 "assembly.display.succeeded tool=\(result.tool.rawValue) contigs=\(result.statistics.contigCount)"
@@ -2485,6 +2486,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
         do {
             let result = try MappingResult.load(from: url)
+            inspectorController.clearSelection()
             viewerController.displayMappingResult(result)
             recordUITestEvent(
                 "mapping.display.succeeded tool=\(result.mapper.rawValue) contigs=\(result.contigs.count)"

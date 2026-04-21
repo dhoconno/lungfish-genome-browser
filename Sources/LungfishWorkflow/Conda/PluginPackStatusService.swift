@@ -141,11 +141,22 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
         let generation: Int
         let timestamp: Date
         let status: PluginPackStatus
+        let fingerprint: PackStatusFingerprint?
+    }
+
+    private struct PlannedInstallTarget {
+        let requirement: PackToolRequirement
+        let reinstall: Bool
+    }
+
+    private struct PackStatusFingerprint: Codable, Equatable {
+        let components: [String]
     }
 
     private struct PersistedPackStatusSnapshot: Codable {
         let timestamp: Date
         let status: PluginPackStatus
+        let fingerprint: PackStatusFingerprint?
     }
 
     private struct PersistedVisibleStatusesSnapshot: Codable {
@@ -228,12 +239,14 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
         let generation = cacheGeneration
         if let cachedVisibleStatuses,
            cachedVisibleStatuses.generation == generation {
-            if Date().timeIntervalSince(cachedVisibleStatuses.timestamp) < cacheLifetime {
+            if await visibleStatusesFingerprintMatches(forGeneration: generation) {
                 return cachedVisibleStatuses.statuses
             }
 
-            _ = visibleStatusesRefreshTask(forGeneration: generation)
-            return cachedVisibleStatuses.statuses
+            if Date().timeIntervalSince(cachedVisibleStatuses.timestamp) < cacheLifetime {
+                _ = visibleStatusesRefreshTask(forGeneration: generation)
+                return cachedVisibleStatuses.statuses
+            }
         }
 
         if let inFlightVisibleStatuses, inFlightVisibleStatuses.generation == generation {
@@ -248,12 +261,14 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
         let generation = cacheGeneration
 
         if let cached = cachedPackStatuses[pack.id], cached.generation == generation {
-            if Date().timeIntervalSince(cached.timestamp) < cacheLifetime {
+            if await packFingerprintMatches(for: pack, cached: cached) {
                 return cached.status
             }
 
-            _ = packStatusRefreshTask(for: pack, generation: generation)
-            return cached.status
+            if Date().timeIntervalSince(cached.timestamp) < cacheLifetime {
+                _ = packStatusRefreshTask(for: pack, generation: generation)
+                return cached.status
+            }
         }
 
         let task = packStatusRefreshTask(for: pack, generation: generation)
@@ -327,10 +342,22 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
             throw PluginPackStatusServiceError.storageUnavailable(unavailableRoot)
         }
 
+        let installTargets = await plannedInstallTargets(for: pack, requestedReinstall: reinstall)
+        guard !installTargets.isEmpty else {
+            progress?(PluginPackInstallProgress(
+                requirementID: nil,
+                requirementDisplayName: nil,
+                overallFraction: 1.0,
+                itemFraction: 1.0,
+                message: "\(pack.name) ready"
+            ))
+            return
+        }
+
         await invalidateVisibleStatusesCache()
-        let installTargets = pack.toolRequirements
         let totalSteps = max(installTargets.count, 1)
-        for (index, requirement) in installTargets.enumerated() {
+        for (index, target) in installTargets.enumerated() {
+            let requirement = target.requirement
             let base = Double(index) / Double(totalSteps)
             if let databaseID = requirement.managedDatabaseID {
                 progress?(PluginPackInstallProgress(
@@ -338,9 +365,11 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
                     requirementDisplayName: requirement.displayName,
                     overallFraction: base,
                     itemFraction: 0,
-                    message: "Installing \(requirement.displayName)…"
+                    message: target.reinstall
+                        ? "Reinstalling \(requirement.displayName)…"
+                        : "Installing \(requirement.displayName)…"
                 ))
-                _ = try await databaseInstallAction(databaseID, reinstall) { fraction, message in
+                _ = try await databaseInstallAction(databaseID, target.reinstall) { fraction, message in
                     let scaled = base + (fraction / Double(totalSteps))
                     progress?(PluginPackInstallProgress(
                         requirementID: requirement.id,
@@ -360,7 +389,11 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
                 continue
             }
 
-            try await installAction(requirement.installPackages, requirement.environment, reinstall) { fraction, message in
+            try await installAction(
+                requirement.installPackages,
+                requirement.environment,
+                target.reinstall
+            ) { fraction, message in
                 let scaled = base + (fraction / Double(totalSteps))
                 progress?(PluginPackInstallProgress(
                     requirementID: requirement.id,
@@ -371,7 +404,10 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
                 ))
             }
         }
-        await runPostInstallHooks(for: pack)
+        await runPostInstallHooks(
+            for: pack,
+            installedEnvironments: Set(installTargets.map(\.requirement.environment))
+        )
         await invalidateVisibleStatusesCache()
         progress?(PluginPackInstallProgress(
             requirementID: nil,
@@ -380,6 +416,36 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
             itemFraction: 1.0,
             message: "\(pack.name) ready"
         ))
+    }
+
+    private func plannedInstallTargets(
+        for pack: PluginPack,
+        requestedReinstall: Bool
+    ) async -> [PlannedInstallTarget] {
+        let knownStatus: PluginPackStatus
+        if let cachedStatus = cachedPackStatuses[pack.id]?.status {
+            knownStatus = cachedStatus
+        } else {
+            knownStatus = await computeStatus(for: pack)
+        }
+        let toolStatuses = Dictionary(uniqueKeysWithValues: knownStatus.toolStatuses.map { ($0.requirement.id, $0) })
+
+        return pack.toolRequirements.compactMap { requirement in
+            guard let toolStatus = toolStatuses[requirement.id] else {
+                return PlannedInstallTarget(requirement: requirement, reinstall: requestedReinstall)
+            }
+
+            guard !toolStatus.isReady else { return nil }
+
+            if requirement.managedDatabaseID != nil {
+                return PlannedInstallTarget(requirement: requirement, reinstall: false)
+            }
+
+            return PlannedInstallTarget(
+                requirement: requirement,
+                reinstall: toolStatus.environmentExists
+            )
+        }
     }
 
     public func invalidateVisibleStatusesCache() async {
@@ -403,13 +469,14 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
                     storageAvailability: storageAvailability
                 )
             }
-            storeVisibleStatuses(statuses, forGeneration: generation)
+            storeVisibleStatuses(statuses, fingerprints: [:], forGeneration: generation)
             return statuses
         }
 
         let bootstrapReady = await bootstrapIsReady()
         var requirementCache: [PackToolRequirement: PackToolStatus] = [:]
         var statuses: [PluginPackStatus] = []
+        var fingerprints: [String: PackStatusFingerprint] = [:]
         statuses.reserveCapacity(PluginPack.visibleForCLI.count)
         for pack in PluginPack.visibleForCLI {
             var toolStatuses: [PackToolStatus] = []
@@ -429,12 +496,17 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
                 bootstrapReady: bootstrapReady,
                 storageAvailability: storageAvailability
             ))
+            fingerprints[pack.id] = await currentFingerprint(for: pack)
         }
-        storeVisibleStatuses(statuses, forGeneration: generation)
+        storeVisibleStatuses(statuses, fingerprints: fingerprints, forGeneration: generation)
         return statuses
     }
 
-    private func storeVisibleStatuses(_ statuses: [PluginPackStatus], forGeneration generation: Int) {
+    private func storeVisibleStatuses(
+        _ statuses: [PluginPackStatus],
+        fingerprints: [String: PackStatusFingerprint],
+        forGeneration generation: Int
+    ) {
         guard generation == cacheGeneration else { return }
         cachedVisibleStatuses = (generation, Date(), statuses)
         let timestamp = Date()
@@ -442,7 +514,8 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
             cachedPackStatuses[status.pack.id] = CachedPackStatus(
                 generation: generation,
                 timestamp: timestamp,
-                status: status
+                status: status,
+                fingerprint: fingerprints[status.pack.id]
             )
         }
         persistSnapshots()
@@ -472,7 +545,8 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
 
         let task = Task { [self] in
             let status = await computeStatus(for: pack)
-            await storePackStatus(status, forGeneration: generation)
+            let fingerprint = await currentFingerprint(for: pack)
+            await storePackStatus(status, fingerprint: fingerprint, forGeneration: generation)
             await clearPackStatusRefreshTask(forPackID: pack.id, generation: generation)
             return status
         }
@@ -481,12 +555,17 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
         return task
     }
 
-    private func storePackStatus(_ status: PluginPackStatus, forGeneration generation: Int) {
+    private func storePackStatus(
+        _ status: PluginPackStatus,
+        fingerprint: PackStatusFingerprint?,
+        forGeneration generation: Int
+    ) {
         guard generation == cacheGeneration else { return }
         cachedPackStatuses[status.pack.id] = CachedPackStatus(
             generation: generation,
             timestamp: Date(),
-            status: status
+            status: status,
+            fingerprint: fingerprint
         )
         persistSnapshots()
     }
@@ -521,7 +600,8 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
                 cachedPackStatuses[packID] = CachedPackStatus(
                     generation: cacheGeneration,
                     timestamp: snapshot.timestamp,
-                    status: snapshot.status
+                    status: snapshot.status,
+                    fingerprint: snapshot.fingerprint
                 )
             }
         } catch {
@@ -535,7 +615,8 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
         let packSnapshots = cachedPackStatuses.reduce(into: [String: PersistedPackStatusSnapshot]()) { snapshots, entry in
             snapshots[entry.key] = PersistedPackStatusSnapshot(
                 timestamp: entry.value.timestamp,
-                status: entry.value.status
+                status: entry.value.status,
+                fingerprint: entry.value.fingerprint
             )
         }
         let snapshotStore = PersistedStatusSnapshotStore(
@@ -565,6 +646,107 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
         let micromambaPath = await condaManager.micromambaPath
         return FileManager.default.fileExists(atPath: micromambaPath.path)
             && FileManager.default.isExecutableFile(atPath: micromambaPath.path)
+    }
+
+    private func visibleStatusesFingerprintMatches(forGeneration generation: Int) async -> Bool {
+        for pack in PluginPack.visibleForCLI {
+            guard let cached = cachedPackStatuses[pack.id], cached.generation == generation else {
+                return false
+            }
+            guard await packFingerprintMatches(for: pack, cached: cached) else {
+                return false
+            }
+        }
+        return true
+    }
+
+    private func packFingerprintMatches(
+        for pack: PluginPack,
+        cached: CachedPackStatus
+    ) async -> Bool {
+        guard let cachedFingerprint = cached.fingerprint else {
+            return false
+        }
+        return await currentFingerprint(for: pack) == cachedFingerprint
+    }
+
+    private func currentFingerprint(for pack: PluginPack) async -> PackStatusFingerprint {
+        let rootPrefix = condaManager.rootPrefix.standardizedFileURL
+        let managedStorageRoot = rootPrefix.deletingLastPathComponent()
+        let envsRoot = rootPrefix.appendingPathComponent("envs", isDirectory: true)
+        let micromambaPath = await condaManager.micromambaPath
+
+        var components = [
+            fingerprintComponent(for: envsRoot),
+            fingerprintComponent(for: micromambaPath),
+        ]
+
+        for requirement in pack.toolRequirements {
+            if let managedDatabaseID = requirement.managedDatabaseID {
+                let databaseURL = managedStorageRoot
+                    .appendingPathComponent("databases", isDirectory: true)
+                    .appendingPathComponent(managedDatabaseID, isDirectory: true)
+                components.append(fingerprintComponent(for: databaseURL))
+                continue
+            }
+
+            let envURL = await condaManager.environmentURL(named: requirement.environment)
+            components.append(fingerprintComponent(for: envURL))
+            components.append(fingerprintComponent(for: envURL.appendingPathComponent("conda-meta", isDirectory: true)))
+            components.append(fingerprintComponent(for: envURL.appendingPathComponent("bin", isDirectory: true)))
+
+            for executableURL in monitoredExecutableURLs(for: requirement, envURL: envURL) {
+                components.append(fingerprintComponent(for: executableURL))
+            }
+        }
+
+        return PackStatusFingerprint(components: components)
+    }
+
+    private func monitoredExecutableURLs(
+        for requirement: PackToolRequirement,
+        envURL: URL
+    ) -> [URL] {
+        var urls: [URL] = []
+        var seenPaths: Set<String> = []
+
+        func appendIfNeeded(_ url: URL) {
+            let path = url.standardizedFileURL.path
+            guard seenPaths.insert(path).inserted else { return }
+            urls.append(url.standardizedFileURL)
+        }
+
+        for executable in requirement.executables {
+            appendIfNeeded(envURL.appendingPathComponent("bin/\(executable)"))
+            for fallbackPath in requirement.fallbackExecutablePaths[executable] ?? [] {
+                appendIfNeeded(envURL.appendingPathComponent(fallbackPath))
+            }
+        }
+
+        if let smokeExecutable = requirement.smokeTest?.executable {
+            appendIfNeeded(envURL.appendingPathComponent("bin/\(smokeExecutable)"))
+        }
+
+        return urls.sorted { $0.path < $1.path }
+    }
+
+    private func fingerprintComponent(for url: URL) -> String {
+        let path = url.standardizedFileURL.path
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: path) else {
+            return "\(path)|missing"
+        }
+
+        let attributes = try? fileManager.attributesOfItem(atPath: path)
+        let type = (attributes?[.type] as? FileAttributeType)?.rawValue ?? "unknown"
+        let size = (attributes?[.size] as? NSNumber)?.int64Value ?? -1
+        let permissions = (attributes?[.posixPermissions] as? NSNumber)?.uint16Value ?? 0
+        let modificationTime = (attributes?[.modificationDate] as? Date)?
+            .timeIntervalSince1970
+            .rounded(.toNearestOrEven)
+            ?? -1
+
+        return "\(path)|type=\(type)|size=\(size)|perm=\(permissions)|mtime=\(modificationTime)"
     }
 
     private func evaluate(
@@ -721,10 +903,16 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
         }
     }
 
-    private func runPostInstallHooks(for pack: PluginPack) async {
+    private func runPostInstallHooks(
+        for pack: PluginPack,
+        installedEnvironments: Set<String>
+    ) async {
         guard !pack.postInstallHooks.isEmpty else { return }
 
         for hook in pack.postInstallHooks {
+            guard installedEnvironments.contains(hook.environment) else {
+                continue
+            }
             let envURL = await condaManager.environmentURL(named: hook.environment)
             guard FileManager.default.fileExists(atPath: envURL.path) else {
                 logger.warning(

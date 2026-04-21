@@ -116,7 +116,8 @@ final class AssemblyContigCatalogTests: XCTestCase {
                 ("alpha primary", "AAAA"),
                 ("beta secondary", "CCCC"),
             ],
-            indexNameTransform: { _ in "duplicate" }
+            indexNameTransform: { _ in "duplicate" },
+            writeIndex: true
         )
 
         do {
@@ -148,6 +149,25 @@ final class AssemblyContigCatalogTests: XCTestCase {
         XCTAssertEqual(fasta, ">empty header\n")
     }
 
+    func testInitBuildsMissingFASTAIndexForManagedAssemblyOutput() async throws {
+        let result = try makeFixtureAssemblyResult(
+            contigs: [
+                ("alpha long header", "GGGGAAAA"),
+                ("beta middle header", "ACGTAC"),
+            ],
+            indexNameTransform: nil,
+            writeIndex: false
+        )
+        let indexURL = result.contigsPath.appendingPathExtension("fai")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: indexURL.path))
+
+        let catalog = try await AssemblyContigCatalog(result: result)
+        let records = try await catalog.records()
+
+        XCTAssertEqual(records.map { $0.name }, ["alpha", "beta"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: indexURL.path))
+    }
+
     private func makeFixtureCatalog() async throws -> AssemblyContigCatalog {
         let result = try makeFixtureAssemblyResult()
         return try await AssemblyContigCatalog(result: result)
@@ -162,7 +182,11 @@ final class AssemblyContigCatalogTests: XCTestCase {
         contigs: [(String, String)],
         indexNameTransform: @escaping (String) -> String
     ) async throws -> AssemblyContigCatalog {
-        let result = try makeFixtureAssemblyResult(contigs: contigs, indexNameTransform: indexNameTransform)
+        let result = try makeFixtureAssemblyResult(
+            contigs: contigs,
+            indexNameTransform: indexNameTransform,
+            writeIndex: true
+        )
         return try await AssemblyContigCatalog(result: result)
     }
 
@@ -175,19 +199,22 @@ final class AssemblyContigCatalogTests: XCTestCase {
     }
 
     private func makeFixtureAssemblyResult(contigs: [(String, String)]) throws -> AssemblyResult {
-        try makeFixtureAssemblyResult(contigs: contigs, indexNameTransform: nil)
+        try makeFixtureAssemblyResult(contigs: contigs, indexNameTransform: nil, writeIndex: true)
     }
 
     private func makeFixtureAssemblyResult(
         contigs: [(String, String)],
-        indexNameTransform: ((String) -> String)?
+        indexNameTransform: ((String) -> String)?,
+        writeIndex: Bool
     ) throws -> AssemblyResult {
         let contigsURL = try writeFixtureFASTA(contigs)
         let tempDir = contigsURL.deletingLastPathComponent()
-        if let indexNameTransform {
-            try writeFASTAIndex(contigs, to: contigsURL.appendingPathExtension("fai"), lineWidth: 4, nameTransform: indexNameTransform)
-        } else {
-            try FASTAIndexBuilder.buildAndWrite(for: contigsURL)
+        if writeIndex {
+            if let indexNameTransform {
+                try writeFASTAIndex(contigs, to: contigsURL.appendingPathExtension("fai"), lineWidth: 4, nameTransform: indexNameTransform)
+            } else {
+                try FASTAIndexBuilder.buildAndWrite(for: contigsURL)
+            }
         }
 
         let statistics = try AssemblyStatisticsCalculator.compute(from: contigsURL)

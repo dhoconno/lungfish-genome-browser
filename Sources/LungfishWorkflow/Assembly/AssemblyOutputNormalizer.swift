@@ -68,6 +68,7 @@ public enum AssemblyOutputNormalizer {
             throw AssemblyOutputNormalizerError.missingPrimaryOutput(contigsPath)
         }
 
+        try FASTAIndexBuilder.buildAndWrite(for: contigsPath)
         let statistics = try AssemblyStatisticsCalculator.compute(from: contigsPath)
         let logPath = primaryOutputDirectory.appendingPathComponent("assembly.log")
 
