@@ -319,7 +319,7 @@ public final class AssemblyResultViewController: NSViewController {
         selectedContigNames = selectedNames
         actionBar.setSelectionCount(rows.count)
 
-        guard let result = currentResult, let catalog else {
+        guard currentResult != nil, let catalog else {
             showEmptySelectionState(advanceSelectionGeneration: false)
             return
         }
@@ -327,16 +327,23 @@ public final class AssemblyResultViewController: NSViewController {
         if rows.count == 1, let record = rows.first {
             let fasta = (try? await catalog.sequenceFASTA(for: record.name, lineWidth: 70)) ?? ""
             guard generation == selectionGeneration else { return }
-            detailPane.showSingleSelection(record: record, fasta: fasta, result: result)
+            detailPane.showSingleSelection(
+                record: record,
+                fastaPreview: Self.previewFASTA(fasta)
+            )
             return
         }
 
         if rows.count > 1 {
+            let previewFASTA = await Self.previewFASTA(for: rows, catalog: catalog)
             if let summary = try? await catalog.selectionSummary(for: selectedNames) {
                 guard generation == selectionGeneration else { return }
-                detailPane.showMultiSelection(summary: summary)
+                detailPane.showMultiSelection(summary: summary, fastaPreview: previewFASTA)
             } else if generation == selectionGeneration {
-                detailPane.showUnavailableSelectionSummary(selectedContigCount: rows.count)
+                detailPane.showUnavailableSelectionSummary(
+                    selectedContigCount: rows.count,
+                    fastaPreview: previewFASTA
+                )
             }
             return
         }
@@ -351,6 +358,42 @@ public final class AssemblyResultViewController: NSViewController {
         selectedContigNames = []
         actionBar.setSelectionCount(0)
         detailPane.showEmptyState(contigCount: allRecords.count)
+    }
+
+    private static func previewFASTA(_ fasta: String, sequenceLineLimit: Int = 4) -> String {
+        let lines = fasta.components(separatedBy: .newlines)
+        guard let header = lines.first, !header.isEmpty else { return "" }
+
+        let sequenceLines = lines.dropFirst().filter { !$0.isEmpty }
+        guard !sequenceLines.isEmpty else {
+            return header + "\n"
+        }
+
+        let previewLines = sequenceLines.prefix(sequenceLineLimit)
+        var preview = ([header] + previewLines).joined(separator: "\n")
+        if sequenceLines.count > sequenceLineLimit {
+            preview += "\n…"
+        }
+        return preview + "\n"
+    }
+
+    private static func previewFASTA(
+        for rows: [AssemblyContigRecord],
+        catalog: any AssemblyContigCatalogProviding
+    ) async -> String {
+        var previews: [String] = []
+        previews.reserveCapacity(rows.count)
+
+        for record in rows {
+            let fasta = (try? await catalog.sequenceFASTA(for: record.name, lineWidth: 70)) ?? ""
+            let preview = Self.previewFASTA(fasta)
+            if !preview.isEmpty {
+                previews.append(preview.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        }
+
+        guard !previews.isEmpty else { return "" }
+        return previews.joined(separator: "\n")
     }
 }
 

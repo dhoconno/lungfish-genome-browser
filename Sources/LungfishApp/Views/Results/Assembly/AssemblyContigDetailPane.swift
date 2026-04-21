@@ -7,17 +7,13 @@ import LungfishWorkflow
 
 @MainActor
 final class AssemblyContigDetailPane: NSView {
-    private let overviewSectionLabel = NSTextField(labelWithString: "Contig Overview")
+    private let overviewSectionLabel = NSTextField(labelWithString: "Contig Preview")
     private let titleLabel = AssemblyQuickCopyTextField(labelWithString: "")
     private let lengthLabel = AssemblyQuickCopyTextField(labelWithString: "")
     private let gcLabel = AssemblyQuickCopyTextField(labelWithString: "")
     private let rankLabel = AssemblyQuickCopyTextField(labelWithString: "")
     private let shareLabel = AssemblyQuickCopyTextField(labelWithString: "")
     private let sequenceSectionLabel = NSTextField(labelWithString: "Sequence")
-    private let contextSectionLabel = NSTextField(labelWithString: "Assembly Context")
-    private let contextLabel = NSTextField(wrappingLabelWithString: "")
-    private let artifactsSectionLabel = NSTextField(labelWithString: "Source Artifacts")
-    private let artifactsLabel = NSTextField(wrappingLabelWithString: "")
     private let sequenceView = NSTextView()
 
     override init(frame frameRect: NSRect) {
@@ -32,7 +28,7 @@ final class AssemblyContigDetailPane: NSView {
         sequenceView.setAccessibilityIdentifier("assembly-result-detail-sequence-text")
         sequenceView.setAccessibilityLabel("Contig sequence")
 
-        [overviewSectionLabel, sequenceSectionLabel, contextSectionLabel, artifactsSectionLabel].forEach {
+        [overviewSectionLabel, sequenceSectionLabel].forEach {
             $0.font = .systemFont(ofSize: 11, weight: .semibold)
             $0.textColor = .secondaryLabelColor
         }
@@ -56,13 +52,6 @@ final class AssemblyContigDetailPane: NSView {
         metricsRow.orientation = .horizontal
         metricsRow.spacing = 12
 
-        contextLabel.textColor = .secondaryLabelColor
-        artifactsLabel.textColor = .secondaryLabelColor
-        contextLabel.setAccessibilityIdentifier("assembly-result-detail-context")
-        contextLabel.setAccessibilityLabel("Assembly context")
-        artifactsLabel.setAccessibilityIdentifier("assembly-result-detail-artifacts")
-        artifactsLabel.setAccessibilityLabel("Source artifacts")
-
         let stack = NSStackView(
             views: [
                 overviewSectionLabel,
@@ -70,10 +59,6 @@ final class AssemblyContigDetailPane: NSView {
                 metricsRow,
                 sequenceSectionLabel,
                 sequenceScrollView,
-                contextSectionLabel,
-                contextLabel,
-                artifactsSectionLabel,
-                artifactsLabel,
             ]
         )
         stack.orientation = .vertical
@@ -108,61 +93,37 @@ final class AssemblyContigDetailPane: NSView {
         rankLabel.stringValue = ""
         shareLabel.stringValue = ""
         sequenceView.string = ""
-        contextLabel.stringValue = "\(contigCount) contigs available"
-        artifactsLabel.stringValue = "Use the table to inspect sequence, assembly share, and source artifacts."
+        overviewSectionLabel.stringValue = contigCount == 1 ? "1 contig available" : "\(contigCount) contigs available"
     }
 
-    func showSingleSelection(record: AssemblyContigRecord, fasta: String, result: AssemblyResult) {
+    func showSingleSelection(record: AssemblyContigRecord, fastaPreview: String) {
+        overviewSectionLabel.stringValue = "Contig Preview"
         titleLabel.stringValue = record.header
         lengthLabel.stringValue = "\(record.lengthBP) bp"
         gcLabel.stringValue = String(format: "%.1f%%", record.gcPercent)
         rankLabel.stringValue = "#\(record.rank)"
         shareLabel.stringValue = String(format: "%.2f%% of assembly", record.shareOfAssemblyPercent)
-        sequenceView.string = fasta
-
-        contextLabel.stringValue = """
-        Assembler: \(result.tool.displayName)
-        Read Type: \(result.readType.displayName)
-        Version: \(result.assemblerVersion ?? "unknown")
-        Wall Time: \(String(format: "%.1fs", result.wallTimeSeconds))
-        Total Assembled bp: \(result.statistics.totalLengthBP)
-        N50: \(result.statistics.n50) bp
-        L50: \(result.statistics.l50)
-        Longest Contig: \(result.statistics.largestContigBP) bp
-        Global GC: \(String(format: "%.1f%%", result.statistics.gcPercent))
-        Output Directory: \(result.outputDirectory.path)
-        Command: \(result.commandLine)
-        """
-
-        artifactsLabel.stringValue = """
-        Contigs FASTA: \(result.contigsPath.path)
-        Graph: \(result.graphPath?.path ?? "missing")
-        Scaffolds: \(result.scaffoldsPath?.path ?? "missing")
-        Log: \(result.logPath?.path ?? "missing")
-        Params: \(result.paramsPath?.path ?? "missing")
-        """
+        sequenceView.string = fastaPreview
     }
 
-    func showMultiSelection(summary: AssemblyContigSelectionSummary) {
+    func showMultiSelection(summary: AssemblyContigSelectionSummary, fastaPreview: String) {
+        overviewSectionLabel.stringValue = "Selection Preview"
         titleLabel.stringValue = "\(summary.selectedContigCount) contigs selected"
         lengthLabel.stringValue = "\(summary.totalSelectedBP) bp total"
         gcLabel.stringValue = String(format: "%.1f%% weighted GC", summary.lengthWeightedGCPercent)
         rankLabel.stringValue = "Longest: \(summary.longestContigBP) bp"
         shareLabel.stringValue = "Shortest: \(summary.shortestContigBP) bp"
-        sequenceView.string = ""
-        contextLabel.stringValue = "Selection summary for the current visible contig set."
-        artifactsLabel.stringValue = "Use Copy FASTA, Export FASTA, or Create Bundle to materialize the selected contigs."
+        sequenceView.string = fastaPreview
     }
 
-    func showUnavailableSelectionSummary(selectedContigCount: Int) {
+    func showUnavailableSelectionSummary(selectedContigCount: Int, fastaPreview: String) {
+        overviewSectionLabel.stringValue = "Selection Preview"
         titleLabel.stringValue = "\(selectedContigCount) contigs selected"
         lengthLabel.stringValue = ""
         gcLabel.stringValue = ""
         rankLabel.stringValue = ""
         shareLabel.stringValue = ""
-        sequenceView.string = ""
-        contextLabel.stringValue = "Selection summary is temporarily unavailable."
-        artifactsLabel.stringValue = "Use Copy FASTA, Export FASTA, or Create Bundle to materialize the selected contigs."
+        sequenceView.string = fastaPreview
     }
 
 #if DEBUG
@@ -184,7 +145,7 @@ final class AssemblyContigDetailPane: NSView {
     var currentHeaderText: String { titleLabel.stringValue }
     var currentSequenceText: String { sequenceView.string }
     var currentSummaryTitle: String { titleLabel.stringValue }
-    var currentContextText: String { contextLabel.stringValue }
-    var currentArtifactsText: String { artifactsLabel.stringValue }
+    var currentContextText: String { "" }
+    var currentArtifactsText: String { "" }
 #endif
 }

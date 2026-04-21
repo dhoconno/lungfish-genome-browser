@@ -31,7 +31,7 @@ final class AssemblyResultViewControllerTests: XCTestCase {
         XCTAssertTrue(vc.testSplitView.arrangedSubviews[1] === vc.testDetailContainer)
     }
 
-    func testSingleSelectionShowsContigOverviewAndSequence() async throws {
+    func testSingleSelectionShowsContigHeaderInfoAndPreviewRows() async throws {
         let vc = AssemblyResultViewController()
         _ = vc.view
         try await vc.configureForTesting(result: makeAssemblyResult())
@@ -39,27 +39,13 @@ final class AssemblyResultViewControllerTests: XCTestCase {
         try await vc.testSelectContig(named: "contig_7")
 
         XCTAssertEqual(vc.testDetailPane.currentHeaderText, "contig_7 annotated header")
+        XCTAssertTrue(vc.testDetailPane.currentSequenceText.contains(">contig_7 annotated header"))
         XCTAssertTrue(vc.testDetailPane.currentSequenceText.contains("AACCGGTT"))
+        XCTAssertTrue(vc.testDetailPane.currentContextText.isEmpty)
+        XCTAssertTrue(vc.testDetailPane.currentArtifactsText.isEmpty)
     }
 
-    func testSingleSelectionShowsAssemblyContextAndArtifacts() async throws {
-        let vc = AssemblyResultViewController()
-        _ = vc.view
-        let result = try makeAssemblyResult()
-        try await vc.configureForTesting(result: result)
-
-        try await vc.testSelectContig(named: "contig_7")
-
-        XCTAssertTrue(vc.testDetailPane.currentContextText.contains("Wall Time"))
-        XCTAssertTrue(vc.testDetailPane.currentContextText.contains("Output Directory"))
-        XCTAssertTrue(vc.testDetailPane.currentContextText.contains("N50"))
-        XCTAssertTrue(vc.testDetailPane.currentArtifactsText.contains(result.contigsPath.lastPathComponent))
-        XCTAssertTrue(vc.testDetailPane.currentArtifactsText.contains(result.graphPath?.lastPathComponent ?? ""))
-        XCTAssertTrue(vc.testDetailPane.currentArtifactsText.contains(result.scaffoldsPath?.lastPathComponent ?? ""))
-        XCTAssertTrue(vc.testDetailPane.currentArtifactsText.contains(result.paramsPath?.lastPathComponent ?? ""))
-    }
-
-    func testMultiSelectionShowsSelectionSummaryInsteadOfConcatenatedSequence() async throws {
+    func testMultiSelectionShowsSelectionSummaryAndPreviewRows() async throws {
         let vc = AssemblyResultViewController()
         _ = vc.view
         try await vc.configureForTesting(result: makeAssemblyResult())
@@ -67,7 +53,12 @@ final class AssemblyResultViewControllerTests: XCTestCase {
         try await vc.testSelectContigs(named: ["contig_7", "contig_9"])
 
         XCTAssertEqual(vc.testDetailPane.currentSummaryTitle, "2 contigs selected")
-        XCTAssertFalse(vc.testDetailPane.currentSequenceText.contains(">contig_7"))
+        XCTAssertTrue(vc.testDetailPane.currentSequenceText.contains(">contig_7 annotated header"))
+        XCTAssertTrue(vc.testDetailPane.currentSequenceText.contains("AACCGGTT"))
+        XCTAssertTrue(vc.testDetailPane.currentSequenceText.contains(">contig_9 secondary header"))
+        XCTAssertTrue(vc.testDetailPane.currentSequenceText.contains("ATATAT"))
+        XCTAssertTrue(vc.testDetailPane.currentContextText.isEmpty)
+        XCTAssertTrue(vc.testDetailPane.currentArtifactsText.isEmpty)
     }
 
     func testSummaryStripShowsAssemblyMetricsAndSupportsQuickCopy() async throws {
