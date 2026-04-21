@@ -38,6 +38,29 @@ final class AssemblyXCUITests: XCTestCase {
     }
 
     @MainActor
+    func testOntDialogShowsHifiasmAndKeepsRunEnabled() throws {
+        let projectURL = try LungfishProjectFixtureBuilder.makeOntAssemblyProject(named: "OntAssemblyFixture")
+        let robot = AssemblyRobot()
+        defer {
+            robot.app.terminate()
+            try? FileManager.default.removeItem(at: projectURL.deletingLastPathComponent())
+        }
+
+        robot.launch(opening: projectURL, backendMode: "deterministic")
+        robot.selectSidebarItem(named: "reads.fastq")
+        robot.openAssemblyDialog()
+        XCTAssertTrue(
+            robot.app.descendants(matching: .any)["fastq-operations-assembly-tool-flye"].firstMatch.exists
+        )
+        XCTAssertTrue(
+            robot.app.descendants(matching: .any)["fastq-operations-assembly-tool-hifiasm"].firstMatch.exists
+        )
+        robot.chooseAssembler("Hifiasm")
+        XCTAssertTrue(robot.primaryActionButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(robot.primaryActionButton.isEnabled)
+    }
+
+    @MainActor
     func testOntAndHiFiDialogsExposeLongReadSpecificControls() throws {
         let ontProjectURL = try LungfishProjectFixtureBuilder.makeOntAssemblyProject(named: "OntAssemblyFixture")
         let hifiProjectURL = try LungfishProjectFixtureBuilder.makePacBioHiFiAssemblyProject(named: "HiFiAssemblyFixture")
@@ -51,21 +74,12 @@ final class AssemblyXCUITests: XCTestCase {
         robot.launch(opening: ontProjectURL, backendMode: "deterministic")
         robot.selectSidebarItem(named: "reads.fastq")
         robot.openAssemblyDialog()
-        XCTAssertTrue(
-            robot.app.descendants(matching: .any)["fastq-operations-assembly-tool-flye"].firstMatch.exists
-        )
-        XCTAssertTrue(
-            robot.app.descendants(matching: .any)["fastq-operations-assembly-tool-hifiasm"].firstMatch.exists
-        )
         robot.chooseAssembler("Flye")
         robot.expandAdvancedOptionsIfNeeded()
         XCTAssertTrue(robot.profilePicker.waitForExistence(timeout: 5))
         XCTAssertFalse(robot.memorySlider.exists)
         XCTAssertFalse(robot.minContigStepper.exists)
         robot.reveal(robot.flyeMetagenomeToggle)
-        robot.chooseAssembler("Hifiasm")
-        XCTAssertTrue(robot.primaryActionButton.waitForExistence(timeout: 5))
-        XCTAssertTrue(robot.primaryActionButton.isEnabled)
         robot.app.terminate()
 
         robot.launch(opening: hifiProjectURL, backendMode: "deterministic")

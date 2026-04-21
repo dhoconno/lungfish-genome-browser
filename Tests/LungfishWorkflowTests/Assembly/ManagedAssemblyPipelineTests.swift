@@ -62,6 +62,58 @@ final class ManagedAssemblyPipelineTests: XCTestCase {
         XCTAssertTrue(command.arguments.contains("--out-dir"))
     }
 
+    func testBuildsHifiasmCommandForOntReadsIncludesOntFlag() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("managed-assembly-hifiasm-ont-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let inputURL = URL(fileURLWithPath: "/tmp/ont.fastq.gz")
+        let request = AssemblyRunRequest(
+            tool: .hifiasm,
+            readType: .ontReads,
+            inputURLs: [inputURL],
+            projectName: "ont-demo",
+            outputDirectory: tempDir,
+            threads: 8,
+            extraArguments: ["--verbosity", "2"]
+        )
+
+        let command = try ManagedAssemblyPipeline.buildCommand(for: request)
+
+        XCTAssertEqual(command.executable, "hifiasm")
+        XCTAssertEqual(command.environment, "hifiasm")
+        XCTAssertEqual(command.workingDirectory, tempDir)
+        XCTAssertEqual(command.arguments.filter { $0 == "--ont" }.count, 1)
+        XCTAssertEqual(command.arguments.last, "2")
+        XCTAssertTrue(command.arguments.contains(inputURL.path))
+        XCTAssertEqual(command.arguments.filter { $0 == inputURL.path }.count, 1)
+    }
+
+    func testBuildsHifiasmCommandForPacBioHiFiReadsOmitsOntFlag() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("managed-assembly-hifiasm-hifi-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let inputURL = URL(fileURLWithPath: "/tmp/hifi.fastq.gz")
+        let request = AssemblyRunRequest(
+            tool: .hifiasm,
+            readType: .pacBioHiFi,
+            inputURLs: [inputURL],
+            projectName: "hifi-demo",
+            outputDirectory: tempDir,
+            threads: 8
+        )
+
+        let command = try ManagedAssemblyPipeline.buildCommand(for: request)
+
+        XCTAssertEqual(command.executable, "hifiasm")
+        XCTAssertEqual(command.environment, "hifiasm")
+        XCTAssertEqual(command.workingDirectory, tempDir)
+        XCTAssertFalse(command.arguments.contains("--ont"))
+        XCTAssertTrue(command.arguments.contains(inputURL.path))
+        XCTAssertEqual(command.arguments.filter { $0 == inputURL.path }.count, 1)
+    }
+
     func testBuildsMegahitCommandForShortReads() throws {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("managed-assembly-megahit-\(UUID().uuidString)")
@@ -297,7 +349,7 @@ final class ManagedAssemblyPipelineTests: XCTestCase {
         }
     }
 
-    func testHifiasmTopologyErrorUsesHiFiCCSLabel() {
+    func testHifiasmTopologyErrorUsesCombinedONTAndHiFiLabel() {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("managed-assembly-hifiasm-invalid-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -317,7 +369,7 @@ final class ManagedAssemblyPipelineTests: XCTestCase {
         XCTAssertThrowsError(try ManagedAssemblyPipeline.buildCommand(for: request)) { error in
             XCTAssertEqual(
                 error.localizedDescription,
-                "Hifiasm expects a single PacBio HiFi/CCS FASTQ input in v1."
+                "Hifiasm expects a single ONT or PacBio HiFi/CCS FASTQ input in v1."
             )
         }
     }

@@ -293,7 +293,7 @@ public struct ManagedAssemblyPipeline: Sendable {
     private static func buildHifiasmCommand(for request: AssemblyRunRequest) throws -> ManagedAssemblyCommand {
         guard request.inputURLs.count == 1, let inputURL = request.inputURLs.first else {
             throw ManagedAssemblyPipelineError.unsupportedInputTopology(
-                "Hifiasm expects a single PacBio HiFi/CCS FASTQ input in v1."
+                "Hifiasm expects a single ONT or PacBio HiFi/CCS FASTQ input in v1."
             )
         }
         try FileManager.default.createDirectory(
@@ -302,6 +302,9 @@ public struct ManagedAssemblyPipeline: Sendable {
         )
         let outputPrefix = request.outputDirectory.appendingPathComponent(request.projectName).path
         var arguments = ["-o", outputPrefix, "-t", "\(request.threads)", inputURL.path]
+        if request.readType == .ontReads {
+            arguments.insert("--ont", at: 0)
+        }
         arguments += request.extraArguments
         return ManagedAssemblyCommand(
             executable: "hifiasm",
