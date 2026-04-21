@@ -186,18 +186,27 @@ public class MainWindowController: NSWindowController {
                 item.isEnabled = visible
 
             case ToolbarIdentifier.toggleAnnotationDrawer:
-                // Bottom drawer is relevant for genomics (annotations) and metagenomics (BLAST/samples)
-                let visible = (mode != .empty)
+                // Bottom drawer is relevant for genomics (annotations), FASTQ metadata,
+                // and metagenomics (BLAST/samples). Assembly uses the document-only inspector.
+                let visible: Bool
+                switch mode {
+                case .genomics, .fastq, .metagenomics:
+                    visible = true
+                case .assembly, .empty:
+                    visible = false
+                }
                 item.isHidden = !visible
                 item.isEnabled = visible
 
-                // Update tooltip based on mode
-                if mode == .metagenomics {
-                    item.toolTip = "Show or hide the BLAST/samples drawer"
-                } else if mode == .fastq {
-                    item.toolTip = "Show or hide the metadata drawer"
-                } else {
-                    item.toolTip = "Show or hide the bottom metadata drawer"
+                // Update tooltip based on mode.
+                if visible {
+                    if mode == .metagenomics {
+                        item.toolTip = "Show or hide the BLAST/samples drawer"
+                    } else if mode == .fastq {
+                        item.toolTip = "Show or hide the metadata drawer"
+                    } else {
+                        item.toolTip = "Show or hide the bottom metadata drawer"
+                    }
                 }
 
             default:

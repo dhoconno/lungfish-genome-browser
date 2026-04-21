@@ -1616,6 +1616,8 @@ public final class InspectorViewModel {
         switch contentMode {
         case .genomics:
             return [.document, .selection, .ai]
+        case .assembly:
+            return [.document]
         case .fastq:
             return [.document]
         case .metagenomics:

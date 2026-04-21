@@ -25,7 +25,7 @@ extension ViewerViewController {
         hideMappingView()
         clearBundleDisplay()
         hideCollectionBackButton()
-        contentMode = .genomics
+        contentMode = .assembly
 
         let controller = AssemblyResultViewController()
         addChild(controller)
