@@ -3,7 +3,6 @@ import SwiftUI
 
 enum AssemblyDocumentSectionKind: Equatable {
     case header
-    case layout
     case sourceData
     case assemblyContext
     case sourceArtifacts
@@ -28,7 +27,7 @@ struct AssemblyDocumentState: Equatable {
     let artifactRows: [AssemblyDocumentArtifactRow]
 
     var visibleSectionOrder: [AssemblyDocumentSectionKind] {
-        [.header, .layout, .sourceData, .assemblyContext, .sourceArtifacts]
+        [.header, .sourceData, .assemblyContext, .sourceArtifacts]
     }
 
     static func == (lhs: AssemblyDocumentState, rhs: AssemblyDocumentState) -> Bool {
@@ -51,10 +50,6 @@ struct AssemblyDocumentSection: View {
         if let assembly = viewModel.assemblyDocument {
             VStack(alignment: .leading, spacing: 16) {
                 header(assembly)
-
-                Divider()
-
-                panelLayoutSection
 
                 Divider()
 
@@ -81,30 +76,6 @@ struct AssemblyDocumentSection: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-        }
-    }
-
-    private var panelLayoutSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Panel Layout")
-                .font(.caption.weight(.semibold))
-
-            Picker("Layout", selection: Binding(
-                get: { viewModel.assemblyPanelLayout },
-                set: { newValue in
-                    viewModel.assemblyPanelLayout = newValue
-                    newValue.persist()
-                }
-            )) {
-                Label("Detail | List", systemImage: "sidebar.left")
-                    .tag(AssemblyPanelLayout.detailLeading)
-                Label("List | Detail", systemImage: "sidebar.right")
-                    .tag(AssemblyPanelLayout.listLeading)
-                Label("List Over Detail", systemImage: "rectangle.split.1x2")
-                    .tag(AssemblyPanelLayout.stacked)
-            }
-            .pickerStyle(.radioGroup)
-            .labelsHidden()
         }
     }
 

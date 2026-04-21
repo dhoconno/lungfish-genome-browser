@@ -16,6 +16,7 @@ final class AssemblyContigTableView: BatchTableView<AssemblyContigRecord> {
             .init(identifier: NSUserInterfaceItemIdentifier("length"), title: "Length (bp)", width: 110, minWidth: 90, defaultAscending: false),
             .init(identifier: NSUserInterfaceItemIdentifier("gc"), title: "GC %", width: 90, minWidth: 70, defaultAscending: false),
             .init(identifier: NSUserInterfaceItemIdentifier("share"), title: "Share of Assembly (%)", width: 150, minWidth: 120, defaultAscending: false),
+            .init(identifier: NSUserInterfaceItemIdentifier("preview"), title: "Sequence Preview", width: 360, minWidth: 220, defaultAscending: true),
         ]
     }
 
@@ -50,6 +51,12 @@ final class AssemblyContigTableView: BatchTableView<AssemblyContigRecord> {
             return (String(format: "%.1f", row.gcPercent), .right, nil)
         case "share":
             return (String(format: "%.2f", row.shareOfAssemblyPercent), .right, nil)
+        case "preview":
+            return (
+                row.previewSequence,
+                .left,
+                nil
+            )
         default:
             return ("", .left, nil)
         }
@@ -78,6 +85,10 @@ final class AssemblyContigTableView: BatchTableView<AssemblyContigRecord> {
             return ascending ? lhs.gcPercent < rhs.gcPercent : lhs.gcPercent > rhs.gcPercent
         case "share":
             return ascending ? lhs.shareOfAssemblyPercent < rhs.shareOfAssemblyPercent : lhs.shareOfAssemblyPercent > rhs.shareOfAssemblyPercent
+        case "preview":
+            return ascending
+                ? lhs.previewSequence.localizedStandardCompare(rhs.previewSequence) == .orderedAscending
+                : lhs.previewSequence.localizedStandardCompare(rhs.previewSequence) == .orderedDescending
         default:
             return ascending ? lhs.rank < rhs.rank : lhs.rank > rhs.rank
         }
@@ -95,6 +106,8 @@ final class AssemblyContigTableView: BatchTableView<AssemblyContigRecord> {
             return String(format: "%.1f", row.gcPercent)
         case "share":
             return String(format: "%.2f", row.shareOfAssemblyPercent)
+        case "preview":
+            return row.previewSequence
         default:
             return row.header
         }

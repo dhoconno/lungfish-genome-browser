@@ -560,6 +560,12 @@ final class FASTQOperationExecutionServiceTests: XCTestCase {
 
         let invocation = try FASTQOperationExecutionService().buildInvocation(for: request)
 
+        #if os(macOS) && arch(arm64)
+        let expectedThreads = "2"
+        #else
+        let expectedThreads = "8"
+        #endif
+
         XCTAssertEqual(
             invocation.arguments,
             [
@@ -567,7 +573,7 @@ final class FASTQOperationExecutionServiceTests: XCTestCase {
                 "--assembler", "megahit",
                 "--read-type", "illumina-short-reads",
                 "--project-name", "Demo",
-                "--threads", "8",
+                "--threads", expectedThreads,
                 "--output", "<derived>",
                 "--memory-gb", "24",
                 "--min-contig-length", "1000",

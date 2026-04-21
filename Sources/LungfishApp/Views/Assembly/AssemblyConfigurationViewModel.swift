@@ -38,6 +38,21 @@ public enum AssemblyRunner {
     /// Task 4 routes the shared UI through ``AssemblyRunRequest`` even while
     /// the standalone execution backend is being generalized.
     public static func run(request: AssemblyRunRequest) {
+        Task { @MainActor in
+            if let warning = await AssemblyRuntimePreflight.warningMessage(for: request) {
+                AssemblyRuntimePreflight.presentWarning(
+                    message: warning,
+                    for: request.tool,
+                    on: NSApp.keyWindow
+                )
+                return
+            }
+            runValidated(request: request)
+        }
+    }
+
+    static func runValidated(request: AssemblyRunRequest) {
+        let request = request.normalizedForExecution()
         let projectName = request.projectName
 
         if Bundle.main.bundleIdentifier != nil {

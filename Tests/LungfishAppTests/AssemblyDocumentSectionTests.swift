@@ -19,7 +19,7 @@ final class AssemblyDocumentSectionTests: XCTestCase {
 
         XCTAssertEqual(
             state.visibleSectionOrder,
-            [.header, .layout, .sourceData, .assemblyContext, .sourceArtifacts]
+            [.header, .sourceData, .assemblyContext, .sourceArtifacts]
         )
     }
 

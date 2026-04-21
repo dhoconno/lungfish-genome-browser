@@ -6,7 +6,7 @@ import AppKit
 
 @MainActor
 final class AssemblyActionBar: NSView {
-    let blastButton = NSButton(title: "BLAST Selected", target: nil, action: nil)
+    let blastButton = NSButton(title: "BLAST Contigs", target: nil, action: nil)
     let copyButton = NSButton(title: "Copy FASTA", target: nil, action: nil)
     let exportButton = NSButton(title: "Export FASTA", target: nil, action: nil)
     let bundleButton = NSButton(title: "Create Bundle", target: nil, action: nil)
@@ -61,6 +61,8 @@ final class AssemblyActionBar: NSView {
         copyButton.isEnabled = hasSelection
         exportButton.isEnabled = hasSelection
         bundleButton.isEnabled = hasSelection
+        blastButton.title = count == 1 ? "BLAST Contig" : "BLAST Contigs"
+        blastButton.setAccessibilityLabel(count == 1 ? "BLAST selected contig" : "BLAST selected contigs")
         infoLabel.stringValue = hasSelection ? "\(count) contig\(count == 1 ? "" : "s") selected" : "Select contigs to materialize"
     }
 

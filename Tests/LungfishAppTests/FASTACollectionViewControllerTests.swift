@@ -6,6 +6,7 @@ import XCTest
 final class FASTACollectionViewControllerTests: XCTestCase {
     func testContextMenuUsesSharedFastaActionSetWhenCallbacksPresent() throws {
         let vc = FASTACollectionViewController()
+        vc.onExtractSequenceRequested = { _ in }
         vc.onBlastRequested = { _ in }
         vc.onExportRequested = { _ in }
         vc.onCreateBundleRequested = { _ in }
@@ -21,7 +22,7 @@ final class FASTACollectionViewControllerTests: XCTestCase {
 
         XCTAssertEqual(
             vc.testContextMenuTitles.filter { !$0.isEmpty },
-            ["Verify with BLAST…", "Copy FASTA", "Export FASTA…", "Create Bundle…", "Run Operation…"]
+            ["Extract Sequence…", "Verify with BLAST…", "Copy FASTA", "Export FASTA…", "Create Bundle…", "Run Operation…"]
         )
     }
 

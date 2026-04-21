@@ -109,6 +109,7 @@ struct AssembleCommand: AsyncParsableCommand {
             selectedProfileID: profile,
             extraArguments: extraArg
         )
+        let executionRequest = request.normalizedForExecution()
 
         print(formatter.header("Managed Assembly"))
         print("")
@@ -117,14 +118,14 @@ struct AssembleCommand: AsyncParsableCommand {
             ("Read type", readType.displayName),
             ("Inputs", inputURLs.map(\.lastPathComponent).joined(separator: ", ")),
             ("Paired-end", pairedEnd ? "yes" : "no"),
-            ("Threads", "\(request.threads)"),
+            ("Threads", "\(executionRequest.threads)"),
             ("Memory", memoryGB.map { "\($0) GB" } ?? "default"),
             ("Profile", profile ?? "default"),
             ("Output", outputDirectory.path),
         ]))
         print("")
 
-        let result = try await ManagedAssemblyPipeline().run(request: request) { _, message in
+        let result = try await ManagedAssemblyPipeline().run(request: executionRequest) { _, message in
             if !globalOptions.quiet {
                 print("\r\(formatter.info(message))", terminator: "")
             }

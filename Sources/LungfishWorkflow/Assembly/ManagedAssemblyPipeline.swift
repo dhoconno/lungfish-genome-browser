@@ -63,6 +63,14 @@ public struct ManagedAssemblyPipeline: Sendable {
     }
 
     public static func buildCommand(for request: AssemblyRunRequest) throws -> ManagedAssemblyCommand {
+        try buildCommand(for: request, host: .current)
+    }
+
+    static func buildCommand(
+        for request: AssemblyRunRequest,
+        host: AssemblyExecutionHost
+    ) throws -> ManagedAssemblyCommand {
+        let request = request.normalizedForExecution(on: host)
         guard AssemblyCompatibility.isSupported(tool: request.tool, for: request.readType) else {
             throw ManagedAssemblyPipelineError.incompatibleSelection(
                 "\(request.tool.displayName) is not available for \(request.readType.displayName) in v1."
@@ -92,6 +100,7 @@ public struct ManagedAssemblyPipeline: Sendable {
         request: AssemblyRunRequest,
         progress: ProgressHandler? = nil
     ) async throws -> AssemblyResult {
+        let request = request.normalizedForExecution()
         let preparedExecution = try Self.prepareExecution(for: request)
         defer {
             if let redirectRoot = preparedExecution.redirectRoot {
@@ -215,6 +224,9 @@ public struct ManagedAssemblyPipeline: Sendable {
         if let selectedProfileID = request.selectedProfileID, !selectedProfileID.isEmpty {
             arguments += ["--presets", selectedProfileID]
         }
+        if let memoryBytes = request.effectiveMegahitMemoryBytes {
+            arguments += ["--memory", "\(memoryBytes)"]
+        }
         arguments += request.extraArguments
         return ManagedAssemblyCommand(
             executable: "megahit",
@@ -242,6 +254,11 @@ public struct ManagedAssemblyPipeline: Sendable {
         }
         if let minContigLength = request.effectiveMinContigLength {
             arguments += ["--min_contig", "\(minContigLength)"]
+        }
+        if !containsArgument(named: "--min_count", in: request.extraArguments) {
+            // Pin SKESA's documented default to avoid high-coverage auto-escalation
+            // that can zero out small assemblies on subsets like ecoli_1K.
+            arguments += ["--min_count", "2"]
         }
         arguments += request.extraArguments
         return ManagedAssemblyCommand(
@@ -361,6 +378,10 @@ public struct ManagedAssemblyPipeline: Sendable {
 
     private static func stagedLeafName(for url: URL, index: Int) -> String {
         "\(index)-\(url.lastPathComponent.replacingOccurrences(of: " ", with: "_"))"
+    }
+
+    private static func containsArgument(named flag: String, in arguments: [String]) -> Bool {
+        arguments.contains(flag) || arguments.contains { $0.hasPrefix("\(flag)=") }
     }
 
     private static func toolRequiresFreshOutputDirectory(_ tool: AssemblyTool) -> Bool {

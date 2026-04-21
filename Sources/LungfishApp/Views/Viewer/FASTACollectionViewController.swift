@@ -55,6 +55,9 @@ public final class FASTACollectionViewController: NSViewController,
 
     /// Invoked when the user double-clicks a sequence or presses "Open in Browser".
     public var onOpenSequence: ((LungfishCore.Sequence, [SequenceAnnotation]) -> Void)?
+    public var onExtractSequenceRequested: (([LungfishCore.Sequence]) -> Void)? {
+        didSet { refreshContextMenu() }
+    }
     public var onBlastRequested: (([LungfishCore.Sequence]) -> Void)? {
         didSet { refreshContextMenu() }
     }
@@ -484,6 +487,10 @@ public final class FASTACollectionViewController: NSViewController,
         contextMenu = FASTASequenceActionMenuBuilder.buildMenu(
             selectionCount: tableView.numberOfSelectedRows,
             handlers: FASTASequenceActionHandlers(
+                onExtractSequence: onExtractSequenceRequested == nil ? nil : { [weak self] in
+                    guard let self else { return }
+                    self.onExtractSequenceRequested?(self.selectedSequences())
+                },
                 onBlast: onBlastRequested == nil ? nil : { [weak self] in
                     guard let self else { return }
                     self.onBlastRequested?(self.selectedSequences())

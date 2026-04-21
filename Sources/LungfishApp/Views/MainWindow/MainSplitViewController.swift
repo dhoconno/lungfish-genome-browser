@@ -4245,6 +4245,32 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         _ request: FASTQOperationLaunchRequest,
         preferredOutputDirectory: URL? = nil
     ) {
+        if case .assemble(let assemblyRequest, _) = request {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let warning = await AssemblyRuntimePreflight.warningMessage(for: assemblyRequest) {
+                    AssemblyRuntimePreflight.presentWarning(
+                        message: warning,
+                        for: assemblyRequest.tool,
+                        on: self.view.window ?? NSApp.keyWindow
+                    )
+                    return
+                }
+                self.runFASTQOperationLaunchRequestValidated(
+                    request,
+                    preferredOutputDirectory: preferredOutputDirectory
+                )
+            }
+            return
+        }
+
+        runFASTQOperationLaunchRequestValidated(request, preferredOutputDirectory: preferredOutputDirectory)
+    }
+
+    private func runFASTQOperationLaunchRequestValidated(
+        _ request: FASTQOperationLaunchRequest,
+        preferredOutputDirectory: URL? = nil
+    ) {
         let currentProjectURL = sidebarController.currentProjectURL?.standardizedFileURL
         let destinationRoot = preferredOutputDirectory?.standardizedFileURL
             ?? currentProjectURL?.appendingPathComponent("Analyses", isDirectory: true)

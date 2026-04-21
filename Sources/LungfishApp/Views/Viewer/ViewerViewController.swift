@@ -1204,6 +1204,12 @@ public class ViewerViewController: NSViewController {
                 fastaRecords: fastaRecords
             )
         }
+        controller.onExtractSequenceRequested = { [weak self] selectedSequences in
+            self?.presentFASTASequenceExtractionDialog(
+                records: selectedSequences.map(Self.fastaRecord(for:)),
+                suggestedName: Self.bundleName(for: selectedSequences)
+            )
+        }
         controller.onExportRequested = { [weak self] selectedSequences in
             self?.exportFASTARecords(
                 selectedSequences.map(Self.fastaRecord(for:)),
@@ -1331,6 +1337,14 @@ public class ViewerViewController: NSViewController {
         return trimmed.isEmpty ? "selected-sequences" : trimmed
     }
 
+    private static func fileName(for baseName: String) -> String {
+        let trimmed = baseName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.lowercased().hasSuffix(".fa") || trimmed.lowercased().hasSuffix(".fasta") {
+            return trimmed
+        }
+        return "\(trimmed).fa"
+    }
+
     private func runGenericBlastVerification(
         sourceLabel: String,
         fastaRecords: [String]
@@ -1418,6 +1432,69 @@ public class ViewerViewController: NSViewController {
         let normalized = records.joined(separator: "")
         try? normalized.write(to: sourceURL, atomically: true, encoding: .utf8)
         AppDelegate.shared?.importFASTAFromURL(sourceURL)
+    }
+
+    func shareFASTARecords(_ records: [String], suggestedName: String) {
+        guard !records.isEmpty else { return }
+        let projectURL = DocumentManager.shared.activeProject?.url
+        guard let tempDirectory = try? ProjectTempDirectory.create(
+            prefix: "fasta-share-",
+            in: projectURL
+        ) else {
+            return
+        }
+
+        let shareURL = tempDirectory.appendingPathComponent(
+            "\(Self.sanitizedFilesystemStem(suggestedName)).fa"
+        )
+        let normalized = records.joined(separator: "")
+        try? normalized.write(to: shareURL, atomically: true, encoding: .utf8)
+        DefaultSharingServicePresenter().present(items: [shareURL], relativeTo: view, preferredEdge: .minY)
+    }
+
+    func presentFASTASequenceExtractionDialog(records: [String], suggestedName: String) {
+        guard !records.isEmpty, let window = view.window, window.attachedSheet == nil else { return }
+
+        let model = FASTASequenceExtractionDialogModel(
+            selectionCount: records.count,
+            suggestedName: suggestedName
+        )
+        let sheetWindow = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 320),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+
+        let dialog = FASTASequenceExtractionDialog(
+            model: model,
+            onCancel: { [weak window, weak sheetWindow] in
+                guard let window, let sheetWindow, window.attachedSheet === sheetWindow else { return }
+                window.endSheet(sheetWindow)
+            },
+            onPrimary: { [weak self, weak window, weak sheetWindow] in
+                guard let self, let window, let sheetWindow else { return }
+                if window.attachedSheet === sheetWindow {
+                    window.endSheet(sheetWindow)
+                }
+
+                let requestedName = model.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                let baseName = requestedName.isEmpty ? suggestedName : requestedName
+                switch model.destination {
+                case .bundle:
+                    self.createReferenceBundle(from: records, suggestedName: baseName)
+                case .file:
+                    self.exportFASTARecords(records, suggestedName: Self.fileName(for: baseName))
+                case .clipboard:
+                    DefaultPasteboard().setString(records.joined(separator: ""))
+                case .share:
+                    self.shareFASTARecords(records, suggestedName: baseName)
+                }
+            }
+        )
+
+        sheetWindow.contentViewController = NSHostingController(rootView: dialog)
+        window.beginSheet(sheetWindow)
     }
 
     func presentFASTAOperationDialog(records: [String], suggestedName: String) {

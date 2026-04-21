@@ -6,12 +6,39 @@ final class FASTASequenceActionMenuBuilderTests: XCTestCase {
     func testBuilderCreatesCommonAssemblyAndFastaActions() {
         let menu = FASTASequenceActionMenuBuilder.buildMenu(
             selectionCount: 1,
-            handlers: .noop
+            handlers: FASTASequenceActionHandlers(
+                onExtractSequence: {},
+                onBlast: {},
+                onCopy: {},
+                onExport: {},
+                onCreateBundle: {},
+                onRunOperation: {}
+            )
         )
 
         XCTAssertEqual(
-            menu.items.map(\.title).filter { !$0.isEmpty },
-            ["Verify with BLAST…", "Copy FASTA", "Export FASTA…", "Create Bundle…", "Run Operation…"]
+            menu.items.map { $0.title }.filter { !$0.isEmpty },
+            ["Extract Sequence…", "Verify with BLAST…", "Copy FASTA", "Export FASTA…", "Create Bundle…", "Run Operation…"]
+        )
+    }
+
+    func testBuilderAllowsAssemblySpecificBlastLabelOverrides() {
+        let menu = FASTASequenceActionMenuBuilder.buildMenu(
+            selectionCount: 1,
+            handlers: FASTASequenceActionHandlers(
+                onExtractSequence: {},
+                blastMenuTitle: "BLAST Contig…",
+                onBlast: {},
+                onCopy: {},
+                onExport: {},
+                onCreateBundle: {},
+                onRunOperation: {}
+            )
+        )
+
+        XCTAssertEqual(
+            menu.items.map { $0.title }.filter { !$0.isEmpty },
+            ["Extract Sequence…", "BLAST Contig…", "Copy FASTA", "Export FASTA…", "Create Bundle…", "Run Operation…"]
         )
     }
 
@@ -19,6 +46,7 @@ final class FASTASequenceActionMenuBuilderTests: XCTestCase {
         let menu = FASTASequenceActionMenuBuilder.buildMenu(
             selectionCount: 1,
             handlers: FASTASequenceActionHandlers(
+                onExtractSequence: {},
                 onBlast: nil,
                 onCopy: {},
                 onExport: nil,
@@ -28,8 +56,8 @@ final class FASTASequenceActionMenuBuilderTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            menu.items.map(\.title).filter { !$0.isEmpty },
-            ["Copy FASTA", "Run Operation…"]
+            menu.items.map { $0.title }.filter { !$0.isEmpty },
+            ["Extract Sequence…", "Copy FASTA", "Run Operation…"]
         )
     }
 }

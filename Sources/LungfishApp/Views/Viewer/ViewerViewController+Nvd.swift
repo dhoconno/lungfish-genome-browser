@@ -155,6 +155,9 @@ extension ViewerViewController {
                 suggestedName: Self.suggestedName(from: fastaRecords, fallback: "nvd-contig")
             )
         }
+        controller.onExtractSequenceRequested = { [weak self] fastaRecords, suggestedName in
+            self?.presentFASTASequenceExtractionDialog(records: fastaRecords, suggestedName: suggestedName)
+        }
         controller.onExportFASTARequested = { [weak self] fastaRecords in
             self?.exportFASTARecords(
                 fastaRecords,

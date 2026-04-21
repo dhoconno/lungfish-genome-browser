@@ -33,6 +33,22 @@ final class AssemblyViewerIntegrationTests: XCTestCase {
         XCTAssertNotNil(viewer.assemblyResultController?.onBlastVerification)
     }
 
+    func testAssemblyBlastVerificationCreatesBottomDrawerHost() throws {
+        let viewer = ViewerViewController()
+        _ = viewer.view
+
+        viewer.displayAssemblyResult(try makeAssemblyResult())
+        viewer.assemblyResultController?.onBlastVerification?(
+            BlastRequest(taxId: nil, sequences: [], readCount: 0, sourceLabel: "selected contigs")
+        )
+
+        let drawer = findDescendant(
+            ofType: BlastResultsDrawerContainerView.self,
+            in: viewer.assemblyResultController?.view
+        )
+        XCTAssertNotNil(drawer)
+    }
+
     func testHideAssemblyViewRestoresViewerChrome() throws {
         let viewer = ViewerViewController()
         _ = viewer.view
@@ -52,5 +68,18 @@ final class AssemblyViewerIntegrationTests: XCTestCase {
         XCTAssertFalse(viewer.statusBar.isHidden)
         XCTAssertFalse(viewer.annotationDrawerView?.isHidden ?? true)
         XCTAssertFalse(viewer.fastqMetadataDrawerView?.isHidden ?? true)
+    }
+
+    private func findDescendant<T: NSView>(ofType type: T.Type, in root: NSView?) -> T? {
+        guard let root else { return nil }
+        if let match = root as? T {
+            return match
+        }
+        for subview in root.subviews {
+            if let match = findDescendant(ofType: type, in: subview) {
+                return match
+            }
+        }
+        return nil
     }
 }

@@ -4,6 +4,7 @@
 
 import AppKit
 import Foundation
+import LungfishCore
 import LungfishWorkflow
 
 protocol AssemblyContigCatalogProviding: Sendable {
@@ -16,13 +17,27 @@ extension AssemblyContigCatalog: AssemblyContigCatalogProviding {}
 
 @MainActor
 public final class AssemblyResultViewController: NSViewController {
+    private enum BlastSelectionLimit {
+        static let maxContigs = 50
+    }
+
     private(set) var currentResult: AssemblyResult?
     public var onBlastVerification: ((BlastRequest) -> Void)?
+    public var onExtractSequenceRequested: (([String], String) -> Void)? {
+        didSet { refreshContextMenu() }
+    }
+    public var onExportFASTARequested: (([String], String) -> Void)? {
+        didSet { refreshContextMenu() }
+    }
+    public var onCreateBundleRequested: (([String], String) -> Void)? {
+        didSet { refreshContextMenu() }
+    }
     public var onRunOperationRequested: (([String]) -> Void)? {
         didSet {
             refreshContextMenu()
         }
     }
+    var warningPresenter: ((String, String) -> Void)?
 
     private let summaryStrip = AssemblySummaryStrip()
     private let splitView = TrackedDividerSplitView()
@@ -49,6 +64,10 @@ public final class AssemblyResultViewController: NSViewController {
     private var selectionGeneration = 0
 
     private var contextMenu = NSMenu()
+    private var splitViewBottomConstraint: NSLayoutConstraint?
+    private var blastDrawerContainer: BlastResultsDrawerContainerView?
+    private var blastDrawerHeightConstraint: NSLayoutConstraint?
+    private var isBlastDrawerOpen = false
 
     public override func loadView() {
         let root = NSView()
@@ -89,6 +108,7 @@ public final class AssemblyResultViewController: NSViewController {
 
         detailPane.translatesAutoresizingMaskIntoConstraints = false
         detailContainer.addSubview(detailPane)
+        detailContainer.isHidden = true
 
         NSLayoutConstraint.activate([
             contigTableView.topAnchor.constraint(equalTo: tableContainer.topAnchor),
@@ -107,25 +127,9 @@ public final class AssemblyResultViewController: NSViewController {
         splitView.dividerStyle = .thin
         splitView.translatesAutoresizingMaskIntoConstraints = false
         splitView.delegate = self
-        splitView.isVertical = AssemblyPanelLayout.current() != .stacked
-
-        let layout = AssemblyPanelLayout.current()
-        if layout == .detailLeading {
-            splitView.addArrangedSubview(detailContainer)
-            splitView.addArrangedSubview(tableContainer)
-        } else {
-            splitView.addArrangedSubview(tableContainer)
-            splitView.addArrangedSubview(detailContainer)
-        }
+        splitView.isVertical = true
+        splitView.addArrangedSubview(tableContainer)
         splitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
-        splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleLayoutSwapRequested),
-            name: .assemblyLayoutSwapRequested,
-            object: nil
-        )
     }
 
     private func setupActionBar() {
@@ -149,12 +153,14 @@ public final class AssemblyResultViewController: NSViewController {
             splitView.topAnchor.constraint(equalTo: summaryStrip.bottomAnchor),
             splitView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             splitView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-
-            actionBar.topAnchor.constraint(equalTo: splitView.bottomAnchor),
             actionBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             actionBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             actionBar.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
+
+        let bottomConstraint = splitView.bottomAnchor.constraint(equalTo: actionBar.topAnchor)
+        bottomConstraint.isActive = true
+        splitViewBottomConstraint = bottomConstraint
     }
 
     private func wireCallbacks() {
@@ -167,12 +173,7 @@ public final class AssemblyResultViewController: NSViewController {
         contigTableView.onMultipleRowsSelected = { [weak self] rows in
             Task { await self?.showSelection(rows: rows) }
         }
-        detailPane.configureQuickCopy(pasteboard: scalarPasteboard)
         contigTableView.scalarPasteboard = scalarPasteboard
-    }
-
-    @objc private func handleLayoutSwapRequested(_ notification: Notification) {
-        applyLayoutPreference()
     }
 
     private func defaultLeadingFraction(for layout: AssemblyPanelLayout) -> CGFloat {
@@ -194,6 +195,7 @@ public final class AssemblyResultViewController: NSViewController {
     }
 
     private func applyLayoutPreference() {
+        guard splitView.arrangedSubviews.count > 1 else { return }
         let layout = AssemblyPanelLayout.current()
         let detailLeading = layout == .detailLeading
         splitCoordinator.applyLayoutPreference(
@@ -208,6 +210,7 @@ public final class AssemblyResultViewController: NSViewController {
     }
 
     private func scheduleInitialSplitValidationIfNeeded() {
+        guard splitView.arrangedSubviews.count > 1 else { return }
         splitCoordinator.scheduleInitialSplitValidationIfNeeded(
             ownerView: view,
             splitView: splitView,
@@ -224,6 +227,8 @@ public final class AssemblyResultViewController: NSViewController {
         contextMenu = FASTASequenceActionMenuBuilder.buildMenu(
             selectionCount: selectedContigNames.count,
             handlers: FASTASequenceActionHandlers(
+                onExtractSequence: { [weak self] in self?.performExtractSelectedSequence() },
+                blastMenuTitle: "BLAST Contig…",
                 onBlast: { [weak self] in self?.performBlastSelected() },
                 onCopy: { [weak self] in self?.performCopySelectedFASTA() },
                 onExport: { [weak self] in self?.performExportSelectedFASTA() },
@@ -236,9 +241,48 @@ public final class AssemblyResultViewController: NSViewController {
         contigTableView.tableContextMenu = contextMenu
     }
 
+    private func defaultSuggestedName(for selectedContigs: [String]) -> String {
+        guard let result = currentResult else {
+            return selectedContigs.first ?? "selected-contigs"
+        }
+        return selectedContigs.count == 1
+            ? selectedContigs[0]
+            : "\(result.outputDirectory.lastPathComponent)-selected-contigs"
+    }
+
+    private func selectedFASTARecords(lineWidth: Int = 70) async -> [String] {
+        guard let catalog else { return [] }
+        var fastaRecords: [String] = []
+        fastaRecords.reserveCapacity(selectedContigNames.count)
+        for contigName in selectedContigNames {
+            if let fasta = try? await catalog.sequenceFASTA(for: contigName, lineWidth: lineWidth) {
+                fastaRecords.append(fasta)
+            }
+        }
+        return fastaRecords
+    }
+
+    private func performExtractSelectedSequence() {
+        guard !selectedContigNames.isEmpty else { return }
+        let suggestedName = defaultSuggestedName(for: selectedContigNames)
+        Task { [weak self] in
+            guard let self else { return }
+            let fastaRecords = await selectedFASTARecords()
+            guard !fastaRecords.isEmpty else { return }
+            onExtractSequenceRequested?(fastaRecords, suggestedName)
+        }
+    }
+
     private func performBlastSelected() {
         guard let result = currentResult, !selectedContigNames.isEmpty else { return }
         let selectedContigs = selectedContigNames
+        guard selectedContigs.count <= BlastSelectionLimit.maxContigs else {
+            presentWarning(
+                title: "Too Many Contigs for BLAST",
+                message: "Select 50 contigs or fewer for a single BLAST submission."
+            )
+            return
+        }
         Task {
             if let request = try? await materializationAction.buildBlastRequest(result: result, selectedContigs: selectedContigs) {
                 onBlastVerification?(request)
@@ -255,18 +299,28 @@ public final class AssemblyResultViewController: NSViewController {
     }
 
     private func performExportSelectedFASTA() {
-        guard let result = currentResult,
-              !selectedContigNames.isEmpty,
-              let window = view.window
-        else { return }
+        guard let result = currentResult, !selectedContigNames.isEmpty else { return }
+        let suggestedName = defaultSuggestedName(for: selectedContigNames)
+
+        if let onExportFASTARequested {
+            Task { [weak self] in
+                guard let self else { return }
+                let fastaRecords = await selectedFASTARecords()
+                guard !fastaRecords.isEmpty else { return }
+                onExportFASTARequested(fastaRecords, "\(suggestedName).fa")
+            }
+            return
+        }
+
+        guard let window = view.window else { return }
 
         let selectedContigs = selectedContigNames
-        let suggestedName = selectedContigs.count == 1
+        let exportName = selectedContigs.count == 1
             ? "\(selectedContigs[0]).fa"
             : "\(result.outputDirectory.lastPathComponent)-selected-contigs.fa"
 
         Task {
-            guard let destination = await savePanelPresenter.present(suggestedName: suggestedName, on: window) else {
+            guard let destination = await savePanelPresenter.present(suggestedName: exportName, on: window) else {
                 return
             }
             try? await materializationAction.exportFASTA(
@@ -279,10 +333,19 @@ public final class AssemblyResultViewController: NSViewController {
 
     private func performCreateBundle() {
         guard let result = currentResult, !selectedContigNames.isEmpty else { return }
+        let suggestedName = defaultSuggestedName(for: selectedContigNames)
+
+        if let onCreateBundleRequested {
+            Task { [weak self] in
+                guard let self else { return }
+                let fastaRecords = await selectedFASTARecords()
+                guard !fastaRecords.isEmpty else { return }
+                onCreateBundleRequested(fastaRecords, suggestedName)
+            }
+            return
+        }
+
         let selectedContigs = selectedContigNames
-        let suggestedName = selectedContigs.count == 1
-            ? selectedContigs[0]
-            : "\(result.outputDirectory.lastPathComponent)-selected-contigs"
         Task {
             _ = try? await materializationAction.createBundle(
                 result: result,
@@ -321,7 +384,6 @@ public final class AssemblyResultViewController: NSViewController {
         refreshContextMenu()
 
         summaryStrip.configure(result: result, pasteboard: scalarPasteboard)
-        detailPane.configureQuickCopy(pasteboard: scalarPasteboard)
         contigTableView.scalarPasteboard = scalarPasteboard
         contigTableView.configure(rows: records)
         showEmptySelectionState()
@@ -330,42 +392,9 @@ public final class AssemblyResultViewController: NSViewController {
 
     private func showSelection(rows: [AssemblyContigRecord]) async {
         selectionGeneration += 1
-        let generation = selectionGeneration
-        let selectedNames = rows.map(\.name)
-        selectedContigNames = selectedNames
+        selectedContigNames = rows.map(\.name)
         actionBar.setSelectionCount(rows.count)
         refreshContextMenu()
-
-        guard currentResult != nil, let catalog else {
-            showEmptySelectionState(advanceSelectionGeneration: false)
-            return
-        }
-
-        if rows.count == 1, let record = rows.first {
-            let fasta = (try? await catalog.sequenceFASTA(for: record.name, lineWidth: 70)) ?? ""
-            guard generation == selectionGeneration else { return }
-            detailPane.showSingleSelection(
-                record: record,
-                fastaPreview: Self.previewFASTA(fasta)
-            )
-            return
-        }
-
-        if rows.count > 1 {
-            let previewFASTA = await Self.previewFASTA(for: rows, catalog: catalog)
-            if let summary = try? await catalog.selectionSummary(for: selectedNames) {
-                guard generation == selectionGeneration else { return }
-                detailPane.showMultiSelection(summary: summary, fastaPreview: previewFASTA)
-            } else if generation == selectionGeneration {
-                detailPane.showUnavailableSelectionSummary(
-                    selectedContigCount: rows.count,
-                    fastaPreview: previewFASTA
-                )
-            }
-            return
-        }
-
-        showEmptySelectionState(advanceSelectionGeneration: false)
     }
 
     private func showEmptySelectionState(advanceSelectionGeneration: Bool = true) {
@@ -375,43 +404,103 @@ public final class AssemblyResultViewController: NSViewController {
         selectedContigNames = []
         actionBar.setSelectionCount(0)
         refreshContextMenu()
-        detailPane.showEmptyState(contigCount: allRecords.count)
     }
 
-    private static func previewFASTA(_ fasta: String, sequenceLineLimit: Int = 4) -> String {
-        let lines = fasta.components(separatedBy: .newlines)
-        guard let header = lines.first, !header.isEmpty else { return "" }
-
-        let sequenceLines = lines.dropFirst().filter { !$0.isEmpty }
-        guard !sequenceLines.isEmpty else {
-            return header + "\n"
-        }
-
-        let previewLines = sequenceLines.prefix(sequenceLineLimit)
-        var preview = ([header] + previewLines).joined(separator: "\n")
-        if sequenceLines.count > sequenceLineLimit {
-            preview += "\n…"
-        }
-        return preview + "\n"
+    public func showBlastLoading(phase: BlastJobPhase, requestId: String?) {
+        let drawer = ensureBlastDrawer()
+        drawer.showLoading(phase: phase, requestId: requestId)
+        openBlastDrawerIfNeeded()
     }
 
-    private static func previewFASTA(
-        for rows: [AssemblyContigRecord],
-        catalog: any AssemblyContigCatalogProviding
-    ) async -> String {
-        var previews: [String] = []
-        previews.reserveCapacity(rows.count)
+    public func showBlastResults(_ result: BlastVerificationResult) {
+        let drawer = ensureBlastDrawer()
+        drawer.showResults(result)
+        openBlastDrawerIfNeeded()
+    }
 
-        for record in rows {
-            let fasta = (try? await catalog.sequenceFASTA(for: record.name, lineWidth: 70)) ?? ""
-            let preview = Self.previewFASTA(fasta)
-            if !preview.isEmpty {
-                previews.append(preview.trimmingCharacters(in: .whitespacesAndNewlines))
-            }
+    public func showBlastFailure(_ message: String) {
+        let drawer = ensureBlastDrawer()
+        drawer.showFailure(message: message)
+        openBlastDrawerIfNeeded()
+    }
+
+    private func ensureBlastDrawer() -> BlastResultsDrawerTab {
+        if let blastDrawerContainer {
+            blastDrawerContainer.blastResultsTab.presentationStyle = .contigBlast
+            return blastDrawerContainer.blastResultsTab
         }
 
-        guard !previews.isEmpty else { return "" }
-        return previews.joined(separator: "\n")
+        let container = BlastResultsDrawerContainerView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(container)
+
+        let heightConstraint = container.heightAnchor.constraint(equalToConstant: 0)
+
+        NSLayoutConstraint.activate([
+            container.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            container.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            container.bottomAnchor.constraint(equalTo: actionBar.topAnchor),
+            heightConstraint,
+        ])
+
+        splitViewBottomConstraint?.isActive = false
+        let newSplitBottom = splitView.bottomAnchor.constraint(equalTo: container.topAnchor)
+        newSplitBottom.isActive = true
+        splitViewBottomConstraint = newSplitBottom
+
+        blastDrawerContainer = container
+        blastDrawerHeightConstraint = heightConstraint
+        container.onDrag = { [weak self] delta in
+            guard let self, let heightConstraint = self.blastDrawerHeightConstraint else { return }
+            let availableExtent = max(0, self.view.bounds.height - self.actionBar.frame.height)
+            let proposed = heightConstraint.constant + delta
+            heightConstraint.constant = MetagenomicsPaneSizing.clampedDrawerExtent(
+                proposed: proposed,
+                containerExtent: availableExtent,
+                minimumDrawerExtent: 160,
+                minimumSiblingExtent: 120
+            )
+            self.view.layoutSubtreeIfNeeded()
+        }
+        container.onDragEnd = { [weak self] in
+            self?.view.layoutSubtreeIfNeeded()
+        }
+        view.layoutSubtreeIfNeeded()
+        container.blastResultsTab.presentationStyle = .contigBlast
+        return container.blastResultsTab
+    }
+
+    private func openBlastDrawerIfNeeded() {
+        guard !isBlastDrawerOpen else { return }
+        guard let blastDrawerHeightConstraint else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.25
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.allowsImplicitAnimation = true
+            blastDrawerHeightConstraint.animator().constant = 220
+            view.layoutSubtreeIfNeeded()
+        }
+        isBlastDrawerOpen = true
+    }
+
+    private func presentWarning(title: String, message: String) {
+        if let warningPresenter {
+            warningPresenter(title, message)
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.applyLungfishBranding()
+
+        if let window = view.window ?? NSApp.keyWindow {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
+        }
     }
 }
 
@@ -444,6 +533,7 @@ extension AssemblyResultViewController: BlastVerifiable {}
 
 extension AssemblyResultViewController: NSSplitViewDelegate {
     public func splitViewDidResizeSubviews(_ notification: Notification) {
+        guard splitView.arrangedSubviews.count > 1 else { return }
         splitCoordinator.splitViewDidResizeSubviews(
             splitView,
             minimumExtents: minimumExtents(for: AssemblyPanelLayout.current())

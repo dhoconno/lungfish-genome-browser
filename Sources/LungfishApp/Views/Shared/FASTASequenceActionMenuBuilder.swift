@@ -3,6 +3,8 @@ import ObjectiveC
 
 @MainActor
 struct FASTASequenceActionHandlers {
+    var onExtractSequence: (() -> Void)? = nil
+    var blastMenuTitle: String = "Verify with BLAST…"
     var onBlast: (() -> Void)?
     var onCopy: (() -> Void)?
     var onExport: (() -> Void)?
@@ -10,6 +12,7 @@ struct FASTASequenceActionHandlers {
     var onRunOperation: (() -> Void)?
 
     static let noop = FASTASequenceActionHandlers(
+        onExtractSequence: {},
         onBlast: {},
         onCopy: {},
         onExport: {},
@@ -51,7 +54,13 @@ enum FASTASequenceActionMenuBuilder {
         let isEnabled = selectionCount > 0
 
         addItem(
-            titled: "Verify with BLAST…",
+            titled: "Extract Sequence…",
+            handler: handlers.onExtractSequence,
+            enabled: isEnabled,
+            to: &items
+        )
+        addItem(
+            titled: handlers.blastMenuTitle,
             handler: handlers.onBlast,
             enabled: isEnabled,
             to: &items

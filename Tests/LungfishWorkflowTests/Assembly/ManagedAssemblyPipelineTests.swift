@@ -93,6 +93,56 @@ final class ManagedAssemblyPipelineTests: XCTestCase {
         XCTAssertTrue(command.arguments.contains("--min-contig-len"))
     }
 
+    func testBuildsMegahitCommandConvertsMemoryBudgetToBytes() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("managed-assembly-megahit-memory-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let request = AssemblyRunRequest(
+            tool: .megahit,
+            readType: .illuminaShortReads,
+            inputURLs: [URL(fileURLWithPath: "/tmp/reads.fastq.gz")],
+            projectName: "memory-demo",
+            outputDirectory: tempDir,
+            threads: 8,
+            memoryGB: 24,
+            minContigLength: 1000,
+            selectedProfileID: nil,
+            extraArguments: []
+        )
+
+        let command = try ManagedAssemblyPipeline.buildCommand(for: request)
+
+        let memoryIndex = try XCTUnwrap(command.arguments.firstIndex(of: "--memory"))
+        XCTAssertEqual(command.arguments[memoryIndex + 1], "25769803776")
+    }
+
+    #if os(macOS) && arch(arm64)
+    func testBuildsMegahitCommandCapsThreadsToTwoOnAppleSilicon() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("managed-assembly-megahit-threads-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let request = AssemblyRunRequest(
+            tool: .megahit,
+            readType: .illuminaShortReads,
+            inputURLs: [URL(fileURLWithPath: "/tmp/reads.fastq.gz")],
+            projectName: "thread-demo",
+            outputDirectory: tempDir,
+            threads: 8,
+            memoryGB: nil,
+            minContigLength: 1000,
+            selectedProfileID: nil,
+            extraArguments: []
+        )
+
+        let command = try ManagedAssemblyPipeline.buildCommand(for: request)
+
+        let threadIndex = try XCTUnwrap(command.arguments.firstIndex(of: "--num-cpu-threads"))
+        XCTAssertEqual(command.arguments[threadIndex + 1], "2")
+    }
+    #endif
+
     func testBuildsSkesaCommandNormalizesZeroMinContigLengthToOne() throws {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("managed-assembly-skesa-\(UUID().uuidString)")
@@ -119,6 +169,55 @@ final class ManagedAssemblyPipelineTests: XCTestCase {
 
         let minContigIndex = try XCTUnwrap(command.arguments.firstIndex(of: "--min_contig"))
         XCTAssertEqual(command.arguments[minContigIndex + 1], "1")
+    }
+
+    func testBuildsSkesaCommandPinsMinCountToTwoWhenUnspecified() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("managed-assembly-skesa-min-count-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let request = AssemblyRunRequest(
+            tool: .skesa,
+            readType: .illuminaShortReads,
+            inputURLs: [URL(fileURLWithPath: "/tmp/reads.fastq.gz")],
+            projectName: "skesa-demo",
+            outputDirectory: tempDir,
+            threads: 8,
+            memoryGB: 32,
+            minContigLength: 1,
+            selectedProfileID: nil,
+            extraArguments: []
+        )
+
+        let command = try ManagedAssemblyPipeline.buildCommand(for: request)
+
+        let minCountIndex = try XCTUnwrap(command.arguments.firstIndex(of: "--min_count"))
+        XCTAssertEqual(command.arguments[minCountIndex + 1], "2")
+    }
+
+    func testBuildsSkesaCommandDoesNotDuplicateExplicitMinCountOverride() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("managed-assembly-skesa-explicit-min-count-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let request = AssemblyRunRequest(
+            tool: .skesa,
+            readType: .illuminaShortReads,
+            inputURLs: [URL(fileURLWithPath: "/tmp/reads.fastq.gz")],
+            projectName: "skesa-demo",
+            outputDirectory: tempDir,
+            threads: 8,
+            memoryGB: 32,
+            minContigLength: 1,
+            selectedProfileID: nil,
+            extraArguments: ["--min_count", "5"]
+        )
+
+        let command = try ManagedAssemblyPipeline.buildCommand(for: request)
+
+        XCTAssertEqual(command.arguments.filter { $0 == "--min_count" }.count, 1)
+        let minCountIndex = try XCTUnwrap(command.arguments.firstIndex(of: "--min_count"))
+        XCTAssertEqual(command.arguments[minCountIndex + 1], "5")
     }
 
     func testRunStagesMegahitIntoFreshWorkspaceWhenFinalOutputDirectoryAlreadyExists() async throws {

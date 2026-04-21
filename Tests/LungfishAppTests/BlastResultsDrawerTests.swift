@@ -337,6 +337,49 @@ final class BlastResultsDrawerTests: XCTestCase {
         XCTAssertEqual(result.verificationPercentage, 15)
     }
 
+    func testContigBlastPresentationUsesNeutralSummaryAndHidesVerificationChrome() throws {
+        let tab = BlastResultsDrawerTab(frame: NSRect(x: 0, y: 0, width: 800, height: 300))
+        let result = BlastVerificationResult(
+            taxonName: "2 contigs",
+            taxId: 0,
+            readResults: [
+                BlastReadResult(
+                    id: "contig_1",
+                    verdict: .verified,
+                    topHitOrganism: "Test organism",
+                    topHitAccession: "NC_000001.1",
+                    percentIdentity: 99.0,
+                    eValue: 0.0,
+                    matchesQueriedTaxon: false
+                ),
+            ],
+            submittedAt: Date(),
+            completedAt: Date(),
+            rid: "CONTIG123",
+            blastProgram: "megablast",
+            database: "core_nt"
+        )
+
+        tab.presentationStyle = .contigBlast
+        tab.showResults(result)
+        tab.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(tab.summaryLabel.stringValue, "BLAST results for 2 contigs")
+        XCTAssertTrue(tab.confidenceLabel.isHidden)
+        XCTAssertTrue(tab.confidenceDots.isHidden)
+        XCTAssertTrue(tab.lcaWarningLabel.isHidden)
+        XCTAssertTrue(tab.isStatusColumnHidden)
+    }
+
+    func testContigBlastLoadingUsesContigCopy() throws {
+        let tab = BlastResultsDrawerTab(frame: NSRect(x: 0, y: 0, width: 800, height: 300))
+
+        tab.presentationStyle = .contigBlast
+        tab.showLoading(phase: .submitting, requestId: nil)
+
+        XCTAssertEqual(tab.loadingPhaseText, "Submitting contigs to NCBI BLAST...")
+    }
+
     // MARK: - Outline View Row Count
 
     func testOutlineViewTopLevelItemCount() throws {

@@ -29,11 +29,14 @@ extension ViewerViewController {
 
         let controller = AssemblyResultViewController()
         addChild(controller)
-        controller.onBlastVerification = { request in
+        controller.onBlastVerification = { [weak self] request in
+            guard let self else { return }
+            guard let blastController = self.assemblyResultController else { return }
+            blastController.showBlastLoading(phase: .submitting, requestId: nil)
             let blastCliCmd = OperationCenter.buildCLICommand(subcommand: "blast verify", args: [])
             let opID = OperationCenter.shared.start(
                 title: "BLAST \(request.sourceLabel)",
-                detail: "Preparing BLAST verification…",
+                detail: "Preparing contig BLAST…",
                 operationType: .blastVerification,
                 cliCommand: blastCliCmd
             )
@@ -57,30 +60,55 @@ extension ViewerViewController {
                         request: verificationRequest,
                         progress: { fraction, message in
                             DispatchQueue.main.async {
-                                OperationCenter.shared.update(id: opID, progress: fraction, detail: message)
+                                MainActor.assumeIsolated {
+                                    OperationCenter.shared.update(id: opID, progress: fraction, detail: message)
+                                    let lower = message.lowercased()
+                                    if lower.contains("waiting") {
+                                        blastController.showBlastLoading(phase: .waiting, requestId: nil)
+                                    } else if lower.contains("parsing") {
+                                        blastController.showBlastLoading(phase: .parsing, requestId: nil)
+                                    } else {
+                                        blastController.showBlastLoading(phase: .submitting, requestId: nil)
+                                    }
+                                }
                             }
                         }
                     )
 
                     DispatchQueue.main.async {
-                        OperationCenter.shared.complete(
-                            id: opID,
-                            detail: "\(result.verifiedCount)/\(result.readResults.count) verified"
-                        )
+                        MainActor.assumeIsolated {
+                            OperationCenter.shared.complete(
+                                id: opID,
+                                detail: "Results ready for \(request.readCount) contig\(request.readCount == 1 ? "" : "s")"
+                            )
+                            blastController.showBlastResults(result)
+                        }
                     }
                 } catch {
                     let errorText = error.localizedDescription
                     DispatchQueue.main.async {
-                        OperationCenter.shared.fail(
-                            id: opID,
-                            detail: errorText,
-                            errorMessage: errorText
-                        )
+                        MainActor.assumeIsolated {
+                            OperationCenter.shared.fail(
+                                id: opID,
+                                detail: errorText,
+                                errorMessage: errorText
+                            )
+                            blastController.showBlastFailure(errorText)
+                        }
                     }
                 }
             }
 
             OperationCenter.shared.setCancelCallback(for: opID) { task.cancel() }
+        }
+        controller.onExtractSequenceRequested = { [weak self] fastaRecords, suggestedName in
+            self?.presentFASTASequenceExtractionDialog(records: fastaRecords, suggestedName: suggestedName)
+        }
+        controller.onExportFASTARequested = { [weak self] fastaRecords, suggestedName in
+            self?.exportFASTARecords(fastaRecords, suggestedName: suggestedName)
+        }
+        controller.onCreateBundleRequested = { [weak self] fastaRecords, suggestedName in
+            self?.createReferenceBundle(from: fastaRecords, suggestedName: suggestedName)
         }
         controller.onRunOperationRequested = { [weak self] fastaRecords in
             let suggestedName: String

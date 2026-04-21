@@ -59,7 +59,11 @@ struct AssemblyWizardSheet: View {
         _selectedReadType = State(initialValue: detectedReadType ?? Self.defaultReadType(for: initialTool))
         _minContigLength = State(initialValue: Self.defaultMinContigLength(for: initialTool))
         _selectedProfileID = State(initialValue: Self.defaultProfileID(for: initialTool) ?? "")
-        _hasConfirmedManualReadType = State(initialValue: detectedReadType != nil)
+        // The visible read-type picker already presents a concrete selection.
+        // Treat that displayed choice as the current manual choice when
+        // auto-detection is inconclusive so the outer run gating stays aligned
+        // with what the user sees.
+        _hasConfirmedManualReadType = State(initialValue: true)
     }
 
     private var availableMemoryGB: Int {
@@ -198,12 +202,16 @@ struct AssemblyWizardSheet: View {
         )
     }
 
+    private var configurationBlockingMessage: String? {
+        compatibilityBlockingMessage ?? readTopologyMessage
+    }
+
     private var canRun: Bool {
         guard !inputFiles.isEmpty else { return false }
         guard outputDirectory != nil else { return false }
         guard !projectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         guard !requiresManualReadTypeConfirmation || hasConfirmedManualReadType else { return false }
-        return compatibilityPresentation.state == .ready
+        return configurationBlockingMessage == nil
     }
 
     private var validationMessage: String? {
@@ -219,8 +227,8 @@ struct AssemblyWizardSheet: View {
         if requiresManualReadTypeConfirmation && !hasConfirmedManualReadType {
             return "Choose a read type before running this assembly."
         }
-        if compatibilityPresentation.state != .ready {
-            return compatibilityPresentation.message
+        if let configurationBlockingMessage {
+            return configurationBlockingMessage
         }
         return nil
     }
@@ -285,7 +293,8 @@ struct AssemblyWizardSheet: View {
             } else if profileOptions.isEmpty {
                 selectedProfileID = nextProfileID
             }
-            if requiresManualReadTypeConfirmation && !hasConfirmedManualReadType {
+            if requiresManualReadTypeConfirmation
+                && !AssemblyCompatibility.isSupported(tool: newValue, for: selectedReadType) {
                 selectedReadType = Self.defaultReadType(for: newValue)
             }
         }
@@ -649,7 +658,7 @@ struct AssemblyWizardSheet: View {
         if let detected = compatibilityEvaluation.resolvedReadType {
             return detected.displayName
         }
-        return "No single read class detected. Choose one manually."
+        return "No single read class detected. Review the selected read type below."
     }
 
     private var readLayoutSummary: String {

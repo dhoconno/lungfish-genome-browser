@@ -69,11 +69,22 @@ public struct AssemblySheetPresenter {
             outputDirectory: outputDirectory,
             initialTool: initialTool,
             onRun: { config in
-                window.endSheet(wizardPanel)
-                if let onRun {
-                    onRun(config)
-                } else {
-                    AssemblyRunner.run(request: config)
+                Task { @MainActor in
+                    if let warning = await AssemblyRuntimePreflight.warningMessage(for: config) {
+                        AssemblyRuntimePreflight.presentWarning(
+                            message: warning,
+                            for: config.tool,
+                            on: wizardPanel
+                        )
+                        return
+                    }
+
+                    window.endSheet(wizardPanel)
+                    if let onRun {
+                        onRun(config)
+                    } else {
+                        AssemblyRunner.runValidated(request: config)
+                    }
                 }
             },
             onCancel: {

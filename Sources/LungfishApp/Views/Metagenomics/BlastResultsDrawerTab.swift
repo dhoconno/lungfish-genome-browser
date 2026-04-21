@@ -118,6 +118,19 @@ public enum BlastJobPhase: Int, Sendable {
         }
     }
 
+    func label(for presentationStyle: BlastResultsDrawerTab.BlastResultsDrawerPresentationStyle) -> String {
+        switch presentationStyle {
+        case .verification:
+            return label
+        case .contigBlast:
+            switch self {
+            case .submitting: return "Submitting contigs to NCBI BLAST..."
+            case .waiting:    return "Waiting for NCBI BLAST results..."
+            case .parsing:    return "Parsing BLAST results..."
+            }
+        }
+    }
+
     /// Total number of phases.
     public static let totalPhases = 3
 }
@@ -234,6 +247,10 @@ private let hiddenColumnsDefaultsKey = "blastResultsHiddenColumns"
 /// run on the main thread.
 @MainActor
 public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
+    enum BlastResultsDrawerPresentationStyle: Equatable {
+        case verification
+        case contigBlast
+    }
 
     // MARK: - State
 
@@ -246,6 +263,13 @@ public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
 
     /// The current display state.
     private(set) var displayState: DisplayState = .empty
+    var presentationStyle: BlastResultsDrawerPresentationStyle = .verification {
+        didSet {
+            guard oldValue != presentationStyle else { return }
+            applyPresentationStyle()
+            refreshForPresentationStyle()
+        }
+    }
 
     /// Outline view wrapper items for the current result (parent rows).
     private var outlineItems: [ReadResultItem] = []
@@ -266,10 +290,6 @@ public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
     var onCancelBlast: (() -> Void)?
 
     // MARK: - Subviews: Empty State
-
-    private let defaultEmptyStateTitle = "No BLAST Verifications"
-    private let defaultEmptyStateDetail =
-        "Right-click a taxon and choose \"BLAST Matching Reads...\" to verify its classification against the NCBI database."
 
     private let emptyStateContainer = NSView()
     private let emptyStateIcon = NSImageView()
@@ -301,6 +321,10 @@ public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
     private let actionBar = NSView()
     let openInBlastButton = NSButton()
     let rerunBlastButton = NSButton()
+    var loadingPhaseText: String { loadingPhaseLabel.stringValue }
+    var isStatusColumnHidden: Bool {
+        resultsOutlineView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("blastStatus"))?.isHidden ?? false
+    }
 
     // MARK: - Number Formatter
 
@@ -332,7 +356,7 @@ public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
         showState(.empty)
 
         setAccessibilityRole(.group)
-        setAccessibilityLabel("BLAST Verification Results")
+        applyPresentationStyle()
     }
 
     // MARK: - Public API
@@ -364,7 +388,7 @@ public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
     func showLoading(phase: BlastJobPhase, requestId: String?) {
         displayState = .loading(phase: phase, requestId: requestId)
 
-        loadingPhaseLabel.stringValue = phase.label
+        loadingPhaseLabel.stringValue = phase.label(for: presentationStyle)
         loadingPhaseNumberLabel.stringValue = "Phase \(phase.rawValue) of \(BlastJobPhase.totalPhases)"
 
         if let rid = requestId {
@@ -394,48 +418,64 @@ public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
     /// - Parameter result: The BLAST verification result to display.
     func showResults(_ result: BlastVerificationResult) {
         displayState = .results(result)
-
-        // Update summary bar with taxon-aware counts
-        let supporting = result.supportingCount
-        let contradicting = result.contradictingCount
         let total = result.totalReads
-        summaryLabel.stringValue = "BLAST for \(result.taxonName): \(supporting) supporting, \(contradicting) contradicting (\(total) reads)"
 
-        let confidence = result.confidence
-        confidenceLabel.stringValue = confidence.displayLabel
-        confidenceLabel.textColor = confidence.accentColor
-        confidenceDots.stringValue = buildConfidenceDots(
-            supporting: supporting,
-            contradicting: contradicting,
-            total: total
-        )
-        confidenceDots.textColor = confidence.accentColor
-        summaryBar.layer?.backgroundColor = confidence.tintColor.cgColor
+        switch presentationStyle {
+        case .verification:
+            let supporting = result.supportingCount
+            let contradicting = result.contradictingCount
+            summaryLabel.stringValue = "BLAST for \(result.taxonName): \(supporting) supporting, \(contradicting) contradicting (\(total) reads)"
 
-        // LCA disagreement indicator
-        let lcaCount = result.lcaDisagreementCount
-        if lcaCount > 0 {
-            lcaWarningLabel.stringValue = "\(lcaCount) with conflicting organisms"
-            lcaWarningLabel.textColor = .systemOrange
-            lcaWarningLabel.isHidden = false
-        } else {
+            let confidence = result.confidence
+            confidenceLabel.stringValue = confidence.displayLabel
+            confidenceLabel.textColor = confidence.accentColor
+            confidenceDots.stringValue = buildConfidenceDots(
+                supporting: supporting,
+                contradicting: contradicting,
+                total: total
+            )
+            confidenceDots.textColor = confidence.accentColor
+            confidenceDots.isHidden = false
+            confidenceLabel.isHidden = false
+            summaryBar.layer?.backgroundColor = confidence.tintColor.cgColor
+
+            let lcaCount = result.lcaDisagreementCount
+            if lcaCount > 0 {
+                lcaWarningLabel.stringValue = "\(lcaCount) with conflicting organisms"
+                lcaWarningLabel.textColor = .systemOrange
+                lcaWarningLabel.isHidden = false
+            } else {
+                lcaWarningLabel.stringValue = ""
+                lcaWarningLabel.isHidden = true
+            }
+
+            let summaryIconName: String
+            switch confidence {
+            case .supported:    summaryIconName = "checkmark.circle.fill"
+            case .mixed:        summaryIconName = "exclamationmark.triangle.fill"
+            case .unsupported:  summaryIconName = "xmark.circle.fill"
+            case .inconclusive: summaryIconName = "questionmark.circle.fill"
+            }
+            summaryIcon.image = NSImage(
+                systemSymbolName: summaryIconName,
+                accessibilityDescription: confidence.displayLabel
+            )
+            summaryIcon.contentTintColor = confidence.accentColor
+        case .contigBlast:
+            summaryLabel.stringValue = "BLAST results for \(result.taxonName)"
+            confidenceLabel.stringValue = ""
+            confidenceDots.stringValue = ""
             lcaWarningLabel.stringValue = ""
+            confidenceLabel.isHidden = true
+            confidenceDots.isHidden = true
             lcaWarningLabel.isHidden = true
+            summaryIcon.image = NSImage(
+                systemSymbolName: "magnifyingglass.circle.fill",
+                accessibilityDescription: "BLAST results"
+            )
+            summaryIcon.contentTintColor = .controlAccentColor
+            summaryBar.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.45).cgColor
         }
-
-        let summaryIconName: String
-        switch confidence {
-        case .supported:    summaryIconName = "checkmark.circle.fill"
-        case .mixed:        summaryIconName = "exclamationmark.triangle.fill"
-        case .unsupported:  summaryIconName = "xmark.circle.fill"
-        case .inconclusive: summaryIconName = "questionmark.circle.fill"
-        }
-        let summaryIconImage = NSImage(
-            systemSymbolName: summaryIconName,
-            accessibilityDescription: confidence.displayLabel
-        )
-        summaryIcon.image = summaryIconImage
-        summaryIcon.contentTintColor = confidence.accentColor
 
         // Enable/disable "Open in BLAST" based on request ID
         openInBlastButton.isEnabled = !result.rid.isEmpty
@@ -451,7 +491,7 @@ public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
         showState(.results(result))
 
         blastLogger.info(
-            "Showing BLAST results: \(supporting) supporting, \(contradicting) contradicting of \(total) for \(result.taxonName, privacy: .public)"
+            "Showing BLAST results for \(result.taxonName, privacy: .public) (\(total) queries)"
         )
     }
 
@@ -535,13 +575,26 @@ public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
     }
 
     private func configureEmptyStateAsDefault() {
-        emptyStateIcon.image = NSImage(
-            systemSymbolName: "bolt.badge.checkmark",
-            accessibilityDescription: "BLAST verification"
-        )
-        emptyStateIcon.contentTintColor = .tertiaryLabelColor
-        emptyStateTitleLabel.stringValue = defaultEmptyStateTitle
-        emptyStateDetailLabel.stringValue = defaultEmptyStateDetail
+        switch presentationStyle {
+        case .verification:
+            emptyStateIcon.image = NSImage(
+                systemSymbolName: "bolt.badge.checkmark",
+                accessibilityDescription: "BLAST verification"
+            )
+            emptyStateIcon.contentTintColor = .tertiaryLabelColor
+            emptyStateTitleLabel.stringValue = "No BLAST Verifications"
+            emptyStateDetailLabel.stringValue =
+                "Right-click a taxon and choose \"BLAST Matching Reads...\" to verify its classification against the NCBI database."
+        case .contigBlast:
+            emptyStateIcon.image = NSImage(
+                systemSymbolName: "magnifyingglass.circle",
+                accessibilityDescription: "BLAST results"
+            )
+            emptyStateIcon.contentTintColor = .tertiaryLabelColor
+            emptyStateTitleLabel.stringValue = "No BLAST Results"
+            emptyStateDetailLabel.stringValue =
+                "Select contigs and choose \"BLAST Contig…\" to compare them against the NCBI database."
+        }
         emptyStateDetailLabel.textColor = .tertiaryLabelColor
     }
 
@@ -552,7 +605,7 @@ public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
             accessibilityDescription: "BLAST verification failed"
         )
         emptyStateIcon.contentTintColor = .systemOrange
-        emptyStateTitleLabel.stringValue = "BLAST Verification Failed"
+        emptyStateTitleLabel.stringValue = presentationStyle == .verification ? "BLAST Verification Failed" : "BLAST Failed"
         emptyStateDetailLabel.stringValue = trimmedMessage.isEmpty ? "Request failed. Please retry." : trimmedMessage
         emptyStateDetailLabel.textColor = .secondaryLabelColor
     }
@@ -668,6 +721,7 @@ public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
 
     private func setupSummaryBar() {
         summaryBar.translatesAutoresizingMaskIntoConstraints = false
+        summaryBar.wantsLayer = true
         resultsContainer.addSubview(summaryBar)
 
         summaryIcon.translatesAutoresizingMaskIntoConstraints = false
@@ -883,6 +937,7 @@ public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
         resultsScrollView.documentView = resultsOutlineView
 
         resultsOutlineView.setAccessibilityLabel("BLAST Results Table")
+        applyPresentationStyle()
     }
 
     // MARK: - Column Header Context Menu
@@ -1200,6 +1255,38 @@ public final class BlastResultsDrawerTab: NSView, NSMenuItemValidation {
         let contra = String(repeating: "\u{25C6}", count: contradictDots)
         let empty = String(repeating: "\u{25CB}", count: emptyDots)
         return filled + contra + empty
+    }
+
+    private func applyPresentationStyle() {
+        let statusColumn = resultsOutlineView.tableColumn(withIdentifier: .blastStatus)
+        let readColumn = resultsOutlineView.tableColumn(withIdentifier: .blastReadId)
+
+        switch presentationStyle {
+        case .verification:
+            statusColumn?.isHidden = false
+            readColumn?.title = "Read / Accession"
+            summaryBar.setAccessibilityLabel("BLAST verification summary")
+            rerunBlastButton.setAccessibilityLabel("Re-run BLAST verification")
+            setAccessibilityLabel("BLAST Verification Results")
+        case .contigBlast:
+            statusColumn?.isHidden = true
+            readColumn?.title = "Contig / Accession"
+            summaryBar.setAccessibilityLabel("BLAST summary")
+            rerunBlastButton.setAccessibilityLabel("Re-run BLAST for selected contigs")
+            setAccessibilityLabel("BLAST Results")
+        }
+    }
+
+    private func refreshForPresentationStyle() {
+        switch displayState {
+        case .empty:
+            configureEmptyStateAsDefault()
+            showState(.empty)
+        case .loading(let phase, let requestId):
+            showLoading(phase: phase, requestId: requestId)
+        case .results(let result):
+            showResults(result)
+        }
     }
 
     // MARK: - Sorting

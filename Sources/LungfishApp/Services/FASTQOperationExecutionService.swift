@@ -393,27 +393,28 @@ struct FASTQOperationExecutionService {
             return CLIInvocation(subcommand: "map", arguments: arguments)
 
         case .assemble(let request, _):
-            var arguments = request.inputURLs.map(\.path)
-            if request.pairedEnd {
+            let executionRequest = request.normalizedForExecution()
+            var arguments = executionRequest.inputURLs.map(\.path)
+            if executionRequest.pairedEnd {
                 arguments.append("--paired")
             }
             arguments += [
-                "--assembler", request.tool.rawValue,
-                "--read-type", request.readType.cliArgument,
-                "--project-name", request.projectName,
-                "--threads", "\(request.threads)",
+                "--assembler", executionRequest.tool.rawValue,
+                "--read-type", executionRequest.readType.cliArgument,
+                "--project-name", executionRequest.projectName,
+                "--threads", "\(executionRequest.threads)",
                 "--output", outputTargetPath,
             ]
-            if let memoryGB = request.memoryGB {
+            if let memoryGB = executionRequest.memoryGB {
                 arguments += ["--memory-gb", "\(memoryGB)"]
             }
-            if let minContigLength = request.effectiveMinContigLength {
+            if let minContigLength = executionRequest.effectiveMinContigLength {
                 arguments += ["--min-contig-length", "\(minContigLength)"]
             }
-            if let selectedProfileID = request.selectedProfileID {
+            if let selectedProfileID = executionRequest.selectedProfileID {
                 arguments += ["--profile", selectedProfileID]
             }
-            for extraArgument in request.extraArguments {
+            for extraArgument in executionRequest.extraArguments {
                 arguments += ["--extra-arg", extraArgument]
             }
             return CLIInvocation(subcommand: "assemble", arguments: arguments)

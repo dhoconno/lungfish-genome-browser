@@ -4,6 +4,44 @@
 
 import Foundation
 
+public struct AssemblyExecutionHost: Sendable, Equatable {
+    public enum OperatingSystem: Sendable, Equatable {
+        case macOS
+        case other
+    }
+
+    public let operatingSystem: OperatingSystem
+    public let architecture: String
+
+    public init(operatingSystem: OperatingSystem, architecture: String) {
+        self.operatingSystem = operatingSystem
+        self.architecture = architecture
+    }
+
+    public static let current = AssemblyExecutionHost(
+        operatingSystem: {
+            #if os(macOS)
+            .macOS
+            #else
+            .other
+            #endif
+        }(),
+        architecture: {
+            #if arch(arm64)
+            "arm64"
+            #elseif arch(x86_64)
+            "x86_64"
+            #else
+            "unknown"
+            #endif
+        }()
+    )
+
+    public var capsMegahitThreads: Bool {
+        operatingSystem == .macOS && architecture == "arm64"
+    }
+}
+
 /// Assembler-neutral request passed into the managed assembly pipeline.
 public struct AssemblyRunRequest: Sendable, Codable, Equatable {
     public let tool: AssemblyTool
@@ -51,5 +89,35 @@ public extension AssemblyRunRequest {
     var effectiveMinContigLength: Int? {
         guard let minContigLength else { return nil }
         return max(minContigLength, 1)
+    }
+
+    var effectiveMegahitMemoryBytes: Int64? {
+        guard tool == .megahit, let memoryGB else { return nil }
+        return Int64(max(memoryGB, 1)) * 1024 * 1024 * 1024
+    }
+
+    func effectiveThreadCount(on host: AssemblyExecutionHost = .current) -> Int {
+        let requestedThreads = max(threads, 1)
+        if tool == .megahit && host.capsMegahitThreads {
+            // MEGAHIT 1.2.9 arm64 crashes reliably above two threads on Apple Silicon.
+            return min(requestedThreads, 2)
+        }
+        return requestedThreads
+    }
+
+    func normalizedForExecution(on host: AssemblyExecutionHost = .current) -> AssemblyRunRequest {
+        AssemblyRunRequest(
+            tool: tool,
+            readType: readType,
+            inputURLs: inputURLs,
+            projectName: projectName,
+            outputDirectory: outputDirectory,
+            pairedEnd: pairedEnd,
+            threads: effectiveThreadCount(on: host),
+            memoryGB: memoryGB,
+            minContigLength: minContigLength,
+            selectedProfileID: selectedProfileID,
+            extraArguments: extraArguments
+        )
     }
 }

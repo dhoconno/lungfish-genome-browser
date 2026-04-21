@@ -183,6 +183,7 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
     /// Called when the user confirms BLAST verification for a contig.
     /// Parameters: (selected hit, contig FASTA sequence).
     public var onBlastVerification: ((NvdBlastHit, String) -> Void)?
+    public var onExtractSequenceRequested: (([String], String) -> Void)?
     public var onExportFASTARequested: (([String]) -> Void)?
     public var onCreateBundleRequested: (([String]) -> Void)?
     public var onRunOperationRequested: (([String]) -> Void)?
@@ -1203,8 +1204,14 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
         )
     }
 
-    @objc private func contextExtractReadsUnified(_ sender: Any?) {
-        presentUnifiedExtractionDialog()
+    @objc private func contextExtractSequence(_ sender: Any?) {
+        let records = selectedContigFASTARecords()
+        guard !records.isEmpty else { return }
+        if let onExtractSequenceRequested {
+            onExtractSequenceRequested(records, suggestedSequenceName(for: records, fallback: "nvd-contig"))
+        } else {
+            presentUnifiedExtractionDialog()
+        }
     }
 
     @objc private func handleLayoutSwapRequested(_ notification: Notification) {
@@ -1533,18 +1540,10 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
 
     private func populateContextMenu(_ menu: NSMenu, for hit: NvdBlastHit) {
         menu.removeAllItems()
-
-        // Extract Reads -> unified extraction dialog
-        let extractItem = NSMenuItem(
-            title: "Extract Reads\u{2026}",
-            action: #selector(contextExtractReadsUnified(_:)),
-            keyEquivalent: ""
-        )
-        extractItem.target = self
-        menu.addItem(extractItem)
         let sharedItems = FASTASequenceActionMenuBuilder.buildItems(
             selectionCount: outlineView.selectedRowIndexes.count,
             handlers: FASTASequenceActionHandlers(
+                onExtractSequence: { [weak self] in self?.contextExtractSequence(nil) },
                 onBlast: (onBlastVerification != nil && database != nil && outlineView.selectedRowIndexes.count <= 1)
                     ? { [weak self] in self?.performBlastVerification(for: hit) }
                     : nil,
@@ -1561,7 +1560,6 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
             )
         )
         if !sharedItems.isEmpty {
-            menu.addItem(NSMenuItem.separator())
             sharedItems.forEach(menu.addItem(_:))
         }
 
@@ -1595,6 +1593,36 @@ public final class NvdResultViewController: NSViewController, NSSplitViewDelegat
             searchPubMed.representedObject = hit.adjustedTaxidName
             menu.addItem(searchPubMed)
         }
+    }
+
+    private func selectedContigFASTARecords() -> [String] {
+        outlineView.selectedRowIndexes.compactMap { row in
+            guard let item = outlineView.item(atRow: row) as? NvdOutlineItem else { return nil }
+            switch item {
+            case .contig(let sampleId, let qseqid):
+                guard let hit = displayedContigs.first(where: { $0.sampleId == sampleId && $0.qseqid == qseqid }) else {
+                    return nil
+                }
+                return contigFASTARecord(for: hit)
+            case .childHit:
+                return nil
+            case .taxonGroup:
+                return nil
+            }
+        }
+    }
+
+    private func suggestedSequenceName(for fastaRecords: [String], fallback: String) -> String {
+        guard let header = fastaRecords.first?
+            .split(whereSeparator: \.isNewline)
+            .first?
+            .dropFirst()
+            .split(separator: " ")
+            .first,
+              !header.isEmpty else {
+            return fallback
+        }
+        return String(header)
     }
 
     // MARK: - Context Menu Actions

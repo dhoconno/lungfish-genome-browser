@@ -12,6 +12,25 @@ public struct AssemblyContigRecord: Sendable, Equatable {
     public let lengthBP: Int64
     public let gcPercent: Double
     public let shareOfAssemblyPercent: Double
+    public let previewSequence: String
+
+    public init(
+        rank: Int,
+        name: String,
+        header: String,
+        lengthBP: Int64,
+        gcPercent: Double,
+        shareOfAssemblyPercent: Double,
+        previewSequence: String = ""
+    ) {
+        self.rank = rank
+        self.name = name
+        self.header = header
+        self.lengthBP = lengthBP
+        self.gcPercent = gcPercent
+        self.shareOfAssemblyPercent = shareOfAssemblyPercent
+        self.previewSequence = previewSequence
+    }
 }
 
 public struct AssemblyContigSelectionSummary: Sendable, Equatable {
@@ -31,6 +50,7 @@ public struct AssemblyContigCatalog: Sendable {
         let gcBases: Int64
         let gcPercent: Double
         let shareOfAssemblyPercent: Double
+        let previewSequence: String
     }
 
     private let reader: IndexedFASTAReader
@@ -55,11 +75,18 @@ public struct AssemblyContigCatalog: Sendable {
             }
             let lengthBP = Int64(entry.length)
             let gcBases: Int64
+            let previewSequence: String
             if lengthBP == 0 {
                 gcBases = 0
+                previewSequence = ""
             } else {
                 let sequence = try await reader.fetchSequence(name: name)
                 gcBases = Int64(Self.gcBaseCount(in: sequence.asString()))
+                previewSequence = try await Self.previewSequence(
+                    reader: reader,
+                    name: name,
+                    entryLength: entry.length
+                )
             }
             contigs.append(
                 ContigMetadata(
@@ -72,7 +99,8 @@ public struct AssemblyContigCatalog: Sendable {
                     shareOfAssemblyPercent: Self.shareOfAssemblyPercent(
                         lengthBP: lengthBP,
                         totalAssemblyBP: result.statistics.totalLengthBP
-                    )
+                    ),
+                    previewSequence: previewSequence
                 )
             )
         }
@@ -99,7 +127,8 @@ public struct AssemblyContigCatalog: Sendable {
                 header: contig.header,
                 lengthBP: contig.lengthBP,
                 gcPercent: contig.gcPercent,
-                shareOfAssemblyPercent: contig.shareOfAssemblyPercent
+                shareOfAssemblyPercent: contig.shareOfAssemblyPercent,
+                previewSequence: contig.previewSequence
             )
         }
     }
@@ -284,6 +313,20 @@ public struct AssemblyContigCatalog: Sendable {
     private static func shareOfAssemblyPercent(lengthBP: Int64, totalAssemblyBP: Int64) -> Double {
         guard totalAssemblyBP > 0 else { return 0 }
         return (Double(lengthBP) / Double(totalAssemblyBP)) * 100.0
+    }
+
+    private static func previewSequence(
+        reader: IndexedFASTAReader,
+        name: String,
+        entryLength: Int,
+        maxBases: Int = 80
+    ) async throws -> String {
+        guard entryLength > 0 else { return "" }
+        let previewLength = min(entryLength, maxBases)
+        let region = GenomicRegion(chromosome: name, start: 0, end: previewLength)
+        let prefix = try await reader.fetch(region: region)
+        guard entryLength > maxBases else { return prefix }
+        return prefix + "…"
     }
 
     private static func formatFASTA(header: String, sequence: String, lineWidth: Int) -> String {
