@@ -124,6 +124,10 @@ public final class MappingResultViewController: NSViewController {
     public override func loadView() {
         let root = NSView()
         root.translatesAutoresizingMaskIntoConstraints = false
+        root.setAccessibilityElement(true)
+        root.setAccessibilityRole(.group)
+        root.setAccessibilityLabel("Mapping result viewport")
+        root.setAccessibilityIdentifier("mapping-result-view")
         view = root
     }
 
@@ -132,6 +136,8 @@ public final class MappingResultViewController: NSViewController {
 
         tableView.dataSource = self
         tableView.delegate = self
+        tableView.setAccessibilityIdentifier("mapping-result-contig-table")
+        tableView.setAccessibilityLabel("Mapping contig table")
         scrollView.documentView = tableView
 
         listContainer.translatesAutoresizingMaskIntoConstraints = false

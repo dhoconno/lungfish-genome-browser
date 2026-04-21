@@ -57,6 +57,17 @@ enum LungfishProjectFixtureBuilder {
         )
     }
 
+    static func makeIlluminaMappingProject(named name: String = "IlluminaMappingFixture") throws -> URL {
+        try makeProject(
+            named: name,
+            fixtures: [
+                (LungfishFixtureCatalog.sarscov2.appendingPathComponent("test_1.fastq.gz"), .projectRoot),
+                (LungfishFixtureCatalog.sarscov2.appendingPathComponent("test_2.fastq.gz"), .projectRoot),
+                (LungfishFixtureCatalog.sarscov2.appendingPathComponent("genome.fasta"), .projectRoot),
+            ]
+        )
+    }
+
     static func makeOntAssemblyProject(named name: String = "OntAssemblyFixture") throws -> URL {
         try makeProject(
             named: name,

@@ -2471,8 +2471,14 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         }
     }
 
+    func refreshSidebarAndDisplayMappingResult(at url: URL) {
+        refreshSidebarAndSelectDerivedURL(url)
+        displayMappingAnalysisFromSidebar(at: url)
+    }
+
     private func displayMappingAnalysisFromSidebar(at url: URL) {
         logger.info("displayMappingAnalysis: Opening '\(url.lastPathComponent, privacy: .public)'")
+        recordUITestEvent("mapping.display.requested \(url.lastPathComponent)")
         invalidatePendingSelectionDebounce(reason: "display mapping analysis")
         cancelFASTQLoadIfNeeded(hideProgress: true, reason: "display mapping analysis")
         cancelMultiDocumentLoadIfNeeded(hideProgress: true, reason: "display mapping analysis")
@@ -2480,10 +2486,14 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         do {
             let result = try MappingResult.load(from: url)
             viewerController.displayMappingResult(result)
+            recordUITestEvent(
+                "mapping.display.succeeded tool=\(result.mapper.rawValue) contigs=\(result.contigs.count)"
+            )
         } catch {
             logger.error(
                 "displayMappingAnalysis: Failed to load result from \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
+            recordUITestEvent("mapping.display.failed \(url.lastPathComponent) error=\(error.localizedDescription)")
             viewerController.clearViewport(statusMessage: "Unable to load mapping result.")
         }
     }

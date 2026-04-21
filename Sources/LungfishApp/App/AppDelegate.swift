@@ -5013,6 +5013,27 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         Task.detached { [weak self] in
             do {
+                if AppUITestConfiguration.current.isEnabled,
+                   AppUITestConfiguration.current.backendMode == .deterministic {
+                    let result = try AppUITestMappingBackend.writeResult(for: request)
+                    let outputDirectory = request.outputDirectory
+                    let capturedRequest = request
+                    DispatchQueue.main.async { MainActor.assumeIsolated {
+                        OperationCenter.shared.complete(
+                            id: opID,
+                            detail: "Mapping complete: \(result.mappedReads)/\(result.totalReads) reads mapped"
+                        )
+                        AppUITestConfiguration.current.appendEvent(
+                            "mapping.operation.completed target=\(outputDirectory.lastPathComponent)"
+                        )
+                        AppDelegate.shared?.routePostMappingDeterministicCompletion(
+                            outputDirectory: outputDirectory,
+                            request: capturedRequest
+                        )
+                    }}
+                    return
+                }
+
                 let materializeTempDir = try ProjectTempDirectory.createFromContext(
                     prefix: "\(request.tool.rawValue)-",
                     contextURL: request.inputFASTQURLs.first ?? request.referenceFASTAURL
@@ -5093,6 +5114,26 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 }}
             }
         }
+    }
+
+    @MainActor
+    fileprivate func routePostMappingDeterministicCompletion(
+        outputDirectory: URL,
+        request: MappingRunRequest
+    ) {
+        guard let split = mainWindowController?.mainSplitViewController else { return }
+        if let bundleURL = Self.findSourceBundle(for: request.inputFASTQURLs) {
+            let entry = AnalysisManifestEntry(
+                tool: request.tool.rawValue,
+                analysisDirectoryName: outputDirectory.lastPathComponent,
+                displayName: "\(request.tool.displayName) Mapping",
+                parameters: request.summaryParameters(),
+                summary: "Deterministic UI test mapping",
+                status: .completed
+            )
+            try? AnalysisManifestStore.recordAnalysis(entry, bundleURL: bundleURL)
+        }
+        split.refreshSidebarAndDisplayMappingResult(at: outputDirectory)
     }
 
     private func prepareMappingViewerBundleIfPossible(

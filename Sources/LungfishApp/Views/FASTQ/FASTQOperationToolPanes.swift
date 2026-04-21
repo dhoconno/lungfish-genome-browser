@@ -18,6 +18,7 @@ struct FASTQOperationToolPanes: View {
                 onRun: state.captureMappingRequest(_:),
                 onRunnerAvailabilityChange: state.updateEmbeddedReadiness(_:)
             )
+            .id(state.selectedToolID.rawValue)
         case .spades, .megahit, .skesa, .flye, .hifiasm:
             AssemblyWizardSheet(
                 inputFiles: state.selectedInputURLs,

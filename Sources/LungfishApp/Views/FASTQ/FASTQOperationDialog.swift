@@ -14,9 +14,7 @@ struct FASTQOperationDialog: View {
             selectedToolID: state.selectedToolID.rawValue,
             statusText: statusText,
             isRunEnabled: state.isRunEnabled,
-            accessibilityNamespace: state.selectedToolID.categoryID == .assembly
-                ? "fastq-operations-assembly"
-                : nil,
+            accessibilityNamespace: accessibilityNamespace(for: state.selectedToolID.categoryID),
             onSelectTool: selectTool(named:),
             onCancel: onCancel,
             onRun: handleRun
@@ -56,5 +54,16 @@ struct FASTQOperationDialog: View {
         }
 
         state.selectTool(toolID)
+    }
+
+    private func accessibilityNamespace(for categoryID: FASTQOperationCategoryID) -> String? {
+        switch categoryID {
+        case .assembly:
+            return "fastq-operations-assembly"
+        case .mapping:
+            return "fastq-operations-mapping"
+        default:
+            return nil
+        }
     }
 }
