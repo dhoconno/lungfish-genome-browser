@@ -44,3 +44,12 @@ public struct AssemblyRunRequest: Sendable, Codable, Equatable {
         self.extraArguments = extraArguments
     }
 }
+
+public extension AssemblyRunRequest {
+    /// Assemblers that expose a minimum-contig flag require a positive value.
+    /// Treat zero-or-negative requests as the smallest usable threshold.
+    var effectiveMinContigLength: Int? {
+        guard let minContigLength else { return nil }
+        return max(minContigLength, 1)
+    }
+}

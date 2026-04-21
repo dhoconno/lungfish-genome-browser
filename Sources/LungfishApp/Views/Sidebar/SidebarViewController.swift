@@ -1906,11 +1906,20 @@ public class SidebarViewController: NSViewController {
         }
     }
 
+    private func urlsMatch(_ lhs: URL, _ rhs: URL) -> Bool {
+        let standardizedLHS = lhs.standardizedFileURL
+        let standardizedRHS = rhs.standardizedFileURL
+        if standardizedLHS == standardizedRHS {
+            return true
+        }
+        return standardizedLHS.resolvingSymlinksInPath() == standardizedRHS.resolvingSymlinksInPath()
+    }
+
     /// Finds a sidebar item by URL.
     private func findItem(byURL url: URL) -> SidebarItem? {
         func search(in items: [SidebarItem]) -> SidebarItem? {
             for item in items {
-                if item.url?.standardizedFileURL == url.standardizedFileURL {
+                if let itemURL = item.url, urlsMatch(itemURL, url) {
                     return item
                 }
                 if let found = search(in: item.children) {

@@ -209,7 +209,7 @@ public struct ManagedAssemblyPipeline: Sendable {
         }
         arguments += ["-o", request.outputDirectory.path]
         arguments += ["--num-cpu-threads", "\(request.threads)"]
-        if let minContigLength = request.minContigLength {
+        if let minContigLength = request.effectiveMinContigLength {
             arguments += ["--min-contig-len", "\(minContigLength)"]
         }
         if let selectedProfileID = request.selectedProfileID, !selectedProfileID.isEmpty {
@@ -240,7 +240,7 @@ public struct ManagedAssemblyPipeline: Sendable {
         if let memoryGB = request.memoryGB {
             arguments += ["--memory", "\(memoryGB)"]
         }
-        if let minContigLength = request.minContigLength {
+        if let minContigLength = request.effectiveMinContigLength {
             arguments += ["--min_contig", "\(minContigLength)"]
         }
         arguments += request.extraArguments

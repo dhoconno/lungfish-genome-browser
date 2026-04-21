@@ -307,7 +307,7 @@ public enum ProvenanceBuilder {
             memoryGB: request.memoryGB ?? 0,
             threads: request.threads,
             skipErrorCorrection: request.extraArguments.contains("--only-assembler"),
-            minContigLength: request.minContigLength ?? 0
+            minContigLength: request.effectiveMinContigLength ?? 0
         )
 
         return AssemblyProvenance(

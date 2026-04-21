@@ -406,7 +406,7 @@ public final class AssemblyBundleBuilder: @unchecked Sendable {
         if let memoryGB = request.memoryGB {
             paramItems.append(MetadataItem(label: "Memory", value: "\(memoryGB) GB"))
         }
-        if let minContigLength = request.minContigLength {
+        if let minContigLength = request.effectiveMinContigLength {
             paramItems.append(MetadataItem(label: "Min Contig Length", value: "\(minContigLength) bp"))
         }
 

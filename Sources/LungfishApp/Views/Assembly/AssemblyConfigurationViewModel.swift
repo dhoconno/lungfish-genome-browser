@@ -67,7 +67,7 @@ public enum AssemblyRunner {
             pairedEnd: request.pairedEnd,
             threads: request.threads,
             memoryGB: request.memoryGB,
-            minContigLength: request.minContigLength,
+            minContigLength: request.effectiveMinContigLength,
             selectedProfileID: request.selectedProfileID,
             extraArguments: request.extraArguments
         )
@@ -95,7 +95,7 @@ public enum AssemblyRunner {
         if let memoryGB = request.memoryGB {
             args += ["--memory-gb", "\(memoryGB)"]
         }
-        if let minContigLength = request.minContigLength {
+        if let minContigLength = request.effectiveMinContigLength {
             args += ["--min-contig-length", "\(minContigLength)"]
         }
         if let profile = request.selectedProfileID {
@@ -183,7 +183,7 @@ public enum AssemblyRunner {
             unpairedReads: pairedReads.2,
             memoryGB: request.memoryGB ?? 8,
             threads: request.threads,
-            minContigLength: request.minContigLength ?? 500,
+            minContigLength: request.effectiveMinContigLength ?? 500,
             skipErrorCorrection: request.extraArguments.contains("--only-assembler"),
             careful: request.extraArguments.contains("--careful"),
             customArgs: request.extraArguments.filter { $0 != "--only-assembler" && $0 != "--careful" },

@@ -111,6 +111,12 @@ public enum PluginPackStatusServiceError: Swift.Error, LocalizedError, Equatable
 }
 
 public actor PluginPackStatusService: PluginPackStatusProviding {
+    private struct CachedPackStatus {
+        let generation: Int
+        let timestamp: Date
+        let status: PluginPackStatus
+    }
+
     public typealias InstallAction = @Sendable (
         _ packages: [String],
         _ environment: String,
@@ -136,6 +142,8 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
     private var cacheGeneration = 0
     private var cachedVisibleStatuses: (generation: Int, timestamp: Date, statuses: [PluginPackStatus])?
     private var inFlightVisibleStatuses: (generation: Int, task: Task<[PluginPackStatus], Never>)?
+    private var cachedPackStatuses: [String: CachedPackStatus] = [:]
+    private var inFlightPackStatuses: [String: (generation: Int, task: Task<PluginPackStatus, Never>)] = [:]
 
     public init(
         condaManager: CondaManager,
@@ -143,7 +151,7 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
         databaseInstallAction: DatabaseInstallAction? = nil,
         databaseInstalledCheck: DatabaseInstalledCheck? = nil,
         storageAvailability: StorageAvailability? = nil,
-        cacheLifetime: TimeInterval = 30
+        cacheLifetime: TimeInterval = 300
     ) {
         self.condaManager = condaManager
         self.installAction = installAction ?? { [condaManager] packages, environment, reinstall, progress in
@@ -191,13 +199,27 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
     }
 
     public func status(for pack: PluginPack) async -> PluginPackStatus {
-        if PluginPack.visibleForCLI.contains(pack) {
-            let statuses = await visibleStatuses()
-            if let matching = statuses.first(where: { $0.pack.id == pack.id }) {
-                return matching
+        let generation = cacheGeneration
+
+        if let cached = cachedPackStatuses[pack.id], cached.generation == generation {
+            if Date().timeIntervalSince(cached.timestamp) < cacheLifetime {
+                return cached.status
             }
+
+            _ = packStatusRefreshTask(for: pack, generation: generation)
+            return cached.status
         }
 
+        let task = packStatusRefreshTask(for: pack, generation: generation)
+        return await task.value
+    }
+
+    public func status(forPackID packID: String) async -> PluginPackStatus? {
+        guard let pack = PluginPack.builtInPack(id: packID) else { return nil }
+        return await status(for: pack)
+    }
+
+    private func computeStatus(for pack: PluginPack) async -> PluginPackStatus {
         let storageAvailability = storageAvailability()
         if case .unavailable(let unavailableRoot) = storageAvailability {
             return makePackStatus(
@@ -222,11 +244,6 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
             bootstrapReady: bootstrapReady,
             storageAvailability: storageAvailability
         )
-    }
-
-    public func status(forPackID packID: String) async -> PluginPackStatus? {
-        guard let pack = PluginPack.builtInPack(id: packID) else { return nil }
-        return await status(for: pack)
     }
 
     private func makePackStatus(
@@ -323,6 +340,8 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
         cacheGeneration += 1
         cachedVisibleStatuses = nil
         inFlightVisibleStatuses = nil
+        cachedPackStatuses = [:]
+        inFlightPackStatuses = [:]
     }
 
     private func computeVisibleStatuses(forGeneration generation: Int) async -> [PluginPackStatus] {
@@ -370,6 +389,47 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
     private func storeVisibleStatuses(_ statuses: [PluginPackStatus], forGeneration generation: Int) {
         guard generation == cacheGeneration else { return }
         cachedVisibleStatuses = (generation, Date(), statuses)
+        let timestamp = Date()
+        for status in statuses {
+            cachedPackStatuses[status.pack.id] = CachedPackStatus(
+                generation: generation,
+                timestamp: timestamp,
+                status: status
+            )
+        }
+    }
+
+    private func packStatusRefreshTask(
+        for pack: PluginPack,
+        generation: Int
+    ) -> Task<PluginPackStatus, Never> {
+        if let inFlight = inFlightPackStatuses[pack.id], inFlight.generation == generation {
+            return inFlight.task
+        }
+
+        let task = Task { [self] in
+            let status = await computeStatus(for: pack)
+            await storePackStatus(status, forGeneration: generation)
+            await clearPackStatusRefreshTask(forPackID: pack.id, generation: generation)
+            return status
+        }
+
+        inFlightPackStatuses[pack.id] = (generation, task)
+        return task
+    }
+
+    private func storePackStatus(_ status: PluginPackStatus, forGeneration generation: Int) {
+        guard generation == cacheGeneration else { return }
+        cachedPackStatuses[status.pack.id] = CachedPackStatus(
+            generation: generation,
+            timestamp: Date(),
+            status: status
+        )
+    }
+
+    private func clearPackStatusRefreshTask(forPackID packID: String, generation: Int) {
+        guard inFlightPackStatuses[packID]?.generation == generation else { return }
+        inFlightPackStatuses[packID] = nil
     }
 
     private func bootstrapIsReady() async -> Bool {

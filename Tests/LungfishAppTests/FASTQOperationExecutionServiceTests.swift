@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 @testable import LungfishApp
 @testable import LungfishIO
@@ -577,6 +578,33 @@ final class FASTQOperationExecutionServiceTests: XCTestCase {
         )
     }
 
+    func testAssemblyLaunchNormalizesZeroMinContigLengthToOne() throws {
+        let request = FASTQOperationLaunchRequest.assemble(
+            request: AssemblyRunRequest(
+                tool: .skesa,
+                readType: .illuminaShortReads,
+                inputURLs: [
+                    URL(fileURLWithPath: "/tmp/sample_R1.fastq.gz"),
+                    URL(fileURLWithPath: "/tmp/sample_R2.fastq.gz"),
+                ],
+                projectName: "Demo",
+                outputDirectory: URL(fileURLWithPath: "/tmp/assembly-out"),
+                pairedEnd: true,
+                threads: 8,
+                memoryGB: nil,
+                minContigLength: 0,
+                selectedProfileID: nil,
+                extraArguments: []
+            ),
+            outputMode: .groupedResult
+        )
+
+        let invocation = try FASTQOperationExecutionService().buildInvocation(for: request)
+
+        let minContigIndex = try XCTUnwrap(invocation.arguments.firstIndex(of: "--min-contig-length"))
+        XCTAssertEqual(invocation.arguments[minContigIndex + 1], "1")
+    }
+
     func testExecuteKeepsPairedAssemblyAsSinglePerInputPlan() async throws {
         let tempDir = try FASTQOperationTestHelper.makeTempDir(prefix: "FASTQExecService")
         defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -759,6 +787,119 @@ final class FASTQOperationExecutionServiceTests: XCTestCase {
 
         XCTAssertEqual(result.importedURLs, [outputDirectory])
         XCTAssertEqual(importer.calls, [[outputDirectory]])
+    }
+
+    func testExecuteWithLiveRunnerDrainsVerboseAssemblyProcessOutput() async throws {
+        actor ResultBox {
+            var result: FASTQOperationExecutionResult?
+            var error: Error?
+
+            func store(result: FASTQOperationExecutionResult) {
+                self.result = result
+            }
+
+            func store(error: Error) {
+                self.error = error
+            }
+        }
+
+        let tempDir = try FASTQOperationTestHelper.makeTempDir(prefix: "FASTQExecService")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let outputDirectory = tempDir.appendingPathComponent("analysis-output", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+
+        let fakeCLI = tempDir.appendingPathComponent("fake-lungfish-cli.sh")
+        let script = """
+        #!/bin/bash
+        set -euo pipefail
+        head -c 1048576 /dev/zero | tr '\\0' 'x'
+        head -c 1048576 /dev/zero | tr '\\0' 'y' >&2
+        cat > contigs.fasta <<'EOF'
+        >contig1
+        AACCGGTT
+        EOF
+        output_dir="$PWD"
+        cat > assembly-result.json <<EOF
+        {
+          "schemaVersion": 2,
+          "tool": "megahit",
+          "readType": "illuminaShortReads",
+          "contigsPath": "contigs.fasta",
+          "graphPath": null,
+          "logPath": null,
+          "scaffoldsPath": null,
+          "paramsPath": null,
+          "assemblerVersion": "test",
+          "commandLine": "fake-lungfish-cli",
+          "outputDirectory": "$output_dir",
+          "statistics": {
+            "contigCount": 1,
+            "gcFraction": 0.5,
+            "l50": 1,
+            "largestContigBP": 8,
+            "meanLengthBP": 8,
+            "n50": 8,
+            "n90": 8,
+            "smallestContigBP": 8,
+            "totalLengthBP": 8
+          },
+          "wallTimeSeconds": 1
+        }
+        EOF
+        """
+        try script.write(to: fakeCLI, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fakeCLI.path)
+
+        XCTAssertEqual(setenv("LUNGFISH_CLI_PATH", fakeCLI.path, 1), 0)
+        defer { unsetenv("LUNGFISH_CLI_PATH") }
+
+        let request = FASTQOperationLaunchRequest.assemble(
+            request: AssemblyRunRequest(
+                tool: .megahit,
+                readType: .illuminaShortReads,
+                inputURLs: [
+                    URL(fileURLWithPath: "/tmp/sample_R1.fastq.gz"),
+                    URL(fileURLWithPath: "/tmp/sample_R2.fastq.gz"),
+                ],
+                projectName: "VerboseRunner",
+                outputDirectory: outputDirectory,
+                pairedEnd: true,
+                threads: 2,
+                memoryGB: nil,
+                minContigLength: nil,
+                selectedProfileID: nil,
+                extraArguments: []
+            ),
+            outputMode: .perInput
+        )
+
+        let service = FASTQOperationExecutionService(
+            inputResolver: SpyInputResolver(resolvedRequest: request),
+            directImporter: SpyDirectImporter()
+        )
+        let resultBox = ResultBox()
+        let finished = expectation(description: "live runner completed")
+
+        Task {
+            do {
+                let result = try await service.execute(
+                    request: request,
+                    workingDirectory: outputDirectory
+                )
+                await resultBox.store(result: result)
+            } catch {
+                await resultBox.store(error: error)
+            }
+            finished.fulfill()
+        }
+
+        await fulfillment(of: [finished], timeout: 5.0)
+
+        let error = await resultBox.error
+        XCTAssertNil(error)
+        let result = await resultBox.result
+        XCTAssertEqual(result?.importedURLs, [outputDirectory])
     }
 
     func testRefreshQCSummaryLaunchBuildsFastqQCSummaryInvocation() throws {

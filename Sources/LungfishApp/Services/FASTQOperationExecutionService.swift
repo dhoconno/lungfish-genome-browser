@@ -407,7 +407,7 @@ struct FASTQOperationExecutionService {
             if let memoryGB = request.memoryGB {
                 arguments += ["--memory-gb", "\(memoryGB)"]
             }
-            if let minContigLength = request.minContigLength {
+            if let minContigLength = request.effectiveMinContigLength {
                 arguments += ["--min-contig-length", "\(minContigLength)"]
             }
             if let selectedProfileID = request.selectedProfileID {
@@ -1014,21 +1014,45 @@ private struct LungfishCLIProcessRunner: FASTQOperationCommandRunning {
         let stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
-
-        do {
-            try process.run()
-        } catch {
-            throw LungfishCLIRunner.RunError.launchFailed(error.localizedDescription)
+        let stdoutTask = Task.detached(priority: .userInitiated) {
+            stdout.fileHandleForReading.readDataToEndOfFile()
+        }
+        let stderrTask = Task.detached(priority: .userInitiated) {
+            stderr.fileHandleForReading.readDataToEndOfFile()
         }
 
-        process.waitUntilExit()
-        if process.terminationStatus != 0 {
+        let terminationStatus: Int32
+        do {
+            terminationStatus = try await withCheckedThrowingContinuation { continuation in
+                process.terminationHandler = { terminatedProcess in
+                    continuation.resume(returning: terminatedProcess.terminationStatus)
+                }
+
+                do {
+                    try process.run()
+                } catch {
+                    continuation.resume(
+                        throwing: LungfishCLIRunner.RunError.launchFailed(error.localizedDescription)
+                    )
+                }
+            }
+        } catch {
+            stdoutTask.cancel()
+            stderrTask.cancel()
+            throw error
+        }
+
+        let stderrData = await stderrTask.value
+        let stdoutData = await stdoutTask.value
+        _ = stdoutData
+
+        if terminationStatus != 0 {
             let stderrText = String(
-                data: stderr.fileHandleForReading.readDataToEndOfFile(),
+                data: stderrData,
                 encoding: .utf8
             ) ?? ""
             throw LungfishCLIRunner.RunError.nonZeroExit(
-                status: process.terminationStatus,
+                status: terminationStatus,
                 stderr: stderrText
             )
         }

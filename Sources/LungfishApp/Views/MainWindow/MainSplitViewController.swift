@@ -162,6 +162,12 @@ public class MainSplitViewController: NSSplitViewController {
     /// loads and reduces main thread contention during rapid browsing.
     private var selectionDebounceWorkItem: DispatchWorkItem?
 
+    /// Background task for multi-selection document loading.
+    ///
+    /// Cancelled whenever the selection moves on so stale collection loads
+    /// cannot repaint the viewport after a tool result is displayed.
+    private var multiDocumentLoadTask: Task<Void, Never>?
+
     // MARK: - FASTQ Loading State
 
     /// Background task for FASTQ statistics/sample loading.
@@ -489,8 +495,12 @@ public class MainSplitViewController: NSSplitViewController {
 
         // If we have documents to load, do it asynchronously
         if needsLoading {
+            multiDocumentLoadTask?.cancel()
+            multiDocumentLoadTask = nil
+            let generation = selectionGeneration
+
             // Use a regular Task (not detached) to maintain MainActor isolation
-            Task { @MainActor [weak self] in
+            multiDocumentLoadTask = Task { @MainActor [weak self] in
                 guard let self = self else { return }
 
                 let totalToLoad = placeholderDocuments.count + unregisteredURLs.count
@@ -501,8 +511,19 @@ public class MainSplitViewController: NSSplitViewController {
 
                 // Load placeholder documents via DocumentLoader
                 for (existingDoc, url, docType) in placeholderDocuments {
+                    guard !Task.isCancelled, self.selectionGeneration == generation else {
+                        logger.info("handleMultipleItemsSelected: Discarding stale multi-select load before lazy load")
+                        self.multiDocumentLoadTask = nil
+                        return
+                    }
+
                     do {
                         let result = try await DocumentLoader.loadFile(at: url, type: docType)
+                        guard !Task.isCancelled, self.selectionGeneration == generation else {
+                            logger.info("handleMultipleItemsSelected: Discarding stale multi-select load after lazy load")
+                            self.multiDocumentLoadTask = nil
+                            return
+                        }
                         existingDoc.sequences = result.sequences
                         existingDoc.annotations = result.annotations
                         loadedDocs.append(existingDoc)
@@ -515,8 +536,19 @@ public class MainSplitViewController: NSSplitViewController {
 
                 // Load unregistered documents via DocumentManager
                 for (url, _) in unregisteredURLs {
+                    guard !Task.isCancelled, self.selectionGeneration == generation else {
+                        logger.info("handleMultipleItemsSelected: Discarding stale multi-select load before document load")
+                        self.multiDocumentLoadTask = nil
+                        return
+                    }
+
                     do {
                         let document = try await DocumentManager.shared.loadDocument(at: url)
+                        guard !Task.isCancelled, self.selectionGeneration == generation else {
+                            logger.info("handleMultipleItemsSelected: Discarding stale multi-select load after document load")
+                            self.multiDocumentLoadTask = nil
+                            return
+                        }
                         loadedDocs.append(document)
                         logger.debug("handleMultipleItemsSelected: Loaded '\(document.name, privacy: .public)'")
                     } catch {
@@ -524,7 +556,14 @@ public class MainSplitViewController: NSSplitViewController {
                     }
                 }
 
+                guard !Task.isCancelled, self.selectionGeneration == generation else {
+                    logger.info("handleMultipleItemsSelected: Discarding stale multi-select load before collection display")
+                    self.multiDocumentLoadTask = nil
+                    return
+                }
+
                 self.viewerController.hideProgress()
+                self.multiDocumentLoadTask = nil
 
                 // Display combined sequences from all documents in the collection view
                 self.displayMultiDocumentCollection(loadedDocs)
@@ -574,6 +613,7 @@ public class MainSplitViewController: NSSplitViewController {
             annotations: allAnnotations,
             sourceNames: sourceNames
         )
+        recordUITestEvent("viewport.collection.displayed sequences=\(allSequences.count)")
         logger.info("displayMultiDocumentCollection: Displayed collection with \(allSequences.count) sequences from \(documents.count) files")
     }
 
@@ -2069,6 +2109,28 @@ public class MainSplitViewController: NSSplitViewController {
 // MARK: - SidebarSelectionDelegate
 
 extension MainSplitViewController: SidebarSelectionDelegate {
+    private func recordUITestEvent(_ event: String) {
+        AppUITestConfiguration.current.appendEvent(event)
+    }
+
+    private func invalidatePendingSelectionDebounce(reason: String) {
+        guard selectionDebounceWorkItem != nil else { return }
+        logger.info("invalidatePendingSelectionDebounce: cancelling pending selection work (\(reason, privacy: .public))")
+        selectionDebounceWorkItem?.cancel()
+        selectionDebounceWorkItem = nil
+        selectionGeneration &+= 1
+    }
+
+    private func cancelMultiDocumentLoadIfNeeded(hideProgress: Bool, reason: String) {
+        if multiDocumentLoadTask != nil {
+            logger.info("cancelMultiDocumentLoadIfNeeded: cancelling multi-document load (\(reason, privacy: .public))")
+            multiDocumentLoadTask?.cancel()
+            multiDocumentLoadTask = nil
+        }
+        if hideProgress {
+            viewerController.hideProgress()
+        }
+    }
 
     /// Cancels any in-flight FASTQ dashboard load and optionally clears progress UI.
     private func cancelFASTQLoadIfNeeded(hideProgress: Bool, reason: String) {
@@ -2382,20 +2444,31 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
     private func displayAssemblyAnalysisFromSidebar(at url: URL) {
         logger.info("displayAssemblyAnalysis: Opening '\(url.lastPathComponent, privacy: .public)'")
+        recordUITestEvent("assembly.display.requested \(url.lastPathComponent)")
+        invalidatePendingSelectionDebounce(reason: "display assembly analysis")
+        cancelFASTQLoadIfNeeded(hideProgress: true, reason: "display assembly analysis")
+        cancelMultiDocumentLoadIfNeeded(hideProgress: true, reason: "display assembly analysis")
 
         do {
             let result = try AssemblyResult.load(from: url)
             viewerController.displayAssemblyResult(result)
+            recordUITestEvent(
+                "assembly.display.succeeded tool=\(result.tool.rawValue) contigs=\(result.statistics.contigCount)"
+            )
         } catch {
             logger.error(
                 "displayAssemblyAnalysis: Failed to load result from \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
+            recordUITestEvent("assembly.display.failed \(url.lastPathComponent) error=\(error.localizedDescription)")
             viewerController.clearViewport(statusMessage: "Unable to load assembly result.")
         }
     }
 
     private func displayMappingAnalysisFromSidebar(at url: URL) {
         logger.info("displayMappingAnalysis: Opening '\(url.lastPathComponent, privacy: .public)'")
+        invalidatePendingSelectionDebounce(reason: "display mapping analysis")
+        cancelFASTQLoadIfNeeded(hideProgress: true, reason: "display mapping analysis")
+        cancelMultiDocumentLoadIfNeeded(hideProgress: true, reason: "display mapping analysis")
 
         do {
             let result = try MappingResult.load(from: url)
@@ -2464,6 +2537,24 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         logger.info("displayBatchGroup: Opening '\(dirName, privacy: .public)'")
 
         let projectURL = sidebarController.currentProjectURL ?? DocumentManager.shared.activeProject?.url
+        let toolId = AnalysesFolder.readAnalysisMetadata(from: batchURL)?.tool ?? dirName
+
+        if toolId.hasPrefix("spades")
+            || toolId.hasPrefix("megahit")
+            || toolId.hasPrefix("skesa")
+            || toolId.hasPrefix("flye")
+            || toolId.hasPrefix("hifiasm") {
+            displayAssemblyAnalysisFromSidebar(at: batchURL)
+            return
+        }
+
+        if toolId == MappingTool.minimap2.rawValue
+            || toolId == MappingTool.bwaMem2.rawValue
+            || toolId == MappingTool.bowtie2.rawValue
+            || toolId == MappingTool.bbmap.rawValue {
+            displayMappingAnalysisFromSidebar(at: batchURL)
+            return
+        }
 
         if dirName.hasPrefix("kraken2") || dirName.hasPrefix("classification") {
             // Check for SQLite database first -- faster than parsing per-sample kreport files.
@@ -4219,7 +4310,18 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                             detail: "Done in \(String(format: "%.1f", elapsed))s"
                         )
                         if let completionTarget {
+                            self.recordUITestEvent(
+                                "fastq.operation.completed target=\(completionTarget.lastPathComponent)"
+                            )
                             self.refreshSidebarAndSelectDerivedURL(completionTarget)
+                            switch result.resolvedRequest {
+                            case .assemble:
+                                self.displayAssemblyAnalysisFromSidebar(at: completionTarget)
+                            case .map:
+                                self.displayMappingAnalysisFromSidebar(at: completionTarget)
+                            default:
+                                break
+                            }
                         } else {
                             self.sidebarController.reloadFromFilesystem()
                         }
@@ -4347,6 +4449,17 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         let selected = sidebarController.selectItem(forURL: standardizedURL)
         if !selected {
             logger.warning("refreshSidebarAndSelectDerivedURL: Could not select derived output '\(standardizedURL.path, privacy: .public)' after reload")
+            recordUITestEvent("sidebar.selection.failed \(standardizedURL.lastPathComponent)")
+            return
+        }
+        recordUITestEvent("sidebar.selection.succeeded \(standardizedURL.lastPathComponent)")
+
+        // Programmatic post-run selections happen while the FASTQ viewport still owns
+        // focus, so the normal sidebar selection callback can be intentionally ignored.
+        if hasActiveSidebarChildViewport,
+           let selectedItem = sidebarController.selectedItems().first,
+           selectedItem.url?.standardizedFileURL == standardizedURL {
+            displayContent(for: selectedItem)
         }
     }
 

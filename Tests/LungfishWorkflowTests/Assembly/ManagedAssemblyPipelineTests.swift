@@ -93,6 +93,34 @@ final class ManagedAssemblyPipelineTests: XCTestCase {
         XCTAssertTrue(command.arguments.contains("--min-contig-len"))
     }
 
+    func testBuildsSkesaCommandNormalizesZeroMinContigLengthToOne() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("managed-assembly-skesa-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let request = AssemblyRunRequest(
+            tool: .skesa,
+            readType: .illuminaShortReads,
+            inputURLs: [
+                URL(fileURLWithPath: "/tmp/R1.fastq.gz"),
+                URL(fileURLWithPath: "/tmp/R2.fastq.gz"),
+            ],
+            projectName: "skesa-demo",
+            outputDirectory: tempDir,
+            pairedEnd: true,
+            threads: 8,
+            memoryGB: nil,
+            minContigLength: 0,
+            selectedProfileID: nil,
+            extraArguments: []
+        )
+
+        let command = try ManagedAssemblyPipeline.buildCommand(for: request)
+
+        let minContigIndex = try XCTUnwrap(command.arguments.firstIndex(of: "--min_contig"))
+        XCTAssertEqual(command.arguments[minContigIndex + 1], "1")
+    }
+
     func testRunStagesMegahitIntoFreshWorkspaceWhenFinalOutputDirectoryAlreadyExists() async throws {
         let tempRoot = try makeTempDirectory(prefix: "managed assembly megahit")
         defer { try? FileManager.default.removeItem(at: tempRoot) }

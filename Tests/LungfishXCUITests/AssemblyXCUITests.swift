@@ -89,6 +89,26 @@ final class AssemblyXCUITests: XCTestCase {
     }
 
     @MainActor
+    func testMegahitDeterministicRunAddsAnalysisToSidebarAndShowsResultViewport() throws {
+        let projectURL = try LungfishProjectFixtureBuilder.makeIlluminaAssemblyProject(named: "MegahitDeterministicAssemblyFixture")
+        let robot = AssemblyRobot()
+        defer {
+            robot.app.terminate()
+            try? FileManager.default.removeItem(at: projectURL.deletingLastPathComponent())
+        }
+
+        robot.launch(opening: projectURL, backendMode: "deterministic")
+        robot.selectSidebarItem(named: "test_1.fastq.gz", extendingSelection: true)
+        robot.openAssemblyDialog()
+        robot.chooseAssembler("MEGAHIT")
+        robot.clickPrimaryAction()
+
+        robot.waitForAnalysisRow(prefix: "megahit-", timeout: 30)
+        XCTAssertTrue(robot.resultView.waitForExistence(timeout: 10))
+        XCTAssertTrue(robot.resultTable.waitForExistence(timeout: 10))
+    }
+
+    @MainActor
     func testSkesaLiveSmokeAddsAnalysisToSidebarAndShowsResultViewport() throws {
         let projectURL = try LungfishProjectFixtureBuilder.makeIlluminaAssemblyProject(named: "SkesaLiveAssemblyFixture")
         let robot = AssemblyRobot()

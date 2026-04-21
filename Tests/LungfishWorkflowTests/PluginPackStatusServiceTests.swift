@@ -2,6 +2,72 @@ import XCTest
 @testable import LungfishWorkflow
 
 final class PluginPackStatusServiceTests: XCTestCase {
+    func testStatusForVisiblePackDoesNotEvaluateUnrelatedVisiblePackRequirements() async throws {
+        actor DatabaseRecorder {
+            var callCount = 0
+
+            func recordCall() {
+                callCount += 1
+            }
+
+            func recordedCallCount() -> Int { callCount }
+        }
+
+        let recorder = DatabaseRecorder()
+        let manager = CondaManager(
+            rootPrefix: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),
+            bundledMicromambaProvider: { nil },
+            bundledMicromambaVersionProvider: { nil }
+        )
+
+        let service = PluginPackStatusService(
+            condaManager: manager,
+            databaseInstalledCheck: { _ in
+                await recorder.recordCall()
+                return false
+            },
+            cacheLifetime: 60
+        )
+
+        _ = await service.status(forPackID: "assembly")
+
+        let callCount = await recorder.recordedCallCount()
+        XCTAssertEqual(callCount, 0)
+    }
+
+    func testStatusForPackReusesPerPackCachedResultWithinTTL() async throws {
+        actor DatabaseRecorder {
+            var callCount = 0
+
+            func recordCall() {
+                callCount += 1
+            }
+
+            func recordedCallCount() -> Int { callCount }
+        }
+
+        let recorder = DatabaseRecorder()
+        let manager = CondaManager(
+            rootPrefix: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),
+            bundledMicromambaProvider: { nil },
+            bundledMicromambaVersionProvider: { nil }
+        )
+
+        let service = PluginPackStatusService(
+            condaManager: manager,
+            databaseInstalledCheck: { _ in
+                await recorder.recordCall()
+                return false
+            },
+            cacheLifetime: 60
+        )
+
+        _ = await service.status(for: .requiredSetupPack)
+        _ = await service.status(for: .requiredSetupPack)
+
+        let callCount = await recorder.recordedCallCount()
+        XCTAssertEqual(callCount, 1)
+    }
 
     func testVisibleStatusesReuseCachedResultWithinTTL() async throws {
         final class DatabaseGate: @unchecked Sendable {

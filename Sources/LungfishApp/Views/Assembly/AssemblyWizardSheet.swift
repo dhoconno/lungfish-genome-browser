@@ -19,7 +19,7 @@ struct AssemblyWizardSheet: View {
     @State private var selectedReadType: AssemblyReadType
     @State private var threads: Double = 4
     @State private var memoryGB: Double = 8
-    @State private var minContigLength: Int = 500
+    @State private var minContigLength: Int
     @State private var selectedProfileID: String
     @State private var projectName: String = ""
     @State private var extraArgumentsText: String = ""
@@ -57,6 +57,7 @@ struct AssemblyWizardSheet: View {
         let detectedReadType = Self.detectedReadType(from: inputFiles)
         _selectedTool = State(initialValue: initialTool)
         _selectedReadType = State(initialValue: detectedReadType ?? Self.defaultReadType(for: initialTool))
+        _minContigLength = State(initialValue: Self.defaultMinContigLength(for: initialTool))
         _selectedProfileID = State(initialValue: Self.defaultProfileID(for: initialTool) ?? "")
         _hasConfirmedManualReadType = State(initialValue: detectedReadType != nil)
     }
@@ -791,6 +792,15 @@ struct AssemblyWizardSheet: View {
             return .ontReads
         case .hifiasm:
             return .pacBioHiFi
+        }
+    }
+
+    static func defaultMinContigLength(for tool: AssemblyTool) -> Int {
+        switch tool {
+        case .spades, .megahit, .skesa:
+            return 0
+        case .flye, .hifiasm:
+            return 0
         }
     }
 

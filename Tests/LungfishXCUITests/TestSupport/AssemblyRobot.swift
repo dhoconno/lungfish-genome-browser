@@ -14,11 +14,16 @@ struct AssemblyRobot {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
+        let eventLogURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lungfish-assembly-ui-events.log")
+        try? FileManager.default.removeItem(at: eventLogURL)
+
         var options = LungfishUITestLaunchOptions(
             projectPath: projectURL,
             fixtureRootPath: LungfishFixtureCatalog.fixturesRoot
         )
         options.backendMode = backendMode
+        options.eventLogPath = eventLogURL
         let workspaceCLI = LungfishFixtureCatalog.repoRoot.appendingPathComponent(".build/debug/lungfish-cli")
         if FileManager.default.isExecutableFile(atPath: workspaceCLI.path) {
             options.cliPath = workspaceCLI
