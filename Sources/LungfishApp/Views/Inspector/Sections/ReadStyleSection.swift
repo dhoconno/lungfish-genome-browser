@@ -161,6 +161,12 @@ public final class ReadStyleSectionViewModel {
     /// Called to launch the BAM-backed variant calling workflow for the loaded bundle.
     public var onCallVariantsRequested: (() -> Void)?
 
+    /// Whether mapping mode should expose biological consensus export.
+    public var supportsConsensusExtraction: Bool = false
+
+    /// Called to export biological consensus from the active mapping viewer.
+    public var onExtractConsensusRequested: (() -> Void)?
+
     /// Whether duplicate workflow is currently running.
     public var isDuplicateWorkflowRunning: Bool = false
 
@@ -779,6 +785,13 @@ public struct ReadStyleSection: View {
             Text("Duplicate Handling")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            if viewModel.supportsConsensusExtraction {
+                Button("Extract Consensus…") {
+                    viewModel.onExtractConsensusRequested?()
+                }
+                .disabled(!viewModel.hasAlignmentTracks)
+            }
 
             Button("Call Variants…") {
                 viewModel.onCallVariantsRequested?()

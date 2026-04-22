@@ -132,13 +132,12 @@ final class MappingResultViewControllerTests: XCTestCase {
         _ = vc.view
 
         vc.configureForTesting(result: makeMappingResult(viewerBundleURL: try makeReferenceBundleWithAnnotationDatabase()))
-        vc.testSelectContig(named: "alpha")
         vc.testClearContigSelection()
 
         let request = try vc.testBuildConsensusExportRequest()
 
-        XCTAssertEqual(request.chromosome, "alpha")
-        XCTAssertEqual(request.suggestedName, "example-alpha-consensus")
+        XCTAssertEqual(request.chromosome, "chr1")
+        XCTAssertEqual(request.suggestedName, "example-chr1-consensus")
     }
 
     private func makeMappingResult(viewerBundleURL: URL? = nil) -> MappingResult {

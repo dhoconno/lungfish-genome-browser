@@ -450,6 +450,8 @@ public class InspectorViewController: NSViewController {
         clearTransientSelectionState()
         viewModel.selectionSectionViewModel.referenceBundle = nil
         viewModel.readStyleSectionViewModel.clear()
+        viewModel.readStyleSectionViewModel.supportsConsensusExtraction = false
+        viewModel.readStyleSectionViewModel.onExtractConsensusRequested = nil
 
         // Clear document section (bundle metadata, FASTQ stats, etc.)
         viewModel.documentSectionViewModel.update(manifest: nil, bundleURL: nil)
@@ -1319,6 +1321,8 @@ public class InspectorViewController: NSViewController {
     /// Populates the read style section with alignment statistics from the bundle's metadata DBs.
     private func updateAlignmentSection(from bundle: ReferenceBundle) {
         viewModel.readStyleSectionViewModel.loadStatistics(from: bundle)
+        viewModel.readStyleSectionViewModel.supportsConsensusExtraction = false
+        viewModel.readStyleSectionViewModel.onExtractConsensusRequested = nil
 
         // Wire the settings-changed callback to post notification
         viewModel.readStyleSectionViewModel.onSettingsChanged = { [weak self] in
@@ -1352,9 +1356,15 @@ public class InspectorViewController: NSViewController {
         viewModel.selectionSectionViewModel.referenceBundle = bundle
         viewModel.documentSectionViewModel.bundleURL = bundle.url
         viewModel.readStyleSectionViewModel.loadStatistics(from: bundle)
+        viewModel.readStyleSectionViewModel.supportsConsensusExtraction = true
         viewModel.readStyleSectionViewModel.onSettingsChanged = { [weak self] in
             guard let self else { return }
             applySettings(self.makeReadDisplaySettingsPayload(from: self.viewModel.readStyleSectionViewModel))
+        }
+        viewModel.readStyleSectionViewModel.onExtractConsensusRequested = { [weak self] in
+            guard let self,
+                  let split = self.parent as? MainSplitViewController else { return }
+            split.viewerController.presentMappingConsensusExtraction()
         }
         viewModel.readStyleSectionViewModel.onMarkDuplicatesRequested = { [weak self] in
             self?.runMarkDuplicatesWorkflow()
