@@ -4,10 +4,6 @@
 
 import Foundation
 import LungfishCore
-import LungfishWorkflow
-import os.log
-
-private let duplicateLogger = Logger(subsystem: LogSubsystem.app, category: "AlignmentDuplicateService")
 
 /// Service for running `samtools markdup` workflows on bundle alignment tracks.
 public final class AlignmentDuplicateService: @unchecked Sendable {
@@ -123,7 +119,8 @@ public final class AlignmentDuplicateService: @unchecked Sendable {
                 try FileManager.default.removeItem(at: outputIndexURL)
             }
 
-            try await runMarkdupPipeline(
+            let markdupPipeline = AlignmentMarkdupPipeline()
+            _ = try await markdupPipeline.run(
                 inputURL: URL(fileURLWithPath: sourcePath),
                 outputURL: outputURL,
                 removeDuplicates: removeDuplicates,
@@ -228,80 +225,6 @@ public final class AlignmentDuplicateService: @unchecked Sendable {
             }
         }
         return parent.appendingPathComponent("\(sourceName)-deduplicated-\(UUID().uuidString.prefix(8)).lungfishref")
-    }
-
-    /// Runs the canonical markdup pipeline:
-    /// sort -n → fixmate -m → sort → markdup (-r optional) → index
-    private static func runMarkdupPipeline(
-        inputURL: URL,
-        outputURL: URL,
-        removeDuplicates: Bool,
-        referenceFastaPath: String?,
-        progressHandler: (@Sendable (Double, String) -> Void)?
-    ) async throws {
-        let runner = NativeToolRunner.shared
-        let outputDir = outputURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
-
-        let tempDir = outputDir.appendingPathComponent(".markdup-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-
-        let nameSortedURL = tempDir.appendingPathComponent("name.sorted.bam")
-        let fixmateURL = tempDir.appendingPathComponent("fixmate.bam")
-        let coordSortedURL = tempDir.appendingPathComponent("coord.sorted.bam")
-
-        let size = (try? FileManager.default.attributesOfItem(atPath: inputURL.path)[.size] as? Int64) ?? 0
-        let longTimeout = max(600.0, Double(size) / 10_000_000.0)
-
-        progressHandler?(0.05, "Sorting by read name...")
-        var sortNameArgs = ["sort", "-n", "-o", nameSortedURL.path]
-        if let referenceFastaPath {
-            sortNameArgs += ["--reference", referenceFastaPath]
-        }
-        sortNameArgs.append(inputURL.path)
-        try await runSamtoolsOrThrow(runner, arguments: sortNameArgs, timeout: longTimeout)
-
-        progressHandler?(0.30, "Running fixmate...")
-        var fixmateArgs = ["fixmate", "-m"]
-        if let referenceFastaPath {
-            fixmateArgs += ["--reference", referenceFastaPath]
-        }
-        fixmateArgs += [nameSortedURL.path, fixmateURL.path]
-        try await runSamtoolsOrThrow(runner, arguments: fixmateArgs, timeout: longTimeout)
-
-        progressHandler?(0.55, "Sorting by coordinate...")
-        var sortCoordArgs = ["sort", "-o", coordSortedURL.path]
-        if let referenceFastaPath {
-            sortCoordArgs += ["--reference", referenceFastaPath]
-        }
-        sortCoordArgs.append(fixmateURL.path)
-        try await runSamtoolsOrThrow(runner, arguments: sortCoordArgs, timeout: longTimeout)
-
-        progressHandler?(0.78, removeDuplicates ? "Removing duplicates..." : "Marking duplicates...")
-        var markdupArgs = ["markdup"]
-        if removeDuplicates {
-            markdupArgs.append("-r")
-        }
-        markdupArgs += [coordSortedURL.path, outputURL.path]
-        try await runSamtoolsOrThrow(runner, arguments: markdupArgs, timeout: longTimeout)
-
-        progressHandler?(0.93, "Indexing output BAM...")
-        try await runSamtoolsOrThrow(runner, arguments: ["index", outputURL.path], timeout: 3600)
-
-        progressHandler?(1.0, "Done")
-        duplicateLogger.info("runMarkdupPipeline: Completed \(outputURL.lastPathComponent, privacy: .public)")
-    }
-
-    private static func runSamtoolsOrThrow(
-        _ runner: NativeToolRunner,
-        arguments: [String],
-        timeout: TimeInterval
-    ) async throws {
-        let result = try await runner.run(.samtools, arguments: arguments, timeout: timeout)
-        guard result.isSuccess else {
-            throw AlignmentDuplicateError.samtoolsFailed(result.stderr.isEmpty ? "samtools exited with \(result.exitCode)" : result.stderr)
-        }
     }
 
     private static func findReferenceFASTA(in bundleURL: URL) -> String? {

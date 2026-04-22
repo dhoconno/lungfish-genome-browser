@@ -101,6 +101,11 @@ public final class AlignmentMetadataDatabase: @unchecked Sendable {
         return database
     }
 
+    /// Opens an existing alignment metadata database for read-write updates.
+    public static func openForUpdate(at url: URL) throws -> AlignmentMetadataDatabase {
+        try AlignmentMetadataDatabase(url: url, readWrite: true)
+    }
+
     private func createSchema() throws {
         let schema = """
         CREATE TABLE IF NOT EXISTS file_info (

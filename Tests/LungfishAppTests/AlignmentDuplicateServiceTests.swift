@@ -4,6 +4,7 @@
 
 import XCTest
 @testable import LungfishApp
+@testable import LungfishWorkflow
 
 final class AlignmentDuplicateServiceTests: XCTestCase {
 
@@ -56,5 +57,94 @@ final class AlignmentDuplicateServiceTests: XCTestCase {
             XCTAssertNotNil(error.errorDescription)
             XCTAssertFalse(error.errorDescription?.isEmpty ?? true)
         }
+    }
+
+    func testMarkdupPipelineRunsCanonicalCommandOrder() async throws {
+        let inputURL = tempDir.appendingPathComponent("input.bam")
+        try Data("bam".utf8).write(to: inputURL)
+
+        let outputURL = tempDir.appendingPathComponent("out/output.bam")
+        let referenceURL = tempDir.appendingPathComponent("reference.fa")
+        try Data(">chr1\nACGT\n".utf8).write(to: referenceURL)
+
+        let runner = RecordingSamtoolsRunner()
+        let pipeline = AlignmentMarkdupPipeline(samtoolsRunner: runner)
+
+        let result = try await pipeline.run(
+            inputURL: inputURL,
+            outputURL: outputURL,
+            removeDuplicates: false,
+            referenceFastaPath: referenceURL.path,
+            progressHandler: nil
+        )
+
+        let commands = await runner.recordedArguments
+        XCTAssertEqual(commands.count, 5)
+        XCTAssertEqual(commands[0], [
+            "sort", "-n", "-o", result.intermediateFiles.nameSortedBAM.path,
+            "--reference", referenceURL.path,
+            inputURL.path
+        ])
+        XCTAssertEqual(commands[1], [
+            "fixmate", "-m",
+            "--reference", referenceURL.path,
+            result.intermediateFiles.nameSortedBAM.path,
+            result.intermediateFiles.fixmateBAM.path
+        ])
+        XCTAssertEqual(commands[2], [
+            "sort", "-o", result.intermediateFiles.coordinateSortedBAM.path,
+            "--reference", referenceURL.path,
+            result.intermediateFiles.fixmateBAM.path
+        ])
+        XCTAssertEqual(commands[3], [
+            "markdup",
+            result.intermediateFiles.coordinateSortedBAM.path,
+            outputURL.path
+        ])
+        XCTAssertEqual(commands[4], ["index", outputURL.path])
+        XCTAssertFalse(commands[3].contains("-r"))
+    }
+
+    func testMarkdupPipelineAddsRemoveFlagWhenDeduplicating() async throws {
+        let inputURL = tempDir.appendingPathComponent("input.bam")
+        try Data("bam".utf8).write(to: inputURL)
+
+        let outputURL = tempDir.appendingPathComponent("out/output.bam")
+        let runner = RecordingSamtoolsRunner()
+        let pipeline = AlignmentMarkdupPipeline(samtoolsRunner: runner)
+
+        let result = try await pipeline.run(
+            inputURL: inputURL,
+            outputURL: outputURL,
+            removeDuplicates: true,
+            referenceFastaPath: nil,
+            progressHandler: nil
+        )
+
+        let commands = await runner.recordedArguments
+        XCTAssertEqual(commands[3], [
+            "markdup",
+            "-r",
+            result.intermediateFiles.coordinateSortedBAM.path,
+            outputURL.path
+        ])
+    }
+}
+
+private actor RecordingSamtoolsRunner: AlignmentSamtoolsRunning {
+    private(set) var recordedArguments: [[String]] = []
+
+    func runSamtools(arguments: [String], timeout: TimeInterval) async throws -> NativeToolResult {
+        recordedArguments.append(arguments)
+
+        if let outputIndex = arguments.firstIndex(of: "-o"), outputIndex + 1 < arguments.count {
+            FileManager.default.createFile(atPath: arguments[outputIndex + 1], contents: Data())
+        } else if arguments.first == "markdup", let outputPath = arguments.last {
+            FileManager.default.createFile(atPath: outputPath, contents: Data())
+        } else if arguments.first == "index", arguments.count >= 2 {
+            FileManager.default.createFile(atPath: arguments[1] + ".bai", contents: Data())
+        }
+
+        return NativeToolResult(exitCode: 0, stdout: "", stderr: "")
     }
 }
