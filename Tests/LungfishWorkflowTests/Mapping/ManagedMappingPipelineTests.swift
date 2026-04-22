@@ -67,7 +67,7 @@ final class ManagedMappingPipelineTests: XCTestCase {
         XCTAssertEqual(Array(try fixture.recordedSubcommands().prefix(3)), ["view", "sort", "index"])
     }
 
-    func testNormalizeAlignmentRemovesRawSAMAfterSuccessfulNormalization() async throws {
+    func testNormalizeAlignmentPreservesCallerOwnedRawSAMByDefault() async throws {
         let fixture = try SamtoolsFixture()
         defer { fixture.cleanup() }
 
@@ -84,13 +84,37 @@ final class ManagedMappingPipelineTests: XCTestCase {
             outputDirectory: fixture.tempRoot
         )
 
-        XCTAssertFalse(
+        XCTAssertTrue(
             FileManager.default.fileExists(atPath: rawSAM.path),
-            "Successful SAM normalization should remove the intermediate raw SAM"
+            "Public normalization should not delete caller-owned SAM inputs by default"
         )
     }
 
-    func testNormalizeAlignmentRetainsRawSAMWhenSortFails() async throws {
+    func testNormalizeAlignmentRemovesRawSAMWhenCleanupIsEnabled() async throws {
+        let fixture = try SamtoolsFixture()
+        defer { fixture.cleanup() }
+
+        let rawSAM = fixture.tempRoot.appendingPathComponent("sample.raw.sam")
+        try Data("sam".utf8).write(to: rawSAM)
+
+        let pipeline = ManagedMappingPipeline(
+            condaManager: .shared,
+            nativeToolRunner: fixture.runner
+        )
+
+        _ = try await pipeline.normalizeAlignment(
+            rawAlignmentURL: rawSAM,
+            outputDirectory: fixture.tempRoot,
+            removeIntermediateRawSAMOnSuccess: true
+        )
+
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: rawSAM.path),
+            "Cleanup-enabled normalization should remove the owned raw SAM after success"
+        )
+    }
+
+    func testNormalizeAlignmentRetainsRawSAMWhenSortFailsEvenIfCleanupIsEnabled() async throws {
         let fixture = try SamtoolsFixture(failingSubcommand: "sort")
         defer { fixture.cleanup() }
 
@@ -105,7 +129,8 @@ final class ManagedMappingPipelineTests: XCTestCase {
         await XCTAssertThrowsErrorAsync(
             try await pipeline.normalizeAlignment(
                 rawAlignmentURL: rawSAM,
-                outputDirectory: fixture.tempRoot
+                outputDirectory: fixture.tempRoot,
+                removeIntermediateRawSAMOnSuccess: true
             )
         )
 
