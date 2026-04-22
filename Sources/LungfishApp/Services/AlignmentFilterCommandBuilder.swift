@@ -1,0 +1,66 @@
+// AlignmentFilterCommandBuilder.swift - Pure BAM filtering command planning
+// Copyright (c) 2024 Lungfish Contributors
+// SPDX-License-Identifier: MIT
+
+import Foundation
+
+/// Builds deterministic samtools command plans for BAM filtering.
+public enum AlignmentFilterCommandBuilder {
+
+    /// Builds a pure command plan from the provided request.
+    public static func build(from request: AlignmentFilterRequest) throws -> AlignmentFilterCommandPlan {
+        if let minimumMAPQ = request.minimumMAPQ, minimumMAPQ < 0 {
+            throw AlignmentFilterError.invalidMinimumMAPQ(minimumMAPQ)
+        }
+
+        let region = try validatedRegion(request.region)
+        let identityExpression = try validatedIdentityExpression(request.identityFilter)
+
+        var excludeFlags: UInt16 = 0
+        if request.mappedOnly {
+            excludeFlags |= 0x4
+        }
+        if request.primaryOnly {
+            excludeFlags |= 0x900
+        }
+        if request.duplicateMode != nil {
+            excludeFlags |= 0x400
+        }
+
+        var arguments: [String] = ["-b"]
+        if excludeFlags != 0 {
+            arguments += ["-F", String(format: "0x%X", excludeFlags)]
+        }
+        if let minimumMAPQ = request.minimumMAPQ {
+            arguments += ["-q", String(minimumMAPQ)]
+        }
+        if let identityExpression {
+            arguments += ["-e", identityExpression]
+        }
+
+        return AlignmentFilterCommandPlan(
+            arguments: arguments,
+            region: region,
+            duplicateMode: request.duplicateMode,
+            identityFilterExpression: identityExpression
+        )
+    }
+
+    private static func validatedRegion(_ region: String?) throws -> String? {
+        guard let region else { return nil }
+        let trimmed = region.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw AlignmentFilterError.invalidRegion(region)
+        }
+        return trimmed
+    }
+
+    private static func validatedIdentityExpression(_ filter: AlignmentFilterIdentityFilter?) throws -> String? {
+        guard let filter else { return nil }
+        if case .minimumPercentIdentity(let threshold) = filter,
+           !(0...100).contains(threshold) {
+            throw AlignmentFilterError.invalidMinimumPercentIdentity(threshold)
+        }
+        return filter.samtoolsExpression
+    }
+}
