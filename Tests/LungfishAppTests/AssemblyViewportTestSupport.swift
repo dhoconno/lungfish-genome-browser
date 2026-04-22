@@ -134,3 +134,35 @@ func makeAssemblyResult(writeFASTAIndex: Bool) throws -> AssemblyResult {
     try result.save(to: root)
     return result
 }
+
+func makeEmptyAssemblyResult(
+    outcome: AssemblyOutcome = .completedWithNoContigs
+) throws -> AssemblyResult {
+    let projectRoot = FileManager.default.temporaryDirectory
+        .appendingPathComponent("assembly-empty-viewport-test-\(UUID().uuidString).lungfish", isDirectory: true)
+    let root = projectRoot
+        .appendingPathComponent("Analyses", isDirectory: true)
+        .appendingPathComponent("spades-2026-04-19T21-40-00", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let contigsURL = root.appendingPathComponent("contigs.fasta")
+    try "".write(to: contigsURL, atomically: true, encoding: .utf8)
+
+    let result = AssemblyResult(
+        tool: .spades,
+        readType: .illuminaShortReads,
+        outcome: outcome,
+        contigsPath: contigsURL,
+        graphPath: root.appendingPathComponent("assembly_graph.gfa"),
+        logPath: root.appendingPathComponent("spades.log"),
+        assemblerVersion: "4.0.0",
+        commandLine: "spades.py -o \(root.path)",
+        outputDirectory: root,
+        statistics: AssemblyStatisticsCalculator.computeFromLengths([]),
+        wallTimeSeconds: 15,
+        scaffoldsPath: root.appendingPathComponent("scaffolds.fasta"),
+        paramsPath: root.appendingPathComponent("params.txt")
+    )
+    try result.save(to: root)
+    return result
+}

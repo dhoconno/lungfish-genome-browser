@@ -273,12 +273,20 @@ public enum AssemblyRunner {
             }
 
             await MainActor.run {
-                OperationCenter.shared.complete(id: opID, detail: "Assembly complete", bundleURLs: [bundleURL])
+                OperationCenter.shared.complete(
+                    id: opID,
+                    detail: completionDetail(for: result),
+                    bundleURLs: [bundleURL]
+                )
             }
 
             postNotification(
-                title: "Assembly Complete",
-                body: "\(request.tool.displayName) finished for \(projectName).",
+                title: completionNotificationTitle(for: result),
+                body: completionNotificationBody(
+                    for: result,
+                    toolDisplayName: request.tool.displayName,
+                    projectName: projectName
+                ),
                 isSuccess: true
             )
         } catch {
@@ -459,14 +467,23 @@ public enum AssemblyRunner {
                     }
                 }
             }
+            let normalizedResult = AssemblyResult.fromLegacy(result)
 
             await MainActor.run {
-                OperationCenter.shared.complete(id: opID, detail: "Assembly complete", bundleURLs: [bundleURL])
+                OperationCenter.shared.complete(
+                    id: opID,
+                    detail: completionDetail(for: normalizedResult),
+                    bundleURLs: [bundleURL]
+                )
             }
 
             postNotification(
-                title: "Assembly Complete",
-                body: "Project \"\(projectName)\" assembled successfully.",
+                title: completionNotificationTitle(for: normalizedResult),
+                body: completionNotificationBody(
+                    for: normalizedResult,
+                    toolDisplayName: "SPAdes",
+                    projectName: projectName
+                ),
                 isSuccess: true
             )
 
@@ -538,6 +555,29 @@ public enum AssemblyRunner {
     }
 
     // MARK: - Notifications
+
+    private static func completionDetail(for result: AssemblyResult) -> String {
+        result.outcome == .completedWithNoContigs
+            ? "Assembly completed, but no contigs were generated."
+            : "Assembly complete"
+    }
+
+    private static func completionNotificationTitle(for result: AssemblyResult) -> String {
+        result.outcome == .completedWithNoContigs
+            ? "No Contigs Generated"
+            : "Assembly Complete"
+    }
+
+    private static func completionNotificationBody(
+        for result: AssemblyResult,
+        toolDisplayName: String,
+        projectName: String
+    ) -> String {
+        if result.outcome == .completedWithNoContigs {
+            return "\(toolDisplayName) finished for \(projectName), but no contigs were generated."
+        }
+        return "\(toolDisplayName) finished for \(projectName)."
+    }
 
     /// Posts a macOS notification for assembly completion or failure.
     private static func postNotification(title: String, body: String, isSuccess: Bool) {

@@ -236,6 +236,22 @@ final class AssemblyResultViewControllerTests: XCTestCase {
         }
     }
 
+    func testCompletedWithNoContigsShowsExplicitEmptyStateAndRemovesBrowsingAffordances() async throws {
+        let vc = AssemblyResultViewController()
+        _ = vc.view
+
+        try await vc.configureForTesting(result: makeEmptyAssemblyResult())
+
+        XCTAssertEqual(vc.testEmptyStateMessage, "Assembly completed, but no contigs were generated.")
+        XCTAssertFalse(vc.testEmptyStateView.isHidden)
+        XCTAssertTrue(vc.testContigTableView.isHidden)
+        XCTAssertEqual(vc.testContigTableView.testTableView.numberOfRows, 0)
+        XCTAssertFalse(vc.testActionBar.blastButton.isEnabled)
+        XCTAssertFalse(vc.testActionBar.copyButton.isEnabled)
+        XCTAssertFalse(vc.testActionBar.exportButton.isEnabled)
+        XCTAssertFalse(vc.testActionBar.bundleButton.isEnabled)
+    }
+
     func testCommandCopyUsesVisibleTableValues() async throws {
         let pasteboard = RecordingPasteboard()
         let vc = AssemblyResultViewController()

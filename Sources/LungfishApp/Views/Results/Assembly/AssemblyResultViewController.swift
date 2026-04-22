@@ -21,6 +21,10 @@ public final class AssemblyResultViewController: NSViewController {
         static let maxContigs = 50
     }
 
+    private enum EmptyStateCopy {
+        static let noContigs = "Assembly completed, but no contigs were generated."
+    }
+
     private(set) var currentResult: AssemblyResult?
     public var onBlastVerification: ((BlastRequest) -> Void)?
     public var onExtractSequenceRequested: (([String], String) -> Void)? {
@@ -44,6 +48,8 @@ public final class AssemblyResultViewController: NSViewController {
     private let tableContainer = NSView()
     private let detailContainer = NSView()
     private let contigTableView = AssemblyContigTableView()
+    private let emptyStateView = NSView()
+    private let emptyStateLabel = NSTextField(wrappingLabelWithString: EmptyStateCopy.noContigs)
     private let detailPane = AssemblyContigDetailPane()
     private let actionBar = AssemblyActionBar()
     private let splitCoordinator = TwoPaneTrackedSplitCoordinator()
@@ -106,6 +112,23 @@ public final class AssemblyResultViewController: NSViewController {
         contigTableView.tableContextMenu = contextMenu
         tableContainer.addSubview(contigTableView)
 
+        emptyStateView.translatesAutoresizingMaskIntoConstraints = false
+        emptyStateView.isHidden = true
+        emptyStateView.setAccessibilityElement(true)
+        emptyStateView.setAccessibilityRole(.group)
+        emptyStateView.setAccessibilityLabel("Assembly empty state")
+        emptyStateView.setAccessibilityIdentifier("assembly-result-empty-state")
+        tableContainer.addSubview(emptyStateView)
+
+        emptyStateLabel.translatesAutoresizingMaskIntoConstraints = false
+        emptyStateLabel.alignment = .center
+        emptyStateLabel.lineBreakMode = .byWordWrapping
+        emptyStateLabel.maximumNumberOfLines = 0
+        emptyStateLabel.font = .systemFont(ofSize: 14, weight: .medium)
+        emptyStateLabel.textColor = .secondaryLabelColor
+        emptyStateLabel.setAccessibilityIdentifier("assembly-result-empty-state-message")
+        emptyStateView.addSubview(emptyStateLabel)
+
         detailPane.translatesAutoresizingMaskIntoConstraints = false
         detailContainer.addSubview(detailPane)
         detailContainer.isHidden = true
@@ -115,6 +138,17 @@ public final class AssemblyResultViewController: NSViewController {
             contigTableView.leadingAnchor.constraint(equalTo: tableContainer.leadingAnchor),
             contigTableView.trailingAnchor.constraint(equalTo: tableContainer.trailingAnchor),
             contigTableView.bottomAnchor.constraint(equalTo: tableContainer.bottomAnchor),
+
+            emptyStateView.topAnchor.constraint(equalTo: tableContainer.topAnchor),
+            emptyStateView.leadingAnchor.constraint(equalTo: tableContainer.leadingAnchor),
+            emptyStateView.trailingAnchor.constraint(equalTo: tableContainer.trailingAnchor),
+            emptyStateView.bottomAnchor.constraint(equalTo: tableContainer.bottomAnchor),
+
+            emptyStateLabel.centerXAnchor.constraint(equalTo: emptyStateView.centerXAnchor),
+            emptyStateLabel.centerYAnchor.constraint(equalTo: emptyStateView.centerYAnchor),
+            emptyStateLabel.leadingAnchor.constraint(greaterThanOrEqualTo: emptyStateView.leadingAnchor, constant: 24),
+            emptyStateLabel.trailingAnchor.constraint(lessThanOrEqualTo: emptyStateView.trailingAnchor, constant: -24),
+            emptyStateLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 420),
 
             detailPane.topAnchor.constraint(equalTo: detailContainer.topAnchor),
             detailPane.leadingAnchor.constraint(equalTo: detailContainer.leadingAnchor),
@@ -371,21 +405,35 @@ public final class AssemblyResultViewController: NSViewController {
     }
 
     private func load(result: AssemblyResult, generation: Int) async throws {
+        guard generation == loadGeneration else { return }
+        currentResult = result
+        summaryStrip.configure(result: result, pasteboard: scalarPasteboard)
+        contigTableView.scalarPasteboard = scalarPasteboard
+
+        if result.outcome == .completedWithNoContigs {
+            catalog = nil
+            allRecords = []
+            selectedContigNames = []
+            contigTableView.configure(rows: [])
+            showEmptyContigState()
+            applyLayoutPreference()
+            return
+        }
+
         let catalog = try await catalogLoader(result)
         let records = try await catalog.records()
         guard !Task.isCancelled, generation == loadGeneration else {
             return
         }
 
-        currentResult = result
         self.catalog = catalog
         self.allRecords = records
         self.selectedContigNames = []
         refreshContextMenu()
-
-        summaryStrip.configure(result: result, pasteboard: scalarPasteboard)
-        contigTableView.scalarPasteboard = scalarPasteboard
         contigTableView.configure(rows: records)
+        contigTableView.isHidden = false
+        emptyStateView.isHidden = true
+        actionBar.setSelectionCount(0)
         showEmptySelectionState()
         applyLayoutPreference()
     }
@@ -401,6 +449,15 @@ public final class AssemblyResultViewController: NSViewController {
         if advanceSelectionGeneration {
             selectionGeneration += 1
         }
+        selectedContigNames = []
+        actionBar.setSelectionCount(0)
+        refreshContextMenu()
+    }
+
+    private func showEmptyContigState() {
+        contigTableView.isHidden = true
+        emptyStateView.isHidden = false
+        detailContainer.isHidden = true
         selectedContigNames = []
         actionBar.setSelectionCount(0)
         refreshContextMenu()
@@ -561,6 +618,8 @@ extension AssemblyResultViewController {
     var testDetailPane: AssemblyContigDetailPane { detailPane }
     var testActionBar: AssemblyActionBar { actionBar }
     var testContextMenuTitles: [String] { contextMenu.items.map(\.title) }
+    var testEmptyStateView: NSView { emptyStateView }
+    var testEmptyStateMessage: String { emptyStateLabel.stringValue }
 
     func testSelectContig(named name: String) async throws {
         if let record = contigTableView.displayedRows.first(where: { $0.name == name }) {

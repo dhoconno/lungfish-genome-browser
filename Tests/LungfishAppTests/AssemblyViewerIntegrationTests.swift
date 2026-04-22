@@ -33,6 +33,25 @@ final class AssemblyViewerIntegrationTests: XCTestCase {
         XCTAssertNotNil(viewer.assemblyResultController?.onBlastVerification)
     }
 
+    func testViewerDisplayAssemblyResultHostsAssemblyControllerForEmptyContigOutcome() async throws {
+        let viewer = ViewerViewController()
+        _ = viewer.view
+
+        viewer.displayAssemblyResult(try makeEmptyAssemblyResult())
+
+        await waitUntil {
+            viewer.assemblyResultController?.testEmptyStateMessage == "Assembly completed, but no contigs were generated."
+        }
+
+        XCTAssertEqual(viewer.contentMode, .assembly)
+        XCTAssertNotNil(viewer.assemblyResultController)
+        XCTAssertTrue(viewer.assemblyResultController?.view.superview === viewer.view)
+        XCTAssertEqual(
+            viewer.assemblyResultController?.testEmptyStateMessage,
+            "Assembly completed, but no contigs were generated."
+        )
+    }
+
     func testAssemblyBlastVerificationCreatesBottomDrawerHost() throws {
         let viewer = ViewerViewController()
         _ = viewer.view
