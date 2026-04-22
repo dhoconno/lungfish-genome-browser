@@ -438,6 +438,7 @@ public class InspectorViewController: NSViewController {
         // Clear annotation selection
         viewModel.selectedAnnotation = nil
         viewModel.selectionSectionViewModel.select(annotation: nil)
+        viewModel.selectionSectionViewModel.referenceBundle = nil
 
         // Clear variant details
         viewModel.variantSectionViewModel.clear()
@@ -1343,6 +1344,8 @@ public class InspectorViewController: NSViewController {
         from bundle: ReferenceBundle,
         applySettings: @escaping ([AnyHashable: Any]) -> Void
     ) {
+        viewModel.selectionSectionViewModel.referenceBundle = bundle
+        viewModel.documentSectionViewModel.bundleURL = bundle.url
         viewModel.readStyleSectionViewModel.loadStatistics(from: bundle)
         viewModel.readStyleSectionViewModel.onSettingsChanged = { [weak self] in
             guard let self else { return }
@@ -1357,6 +1360,7 @@ public class InspectorViewController: NSViewController {
         viewModel.readStyleSectionViewModel.onCallVariantsRequested = { [weak self] in
             self?.runCallVariantsWorkflow()
         }
+        applySettings(makeReadDisplaySettingsPayload(from: viewModel.readStyleSectionViewModel))
         logger.info("updateMappingAlignmentSection: \(bundle.alignmentTrackIds.count) alignment tracks loaded")
     }
 
