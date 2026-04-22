@@ -7,7 +7,7 @@ Status: Draft for review
 
 Lungfish should support BAM filtering as a general bundle-alignment feature, not as a mapping-only special case. The right entry point is the Inspector sidebar for loaded alignment tracks. Users will choose a source alignment track, select BAM filters, and create a new sibling alignment track in the same `.lungfishref` bundle under `alignments/filtered/`.
 
-This design uses one shared filtering engine for both imported BAM tracks and BAMs produced by managed mapping analyses, because managed mapping results already import their BAM into a reference bundle for integrated viewing. The source BAM remains unchanged. Each filtered output is a new derived BAM with explicit provenance describing the original source BAM, any duplicate preprocessing, the exact filters applied, and pre/post read counts.
+This design uses one shared filtering engine for both imported BAM tracks and BAMs produced by managed mapping analyses, because managed mapping results already import their BAM into a copied reference bundle for integrated viewing when a source reference bundle is available. The top-level mapping output remains an analysis directory, not a `.lungfishref` bundle. The source BAM remains unchanged. Each filtered output is a new derived BAM with explicit provenance describing the original source BAM, any duplicate preprocessing, the exact filters applied, and pre/post read counts.
 
 ## Goals
 
@@ -48,6 +48,23 @@ Managed mapping runs already perform a normalization sequence that is close to t
 - `samtools flagstat`
 
 That path already records mapping provenance separately for analysis bundles.
+
+### Mapping Results Are Analysis Directories With an Optional Viewer Bundle
+
+Managed mapping output is not itself a `.lungfishref` bundle. The primary mapping result is an analysis directory containing artifacts such as:
+
+- the normalized BAM
+- the BAM index
+- `mapping-result.json`
+- mapping provenance
+
+When the mapping run started from a source reference bundle, Lungfish also creates a copied viewer bundle inside the analysis directory and imports the mapping BAM into that copied bundle for integrated viewing.
+
+This distinction matters for BAM filtering:
+
+- BAM filtering should target alignment tracks in the copied viewer bundle
+- not the top-level analysis directory directly
+- if no viewer bundle exists, the Inspector should disable BAM filtering for that mapping result and explain why
 
 ### Duplicate Workflows Already Re-Import Derived BAMs
 
@@ -347,6 +364,7 @@ Mapping-result BAMs should not keep a separate bespoke BAM filtering implementat
 Instead:
 
 - if a mapping result has a viewer bundle with imported alignment tracks, BAM filtering should operate through the same bundle alignment workflow
+- if a mapping result does not have a viewer bundle, BAM filtering is unavailable until the BAM is associated with a bundle-backed alignment track
 - mapping-analysis provenance remains analysis-specific
 - derived BAM provenance remains track-specific
 
