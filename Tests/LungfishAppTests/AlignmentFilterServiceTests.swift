@@ -288,7 +288,7 @@ private struct BundleFixture {
     let sourceBAMURL: URL
 }
 
-private actor FilterServiceRecordingSamtoolsRunner: AlignmentSamtoolsRunning {
+private actor FilterServiceRecordingSamtoolsRunner: LungfishApp.AlignmentSamtoolsRunning {
     private let countResponses: [String: Int]
     private(set) var commands: [[String]] = []
 
@@ -323,7 +323,7 @@ private actor FilterServiceRecordingSamtoolsRunner: AlignmentSamtoolsRunning {
     }
 }
 
-private actor FilterServiceRecordingMarkdupPipeline: AlignmentMarkdupPipelining {
+private actor FilterServiceRecordingMarkdupPipeline: LungfishApp.AlignmentMarkdupPipelining {
     struct Invocation: Equatable {
         let inputURL: URL
         let outputURL: URL
@@ -344,7 +344,7 @@ private actor FilterServiceRecordingMarkdupPipeline: AlignmentMarkdupPipelining 
         removeDuplicates: Bool,
         referenceFastaPath: String?,
         progressHandler: (@Sendable (Double, String) -> Void)?
-    ) async throws -> AlignmentMarkdupPipelineResult {
+    ) async throws -> LungfishApp.AlignmentMarkdupPipelineResult {
         let effectiveOutputURL = configuredOutputURL ?? outputURL
         invocations.append(
             Invocation(
@@ -362,7 +362,7 @@ private actor FilterServiceRecordingMarkdupPipeline: AlignmentMarkdupPipelining 
         FileManager.default.createFile(atPath: effectiveOutputURL.path, contents: Data())
         FileManager.default.createFile(atPath: effectiveOutputURL.path + ".bai", contents: Data())
 
-        return AlignmentMarkdupPipelineResult(
+        return LungfishApp.AlignmentMarkdupPipelineResult(
             outputURL: effectiveOutputURL,
             indexURL: URL(fileURLWithPath: effectiveOutputURL.path + ".bai"),
             intermediateFiles: .init(
@@ -413,7 +413,7 @@ private actor FilterServiceRecordingImporter: AlignmentBAMImporting {
     }
 }
 
-private struct FailingFilterServiceMarkdupPipeline: AlignmentMarkdupPipelining {
+private struct FailingFilterServiceMarkdupPipeline: LungfishApp.AlignmentMarkdupPipelining {
     let error: Error
 
     func run(
@@ -422,7 +422,7 @@ private struct FailingFilterServiceMarkdupPipeline: AlignmentMarkdupPipelining {
         removeDuplicates: Bool,
         referenceFastaPath: String?,
         progressHandler: (@Sendable (Double, String) -> Void)?
-    ) async throws -> AlignmentMarkdupPipelineResult {
+    ) async throws -> LungfishApp.AlignmentMarkdupPipelineResult {
         throw error
     }
 }

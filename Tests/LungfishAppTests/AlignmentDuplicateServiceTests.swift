@@ -68,7 +68,7 @@ final class AlignmentDuplicateServiceTests: XCTestCase {
         try Data(">chr1\nACGT\n".utf8).write(to: referenceURL)
 
         let runner = RecordingSamtoolsRunner()
-        let pipeline = AlignmentMarkdupPipeline(samtoolsRunner: runner)
+        let pipeline = LungfishApp.AlignmentMarkdupPipeline(samtoolsRunner: runner)
 
         let result = try await pipeline.run(
             inputURL: inputURL,
@@ -111,7 +111,7 @@ final class AlignmentDuplicateServiceTests: XCTestCase {
 
         let outputURL = tempDir.appendingPathComponent("out/output.bam")
         let runner = RecordingSamtoolsRunner()
-        let pipeline = AlignmentMarkdupPipeline(samtoolsRunner: runner)
+        let pipeline = LungfishApp.AlignmentMarkdupPipeline(samtoolsRunner: runner)
 
         let result = try await pipeline.run(
             inputURL: inputURL,
@@ -131,7 +131,7 @@ final class AlignmentDuplicateServiceTests: XCTestCase {
     }
 }
 
-private actor RecordingSamtoolsRunner: AlignmentSamtoolsRunning {
+private actor RecordingSamtoolsRunner: LungfishApp.AlignmentSamtoolsRunning {
     private(set) var recordedArguments: [[String]] = []
 
     func runSamtools(arguments: [String], timeout: TimeInterval) async throws -> NativeToolResult {
