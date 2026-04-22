@@ -3,12 +3,15 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import LungfishIO
 import LungfishWorkflow
 
 @MainActor
 public final class MappingResultViewController: NSViewController {
     private(set) var currentResult: MappingResult?
     private var loadedViewerBundleURL: URL?
+
+    var onEmbeddedReferenceBundleLoaded: ((ReferenceBundle) -> Void)?
 
     private let embeddedViewerController = ViewerViewController()
     private let splitCoordinator = TwoPaneTrackedSplitCoordinator()
@@ -247,6 +250,16 @@ public final class MappingResultViewController: NSViewController {
         loadedViewerBundleURL = standardized
     }
 
+    func applyEmbeddedReadDisplaySettings(_ userInfo: [AnyHashable: Any]) {
+        embeddedViewerController.applyReadDisplaySettings(userInfo)
+    }
+
+    func notifyEmbeddedReferenceBundleLoadedIfAvailable() {
+        if let bundle = embeddedViewerController.viewerView.currentReferenceBundle {
+            onEmbeddedReferenceBundleLoaded?(bundle)
+        }
+    }
+
     private func rebuildEmbeddedAnnotationSearchIndex() {
         guard let bundle = embeddedViewerController.viewerView.currentReferenceBundle else {
             embeddedViewerController.annotationSearchIndex = nil
@@ -257,6 +270,7 @@ public final class MappingResultViewController: NSViewController {
         let chromosomes = embeddedViewerController.currentBundleDataProvider?.chromosomes ?? []
         index.buildIndex(bundle: bundle, chromosomes: chromosomes)
         embeddedViewerController.annotationSearchIndex = index
+        onEmbeddedReferenceBundleLoaded?(bundle)
     }
 
     private func displaySelectedContig(_ selectedContig: MappingContigSummary) {

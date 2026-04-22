@@ -823,7 +823,10 @@ public class ViewerViewController: NSViewController {
 
     @objc private func handleReadDisplaySettingsChanged(_ notification: Notification) {
         guard let userInfo = notification.userInfo else { return }
+        applyReadDisplaySettings(userInfo)
+    }
 
+    func applyReadDisplaySettings(_ userInfo: [AnyHashable: Any]) {
         if let showReads = userInfo[NotificationUserInfoKey.showReads] as? Bool {
             viewerView.showReads = showReads
         }

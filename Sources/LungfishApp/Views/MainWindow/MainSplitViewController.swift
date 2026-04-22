@@ -2503,6 +2503,18 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                 )
             )
             viewerController.displayMappingResult(result)
+            if let mappingController = viewerController.mappingResultController {
+                mappingController.onEmbeddedReferenceBundleLoaded = { [weak self, weak mappingController] bundle in
+                    guard let self, let mappingController else { return }
+                    self.inspectorController.updateMappingAlignmentSection(
+                        from: bundle,
+                        applySettings: { payload in
+                            mappingController.applyEmbeddedReadDisplaySettings(payload)
+                        }
+                    )
+                }
+                mappingController.notifyEmbeddedReferenceBundleLoadedIfAvailable()
+            }
             recordUITestEvent(
                 "mapping.display.succeeded tool=\(result.mapper.rawValue) contigs=\(result.contigs.count)"
             )

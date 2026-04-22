@@ -1285,38 +1285,42 @@ public class InspectorViewController: NSViewController {
         }
     }
 
+    private func makeReadDisplaySettingsPayload(from vm: ReadStyleSectionViewModel) -> [AnyHashable: Any] {
+        [
+            NotificationUserInfoKey.showReads: vm.showReads,
+            NotificationUserInfoKey.maxReadRows: Int(vm.maxReadRows),
+            NotificationUserInfoKey.limitReadRows: vm.limitReadRows,
+            NotificationUserInfoKey.verticalCompressContig: vm.verticallyCompressContig,
+            NotificationUserInfoKey.minMapQ: Int(vm.minMapQ),
+            NotificationUserInfoKey.showMismatches: vm.showMismatches,
+            NotificationUserInfoKey.showSoftClips: vm.showSoftClips,
+            NotificationUserInfoKey.showIndels: vm.showIndels,
+            NotificationUserInfoKey.showStrandColors: vm.showStrandColors,
+            NotificationUserInfoKey.consensusMaskingEnabled: vm.consensusMaskingEnabled,
+            NotificationUserInfoKey.consensusGapThresholdPercent: Int(vm.consensusGapThresholdPercent),
+            NotificationUserInfoKey.consensusMinDepth: Int(vm.consensusMinDepth),
+            NotificationUserInfoKey.consensusMaskingMinDepth: Int(vm.consensusMaskingMinDepth),
+            NotificationUserInfoKey.consensusMinMapQ: Int(vm.consensusMinMapQ),
+            NotificationUserInfoKey.consensusMinBaseQ: Int(vm.consensusMinBaseQ),
+            NotificationUserInfoKey.showConsensusTrack: vm.showConsensusTrack,
+            NotificationUserInfoKey.consensusMode: vm.consensusMode.rawValue,
+            NotificationUserInfoKey.consensusUseAmbiguity: vm.consensusUseAmbiguity,
+            NotificationUserInfoKey.excludeFlags: vm.computedExcludeFlags,
+            NotificationUserInfoKey.selectedReadGroups: vm.selectedReadGroups,
+        ]
+    }
+
     /// Populates the read style section with alignment statistics from the bundle's metadata DBs.
     private func updateAlignmentSection(from bundle: ReferenceBundle) {
         viewModel.readStyleSectionViewModel.loadStatistics(from: bundle)
 
         // Wire the settings-changed callback to post notification
         viewModel.readStyleSectionViewModel.onSettingsChanged = { [weak self] in
-            guard let vm = self?.viewModel.readStyleSectionViewModel else { return }
+            guard let self else { return }
             NotificationCenter.default.post(
                 name: .readDisplaySettingsChanged,
                 object: self,
-                userInfo: [
-                    NotificationUserInfoKey.showReads: vm.showReads,
-                    NotificationUserInfoKey.maxReadRows: Int(vm.maxReadRows),
-                    NotificationUserInfoKey.limitReadRows: vm.limitReadRows,
-                    NotificationUserInfoKey.verticalCompressContig: vm.verticallyCompressContig,
-                    NotificationUserInfoKey.minMapQ: Int(vm.minMapQ),
-                    NotificationUserInfoKey.showMismatches: vm.showMismatches,
-                    NotificationUserInfoKey.showSoftClips: vm.showSoftClips,
-                    NotificationUserInfoKey.showIndels: vm.showIndels,
-                    NotificationUserInfoKey.showStrandColors: vm.showStrandColors,
-                    NotificationUserInfoKey.consensusMaskingEnabled: vm.consensusMaskingEnabled,
-                    NotificationUserInfoKey.consensusGapThresholdPercent: Int(vm.consensusGapThresholdPercent),
-                    NotificationUserInfoKey.consensusMinDepth: Int(vm.consensusMinDepth),
-                    NotificationUserInfoKey.consensusMaskingMinDepth: Int(vm.consensusMaskingMinDepth),
-                    NotificationUserInfoKey.consensusMinMapQ: Int(vm.consensusMinMapQ),
-                    NotificationUserInfoKey.consensusMinBaseQ: Int(vm.consensusMinBaseQ),
-                    NotificationUserInfoKey.showConsensusTrack: vm.showConsensusTrack,
-                    NotificationUserInfoKey.consensusMode: vm.consensusMode.rawValue,
-                    NotificationUserInfoKey.consensusUseAmbiguity: vm.consensusUseAmbiguity,
-                    NotificationUserInfoKey.excludeFlags: vm.computedExcludeFlags,
-                    NotificationUserInfoKey.selectedReadGroups: vm.selectedReadGroups,
-                ]
+                userInfo: self.makeReadDisplaySettingsPayload(from: self.viewModel.readStyleSectionViewModel)
             )
         }
 
@@ -1333,6 +1337,27 @@ public class InspectorViewController: NSViewController {
         }
 
         logger.info("updateAlignmentSection: \(bundle.alignmentTrackIds.count) alignment tracks loaded")
+    }
+
+    func updateMappingAlignmentSection(
+        from bundle: ReferenceBundle,
+        applySettings: @escaping ([AnyHashable: Any]) -> Void
+    ) {
+        viewModel.readStyleSectionViewModel.loadStatistics(from: bundle)
+        viewModel.readStyleSectionViewModel.onSettingsChanged = { [weak self] in
+            guard let self else { return }
+            applySettings(self.makeReadDisplaySettingsPayload(from: self.viewModel.readStyleSectionViewModel))
+        }
+        viewModel.readStyleSectionViewModel.onMarkDuplicatesRequested = { [weak self] in
+            self?.runMarkDuplicatesWorkflow()
+        }
+        viewModel.readStyleSectionViewModel.onCreateDeduplicatedBundleRequested = { [weak self] in
+            self?.runCreateDeduplicatedBundleWorkflow()
+        }
+        viewModel.readStyleSectionViewModel.onCallVariantsRequested = { [weak self] in
+            self?.runCallVariantsWorkflow()
+        }
+        logger.info("updateMappingAlignmentSection: \(bundle.alignmentTrackIds.count) alignment tracks loaded")
     }
 
     // MARK: - Variant Calling Workflow
