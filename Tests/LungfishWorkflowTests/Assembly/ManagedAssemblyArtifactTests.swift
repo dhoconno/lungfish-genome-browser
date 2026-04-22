@@ -119,6 +119,53 @@ final class ManagedAssemblyArtifactTests: XCTestCase {
         XCTAssertEqual(loaded.graphPath, graphURL)
     }
 
+    func testManagedAssemblyResultWithoutOutcomeAndZeroContigsDefaultsToCompletedWithNoContigs() throws {
+        let tempDir = try makeTempDirectory(prefix: "managed-assembly-legacy-empty-outcome")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let contigsURL = tempDir.appendingPathComponent("contigs.fasta")
+        try "".write(to: contigsURL, atomically: true, encoding: .utf8)
+
+        let statistics = try AssemblyStatisticsCalculator.compute(from: contigsURL)
+        let payload = """
+        {
+          "assemblerVersion" : "1.2.9",
+          "commandLine" : "megahit -1 R1.fastq.gz -2 R2.fastq.gz -o output",
+          "contigsPath" : "contigs.fasta",
+          "graphPath" : null,
+          "logPath" : null,
+          "outputDirectory" : "\(tempDir.path)",
+          "paramsPath" : null,
+          "readType" : "illuminaShortReads",
+          "scaffoldsPath" : null,
+          "schemaVersion" : 2,
+          "statistics" : {
+            "contigCount" : \(statistics.contigCount),
+            "gcFraction" : \(statistics.gcFraction),
+            "l50" : \(statistics.l50),
+            "largestContigBP" : \(statistics.largestContigBP),
+            "meanLengthBP" : \(statistics.meanLengthBP),
+            "n50" : \(statistics.n50),
+            "n90" : \(statistics.n90),
+            "smallestContigBP" : \(statistics.smallestContigBP),
+            "totalLengthBP" : \(statistics.totalLengthBP)
+          },
+          "tool" : "megahit",
+          "wallTimeSeconds" : 42.5
+        }
+        """
+        try payload.write(
+            to: tempDir.appendingPathComponent("assembly-result.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let loaded = try AssemblyResult.load(from: tempDir)
+
+        XCTAssertEqual(loaded.outcome, .completedWithNoContigs)
+        XCTAssertEqual(loaded.statistics.contigCount, 0)
+    }
+
     func testAssemblyResultLoadsLegacySpadesSidecar() throws {
         let tempDir = try makeTempDirectory(prefix: "legacy-spades-result")
         defer { try? FileManager.default.removeItem(at: tempDir) }

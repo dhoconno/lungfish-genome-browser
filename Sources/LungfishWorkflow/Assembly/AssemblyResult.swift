@@ -111,10 +111,12 @@ public extension AssemblyResult {
         decoder.dateDecodingStrategy = .iso8601
 
         if let persisted = try? decoder.decode(PersistedManagedAssemblyResult.self, from: data) {
+            let outcome = persisted.outcome ?? inferredOutcome(from: persisted.statistics)
+
             return AssemblyResult(
                 tool: persisted.tool,
                 readType: persisted.readType,
-                outcome: persisted.outcome ?? .completed,
+                outcome: outcome,
                 contigsPath: directory.appendingPathComponent(persisted.contigsPath),
                 graphPath: persisted.graphPath.map { directory.appendingPathComponent($0) },
                 logPath: persisted.logPath.map { directory.appendingPathComponent($0) },
@@ -132,9 +134,7 @@ public extension AssemblyResult {
     }
 
     static func fromLegacy(_ result: SPAdesAssemblyResult) -> AssemblyResult {
-        let outcome: AssemblyOutcome = result.statistics.contigCount == 0
-            ? .completedWithNoContigs
-            : .completed
+        let outcome = inferredOutcome(from: result.statistics)
 
         return AssemblyResult(
             tool: .spades,
@@ -151,5 +151,9 @@ public extension AssemblyResult {
             scaffoldsPath: result.scaffoldsPath,
             paramsPath: result.paramsPath
         )
+    }
+
+    private static func inferredOutcome(from statistics: AssemblyStatistics) -> AssemblyOutcome {
+        statistics.contigCount == 0 ? .completedWithNoContigs : .completed
     }
 }
