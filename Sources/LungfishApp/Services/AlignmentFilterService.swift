@@ -110,6 +110,7 @@ public final class AlignmentFilterService: @unchecked Sendable {
         progressHandler?(0.05, "Checking required SAM tags...")
         try await preflightRequiredTags(
             plan.requiredSAMTags,
+            plan: plan,
             inputPath: sourceAlignmentPath,
             sourceTrackID: sourceTrackID
         )
@@ -192,9 +193,13 @@ public final class AlignmentFilterService: @unchecked Sendable {
             name: outputTrackName,
             progressHandler: progressHandler
         )
+        let relocatedImportResult = try relocateImportedTrackIntoFilteredStorage(
+            importResult: importResult,
+            bundleURL: bundleURL
+        )
 
         try appendDerivationMetadata(
-            importResult: importResult,
+            importResult: relocatedImportResult,
             bundleURL: bundleURL,
             sourceTrack: sourceTrack,
             sourceAlignmentPath: sourceAlignmentPath,
@@ -206,23 +211,26 @@ public final class AlignmentFilterService: @unchecked Sendable {
 
         alignmentFilterLogger.info("Derived filtered BAM track from \(sourceTrackID, privacy: .public)")
         progressHandler?(1.0, "Filtered alignment imported.")
-        return AlignmentFilterServiceResult(importResult: importResult, commandHistory: commandHistory)
+        return AlignmentFilterServiceResult(importResult: relocatedImportResult, commandHistory: commandHistory)
     }
 
     private func preflightRequiredTags(
         _ requiredSAMTags: [String],
+        plan: AlignmentFilterCommandPlan,
         inputPath: String,
         sourceTrackID: String
     ) async throws {
         guard !requiredSAMTags.isEmpty else { return }
 
-        let totalCount = try await alignmentCount(arguments: ["view", "-c", inputPath])
+        let totalCount = try await alignmentCount(
+            arguments: preflightCountArguments(for: plan, inputPath: inputPath, requiredTag: nil)
+        )
         guard totalCount > 0 else { return }
 
         var missingTags: [String] = []
         for tag in requiredSAMTags.sorted() {
             let taggedCount = try await alignmentCount(
-                arguments: ["view", "-c", "-e", "exists([\(tag)])", inputPath]
+                arguments: preflightCountArguments(for: plan, inputPath: inputPath, requiredTag: tag)
             )
             if taggedCount != totalCount {
                 missingTags.append(tag)
@@ -252,6 +260,34 @@ public final class AlignmentFilterService: @unchecked Sendable {
         return result
     }
 
+    private func preflightCountArguments(
+        for plan: AlignmentFilterCommandPlan,
+        inputPath: String,
+        requiredTag: String?
+    ) -> [String] {
+        var arguments = plan.commandArguments(appendingInputPath: inputPath)
+
+        if let binaryIndex = arguments.firstIndex(of: "-b") {
+            arguments.remove(at: binaryIndex)
+        }
+
+        if let identityExpression = plan.identityFilterExpression,
+           let expressionIndex = arguments.firstIndex(of: "-e"),
+           expressionIndex + 1 < arguments.count,
+           arguments[expressionIndex + 1] == identityExpression {
+            arguments.removeSubrange(expressionIndex...(expressionIndex + 1))
+        }
+
+        arguments.insert("-c", at: 1)
+
+        if let requiredTag {
+            let inputIndex = max(1, arguments.count - plan.trailingArguments.count - 1)
+            arguments.insert(contentsOf: ["-e", "exists([\(requiredTag)])"], at: inputIndex)
+        }
+
+        return arguments
+    }
+
     private func insertingOutputPath(
         _ outputPath: String,
         into arguments: [String],
@@ -262,6 +298,92 @@ public final class AlignmentFilterService: @unchecked Sendable {
         let inputIndex = max(1, rewritten.count - trailingArgumentCount - 1)
         rewritten.insert(contentsOf: ["-o", outputPath], at: inputIndex)
         return rewritten
+    }
+
+    private func relocateImportedTrackIntoFilteredStorage(
+        importResult: BAMImportService.ImportResult,
+        bundleURL: URL
+    ) throws -> BAMImportService.ImportResult {
+        let trackInfo = importResult.trackInfo
+        guard !trackInfo.sourcePath.hasPrefix("alignments/filtered/") else {
+            return importResult
+        }
+
+        let filteredDirectoryURL = bundleURL.appendingPathComponent("alignments/filtered", isDirectory: true)
+        try FileManager.default.createDirectory(at: filteredDirectoryURL, withIntermediateDirectories: true)
+
+        let sourceURL = resolveBundlePath(trackInfo.sourcePath, bundleURL: bundleURL)
+        let indexURL = resolveBundlePath(trackInfo.indexPath, bundleURL: bundleURL)
+        let destinationSourceRelativePath = "alignments/filtered/\(sourceURL.lastPathComponent)"
+        let destinationIndexRelativePath = "alignments/filtered/\(indexURL.lastPathComponent)"
+        let destinationSourceURL = bundleURL.appendingPathComponent(destinationSourceRelativePath)
+        let destinationIndexURL = bundleURL.appendingPathComponent(destinationIndexRelativePath)
+
+        try replaceItemIfPresent(at: destinationSourceURL)
+        try replaceItemIfPresent(at: destinationIndexURL)
+        try FileManager.default.moveItem(at: sourceURL, to: destinationSourceURL)
+        try FileManager.default.moveItem(at: indexURL, to: destinationIndexURL)
+
+        var destinationMetadataRelativePath: String?
+        if let metadataDBPath = trackInfo.metadataDBPath {
+            let metadataDBURL = resolveBundlePath(metadataDBPath, bundleURL: bundleURL)
+            let relocatedMetadataRelativePath = "alignments/filtered/\(metadataDBURL.lastPathComponent)"
+            let relocatedMetadataURL = bundleURL.appendingPathComponent(relocatedMetadataRelativePath)
+            try replaceItemIfPresent(at: relocatedMetadataURL)
+            try FileManager.default.moveItem(at: metadataDBURL, to: relocatedMetadataURL)
+
+            let metadataDB = try AlignmentMetadataDatabase.openForUpdate(at: relocatedMetadataURL)
+            metadataDB.setFileInfo("source_path", value: destinationSourceURL.path)
+            metadataDB.setFileInfo("source_path_in_bundle", value: destinationSourceRelativePath)
+            metadataDB.setFileInfo("file_name", value: destinationSourceURL.lastPathComponent)
+            destinationMetadataRelativePath = relocatedMetadataRelativePath
+        }
+
+        let relocatedTrackInfo = AlignmentTrackInfo(
+            id: trackInfo.id,
+            name: trackInfo.name,
+            description: trackInfo.description,
+            format: trackInfo.format,
+            sourcePath: destinationSourceRelativePath,
+            sourceBookmark: trackInfo.sourceBookmark,
+            indexPath: destinationIndexRelativePath,
+            indexBookmark: trackInfo.indexBookmark,
+            metadataDBPath: destinationMetadataRelativePath,
+            checksumSHA256: trackInfo.checksumSHA256,
+            fileSizeBytes: trackInfo.fileSizeBytes,
+            addedDate: trackInfo.addedDate,
+            mappedReadCount: trackInfo.mappedReadCount,
+            unmappedReadCount: trackInfo.unmappedReadCount,
+            sampleNames: trackInfo.sampleNames
+        )
+
+        let manifest = try BundleManifest.load(from: bundleURL)
+        let updatedManifest = manifest
+            .removingAlignmentTrack(id: trackInfo.id)
+            .addingAlignmentTrack(relocatedTrackInfo)
+        try updatedManifest.save(to: bundleURL)
+
+        return BAMImportService.ImportResult(
+            trackInfo: relocatedTrackInfo,
+            mappedReads: importResult.mappedReads,
+            unmappedReads: importResult.unmappedReads,
+            sampleNames: importResult.sampleNames,
+            indexWasCreated: importResult.indexWasCreated,
+            wasSorted: importResult.wasSorted
+        )
+    }
+
+    private func resolveBundlePath(_ path: String, bundleURL: URL) -> URL {
+        if path.hasPrefix("/") {
+            return URL(fileURLWithPath: path)
+        }
+        return bundleURL.appendingPathComponent(path)
+    }
+
+    private func replaceItemIfPresent(at url: URL) throws {
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
     }
 
     private func appendDerivationMetadata(

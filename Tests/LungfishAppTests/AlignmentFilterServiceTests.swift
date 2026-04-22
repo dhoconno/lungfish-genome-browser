@@ -26,7 +26,16 @@ final class AlignmentFilterServiceTests: XCTestCase {
 
     func testFilterAlignmentFailsWhenNMTagIsRequiredButMissing() async throws {
         let bundle = try makeBundleFixture()
-        let runner = FilterServiceRecordingSamtoolsRunner(totalCount: 12, taggedCount: 0)
+        let selectionArgs = ["-F", "0x4", "-q", "20"]
+        let region = "chr1:1-10"
+        let totalCountCommand = ["view", "-c"] + selectionArgs + [bundle.sourceBAMURL.path, region]
+        let taggedCountCommand = ["view", "-c"] + selectionArgs + ["-e", "exists([NM])", bundle.sourceBAMURL.path, region]
+        let runner = FilterServiceRecordingSamtoolsRunner(
+            countResponses: [
+                FilterServiceRecordingSamtoolsRunner.responseKey(for: totalCountCommand): 12,
+                FilterServiceRecordingSamtoolsRunner.responseKey(for: taggedCountCommand): 0
+            ]
+        )
         let markdupPipeline = FilterServiceRecordingMarkdupPipeline()
         let importer = FilterServiceRecordingImporter(result: makeImportResult(trackID: "derived"))
         let service = AlignmentFilterService(
@@ -40,8 +49,13 @@ final class AlignmentFilterServiceTests: XCTestCase {
                 bundleURL: bundle.bundleURL,
                 sourceTrackID: bundle.sourceTrack.id,
                 outputTrackName: "Exact matches",
-                filterRequest: AlignmentFilterRequest(identityFilter: .exactMatch),
-                progressHandler: nil
+                filterRequest: AlignmentFilterRequest(
+                    mappedOnly: true,
+                    minimumMAPQ: 20,
+                    identityFilter: .exactMatch,
+                    region: region
+                ),
+                progressHandler: nil as (@Sendable (Double, String) -> Void)?
             )
             XCTFail("Expected missing-tag failure")
         } catch let error as AlignmentFilterServiceError {
@@ -56,8 +70,8 @@ final class AlignmentFilterServiceTests: XCTestCase {
         let markdupInvocations = await markdupPipeline.invocations
         let importedBAMURLs = await importer.importedBAMURLs
         XCTAssertEqual(commands, [
-            ["view", "-c", bundle.sourceBAMURL.path],
-            ["view", "-c", "-e", "exists([NM])", bundle.sourceBAMURL.path]
+            totalCountCommand,
+            taggedCountCommand
         ])
         XCTAssertEqual(markdupInvocations.count, 0)
         XCTAssertEqual(importedBAMURLs.count, 0)
@@ -65,7 +79,7 @@ final class AlignmentFilterServiceTests: XCTestCase {
 
     func testFilterAlignmentRunsDuplicatePreprocessingBeforeViewStepForRemoveMode() async throws {
         let bundle = try makeBundleFixture()
-        let runner = FilterServiceRecordingSamtoolsRunner(totalCount: 0, taggedCount: 0)
+        let runner = FilterServiceRecordingSamtoolsRunner()
         let markdupOutputURL = tempDir.appendingPathComponent("preprocessed/marked.bam")
         let markdupPipeline = FilterServiceRecordingMarkdupPipeline(outputURL: markdupOutputURL)
         let importer = FilterServiceRecordingImporter(result: makeImportResult(trackID: "derived"))
@@ -75,7 +89,7 @@ final class AlignmentFilterServiceTests: XCTestCase {
             bamImporter: importer
         )
 
-        _ = try await service.deriveFilteredAlignment(
+        let result = try await service.deriveFilteredAlignment(
             bundleURL: bundle.bundleURL,
             sourceTrackID: bundle.sourceTrack.id,
             outputTrackName: "Removed duplicates",
@@ -100,6 +114,34 @@ final class AlignmentFilterServiceTests: XCTestCase {
         let importedBAMs = await importer.importedBAMURLs
         XCTAssertEqual(importedBAMs.count, 1)
         XCTAssertEqual(importedBAMs[0].lastPathComponent, "source-track.filtered.sorted.bam")
+        XCTAssertTrue(result.importResult.trackInfo.sourcePath.hasPrefix("alignments/filtered/"))
+        XCTAssertTrue(result.importResult.trackInfo.indexPath.hasPrefix("alignments/filtered/"))
+        XCTAssertTrue(result.importResult.trackInfo.metadataDBPath?.hasPrefix("alignments/filtered/") ?? false)
+
+        let manifest = try BundleManifest.load(from: bundle.bundleURL)
+        guard let importedTrack = manifest.alignments.first(where: { $0.id == result.importResult.trackInfo.id }) else {
+            return XCTFail("Expected imported track in manifest")
+        }
+        XCTAssertTrue(importedTrack.sourcePath.hasPrefix("alignments/filtered/"))
+        XCTAssertTrue(importedTrack.indexPath.hasPrefix("alignments/filtered/"))
+        XCTAssertTrue(importedTrack.metadataDBPath?.hasPrefix("alignments/filtered/") ?? false)
+
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: bundle.bundleURL.appendingPathComponent(importedTrack.sourcePath).path
+            )
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: bundle.bundleURL.appendingPathComponent("alignments/derived.bam").path
+            )
+        )
+
+        let metadataDB = try XCTUnwrap(
+            AlignmentMetadataDatabase(url: bundle.bundleURL.appendingPathComponent(importedTrack.metadataDBPath!))
+        )
+        XCTAssertEqual(metadataDB.getFileInfo("source_path_in_bundle"), importedTrack.sourcePath)
+        XCTAssertEqual(metadataDB.getFileInfo("file_name"), URL(fileURLWithPath: importedTrack.sourcePath).lastPathComponent)
     }
 
     private func makeBundleFixture() throws -> BundleFixture {
@@ -155,7 +197,8 @@ final class AlignmentFilterServiceTests: XCTestCase {
             name: "Derived",
             format: .bam,
             sourcePath: "alignments/\(trackID).bam",
-            indexPath: "alignments/\(trackID).bam.bai"
+            indexPath: "alignments/\(trackID).bam.bai",
+            metadataDBPath: "alignments/\(trackID).stats.db"
         )
         return BAMImportService.ImportResult(
             trackInfo: trackInfo,
@@ -175,29 +218,23 @@ private struct BundleFixture {
 }
 
 private actor FilterServiceRecordingSamtoolsRunner: AlignmentSamtoolsRunning {
-    private let totalCount: Int
-    private let taggedCount: Int
+    private let countResponses: [String: Int]
     private(set) var commands: [[String]] = []
 
-    init(totalCount: Int, taggedCount: Int) {
-        self.totalCount = totalCount
-        self.taggedCount = taggedCount
+    init(countResponses: [String: Int] = [:]) {
+        self.countResponses = countResponses
+    }
+
+    nonisolated static func responseKey(for arguments: [String]) -> String {
+        arguments.joined(separator: "\u{1F}")
     }
 
     func runSamtools(arguments: [String], timeout: TimeInterval) async throws -> NativeToolResult {
         commands.append(arguments)
 
-        if arguments.count == 3,
-           arguments[0] == "view",
-           arguments[1] == "-c" {
-            return NativeToolResult(exitCode: 0, stdout: "\(totalCount)\n", stderr: "")
-        }
-        if arguments.count >= 5,
-           arguments[0] == "view",
-           arguments[1] == "-c",
-           arguments[2] == "-e",
-           arguments[3] == "exists([NM])" {
-            return NativeToolResult(exitCode: 0, stdout: "\(taggedCount)\n", stderr: "")
+        let key = Self.responseKey(for: arguments)
+        if let count = countResponses[key] {
+            return NativeToolResult(exitCode: 0, stdout: "\(count)\n", stderr: "")
         }
 
         if let outputIndex = arguments.firstIndex(of: "-o"), outputIndex + 1 < arguments.count {
@@ -282,6 +319,25 @@ private actor FilterServiceRecordingImporter: AlignmentBAMImporting {
         progressHandler: (@Sendable (Double, String) -> Void)?
     ) async throws -> BAMImportService.ImportResult {
         importedBAMURLs.append(bamURL)
+        try FileManager.default.createDirectory(
+            at: bundleURL.appendingPathComponent("alignments"),
+            withIntermediateDirectories: true
+        )
+
+        let importedTrack = result.trackInfo
+        let sourceURL = bundleURL.appendingPathComponent(importedTrack.sourcePath)
+        let indexURL = bundleURL.appendingPathComponent(importedTrack.indexPath)
+        let dbURL = bundleURL.appendingPathComponent(importedTrack.metadataDBPath!)
+        FileManager.default.createFile(atPath: sourceURL.path, contents: Data("bam".utf8))
+        FileManager.default.createFile(atPath: indexURL.path, contents: Data("bai".utf8))
+
+        let metadataDB = try AlignmentMetadataDatabase.create(at: dbURL)
+        metadataDB.setFileInfo("source_path", value: sourceURL.path)
+        metadataDB.setFileInfo("source_path_in_bundle", value: importedTrack.sourcePath)
+        metadataDB.setFileInfo("file_name", value: sourceURL.lastPathComponent)
+
+        let manifest = try BundleManifest.load(from: bundleURL)
+        try manifest.addingAlignmentTrack(importedTrack).save(to: bundleURL)
         return result
     }
 }
