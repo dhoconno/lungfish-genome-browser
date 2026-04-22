@@ -2492,7 +2492,16 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
         do {
             let result = try MappingResult.load(from: url)
+            let provenance = MappingProvenance.load(from: url)
+            let projectURL = sidebarController.currentProjectURL ?? DocumentManager.shared.activeProject?.url
             inspectorController.clearSelection()
+            inspectorController.updateMappingDocument(
+                MappingDocumentStateBuilder.build(
+                    result: result,
+                    provenance: provenance,
+                    projectURL: projectURL
+                )
+            )
             viewerController.displayMappingResult(result)
             recordUITestEvent(
                 "mapping.display.succeeded tool=\(result.mapper.rawValue) contigs=\(result.contigs.count)"

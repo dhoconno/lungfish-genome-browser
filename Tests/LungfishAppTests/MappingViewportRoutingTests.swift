@@ -18,6 +18,7 @@ final class MappingViewportRoutingTests: XCTestCase {
 
         XCTAssertTrue(source.contains("displayMappingResult(_ result: MappingResult)"))
         XCTAssertTrue(source.contains("MappingResultViewController()"))
+        XCTAssertTrue(source.contains("contentMode = .mapping"))
         XCTAssertTrue(source.contains("hideMappingView()"))
     }
 

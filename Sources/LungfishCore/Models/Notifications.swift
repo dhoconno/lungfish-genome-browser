@@ -138,6 +138,8 @@ extension Notification.Name {
 public enum ViewportContentMode: String, Sendable {
     /// Genomic sequence viewer (FASTA, VCF, genome bundles).
     case genomics
+    /// Managed mapping result viewport.
+    case mapping
     /// De novo assembly result viewport.
     case assembly
     /// FASTQ dataset dashboard.

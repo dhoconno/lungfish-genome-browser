@@ -15,6 +15,9 @@ import LungfishIO
 @Observable
 @MainActor
 public final class DocumentSectionViewModel {
+    /// Mapping-result document state shown when a mapping viewport is active.
+    var mappingDocument: MappingDocumentState?
+
     /// Assembly-result document state shown when an assembly viewport is active.
     var assemblyDocument: AssemblyDocumentState?
 
@@ -36,6 +39,7 @@ public final class DocumentSectionViewModel {
     ///   - manifest: The bundle manifest to display, or nil to clear
     ///   - bundleURL: The URL of the loaded bundle
     func update(manifest: BundleManifest?, bundleURL: URL?) {
+        mappingDocument = nil
         assemblyDocument = nil
         navigateToSourceData = nil
         self.manifest = manifest
@@ -69,6 +73,7 @@ public final class DocumentSectionViewModel {
 
     /// Updates the view model with FASTQ dataset statistics.
     func updateFASTQStatistics(_ stats: FASTQDatasetStatistics) {
+        mappingDocument = nil
         assemblyDocument = nil
         navigateToSourceData = nil
         self.fastqStatistics = stats
@@ -101,6 +106,7 @@ public final class DocumentSectionViewModel {
 
     /// Updates the view model with NAO-MGS manifest data.
     func updateNaoMgsManifest(_ manifest: NaoMgsManifest?) {
+        mappingDocument = nil
         assemblyDocument = nil
         self.naoMgsManifest = manifest
     }
@@ -112,8 +118,28 @@ public final class DocumentSectionViewModel {
 
     /// Updates the view model with NVD manifest data.
     func updateNvdManifest(_ manifest: NvdManifest?) {
+        mappingDocument = nil
         assemblyDocument = nil
         self.nvdManifest = manifest
+    }
+
+    /// Updates the view model with mapping-document data and clears other document modes.
+    func updateMappingDocument(_ state: MappingDocumentState?) {
+        mappingDocument = state
+        guard state != nil else { return }
+
+        assemblyDocument = nil
+        manifest = nil
+        bundleURL = nil
+        selectedChromosome = nil
+        fastqStatistics = nil
+        sraRunInfo = nil
+        enaReadRecord = nil
+        ingestionMetadata = nil
+        fastqDerivativeManifest = nil
+        naoMgsManifest = nil
+        nvdManifest = nil
+        analysisManifestEntries = []
     }
 
     /// Updates the view model with assembly-document data and clears other document modes.
@@ -121,6 +147,7 @@ public final class DocumentSectionViewModel {
         assemblyDocument = state
         guard state != nil else { return }
 
+        mappingDocument = nil
         manifest = nil
         bundleURL = nil
         selectedChromosome = nil
@@ -141,6 +168,9 @@ public final class DocumentSectionViewModel {
     /// Persisted assembly layout preference.
     var assemblyPanelLayout: AssemblyPanelLayout = .current()
 
+    /// Persisted mapping layout preference.
+    var mappingPanelLayout: MappingPanelLayout = .current()
+
     // MARK: - Unified Classifier Sample Picker
     /// Shared classifier sample picker state for Inspector-embedded sample selector.
     var classifierPickerState: ClassifierSamplePickerState?
@@ -156,7 +186,8 @@ public final class DocumentSectionViewModel {
 
     /// Whether any content is available for display (bundle, FASTQ, SRA, NAO-MGS, or NVD metadata).
     var hasAnyContent: Bool {
-        assemblyDocument != nil ||
+        mappingDocument != nil ||
+            assemblyDocument != nil ||
             manifest != nil ||
             fastqStatistics != nil ||
             sraRunInfo != nil ||
@@ -243,7 +274,9 @@ public struct DocumentSection: View {
     }
 
     public var body: some View {
-        if viewModel.assemblyDocument != nil {
+        if viewModel.mappingDocument != nil {
+            MappingDocumentSection(viewModel: viewModel)
+        } else if viewModel.assemblyDocument != nil {
             AssemblyDocumentSection(viewModel: viewModel)
         } else if let manifest = viewModel.manifest {
             bundleContent(manifest)

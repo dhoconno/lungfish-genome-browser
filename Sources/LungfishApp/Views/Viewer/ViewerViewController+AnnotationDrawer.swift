@@ -178,75 +178,77 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         // Clear any previous sequence fetch error so the new region can be fetched
         viewerView.clearSequenceFetchError()
 
-        // Log current viewer state before navigation
-        let currentChrom = referenceFrame?.chromosome ?? "nil"
-        let currentScale = referenceFrame?.scale ?? 0
-        annotDrawerLogger.info("annotationDrawer: Pre-nav state: currentChrom=\(currentChrom, privacy: .public), scale=\(currentScale, format: .fixed(precision: 2)) bp/px")
+        if mappingResultController?.currentResult == nil {
+            // Log current viewer state before navigation
+            let currentChrom = referenceFrame?.chromosome ?? "nil"
+            let currentScale = referenceFrame?.scale ?? 0
+            annotDrawerLogger.info("annotationDrawer: Pre-nav state: currentChrom=\(currentChrom, privacy: .public), scale=\(currentScale, format: .fixed(precision: 2)) bp/px")
 
-        if let provider = currentBundleDataProvider,
-           let chromInfo = provider.chromosomeInfo(named: navigationChromosome) {
-            annotDrawerLogger.info("annotationDrawer: Using bundle provider, chromLength=\(chromInfo.length)")
-            let clampedWindow = centeredWindow(
-                center: (result.start + result.end) / 2,
-                span: desiredSpan,
-                chromosomeLength: Int(chromInfo.length)
-            )
-            navigateToChromosomeAndPosition(
-                chromosome: chromInfo.name,
-                chromosomeLength: Int(chromInfo.length),
-                start: clampedWindow.start,
-                end: clampedWindow.end
-            )
-        } else {
-            annotDrawerLogger.info("annotationDrawer: No bundle provider, using navigateToPosition")
-            let seqLength = referenceFrame?.sequenceLength ?? Int.max
-            let clampedWindow = centeredWindow(
-                center: (result.start + result.end) / 2,
-                span: desiredSpan,
-                chromosomeLength: seqLength
-            )
-            navigateToPosition(
-                chromosome: navigationChromosome,
-                start: clampedWindow.start,
-                end: clampedWindow.end
-            )
-        }
+            if let provider = currentBundleDataProvider,
+               let chromInfo = provider.chromosomeInfo(named: navigationChromosome) {
+                annotDrawerLogger.info("annotationDrawer: Using bundle provider, chromLength=\(chromInfo.length)")
+                let clampedWindow = centeredWindow(
+                    center: (result.start + result.end) / 2,
+                    span: desiredSpan,
+                    chromosomeLength: Int(chromInfo.length)
+                )
+                navigateToChromosomeAndPosition(
+                    chromosome: chromInfo.name,
+                    chromosomeLength: Int(chromInfo.length),
+                    start: clampedWindow.start,
+                    end: clampedWindow.end
+                )
+            } else {
+                annotDrawerLogger.info("annotationDrawer: No bundle provider, using navigateToPosition")
+                let seqLength = referenceFrame?.sequenceLength ?? Int.max
+                let clampedWindow = centeredWindow(
+                    center: (result.start + result.end) / 2,
+                    span: desiredSpan,
+                    chromosomeLength: seqLength
+                )
+                navigateToPosition(
+                    chromosome: navigationChromosome,
+                    start: clampedWindow.start,
+                    end: clampedWindow.end
+                )
+            }
 
-        // Guard against transient state races where immediate redraw restores stale extents.
-        let expectedCenter = Double((result.start + result.end) / 2)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, let frame = self.referenceFrame else { return }
-                let isSameChrom = frame.chromosome == navigationChromosome
-                let currentCenter = (frame.start + frame.end) / 2.0
-                let isCentered = abs(currentCenter - expectedCenter) <= 2.0
-                guard !(isSameChrom && isCentered) else { return }
+            // Guard against transient state races where immediate redraw restores stale extents.
+            let expectedCenter = Double((result.start + result.end) / 2)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, let frame = self.referenceFrame else { return }
+                    let isSameChrom = frame.chromosome == navigationChromosome
+                    let currentCenter = (frame.start + frame.end) / 2.0
+                    let isCentered = abs(currentCenter - expectedCenter) <= 2.0
+                    guard !(isSameChrom && isCentered) else { return }
 
-                if let provider = self.currentBundleDataProvider,
-                   let chromInfo = provider.chromosomeInfo(named: navigationChromosome) {
-                    let clampedWindow = self.centeredWindow(
-                        center: Int(expectedCenter.rounded()),
-                        span: desiredSpan,
-                        chromosomeLength: Int(chromInfo.length)
-                    )
-                    self.navigateToChromosomeAndPosition(
-                        chromosome: chromInfo.name,
-                        chromosomeLength: Int(chromInfo.length),
-                        start: clampedWindow.start,
-                        end: clampedWindow.end
-                    )
-                } else {
-                    let seqLength = self.referenceFrame?.sequenceLength ?? Int.max
-                    let clampedWindow = self.centeredWindow(
-                        center: Int(expectedCenter.rounded()),
-                        span: desiredSpan,
-                        chromosomeLength: seqLength
-                    )
-                    _ = self.navigateToPosition(
-                        chromosome: navigationChromosome,
-                        start: clampedWindow.start,
-                        end: clampedWindow.end
-                    )
+                    if let provider = self.currentBundleDataProvider,
+                       let chromInfo = provider.chromosomeInfo(named: navigationChromosome) {
+                        let clampedWindow = self.centeredWindow(
+                            center: Int(expectedCenter.rounded()),
+                            span: desiredSpan,
+                            chromosomeLength: Int(chromInfo.length)
+                        )
+                        self.navigateToChromosomeAndPosition(
+                            chromosome: chromInfo.name,
+                            chromosomeLength: Int(chromInfo.length),
+                            start: clampedWindow.start,
+                            end: clampedWindow.end
+                        )
+                    } else {
+                        let seqLength = self.referenceFrame?.sequenceLength ?? Int.max
+                        let clampedWindow = self.centeredWindow(
+                            center: Int(expectedCenter.rounded()),
+                            span: desiredSpan,
+                            chromosomeLength: seqLength
+                        )
+                        _ = self.navigateToPosition(
+                            chromosome: navigationChromosome,
+                            start: clampedWindow.start,
+                            end: clampedWindow.end
+                        )
+                    }
                 }
             }
         }
@@ -273,6 +275,9 @@ extension ViewerViewController: AnnotationTableDrawerDelegate {
         }
         viewerView.selectedAnnotation = annotation
         viewerView.postAnnotationSelectedNotification(annotation)
+        if mappingResultController?.currentResult != nil {
+            zoomToMappingAnnotation(annotation)
+        }
         if result.isVariant {
             NotificationCenter.default.post(
                 name: .variantSelected,

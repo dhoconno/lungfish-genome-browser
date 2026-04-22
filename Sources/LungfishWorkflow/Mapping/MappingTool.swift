@@ -48,6 +48,13 @@ public enum MappingReadClass: String, CaseIterable, Codable, Sendable {
         }
     }
 
+    public static func detect(fromInputURL url: URL) -> Self? {
+        guard let fastqURL = resolveFASTQURL(forInputURL: url) else {
+            return nil
+        }
+        return detect(fromFASTQ: fastqURL)
+    }
+
     public static func detect(fromFASTQ url: URL) -> Self? {
         guard let header = readFASTQHeader(from: url) else {
             return nil
@@ -131,6 +138,16 @@ public enum MappingReadClass: String, CaseIterable, Codable, Sendable {
         }
         guard size > 0 else { return nil }
         return output.prefix(size)
+    }
+
+    static func resolveFASTQURL(forInputURL url: URL) -> URL? {
+        let standardizedURL = url.standardizedFileURL
+        if let resolved = FASTQBundle.resolvePrimaryFASTQURL(for: standardizedURL) {
+            return resolved
+        }
+
+        let parentURL = standardizedURL.deletingLastPathComponent().standardizedFileURL
+        return FASTQBundle.resolvePrimaryFASTQURL(for: parentURL)
     }
 }
 

@@ -187,12 +187,13 @@ public class MainWindowController: NSWindowController {
 
             case ToolbarIdentifier.toggleAnnotationDrawer:
                 // Bottom drawer is relevant for genomics (annotations), FASTQ metadata,
-                // and metagenomics (BLAST/samples). Assembly uses the document-only inspector.
+                // and metagenomics (BLAST/samples). Mapping and assembly embed their own
+                // detail surfaces and do not use the top-level drawer toggle.
                 let visible: Bool
                 switch mode {
                 case .genomics, .fastq, .metagenomics:
                     visible = true
-                case .assembly, .empty:
+                case .mapping, .assembly, .empty:
                     visible = false
                 }
                 item.isHidden = !visible

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import LungfishCore
 import LungfishIO
 import os.log
 
@@ -663,5 +664,48 @@ public actor ReadExtractionService {
         }
 
         return 0
+    }
+}
+
+// MARK: - Mapping Annotation Region Helpers
+
+public extension ReadExtractionService {
+    static func samtoolsRegions(for annotation: SequenceAnnotation) -> [String] {
+        guard let chromosome = annotation.chromosome else { return [] }
+        let blocks = canonicalBlocks(for: annotation.intervals)
+        return blocks.map { block in
+            "\(chromosome):\(block.start + 1)-\(block.end)"
+        }
+    }
+
+    static func samtoolsRegion(
+        chromosome: String,
+        interval: AnnotationInterval
+    ) -> String {
+        "\(chromosome):\(interval.start + 1)-\(interval.end)"
+    }
+
+    static func canonicalBlocks(for intervals: [AnnotationInterval]) -> [AnnotationInterval] {
+        let sorted = intervals
+            .filter { $0.length > 0 }
+            .sorted()
+        guard let first = sorted.first else { return [] }
+
+        var merged: [AnnotationInterval] = []
+        var currentStart = first.start
+        var currentEnd = first.end
+
+        for interval in sorted.dropFirst() {
+            if interval.start <= currentEnd {
+                currentEnd = max(currentEnd, interval.end)
+            } else {
+                merged.append(AnnotationInterval(start: currentStart, end: currentEnd))
+                currentStart = interval.start
+                currentEnd = interval.end
+            }
+        }
+
+        merged.append(AnnotationInterval(start: currentStart, end: currentEnd))
+        return merged
     }
 }

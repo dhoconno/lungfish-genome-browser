@@ -30,6 +30,7 @@ final class BundleManifestTests: XCTestCase {
             formatVersion: "1.0",
             name: "Human Reference Genome",
             identifier: "com.example.grch38",
+            originBundlePath: "@/Downloads/Human Reference Genome.lungfishref",
             source: SourceInfo(
                 organism: "Homo sapiens",
                 assembly: "GRCh38",
@@ -54,10 +55,47 @@ final class BundleManifestTests: XCTestCase {
         XCTAssertEqual(manifest.formatVersion, "1.0")
         XCTAssertEqual(manifest.name, "Human Reference Genome")
         XCTAssertEqual(manifest.identifier, "com.example.grch38")
+        XCTAssertEqual(manifest.originBundlePath, "@/Downloads/Human Reference Genome.lungfishref")
         XCTAssertEqual(manifest.source.organism, "Homo sapiens")
         XCTAssertEqual(manifest.source.assembly, "GRCh38")
         XCTAssertEqual(manifest.genome!.chromosomes.count, 2)
         XCTAssertEqual(manifest.genome!.totalLength, 3_100_000_000)
+    }
+
+    func testBundleManifestSaveLoadRoundTripsOriginBundlePath() throws {
+        let bundleURL = tempDirectory.appendingPathComponent("TestGenome.lungfishref", isDirectory: true)
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+
+        let manifest = BundleManifest(
+            name: "Test Genome",
+            identifier: "com.example.test-genome",
+            originBundlePath: "@/Downloads/TestGenome.lungfishref",
+            source: SourceInfo(
+                organism: "Test organism",
+                assembly: "TG1"
+            ),
+            genome: GenomeInfo(
+                path: "genome/sequence.fa.gz",
+                indexPath: "genome/sequence.fa.gz.fai",
+                gzipIndexPath: "genome/sequence.fa.gz.gzi",
+                totalLength: 10,
+                chromosomes: [
+                    ChromosomeInfo(
+                        name: "chr1",
+                        length: 10,
+                        offset: 0,
+                        lineBases: 10,
+                        lineWidth: 11,
+                        aliases: []
+                    )
+                ]
+            )
+        )
+
+        try manifest.save(to: bundleURL)
+        let loaded = try BundleManifest.load(from: bundleURL)
+
+        XCTAssertEqual(loaded.originBundlePath, "@/Downloads/TestGenome.lungfishref")
     }
 
     // MARK: - SourceInfo Tests

@@ -72,18 +72,32 @@ struct MappingWizardSheet: View {
         inputFiles.count == 2
     }
 
+    private var selectedReferenceCandidate: ReferenceCandidate? {
+        referenceCandidates.first(where: { $0.id == selectedReferenceID })
+    }
+
     private var resolvedReferenceURL: URL? {
         if selectedReferenceID == "__browsed__", let browsedReferenceURL {
             return browsedReferenceURL
         }
-        return referenceCandidates.first(where: { $0.id == selectedReferenceID })?.fastaURL
+        return selectedReferenceCandidate?.fastaURL
     }
 
     private var sourceReferenceBundleURL: URL? {
         if selectedReferenceID == "__browsed__" {
             return nil
         }
-        return referenceCandidates.first(where: { $0.id == selectedReferenceID })?.sourceBundleURL
+        return ReferenceBundleSourceResolver.canonicalSourceBundleURL(
+            for: selectedReferenceCandidate?.sourceBundleURL,
+            projectURL: projectURL
+        )
+    }
+
+    private var selectedReferencePathDisplay: String? {
+        if selectedReferenceID == "__browsed__", let browsedReferenceURL {
+            return displayPath(for: browsedReferenceURL)
+        }
+        return selectedReferenceCandidate?.displayPath(relativeTo: projectURL)
     }
 
     private var selectedMode: MappingMode? {
@@ -234,6 +248,15 @@ struct MappingWizardSheet: View {
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
+
+                if let selectedReferencePathDisplay {
+                    Text(selectedReferencePathDisplay)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                }
             }
 
             Button("Browse...") {
@@ -442,6 +465,19 @@ struct MappingWizardSheet: View {
             browsedReferenceURL = url
             selectedReferenceID = "__browsed__"
         }
+    }
+
+    private func displayPath(for url: URL) -> String {
+        let standardizedTarget = url.standardizedFileURL.path
+        guard let projectURL else { return standardizedTarget }
+
+        let projectPath = projectURL.standardizedFileURL.path
+        let normalizedProjectPath = projectPath.hasSuffix("/") ? projectPath : projectPath + "/"
+        guard standardizedTarget.hasPrefix(normalizedProjectPath) else {
+            return standardizedTarget
+        }
+
+        return String(standardizedTarget.dropFirst(normalizedProjectPath.count))
     }
 
     private func inspectInputs() async {

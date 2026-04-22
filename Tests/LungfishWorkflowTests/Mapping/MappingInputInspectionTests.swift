@@ -41,6 +41,27 @@ final class MappingInputInspectionTests: XCTestCase {
         XCTAssertEqual(inspection.observedMaxReadLength, 1_200)
         XCTAssertTrue(inspection.mixedReadClasses)
     }
+
+    func testInspectResolvesLungfishFASTQBundleInputs() throws {
+        let fixture = try MappingFASTQFixture()
+        defer { fixture.cleanup() }
+
+        let illuminaFASTQ = try fixture.writeFASTQ(
+            name: "illumina.fastq",
+            header: "@A00488:385:HKGCLDRXX:1:1101:1000:1000 1:N:0:1",
+            sequenceLength: 151
+        )
+        let bundleURL = try fixture.wrapInBundle(
+            fastqURL: illuminaFASTQ,
+            bundleName: "illumina"
+        )
+
+        let inspection = MappingInputInspection.inspect(urls: [bundleURL])
+
+        XCTAssertEqual(inspection.readClass, .illuminaShortReads)
+        XCTAssertEqual(inspection.observedMaxReadLength, 151)
+        XCTAssertFalse(inspection.mixedReadClasses)
+    }
 }
 
 private struct MappingFASTQFixture {
@@ -65,5 +86,15 @@ private struct MappingFASTQFixture {
         let text = "\(header)\n\(sequence)\n+\n\(quality)\n"
         try text.write(to: url, atomically: true, encoding: .utf8)
         return url
+    }
+
+    func wrapInBundle(fastqURL: URL, bundleName: String) throws -> URL {
+        let bundleURL = root.appendingPathComponent("\(bundleName).lungfishfastq", isDirectory: true)
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(
+            at: fastqURL,
+            to: bundleURL.appendingPathComponent(fastqURL.lastPathComponent)
+        )
+        return bundleURL
     }
 }

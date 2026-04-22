@@ -108,6 +108,13 @@ public class SequenceViewerView: NSView {
     /// Option signature used to compute `cachedConsensusSequence`.
     private var cachedConsensusOptionsSignature: String = ""
 
+    /// Shared command-key zoom handler for the sequence viewer.
+    private lazy var zoomShortcutHandler = ZoomShortcutHandler(
+        zoomIn: { [weak self] in self?.viewController?.zoomIn() },
+        zoomOut: { [weak self] in self?.viewController?.zoomOut() },
+        zoomToFit: { [weak self] in self?.viewController?.zoomToFit() }
+    )
+
     /// Whether we're currently fetching read data
     private var isFetchingReads: Bool = false {
         didSet { updateTrackLoadingAnimationState() }
@@ -5313,6 +5320,10 @@ public class SequenceViewerView: NSView {
     public override var acceptsFirstResponder: Bool { true }
 
     public override func keyDown(with event: NSEvent) {
+        if zoomShortcutHandler.handleZoomShortcut(event) {
+            return
+        }
+
         switch event.keyCode {
         case 123: // Left arrow - pan left (use bounded pan)
             viewController?.referenceFrame?.pan(by: -100)
@@ -5351,6 +5362,13 @@ public class SequenceViewerView: NSView {
         default:
             super.keyDown(with: event)
         }
+    }
+
+    public override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if zoomShortcutHandler.handleZoomShortcut(event) {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
     }
 
     // MARK: - Gutter Edge Drag
@@ -5723,7 +5741,26 @@ public class SequenceViewerView: NSView {
         let zoomItem = NSMenuItem(title: "Zoom to Annotation", action: #selector(zoomToAnnotationAction(_:)), keyEquivalent: "")
         zoomItem.target = self
         zoomItem.representedObject = annotation
+        if let reason = viewController?.mappingZoomUnavailableReason(for: annotation) {
+            zoomItem.isEnabled = false
+            zoomItem.title = "Zoom to Annotation Unavailable: \(reason)"
+        }
         menu.addItem(zoomItem)
+
+        if viewController?.mappingResultController?.currentResult != nil {
+            let extractReadsItem = NSMenuItem(
+                title: "Extract Overlapping Reads\u{2026}",
+                action: #selector(extractOverlappingReadsAction(_:)),
+                keyEquivalent: ""
+            )
+            extractReadsItem.target = self
+            extractReadsItem.representedObject = annotation
+            if let reason = viewController?.mappingExtractionUnavailableReason(for: annotation) {
+                extractReadsItem.isEnabled = false
+                extractReadsItem.title = "Extract Overlapping Reads Unavailable: \(reason)"
+            }
+            menu.addItem(extractReadsItem)
+        }
 
         let inspectorItem = NSMenuItem(title: "Show in Inspector", action: #selector(showAnnotationInInspector(_:)), keyEquivalent: "")
         inspectorItem.target = self
@@ -6062,8 +6099,17 @@ public class SequenceViewerView: NSView {
         zoomToAnnotation(annotation)
     }
 
+    @objc private func extractOverlappingReadsAction(_ sender: NSMenuItem?) {
+        guard let annotation = sender?.representedObject as? SequenceAnnotation else { return }
+        viewController?.extractOverlappingReads(from: annotation)
+    }
+
     /// Zooms the viewer to show the given annotation (callable from notification handlers).
     func zoomToAnnotation(_ annotation: SequenceAnnotation) {
+        if viewController?.mappingResultController?.currentResult != nil {
+            viewController?.zoomToMappingAnnotation(annotation)
+            return
+        }
         guard let frame = viewController?.referenceFrame else { return }
         let annotationLength = max(1, annotation.end - annotation.start)
         let padding = max(10, Double(annotationLength) * 0.05)

@@ -199,9 +199,7 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
         hideProgress()
 
         // Notify that bundle has been loaded (for annotation search index building, toolbar updates, inspector)
-        NotificationCenter.default.post(
-            name: .bundleDidLoad,
-            object: self,
+        publishBundleDidLoadNotification(
             userInfo: [
                 NotificationUserInfoKey.bundleURL: url,
                 NotificationUserInfoKey.chromosomes: chromosomes,
@@ -532,6 +530,17 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
             lastChromosome: nil,
             lastOrigin: nil,
             lastScale: nil
+        )
+    }
+}
+
+extension ViewerViewController {
+    func publishBundleDidLoadNotification(userInfo: [AnyHashable: Any]) {
+        guard publishesGlobalViewportNotifications else { return }
+        NotificationCenter.default.post(
+            name: .bundleDidLoad,
+            object: self,
+            userInfo: userInfo
         )
     }
 }

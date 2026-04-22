@@ -88,4 +88,62 @@ final class MappingXCUITests: XCTestCase {
         XCTAssertTrue(robot.resultView.waitForExistence(timeout: 10))
         XCTAssertTrue(robot.resultTable.waitForExistence(timeout: 10))
     }
+
+    @MainActor
+    func testDeterministicMappingViewportAcceptsZoomShortcuts() throws {
+        let projectURL = try LungfishProjectFixtureBuilder.makeIlluminaMappingProject(
+            named: "MappingShortcutFixture"
+        )
+        let robot = MappingRobot()
+        defer {
+            robot.app.terminate()
+            try? FileManager.default.removeItem(at: projectURL.deletingLastPathComponent())
+        }
+
+        robot.launch(opening: projectURL, backendMode: "deterministic")
+        robot.selectSidebarItem(named: "test_1.fastq.gz", extendingSelection: true)
+        robot.openMappingDialog()
+        robot.chooseMapper("minimap2")
+        robot.clickPrimaryAction()
+
+        robot.waitForAnalysisRow(prefix: "minimap2-", timeout: 30)
+        robot.pressResultZoomShortcut(.zoomIn)
+        robot.pressResultZoomShortcut(.zoomOut)
+        robot.pressResultZoomShortcut(.zoomToFit)
+
+        XCTAssertTrue(robot.resultView.waitForExistence(timeout: 10))
+        XCTAssertTrue(robot.resultTable.waitForExistence(timeout: 10))
+    }
+
+    @MainActor
+    func testMappingInspectorSourceDataLinksNavigateToSidebarItems() throws {
+        let projectURL = try LungfishProjectFixtureBuilder.makeMappingInspectorNavigationProject(
+            named: "MappingInspectorNavigationFixture"
+        )
+        let robot = MappingRobot()
+        defer {
+            robot.app.terminate()
+            try? FileManager.default.removeItem(at: projectURL.deletingLastPathComponent())
+        }
+
+        robot.launch(opening: projectURL, backendMode: "deterministic")
+        robot.selectSidebarItem(named: "test_1.fastq.gz", extendingSelection: true)
+        robot.openMappingDialog()
+        robot.chooseMapper("minimap2")
+        robot.clickPrimaryAction()
+
+        robot.waitForAnalysisRow(prefix: "minimap2-", timeout: 30)
+        XCTAssertTrue(robot.resultView.waitForExistence(timeout: 10))
+
+        robot.clickInspectorSourceLink("test_1.fastq.gz")
+        robot.waitForSelectedSidebarItem(containing: "test_1.fastq.gz")
+
+        robot.selectSidebarItem(prefix: "minimap2-")
+        robot.clickInspectorSourceLink("Source Reference Bundle")
+        robot.waitForSelectedSidebarItem(containing: "TestGenome")
+
+        robot.selectSidebarItem(prefix: "minimap2-")
+        robot.clickInspectorSourceLink("Reference FASTA")
+        robot.waitForSelectedSidebarItem(containing: "TestGenome")
+    }
 }

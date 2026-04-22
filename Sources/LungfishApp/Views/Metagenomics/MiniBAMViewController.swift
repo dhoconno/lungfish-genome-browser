@@ -117,6 +117,11 @@ public final class MiniBAMViewController: NSViewController {
     private var pendingViewportResizeTask: Task<Void, Never>?
     private var deferredReferenceTask: Task<Void, Never>?
     private var loadGeneration: Int = 0
+    private lazy var zoomShortcutHandler = ZoomShortcutHandler(
+        zoomIn: { [weak self] in self?.zoomIn() },
+        zoomOut: { [weak self] in self?.zoomOut() },
+        zoomToFit: { [weak self] in self?.zoomToFit() }
+    )
 
     // MARK: - Read Cache
 
@@ -582,38 +587,7 @@ public final class MiniBAMViewController: NSViewController {
 
     @discardableResult
     private func handleZoomShortcut(_ event: NSEvent) -> Bool {
-        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard modifiers.contains(.command) else { return false }
-        let disallowed: NSEvent.ModifierFlags = [.control, .option, .function]
-        guard modifiers.intersection(disallowed).isEmpty else { return false }
-
-        switch event.keyCode {
-        case 24, 69:  // =/+ main + keypad
-            zoomIn()
-            return true
-        case 27, 78:  // - main + keypad
-            zoomOut()
-            return true
-        case 29, 82:  // 0 main + keypad
-            zoomToFit()
-            return true
-        default:
-            break
-        }
-
-        switch event.charactersIgnoringModifiers {
-        case "+", "=":
-            zoomIn()
-            return true
-        case "-", "_":
-            zoomOut()
-            return true
-        case "0":
-            zoomToFit()
-            return true
-        default:
-            return false
-        }
+        zoomShortcutHandler.handleZoomShortcut(event)
     }
 
     public override func keyDown(with event: NSEvent) {
@@ -697,35 +671,13 @@ public final class MiniBAMViewController: NSViewController {
         }
     }
 
-    private var isVisibleInHierarchy: Bool {
-        guard isViewLoaded, view.window != nil else { return false }
-        var node: NSView? = view
-        while let current = node {
-            if current.isHidden || current.alphaValue <= 0.01 {
-                return false
-            }
-            node = current.superview
-        }
-        return true
-    }
-
     private func shouldHandleLocalZoomShortcut(_ event: NSEvent) -> Bool {
-        guard let window = view.window else { return false }
-        guard window == event.window, window.isKeyWindow else { return false }
-        guard isVisibleInHierarchy else { return false }
-        return responderIsWithinMiniBAM(window.firstResponder)
-    }
-
-    private func responderIsWithinMiniBAM(_ responder: NSResponder?) -> Bool {
-        guard let rootView = viewIfLoaded else { return false }
-        var current: NSResponder? = responder
-        while let responder = current {
-            if let responderView = responder as? NSView, responderView.isDescendant(of: rootView) {
-                return true
-            }
-            current = responder.nextResponder
-        }
-        return false
+        ZoomShortcutHandler.shouldHandleLocalZoomShortcut(
+            event,
+            window: view.window,
+            rootView: view,
+            responder: view.window?.firstResponder
+        )
     }
 
     // MARK: - Context Menu Actions

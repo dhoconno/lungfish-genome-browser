@@ -172,6 +172,61 @@ final class ManagedMappingPipelineTests: XCTestCase {
         }
     }
 
+    func testValidateCompatibilityAcceptsBundleBackedIlluminaInputsForOtherMappers() throws {
+        let fixture = try MappingFASTQFixture()
+        defer { fixture.cleanup() }
+
+        let illuminaFASTQ = try fixture.writeFASTQ(
+            name: "illumina.fastq",
+            header: "@A00488:385:HKGCLDRXX:1:1101:1000:1000 1:N:0:1",
+            sequenceLength: 151
+        )
+        let bundleURL = try fixture.wrapInBundle(
+            fastqURL: illuminaFASTQ,
+            bundleName: "illumina"
+        )
+
+        let requests: [MappingRunRequest] = [
+            MappingRunRequest(
+                tool: .bwaMem2,
+                modeID: MappingMode.defaultShortRead.id,
+                inputFASTQURLs: [bundleURL],
+                referenceFASTAURL: fixture.referenceURL,
+                outputDirectory: fixture.root.appendingPathComponent("bwa-out"),
+                sampleName: "sample",
+                pairedEnd: false,
+                threads: 4
+            ),
+            MappingRunRequest(
+                tool: .bowtie2,
+                modeID: MappingMode.defaultShortRead.id,
+                inputFASTQURLs: [bundleURL],
+                referenceFASTAURL: fixture.referenceURL,
+                outputDirectory: fixture.root.appendingPathComponent("bowtie-out"),
+                sampleName: "sample",
+                pairedEnd: false,
+                threads: 4
+            ),
+            MappingRunRequest(
+                tool: .bbmap,
+                modeID: MappingMode.bbmapStandard.id,
+                inputFASTQURLs: [bundleURL],
+                referenceFASTAURL: fixture.referenceURL,
+                outputDirectory: fixture.root.appendingPathComponent("bbmap-out"),
+                sampleName: "sample",
+                pairedEnd: false,
+                threads: 4
+            )
+        ]
+
+        for request in requests {
+            XCTAssertNoThrow(
+                try ManagedMappingPipeline.validateCompatibility(for: request),
+                "\(request.tool.displayName) should accept an Illumina .lungfishfastq bundle"
+            )
+        }
+    }
+
     private func makeRequest(tool: MappingTool, modeID: String? = nil) -> MappingRunRequest {
         MappingRunRequest(
             tool: tool,
@@ -306,5 +361,15 @@ private struct MappingFASTQFixture {
         let text = "\(header)\n\(sequence)\n+\n\(quality)\n"
         try text.write(to: url, atomically: true, encoding: .utf8)
         return url
+    }
+
+    func wrapInBundle(fastqURL: URL, bundleName: String) throws -> URL {
+        let bundleURL = root.appendingPathComponent("\(bundleName).lungfishfastq", isDirectory: true)
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(
+            at: fastqURL,
+            to: bundleURL.appendingPathComponent(fastqURL.lastPathComponent)
+        )
+        return bundleURL
     }
 }

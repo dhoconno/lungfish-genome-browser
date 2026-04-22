@@ -126,6 +126,80 @@ struct MappingRobot {
         XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: timeout), .completed, file: file, line: line)
     }
 
+    func selectSidebarItem(
+        prefix: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let predicate = NSPredicate(format: "label BEGINSWITH %@", prefix)
+        let item = app.outlines["sidebar-outline"]
+            .descendants(matching: .any)
+            .matching(predicate)
+            .firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 10), file: file, line: line)
+        item.click()
+    }
+
+    func clickInspectorSourceLink(
+        _ label: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let identifier = "mapping-source-data-\(accessibilitySlug(for: label))"
+        let button = app.buttons[identifier].firstMatch
+        if button.waitForExistence(timeout: 10) {
+            button.click()
+            return
+        }
+
+        let link = app.links[label].firstMatch
+        XCTAssertTrue(link.waitForExistence(timeout: 10), file: file, line: line)
+        link.click()
+    }
+
+    func waitForSelectedSidebarItem(
+        containing label: String,
+        timeout: TimeInterval = 10,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let selectedRow = app.outlines["sidebar-outline"]
+            .descendants(matching: .any)
+            .matching(NSPredicate(format: "selected == true"))
+            .containing(NSPredicate(format: "label CONTAINS %@", label))
+            .firstMatch
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true"),
+            object: selectedRow
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: timeout), .completed, file: file, line: line)
+    }
+
+    func focusResultView(
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let view = resultView
+        XCTAssertTrue(view.waitForExistence(timeout: 10), file: file, line: line)
+        view.click()
+    }
+
+    func pressResultZoomShortcut(
+        _ shortcut: MappingZoomShortcut,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        focusResultView(file: file, line: line)
+        switch shortcut {
+        case .zoomIn:
+            app.typeKey("=", modifierFlags: .command)
+        case .zoomOut:
+            app.typeKey("-", modifierFlags: .command)
+        case .zoomToFit:
+            app.typeKey("0", modifierFlags: .command)
+        }
+    }
+
     var mappingDialog: XCUIElement {
         app.descendants(matching: .any)["fastq-operations-mapping-dialog"]
     }
@@ -141,4 +215,18 @@ struct MappingRobot {
     var resultTable: XCUIElement {
         app.tables["mapping-result-contig-table"]
     }
+
+    private func accessibilitySlug(for text: String) -> String {
+        text
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: "-")
+    }
+}
+
+enum MappingZoomShortcut {
+    case zoomIn
+    case zoomOut
+    case zoomToFit
 }

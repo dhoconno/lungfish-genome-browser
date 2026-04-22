@@ -68,6 +68,11 @@ public enum ReferenceCandidate: Sendable, Identifiable, Equatable {
         }
     }
 
+    /// Returns a displayable FASTA path, relative to the project when possible.
+    public func displayPath(relativeTo projectURL: URL?) -> String {
+        Self.displayPath(for: fastaURL, relativeTo: projectURL)
+    }
+
     /// Source categories for grouping in dropdowns.
     public enum SourceCategory: String, Sendable, CaseIterable {
         case projectReferences = "Project References"
@@ -79,5 +84,18 @@ public enum ReferenceCandidate: Sendable, Identifiable, Equatable {
 
     public static func == (lhs: ReferenceCandidate, rhs: ReferenceCandidate) -> Bool {
         lhs.id == rhs.id
+    }
+
+    private static func displayPath(for url: URL, relativeTo projectURL: URL?) -> String {
+        let standardizedTarget = url.standardizedFileURL.path
+        guard let projectURL else { return standardizedTarget }
+
+        let projectPath = projectURL.standardizedFileURL.path
+        let normalizedProjectPath = projectPath.hasSuffix("/") ? projectPath : projectPath + "/"
+        guard standardizedTarget.hasPrefix(normalizedProjectPath) else {
+            return standardizedTarget
+        }
+
+        return String(standardizedTarget.dropFirst(normalizedProjectPath.count))
     }
 }

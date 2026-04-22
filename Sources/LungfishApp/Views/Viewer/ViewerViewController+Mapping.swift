@@ -24,7 +24,7 @@ extension ViewerViewController {
         hideMappingView()
         clearBundleDisplay()
         hideCollectionBackButton()
-        contentMode = .genomics
+        contentMode = .mapping
 
         let controller = MappingResultViewController()
         addChild(controller)
@@ -66,5 +66,84 @@ extension ViewerViewController {
         enhancedRulerView.isHidden = false
         viewerView.isHidden = false
         statusBar.isHidden = false
+    }
+
+    func mappingZoomRegion(for annotation: SequenceAnnotation) -> GenomicRegion? {
+        guard mappingResultController?.currentResult != nil else { return nil }
+        guard let provider = currentBundleDataProvider,
+              let chromosome = annotation.chromosome,
+              let chromosomeInfo = provider.chromosomeInfo(named: chromosome) else {
+            return nil
+        }
+
+        return MappingAnnotationActionCoordinator.zoomRegion(
+            for: annotation,
+            chromosomeLength: Int(chromosomeInfo.length)
+        )
+    }
+
+    func zoomToMappingAnnotation(_ annotation: SequenceAnnotation) {
+        guard let region = mappingZoomRegion(for: annotation),
+              let provider = currentBundleDataProvider,
+              let chromosomeInfo = provider.chromosomeInfo(named: region.chromosome) else {
+            return
+        }
+
+        navigateToChromosomeAndPosition(
+            chromosome: chromosomeInfo.name,
+            chromosomeLength: Int(chromosomeInfo.length),
+            start: region.start,
+            end: region.end
+        )
+    }
+
+    func mappingExtractionConfiguration(for annotation: SequenceAnnotation) -> BAMRegionExtractionConfig? {
+        guard let result = mappingResultController?.currentResult else { return nil }
+        let outputDirectory = result.bamURL.deletingLastPathComponent().appendingPathComponent(
+            "annotation-extractions",
+            isDirectory: true
+        )
+        return MappingAnnotationActionCoordinator.extractionConfiguration(
+            for: annotation,
+            mappingResult: result,
+            outputDirectory: outputDirectory
+        )
+    }
+
+    func mappingZoomUnavailableReason(for annotation: SequenceAnnotation) -> String? {
+        guard mappingResultController?.currentResult != nil else { return nil }
+        guard annotation.chromosome != nil else {
+            return "annotation chromosome is unavailable"
+        }
+        guard let provider = currentBundleDataProvider else {
+            return "reference bundle is unavailable"
+        }
+        guard provider.chromosomeInfo(named: annotation.chromosome!) != nil else {
+            return "annotation chromosome is not present in the reference bundle"
+        }
+        return nil
+    }
+
+    func mappingExtractionUnavailableReason(for annotation: SequenceAnnotation) -> String? {
+        guard mappingResultController?.currentResult != nil else { return nil }
+        guard annotation.chromosome != nil else {
+            return "annotation chromosome is unavailable"
+        }
+        guard !MappingAnnotationActionCoordinator.samtoolsRegions(for: annotation).isEmpty else {
+            return "annotation has no extractable blocks"
+        }
+        return nil
+    }
+
+    func extractOverlappingReads(from annotation: SequenceAnnotation) {
+        guard let config = mappingExtractionConfiguration(for: annotation) else { return }
+        Task.detached(priority: .userInitiated) {
+            do {
+                let service = ReadExtractionService()
+                _ = try await service.extractByBAMRegion(config: config)
+            } catch {
+                mappingDisplayLogger.error("extractOverlappingReads failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 }

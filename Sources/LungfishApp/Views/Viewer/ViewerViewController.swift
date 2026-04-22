@@ -80,6 +80,12 @@ public class ViewerViewController: NSViewController {
     /// Mapping result browser (shown in place of the sequence viewer for mapping analyses)
     var mappingResultController: MappingResultViewController?
 
+    /// Whether this viewer should publish app-wide viewport notifications.
+    ///
+    /// Embedded viewers, such as the mapping detail viewer, use the same
+    /// rendering stack but must not overwrite the main inspector or toolbar state.
+    var publishesGlobalViewportNotifications = true
+
     // MARK: - State
 
     /// The current viewport content mode (genomics, FASTQ, metagenomics, or empty).
@@ -89,6 +95,7 @@ public class ViewerViewController: NSViewController {
     public var contentMode: ViewportContentMode = .empty {
         didSet {
             guard contentMode != oldValue else { return }
+            guard publishesGlobalViewportNotifications else { return }
             NotificationCenter.default.post(
                 name: .viewportContentModeDidChange,
                 object: self,

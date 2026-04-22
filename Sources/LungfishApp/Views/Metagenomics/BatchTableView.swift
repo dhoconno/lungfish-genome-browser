@@ -149,7 +149,7 @@ class BatchTableView<Row>: NSView, NSTableViewDataSource, NSTableViewDelegate {
     var unfilteredRows: [Row] = []
 
     /// Per-column filters applied via column header click menus.
-    private(set) var columnFilters: [String: ColumnFilter] = [:]
+    internal(set) var columnFilters: [String: ColumnFilter] = [:]
 
     /// Original column titles before filter indicators were appended.
     private var originalColumnTitles: [String: String] = [:]
@@ -373,6 +373,24 @@ class BatchTableView<Row>: NSView, NSTableViewDataSource, NSTableViewDelegate {
         ColumnFilter.updateColumnTitleIndicators(on: tableView, filters: columnFilters, originalTitles: &originalColumnTitles)
     }
 
+    /// Replaces or inserts a column filter and refreshes the table.
+    func setColumnFilter(_ filter: ColumnFilter, for columnId: String) {
+        columnFilters[columnId] = filter
+        applyFilter()
+    }
+
+    /// Removes one column filter and refreshes the table.
+    func clearColumnFilter(for columnId: String) {
+        columnFilters.removeValue(forKey: columnId)
+        applyFilter()
+    }
+
+    /// Removes every column filter and refreshes the table.
+    func clearAllColumnFilters() {
+        columnFilters.removeAll()
+        applyFilter()
+    }
+
     // MARK: - Cell Factory
 
     func makeCellView(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {
@@ -532,8 +550,10 @@ class BatchTableView<Row>: NSView, NSTableViewDataSource, NSTableViewDelegate {
                 value2 = field2.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             }
 
-            self.columnFilters[columnId] = ColumnFilter(columnId: columnId, op: op, value: value, value2: value2)
-            self.applyFilter()
+            self.setColumnFilter(
+                ColumnFilter(columnId: columnId, op: op, value: value, value2: value2),
+                for: columnId
+            )
         }
     }
 
@@ -551,13 +571,11 @@ class BatchTableView<Row>: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
     @objc private func batchClearColumnFilter(_ sender: NSMenuItem) {
         guard let columnId = sender.representedObject as? String else { return }
-        columnFilters.removeValue(forKey: columnId)
-        applyFilter()
+        clearColumnFilter(for: columnId)
     }
 
     @objc private func batchClearAllColumnFilters(_ sender: Any?) {
-        columnFilters.removeAll()
-        applyFilter()
+        clearAllColumnFilters()
     }
 
     // MARK: - NSTableViewDelegate

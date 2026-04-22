@@ -656,6 +656,9 @@ public extension Notification.Name {
     /// Posted when the persisted assembly panel layout preference changes.
     static let assemblyLayoutSwapRequested = Notification.Name("com.lungfish.assemblyLayoutSwapRequested")
 
+    /// Posted when the persisted mapping panel layout preference changes.
+    static let mappingLayoutSwapRequested = Notification.Name("com.lungfish.mappingLayoutSwapRequested")
+
     /// Posted when sample selection changes in the Inspector-embedded sample picker.
     static let metagenomicsSampleSelectionChanged = Notification.Name("com.lungfish.metagenomicsSampleSelectionChanged")
 

@@ -1318,9 +1318,7 @@ enum FASTQOperationToolID: String, CaseIterable, Sendable {
 
     var embeddedReadinessText: String {
         switch self {
-        case .minimap2:
-            return "Select a reference sequence to continue."
-        case .bwaMem2, .bowtie2, .bbmap:
+        case .minimap2, .bwaMem2, .bowtie2, .bbmap:
             return "Complete the mapping settings to continue."
         case .kraken2, .esViritu, .taxTriage:
             return "Complete the classifier settings to continue."

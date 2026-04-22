@@ -58,6 +58,25 @@ final class ReferenceCandidateTests: XCTestCase {
         XCTAssertEqual(candidate.fastaURL, url)
     }
 
+    func testProjectReferenceDisplayPathIsRelativeToProject() {
+        let projectURL = URL(fileURLWithPath: "/project/example.lungfish", isDirectory: true)
+        let manifest = ReferenceSequenceManifest(
+            name: "NC_045512",
+            createdAt: Date(),
+            sourceFilename: "NC_045512.fasta",
+            fastaFilename: "sequence.fasta"
+        )
+        let candidate = ReferenceCandidate.projectReference(
+            url: projectURL.appendingPathComponent("Reference Sequences/NC_045512.lungfishref"),
+            manifest: manifest
+        )
+
+        XCTAssertEqual(
+            candidate.displayPath(relativeTo: projectURL),
+            "Reference Sequences/NC_045512.lungfishref/sequence.fasta"
+        )
+    }
+
     // MARK: - Source Category
 
     func testSourceCategories() {

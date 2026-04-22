@@ -453,6 +453,7 @@ public class InspectorViewController: NSViewController {
         viewModel.documentSectionViewModel.ingestionMetadata = nil
         viewModel.documentSectionViewModel.fastqDerivativeManifest = nil
         viewModel.documentSectionViewModel.analysisManifestEntries = []
+        viewModel.documentSectionViewModel.updateMappingDocument(nil)
         viewModel.documentSectionViewModel.updateAssemblyDocument(nil)
         viewModel.documentSectionViewModel.navigateToSourceData = nil
 
@@ -880,6 +881,25 @@ public class InspectorViewController: NSViewController {
         }
         viewModel.documentSectionViewModel.updateAssemblyDocument(state)
         viewModel.selectedTab = .document
+    }
+
+    /// Updates the Document inspector with a prebuilt mapping document state.
+    func updateMappingDocument(_ state: MappingDocumentState?) {
+        if state != nil {
+            viewModel.documentSectionViewModel.navigateToSourceData = { url in
+                NotificationCenter.default.post(
+                    name: .navigateToSidebarItem,
+                    object: nil,
+                    userInfo: ["url": url]
+                )
+            }
+        } else {
+            viewModel.documentSectionViewModel.navigateToSourceData = nil
+        }
+        viewModel.documentSectionViewModel.updateMappingDocument(state)
+        if state != nil {
+            viewModel.selectedTab = .document
+        }
     }
 
     /// Updates the chromosome selection in the Document tab.
@@ -1712,6 +1732,8 @@ public final class InspectorViewModel {
         switch contentMode {
         case .genomics:
             return [.document, .selection, .ai]
+        case .mapping:
+            return [.document, .selection]
         case .assembly:
             return [.document]
         case .fastq:

@@ -481,6 +481,22 @@ final class FASTQOperationDialogRoutingTests: XCTestCase {
         )
     }
 
+    func testMinimap2UsesGenericEmbeddedReadinessText() {
+        XCTAssertEqual(
+            FASTQOperationToolID.minimap2.embeddedReadinessText,
+            "Complete the mapping settings to continue."
+        )
+    }
+
+    func testAllSharedMappingToolsUseGenericEmbeddedReadinessText() {
+        for toolID in [FASTQOperationToolID.minimap2, .bwaMem2, .bowtie2, .bbmap] {
+            XCTAssertEqual(
+                toolID.embeddedReadinessText,
+                "Complete the mapping settings to continue."
+            )
+        }
+    }
+
     func testCaptureMappingRequestStoresSharedMappingRequest() {
         let sampleFASTQ = illuminaFASTQFixtureURL
         let state = FASTQOperationDialogState(

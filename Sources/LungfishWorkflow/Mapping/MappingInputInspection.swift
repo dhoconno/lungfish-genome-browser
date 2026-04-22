@@ -25,10 +25,13 @@ public struct MappingInputInspection: Sendable, Equatable {
         var maxReadLength = 0
 
         for url in urls {
-            if let readClass = MappingReadClass.detect(fromFASTQ: url) {
+            guard let fastqURL = MappingReadClass.resolveFASTQURL(forInputURL: url) else {
+                continue
+            }
+            if let readClass = MappingReadClass.detect(fromFASTQ: fastqURL) {
                 detectedClasses.insert(readClass)
             }
-            maxReadLength = max(maxReadLength, observedReadLength(fromFASTQ: url) ?? 0)
+            maxReadLength = max(maxReadLength, observedReadLength(fromFASTQ: fastqURL) ?? 0)
         }
 
         return MappingInputInspection(

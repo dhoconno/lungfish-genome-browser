@@ -67,6 +67,11 @@ public struct BundleManifest: Codable, Sendable, Equatable {
     /// Optional description of the bundle.
     public let description: String?
 
+    /// Optional origin bundle path when this bundle is a copied derivative of
+    /// another reference bundle. Stored as a project-relative (`@/…`),
+    /// filesystem-relative (`../…`), or absolute path.
+    public let originBundlePath: String?
+
     /// Date the bundle was created.
     public let createdDate: Date
 
@@ -119,6 +124,7 @@ public struct BundleManifest: Codable, Sendable, Equatable {
         name: String,
         identifier: String,
         description: String? = nil,
+        originBundlePath: String? = nil,
         createdDate: Date = Date(),
         modifiedDate: Date = Date(),
         source: SourceInfo,
@@ -133,6 +139,7 @@ public struct BundleManifest: Codable, Sendable, Equatable {
         self.name = name
         self.identifier = identifier
         self.description = description
+        self.originBundlePath = originBundlePath
         self.createdDate = createdDate
         self.modifiedDate = modifiedDate
         self.source = source
@@ -144,6 +151,41 @@ public struct BundleManifest: Codable, Sendable, Equatable {
         self.metadata = metadata
     }
 
+    /// Backward-compatible initializer preserved for existing call sites that
+    /// do not supply `originBundlePath`.
+    public init(
+        formatVersion: String = "1.0",
+        name: String,
+        identifier: String,
+        description: String? = nil,
+        createdDate: Date = Date(),
+        modifiedDate: Date = Date(),
+        source: SourceInfo,
+        genome: GenomeInfo? = nil,
+        annotations: [AnnotationTrackInfo] = [],
+        variants: [VariantTrackInfo] = [],
+        tracks: [SignalTrackInfo] = [],
+        alignments: [AlignmentTrackInfo] = [],
+        metadata: [MetadataGroup]? = nil
+    ) {
+        self.init(
+            formatVersion: formatVersion,
+            name: name,
+            identifier: identifier,
+            description: description,
+            originBundlePath: nil,
+            createdDate: createdDate,
+            modifiedDate: modifiedDate,
+            source: source,
+            genome: genome,
+            annotations: annotations,
+            variants: variants,
+            tracks: tracks,
+            alignments: alignments,
+            metadata: metadata
+        )
+    }
+
     // MARK: - Coding Keys
 
     private enum CodingKeys: String, CodingKey {
@@ -151,6 +193,7 @@ public struct BundleManifest: Codable, Sendable, Equatable {
         case name
         case identifier
         case description
+        case originBundlePath = "origin_bundle_path"
         case createdDate = "created_date"
         case modifiedDate = "modified_date"
         case source
@@ -171,6 +214,7 @@ public struct BundleManifest: Codable, Sendable, Equatable {
         name = try container.decode(String.self, forKey: .name)
         identifier = try container.decode(String.self, forKey: .identifier)
         description = try container.decodeIfPresent(String.self, forKey: .description)
+        originBundlePath = try container.decodeIfPresent(String.self, forKey: .originBundlePath)
         createdDate = try container.decode(Date.self, forKey: .createdDate)
         modifiedDate = try container.decode(Date.self, forKey: .modifiedDate)
         source = try container.decode(SourceInfo.self, forKey: .source)
@@ -875,6 +919,7 @@ extension BundleManifest {
             name: name,
             identifier: identifier,
             description: description,
+            originBundlePath: originBundlePath,
             createdDate: createdDate,
             modifiedDate: Date(),
             source: source,
@@ -909,6 +954,7 @@ extension BundleManifest {
             name: name,
             identifier: identifier,
             description: description,
+            originBundlePath: originBundlePath,
             createdDate: createdDate,
             modifiedDate: Date(),
             source: source,
@@ -928,6 +974,7 @@ extension BundleManifest {
             name: name,
             identifier: identifier,
             description: description,
+            originBundlePath: originBundlePath,
             createdDate: createdDate,
             modifiedDate: Date(),
             source: source,
@@ -947,6 +994,7 @@ extension BundleManifest {
             name: name,
             identifier: identifier,
             description: description,
+            originBundlePath: originBundlePath,
             createdDate: createdDate,
             modifiedDate: Date(),
             source: source,

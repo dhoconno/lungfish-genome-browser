@@ -32,7 +32,7 @@ final class AppUITestMappingBackendTests: XCTestCase {
             let outputDirectory = tempRoot.appendingPathComponent("out-\(tool.rawValue)", isDirectory: true)
             let request = MappingRunRequest(
                 tool: tool,
-                modeID: "short-read-default",
+                modeID: tool == .bbmap ? MappingMode.bbmapStandard.id : MappingMode.defaultShortRead.id,
                 inputFASTQURLs: [inputURL],
                 referenceFASTAURL: referenceURL,
                 projectURL: nil,
@@ -46,6 +46,10 @@ final class AppUITestMappingBackendTests: XCTestCase {
             XCTAssertEqual(written.contigs.count, 1)
             XCTAssertEqual(written.contigs.first?.contigName, "chr1")
             XCTAssertEqual(written.contigs.first?.contigLength, expectedContigLength)
+            XCTAssertNotNil(written.viewerBundleURL, "Deterministic mapping backend should synthesize a viewer bundle")
+            if let viewerBundleURL = written.viewerBundleURL {
+                XCTAssertTrue(FileManager.default.fileExists(atPath: viewerBundleURL.appendingPathComponent("manifest.json").path))
+            }
 
             let loaded = try MappingResult.load(from: outputDirectory)
             XCTAssertEqual(loaded.mapper, tool)
@@ -53,6 +57,13 @@ final class AppUITestMappingBackendTests: XCTestCase {
             XCTAssertEqual(loaded.contigs.first?.contigName, "chr1")
             XCTAssertEqual(loaded.totalReads, written.totalReads)
             XCTAssertEqual(loaded.mappedReads, written.mappedReads)
+
+            let provenance = try XCTUnwrap(MappingProvenance.load(from: outputDirectory))
+            XCTAssertEqual(provenance.mapper, tool)
+            XCTAssertEqual(provenance.mapperVersion, "ui-test-deterministic")
+            XCTAssertEqual(provenance.samtoolsVersion, "ui-test-deterministic")
+            XCTAssertEqual(provenance.viewerBundlePath, written.viewerBundleURL?.standardizedFileURL.path)
+            XCTAssertEqual(provenance.commandInvocations.first?.label, tool.displayName)
         }
     }
 }

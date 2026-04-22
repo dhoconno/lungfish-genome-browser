@@ -9,106 +9,29 @@ import LungfishWorkflow
 public final class MappingResultViewController: NSViewController {
     private(set) var currentResult: MappingResult?
     private var loadedViewerBundleURL: URL?
-    private var didSetInitialSplitPosition = false
 
     private let embeddedViewerController = ViewerViewController()
+    private let splitCoordinator = TwoPaneTrackedSplitCoordinator()
 
     private let summaryBar: NSView = {
         let bar = NSView()
         bar.translatesAutoresizingMaskIntoConstraints = false
+        return bar
+    }()
 
+    private let summaryLabel: NSTextField = {
         let label = NSTextField(labelWithString: "Mapping Results")
         label.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
         label.textColor = .secondaryLabelColor
         label.translatesAutoresizingMaskIntoConstraints = false
-        bar.addSubview(label)
-
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 12),
-            label.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            bar.heightAnchor.constraint(equalToConstant: 32),
-        ])
-
-        return bar
+        label.setAccessibilityIdentifier("mapping-result-summary-label")
+        return label
     }()
 
-    private let splitView: NSSplitView = {
-        let split = NSSplitView()
-        split.translatesAutoresizingMaskIntoConstraints = false
-        split.isVertical = true
-        split.dividerStyle = .thin
-        return split
-    }()
-
+    private let splitView = TrackedDividerSplitView()
     private let listContainer = NSView()
     private let detailContainer = NSView()
-
-    private let scrollView: NSScrollView = {
-        let scroll = NSScrollView()
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.hasVerticalScroller = true
-        scroll.hasHorizontalScroller = true
-        scroll.autohidesScrollers = true
-        scroll.borderType = .bezelBorder
-        return scroll
-    }()
-
-    private let tableView: NSTableView = {
-        let table = NSTableView()
-        table.usesAlternatingRowBackgroundColors = true
-        table.allowsMultipleSelection = false
-        table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
-
-        let contig = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("contig"))
-        contig.title = "Contig"
-        contig.width = 220
-        contig.minWidth = 140
-
-        let length = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("length"))
-        length.title = "Length"
-        length.width = 90
-        length.minWidth = 70
-
-        let reads = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("reads"))
-        reads.title = "Reads"
-        reads.width = 90
-        reads.minWidth = 70
-
-        let mappedPct = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("mappedPercent"))
-        mappedPct.title = "% Mapped"
-        mappedPct.width = 84
-        mappedPct.minWidth = 74
-
-        let depth = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("depth"))
-        depth.title = "Depth"
-        depth.width = 80
-        depth.minWidth = 66
-
-        let breadth = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("breadth"))
-        breadth.title = "Breadth"
-        breadth.width = 84
-        breadth.minWidth = 70
-
-        let mapq = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("mapq"))
-        mapq.title = "MAPQ"
-        mapq.width = 72
-        mapq.minWidth = 60
-
-        let identity = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("identity"))
-        identity.title = "Identity"
-        identity.width = 84
-        identity.minWidth = 70
-
-        table.addTableColumn(contig)
-        table.addTableColumn(length)
-        table.addTableColumn(reads)
-        table.addTableColumn(mappedPct)
-        table.addTableColumn(depth)
-        table.addTableColumn(breadth)
-        table.addTableColumn(mapq)
-        table.addTableColumn(identity)
-        return table
-    }()
+    private let contigTableView = MappingContigTableView()
 
     private let detailPlaceholderLabel: NSTextField = {
         let label = NSTextField(labelWithString: "Select a mapped contig to inspect mapped reads.")
@@ -116,10 +39,9 @@ public final class MappingResultViewController: NSViewController {
         label.alignment = .center
         label.textColor = .secondaryLabelColor
         label.maximumNumberOfLines = 0
+        label.setAccessibilityIdentifier("mapping-result-detail-placeholder")
         return label
     }()
-
-    private var contigRows: [MappingContigSummary] = []
 
     public override func loadView() {
         let root = NSView()
@@ -129,23 +51,44 @@ public final class MappingResultViewController: NSViewController {
         root.setAccessibilityLabel("Mapping result viewport")
         root.setAccessibilityIdentifier("mapping-result-view")
         view = root
+
+        setupSummaryBar()
+        setupContainers()
+        setupSplitView()
+        layoutSubviews()
+        wireCallbacks()
+        applyLayoutPreference()
     }
 
-    public override func viewDidLoad() {
-        super.viewDidLoad()
+    public override func viewDidLayout() {
+        super.viewDidLayout()
+        guard splitView.arrangedSubviews.count > 1 else { return }
+        guard splitCoordinator.needsInitialSplitValidation else { return }
+        scheduleInitialSplitValidationIfNeeded()
+    }
 
-        tableView.dataSource = self
-        tableView.delegate = self
-        tableView.setAccessibilityIdentifier("mapping-result-contig-table")
-        tableView.setAccessibilityLabel("Mapping contig table")
-        scrollView.documentView = tableView
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
 
-        listContainer.translatesAutoresizingMaskIntoConstraints = false
-        detailContainer.translatesAutoresizingMaskIntoConstraints = false
-        splitView.addArrangedSubview(listContainer)
-        splitView.addArrangedSubview(detailContainer)
+    private func setupSummaryBar() {
+        summaryBar.addSubview(summaryLabel)
+        NSLayoutConstraint.activate([
+            summaryLabel.leadingAnchor.constraint(equalTo: summaryBar.leadingAnchor, constant: 12),
+            summaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: summaryBar.trailingAnchor, constant: -12),
+            summaryLabel.centerYAnchor.constraint(equalTo: summaryBar.centerYAnchor),
+            summaryBar.heightAnchor.constraint(equalToConstant: 32),
+        ])
+    }
 
-        listContainer.addSubview(scrollView)
+    private func setupContainers() {
+        [summaryBar, splitView, listContainer, detailContainer, contigTableView].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+        }
+
+        embeddedViewerController.publishesGlobalViewportNotifications = false
+
+        listContainer.addSubview(contigTableView)
         detailContainer.addSubview(detailPlaceholderLabel)
 
         addChild(embeddedViewerController)
@@ -153,6 +96,36 @@ public final class MappingResultViewController: NSViewController {
         detailView.translatesAutoresizingMaskIntoConstraints = false
         detailContainer.addSubview(detailView, positioned: .below, relativeTo: detailPlaceholderLabel)
 
+        NSLayoutConstraint.activate([
+            contigTableView.topAnchor.constraint(equalTo: listContainer.topAnchor),
+            contigTableView.leadingAnchor.constraint(equalTo: listContainer.leadingAnchor),
+            contigTableView.trailingAnchor.constraint(equalTo: listContainer.trailingAnchor),
+            contigTableView.bottomAnchor.constraint(equalTo: listContainer.bottomAnchor),
+
+            detailView.topAnchor.constraint(equalTo: detailContainer.topAnchor),
+            detailView.leadingAnchor.constraint(equalTo: detailContainer.leadingAnchor),
+            detailView.trailingAnchor.constraint(equalTo: detailContainer.trailingAnchor),
+            detailView.bottomAnchor.constraint(equalTo: detailContainer.bottomAnchor),
+
+            detailPlaceholderLabel.centerXAnchor.constraint(equalTo: detailContainer.centerXAnchor),
+            detailPlaceholderLabel.centerYAnchor.constraint(equalTo: detailContainer.centerYAnchor),
+            detailPlaceholderLabel.leadingAnchor.constraint(greaterThanOrEqualTo: detailContainer.leadingAnchor, constant: 24),
+            detailPlaceholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: detailContainer.trailingAnchor, constant: -24),
+        ])
+    }
+
+    private func setupSplitView() {
+        splitView.translatesAutoresizingMaskIntoConstraints = false
+        splitView.dividerStyle = .thin
+        splitView.delegate = self
+        splitView.isVertical = true
+        splitView.addArrangedSubview(listContainer)
+        splitView.addArrangedSubview(detailContainer)
+        splitView.setHoldingPriority(.defaultLow, forSubviewAt: 0)
+        splitView.setHoldingPriority(.defaultLow, forSubviewAt: 1)
+    }
+
+    private func layoutSubviews() {
         view.addSubview(summaryBar)
         view.addSubview(splitView)
 
@@ -165,63 +138,100 @@ public final class MappingResultViewController: NSViewController {
             splitView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             splitView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             splitView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-
-            scrollView.topAnchor.constraint(equalTo: listContainer.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: listContainer.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: listContainer.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: listContainer.bottomAnchor),
-
-            detailView.topAnchor.constraint(equalTo: detailContainer.topAnchor),
-            detailView.leadingAnchor.constraint(equalTo: detailContainer.leadingAnchor),
-            detailView.trailingAnchor.constraint(equalTo: detailContainer.trailingAnchor),
-            detailView.bottomAnchor.constraint(equalTo: detailContainer.bottomAnchor),
-
-            detailPlaceholderLabel.centerXAnchor.constraint(equalTo: detailContainer.centerXAnchor),
-            detailPlaceholderLabel.centerYAnchor.constraint(equalTo: detailContainer.centerYAnchor),
-            detailPlaceholderLabel.leadingAnchor.constraint(greaterThanOrEqualTo: detailContainer.leadingAnchor, constant: 24),
-            detailPlaceholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: detailContainer.trailingAnchor, constant: -24),
-
-            listContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 320),
-            detailContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 480),
         ])
-
-        splitView.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
     }
 
-    public override func viewDidLayout() {
-        super.viewDidLayout()
-        guard !didSetInitialSplitPosition else { return }
-        didSetInitialSplitPosition = true
-        splitView.setPosition(420, ofDividerAt: 0)
+    private func wireCallbacks() {
+        contigTableView.onRowSelected = { [weak self] row in
+            self?.displaySelectedContig(row)
+        }
+        contigTableView.onSelectionCleared = { [weak self] in
+            self?.showDetailPlaceholder("Select a mapped contig to inspect mapped reads.")
+        }
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleLayoutPreferenceChanged),
+            name: .mappingLayoutSwapRequested,
+            object: nil
+        )
+    }
+
+    @objc private func handleLayoutPreferenceChanged() {
+        applyLayoutPreference()
+    }
+
+    private func defaultLeadingFraction(for layout: MappingPanelLayout) -> CGFloat {
+        switch layout {
+        case .detailLeading:
+            return 0.6
+        case .listLeading, .stacked:
+            return 0.4
+        }
+    }
+
+    private func minimumExtents(for layout: MappingPanelLayout) -> (leading: CGFloat, trailing: CGFloat) {
+        switch layout {
+        case .detailLeading:
+            return (320, 320)
+        case .listLeading, .stacked:
+            return (320, 320)
+        }
+    }
+
+    private func applyLayoutPreference() {
+        guard splitView.arrangedSubviews.count > 1 else { return }
+        let layout = MappingPanelLayout.current()
+        let detailLeading = layout == .detailLeading
+        splitCoordinator.applyLayoutPreference(
+            to: splitView,
+            desiredIsVertical: layout != .stacked,
+            desiredFirstPane: detailLeading ? detailContainer : listContainer,
+            desiredSecondPane: detailLeading ? listContainer : detailContainer,
+            defaultLeadingFraction: defaultLeadingFraction(for: layout),
+            minimumExtents: minimumExtents(for: layout),
+            isViewInWindow: view.window != nil
+        )
+    }
+
+    private func scheduleInitialSplitValidationIfNeeded() {
+        splitCoordinator.scheduleInitialSplitValidationIfNeeded(
+            ownerView: view,
+            splitView: splitView,
+            minimumExtents: { [weak self] in
+                self?.minimumExtents(for: MappingPanelLayout.current()) ?? (320, 320)
+            },
+            defaultLeadingFraction: { [weak self] in
+                self?.defaultLeadingFraction(for: MappingPanelLayout.current()) ?? 0.4
+            }
+        )
     }
 
     private func updateSummaryBar() {
-        guard let result = currentResult,
-              let label = summaryBar.subviews.compactMap({ $0 as? NSTextField }).first else { return }
+        guard let result = currentResult else { return }
         let pct = result.totalReads > 0
             ? String(format: "%.1f%%", Double(result.mappedReads) / Double(result.totalReads) * 100)
             : "—"
-        label.stringValue = "\(result.mapper.displayName) Mapping — \(result.mappedReads.formatted()) / \(result.totalReads.formatted()) reads mapped (\(pct))"
+        summaryLabel.stringValue = "\(result.mapper.displayName) Mapping — \(result.mappedReads.formatted()) / \(result.totalReads.formatted()) reads mapped (\(pct))"
     }
 
     private func refreshSelection() {
-        tableView.reloadData()
-        if !contigRows.isEmpty {
-            tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-            displaySelectedContig()
+        guard !contigTableView.displayedRows.isEmpty else {
+            if let viewerBundleURL = currentResult?.viewerBundleURL {
+                do {
+                    try loadViewerBundleIfNeeded(from: viewerBundleURL)
+                    showDetailViewer()
+                } catch {
+                    showDetailPlaceholder("Unable to load the reference mapping viewer.")
+                }
+            } else {
+                showDetailPlaceholder("Reference bundle viewer unavailable for this mapping result.")
+            }
             return
         }
 
-        if let viewerBundleURL = currentResult?.viewerBundleURL {
-            do {
-                try loadViewerBundleIfNeeded(from: viewerBundleURL)
-                showDetailViewer()
-            } catch {
-                showDetailPlaceholder("Unable to load the reference mapping viewer.")
-            }
-        } else {
-            showDetailPlaceholder("Reference bundle viewer unavailable for this mapping result.")
-        }
+        contigTableView.tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        displaySelectedContig(contigTableView.displayedRows[0])
     }
 
     private func loadViewerBundleIfNeeded(from bundleURL: URL) throws {
@@ -235,14 +245,9 @@ public final class MappingResultViewController: NSViewController {
         loadedViewerBundleURL = standardized
     }
 
-    private func displaySelectedContig() {
+    private func displaySelectedContig(_ selectedContig: MappingContigSummary) {
         guard let result = currentResult else {
             showDetailPlaceholder("No mapping result loaded.")
-            return
-        }
-
-        guard tableView.selectedRow >= 0, tableView.selectedRow < contigRows.count else {
-            showDetailPlaceholder("Select a mapped contig to inspect mapped reads.")
             return
         }
 
@@ -253,7 +258,6 @@ public final class MappingResultViewController: NSViewController {
 
         do {
             try loadViewerBundleIfNeeded(from: viewerBundleURL)
-            let selectedContig = contigRows[tableView.selectedRow]
             guard let chromosome = embeddedViewerController.currentBundleDataProvider?.chromosomeInfo(named: selectedContig.contigName) else {
                 showDetailPlaceholder("Selected contig is not present in the reference bundle.")
                 return
@@ -290,10 +294,11 @@ extension MappingResultViewController: ResultViewportController {
 
     public func configure(result: MappingResult) {
         currentResult = result
-        contigRows = result.contigs
-        updateSummaryBar()
         loadedViewerBundleURL = nil
+        updateSummaryBar()
+        contigTableView.configure(rows: result.contigs)
         refreshSelection()
+        applyLayoutPreference()
     }
 
     public var summaryBarView: NSView { summaryBar }
@@ -307,73 +312,35 @@ extension MappingResultViewController: ResultViewportController {
     }
 }
 
-extension MappingResultViewController: NSTableViewDataSource {
-    public func numberOfRows(in tableView: NSTableView) -> Int {
-        contigRows.count
+extension MappingResultViewController: NSSplitViewDelegate {
+    public func splitViewDidResizeSubviews(_ notification: Notification) {
+        guard splitView.arrangedSubviews.count > 1 else { return }
+        splitCoordinator.splitViewDidResizeSubviews(
+            splitView,
+            minimumExtents: minimumExtents(for: MappingPanelLayout.current())
+        )
     }
 }
 
-extension MappingResultViewController: NSTableViewDelegate {
-    public func tableViewSelectionDidChange(_ notification: Notification) {
-        displaySelectedContig()
+#if DEBUG
+extension MappingResultViewController {
+    func configureForTesting(result: MappingResult) {
+        configure(result: result)
     }
 
-    public func tableView(
-        _ tableView: NSTableView,
-        viewFor tableColumn: NSTableColumn?,
-        row: Int
-    ) -> NSView? {
-        guard row < contigRows.count else { return nil }
+    var testSplitView: TrackedDividerSplitView { splitView }
+    var testListContainer: NSView { listContainer }
+    var testDetailContainer: NSView { detailContainer }
+    var testSummaryText: String { summaryLabel.stringValue }
+    var testContigTableView: MappingContigTableView { contigTableView }
+    var testDetailPlaceholderMessage: String { detailPlaceholderLabel.stringValue }
+    var testEmbeddedViewerPublishesGlobalViewportNotifications: Bool {
+        embeddedViewerController.publishesGlobalViewportNotifications
+    }
 
-        let summary = contigRows[row]
-        let cellIdentifier = NSUserInterfaceItemIdentifier("mapping-cell-\(tableColumn?.identifier.rawValue ?? "default")")
-        let cell: NSTableCellView
-        if let reused = tableView.makeView(withIdentifier: cellIdentifier, owner: self) as? NSTableCellView {
-            cell = reused
-        } else {
-            cell = NSTableCellView()
-            cell.identifier = cellIdentifier
-            let textField = NSTextField(labelWithString: "")
-            textField.translatesAutoresizingMaskIntoConstraints = false
-            cell.addSubview(textField)
-            cell.textField = textField
-            NSLayoutConstraint.activate([
-                textField.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
-                textField.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
-                textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            ])
-        }
-
-        switch tableColumn?.identifier.rawValue {
-        case "contig":
-            cell.textField?.stringValue = summary.contigName
-            cell.textField?.alignment = .left
-        case "length":
-            cell.textField?.stringValue = summary.contigLength.formatted()
-            cell.textField?.alignment = .right
-        case "reads":
-            cell.textField?.stringValue = summary.mappedReads.formatted()
-            cell.textField?.alignment = .right
-        case "mappedPercent":
-            cell.textField?.stringValue = String(format: "%.1f%%", summary.mappedReadPercent * 100)
-            cell.textField?.alignment = .right
-        case "depth":
-            cell.textField?.stringValue = String(format: "%.1f", summary.meanDepth)
-            cell.textField?.alignment = .right
-        case "breadth":
-            cell.textField?.stringValue = String(format: "%.1f%%", summary.coverageBreadth * 100)
-            cell.textField?.alignment = .right
-        case "mapq":
-            cell.textField?.stringValue = String(format: "%.1f", summary.medianMAPQ)
-            cell.textField?.alignment = .right
-        case "identity":
-            cell.textField?.stringValue = String(format: "%.1f%%", summary.meanIdentity * 100)
-            cell.textField?.alignment = .right
-        default:
-            cell.textField?.stringValue = ""
-            cell.textField?.alignment = .left
-        }
-
-        return cell
+    func testSelectContig(named name: String) {
+        guard let row = contigTableView.displayedRows.firstIndex(where: { $0.contigName == name }) else { return }
+        contigTableView.tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
     }
 }
+#endif

@@ -141,6 +141,33 @@ public final class ManagedMappingPipeline: @unchecked Sendable {
             contigs: contigs
         )
         try result.save(to: prepared.request.outputDirectory)
+
+        let mapperVersion = await detectToolVersion(
+            toolName: command.executable,
+            environment: prepared.request.tool.environmentName,
+            condaManager: condaManager
+        )
+        let samtoolsVersion = await nativeToolRunner.getToolVersion(.samtools) ?? "unknown"
+        let provenance = MappingProvenance.build(
+            request: prepared.request,
+            result: result,
+            mapperInvocation: MappingCommandInvocation(
+                label: prepared.request.tool.displayName,
+                argv: [command.executable] + command.arguments
+            ),
+            normalizationInvocations: MappingProvenance.normalizationInvocations(
+                rawAlignmentURL: rawAlignmentURL,
+                outputDirectory: prepared.request.outputDirectory,
+                sampleName: prepared.request.sampleName,
+                threads: prepared.request.threads,
+                minimumMappingQuality: prepared.request.minimumMappingQuality,
+                includeSecondary: prepared.request.includeSecondary,
+                includeSupplementary: prepared.request.includeSupplementary
+            ),
+            mapperVersion: mapperVersion,
+            samtoolsVersion: samtoolsVersion
+        )
+        try provenance.save(to: prepared.request.outputDirectory)
         progress?(1.0, "Mapping complete.")
         return result
     }
