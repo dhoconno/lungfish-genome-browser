@@ -39,11 +39,26 @@ public struct AlignmentBAMImporter: AlignmentBAMImporting, Sendable {
     }
 }
 
+/// Injectable manifest persistence used by filtered-track relocation.
+public protocol AlignmentBundleManifestWriting: Sendable {
+    func save(_ manifest: BundleManifest, to bundleURL: URL) throws
+}
+
+/// Default manifest writer backed by `BundleManifest.save`.
+public struct AlignmentBundleManifestWriter: AlignmentBundleManifestWriting, Sendable {
+    public init() {}
+
+    public func save(_ manifest: BundleManifest, to bundleURL: URL) throws {
+        try manifest.save(to: bundleURL)
+    }
+}
+
 /// Errors thrown while deriving a filtered BAM from a bundle alignment track.
 public enum AlignmentFilterServiceError: Error, LocalizedError, Sendable, Equatable {
     case sourceTrackNotFound(String)
     case missingRequiredSAMTags([String], sourceTrackID: String)
     case invalidCountOutput(String)
+    case preprocessingFailed(String)
     case samtoolsFailed(String)
 
     public var errorDescription: String? {
@@ -54,6 +69,8 @@ public enum AlignmentFilterServiceError: Error, LocalizedError, Sendable, Equata
             return "Alignment track '\(sourceTrackID)' is missing required SAM tags: \(tags.joined(separator: ", "))"
         case .invalidCountOutput(let output):
             return "samtools returned an invalid alignment count: \(output)"
+        case .preprocessingFailed(let message):
+            return "Alignment preprocessing failed: \(message)"
         case .samtoolsFailed(let message):
             return "samtools BAM filtering failed: \(message)"
         }
@@ -79,15 +96,18 @@ public final class AlignmentFilterService: @unchecked Sendable {
     private let samtoolsRunner: any AlignmentSamtoolsRunning
     private let markdupPipeline: any AlignmentMarkdupPipelining
     private let bamImporter: any AlignmentBAMImporting
+    private let manifestWriter: any AlignmentBundleManifestWriting
 
     public init(
         samtoolsRunner: any AlignmentSamtoolsRunning = NativeToolSamtoolsRunner.shared,
         markdupPipeline: (any AlignmentMarkdupPipelining)? = nil,
-        bamImporter: any AlignmentBAMImporting = AlignmentBAMImporter()
+        bamImporter: any AlignmentBAMImporting = AlignmentBAMImporter(),
+        manifestWriter: any AlignmentBundleManifestWriting = AlignmentBundleManifestWriter()
     ) {
         self.samtoolsRunner = samtoolsRunner
         self.markdupPipeline = markdupPipeline ?? AlignmentMarkdupPipeline(samtoolsRunner: samtoolsRunner)
         self.bamImporter = bamImporter
+        self.manifestWriter = manifestWriter
     }
 
     public func deriveFilteredAlignment(
@@ -132,13 +152,18 @@ public final class AlignmentFilterService: @unchecked Sendable {
             case .samtoolsMarkdup(let removeDuplicates):
                 let markdupOutputURL = workDir.appendingPathComponent("\(sourceTrackID).preprocessed.markdup.bam")
                 progressHandler?(0.18, "Running duplicate preprocessing...")
-                let result = try await markdupPipeline.run(
-                    inputURL: currentInputURL,
-                    outputURL: markdupOutputURL,
-                    removeDuplicates: removeDuplicates,
-                    referenceFastaPath: referenceFastaPath,
-                    progressHandler: progressHandler
-                )
+                let result: AlignmentMarkdupPipelineResult
+                do {
+                    result = try await markdupPipeline.run(
+                        inputURL: currentInputURL,
+                        outputURL: markdupOutputURL,
+                        removeDuplicates: removeDuplicates,
+                        referenceFastaPath: referenceFastaPath,
+                        progressHandler: progressHandler
+                    )
+                } catch {
+                    throw AlignmentFilterServiceError.preprocessingFailed(error.localizedDescription)
+                }
                 currentInputURL = result.outputURL
                 commandHistory += result.commandHistory
             }
@@ -318,25 +343,30 @@ public final class AlignmentFilterService: @unchecked Sendable {
         let destinationIndexRelativePath = "alignments/filtered/\(indexURL.lastPathComponent)"
         let destinationSourceURL = bundleURL.appendingPathComponent(destinationSourceRelativePath)
         let destinationIndexURL = bundleURL.appendingPathComponent(destinationIndexRelativePath)
-
-        try replaceItemIfPresent(at: destinationSourceURL)
-        try replaceItemIfPresent(at: destinationIndexURL)
-        try FileManager.default.moveItem(at: sourceURL, to: destinationSourceURL)
-        try FileManager.default.moveItem(at: indexURL, to: destinationIndexURL)
+        var stagedURLs: [URL] = []
 
         var destinationMetadataRelativePath: String?
-        if let metadataDBPath = trackInfo.metadataDBPath {
-            let metadataDBURL = resolveBundlePath(metadataDBPath, bundleURL: bundleURL)
-            let relocatedMetadataRelativePath = "alignments/filtered/\(metadataDBURL.lastPathComponent)"
-            let relocatedMetadataURL = bundleURL.appendingPathComponent(relocatedMetadataRelativePath)
-            try replaceItemIfPresent(at: relocatedMetadataURL)
-            try FileManager.default.moveItem(at: metadataDBURL, to: relocatedMetadataURL)
+        var sourceMetadataURL: URL?
+        do {
+            try stageCopy(from: sourceURL, to: destinationSourceURL, stagedURLs: &stagedURLs)
+            try stageCopy(from: indexURL, to: destinationIndexURL, stagedURLs: &stagedURLs)
 
-            let metadataDB = try AlignmentMetadataDatabase.openForUpdate(at: relocatedMetadataURL)
-            metadataDB.setFileInfo("source_path", value: destinationSourceURL.path)
-            metadataDB.setFileInfo("source_path_in_bundle", value: destinationSourceRelativePath)
-            metadataDB.setFileInfo("file_name", value: destinationSourceURL.lastPathComponent)
-            destinationMetadataRelativePath = relocatedMetadataRelativePath
+            if let metadataDBPath = trackInfo.metadataDBPath {
+                let metadataDBURL = resolveBundlePath(metadataDBPath, bundleURL: bundleURL)
+                let relocatedMetadataRelativePath = "alignments/filtered/\(metadataDBURL.lastPathComponent)"
+                let relocatedMetadataURL = bundleURL.appendingPathComponent(relocatedMetadataRelativePath)
+                try stageCopy(from: metadataDBURL, to: relocatedMetadataURL, stagedURLs: &stagedURLs)
+
+                let metadataDB = try AlignmentMetadataDatabase.openForUpdate(at: relocatedMetadataURL)
+                metadataDB.setFileInfo("source_path", value: destinationSourceURL.path)
+                metadataDB.setFileInfo("source_path_in_bundle", value: destinationSourceRelativePath)
+                metadataDB.setFileInfo("file_name", value: destinationSourceURL.lastPathComponent)
+                destinationMetadataRelativePath = relocatedMetadataRelativePath
+                sourceMetadataURL = metadataDBURL
+            }
+        } catch {
+            cleanupStagedItems(stagedURLs)
+            throw error
         }
 
         let relocatedTrackInfo = AlignmentTrackInfo(
@@ -361,7 +391,18 @@ public final class AlignmentFilterService: @unchecked Sendable {
         let updatedManifest = manifest
             .removingAlignmentTrack(id: trackInfo.id)
             .addingAlignmentTrack(relocatedTrackInfo)
-        try updatedManifest.save(to: bundleURL)
+        do {
+            try manifestWriter.save(updatedManifest, to: bundleURL)
+        } catch {
+            cleanupStagedItems(stagedURLs)
+            throw error
+        }
+
+        try? FileManager.default.removeItem(at: sourceURL)
+        try? FileManager.default.removeItem(at: indexURL)
+        if let sourceMetadataURL {
+            try? FileManager.default.removeItem(at: sourceMetadataURL)
+        }
 
         return BAMImportService.ImportResult(
             trackInfo: relocatedTrackInfo,
@@ -383,6 +424,18 @@ public final class AlignmentFilterService: @unchecked Sendable {
     private func replaceItemIfPresent(at url: URL) throws {
         if FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
+        }
+    }
+
+    private func stageCopy(from sourceURL: URL, to destinationURL: URL, stagedURLs: inout [URL]) throws {
+        try replaceItemIfPresent(at: destinationURL)
+        try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+        stagedURLs.append(destinationURL)
+    }
+
+    private func cleanupStagedItems(_ stagedURLs: [URL]) {
+        for url in stagedURLs {
+            try? FileManager.default.removeItem(at: url)
         }
     }
 

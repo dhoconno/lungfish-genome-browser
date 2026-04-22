@@ -144,6 +144,77 @@ final class AlignmentFilterServiceTests: XCTestCase {
         XCTAssertEqual(metadataDB.getFileInfo("file_name"), URL(fileURLWithPath: importedTrack.sourcePath).lastPathComponent)
     }
 
+    func testFilterAlignmentRollsBackCopiedFilteredFilesWhenManifestSaveFails() async throws {
+        let bundle = try makeBundleFixture()
+        let runner = FilterServiceRecordingSamtoolsRunner()
+        let importer = FilterServiceRecordingImporter(result: makeImportResult(trackID: "derived"))
+        let manifestWriter = FailingAlignmentManifestWriter()
+        let service = AlignmentFilterService(
+            samtoolsRunner: runner,
+            bamImporter: importer,
+            manifestWriter: manifestWriter
+        )
+
+        do {
+            _ = try await service.deriveFilteredAlignment(
+                bundleURL: bundle.bundleURL,
+                sourceTrackID: bundle.sourceTrack.id,
+                outputTrackName: "Filtered",
+                filterRequest: AlignmentFilterRequest(),
+                progressHandler: nil
+            )
+            XCTFail("Expected manifest writer failure")
+        } catch {
+            let rootBAMURL = bundle.bundleURL.appendingPathComponent("alignments/derived.bam")
+            let rootIndexURL = bundle.bundleURL.appendingPathComponent("alignments/derived.bam.bai")
+            let rootDBURL = bundle.bundleURL.appendingPathComponent("alignments/derived.stats.db")
+            let filteredBAMURL = bundle.bundleURL.appendingPathComponent("alignments/filtered/derived.bam")
+            let filteredIndexURL = bundle.bundleURL.appendingPathComponent("alignments/filtered/derived.bam.bai")
+            let filteredDBURL = bundle.bundleURL.appendingPathComponent("alignments/filtered/derived.stats.db")
+
+            XCTAssertTrue(FileManager.default.fileExists(atPath: rootBAMURL.path))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: rootIndexURL.path))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: rootDBURL.path))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: filteredBAMURL.path))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: filteredIndexURL.path))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: filteredDBURL.path))
+
+            let manifest = try BundleManifest.load(from: bundle.bundleURL)
+            let importedTrack = try XCTUnwrap(manifest.alignments.first(where: { $0.id == "derived" }))
+            XCTAssertEqual(importedTrack.sourcePath, "alignments/derived.bam")
+            XCTAssertEqual(importedTrack.indexPath, "alignments/derived.bam.bai")
+            XCTAssertEqual(importedTrack.metadataDBPath, "alignments/derived.stats.db")
+        }
+    }
+
+    func testFilterAlignmentWrapsMarkdupPreprocessingFailuresIntoFilterServiceError() async throws {
+        let bundle = try makeBundleFixture()
+        let runner = FilterServiceRecordingSamtoolsRunner()
+        let markdupPipeline = FailingFilterServiceMarkdupPipeline(error: AlignmentDuplicateError.samtoolsFailed("markdup failed"))
+        let importer = FilterServiceRecordingImporter(result: makeImportResult(trackID: "derived"))
+        let service = AlignmentFilterService(
+            samtoolsRunner: runner,
+            markdupPipeline: markdupPipeline,
+            bamImporter: importer
+        )
+
+        do {
+            _ = try await service.deriveFilteredAlignment(
+                bundleURL: bundle.bundleURL,
+                sourceTrackID: bundle.sourceTrack.id,
+                outputTrackName: "Filtered",
+                filterRequest: AlignmentFilterRequest(duplicateMode: .remove),
+                progressHandler: nil
+            )
+            XCTFail("Expected preprocessing failure")
+        } catch let error as AlignmentFilterServiceError {
+            guard case .preprocessingFailed(let message) = error else {
+                return XCTFail("Unexpected filter-service error: \(error)")
+            }
+            XCTAssertTrue(message.contains("markdup failed"))
+        }
+    }
+
     private func makeBundleFixture() throws -> BundleFixture {
         let bundleURL = tempDir.appendingPathComponent("fixture.lungfishref", isDirectory: true)
         let alignmentsURL = bundleURL.appendingPathComponent("alignments", isDirectory: true)
@@ -339,5 +410,25 @@ private actor FilterServiceRecordingImporter: AlignmentBAMImporting {
         let manifest = try BundleManifest.load(from: bundleURL)
         try manifest.addingAlignmentTrack(importedTrack).save(to: bundleURL)
         return result
+    }
+}
+
+private struct FailingFilterServiceMarkdupPipeline: AlignmentMarkdupPipelining {
+    let error: Error
+
+    func run(
+        inputURL: URL,
+        outputURL: URL,
+        removeDuplicates: Bool,
+        referenceFastaPath: String?,
+        progressHandler: (@Sendable (Double, String) -> Void)?
+    ) async throws -> AlignmentMarkdupPipelineResult {
+        throw error
+    }
+}
+
+private struct FailingAlignmentManifestWriter: AlignmentBundleManifestWriting {
+    func save(_ manifest: BundleManifest, to bundleURL: URL) throws {
+        throw NSError(domain: "AlignmentFilterServiceTests", code: 99, userInfo: [NSLocalizedDescriptionKey: "manifest save failed"])
     }
 }
