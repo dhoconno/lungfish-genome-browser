@@ -13,7 +13,7 @@ public enum AlignmentFilterCommandBuilder {
             throw AlignmentFilterError.invalidMinimumMAPQ(minimumMAPQ)
         }
 
-        let region = try validatedRegion(request.region)
+        let trailingArguments = try validatedTrailingArguments(request.region)
         let identityExpression = try validatedIdentityExpression(request.identityFilter)
 
         var excludeFlags: UInt16 = 0
@@ -40,19 +40,19 @@ public enum AlignmentFilterCommandBuilder {
 
         return AlignmentFilterCommandPlan(
             arguments: arguments,
-            region: region,
+            trailingArguments: trailingArguments,
             duplicateMode: request.duplicateMode,
             identityFilterExpression: identityExpression
         )
     }
 
-    private static func validatedRegion(_ region: String?) throws -> String? {
-        guard let region else { return nil }
+    private static func validatedTrailingArguments(_ region: String?) throws -> [String] {
+        guard let region else { return [] }
         let trimmed = region.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             throw AlignmentFilterError.invalidRegion(region)
         }
-        return trimmed
+        return [trimmed]
     }
 
     private static func validatedIdentityExpression(_ filter: AlignmentFilterIdentityFilter?) throws -> String? {

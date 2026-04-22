@@ -25,7 +25,7 @@ public enum AlignmentFilterIdentityFilter: Sendable, Codable, Equatable {
         case .exactMatch:
             return "[NM] == 0"
         case .minimumPercentIdentity(let threshold):
-            return "(qlen > 0) && (((qlen - [NM]) / qlen) * 100 >= \(Self.formattedThreshold(threshold)))"
+            return "(qlen > sclen) && (((qlen - sclen - [NM]) / (qlen - sclen)) * 100 >= \(Self.formattedThreshold(threshold)))"
         }
     }
 
@@ -76,7 +76,7 @@ public struct AlignmentFilterCommandPlan: Sendable, Codable, Equatable {
     public let executable: String
     public let subcommand: String
     public let arguments: [String]
-    public let region: String?
+    public let trailingArguments: [String]
     public let duplicateMode: AlignmentFilterDuplicateMode?
     public let identityFilterExpression: String?
 
@@ -84,21 +84,21 @@ public struct AlignmentFilterCommandPlan: Sendable, Codable, Equatable {
         executable: String = "samtools",
         subcommand: String = "view",
         arguments: [String],
-        region: String? = nil,
+        trailingArguments: [String] = [],
         duplicateMode: AlignmentFilterDuplicateMode? = nil,
         identityFilterExpression: String? = nil
     ) {
         self.executable = executable
         self.subcommand = subcommand
         self.arguments = arguments
-        self.region = region
+        self.trailingArguments = trailingArguments
         self.duplicateMode = duplicateMode
         self.identityFilterExpression = identityFilterExpression
     }
 
-    /// Full command arguments including the subcommand.
-    public var commandArguments: [String] {
-        [subcommand] + arguments
+    /// Full command arguments including the subcommand, input path, and trailing regions.
+    public func commandArguments(appendingInputPath inputPath: String) -> [String] {
+        [subcommand] + arguments + [inputPath] + trailingArguments
     }
 }
 

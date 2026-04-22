@@ -27,7 +27,19 @@ final class AlignmentFilterCommandBuilderTests: XCTestCase {
             "-q", "30",
             "-e", "[NM] == 0"
         ])
-        XCTAssertEqual(plan.region, "chr7")
+        XCTAssertEqual(plan.trailingArguments, ["chr7"])
+        XCTAssertEqual(
+            plan.commandArguments(appendingInputPath: "/tmp/input.bam"),
+            [
+                "view",
+                "-b",
+                "-F", "0xD04",
+                "-q", "30",
+                "-e", "[NM] == 0",
+                "/tmp/input.bam",
+                "chr7"
+            ]
+        )
         XCTAssertEqual(plan.duplicateMode, .exclude)
         XCTAssertEqual(plan.identityFilterExpression, "[NM] == 0")
     }
@@ -47,13 +59,13 @@ final class AlignmentFilterCommandBuilderTests: XCTestCase {
         XCTAssertEqual(plan.arguments, [
             "-b",
             "-F", "0x400",
-            "-e", "(qlen > 0) && (((qlen - [NM]) / qlen) * 100 >= 95)"
+            "-e", "(qlen > sclen) && (((qlen - sclen - [NM]) / (qlen - sclen)) * 100 >= 95)"
         ])
-        XCTAssertNil(plan.region)
+        XCTAssertTrue(plan.trailingArguments.isEmpty)
         XCTAssertEqual(plan.duplicateMode, .remove)
         XCTAssertEqual(
             plan.identityFilterExpression,
-            "(qlen > 0) && (((qlen - [NM]) / qlen) * 100 >= 95)"
+            "(qlen > sclen) && (((qlen - sclen - [NM]) / (qlen - sclen)) * 100 >= 95)"
         )
     }
 }
