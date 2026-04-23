@@ -905,6 +905,135 @@ final class LoadedDocumentBundleTests: XCTestCase {
     }
 }
 
+// MARK: - Viewer Bundle Routing Tests
+
+@MainActor
+final class ViewerBundleRoutingTests: XCTestCase {
+    nonisolated(unsafe) private var tempDir: URL!
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bundle_viewer_routing_tests_\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        if let tempDir {
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+        tempDir = nil
+        try super.tearDownWithError()
+    }
+
+    func testDisplayBundleDefaultOverloadUsesBrowseMode() throws {
+        let vc = ViewerViewController()
+        _ = vc.view
+        let bundleURL = try makeReferenceBundle(chromosomes: ["chr1", "chr2"])
+
+        try vc.displayBundle(at: bundleURL)
+
+        XCTAssertNotNil(vc.testBundleBrowserController)
+        XCTAssertNil(vc.chromosomeNavigatorView)
+        XCTAssertNil(vc.referenceFrame)
+    }
+
+    func testDisplayBundleBrowseModeDoesNotInstallChromosomeNavigatorOrReferenceFrame() throws {
+        let vc = ViewerViewController()
+        _ = vc.view
+        let bundleURL = try makeReferenceBundle(chromosomes: ["chr1", "chr2"])
+
+        try vc.displayBundle(at: bundleURL, mode: .browse)
+
+        XCTAssertNil(vc.chromosomeNavigatorView)
+        XCTAssertNil(vc.referenceFrame)
+        XCTAssertNotNil(vc.testBundleBrowserController)
+    }
+
+    func testSingleSequenceBundleStillOpensInBrowserMode() throws {
+        let vc = ViewerViewController()
+        _ = vc.view
+        let bundleURL = try makeReferenceBundle(chromosomes: ["chr1"])
+
+        try vc.displayBundle(at: bundleURL, mode: .browse)
+
+        XCTAssertNil(vc.chromosomeNavigatorView)
+        XCTAssertNil(vc.referenceFrame)
+        XCTAssertEqual(vc.testBundleBrowserController?.testSelectedName, "chr1")
+    }
+
+    func testBundleBrowserDrillDownAndBackRestoresBrowserState() throws {
+        let vc = ViewerViewController()
+        _ = vc.view
+        let bundleURL = try makeReferenceBundle(chromosomes: ["chr1", "chr2"])
+
+        try vc.displayBundle(at: bundleURL, mode: .browse)
+        let browser = try XCTUnwrap(vc.testBundleBrowserController)
+        browser.testSelectRow(named: "chr2")
+
+        browser.testInvokeOpen()
+
+        XCTAssertNil(vc.testBundleBrowserController)
+        XCTAssertEqual(vc.referenceFrame?.chromosome, "chr2")
+        XCTAssertEqual(vc.testBundleBackNavigationAccessibilityIdentifier, "viewer-back-navigation-button")
+
+        vc.testTapBundleBackNavigation()
+
+        XCTAssertNil(vc.referenceFrame)
+        XCTAssertEqual(vc.testBundleBrowserController?.testSelectedName, "chr2")
+    }
+
+    func testFailedBrowseOpenPreservesExistingBundleBrowserState() throws {
+        let vc = ViewerViewController()
+        _ = vc.view
+        let validBundleURL = try makeReferenceBundle(chromosomes: ["chr1", "chr2"])
+        let invalidBundleURL = tempDir.appendingPathComponent("invalid-bundle.lungfishref", isDirectory: true)
+        try FileManager.default.createDirectory(at: invalidBundleURL, withIntermediateDirectories: true)
+
+        try vc.displayBundle(at: validBundleURL, mode: .browse)
+        let browser = try XCTUnwrap(vc.testBundleBrowserController)
+        browser.testSelectRow(named: "chr2")
+
+        XCTAssertThrowsError(try vc.displayBundle(at: invalidBundleURL, mode: .browse))
+
+        XCTAssertEqual(vc.currentBundleURL?.standardizedFileURL, validBundleURL.standardizedFileURL)
+        XCTAssertNotNil(vc.testBundleBrowserController)
+        XCTAssertEqual(vc.testBundleBrowserController?.testSelectedName, "chr2")
+        XCTAssertNil(vc.referenceFrame)
+    }
+
+    private func makeReferenceBundle(chromosomes: [String]) throws -> URL {
+        let bundleURL = tempDir.appendingPathComponent("\(UUID().uuidString).lungfishref", isDirectory: true)
+        let genomeURL = bundleURL.appendingPathComponent("genome", isDirectory: true)
+        try FileManager.default.createDirectory(at: genomeURL, withIntermediateDirectories: true)
+        try Data().write(to: genomeURL.appendingPathComponent("sequence.fa.gz"))
+        try Data().write(to: genomeURL.appendingPathComponent("sequence.fa.gz.fai"))
+
+        let manifest = BundleManifest(
+            name: "Fixture",
+            identifier: "org.test.viewer.fixture",
+            source: SourceInfo(organism: "Fixture", assembly: "fixture"),
+            genome: GenomeInfo(
+                path: "genome/sequence.fa.gz",
+                indexPath: "genome/sequence.fa.gz.fai",
+                totalLength: Int64(chromosomes.count * 100),
+                chromosomes: chromosomes.enumerated().map { index, name in
+                    ChromosomeInfo(
+                        name: name,
+                        length: 100,
+                        offset: Int64(index * 101),
+                        lineBases: 80,
+                        lineWidth: 81
+                    )
+                }
+            )
+        )
+
+        try manifest.save(to: bundleURL)
+        return bundleURL
+    }
+}
+
 // MARK: - AnnotationTrackInfo Tests
 
 /// Tests for `AnnotationTrackInfo` construction and type values.

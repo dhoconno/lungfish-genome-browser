@@ -222,7 +222,7 @@ public final class MappingResultViewController: NSViewController {
         guard !contigTableView.displayedRows.isEmpty else {
             if let viewerBundleURL = currentResult?.viewerBundleURL {
                 do {
-                    try loadViewerBundleIfNeeded(from: viewerBundleURL)
+                    try loadViewerBundleIfNeeded(from: viewerBundleURL, sequenceName: "")
                     showDetailViewer()
                 } catch {
                     showDetailPlaceholder("Unable to load the reference mapping viewer.")
@@ -237,7 +237,7 @@ public final class MappingResultViewController: NSViewController {
         displaySelectedContig(contigTableView.displayedRows[0])
     }
 
-    private func loadViewerBundleIfNeeded(from bundleURL: URL) throws {
+    private func loadViewerBundleIfNeeded(from bundleURL: URL, sequenceName: String) throws {
         let standardized = bundleURL.standardizedFileURL
         if loadedViewerBundleURL == standardized {
             return
@@ -245,7 +245,10 @@ public final class MappingResultViewController: NSViewController {
 
         embeddedViewerController.clearViewport(statusMessage: "Loading mapping viewer...")
         embeddedViewerController.annotationSearchIndex = nil
-        try embeddedViewerController.displayBundle(at: standardized)
+        try embeddedViewerController.displayBundle(
+            at: standardized,
+            mode: .sequence(name: sequenceName, restoreViewState: false)
+        )
         rebuildEmbeddedAnnotationSearchIndex()
         loadedViewerBundleURL = standardized
     }
@@ -323,7 +326,10 @@ public final class MappingResultViewController: NSViewController {
         }
 
         do {
-            try loadViewerBundleIfNeeded(from: viewerBundleURL)
+            try loadViewerBundleIfNeeded(
+                from: viewerBundleURL,
+                sequenceName: selectedContig.contigName
+            )
             guard let chromosome = embeddedViewerController.currentBundleDataProvider?.chromosomeInfo(named: selectedContig.contigName) else {
                 showDetailPlaceholder("Selected contig is not present in the reference bundle.")
                 return
@@ -408,6 +414,9 @@ extension MappingResultViewController {
     var testDetailPlaceholderMessage: String { detailPlaceholderLabel.stringValue }
     var testEmbeddedViewerPublishesGlobalViewportNotifications: Bool {
         embeddedViewerController.publishesGlobalViewportNotifications
+    }
+    var testEmbeddedViewerShowsBundleBrowser: Bool {
+        embeddedViewerController.testBundleBrowserController != nil
     }
 
     func testSelectContig(named name: String) {

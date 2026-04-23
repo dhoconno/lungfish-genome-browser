@@ -2403,19 +2403,19 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
     /// Display reference bundle using the ViewerViewController's bundle display system.
     ///
-    /// This method delegates to `ViewerViewController.displayBundle(at:)` which handles:
-    /// - Loading and validating the bundle manifest
-    /// - Creating a `BundleDataProvider` for on-demand data access
-    /// - Showing a `ChromosomeNavigatorView` for chromosome selection
-    /// - Setting up the `ReferenceFrame` for the first chromosome
-    /// - Configuring the `SequenceViewerView` for on-demand rendering
+    /// Top-level bundle opens route through the explicit bundle browser mode so
+    /// `.lungfishref` documents land in the list/detail browser first.
     private func displayReferenceBundle(at url: URL, forceReload: Bool = false) {
         if !forceReload,
            viewerController.currentBundleDataProvider != nil,
            viewerController.currentBundleURL?.standardizedFileURL == url.standardizedFileURL {
-            logger.debug("displayReferenceBundle: '\(url.lastPathComponent, privacy: .public)' already displayed, skipping reload")
-            viewerController.openAnnotationDrawerIfBundleHasData()
-            return
+            if viewerController.bundleBrowserController != nil {
+                logger.debug("displayReferenceBundle: '\(url.lastPathComponent, privacy: .public)' already displayed in browse mode, skipping reload")
+                viewerController.openAnnotationDrawerIfBundleHasData()
+                return
+            }
+
+            logger.debug("displayReferenceBundle: '\(url.lastPathComponent, privacy: .public)' already displayed in sequence mode, restoring browse mode")
         }
 
         logger.info("displayReferenceBundle: Opening '\(url.lastPathComponent, privacy: .public)'")
@@ -2432,7 +2432,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
                 defer { self.activityIndicator.hide() }
 
                 do {
-                    try self.viewerController.displayBundle(at: url)
+                    try self.viewerController.displayBundle(at: url, mode: .browse)
                     logger.info("displayReferenceBundle: Bundle displayed successfully")
                 } catch {
                     logger.error("displayReferenceBundle: Failed - \(error.localizedDescription, privacy: .public)")
@@ -4135,7 +4135,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
 
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated {
-                self?.viewerController.updateFASTQOperationStatus("Running FASTQ operation...")
+                self?.viewerController.updateFASTQOperationStatus("Running FASTQ/FASTA operation...")
             }
         }
 
@@ -4344,7 +4344,7 @@ extension MainSplitViewController: SidebarSelectionDelegate {
         )
         OperationCenter.shared.log(id: opID, level: .info, message: "Starting \(request.operationDisplayTitle)")
 
-        viewerController.updateFASTQOperationStatus("Running FASTQ operation...")
+        viewerController.updateFASTQOperationStatus("Running FASTQ/FASTA operation...")
 
         Task.detached(priority: .userInitiated) { [weak self] in
             do {
