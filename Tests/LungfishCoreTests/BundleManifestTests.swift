@@ -343,6 +343,159 @@ final class BundleManifestTests: XCTestCase {
         XCTAssertEqual(loaded.source.organism, manifest.source.organism)
     }
 
+    func testSaveSynthesizesBrowserSummaryFromGenomeChromosomes() throws {
+        let bundleURL = tempDirectory.appendingPathComponent("browser-summary.lungfishref")
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+
+        let manifest = BundleManifest(
+            formatVersion: "1.0",
+            name: "Browser Summary Bundle",
+            identifier: "test.browser-summary",
+            source: SourceInfo(
+                organism: "Test",
+                assembly: "TestAsm",
+                database: "Test"
+            ),
+            genome: GenomeInfo(
+                path: "genome/seq.fa.gz",
+                indexPath: "genome/seq.fa.gz.fai",
+                totalLength: 11_000,
+                chromosomes: [
+                    ChromosomeInfo(
+                        name: "chr1",
+                        length: 10_000,
+                        offset: 0,
+                        lineBases: 50,
+                        lineWidth: 51,
+                        aliases: ["1"],
+                        isPrimary: true,
+                        fastaDescription: "Test chromosome 1"
+                    ),
+                    ChromosomeInfo(
+                        name: "chrM",
+                        length: 1_000,
+                        offset: 10_001,
+                        lineBases: 50,
+                        lineWidth: 51,
+                        aliases: ["MT"],
+                        isPrimary: false,
+                        isMitochondrial: true,
+                        fastaDescription: "Test mitochondrion"
+                    )
+                ]
+            ),
+            annotations: [
+                AnnotationTrackInfo(id: "genes", name: "Genes", path: "annotations/genes.bb")
+            ],
+            variants: [
+                VariantTrackInfo(id: "snps", name: "SNPs", path: "variants/snps.bcf", indexPath: "variants/snps.bcf.csi")
+            ],
+            tracks: [],
+            alignments: [
+                AlignmentTrackInfo(
+                    id: "reads-a",
+                    name: "reads-a.bam",
+                    format: .bam,
+                    sourcePath: "/data/reads-a.bam",
+                    indexPath: "/data/reads-a.bam.bai",
+                    mappedReadCount: 12
+                ),
+                AlignmentTrackInfo(
+                    id: "reads-b",
+                    name: "reads-b.bam",
+                    format: .bam,
+                    sourcePath: "/data/reads-b.bam",
+                    indexPath: "/data/reads-b.bam.bai",
+                    mappedReadCount: 30
+                )
+            ]
+        )
+
+        try manifest.save(to: bundleURL)
+        let loaded = try BundleManifest.load(from: bundleURL)
+
+        XCTAssertEqual(loaded.browserSummary?.schemaVersion, 1)
+        XCTAssertEqual(loaded.browserSummary?.aggregate.annotationTrackCount, 1)
+        XCTAssertEqual(loaded.browserSummary?.aggregate.variantTrackCount, 1)
+        XCTAssertEqual(loaded.browserSummary?.aggregate.alignmentTrackCount, 2)
+        XCTAssertEqual(loaded.browserSummary?.aggregate.totalMappedReads, 42)
+        XCTAssertEqual(loaded.browserSummary?.sequences.map(\.name), ["chr1", "chrM"])
+        XCTAssertEqual(loaded.browserSummary?.sequences.first?.aliases, ["1"])
+        XCTAssertEqual(loaded.browserSummary?.sequences.first?.displayDescription, "Test chromosome 1")
+        XCTAssertEqual(loaded.browserSummary?.sequences.last?.aliases, ["MT"])
+        XCTAssertEqual(loaded.browserSummary?.sequences.last?.displayDescription, "Test mitochondrion")
+        XCTAssertEqual(loaded.browserSummary?.sequences.last?.isPrimary, false)
+        XCTAssertEqual(loaded.browserSummary?.sequences.last?.isMitochondrial, true)
+        XCTAssertNil(loaded.browserSummary?.sequences.last?.metrics)
+    }
+
+    func testSaveRebuildsInvalidatedBrowserSummaryAfterManifestMutation() throws {
+        let bundleURL = tempDirectory.appendingPathComponent("browser-summary-refresh.lungfishref")
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+
+        let manifest = BundleManifest(
+            formatVersion: "1.0",
+            name: "Browser Summary Refresh Bundle",
+            identifier: "test.browser-summary-refresh",
+            source: SourceInfo(
+                organism: "Test",
+                assembly: "TestAsm",
+                database: "Test"
+            ),
+            genome: GenomeInfo(
+                path: "genome/seq.fa.gz",
+                indexPath: "genome/seq.fa.gz.fai",
+                totalLength: 10_000,
+                chromosomes: [
+                    ChromosomeInfo(
+                        name: "chr1",
+                        length: 10_000,
+                        offset: 0,
+                        lineBases: 50,
+                        lineWidth: 51,
+                        aliases: ["1"],
+                        fastaDescription: "Test chromosome 1"
+                    )
+                ]
+            )
+        )
+
+        try manifest.save(to: bundleURL)
+        let loaded = try BundleManifest.load(from: bundleURL)
+        XCTAssertEqual(loaded.browserSummary?.aggregate.variantTrackCount, 0)
+        XCTAssertEqual(loaded.browserSummary?.aggregate.alignmentTrackCount, 0)
+
+        let mutated = loaded
+            .addingVariantTrack(
+                VariantTrackInfo(
+                    id: "snps",
+                    name: "SNPs",
+                    path: "variants/snps.bcf",
+                    indexPath: "variants/snps.bcf.csi"
+                )
+            )
+            .addingAlignmentTrack(
+                AlignmentTrackInfo(
+                    id: "reads",
+                    name: "reads.bam",
+                    format: .bam,
+                    sourcePath: "/data/reads.bam",
+                    indexPath: "/data/reads.bam.bai",
+                    mappedReadCount: 25
+                )
+            )
+
+        XCTAssertNil(mutated.browserSummary)
+
+        try mutated.save(to: bundleURL)
+        let reloaded = try BundleManifest.load(from: bundleURL)
+
+        XCTAssertEqual(reloaded.browserSummary?.aggregate.variantTrackCount, 1)
+        XCTAssertEqual(reloaded.browserSummary?.aggregate.alignmentTrackCount, 1)
+        XCTAssertEqual(reloaded.browserSummary?.aggregate.totalMappedReads, 25)
+        XCTAssertEqual(reloaded.browserSummary?.sequences.map(\.name), ["chr1"])
+    }
+
     // MARK: - Validation Tests
 
     func testValidManifest() {
@@ -553,6 +706,52 @@ final class BundleManifestTests: XCTestCase {
         let manifest = try decoder.decode(BundleManifest.self, from: strippedData)
         XCTAssertTrue(manifest.alignments.isEmpty, "Missing alignments field should decode as empty array")
         XCTAssertEqual(manifest.name, original.name)
+    }
+
+    func testDecodeWithoutBrowserSummaryForLegacyBundleJSON() throws {
+        let legacyJSON = """
+        {
+          "format_version" : "1.0",
+          "name" : "Legacy Bundle",
+          "identifier" : "test.legacy",
+          "created_date" : "2026-04-22T12:00:00Z",
+          "modified_date" : "2026-04-22T12:00:00Z",
+          "source" : {
+            "organism" : "Test organism",
+            "assembly" : "LegacyAsm"
+          },
+          "genome" : {
+            "path" : "genome/seq.fa.gz",
+            "index_path" : "genome/seq.fa.gz.fai",
+            "total_length" : 1000,
+            "chromosomes" : [
+              {
+                "name" : "chr1",
+                "length" : 1000,
+                "offset" : 0,
+                "line_bases" : 50,
+                "line_width" : 51,
+                "aliases" : [ "1" ],
+                "is_primary" : true,
+                "is_mitochondrial" : false
+              }
+            ]
+          },
+          "annotations" : [],
+          "variants" : [],
+          "tracks" : []
+        }
+        """.data(using: .utf8)!
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let manifest = try decoder.decode(BundleManifest.self, from: legacyJSON)
+
+        XCTAssertEqual(manifest.name, "Legacy Bundle")
+        XCTAssertEqual(manifest.genome?.chromosomes.map(\.name), ["chr1"])
+        XCTAssertTrue(manifest.alignments.isEmpty)
+        XCTAssertNil(manifest.browserSummary)
     }
 
     func testDuplicateAlignmentTrackIdsValidation() {
