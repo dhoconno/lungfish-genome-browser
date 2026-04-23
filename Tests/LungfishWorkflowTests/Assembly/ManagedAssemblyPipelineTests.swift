@@ -76,6 +76,29 @@ final class ManagedAssemblyPipelineTests: XCTestCase {
         XCTAssertTrue(command.arguments.contains("-2"))
     }
 
+    func testPairedEndTopologyErrorUsesGenericSequenceLanguage() {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("managed-assembly-invalid-paired-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let request = AssemblyRunRequest(
+            tool: .spades,
+            readType: .illuminaShortReads,
+            inputURLs: [URL(fileURLWithPath: "/tmp/reads.fasta")],
+            projectName: "demo",
+            outputDirectory: tempDir,
+            pairedEnd: true,
+            threads: 4
+        )
+
+        XCTAssertThrowsError(try ManagedAssemblyPipeline.buildCommand(for: request)) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "Paired-end assembly requests must include exactly two sequence inputs."
+            )
+        }
+    }
+
     func testBuildsFlyeCommandForOntReads() throws {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("managed-assembly-flye-\(UUID().uuidString)")
@@ -100,6 +123,31 @@ final class ManagedAssemblyPipelineTests: XCTestCase {
         XCTAssertEqual(command.workingDirectory, tempDir.deletingLastPathComponent())
         XCTAssertTrue(command.arguments.contains("--nano-hq"))
         XCTAssertTrue(command.arguments.contains("--out-dir"))
+    }
+
+    func testFlyeTopologyErrorUsesGenericSequenceLanguage() {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("managed-assembly-flye-invalid-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let request = AssemblyRunRequest(
+            tool: .flye,
+            readType: .ontReads,
+            inputURLs: [
+                URL(fileURLWithPath: "/tmp/reads-1.fasta"),
+                URL(fileURLWithPath: "/tmp/reads-2.fasta"),
+            ],
+            projectName: "demo",
+            outputDirectory: tempDir,
+            threads: 4
+        )
+
+        XCTAssertThrowsError(try ManagedAssemblyPipeline.buildCommand(for: request)) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "Flye expects a single ONT sequence input in v1."
+            )
+        }
     }
 
     func testBuildsHifiasmCommandForOntReadsIncludesOntFlag() throws {
@@ -187,6 +235,31 @@ final class ManagedAssemblyPipelineTests: XCTestCase {
         XCTAssertEqual(command.arguments.filter { $0 == "--n-hap" }.count, 1)
         XCTAssertEqual(command.arguments.filter { $0 == "-l0" }.count, 1)
         XCTAssertEqual(command.arguments.filter { $0 == "-f0" }.count, 1)
+    }
+
+    func testHifiasmTopologyErrorUsesGenericSequenceLanguage() {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("managed-assembly-hifiasm-invalid-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let request = AssemblyRunRequest(
+            tool: .hifiasm,
+            readType: .pacBioHiFi,
+            inputURLs: [
+                URL(fileURLWithPath: "/tmp/reads-1.fasta"),
+                URL(fileURLWithPath: "/tmp/reads-2.fasta"),
+            ],
+            projectName: "demo",
+            outputDirectory: tempDir,
+            threads: 4
+        )
+
+        XCTAssertThrowsError(try ManagedAssemblyPipeline.buildCommand(for: request)) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "Hifiasm expects a single ONT or PacBio HiFi/CCS sequence input in v1."
+            )
+        }
     }
 
     func testBuildsHifiasmCommandPrimaryToggleRemainsIndependentOfProfileSelection() throws {
@@ -458,7 +531,7 @@ final class ManagedAssemblyPipelineTests: XCTestCase {
         XCTAssertThrowsError(try ManagedAssemblyPipeline.buildCommand(for: request)) { error in
             XCTAssertEqual(
                 error.localizedDescription,
-                "Hifiasm expects a single ONT or PacBio HiFi/CCS FASTQ input in v1."
+                "Hifiasm expects a single ONT or PacBio HiFi/CCS sequence input in v1."
             )
         }
     }

@@ -350,13 +350,13 @@ final class FASTQProjectSimulationTests: XCTestCase {
         await XCTAssertThrowsErrorAsync(
             try await service.createDerivative(from: source.bundleURL, request: .lengthFilter(min: nil, max: nil))
         ) { error in
-            XCTAssertEqual(error.localizedDescription, "Invalid FASTQ operation: Specify a minimum length, a maximum length, or both.")
+            XCTAssertEqual(error.localizedDescription, "Invalid FASTQ/FASTA operation: Specify a minimum length, a maximum length, or both.")
         }
 
         await XCTAssertThrowsErrorAsync(
             try await service.createDerivative(from: source.bundleURL, request: .lengthFilter(min: 10, max: 5))
         ) { error in
-            XCTAssertEqual(error.localizedDescription, "Invalid FASTQ operation: Minimum length cannot exceed maximum length.")
+            XCTAssertEqual(error.localizedDescription, "Invalid FASTQ/FASTA operation: Minimum length cannot exceed maximum length.")
         }
 
         let invalidPrimerConfiguration = FASTQPrimerTrimConfiguration(
@@ -370,7 +370,7 @@ final class FASTQProjectSimulationTests: XCTestCase {
         await XCTAssertThrowsErrorAsync(
             try await service.createDerivative(from: source.bundleURL, request: .primerRemoval(configuration: invalidPrimerConfiguration))
         ) { error in
-            XCTAssertEqual(error.localizedDescription, "Invalid FASTQ operation: Primer minimum overlap must be > 0.")
+            XCTAssertEqual(error.localizedDescription, "Invalid FASTQ/FASTA operation: Primer minimum overlap must be > 0.")
         }
     }
 }

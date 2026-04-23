@@ -186,6 +186,54 @@ final class CLIExitCodeRegressionTests: XCTestCase {
     }
 }
 
+// MARK: - ClassifyCommand Input Format
+
+final class ClassifyCommandInputFormatRegressionTests: XCTestCase {
+
+    func testInferInputFormatReturnsFASTAForHomogeneousFASTAInputs() throws {
+        let urls = [
+            URL(fileURLWithPath: "/tmp/input-a.fasta"),
+            URL(fileURLWithPath: "/tmp/input-b.fa"),
+        ]
+
+        XCTAssertEqual(try ClassifyCommand.inferInputFormat(from: urls), .fasta)
+    }
+
+    func testInferInputFormatReturnsFASTAForReferenceBundleInputs() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("classify-reference-input-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let bundleURL = try makeReferenceBundle(
+            named: "classify-reference",
+            under: tempDir,
+            fastaFilename: "genome/sequence.fa.gz"
+        )
+
+        XCTAssertEqual(try ClassifyCommand.inferInputFormat(from: [bundleURL]), .fasta)
+    }
+
+    func testInferInputFormatRejectsMixedSequenceFormats() {
+        let urls = [
+            URL(fileURLWithPath: "/tmp/input-a.fastq"),
+            URL(fileURLWithPath: "/tmp/input-b.fasta"),
+        ]
+
+        XCTAssertThrowsError(try ClassifyCommand.inferInputFormat(from: urls)) { error in
+            guard let cliError = error as? CLIError else {
+                XCTFail("Expected CLIError, got \(type(of: error))")
+                return
+            }
+            switch cliError {
+            case .validationFailed(let errors):
+                XCTAssertTrue(errors.contains { $0.contains("same format") })
+            default:
+                XCTFail("Expected validationFailed, got \(cliError)")
+            }
+        }
+    }
+}
+
 // MARK: - CLIError
 
 final class CLIErrorRegressionTests: XCTestCase {
@@ -650,7 +698,30 @@ final class AssembleCommandRegressionTests: XCTestCase {
 
         let resolved = try AssembleCommand.resolveExecutionInputURLs(for: [bundleURL])
 
-        XCTAssertEqual(resolved.map(\.standardizedFileURL), [fastaURL.standardizedFileURL])
+        XCTAssertEqual(
+            resolved.map(\.standardizedFileURL),
+            [fastaURL.standardizedFileURL]
+        )
+    }
+
+    func testReferenceBundleInputResolvesToContainedFASTAForExecution() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("assemble-reference-bundle-input-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let bundleURL = try makeReferenceBundle(
+            named: "assemble-reference",
+            under: tempDir,
+            fastaFilename: "genome/sequence.fa.gz"
+        )
+        let fastaURL = bundleURL.appendingPathComponent("genome/sequence.fa.gz")
+
+        let resolved = try AssembleCommand.resolveExecutionInputURLs(for: [bundleURL])
+
+        XCTAssertEqual(
+            resolved.map(\.standardizedFileURL),
+            [fastaURL.standardizedFileURL]
+        )
     }
 
     func testInvalidReadTypeIsRejectedBeforeFallbackInference() async {
@@ -710,6 +781,41 @@ final class OrientCommandRegressionTests: XCTestCase {
     }
 }
 
+private func makeReferenceBundle(
+    named bundleName: String,
+    under root: URL,
+    fastaFilename: String
+) throws -> URL {
+    let bundleURL = root.appendingPathComponent("\(bundleName).lungfishref", isDirectory: true)
+    try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+
+    let fastaURL = bundleURL.appendingPathComponent(fastaFilename)
+    try FileManager.default.createDirectory(
+        at: fastaURL.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    try ">contig1\nAACCGGTT\n".write(to: fastaURL, atomically: true, encoding: .utf8)
+    try "contig1\t8\t9\t8\t9\n".write(
+        to: bundleURL.appendingPathComponent("\(fastaFilename).fai"),
+        atomically: true,
+        encoding: .utf8
+    )
+
+    let manifest = BundleManifest(
+        name: bundleName,
+        identifier: "org.lungfish.\(bundleName)",
+        source: SourceInfo(organism: "Test organism", assembly: "Test assembly"),
+        genome: GenomeInfo(
+            path: fastaFilename,
+            indexPath: "\(fastaFilename).fai",
+            totalLength: 8,
+            chromosomes: []
+        )
+    )
+    try manifest.save(to: bundleURL)
+    return bundleURL
+}
+
 // MARK: - MapCommand
 // NOTE: Has duplicate --threads option (own + GlobalOptions).
 
@@ -728,6 +834,26 @@ final class MapCommandRegressionTests: XCTestCase {
 
         XCTAssertTrue(help.contains("--mapper"))
         XCTAssertTrue(help.contains("read-mapping"))
+    }
+
+    func testReferenceBundleInputResolvesToContainedFASTAForExecution() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("map-reference-bundle-input-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let bundleURL = try makeReferenceBundle(
+            named: "map-reference",
+            under: tempDir,
+            fastaFilename: "genome/sequence.fa.gz"
+        )
+        let fastaURL = bundleURL.appendingPathComponent("genome/sequence.fa.gz")
+
+        let resolved = try MapCommand.resolveExecutionInputURLs(for: [bundleURL])
+
+        XCTAssertEqual(
+            resolved.map(\.standardizedFileURL),
+            [fastaURL.standardizedFileURL]
+        )
     }
 
     func testDerivedFASTAInputResolvesToContainedFASTAForExecution() throws {
@@ -755,7 +881,10 @@ final class MapCommandRegressionTests: XCTestCase {
 
         let resolved = try MapCommand.resolveExecutionInputURLs(for: [bundleURL])
 
-        XCTAssertEqual(resolved.map(\.standardizedFileURL), [fastaURL.standardizedFileURL])
+        XCTAssertEqual(
+            resolved.map(\.standardizedFileURL),
+            [fastaURL.standardizedFileURL]
+        )
     }
 }
 

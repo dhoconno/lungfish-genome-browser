@@ -21,7 +21,7 @@ public enum ReferenceSequenceScanner {
     /// Resolves the FASTA URL within a `.lungfishref` bundle.
     ///
     /// Handles both simple reference bundles (with `ReferenceSequenceManifest`)
-    /// and full genome bundles (with `BundleManifest` and FASTA in `genome/`).
+    /// and full genome bundles (with `BundleManifest` genome paths anywhere inside the bundle).
     private static func resolveFASTAInBundle(_ bundleURL: URL) -> (fastaURL: URL, displayName: String)? {
         // Strategy 1: Simple reference manifest
         if let fastaURL = ReferenceSequenceFolder.fastaURL(in: bundleURL) {
@@ -39,22 +39,14 @@ public enum ReferenceSequenceScanner {
             return (fastaURL, name)
         }
 
-        // Strategy 2: Genome bundle — FASTA in genome/ subdirectory
-        let fm = FileManager.default
-        let genomeDir = bundleURL.appendingPathComponent("genome")
-        if let genomeContents = try? fm.contentsOfDirectory(at: genomeDir, includingPropertiesForKeys: nil) {
-            let fastaFile = genomeContents.first { file in
-                let name = file.lastPathComponent.lowercased()
-                return name.hasSuffix(".fa") || name.hasSuffix(".fasta") || name.hasSuffix(".fna")
-                    || name.hasSuffix(".fa.gz") || name.hasSuffix(".fasta.gz") || name.hasSuffix(".fna.gz")
-            }
-            if let fastaFile {
-                let displayName = bundleURL.deletingPathExtension().lastPathComponent
-                return (fastaFile, displayName)
-            }
+        // Strategy 2: Full genome bundle — authoritative path from the bundle manifest
+        if let fastaURL = SequenceInputResolver.resolvePrimarySequenceURL(for: bundleURL),
+           !isHiddenSidecarURL(fastaURL) {
+            return (fastaURL, bundleURL.deletingPathExtension().lastPathComponent)
         }
 
         // Strategy 3: FASTA at bundle root
+        let fm = FileManager.default
         if let rootContents = try? fm.contentsOfDirectory(at: bundleURL, includingPropertiesForKeys: nil) {
             let fastaFile = rootContents.first { isFASTAFile($0) }
             if let fastaFile {
@@ -247,10 +239,17 @@ public enum ReferenceSequenceScanner {
 
     /// Checks if a URL points to a FASTA file based on extension.
     private static func isFASTAFile(_ url: URL) -> Bool {
+        guard !isHiddenSidecarURL(url) else {
+            return false
+        }
         var checkURL = url
         if checkURL.pathExtension.lowercased() == "gz" {
             checkURL = checkURL.deletingPathExtension()
         }
         return fastaExtensions.contains(checkURL.pathExtension.lowercased())
+    }
+
+    private static func isHiddenSidecarURL(_ url: URL) -> Bool {
+        url.lastPathComponent.hasPrefix("._")
     }
 }

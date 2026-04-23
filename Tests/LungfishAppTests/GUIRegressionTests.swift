@@ -14,6 +14,7 @@
 // 5. Operations panel behavior
 // 6. Sidebar display
 
+import AppKit
 import XCTest
 @testable import LungfishApp
 @testable import LungfishIO
@@ -23,9 +24,10 @@ import XCTest
 final class GUIRegressionTests: XCTestCase {
 
     func testToolsMenuContainsFASTQOperationsSubmenu() throws {
+        _ = NSApplication.shared
         let mainMenu = MainMenu.createMainMenu()
         let toolsMenu = try XCTUnwrap(mainMenu.items.first { $0.title == "Tools" }?.submenu)
-        let fastqOperationsItem = try XCTUnwrap(toolsMenu.items.first { $0.title == "FASTQ Operations" })
+        let fastqOperationsItem = try XCTUnwrap(toolsMenu.items.first { $0.title == "FASTQ/FASTA Operations" })
         let fastqOperationsMenu = try XCTUnwrap(fastqOperationsItem.submenu)
 
         XCTAssertEqual(fastqOperationsMenu.items.map(\.title), [

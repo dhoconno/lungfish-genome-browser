@@ -301,7 +301,7 @@ public actor ClassificationPipeline {
 
         // Record kraken2 provenance step.
         let inputRecords = effectiveConfig.inputFiles.map { url in
-            FileRecord(path: url.path, format: .fastq, role: .input)
+            FileRecord(path: url.path, format: effectiveConfig.provenanceInputFileFormat, role: .input)
         }
         let kraken2Outputs = [
             FileRecord(path: effectiveConfig.reportURL.path, format: .text, role: .report),

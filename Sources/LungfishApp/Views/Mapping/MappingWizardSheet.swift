@@ -33,9 +33,11 @@ struct MappingWizardSheet: View {
     @State private var seedLength = ""
     @State private var bandwidth = ""
 
+    @State private var detectedSequenceFormat: SequenceFormat?
     @State private var detectedReadClass: MappingReadClass?
     @State private var observedMaxReadLength: Int?
     @State private var mixedReadClasses = false
+    @State private var mixedSequenceFormats = false
     @State private var isInspectingInputs = false
 
     var onRun: ((MappingRunRequest) -> Void)?
@@ -105,10 +107,11 @@ struct MappingWizardSheet: View {
     }
 
     private var compatibilityEvaluation: MappingCompatibilityEvaluation? {
-        guard let detectedReadClass, let selectedMode else { return nil }
+        guard let detectedSequenceFormat, let selectedMode else { return nil }
         return MappingCompatibility.evaluate(
             tool: initialTool,
             mode: selectedMode,
+            inputFormat: detectedSequenceFormat,
             readClass: detectedReadClass,
             observedMaxReadLength: observedMaxReadLength
         )
@@ -119,8 +122,10 @@ struct MappingWizardSheet: View {
             compatibility: compatibilityEvaluation,
             hasReference: resolvedReferenceURL != nil,
             hasInputs: !inputFiles.isEmpty,
+            detectedSequenceFormat: detectedSequenceFormat,
             detectedReadClass: detectedReadClass,
-            mixedReadClasses: mixedReadClasses
+            mixedReadClasses: mixedReadClasses,
+            mixedSequenceFormats: mixedSequenceFormats
         )
     }
 
@@ -151,6 +156,9 @@ struct MappingWizardSheet: View {
         }
         .onChange(of: canRun) { _, ready in
             onRunnerAvailabilityChange?(ready)
+        }
+        .onChange(of: detectedSequenceFormat) { _, _ in
+            onRunnerAvailabilityChange?(canRun)
         }
         .onChange(of: detectedReadClass) { _, _ in
             onRunnerAvailabilityChange?(canRun)
@@ -307,11 +315,16 @@ struct MappingWizardSheet: View {
             if isInspectingInputs {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
-                    Text("Inspecting FASTQ read classes...")
+                    Text("Inspecting sequence inputs...")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             } else {
+                if let detectedSequenceFormat {
+                    Text("Detected format: \(detectedSequenceFormat == .fasta ? "FASTA" : "FASTQ")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 if let detectedReadClass {
                     Text("Detected reads: \(detectedReadClass.displayName)")
                         .font(.caption)
@@ -485,9 +498,11 @@ struct MappingWizardSheet: View {
         let result = await Task.detached(priority: .userInitiated) {
             MappingInputInspection.inspect(urls: inputFiles)
         }.value
+        detectedSequenceFormat = result.sequenceFormat
         detectedReadClass = result.readClass
         observedMaxReadLength = result.observedMaxReadLength
         mixedReadClasses = result.mixedReadClasses
+        mixedSequenceFormats = result.mixedSequenceFormats
         isInspectingInputs = false
     }
 

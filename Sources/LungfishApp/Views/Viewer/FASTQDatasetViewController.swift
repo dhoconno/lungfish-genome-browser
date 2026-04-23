@@ -421,7 +421,7 @@ public final class FASTQDatasetViewController: NSViewController {
     private let previewPane = NSView()
     private let operationSidebar = NSTableView()
     private let operationScrollView = NSScrollView()
-    private let operationSidebarHeader = NSTextField(labelWithString: "FASTQ Operations")
+    private let operationSidebarHeader = NSTextField(labelWithString: "FASTQ/FASTA Operations")
     private let operationSidebarHeaderSeparator = NSBox()
     private let parameterBar = NSStackView()
     private let parameterBarSeparator = NSBox()
@@ -1050,7 +1050,7 @@ public final class FASTQDatasetViewController: NSViewController {
         }
 
         guard let kind = selectedOperation else {
-            let label = NSTextField(labelWithString: "Choose a FASTQ operations category to open the dialog.")
+            let label = NSTextField(labelWithString: "Choose a FASTQ/FASTA operations category to open the dialog.")
             label.font = .systemFont(ofSize: 11)
             label.textColor = .tertiaryLabelColor
             parameterBar.addArrangedSubview(label)
@@ -2330,23 +2330,23 @@ public final class FASTQDatasetViewController: NSViewController {
     private func tooltipForOperationCategory(_ category: FASTQOperationCategoryID) -> String {
         switch category {
         case .qcReporting:
-            return "Open the FASTQ operations dialog with QC and reporting tools selected."
+            return "Open the FASTQ/FASTA operations dialog with QC and reporting tools selected."
         case .demultiplexing:
-            return "Open the FASTQ operations dialog with demultiplexing tools selected."
+            return "Open the FASTQ/FASTA operations dialog with demultiplexing tools selected."
         case .trimmingFiltering:
-            return "Open the FASTQ operations dialog with trimming and filtering tools selected."
+            return "Open the FASTQ/FASTA operations dialog with trimming and filtering tools selected."
         case .decontamination:
-            return "Open the FASTQ operations dialog with decontamination tools selected."
+            return "Open the FASTQ/FASTA operations dialog with decontamination tools selected."
         case .readProcessing:
-            return "Open the FASTQ operations dialog with read processing tools selected."
+            return "Open the FASTQ/FASTA operations dialog with read processing tools selected."
         case .searchSubsetting:
-            return "Open the FASTQ operations dialog with search and subsetting tools selected."
+            return "Open the FASTQ/FASTA operations dialog with search and subsetting tools selected."
         case .mapping:
-            return "Open the FASTQ operations dialog with mapping tools selected."
+            return "Open the FASTQ/FASTA operations dialog with mapping tools selected."
         case .assembly:
-            return "Open the FASTQ operations dialog with assembly tools selected."
+            return "Open the FASTQ/FASTA operations dialog with assembly tools selected."
         case .classification:
-            return "Open the FASTQ operations dialog with classification tools selected."
+            return "Open the FASTQ/FASTA operations dialog with classification tools selected."
         }
     }
 
@@ -2794,7 +2794,7 @@ public final class FASTQDatasetViewController: NSViewController {
         selectedOperation = nil
         showOperationsDialogLauncherHint()
         dismissErrorBanner()
-        setStatus("Open \(titleForOperationCategory(category)) tools in the FASTQ operations dialog.")
+        setStatus("Open \(titleForOperationCategory(category)) tools in the FASTQ/FASTA operations dialog.")
         onLaunchFASTQOperationCategory?(category)
     }
 
@@ -2804,7 +2804,7 @@ public final class FASTQDatasetViewController: NSViewController {
             subview.removeFromSuperview()
         }
 
-        let label = NSTextField(labelWithString: "Choose a FASTQ operations category to open the dialog.")
+        let label = NSTextField(labelWithString: "Choose a FASTQ/FASTA operations category to open the dialog.")
         label.font = .systemFont(ofSize: 11)
         label.textColor = .tertiaryLabelColor
         parameterBar.addArrangedSubview(label)

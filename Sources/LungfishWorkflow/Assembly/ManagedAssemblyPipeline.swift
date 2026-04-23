@@ -272,7 +272,7 @@ public struct ManagedAssemblyPipeline: Sendable {
     private static func buildFlyeCommand(for request: AssemblyRunRequest) throws -> ManagedAssemblyCommand {
         guard request.inputURLs.count == 1, let inputURL = request.inputURLs.first else {
             throw ManagedAssemblyPipelineError.unsupportedInputTopology(
-                "Flye expects a single ONT FASTQ input in v1."
+                "Flye expects a single ONT sequence input in v1."
             )
         }
         let readMode = request.selectedProfileID ?? "nano-hq"
@@ -293,7 +293,7 @@ public struct ManagedAssemblyPipeline: Sendable {
     private static func buildHifiasmCommand(for request: AssemblyRunRequest) throws -> ManagedAssemblyCommand {
         guard request.inputURLs.count == 1, let inputURL = request.inputURLs.first else {
             throw ManagedAssemblyPipelineError.unsupportedInputTopology(
-                "Hifiasm expects a single ONT or PacBio HiFi/CCS FASTQ input in v1."
+                "Hifiasm expects a single ONT or PacBio HiFi/CCS sequence input in v1."
             )
         }
         try FileManager.default.createDirectory(
@@ -322,7 +322,7 @@ public struct ManagedAssemblyPipeline: Sendable {
         guard request.pairedEnd else { return nil }
         guard request.inputURLs.count == 2 else {
             throw ManagedAssemblyPipelineError.unsupportedInputTopology(
-                "Paired-end assembly requests must include exactly two FASTQ inputs."
+                "Paired-end assembly requests must include exactly two sequence inputs."
             )
         }
         return (request.inputURLs[0], request.inputURLs[1])

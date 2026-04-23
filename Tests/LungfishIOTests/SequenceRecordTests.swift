@@ -126,23 +126,35 @@ final class SequenceRecordTests: XCTestCase {
 
     // MARK: - Operation Format Compatibility
 
-    func testSubsetOperationsSupportFASTA() {
+    func testSequenceOnlyAndBridgeableOperationsSupportFASTA() {
         XCTAssertTrue(FASTQDerivativeOperationKind.subsampleProportion.supportsFASTA)
         XCTAssertTrue(FASTQDerivativeOperationKind.subsampleCount.supportsFASTA)
         XCTAssertTrue(FASTQDerivativeOperationKind.lengthFilter.supportsFASTA)
         XCTAssertTrue(FASTQDerivativeOperationKind.searchText.supportsFASTA)
         XCTAssertTrue(FASTQDerivativeOperationKind.searchMotif.supportsFASTA)
         XCTAssertTrue(FASTQDerivativeOperationKind.deduplicate.supportsFASTA)
+        XCTAssertTrue(FASTQDerivativeOperationKind.adapterTrim.supportsFASTA)
         XCTAssertTrue(FASTQDerivativeOperationKind.fixedTrim.supportsFASTA)
+        XCTAssertTrue(FASTQDerivativeOperationKind.contaminantFilter.supportsFASTA)
+        XCTAssertTrue(FASTQDerivativeOperationKind.primerRemoval.supportsFASTA)
+        XCTAssertTrue(FASTQDerivativeOperationKind.demultiplex.supportsFASTA)
         XCTAssertTrue(FASTQDerivativeOperationKind.orient.supportsFASTA)
+        XCTAssertTrue(FASTQDerivativeOperationKind.humanReadScrub.supportsFASTA)
     }
 
     func testQualityDependentOperationsDoNotSupportFASTA() {
         XCTAssertFalse(FASTQDerivativeOperationKind.qualityTrim.supportsFASTA)
-        XCTAssertFalse(FASTQDerivativeOperationKind.adapterTrim.supportsFASTA)
         XCTAssertFalse(FASTQDerivativeOperationKind.pairedEndMerge.supportsFASTA)
         XCTAssertFalse(FASTQDerivativeOperationKind.pairedEndRepair.supportsFASTA)
-        XCTAssertFalse(FASTQDerivativeOperationKind.demultiplex.supportsFASTA)
+        XCTAssertFalse(FASTQDerivativeOperationKind.errorCorrection.supportsFASTA)
+    }
+
+    func testBridgeableOperationContractsAcceptFASTA() {
+        XCTAssertTrue(OperationContract.input(for: .adapterTrim).acceptedFormats.contains(.fasta))
+        XCTAssertTrue(OperationContract.input(for: .contaminantFilter).acceptedFormats.contains(.fasta))
+        XCTAssertTrue(OperationContract.input(for: .primerRemoval).acceptedFormats.contains(.fasta))
+        XCTAssertTrue(OperationContract.input(for: .demultiplex).acceptedFormats.contains(.fasta))
+        XCTAssertTrue(OperationContract.input(for: .humanReadScrub).acceptedFormats.contains(.fasta))
     }
 
     // MARK: - Manifest sequenceFormat

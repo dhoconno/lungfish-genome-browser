@@ -98,6 +98,10 @@ public struct DemultiplexConfig: Sendable {
     /// When nil, the pipeline infers pairing from `sourceBundleURL`/`inputURL`.
     public let inputPairingMode: IngestionMetadata.PairingMode?
 
+    /// Sequence format of the logical input dataset when virtual demux
+    /// manifests should materialize back to FASTA.
+    public let inputSequenceFormat: SequenceFormat?
+
     /// Resolved adapter context (uses override if set, otherwise derives from kit).
     public var resolvedAdapterContext: any PlatformAdapterContext {
         adapterContext ?? barcodeKit.adapterContext
@@ -170,6 +174,7 @@ public struct DemultiplexConfig: Sendable {
         rootBundleURL: URL? = nil,
         rootFASTQFilename: String? = nil,
         inputPairingMode: IngestionMetadata.PairingMode? = nil,
+        inputSequenceFormat: SequenceFormat? = nil,
         minimumInsert: Int = 2000,
         useNoIndels: Bool = false,
         captureTrimsForChaining: Bool = false
@@ -215,6 +220,7 @@ public struct DemultiplexConfig: Sendable {
         self.rootBundleURL = rootBundleURL
         self.rootFASTQFilename = rootFASTQFilename
         self.inputPairingMode = inputPairingMode
+        self.inputSequenceFormat = inputSequenceFormat
         self.minimumInsert = minimumInsert
         self.useNoIndels = useNoIndels
         self.captureTrimsForChaining = captureTrimsForChaining
@@ -944,7 +950,8 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                     lineage: [demuxOp],
                     operation: demuxOp,
                     cachedStatistics: stats,
-                    pairingMode: config.inputPairingMode ?? inferredPairingMode(from: parentBundleURL ?? config.inputURL)
+                    pairingMode: config.inputPairingMode ?? inferredPairingMode(from: parentBundleURL ?? config.inputURL),
+                    sequenceFormat: config.inputSequenceFormat
                 )
                 do {
                     try FASTQBundle.saveDerivedManifest(derivedManifest, in: result.bundleURL)
@@ -1150,7 +1157,8 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                     lineage: [demuxOp],
                     operation: demuxOp,
                     cachedStatistics: stats,
-                    pairingMode: config.inputPairingMode ?? inferredPairingMode(from: config.sourceBundleURL ?? config.inputURL)
+                    pairingMode: config.inputPairingMode ?? inferredPairingMode(from: config.sourceBundleURL ?? config.inputURL),
+                    sequenceFormat: config.inputSequenceFormat
                 )
                 do {
                     try FASTQBundle.saveDerivedManifest(derivedManifest, in: bundleURL)
@@ -1233,7 +1241,8 @@ public final class DemultiplexingPipeline: @unchecked Sendable {
                     lineage: [demuxOp],
                     operation: demuxOp,
                     cachedStatistics: stats,
-                    pairingMode: config.inputPairingMode ?? inferredPairingMode(from: config.sourceBundleURL ?? config.inputURL)
+                    pairingMode: config.inputPairingMode ?? inferredPairingMode(from: config.sourceBundleURL ?? config.inputURL),
+                    sequenceFormat: config.inputSequenceFormat
                 )
                 do {
                     try FASTQBundle.saveDerivedManifest(derivedManifest, in: bundleURL)

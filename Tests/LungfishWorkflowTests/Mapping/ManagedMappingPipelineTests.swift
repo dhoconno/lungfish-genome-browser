@@ -3,6 +3,19 @@ import XCTest
 
 final class ManagedMappingPipelineTests: XCTestCase {
 
+    func testPrepareExecutionStagesSAMSafeFASTAInputsBeforeMapping() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = root
+            .appendingPathComponent("Sources/LungfishWorkflow/Mapping/ManagedMappingPipeline.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        XCTAssertTrue(source.contains("stageSAMSafeFASTAInputsIfNeeded"))
+    }
+
     func testBuildsBwaMem2CommandForShortReads() throws {
         let request = makeRequest(tool: .bwaMem2)
 
@@ -275,6 +288,126 @@ final class ManagedMappingPipelineTests: XCTestCase {
         }
     }
 
+    func testValidateCompatibilityAcceptsFASTAInputsForAllMappers() throws {
+        let fixture = try MappingFASTQFixture()
+        defer { fixture.cleanup() }
+
+        let fastaURL = try fixture.writeFASTA(
+            name: "reference-sequences.fasta",
+            identifier: "haplotype-1",
+            sequenceLength: 400
+        )
+
+        let requests: [MappingRunRequest] = [
+            MappingRunRequest(
+                tool: .minimap2,
+                modeID: MappingMode.defaultShortRead.id,
+                inputFASTQURLs: [fastaURL],
+                referenceFASTAURL: fixture.referenceURL,
+                outputDirectory: fixture.root.appendingPathComponent("minimap2-out"),
+                sampleName: "sample",
+                pairedEnd: false,
+                threads: 4
+            ),
+            MappingRunRequest(
+                tool: .bwaMem2,
+                modeID: MappingMode.defaultShortRead.id,
+                inputFASTQURLs: [fastaURL],
+                referenceFASTAURL: fixture.referenceURL,
+                outputDirectory: fixture.root.appendingPathComponent("bwa-out"),
+                sampleName: "sample",
+                pairedEnd: false,
+                threads: 4
+            ),
+            MappingRunRequest(
+                tool: .bowtie2,
+                modeID: MappingMode.defaultShortRead.id,
+                inputFASTQURLs: [fastaURL],
+                referenceFASTAURL: fixture.referenceURL,
+                outputDirectory: fixture.root.appendingPathComponent("bowtie-out"),
+                sampleName: "sample",
+                pairedEnd: false,
+                threads: 4
+            ),
+            MappingRunRequest(
+                tool: .bbmap,
+                modeID: MappingMode.bbmapStandard.id,
+                inputFASTQURLs: [fastaURL],
+                referenceFASTAURL: fixture.referenceURL,
+                outputDirectory: fixture.root.appendingPathComponent("bbmap-out"),
+                sampleName: "sample",
+                pairedEnd: false,
+                threads: 4
+            ),
+        ]
+
+        for request in requests {
+            XCTAssertNoThrow(
+                try ManagedMappingPipeline.validateCompatibility(for: request),
+                "\(request.tool.displayName) should accept FASTA-backed sequence inputs"
+            )
+        }
+    }
+
+    func testStageSAMSafeFASTAInputsShortensOverlongIdentifiersAtRuntime() async throws {
+        let fixture = try MappingFASTQFixture()
+        defer { fixture.cleanup() }
+
+        let overlongIdentifier = "02_Mafa_A2_05g1|" + Array(repeating: "A2_05_01", count: 40).joined(separator: ",_")
+        let fastaURL = try fixture.writeFASTA(
+            name: "queries.fasta",
+            records: [
+                (identifier: overlongIdentifier, sequenceLength: 80),
+                (identifier: "short-id", sequenceLength: 40),
+            ]
+        )
+
+        let staged = try await MappingFASTAInputStager.stageSAMSafeFASTAInputsIfNeeded(
+            inputURLs: [fastaURL],
+            projectURL: fixture.root
+        )
+        defer {
+            for url in staged.cleanupURLs {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+
+        XCTAssertEqual(staged.inputURLs.count, 1)
+        XCTAssertNotEqual(staged.inputURLs[0].standardizedFileURL, fastaURL.standardizedFileURL)
+        XCTAssertEqual(staged.cleanupURLs.count, 1)
+
+        let stagedHeaders = try String(contentsOf: staged.inputURLs[0], encoding: .utf8)
+            .split(separator: "\n")
+            .filter { $0.hasPrefix(">") }
+            .map { String($0.dropFirst()) }
+
+        XCTAssertEqual(stagedHeaders.count, 2)
+        XCTAssertTrue(stagedHeaders.allSatisfy { $0.utf8.count <= MappingFASTAInputStager.maximumSAMQueryNameLength })
+        XCTAssertNotEqual(stagedHeaders[0], overlongIdentifier)
+        XCTAssertEqual(stagedHeaders[1], "short-id")
+    }
+
+    func testStageSAMSafeFASTAInputsLeavesSafeIdentifiersUntouched() async throws {
+        let fixture = try MappingFASTQFixture()
+        defer { fixture.cleanup() }
+
+        let fastaURL = try fixture.writeFASTA(
+            name: "safe-queries.fasta",
+            records: [
+                (identifier: "contig-1", sequenceLength: 80),
+                (identifier: "contig-2", sequenceLength: 40),
+            ]
+        )
+
+        let staged = try await MappingFASTAInputStager.stageSAMSafeFASTAInputsIfNeeded(
+            inputURLs: [fastaURL],
+            projectURL: fixture.root
+        )
+
+        XCTAssertEqual(staged.inputURLs.map(\.standardizedFileURL), [fastaURL.standardizedFileURL])
+        XCTAssertTrue(staged.cleanupURLs.isEmpty)
+    }
+
     private func makeRequest(tool: MappingTool, modeID: String? = nil) -> MappingRunRequest {
         MappingRunRequest(
             tool: tool,
@@ -436,6 +569,26 @@ private struct MappingFASTQFixture {
         let sequence = String(repeating: "A", count: sequenceLength)
         let quality = String(repeating: "I", count: sequenceLength)
         let text = "\(header)\n\(sequence)\n+\n\(quality)\n"
+        try text.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    func writeFASTA(name: String, identifier: String, sequenceLength: Int) throws -> URL {
+        try writeFASTA(
+            name: name,
+            records: [(identifier: identifier, sequenceLength: sequenceLength)]
+        )
+    }
+
+    func writeFASTA(
+        name: String,
+        records: [(identifier: String, sequenceLength: Int)]
+    ) throws -> URL {
+        let url = root.appendingPathComponent(name)
+        let text = records.map { record in
+            let sequence = String(repeating: "A", count: record.sequenceLength)
+            return ">\(record.identifier)\n\(sequence)\n"
+        }.joined()
         try text.write(to: url, atomically: true, encoding: .utf8)
         return url
     }

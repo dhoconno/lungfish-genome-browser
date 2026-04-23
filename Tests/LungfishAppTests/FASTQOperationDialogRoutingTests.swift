@@ -890,6 +890,24 @@ final class FASTQOperationDialogRoutingTests: XCTestCase {
         XCTAssertTrue(stateSource.contains("var embeddedRunTrigger"))
     }
 
+    func testOperationsDialogRoutesCurrentWindowProjectIntoDialogState() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let presenterSource = try String(
+            contentsOf: root.appendingPathComponent("Sources/LungfishApp/Views/FASTQ/FASTQOperationsDialogPresenter.swift"),
+            encoding: .utf8
+        )
+        let appDelegateSource = try String(
+            contentsOf: root.appendingPathComponent("Sources/LungfishApp/App/AppDelegate.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(presenterSource.contains("projectURL: projectURL"))
+        XCTAssertTrue(appDelegateSource.contains("projectURL: currentProjectURL"))
+    }
+
     func testDerivativeToolPaneContainsRealHonestControls() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

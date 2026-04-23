@@ -39,6 +39,14 @@ final class FASTQVirtualSubsetTests: XCTestCase {
         try lines.joined(separator: "\n").appending("\n").write(to: url, atomically: true, encoding: .utf8)
     }
 
+    private func writeFASTA(records: [(id: String, description: String?, sequence: String)], to url: URL) throws {
+        let lines: [String] = records.flatMap { record in
+            let header = record.description.map { ">\(record.id) \($0)" } ?? ">\(record.id)"
+            return [header, record.sequence]
+        }
+        try lines.joined(separator: "\n").appending("\n").write(to: url, atomically: true, encoding: .utf8)
+    }
+
     private func loadFASTQRecords(from url: URL) async throws -> [FASTQRecord] {
         let reader = FASTQReader(validateSequence: false)
         var records: [FASTQRecord] = []
@@ -187,5 +195,84 @@ final class FASTQVirtualSubsetTests: XCTestCase {
         try await service.exportMaterializedFASTQ(fromDerivedBundle: filteredBundle, to: materializedURL)
         let materializedText = try String(contentsOf: materializedURL, encoding: .utf8)
         XCTAssertEqual(materializedText, "@read1 runid=abc sample=demo\nTAACCGG\n+\nIIIIIII\n")
+    }
+
+    func testLengthFilteredFASTADemuxSubsetReMaterializesAsFASTA() async throws {
+        let tempDir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let rootBundleURL = tempDir.appendingPathComponent(
+            "root-fasta.\(FASTQBundle.directoryExtension)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: rootBundleURL, withIntermediateDirectories: true)
+        let rootFASTAURL = rootBundleURL.appendingPathComponent("reads.fasta")
+        try writeFASTA(
+            records: [
+                (id: "read1", description: "runid=abc sample=demo", sequence: "AACCGGTTAA"),
+            ],
+            to: rootFASTAURL
+        )
+
+        let demuxBundle = tempDir.appendingPathComponent(
+            "root-fasta-demux.\(FASTQBundle.directoryExtension)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: demuxBundle, withIntermediateDirectories: true)
+        try "read1\n".write(
+            to: demuxBundle.appendingPathComponent("read-ids.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try FASTQTrimPositionFile.write(
+            [FASTQTrimRecord(readID: "read1", trimStart: 2, trimEnd: 9)],
+            to: demuxBundle.appendingPathComponent(FASTQBundle.trimPositionFilename)
+        )
+        try "read1\t-\n".write(
+            to: demuxBundle.appendingPathComponent("orient-map.tsv"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let demuxOperation = FASTQDerivativeOperation(kind: .demultiplex, toolUsed: "cutadapt")
+        let demuxManifest = FASTQDerivedBundleManifest(
+            name: "root-fasta-demux",
+            parentBundleRelativePath: "../\(rootBundleURL.lastPathComponent)",
+            rootBundleRelativePath: "../\(rootBundleURL.lastPathComponent)",
+            rootFASTQFilename: rootFASTAURL.lastPathComponent,
+            payload: .demuxedVirtual(
+                barcodeID: "bc01",
+                readIDListFilename: "read-ids.txt",
+                previewFilename: "preview.fastq",
+                trimPositionsFilename: FASTQBundle.trimPositionFilename,
+                orientMapFilename: "orient-map.tsv"
+            ),
+            lineage: [demuxOperation],
+            operation: demuxOperation,
+            cachedStatistics: .placeholder(readCount: 1, baseCount: 10),
+            pairingMode: .singleEnd,
+            sequenceFormat: .fasta
+        )
+        try FASTQBundle.saveDerivedManifest(demuxManifest, in: demuxBundle)
+
+        let service = FASTQDerivativeService()
+        let filteredBundle = try await service.createDerivative(
+            from: demuxBundle,
+            request: .lengthFilter(min: 7, max: 7)
+        )
+
+        let filteredManifest = try XCTUnwrap(FASTQBundle.loadDerivedManifest(in: filteredBundle))
+        XCTAssertEqual(filteredManifest.sequenceFormat, .fasta)
+
+        let previewURL = try XCTUnwrap(FASTQBundle.resolvePrimaryFASTQURL(for: filteredBundle))
+        let previewText = try String(contentsOf: previewURL, encoding: .utf8)
+        XCTAssertEqual(previewText, "@read1\nTAACCGG\n+\nIIIIIII\n")
+
+        let materializedURL = tempDir.appendingPathComponent("filtered-demux.fasta")
+        try await service.exportMaterializedFASTQ(fromDerivedBundle: filteredBundle, to: materializedURL)
+        XCTAssertEqual(SequenceFormat.from(url: materializedURL), .fasta)
+
+        let materializedText = try String(contentsOf: materializedURL, encoding: .utf8)
+        XCTAssertEqual(materializedText, ">read1\nTAACCGG\n")
     }
 }

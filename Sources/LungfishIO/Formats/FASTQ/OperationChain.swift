@@ -72,9 +72,14 @@ public enum OperationContract {
                 acceptedFormats: [.fastq],
                 requiredPairing: [.interleaved, .splitPaired]
             )
-        case .qualityTrim, .adapterTrim, .primerRemoval:
+        case .qualityTrim:
             return OperationInput(
                 acceptedFormats: [.fastq],
+                requiredPairing: nil
+            )
+        case .adapterTrim, .primerRemoval:
+            return OperationInput(
+                acceptedFormats: [.fastq, .fasta],
                 requiredPairing: nil
             )
         case .subsampleProportion, .subsampleCount, .lengthFilter,
@@ -83,7 +88,12 @@ public enum OperationContract {
                 acceptedFormats: [.fastq, .fasta],
                 requiredPairing: nil
             )
-        case .contaminantFilter, .errorCorrection:
+        case .contaminantFilter:
+            return OperationInput(
+                acceptedFormats: [.fastq, .fasta],
+                requiredPairing: nil
+            )
+        case .errorCorrection:
             return OperationInput(
                 acceptedFormats: [.fastq],
                 requiredPairing: nil
@@ -95,7 +105,7 @@ public enum OperationContract {
             )
         case .demultiplex:
             return OperationInput(
-                acceptedFormats: [.fastq],
+                acceptedFormats: [.fastq, .fasta],
                 requiredPairing: nil
             )
         case .orient:
@@ -110,7 +120,7 @@ public enum OperationContract {
             )
         case .humanReadScrub:
             return OperationInput(
-                acceptedFormats: [.fastq],
+                acceptedFormats: [.fastq, .fasta],
                 requiredPairing: nil
             )
         }

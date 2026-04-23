@@ -8,7 +8,7 @@ import LungfishWorkflow
 import LungfishIO
 import LungfishCore
 
-/// Run Kraken2 taxonomic classification on FASTQ files.
+/// Run Kraken2 taxonomic classification on FASTQ or FASTA inputs.
 ///
 /// This subcommand resolves the database from the metagenomics registry,
 /// configures the classification pipeline, and runs Kraken2. Optionally
@@ -29,9 +29,9 @@ import LungfishCore
 struct ClassifyCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "classify",
-        abstract: "Run Kraken2 taxonomic classification on FASTQ files",
+        abstract: "Run Kraken2 taxonomic classification on FASTQ or FASTA inputs",
         discussion: """
-        Classify metagenomic reads using Kraken2 with an installed database.
+        Classify metagenomic reads or assembled sequences using Kraken2 with an installed database.
         Databases are managed via `lungfish conda db` or downloaded from the
         built-in catalog. Results include a kreport file, per-read output,
         and an optional Bracken abundance profile.
@@ -40,7 +40,7 @@ struct ClassifyCommand: AsyncParsableCommand {
 
     // MARK: - Arguments
 
-    @Argument(help: "Input FASTQ file(s). Provide two files for paired-end.")
+    @Argument(help: "Input sequence file(s). Provide two files for paired-end FASTQ.")
     var fastqFiles: [String]
 
     @Option(name: .customLong("db"), help: "Database name (e.g., 'Viral', 'Standard-8')")
@@ -86,6 +86,25 @@ struct ClassifyCommand: AsyncParsableCommand {
 
     // MARK: - Execution
 
+    static func inferInputFormat(from inputURLs: [URL]) throws -> SequenceFormat {
+        let formats = try inputURLs.map { url -> SequenceFormat in
+            guard let format = SequenceInputResolver.inputSequenceFormat(for: url) else {
+                throw CLIError.formatDetectionFailed(path: url.path)
+            }
+            return format
+        }
+
+        guard let firstFormat = formats.first else {
+            return .fastq
+        }
+        guard formats.dropFirst().allSatisfy({ $0 == firstFormat }) else {
+            throw CLIError.validationFailed(
+                errors: ["All input sequence files must use the same format (FASTA or FASTQ)."]
+            )
+        }
+        return firstFormat
+    }
+
     func run() async throws {
         let formatter = TerminalFormatter(useColors: globalOptions.useColors)
 
@@ -96,6 +115,20 @@ struct ClassifyCommand: AsyncParsableCommand {
                 print(formatter.error("Input file not found: \(url.path)"))
                 throw ExitCode.failure
             }
+        }
+        let executionInputURLs: [URL]
+        do {
+            executionInputURLs = try Self.resolveExecutionInputURLs(for: inputURLs)
+        } catch {
+            print(formatter.error(error.localizedDescription))
+            throw ExitCode.failure
+        }
+        let inputFormat: SequenceFormat
+        do {
+            inputFormat = try Self.inferInputFormat(from: inputURLs)
+        } catch {
+            print(formatter.error(error.localizedDescription))
+            throw ExitCode.failure
         }
 
         // Resolve database from registry.
@@ -130,9 +163,10 @@ struct ClassifyCommand: AsyncParsableCommand {
         // Build config from preset, then apply overrides.
         var config = ClassificationConfig.fromPreset(
             preset.toPreset(),
-            inputFiles: inputURLs,
+            inputFiles: executionInputURLs,
             isPairedEnd: pairedEnd,
             databaseName: databaseName,
+            inputFormat: inputFormat,
             databasePath: dbPath,
             threads: threads,
             memoryMapping: memoryMapping,
@@ -153,6 +187,7 @@ struct ClassifyCommand: AsyncParsableCommand {
         print("")
         print(formatter.keyValueTable([
             ("Input files", inputURLs.map(\.lastPathComponent).joined(separator: ", ")),
+            ("Input format", inputFormat == .fasta ? "FASTA" : "FASTQ"),
             ("Paired-end", pairedEnd ? "yes" : "no"),
             ("Database", databaseName),
             ("Preset", preset.rawValue),
@@ -230,6 +265,15 @@ struct ClassifyCommand: AsyncParsableCommand {
         print("")
         print(formatter.success("Classification completed in \(String(format: "%.1f", result.runtime))s"))
     }
+
+    static func resolveExecutionInputURLs(for inputURLs: [URL]) throws -> [URL] {
+        try inputURLs.map { inputURL in
+            guard let resolvedURL = SequenceInputResolver.resolvePrimarySequenceURL(for: inputURL) else {
+                throw CLIError.formatDetectionFailed(path: inputURL.path)
+            }
+            return resolvedURL.standardizedFileURL
+        }
+    }
 }
 
 // MARK: - ClassificationPresetArgument
@@ -248,4 +292,5 @@ enum ClassificationPresetArgument: String, ExpressibleByArgument, CaseIterable {
         case .precise: return .precise
         }
     }
+
 }
