@@ -27,6 +27,19 @@ final class VariantCallingToolsMenuTests: XCTestCase {
     }
 
     @MainActor
+    func testCanShowBAMVariantCallingRechecksWhenMissingIndexAppears() throws {
+        let delegate = AppDelegate()
+        let bundle = try makeBundle(format: .bam, withIndex: false)
+
+        XCTAssertFalse(delegate.canShowBAMVariantCalling(bundle: bundle))
+
+        let indexURL = bundle.url.appendingPathComponent(bundle.manifest.alignments[0].indexPath)
+        XCTAssertTrue(FileManager.default.createFile(atPath: indexURL.path, contents: Data("index".utf8)))
+
+        XCTAssertTrue(delegate.canShowBAMVariantCalling(bundle: bundle))
+    }
+
+    @MainActor
     func testAppDelegateSourceValidatesAndRoutesCallVariantsMenuItem() throws {
         let source = try String(
             contentsOf: repositoryRoot()
@@ -36,8 +49,6 @@ final class VariantCallingToolsMenuTests: XCTestCase {
 
         XCTAssertTrue(source.contains("#selector(showBAMVariantCalling(_:))"))
         XCTAssertTrue(source.contains("presentVariantCallingDialog("))
-        XCTAssertTrue(source.contains("bamVariantCallingAvailabilityCache"))
-        XCTAssertTrue(source.contains("bamVariantCallingAvailabilityCacheKey"))
     }
 
     private func makeBundle(format: AlignmentFormat, withIndex: Bool) throws -> ReferenceBundle {

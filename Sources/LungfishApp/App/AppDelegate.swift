@@ -338,7 +338,6 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     }
 
     private var bamVariantCallingAvailabilityCacheKey: BAMVariantCallingAvailabilityCacheKey?
-    private var bamVariantCallingAvailabilityCache: Bool?
 
     private struct VCFImportHelperEvent: Decodable {
         let event: String
@@ -4273,19 +4272,16 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     func canShowBAMVariantCalling(bundle: ReferenceBundle?) -> Bool {
         guard let bundle else {
             bamVariantCallingAvailabilityCacheKey = nil
-            bamVariantCallingAvailabilityCache = nil
             return false
         }
 
         let cacheKey = BAMVariantCallingAvailabilityCacheKey(bundle: bundle)
-        if bamVariantCallingAvailabilityCacheKey == cacheKey,
-           let cachedValue = bamVariantCallingAvailabilityCache {
-            return cachedValue
+        if bamVariantCallingAvailabilityCacheKey == cacheKey {
+            return true
         }
 
         let canShow = !BAMVariantCallingEligibility.eligibleAlignmentTracks(in: bundle).isEmpty
-        bamVariantCallingAvailabilityCacheKey = cacheKey
-        bamVariantCallingAvailabilityCache = canShow
+        bamVariantCallingAvailabilityCacheKey = canShow ? cacheKey : nil
         return canShow
     }
 
