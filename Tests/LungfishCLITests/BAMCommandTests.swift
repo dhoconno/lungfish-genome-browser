@@ -10,6 +10,7 @@ final class BAMCommandTests: XCTestCase {
     func testBamCommandNameAndHelp() {
         XCTAssertEqual(BAMCommand.configuration.commandName, "bam")
         XCTAssertTrue(BAMCommand.helpMessage().contains("filter"))
+        XCTAssertTrue(BAMCommand.FilterSubcommand.helpMessage().contains("mapping analysis directory"))
     }
 
     func testFilterSubcommandParsesBundleTargetAndFlags() throws {
@@ -42,14 +43,14 @@ final class BAMCommandTests: XCTestCase {
     func testFilterSubcommandParsesMappingResultTargetAndPercentIdentity() throws {
         let command = try BAMCommand.FilterSubcommand.parse([
             "filter",
-            "--mapping-result", "/tmp/Run/mapping-result.json",
+            "--mapping-result", "/tmp/Run",
             "--alignment-track", "aln-2",
             "--output-track-name", "Identity >= 99",
             "--min-percent-identity", "99",
         ])
 
         XCTAssertNil(command.bundlePath)
-        XCTAssertEqual(command.mappingResultPath, "/tmp/Run/mapping-result.json")
+        XCTAssertEqual(command.mappingResultPath, "/tmp/Run")
         XCTAssertEqual(command.alignmentTrackID, "aln-2")
         XCTAssertEqual(command.outputTrackName, "Identity >= 99")
         XCTAssertEqual(command.minimumPercentIdentity, 99)
@@ -60,7 +61,7 @@ final class BAMCommandTests: XCTestCase {
             try BAMCommand.FilterSubcommand.parse([
                 "filter",
                 "--bundle", "/tmp/Test.lungfishref",
-                "--mapping-result", "/tmp/Run/mapping-result.json",
+                "--mapping-result", "/tmp/Run",
                 "--alignment-track", "aln-1",
                 "--output-track-name", "Filtered",
             ])

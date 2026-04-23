@@ -28,7 +28,7 @@ extension BAMCommand {
     struct FilterSubcommand: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "filter",
-            abstract: "Derive a filtered BAM alignment track from a bundle or mapping result"
+            abstract: "Derive a filtered BAM alignment track from a bundle or mapping analysis directory"
         )
 
         struct Runtime {
@@ -58,7 +58,7 @@ extension BAMCommand {
         @Option(name: .customLong("bundle"), help: "Path to the reference bundle directory")
         var bundlePath: String?
 
-        @Option(name: .customLong("mapping-result"), help: "Path to a mapping-result.json file")
+        @Option(name: .customLong("mapping-result"), help: "Path to the mapping analysis directory")
         var mappingResultPath: String?
 
         @Option(name: .customLong("alignment-track"), help: "Bundle alignment track identifier")

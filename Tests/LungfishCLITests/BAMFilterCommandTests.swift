@@ -72,7 +72,7 @@ final class BAMFilterCommandTests: XCTestCase {
     func testFilterCommandPassesMappingResultTargetAndEmitsTextLines() async throws {
         let command = try BAMCommand.FilterSubcommand.parse([
             "filter",
-            "--mapping-result", "/tmp/Run/mapping-result.json",
+            "--mapping-result", "/tmp/Run",
             "--alignment-track", "aln-2",
             "--output-track-name", "Identity >= 99",
             "--mapped-only",
@@ -82,7 +82,7 @@ final class BAMFilterCommandTests: XCTestCase {
 
         let runtime = BAMCommand.FilterSubcommand.Runtime(
             runFilter: { target, sourceTrackID, outputTrackName, request in
-                XCTAssertEqual(target, .mappingResult(URL(fileURLWithPath: "/tmp/Run/mapping-result.json")))
+                XCTAssertEqual(target, .mappingResult(URL(fileURLWithPath: "/tmp/Run")))
                 XCTAssertEqual(sourceTrackID, "aln-2")
                 XCTAssertEqual(outputTrackName, "Identity >= 99")
                 XCTAssertEqual(
@@ -99,7 +99,7 @@ final class BAMFilterCommandTests: XCTestCase {
 
                 return BundleAlignmentFilterResult(
                     bundleURL: URL(fileURLWithPath: "/tmp/Test.lungfishref"),
-                    mappingResultURL: URL(fileURLWithPath: "/tmp/Run/mapping-result.json"),
+                    mappingResultURL: URL(fileURLWithPath: "/tmp/Run"),
                     trackInfo: AlignmentTrackInfo(
                         id: "aln-derived-99",
                         name: "Identity >= 99",
@@ -118,7 +118,7 @@ final class BAMFilterCommandTests: XCTestCase {
 
         XCTAssertTrue(lines.contains("Created filtered BAM track 'Identity >= 99' (aln-derived-99)."))
         XCTAssertTrue(lines.contains("Bundle: /tmp/Test.lungfishref"))
-        XCTAssertTrue(lines.contains("Mapping result: /tmp/Run/mapping-result.json"))
+        XCTAssertTrue(lines.contains("Mapping result: /tmp/Run"))
         XCTAssertTrue(lines.contains("BAM: /tmp/Test.lungfishref/alignments/filtered/aln-derived-99.bam"))
         XCTAssertTrue(lines.contains("BAI: /tmp/Test.lungfishref/alignments/filtered/aln-derived-99.bam.bai"))
         XCTAssertTrue(lines.contains("Metadata DB: /tmp/Test.lungfishref/alignments/filtered/aln-derived-99.stats.db"))
