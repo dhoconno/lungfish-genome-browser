@@ -197,7 +197,7 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
             browserView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
 
-        controller.configure(summary: summary, restoredState: restoredState)
+        controller.configure(summary: summary, bundleURL: context.url, restoredState: restoredState)
         bundleBrowserController = controller
 
         enhancedRulerView.isHidden = true

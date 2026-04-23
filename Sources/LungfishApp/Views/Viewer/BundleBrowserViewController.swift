@@ -12,9 +12,11 @@ final class BundleBrowserViewController: NSViewController, NSTableViewDataSource
     var onOpenSequence: ((BundleBrowserSequenceSummary) -> Void)?
 
     private var summary: BundleBrowserSummary?
+    private var bundleURL: URL?
     private var displayedRows: [BundleBrowserSequenceSummary] = []
     private var preferredSelectedSequenceName: String?
     private var isRestoringSelection = false
+    private var loadedBundleURL: URL?
 
     private let splitView = NSSplitView()
     private let listPane = NSView()
@@ -22,12 +24,14 @@ final class BundleBrowserViewController: NSViewController, NSTableViewDataSource
     private let searchField = NSSearchField()
     private let scrollView = NSScrollView()
     private let tableView = NSTableView()
-    private let openButton = NSButton(title: "Open in Browser", target: nil, action: nil)
+    private let openButton = NSButton(title: "Open Focused Viewer", target: nil, action: nil)
+    private let embeddedViewerController = ViewerViewController()
     private let detailStack = NSStackView()
     private let detailNameLabel = NSTextField(labelWithString: "")
     private let detailDescriptionLabel = NSTextField(labelWithString: "")
     private let detailLengthLabel = NSTextField(labelWithString: "")
     private let detailMetricsLabel = NSTextField(labelWithString: "")
+    private let detailPlaceholderLabel = NSTextField(labelWithString: "Select a sequence to inspect.")
 
     override func loadView() {
         let rootView = NSView(frame: NSRect(x: 0, y: 0, width: 960, height: 640))
@@ -47,8 +51,9 @@ final class BundleBrowserViewController: NSViewController, NSTableViewDataSource
         ])
     }
 
-    func configure(summary: BundleBrowserSummary, restoredState: BundleBrowserState? = nil) {
+    func configure(summary: BundleBrowserSummary, bundleURL: URL? = nil, restoredState: BundleBrowserState? = nil) {
         self.summary = summary
+        self.bundleURL = bundleURL?.standardizedFileURL
 
         let state = restoredState ?? BundleBrowserState(
             filterText: "",
@@ -75,7 +80,8 @@ final class BundleBrowserViewController: NSViewController, NSTableViewDataSource
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let identifier = NSUserInterfaceItemIdentifier("BundleBrowserCell")
+        let columnIdentifier = tableColumn?.identifier.rawValue ?? "name"
+        let identifier = NSUserInterfaceItemIdentifier("BundleBrowserCell.\(columnIdentifier)")
         let cell = (tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView) ?? NSTableCellView()
         let cellTextField = cell.textField ?? NSTextField(labelWithString: "")
         cell.identifier = identifier
@@ -92,7 +98,33 @@ final class BundleBrowserViewController: NSViewController, NSTableViewDataSource
             ])
         }
 
-        cellTextField.stringValue = displayedRows[row].name
+        let sequence = displayedRows[row]
+        switch columnIdentifier {
+        case "name":
+            cellTextField.stringValue = sequence.name
+            cellTextField.font = .systemFont(ofSize: 12)
+            cellTextField.alignment = .left
+        case "length":
+            cellTextField.stringValue = sequence.length.formatted()
+            cellTextField.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+            cellTextField.alignment = .right
+        case "mappedReads":
+            cellTextField.stringValue = sequence.metrics?.mappedReads?.formatted() ?? "—"
+            cellTextField.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+            cellTextField.alignment = .right
+        case "mappedPercent":
+            if let mappedPercent = sequence.metrics?.mappedPercent {
+                cellTextField.stringValue = String(format: "%.1f%%", mappedPercent)
+            } else {
+                cellTextField.stringValue = "—"
+            }
+            cellTextField.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+            cellTextField.alignment = .right
+        default:
+            cellTextField.stringValue = sequence.displayDescription ?? ""
+            cellTextField.font = .systemFont(ofSize: 12)
+            cellTextField.alignment = .left
+        }
         return cell
     }
 
@@ -179,7 +211,7 @@ final class BundleBrowserViewController: NSViewController, NSTableViewDataSource
         tableView.setAccessibilityIdentifier("bundle-browser-table")
         tableView.delegate = self
         tableView.dataSource = self
-        tableView.headerView = nil
+        tableView.headerView = NSTableHeaderView()
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.rowHeight = 28
         tableView.allowsEmptySelection = true
@@ -187,10 +219,19 @@ final class BundleBrowserViewController: NSViewController, NSTableViewDataSource
         tableView.doubleAction = #selector(openSelectedSequence(_:))
         tableView.target = self
 
-        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("sequence"))
-        column.title = "Sequence"
-        column.resizingMask = .autoresizingMask
-        tableView.addTableColumn(column)
+        let columns: [(id: String, title: String, width: CGFloat)] = [
+            ("name", "Contig", 180),
+            ("length", "Length", 100),
+            ("mappedReads", "Mapped Reads", 110),
+            ("mappedPercent", "% Mapped", 100),
+        ]
+        for columnInfo in columns {
+            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(columnInfo.id))
+            column.title = columnInfo.title
+            column.width = columnInfo.width
+            column.minWidth = 72
+            tableView.addTableColumn(column)
+        }
 
         scrollView.documentView = tableView
         listPane.addSubview(searchField)
@@ -220,6 +261,11 @@ final class BundleBrowserViewController: NSViewController, NSTableViewDataSource
         detailLengthLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
         detailMetricsLabel.font = .systemFont(ofSize: 12)
         detailMetricsLabel.textColor = .secondaryLabelColor
+        detailPlaceholderLabel.font = .systemFont(ofSize: 13)
+        detailPlaceholderLabel.textColor = .secondaryLabelColor
+        detailPlaceholderLabel.alignment = .center
+        detailPlaceholderLabel.maximumNumberOfLines = 0
+        detailPlaceholderLabel.translatesAutoresizingMaskIntoConstraints = false
 
         [detailNameLabel, detailDescriptionLabel, detailLengthLabel, detailMetricsLabel].forEach {
             $0.lineBreakMode = .byTruncatingTail
@@ -232,17 +278,32 @@ final class BundleBrowserViewController: NSViewController, NSTableViewDataSource
         openButton.target = self
         openButton.action = #selector(openSelectedSequence(_:))
 
+        embeddedViewerController.publishesGlobalViewportNotifications = true
+        addChild(embeddedViewerController)
+        let detailView = embeddedViewerController.view
+        detailView.translatesAutoresizingMaskIntoConstraints = false
+        detailPane.addSubview(detailView)
         detailPane.addSubview(detailStack)
         detailPane.addSubview(openButton)
+        detailPane.addSubview(detailPlaceholderLabel)
 
         NSLayoutConstraint.activate([
             detailStack.topAnchor.constraint(equalTo: detailPane.topAnchor, constant: 16),
             detailStack.leadingAnchor.constraint(equalTo: detailPane.leadingAnchor, constant: 16),
-            detailStack.trailingAnchor.constraint(lessThanOrEqualTo: detailPane.trailingAnchor, constant: -16),
+            detailStack.trailingAnchor.constraint(lessThanOrEqualTo: openButton.leadingAnchor, constant: -12),
 
-            openButton.topAnchor.constraint(equalTo: detailStack.bottomAnchor, constant: 16),
-            openButton.leadingAnchor.constraint(equalTo: detailPane.leadingAnchor, constant: 16),
-            openButton.bottomAnchor.constraint(lessThanOrEqualTo: detailPane.bottomAnchor, constant: -16),
+            openButton.centerYAnchor.constraint(equalTo: detailNameLabel.centerYAnchor),
+            openButton.trailingAnchor.constraint(equalTo: detailPane.trailingAnchor, constant: -16),
+
+            detailView.topAnchor.constraint(equalTo: detailStack.bottomAnchor, constant: 12),
+            detailView.leadingAnchor.constraint(equalTo: detailPane.leadingAnchor),
+            detailView.trailingAnchor.constraint(equalTo: detailPane.trailingAnchor),
+            detailView.bottomAnchor.constraint(equalTo: detailPane.bottomAnchor),
+
+            detailPlaceholderLabel.centerXAnchor.constraint(equalTo: detailView.centerXAnchor),
+            detailPlaceholderLabel.centerYAnchor.constraint(equalTo: detailView.centerYAnchor),
+            detailPlaceholderLabel.leadingAnchor.constraint(greaterThanOrEqualTo: detailView.leadingAnchor, constant: 24),
+            detailPlaceholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: detailView.trailingAnchor, constant: -24),
         ])
 
         updateDetailPane(for: nil)
@@ -306,6 +367,8 @@ final class BundleBrowserViewController: NSViewController, NSTableViewDataSource
             detailLengthLabel.stringValue = ""
             detailMetricsLabel.stringValue = ""
             openButton.isEnabled = false
+            embeddedViewerController.view.isHidden = true
+            detailPlaceholderLabel.isHidden = false
             return
         }
 
@@ -320,5 +383,46 @@ final class BundleBrowserViewController: NSViewController, NSTableViewDataSource
         }
 
         openButton.isEnabled = true
+        loadSequenceDetail(for: row)
+    }
+
+    private func loadSequenceDetail(for row: BundleBrowserSequenceSummary) {
+        guard let bundleURL else {
+            embeddedViewerController.view.isHidden = true
+            detailPlaceholderLabel.stringValue = "Sequence detail is unavailable for this bundle summary."
+            detailPlaceholderLabel.isHidden = false
+            return
+        }
+
+        do {
+            if loadedBundleURL != bundleURL {
+                embeddedViewerController.clearViewport(statusMessage: "Loading sequence detail...")
+                try embeddedViewerController.displayBundle(
+                    at: bundleURL,
+                    mode: .sequence(name: row.name, restoreViewState: false)
+                )
+                loadedBundleURL = bundleURL
+            } else if let chromosome = embeddedViewerController.currentBundleDataProvider?.chromosomeInfo(named: row.name) {
+                embeddedViewerController.navigateToChromosomeAndPosition(
+                    chromosome: chromosome.name,
+                    chromosomeLength: Int(chromosome.length),
+                    start: 0,
+                    end: Int(chromosome.length)
+                )
+            } else {
+                try embeddedViewerController.displayBundle(
+                    at: bundleURL,
+                    mode: .sequence(name: row.name, restoreViewState: false)
+                )
+            }
+
+            embeddedViewerController.view.isHidden = false
+            detailPlaceholderLabel.isHidden = true
+            detailPlaceholderLabel.stringValue = "Select a sequence to inspect."
+        } catch {
+            embeddedViewerController.view.isHidden = true
+            detailPlaceholderLabel.stringValue = "Unable to load sequence detail for \(row.name)."
+            detailPlaceholderLabel.isHidden = false
+        }
     }
 }

@@ -962,6 +962,37 @@ final class ViewerBundleRoutingTests: XCTestCase {
         XCTAssertEqual(vc.testBundleBrowserController?.testSelectedName, "chr1")
     }
 
+    func testBrowseModeEmbedsSequenceDetailViewerForSelectedRow() throws {
+        let vc = ViewerViewController()
+        _ = vc.view
+        let bundleURL = try makeReferenceBundle(chromosomes: ["chr1", "chr2"])
+
+        try vc.displayBundle(at: bundleURL, mode: .browse)
+
+        let browser = try XCTUnwrap(vc.testBundleBrowserController)
+        let embeddedViewer = try XCTUnwrap(browser.children.compactMap { $0 as? ViewerViewController }.first)
+
+        XCTAssertEqual(browser.testSelectedName, "chr1")
+        XCTAssertEqual(embeddedViewer.referenceFrame?.chromosome, "chr1")
+        XCTAssertNil(embeddedViewer.chromosomeNavigatorView)
+        XCTAssertNil(embeddedViewer.testBundleBrowserController)
+    }
+
+    func testBrowseModeSelectionUpdatesEmbeddedSequenceDetailViewer() throws {
+        let vc = ViewerViewController()
+        _ = vc.view
+        let bundleURL = try makeReferenceBundle(chromosomes: ["chr1", "chr2"])
+
+        try vc.displayBundle(at: bundleURL, mode: .browse)
+        let browser = try XCTUnwrap(vc.testBundleBrowserController)
+        let embeddedViewer = try XCTUnwrap(browser.children.compactMap { $0 as? ViewerViewController }.first)
+
+        browser.testSelectRow(named: "chr2")
+
+        XCTAssertEqual(browser.testSelectedName, "chr2")
+        XCTAssertEqual(embeddedViewer.referenceFrame?.chromosome, "chr2")
+    }
+
     func testBundleBrowserDrillDownAndBackRestoresBrowserState() throws {
         let vc = ViewerViewController()
         _ = vc.view
