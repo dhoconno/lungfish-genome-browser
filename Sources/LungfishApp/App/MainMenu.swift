@@ -640,6 +640,15 @@ public final class MainMenu {
 
         toolsMenu.addItem(.separator())
 
+        let callVariantsItem = toolsMenu.addItem(
+            withTitle: "Call Variants…",
+            action: #selector(ToolsMenuActions.showBAMVariantCalling(_:)),
+            keyEquivalent: ""
+        )
+        callVariantsItem.identifier = NSUserInterfaceItemIdentifier(MainMenuAccessibilityID.callVariants)
+
+        toolsMenu.addItem(.separator())
+
         // Online databases
         let searchDatabasesItem = NSMenuItem(title: "Search Online Databases...", action: nil, keyEquivalent: "")
         let searchDatabasesMenu = NSMenu(title: "Search Online Databases")
@@ -891,6 +900,7 @@ public final class MainMenu {
     func showFASTQMappingOperations(_ sender: Any?)
     func showFASTQAssemblyOperations(_ sender: Any?)
     func showFASTQClassificationOperations(_ sender: Any?)
+    func showBAMVariantCalling(_ sender: Any?)
     func searchNCBI(_ sender: Any?)
     func searchSRA(_ sender: Any?)
     func searchPathoplexus(_ sender: Any?)

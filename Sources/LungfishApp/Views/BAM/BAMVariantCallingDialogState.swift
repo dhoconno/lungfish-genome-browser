@@ -8,6 +8,9 @@ import LungfishWorkflow
 final class BAMVariantCallingDialogState {
     let bundle: ReferenceBundle
     let sidebarItems: [DatasetOperationToolSidebarItem]
+    let alignmentTrackOptions: [AlignmentTrackInfo]
+
+    private let eligibleAlignmentTrackIDs: Set<String>
 
     var selectedAlignmentTrackID: String {
         didSet {
@@ -31,12 +34,19 @@ final class BAMVariantCallingDialogState {
 
     init(
         bundle: ReferenceBundle,
+        preferredAlignmentTrackID: String? = nil,
         sidebarItems: [DatasetOperationToolSidebarItem] = BAMVariantCallingCatalog.availableSidebarItems()
     ) {
         self.bundle = bundle
         self.sidebarItems = sidebarItems
+        let eligibleAlignmentTracks = BAMVariantCallingEligibility.eligibleAlignmentTracks(in: bundle)
+        self.alignmentTrackOptions = eligibleAlignmentTracks
+        self.eligibleAlignmentTrackIDs = Set(eligibleAlignmentTracks.map(\.id))
 
-        let defaultAlignmentTrackID = bundle.alignmentTrackIds.first ?? ""
+        let defaultAlignmentTrackID = BAMVariantCallingEligibility.defaultTrackID(
+            in: eligibleAlignmentTracks,
+            preferredAlignmentTrackID: preferredAlignmentTrackID
+        )
         self.selectedAlignmentTrackID = defaultAlignmentTrackID
         self.selectedCaller = .lofreq
         self.minimumAlleleFrequencyText = "0.05"
@@ -51,10 +61,6 @@ final class BAMVariantCallingDialogState {
             alignmentTrackID: defaultAlignmentTrackID,
             caller: .lofreq
         )
-    }
-
-    var alignmentTrackOptions: [AlignmentTrackInfo] {
-        bundle.alignmentTrackIds.compactMap { bundle.alignmentTrack(id: $0) }
     }
 
     var datasetLabel: String {
@@ -76,7 +82,11 @@ final class BAMVariantCallingDialogState {
         }
 
         if alignmentTrackOptions.isEmpty {
-            return "This bundle has no alignment tracks to call variants from."
+            return "This bundle has no analysis-ready BAM alignment tracks to call variants from."
+        }
+
+        guard hasEligibleSelectedAlignmentTrack else {
+            return "Select an analysis-ready BAM alignment track."
         }
 
         if trimmedOutputTrackName.isEmpty {
@@ -108,6 +118,7 @@ final class BAMVariantCallingDialogState {
     var isRunEnabled: Bool {
         guard selectedCallerAvailability == .available else { return false }
         guard !alignmentTrackOptions.isEmpty else { return false }
+        guard hasEligibleSelectedAlignmentTrack else { return false }
         guard !trimmedOutputTrackName.isEmpty else { return false }
         guard trimmedMinimumAlleleFrequency.isEmpty || minimumAlleleFrequency != nil else { return false }
         guard trimmedMinimumDepth.isEmpty || minimumDepth != nil else { return false }
@@ -185,6 +196,10 @@ final class BAMVariantCallingDialogState {
 
     private var trimmedOutputTrackName: String {
         outputTrackName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var hasEligibleSelectedAlignmentTrack: Bool {
+        eligibleAlignmentTrackIDs.contains(selectedAlignmentTrackID)
     }
 
     private var selectedCallerAvailability: DatasetOperationAvailability {

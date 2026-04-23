@@ -116,6 +116,7 @@ enum MainMenuAccessibilityID {
     static let export = "file-menu-export"
     static let clearTemporaryFiles = "file-menu-clear-temporary-files"
 
+    static let callVariants = "tools-menu-call-variants"
     static let pluginManager = "tools-menu-plugin-manager"
     static let showOperationsPanel = "operations-menu-show-panel"
 

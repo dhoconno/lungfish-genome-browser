@@ -29,6 +29,7 @@ final class SettingsAndImportXCUIReadinessTests: XCTestCase {
         XCTAssertEqual(MainMenuAccessibilityID.helpMenu, "main-menu-help")
         XCTAssertEqual(MainMenuAccessibilityID.newProject, "file-menu-new-project")
         XCTAssertEqual(MainMenuAccessibilityID.importCenter, "file-menu-import-center")
+        XCTAssertEqual(MainMenuAccessibilityID.callVariants, "tools-menu-call-variants")
         XCTAssertEqual(MainMenuAccessibilityID.pluginManager, "tools-menu-plugin-manager")
         XCTAssertEqual(MainMenuAccessibilityID.showOperationsPanel, "operations-menu-show-panel")
         XCTAssertEqual(MainMenuAccessibilityID.reportIssue, "help-menu-report-issue")
@@ -113,6 +114,12 @@ final class SettingsAndImportXCUIReadinessTests: XCTestCase {
         XCTAssertTrue(source.contains("sender.reply(toOpenOrPrint: allQueued ? .success : .failure)"))
         XCTAssertTrue(source.contains("if type == .lungfishProject"))
         XCTAssertTrue(source.contains("let controller = ensureMainWindowForDocumentOpen()"))
+    }
+
+    func testAppDelegateRespondsToVariantCallingMenuSelector() {
+        XCTAssertTrue(
+            AppDelegate.instancesRespond(to: NSSelectorFromString("showBAMVariantCalling:"))
+        )
     }
 
     private func repositoryRoot() -> URL {
