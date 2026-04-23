@@ -182,6 +182,54 @@ final class BAMVariantCallingDialogRoutingTests: XCTestCase {
         XCTAssertFalse(state.isRunEnabled)
     }
 
+    @MainActor
+    func testReadStyleSectionTracksVariantCallingEligibility() throws {
+        let viewModel = ReadStyleSectionViewModel()
+
+        let eligibleBundle = try makeBundleFixture(
+            alignments: [
+                AlignmentTrackInfo(
+                    id: "aln-bam",
+                    name: "Eligible BAM",
+                    format: .bam,
+                    sourcePath: "alignments/eligible.sorted.bam",
+                    indexPath: "alignments/eligible.sorted.bam.bai"
+                ),
+            ],
+            existingFiles: [
+                "alignments/eligible.sorted.bam",
+                "alignments/eligible.sorted.bam.bai",
+            ]
+        )
+        viewModel.loadStatistics(from: eligibleBundle)
+        XCTAssertTrue(viewModel.hasVariantCallableAlignmentTracks)
+
+        let ineligibleBundle = try makeBundleFixture(
+            alignments: [
+                AlignmentTrackInfo(
+                    id: "aln-sam",
+                    name: "SAM Only",
+                    format: .sam,
+                    sourcePath: "alignments/raw.sam",
+                    indexPath: "alignments/raw.sam.bai"
+                ),
+            ],
+            existingFiles: ["alignments/raw.sam"]
+        )
+        viewModel.loadStatistics(from: ineligibleBundle)
+        XCTAssertFalse(viewModel.hasVariantCallableAlignmentTracks)
+    }
+
+    func testReadStyleSectionSourceDisablesCallVariantsUsingEligibilityFlag() throws {
+        let source = try String(
+            contentsOf: repositoryRoot()
+                .appendingPathComponent("Sources/LungfishApp/Views/Inspector/Sections/ReadStyleSection.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains(".disabled(!viewModel.hasVariantCallableAlignmentTracks)"))
+    }
+
     func testCatalogDisablesAllToolsWhenVariantCallingPackIsMissing() async {
         let catalog = BAMVariantCallingCatalog(
             statusProvider: StubVariantCallingPackStatusProvider(states: ["variant-calling": .needsInstall])

@@ -98,6 +98,9 @@ public final class ReadStyleSectionViewModel {
     /// Whether alignment tracks are present in the current bundle.
     public var hasAlignmentTracks: Bool = false
 
+    /// Whether the current bundle includes at least one BAM track eligible for variant calling.
+    public var hasVariantCallableAlignmentTracks: Bool = false
+
     /// Total mapped reads across all chromosomes.
     public var totalMappedReads: Int64 = 0
 
@@ -175,6 +178,7 @@ public final class ReadStyleSectionViewModel {
     /// Clears all statistics (called when bundle is unloaded).
     public func clear() {
         hasAlignmentTracks = false
+        hasVariantCallableAlignmentTracks = false
         totalMappedReads = 0
         totalUnmappedReads = 0
         chromosomeStats = []
@@ -195,6 +199,9 @@ public final class ReadStyleSectionViewModel {
         }
 
         hasAlignmentTracks = true
+        hasVariantCallableAlignmentTracks = !BAMVariantCallingEligibility
+            .eligibleAlignmentTracks(in: bundle)
+            .isEmpty
         trackNames = trackIds.compactMap { bundle.alignmentTrack(id: $0)?.name }
 
         var aggMapped: Int64 = 0
@@ -796,7 +803,7 @@ public struct ReadStyleSection: View {
             Button("Call Variants…") {
                 viewModel.onCallVariantsRequested?()
             }
-            .disabled(!viewModel.hasAlignmentTracks)
+            .disabled(!viewModel.hasVariantCallableAlignmentTracks)
 
             Button("Mark Duplicates in Bundle Tracks") {
                 viewModel.onMarkDuplicatesRequested?()
