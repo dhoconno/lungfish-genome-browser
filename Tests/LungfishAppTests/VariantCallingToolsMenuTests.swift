@@ -40,6 +40,19 @@ final class VariantCallingToolsMenuTests: XCTestCase {
     }
 
     @MainActor
+    func testCanShowBAMVariantCallingRechecksWhenIndexDisappears() throws {
+        let delegate = AppDelegate()
+        let bundle = try makeBundle(format: .bam, withIndex: true)
+
+        XCTAssertTrue(delegate.canShowBAMVariantCalling(bundle: bundle))
+
+        let indexURL = bundle.url.appendingPathComponent(bundle.manifest.alignments[0].indexPath)
+        try FileManager.default.removeItem(at: indexURL)
+
+        XCTAssertFalse(delegate.canShowBAMVariantCalling(bundle: bundle))
+    }
+
+    @MainActor
     func testAppDelegateSourceValidatesAndRoutesCallVariantsMenuItem() throws {
         let source = try String(
             contentsOf: repositoryRoot()
