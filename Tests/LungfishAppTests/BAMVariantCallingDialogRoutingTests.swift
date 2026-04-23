@@ -167,7 +167,19 @@ final class BAMVariantCallingDialogRoutingTests: XCTestCase {
 
         XCTAssertEqual(state.alignmentTrackOptions, [])
         XCTAssertFalse(state.isRunEnabled)
-        XCTAssertTrue(state.readinessText.contains("analysis-ready BAM"))
+        XCTAssertEqual(
+            state.readinessText,
+            "This bundle has no analysis-ready BAM alignment tracks to call variants from."
+        )
+    }
+
+    @MainActor
+    func testDialogStateDisablesRunForInvalidSelectedTrackID() throws {
+        let state = BAMVariantCallingDialogState(bundle: try makeBundleFixture())
+
+        state.selectedAlignmentTrackID = "missing-track"
+
+        XCTAssertFalse(state.isRunEnabled)
     }
 
     func testCatalogDisablesAllToolsWhenVariantCallingPackIsMissing() async {

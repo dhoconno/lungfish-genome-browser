@@ -16,14 +16,13 @@ enum BAMVariantCallingEligibility {
     }
 
     static func defaultTrackID(
-        in bundle: ReferenceBundle,
+        in eligibleAlignmentTracks: [AlignmentTrackInfo],
         preferredAlignmentTrackID: String?
     ) -> String {
-        let eligible = eligibleAlignmentTracks(in: bundle)
         if let preferredAlignmentTrackID,
-           eligible.contains(where: { $0.id == preferredAlignmentTrackID }) {
+           eligibleAlignmentTracks.contains(where: { $0.id == preferredAlignmentTrackID }) {
             return preferredAlignmentTrackID
         }
-        return eligible.first?.id ?? ""
+        return eligibleAlignmentTracks.first?.id ?? ""
     }
 }
