@@ -66,7 +66,8 @@ extension BAMCommand {
                     path: path,
                     force: force,
                     sortThreads: sortThreads,
-                    quiet: globalOptions.quiet
+                    quiet: globalOptions.quiet,
+                    outputFormat: globalOptions.outputFormat
                 ),
                 runtime: runtime,
                 emit: emit

@@ -17,6 +17,7 @@ struct MarkdupCommand: AsyncParsableCommand {
         let force: Bool
         let sortThreads: Int
         let quiet: Bool
+        let outputFormat: OutputFormat
     }
 
     struct Runtime {
@@ -56,7 +57,9 @@ struct MarkdupCommand: AsyncParsableCommand {
         runtime: Runtime = .live(),
         emit: @escaping (String) -> Void
     ) async throws -> [MarkdupResult] {
-        try await runtime.execute(input, emit)
+        let results = try await runtime.execute(input, emit)
+        emitResults(results, for: input, emit: emit)
+        return results
     }
 
     private func makeExecutionInput() -> ExecutionInput {
@@ -64,7 +67,8 @@ struct MarkdupCommand: AsyncParsableCommand {
             path: path,
             force: force,
             sortThreads: sortThreads,
-            quiet: globalOptions.quiet
+            quiet: globalOptions.quiet,
+            outputFormat: globalOptions.outputFormat
         )
     }
 
@@ -88,21 +92,17 @@ struct MarkdupCommand: AsyncParsableCommand {
             try materializeNaoMgsBamsIfNeeded(
                 at: inputURL,
                 samtoolsPath: samtoolsPath,
-                force: input.force,
-                quiet: input.quiet,
+                input: input,
                 emit: emit
             )
 
-            emitIfNeeded(input.quiet, line: "Scanning \(inputURL.path) for BAM files...", emit: emit)
+            emitIfNeeded(input, line: "Scanning \(inputURL.path) for BAM files...", emit: emit)
             let results = try MarkdupService.markdupDirectory(
                 inputURL,
                 samtoolsPath: samtoolsPath,
                 threads: input.sortThreads,
                 force: input.force
             )
-            if !input.quiet {
-                emitSummary(results, emit: emit)
-            }
             return results
         }
 
@@ -116,17 +116,13 @@ struct MarkdupCommand: AsyncParsableCommand {
             threads: input.sortThreads,
             force: input.force
         )
-        if !input.quiet {
-            emitSummary([result], emit: emit)
-        }
         return [result]
     }
 
     private static func materializeNaoMgsBamsIfNeeded(
         at inputURL: URL,
         samtoolsPath: String,
-        force: Bool,
-        quiet: Bool,
+        input: ExecutionInput,
         emit: @escaping (String) -> Void
     ) throws {
         let naoMgsDbURL = inputURL.appendingPathComponent("hits.sqlite")
@@ -135,7 +131,7 @@ struct MarkdupCommand: AsyncParsableCommand {
         }
 
         emitIfNeeded(
-            quiet,
+            input,
             line: "Detected NAO-MGS result directory; materializing BAMs from SQLite...",
             emit: emit
         )
@@ -145,12 +141,12 @@ struct MarkdupCommand: AsyncParsableCommand {
                 dbPath: naoMgsDbURL.path,
                 resultURL: inputURL,
                 samtoolsPath: samtoolsPath,
-                force: force
+                force: input.force
             )
-            emitIfNeeded(quiet, line: "Materialized \(materialized.count) BAM file(s)", emit: emit)
+            emitIfNeeded(input, line: "Materialized \(materialized.count) BAM file(s)", emit: emit)
         } catch {
             emitIfNeeded(
-                quiet,
+                input,
                 line: "Warning: NAO-MGS BAM materialization failed: \(error.localizedDescription)",
                 emit: emit
             )
@@ -172,15 +168,74 @@ struct MarkdupCommand: AsyncParsableCommand {
         emit(String(format: "Elapsed: %.1fs", totalTime))
     }
 
+    private static func emitResults(
+        _ results: [MarkdupResult],
+        for input: ExecutionInput,
+        emit: @escaping (String) -> Void
+    ) {
+        if input.outputFormat == .json {
+            if let line = encodeJSONOutput(results) {
+                emit(line)
+            }
+            return
+        }
+
+        guard !input.quiet else {
+            return
+        }
+        emitSummary(results, emit: emit)
+    }
+
     private static func emitIfNeeded(
-        _ quiet: Bool,
+        _ input: ExecutionInput,
         line: String,
         emit: @escaping (String) -> Void
     ) {
-        guard !quiet else {
+        guard input.outputFormat != .json, !input.quiet else {
             return
         }
         emit(line)
+    }
+
+    private static func encodeJSONOutput(_ results: [MarkdupResult]) -> String? {
+        let summary = JSONOutput(
+            processedBAMs: results.count,
+            alreadyMarkedBAMs: results.filter(\.wasAlreadyMarkduped).count,
+            totalReads: results.reduce(0) { $0 + $1.totalReads },
+            duplicateReads: results.reduce(0) { $0 + $1.duplicateReads },
+            elapsedSeconds: results.reduce(0.0) { $0 + $1.durationSeconds },
+            results: results.map {
+                JSONOutput.Result(
+                    bamPath: $0.bamURL.path,
+                    wasAlreadyMarkduped: $0.wasAlreadyMarkduped,
+                    totalReads: $0.totalReads,
+                    duplicateReads: $0.duplicateReads,
+                    durationSeconds: $0.durationSeconds
+                )
+            }
+        )
+        let encoder = JSONEncoder()
+        guard let data = try? encoder.encode(summary) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private struct JSONOutput: Encodable {
+        struct Result: Encodable {
+            let bamPath: String
+            let wasAlreadyMarkduped: Bool
+            let totalReads: Int
+            let duplicateReads: Int
+            let durationSeconds: Double
+        }
+
+        let processedBAMs: Int
+        let alreadyMarkedBAMs: Int
+        let totalReads: Int
+        let duplicateReads: Int
+        let elapsedSeconds: Double
+        let results: [Result]
     }
 
     static func locateSamtools(homeDirectory: URL = currentHomeDirectory()) -> String? {

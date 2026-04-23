@@ -9,6 +9,23 @@ import XCTest
 final class MarkdupCommandTests: XCTestCase {
     private typealias MarkdupRuntime = MarkdupCommand.Runtime
 
+    private struct MarkdupJSONOutput: Decodable {
+        struct Result: Decodable {
+            let bamPath: String
+            let wasAlreadyMarkduped: Bool
+            let totalReads: Int
+            let duplicateReads: Int
+            let durationSeconds: Double
+        }
+
+        let processedBAMs: Int
+        let alreadyMarkedBAMs: Int
+        let totalReads: Int
+        let duplicateReads: Int
+        let elapsedSeconds: Double
+        let results: [Result]
+    }
+
     // MARK: - Inline BAM fixture helper
     // The canonical BamFixtureBuilder lives in LungfishIOTests and isn't
     // visible here. We duplicate a minimal version locally to avoid cross-target
@@ -440,5 +457,87 @@ final class MarkdupCommandTests: XCTestCase {
         XCTAssertEqual(calls.map(\.sortThreads), [7, 7])
         XCTAssertEqual(calls.map(\.quiet), [false, false])
         XCTAssertEqual(canonicalOutput, legacyOutput)
+    }
+
+    func testLegacyMarkdupJSONOutputUsesStructuredSummary() async throws {
+        let resultURL = URL(fileURLWithPath: "/tmp/legacy-json.bam")
+        let runtime = MarkdupRuntime(
+            execute: { _, _ in
+                [
+                    MarkdupResult(
+                        bamURL: resultURL,
+                        wasAlreadyMarkduped: true,
+                        totalReads: 42,
+                        duplicateReads: 9,
+                        durationSeconds: 1.25
+                    )
+                ]
+            }
+        )
+        let command = try MarkdupCommand.parse([
+            resultURL.path,
+            "--format", "json",
+        ])
+
+        var output: [String] = []
+        _ = try await command.executeForTesting(runtime: runtime) { output.append($0) }
+
+        XCTAssertEqual(output.count, 1)
+        XCTAssertFalse(output[0].contains("Processed 1 BAM file"))
+
+        let summary = try XCTUnwrap(decodeMarkdupJSONOutput(output[0]))
+        XCTAssertEqual(summary.processedBAMs, 1)
+        XCTAssertEqual(summary.alreadyMarkedBAMs, 1)
+        XCTAssertEqual(summary.totalReads, 42)
+        XCTAssertEqual(summary.duplicateReads, 9)
+        XCTAssertEqual(summary.elapsedSeconds, 1.25)
+        XCTAssertEqual(summary.results.map(\.bamPath), [resultURL.path])
+    }
+
+    func testCanonicalBamMarkdupJSONOutputMatchesLegacyShape() async throws {
+        let resultURL = URL(fileURLWithPath: "/tmp/canonical-json.bam")
+        let runtime = MarkdupRuntime(
+            execute: { _, _ in
+                [
+                    MarkdupResult(
+                        bamURL: resultURL,
+                        wasAlreadyMarkduped: false,
+                        totalReads: 64,
+                        duplicateReads: 7,
+                        durationSeconds: 2.5
+                    )
+                ]
+            }
+        )
+        let legacyCommand = try MarkdupCommand.parse([
+            resultURL.path,
+            "--format", "json",
+        ])
+        let canonicalCommand = try BAMCommand.MarkdupSubcommand.parse([
+            "markdup",
+            resultURL.path,
+            "--format", "json",
+        ])
+
+        var legacyOutput: [String] = []
+        _ = try await legacyCommand.executeForTesting(runtime: runtime) { legacyOutput.append($0) }
+
+        var canonicalOutput: [String] = []
+        _ = try await canonicalCommand.executeForTesting(runtime: runtime) { canonicalOutput.append($0) }
+
+        XCTAssertEqual(canonicalOutput, legacyOutput)
+
+        let summary = try XCTUnwrap(decodeMarkdupJSONOutput(canonicalOutput[0]))
+        XCTAssertEqual(summary.processedBAMs, 1)
+        XCTAssertEqual(summary.alreadyMarkedBAMs, 0)
+        XCTAssertEqual(summary.totalReads, 64)
+        XCTAssertEqual(summary.duplicateReads, 7)
+        XCTAssertEqual(summary.elapsedSeconds, 2.5)
+        XCTAssertEqual(summary.results.map(\.bamPath), [resultURL.path])
+    }
+
+    private func decodeMarkdupJSONOutput(_ line: String) -> MarkdupJSONOutput? {
+        let data = Data(line.utf8)
+        return try? JSONDecoder().decode(MarkdupJSONOutput.self, from: data)
     }
 }
