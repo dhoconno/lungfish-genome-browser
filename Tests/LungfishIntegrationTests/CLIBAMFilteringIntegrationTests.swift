@@ -1,9 +1,9 @@
+import Foundation
 import XCTest
 import LungfishTestSupport
 @testable import LungfishCLI
 @testable import LungfishCore
 @testable import LungfishIO
-@testable import LungfishWorkflow
 
 final class CLIBAMFilteringIntegrationTests: XCTestCase {
     private var tempDir: URL!
@@ -32,37 +32,34 @@ final class CLIBAMFilteringIntegrationTests: XCTestCase {
             "--alignment-track", fixture.sourceTrackID,
             "--output-track-name", "Mapped Reads",
             "--mapped-only",
-            "--format", "json",
+            "-q",
         ])
 
-        var lines: [String] = []
-        let result = try await command.executeForTesting(
-            runtime: makeRuntime(homeDirectory: managedHome.homeURL)
-        ) { lines.append($0) }
-
-        XCTAssertEqual(result.bundleURL, fixture.bundleURL)
-        XCTAssertNil(result.mappingResultURL)
-        XCTAssertEqual(result.trackInfo.name, "Mapped Reads")
-        XCTAssertTrue(result.trackInfo.sourcePath.hasPrefix("alignments/filtered/"))
+        try await managedHome.withLiveRuntimeActivation {
+            try await command.run()
+        }
 
         let manifest = try BundleManifest.load(from: fixture.bundleURL)
         XCTAssertEqual(manifest.alignments.count, 2)
         XCTAssertTrue(manifest.alignments.contains(where: { $0.id == fixture.sourceTrackID }))
-        XCTAssertTrue(manifest.alignments.contains(where: { $0.id == result.trackInfo.id }))
+        let derivedTrack = try XCTUnwrap(manifest.alignments.first(where: { $0.id != fixture.sourceTrackID }))
+        XCTAssertEqual(derivedTrack.name, "Mapped Reads")
+        XCTAssertTrue(derivedTrack.sourcePath.hasPrefix("alignments/filtered/"))
 
-        let metadataURL = fixture.bundleURL.appendingPathComponent(try XCTUnwrap(result.trackInfo.metadataDBPath))
+        let metadataURL = fixture.bundleURL.appendingPathComponent(try XCTUnwrap(derivedTrack.metadataDBPath))
         let metadataDB = try AlignmentMetadataDatabase.openForUpdate(at: metadataURL)
         XCTAssertEqual(metadataDB.getFileInfo("derivation_kind"), "filtered_alignment")
         XCTAssertEqual(metadataDB.getFileInfo("derivation_source_track_id"), fixture.sourceTrackID)
         XCTAssertEqual(metadataDB.getFileInfo("derivation_target_kind"), "bundle")
         XCTAssertEqual(metadataDB.provenanceHistory().map(\.subcommand), ["view", "sort", "index"])
         XCTAssertTrue(metadataDB.getFileInfo("derivation_command_chain")?.contains("samtools view") == true)
-
-        let runComplete = try XCTUnwrap(lines.compactMap(decodeEvent).first(where: { $0.event == "runComplete" }))
-        XCTAssertEqual(runComplete.bundlePath, fixture.bundleURL.path)
-        XCTAssertNil(runComplete.mappingResultPath)
-        XCTAssertEqual(runComplete.sourceAlignmentTrackID, fixture.sourceTrackID)
-        XCTAssertEqual(runComplete.outputAlignmentTrackID, result.trackInfo.id)
+        XCTAssertEqual(
+            try bamReadNames(
+                at: fixture.bundleURL.appendingPathComponent(derivedTrack.sourcePath),
+                samtoolsPath: managedHome.samtoolsPath
+            ),
+            ["mapped-primary-highmapq", "mapped-primary-lowmapq", "mapped-secondary"]
+        )
     }
 
     func testMappingResultFilteringWritesIntoViewerBundleOnly() async throws {
@@ -80,15 +77,12 @@ final class CLIBAMFilteringIntegrationTests: XCTestCase {
             "--alignment-track", fixture.sourceTrackID,
             "--output-track-name", "Primary Reads",
             "--primary-only",
+            "-q",
         ])
 
-        var lines: [String] = []
-        let result = try await command.executeForTesting(
-            runtime: makeRuntime(homeDirectory: managedHome.homeURL)
-        ) { lines.append($0) }
-
-        XCTAssertEqual(result.bundleURL, fixture.bundleURL)
-        XCTAssertEqual(result.mappingResultURL, mappingResultURL)
+        try await managedHome.withLiveRuntimeActivation {
+            try await command.run()
+        }
 
         let mappingResultContents = try FileManager.default.contentsOfDirectory(
             atPath: mappingResultURL.path
@@ -97,43 +91,53 @@ final class CLIBAMFilteringIntegrationTests: XCTestCase {
 
         let manifest = try BundleManifest.load(from: fixture.bundleURL)
         XCTAssertEqual(manifest.alignments.count, 2)
-        XCTAssertTrue(manifest.alignments.contains(where: { $0.id == result.trackInfo.id }))
+        let derivedTrack = try XCTUnwrap(manifest.alignments.first(where: { $0.id != fixture.sourceTrackID }))
+        XCTAssertEqual(derivedTrack.name, "Primary Reads")
 
-        let metadataURL = fixture.bundleURL.appendingPathComponent(try XCTUnwrap(result.trackInfo.metadataDBPath))
+        let metadataURL = fixture.bundleURL.appendingPathComponent(try XCTUnwrap(derivedTrack.metadataDBPath))
         let metadataDB = try AlignmentMetadataDatabase.openForUpdate(at: metadataURL)
         XCTAssertEqual(metadataDB.getFileInfo("derivation_target_kind"), "mapping_result")
         XCTAssertEqual(metadataDB.getFileInfo("derivation_mapping_result_path"), mappingResultURL.path)
         XCTAssertEqual(metadataDB.provenanceHistory().map(\.subcommand), ["view", "sort", "index"])
-
-        XCTAssertTrue(lines.contains("Mapping result: \(mappingResultURL.path)"))
         XCTAssertTrue(
             FileManager.default.fileExists(
-                atPath: fixture.bundleURL.appendingPathComponent(result.trackInfo.sourcePath).path
+                atPath: fixture.bundleURL.appendingPathComponent(derivedTrack.sourcePath).path
             )
         )
-    }
-
-    private func makeRuntime(homeDirectory: URL) -> BAMCommand.FilterSubcommand.Runtime {
-        let toolRunner = NativeToolRunner(toolsDirectory: nil, homeDirectory: homeDirectory)
-        let samtoolsRunner = NativeToolSamtoolsRunner(runner: toolRunner)
-        let service = BundleAlignmentFilterService(samtoolsRunner: samtoolsRunner)
-
-        return BAMCommand.FilterSubcommand.Runtime(
-            runFilter: { target, sourceTrackID, outputTrackName, request in
-                try await service.deriveFilteredAlignment(
-                    target: target,
-                    sourceTrackID: sourceTrackID,
-                    outputTrackName: outputTrackName,
-                    filterRequest: request
-                )
-            }
+        XCTAssertEqual(
+            try bamReadNames(
+                at: fixture.bundleURL.appendingPathComponent(derivedTrack.sourcePath),
+                samtoolsPath: managedHome.samtoolsPath
+            ),
+            ["mapped-primary-highmapq", "mapped-primary-lowmapq", "unmapped-read"]
         )
     }
 }
 
-private func decodeEvent(_ line: String) -> BAMCommand.FilterEvent? {
-    guard let data = line.data(using: .utf8) else {
-        return nil
-    }
-    return try? JSONDecoder().decode(BAMCommand.FilterEvent.self, from: data)
+private func bamReadNames(at bamURL: URL, samtoolsPath: URL) throws -> [String] {
+    let process = Process()
+    process.executableURL = samtoolsPath
+    process.arguments = ["view", bamURL.path]
+    let stdout = Pipe()
+    let stderr = Pipe()
+    process.standardOutput = stdout
+    process.standardError = stderr
+    try process.run()
+    process.waitUntilExit()
+
+    let stderrText = String(
+        data: stderr.fileHandleForReading.readDataToEndOfFile(),
+        encoding: .utf8
+    ) ?? ""
+    XCTAssertEqual(process.terminationStatus, 0, "samtools view failed: \(stderrText)")
+
+    let output = String(
+        data: stdout.fileHandleForReading.readDataToEndOfFile(),
+        encoding: .utf8
+    ) ?? ""
+    return output
+        .split(separator: "\n")
+        .compactMap { line in
+            line.split(separator: "\t", omittingEmptySubsequences: false).first.map(String.init)
+        }
 }

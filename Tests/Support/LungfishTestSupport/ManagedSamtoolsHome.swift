@@ -87,4 +87,57 @@ public struct ManagedSamtoolsHome: Sendable {
         }
         return try await operation()
     }
+
+    public func withLiveRuntimeActivation<T>(
+        _ operation: () async throws -> T
+    ) async throws -> T {
+        let fileManager = FileManager.default
+        let liveHomeDirectory = fileManager.homeDirectoryForCurrentUser
+        let liveStore = ManagedStorageConfigStore(homeDirectory: liveHomeDirectory)
+        let liveConfigURL = liveStore.configURL
+        let originalConfigData = try? Data(contentsOf: liveConfigURL)
+
+        try liveStore.setActiveRoot(managedRootURL)
+        await NativeToolRunner.shared.clearCache()
+
+        do {
+            let result = try await withActivated {
+                try await operation()
+            }
+            try restoreLiveRuntimeConfig(
+                originalConfigData: originalConfigData,
+                liveConfigURL: liveConfigURL,
+                fileManager: fileManager
+            )
+            await NativeToolRunner.shared.clearCache()
+            return result
+        } catch {
+            try restoreLiveRuntimeConfig(
+                originalConfigData: originalConfigData,
+                liveConfigURL: liveConfigURL,
+                fileManager: fileManager
+            )
+            await NativeToolRunner.shared.clearCache()
+            throw error
+        }
+    }
+
+    private func restoreLiveRuntimeConfig(
+        originalConfigData: Data?,
+        liveConfigURL: URL,
+        fileManager: FileManager
+    ) throws {
+        if let originalConfigData {
+            try fileManager.createDirectory(
+                at: liveConfigURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try originalConfigData.write(to: liveConfigURL, options: .atomic)
+            return
+        }
+
+        if fileManager.fileExists(atPath: liveConfigURL.path) {
+            try fileManager.removeItem(at: liveConfigURL)
+        }
+    }
 }
