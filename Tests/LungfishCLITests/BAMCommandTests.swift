@@ -10,6 +10,7 @@ final class BAMCommandTests: XCTestCase {
     func testBamCommandNameAndHelp() {
         XCTAssertEqual(BAMCommand.configuration.commandName, "bam")
         XCTAssertTrue(BAMCommand.helpMessage().contains("filter"))
+        XCTAssertTrue(BAMCommand.helpMessage().contains("lungfish-cli bam filter"))
         XCTAssertTrue(BAMCommand.FilterSubcommand.helpMessage().contains("mapping analysis directory"))
     }
 

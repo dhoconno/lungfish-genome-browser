@@ -7,6 +7,10 @@ struct BAMCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "bam",
         abstract: "Operate on bundle-owned BAM alignment tracks",
+        discussion: """
+            Use `lungfish-cli bam filter` to derive filtered alignment tracks and
+            `lungfish-cli bam markdup` to mark duplicates in BAM workflows.
+            """,
         subcommands: [FilterSubcommand.self, MarkdupSubcommand.self]
     )
 
