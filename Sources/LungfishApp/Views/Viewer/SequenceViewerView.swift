@@ -2778,6 +2778,52 @@ public class SequenceViewerView: NSView {
         }
     }
 
+    func fetchConsensusSequenceForExport(request: MappingConsensusExportRequest) async throws -> String {
+        guard let provider = alignmentDataProviders.first?.provider else {
+            throw NSError(
+                domain: "Lungfish",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "No alignment provider loaded"]
+            )
+        }
+
+        let primaryChromosome = alignmentChromosomeName(for: request.chromosome)
+        var result = try await provider.fetchConsensus(
+            chromosome: primaryChromosome,
+            start: request.start,
+            end: request.end,
+            mode: request.mode,
+            minMapQ: request.minMapQ,
+            minBaseQ: request.minBaseQ,
+            minDepth: request.minDepth,
+            excludeFlags: request.excludeFlags,
+            useAmbiguity: request.useAmbiguity,
+            showDeletions: request.showDeletions,
+            showInsertions: request.showInsertions
+        )
+
+        if result.sequence.isEmpty, primaryChromosome != request.chromosome {
+            let fallback = try await provider.fetchConsensus(
+                chromosome: request.chromosome,
+                start: request.start,
+                end: request.end,
+                mode: request.mode,
+                minMapQ: request.minMapQ,
+                minBaseQ: request.minBaseQ,
+                minDepth: request.minDepth,
+                excludeFlags: request.excludeFlags,
+                useAmbiguity: request.useAmbiguity,
+                showDeletions: request.showDeletions,
+                showInsertions: request.showInsertions
+            )
+            if !fallback.sequence.isEmpty {
+                result = fallback
+            }
+        }
+
+        return result.sequence
+    }
+
     /// Draws consensus sequence row below the coverage strip.
     private func drawConsensusTrack(
         sequenceString: String?,

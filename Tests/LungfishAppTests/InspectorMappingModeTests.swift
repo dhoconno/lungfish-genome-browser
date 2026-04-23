@@ -71,15 +71,39 @@ final class InspectorMappingModeTests: XCTestCase {
         XCTAssertEqual(deliveredPayload?[NotificationUserInfoKey.consensusMaskingMinDepth] as? Int, 13)
     }
 
-    func testClearSelectionPreservesActiveBundleReferenceForInspectorActions() throws {
+    func testEmptySidebarDeselectionPreservesActiveBundleContextForInspectorActions() throws {
         let vc = InspectorViewController()
         _ = vc.view
         let bundle = try makeReferenceBundle()
 
         vc.updateMappingAlignmentSection(from: bundle, applySettings: { _ in })
-        vc.clearSelection()
+        NotificationCenter.default.post(
+            name: .sidebarSelectionChanged,
+            object: nil,
+            userInfo: ["items": [SidebarItem]()]
+        )
 
         XCTAssertEqual(vc.selectionSectionViewModel.referenceBundle?.url, bundle.url)
+        XCTAssertEqual(vc.viewModel.documentSectionViewModel.bundleURL, bundle.url)
+    }
+
+    func testClearSelectionClearsBundleContextAndAlignmentStats() throws {
+        let vc = InspectorViewController()
+        _ = vc.view
+        let bundle = try makeReferenceBundle()
+
+        vc.updateMappingAlignmentSection(from: bundle, applySettings: { _ in })
+        vc.readStyleSectionViewModel.hasAlignmentTracks = true
+        vc.readStyleSectionViewModel.totalMappedReads = 99
+        vc.readStyleSectionViewModel.trackNames = ["reads"]
+
+        vc.clearSelection()
+
+        XCTAssertNil(vc.selectionSectionViewModel.referenceBundle)
+        XCTAssertNil(vc.viewModel.documentSectionViewModel.bundleURL)
+        XCTAssertFalse(vc.readStyleSectionViewModel.hasAlignmentTracks)
+        XCTAssertEqual(vc.readStyleSectionViewModel.totalMappedReads, 0)
+        XCTAssertEqual(vc.readStyleSectionViewModel.trackNames, [])
     }
 
     private func makeReferenceBundle() throws -> ReferenceBundle {

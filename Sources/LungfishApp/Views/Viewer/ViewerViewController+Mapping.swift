@@ -10,6 +10,32 @@ import os.log
 private let mappingDisplayLogger = Logger(subsystem: LogSubsystem.app, category: "ViewerMapping")
 
 extension ViewerViewController {
+    func presentMappingConsensusExtraction() {
+        guard let controller = mappingResultController else {
+            NSSound.beep()
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            do {
+                let payload = try await controller.buildConsensusExportPayload()
+                self?.presentFASTASequenceExtractionDialog(
+                    records: payload.records,
+                    suggestedName: payload.suggestedName
+                )
+            } catch {
+                mappingDisplayLogger.error(
+                    "presentMappingConsensusExtraction failed: \(error.localizedDescription, privacy: .public)"
+                )
+                NSSound.beep()
+            }
+        }
+    }
+
+    func fetchMappingConsensusSequence(_ request: MappingConsensusExportRequest) async throws -> String {
+        try await viewerView.fetchConsensusSequenceForExport(request: request)
+    }
+
     public func displayMappingResult(_ result: MappingResult) {
         hideQuickLookPreview()
         hideFASTQDatasetView()

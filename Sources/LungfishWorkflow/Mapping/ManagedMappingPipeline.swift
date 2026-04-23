@@ -118,7 +118,8 @@ public final class ManagedMappingPipeline: @unchecked Sendable {
             threads: prepared.request.threads,
             minimumMappingQuality: prepared.request.minimumMappingQuality,
             includeSecondary: prepared.request.includeSecondary,
-            includeSupplementary: prepared.request.includeSupplementary
+            includeSupplementary: prepared.request.includeSupplementary,
+            removeIntermediateRawSAMOnSuccess: true
         )
 
         progress?(0.9, "Summarizing mapped contigs...")
@@ -179,7 +180,8 @@ public final class ManagedMappingPipeline: @unchecked Sendable {
         threads: Int = ProcessInfo.processInfo.processorCount,
         minimumMappingQuality: Int = 0,
         includeSecondary: Bool = true,
-        includeSupplementary: Bool = true
+        includeSupplementary: Bool = true,
+        removeIntermediateRawSAMOnSuccess: Bool = false
     ) async throws -> NormalizedMappingAlignment {
         let fm = FileManager.default
         try fm.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
@@ -224,6 +226,12 @@ public final class ManagedMappingPipeline: @unchecked Sendable {
 
         try await samtoolsIndex(bamURL: sortedBAM)
         let (totalReads, mappedReads) = try await samtoolsFlagstatCounts(bamURL: sortedBAM)
+        if removeIntermediateRawSAMOnSuccess,
+           extensionLower == "sam",
+           rawAlignmentURL.lastPathComponent.hasSuffix(".raw.sam"),
+           fm.fileExists(atPath: rawAlignmentURL.path) {
+            try? fm.removeItem(at: rawAlignmentURL)
+        }
         if fm.fileExists(atPath: tempFilteredBAM.path) {
             try? fm.removeItem(at: tempFilteredBAM)
         }

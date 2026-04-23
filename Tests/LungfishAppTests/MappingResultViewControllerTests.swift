@@ -113,6 +113,48 @@ final class MappingResultViewControllerTests: XCTestCase {
         XCTAssertEqual(deliveredBundle?.manifest.name, "Fixture")
     }
 
+    func testConsensusExportUsesSelectedContigNameInSuggestedStem() throws {
+        let vc = MappingResultViewController()
+        _ = vc.view
+
+        vc.configureForTesting(result: makeMappingResult(viewerBundleURL: try makeReferenceBundleWithAnnotationDatabase()))
+
+        let request = try vc.testBuildConsensusExportRequest()
+
+        XCTAssertEqual(request.chromosome, "beta")
+        XCTAssertEqual(request.suggestedName, "example-beta-consensus")
+        XCTAssertFalse(request.showDeletions)
+        XCTAssertTrue(request.showInsertions)
+    }
+
+    func testConsensusExportFallsBackToVisibleChromosomeWhenSelectionClears() throws {
+        let vc = MappingResultViewController()
+        _ = vc.view
+
+        vc.configureForTesting(result: makeMappingResult(viewerBundleURL: try makeReferenceBundleWithAnnotationDatabase()))
+        vc.testClearContigSelection()
+
+        let request = try vc.testBuildConsensusExportRequest()
+
+        XCTAssertEqual(request.chromosome, "chr1")
+        XCTAssertEqual(request.suggestedName, "example-chr1-consensus")
+    }
+
+    func testConsensusExportUsesEffectiveMaximumMapQFloor() throws {
+        let vc = MappingResultViewController()
+        _ = vc.view
+
+        vc.configureForTesting(result: makeMappingResult(viewerBundleURL: try makeReferenceBundleWithAnnotationDatabase()))
+        vc.testSetEmbeddedReadDisplaySettings(
+            minMapQ: 27,
+            consensusMinMapQ: 11
+        )
+
+        let request = try vc.testBuildConsensusExportRequest()
+
+        XCTAssertEqual(request.minMapQ, 27)
+    }
+
     private func makeMappingResult(viewerBundleURL: URL? = nil) -> MappingResult {
         MappingResult(
             mapper: .minimap2,

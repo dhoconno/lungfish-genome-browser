@@ -260,6 +260,44 @@ public final class MappingResultViewController: NSViewController {
         }
     }
 
+    func buildConsensusExportPayload() async throws -> (records: [String], suggestedName: String) {
+        let request = try buildConsensusExportRequest()
+        let consensus = try await embeddedViewerController.fetchMappingConsensusSequence(request)
+        let record = ">\(request.recordName)\n\(consensus)\n"
+        return ([record], request.suggestedName)
+    }
+
+    // TODO(2026-04-22): Add visible-viewport consensus export.
+    // TODO(2026-04-22): Add selected-annotation consensus export.
+    // TODO(2026-04-22): Add selected-region consensus export.
+    func buildConsensusExportRequest() throws -> MappingConsensusExportRequest {
+        guard let result = currentResult else {
+            throw NSError(
+                domain: "Lungfish",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "No mapping result loaded"]
+            )
+        }
+
+        let fallbackChromosome = embeddedViewerController.currentBundleDataProvider?
+            .chromosomeInfo(named: embeddedViewerController.referenceFrame?.chromosome ?? "")
+
+        return try MappingConsensusExportRequestBuilder.build(
+            sampleName: result.bamURL.deletingPathExtension().deletingPathExtension().lastPathComponent,
+            selectedContig: currentSelectedContig(),
+            fallbackChromosome: fallbackChromosome,
+            consensusMode: embeddedViewerController.viewerView.consensusModeSetting,
+            consensusMinDepth: embeddedViewerController.viewerView.consensusMinDepthSetting,
+            consensusMinMapQ: max(
+                embeddedViewerController.viewerView.minMapQSetting,
+                embeddedViewerController.viewerView.consensusMinMapQSetting
+            ),
+            consensusMinBaseQ: embeddedViewerController.viewerView.consensusMinBaseQSetting,
+            excludeFlags: embeddedViewerController.viewerView.excludeFlagsSetting,
+            useAmbiguity: embeddedViewerController.viewerView.consensusUseAmbiguitySetting
+        )
+    }
+
     private func rebuildEmbeddedAnnotationSearchIndex() {
         guard let bundle = embeddedViewerController.viewerView.currentReferenceBundle else {
             embeddedViewerController.annotationSearchIndex = nil
@@ -312,6 +350,12 @@ public final class MappingResultViewController: NSViewController {
         detailPlaceholderLabel.stringValue = message
         detailPlaceholderLabel.isHidden = false
         embeddedViewerController.view.isHidden = true
+    }
+
+    private func currentSelectedContig() -> MappingContigSummary? {
+        let selectedRow = contigTableView.tableView.selectedRow
+        guard selectedRow >= 0, selectedRow < contigTableView.displayedRows.count else { return nil }
+        return contigTableView.displayedRows[selectedRow]
     }
 }
 
@@ -369,6 +413,19 @@ extension MappingResultViewController {
     func testSelectContig(named name: String) {
         guard let row = contigTableView.displayedRows.firstIndex(where: { $0.contigName == name }) else { return }
         contigTableView.tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+    }
+
+    func testClearContigSelection() {
+        contigTableView.tableView.deselectAll(nil)
+    }
+
+    func testBuildConsensusExportRequest() throws -> MappingConsensusExportRequest {
+        try buildConsensusExportRequest()
+    }
+
+    func testSetEmbeddedReadDisplaySettings(minMapQ: Int, consensusMinMapQ: Int) {
+        embeddedViewerController.viewerView.minMapQSetting = minMapQ
+        embeddedViewerController.viewerView.consensusMinMapQSetting = consensusMinMapQ
     }
 }
 #endif
