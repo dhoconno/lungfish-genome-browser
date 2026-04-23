@@ -900,7 +900,7 @@ public final class MainMenu {
     func showFASTQMappingOperations(_ sender: Any?)
     func showFASTQAssemblyOperations(_ sender: Any?)
     func showFASTQClassificationOperations(_ sender: Any?)
-    func showBAMVariantCalling(_ sender: Any?)
+    @objc optional func showBAMVariantCalling(_ sender: Any?)
     func searchNCBI(_ sender: Any?)
     func searchSRA(_ sender: Any?)
     func searchPathoplexus(_ sender: Any?)
@@ -990,13 +990,6 @@ final class OperationsMenuDelegate: NSObject, NSMenuDelegate {
             menu.insertItem(menuItem, at: index)
         }
     }
-}
-
-@MainActor
-extension AppDelegate {
-    /// Placeholder selector for the Task 2 menu surface.
-    /// Menu action behavior is implemented separately.
-    @objc func showBAMVariantCalling(_ sender: Any?) {}
 }
 
 /// Help menu action handlers.
