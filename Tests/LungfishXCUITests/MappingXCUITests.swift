@@ -107,12 +107,34 @@ final class MappingXCUITests: XCTestCase {
         robot.clickPrimaryAction()
 
         robot.waitForAnalysisRow(prefix: "minimap2-", timeout: 30)
+        robot.waitForResultViewport()
         robot.pressResultZoomShortcut(.zoomIn)
         robot.pressResultZoomShortcut(.zoomOut)
         robot.pressResultZoomShortcut(.zoomToFit)
 
-        XCTAssertTrue(robot.resultView.waitForExistence(timeout: 10))
-        XCTAssertTrue(robot.resultTable.waitForExistence(timeout: 10))
+        robot.waitForResultViewport()
+    }
+
+    @MainActor
+    func testDeterministicMappingViewportDoesNotShowNestedBundleBrowser() throws {
+        let projectURL = try LungfishProjectFixtureBuilder.makeIlluminaMappingProject(
+            named: "MappingBundleModeFixture"
+        )
+        let robot = MappingRobot()
+        defer {
+            robot.app.terminate()
+            try? FileManager.default.removeItem(at: projectURL.deletingLastPathComponent())
+        }
+
+        robot.launch(opening: projectURL, backendMode: "deterministic")
+        robot.selectSidebarItem(named: "test_1.fastq.gz", extendingSelection: true)
+        robot.openMappingDialog()
+        robot.chooseMapper("minimap2")
+        robot.clickPrimaryAction()
+
+        robot.waitForAnalysisRow(prefix: "minimap2-", timeout: 30)
+        robot.waitForResultViewport()
+        XCTAssertFalse(robot.bundleBrowserView.waitForExistence(timeout: 1))
     }
 
     @MainActor
@@ -133,7 +155,7 @@ final class MappingXCUITests: XCTestCase {
         robot.clickPrimaryAction()
 
         robot.waitForAnalysisRow(prefix: "minimap2-", timeout: 30)
-        XCTAssertTrue(robot.resultView.waitForExistence(timeout: 10))
+        robot.waitForResultViewport()
 
         robot.clickInspectorSourceLink("test_1.fastq.gz")
         robot.waitForSelectedSidebarItem(containing: "test_1.fastq.gz")

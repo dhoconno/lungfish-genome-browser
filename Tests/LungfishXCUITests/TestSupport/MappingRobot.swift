@@ -59,7 +59,7 @@ struct MappingRobot {
         XCTAssertTrue(toolsMenu.waitForExistence(timeout: 5), file: file, line: line)
         toolsMenu.click()
 
-        let fastqOperationsMenu = app.menuItems["FASTQ Operations"]
+        let fastqOperationsMenu = app.menuItems["FASTQ/FASTA Operations"]
         XCTAssertTrue(fastqOperationsMenu.waitForExistence(timeout: 5), file: file, line: line)
         fastqOperationsMenu.click()
 
@@ -214,6 +214,19 @@ struct MappingRobot {
 
     var resultTable: XCUIElement {
         app.tables["mapping-result-contig-table"]
+    }
+
+    var bundleBrowserView: XCUIElement {
+        app.otherElements["bundle-browser-view"]
+    }
+
+    func waitForResultViewport(
+        timeout: TimeInterval = 10,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(resultView.waitForExistence(timeout: timeout), file: file, line: line)
+        XCTAssertTrue(resultTable.waitForExistence(timeout: timeout), file: file, line: line)
     }
 
     private func accessibilitySlug(for text: String) -> String {
