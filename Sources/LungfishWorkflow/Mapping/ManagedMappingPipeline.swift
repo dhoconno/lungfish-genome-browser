@@ -46,7 +46,7 @@ public enum ManagedMappingPipelineError: Error, LocalizedError, Sendable {
         case .stagingFailed(let message):
             return message
         case .inputNotFound(let url):
-            return "Input FASTQ not found: \(url.lastPathComponent)"
+            return "Input sequence file not found: \(url.lastPathComponent)"
         case .referenceNotFound(let url):
             return "Reference FASTA not found: \(url.lastPathComponent)"
         case .mapperNotInstalled(let tool):
@@ -86,7 +86,7 @@ public final class ManagedMappingPipeline: @unchecked Sendable {
         progress: ProgressHandler? = nil
     ) async throws -> MappingResult {
         let start = Date()
-        let prepared = try prepareExecution(for: request)
+        let prepared = try await prepareExecution(for: request)
         defer {
             for url in prepared.cleanupURLs {
                 try? FileManager.default.removeItem(at: url)
@@ -247,14 +247,14 @@ public final class ManagedMappingPipeline: @unchecked Sendable {
 
     static func validateCompatibility(for request: MappingRunRequest) throws {
         let inspection = MappingInputInspection.inspect(urls: request.inputFASTQURLs)
+        if inspection.mixedSequenceFormats {
+            throw ManagedMappingPipelineError.incompatibleSelection(
+                "Selected sequence inputs mix FASTA and FASTQ formats. Select one format per mapping run."
+            )
+        }
         if inspection.mixedReadClasses {
             throw ManagedMappingPipelineError.incompatibleSelection(
                 "Selected FASTQ inputs mix incompatible read classes. Select one read class per mapping run."
-            )
-        }
-        guard let readClass = inspection.readClass else {
-            throw ManagedMappingPipelineError.incompatibleSelection(
-                "Unable to detect a supported read class from the selected FASTQ inputs."
             )
         }
         guard let mode = MappingMode(rawValue: request.modeID) else {
@@ -263,9 +263,33 @@ public final class ManagedMappingPipeline: @unchecked Sendable {
             )
         }
 
+        let inputFormat = inspection.sequenceFormat
+            ?? (inspection.readClass != nil ? SequenceFormat.fastq : nil)
+
+        if inputFormat == .fasta {
+            let evaluation = MappingCompatibility.evaluate(
+                tool: request.tool,
+                mode: mode,
+                inputFormat: .fasta,
+                readClass: nil,
+                observedMaxReadLength: inspection.observedMaxReadLength
+            )
+            if case .blocked(let message) = evaluation.state {
+                throw ManagedMappingPipelineError.incompatibleSelection(message)
+            }
+            return
+        }
+
+        guard let readClass = inspection.readClass else {
+            throw ManagedMappingPipelineError.incompatibleSelection(
+                "Unable to detect a supported read class from the selected FASTQ inputs."
+            )
+        }
+
         let evaluation = MappingCompatibility.evaluate(
             tool: request.tool,
             mode: mode,
+            inputFormat: .fastq,
             readClass: readClass,
             observedMaxReadLength: inspection.observedMaxReadLength
         )
@@ -299,7 +323,13 @@ public final class ManagedMappingPipeline: @unchecked Sendable {
         }
     }
 
-    private func prepareExecution(for request: MappingRunRequest) throws -> PreparedMappingExecution {
+    private func prepareExecution(for request: MappingRunRequest) async throws -> PreparedMappingExecution {
+        let stagedInputs = try await MappingFASTAInputStager.stageSAMSafeFASTAInputsIfNeeded(
+            inputURLs: request.inputFASTQURLs,
+            projectURL: request.projectURL
+        )
+        let effectiveRequest = request.withInputFASTQURLs(stagedInputs.inputURLs)
+
         switch request.tool {
         case .bwaMem2, .bowtie2:
             let workspace = try ProjectTempDirectory.create(
@@ -307,22 +337,22 @@ public final class ManagedMappingPipeline: @unchecked Sendable {
                 in: request.projectURL
             )
             let referenceLocator = ReferenceLocator(
-                referenceURL: request.referenceFASTAURL,
+                referenceURL: effectiveRequest.referenceFASTAURL,
                 indexPrefixURL: workspace.appendingPathComponent("reference-index")
             )
             return PreparedMappingExecution(
-                request: request,
+                request: effectiveRequest,
                 referenceLocator: referenceLocator,
-                cleanupURLs: [workspace]
+                cleanupURLs: stagedInputs.cleanupURLs + [workspace]
             )
         case .minimap2, .bbmap:
             return PreparedMappingExecution(
-                request: request,
+                request: effectiveRequest,
                 referenceLocator: ReferenceLocator(
-                    referenceURL: request.referenceFASTAURL,
-                    indexPrefixURL: request.outputDirectory.appendingPathComponent(".mapping-index/reference-index")
+                    referenceURL: effectiveRequest.referenceFASTAURL,
+                    indexPrefixURL: effectiveRequest.outputDirectory.appendingPathComponent(".mapping-index/reference-index")
                 ),
-                cleanupURLs: []
+                cleanupURLs: stagedInputs.cleanupURLs
             )
         }
     }

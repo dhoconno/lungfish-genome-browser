@@ -13,9 +13,9 @@ import LungfishCore
 ///
 /// | Tier | Scale (bp/px) | Rendering |
 /// |------|---------------|-----------|
-/// | Coverage | > 10 | Forward/reverse stacked area chart |
-/// | Packed | 0.6 - 10 | Colored bars with strand indicators |
-/// | Base | < 0.6 | Geneious-style dots for matches, letters for mismatches |
+/// | Coverage | > 2.0 | Forward/reverse stacked area chart |
+/// | Packed | 0.6 < x <= 2.0 | Colored bars with strand indicators |
+/// | Base | <= 0.6 | Geneious-style dots for matches, letters for mismatches |
 ///
 /// ## Design Notes
 ///
@@ -55,8 +55,8 @@ public enum ReadTrackRenderer {
     static let minReadPixels: CGFloat = 2
 
     /// Zoom tier thresholds.
-    static let coverageThresholdBpPerPx: Double = 10
-    static let baseThresholdBpPerPx: Double = 0.6
+    static let coverageThresholdBpPerPx: Double = ReadViewportPolicy.coverageThresholdBpPerPx
+    static let baseThresholdBpPerPx: Double = ReadViewportPolicy.baseThresholdBpPerPx
     /// In base tier, switch from dot-mode matches to letter-mode matches once bases are clearly legible.
     static let matchLetterThresholdPxPerBase: Double = 4.0
 
@@ -114,13 +114,7 @@ public enum ReadTrackRenderer {
 
     /// Returns the appropriate zoom tier for the current scale.
     public static func zoomTier(scale: Double) -> ZoomTier {
-        if scale > coverageThresholdBpPerPx {
-            return .coverage
-        } else if scale > baseThresholdBpPerPx {
-            return .packed
-        } else {
-            return .base
-        }
+        ReadViewportPolicy.zoomTier(scale: scale)
     }
 
     /// Zoom tier for read rendering.

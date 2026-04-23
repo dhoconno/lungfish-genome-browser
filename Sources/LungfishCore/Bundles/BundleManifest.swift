@@ -116,6 +116,10 @@ public struct BundleManifest: Codable, Sendable, Equatable {
     /// Optional for backward compatibility with existing bundles.
     public let metadata: [MetadataGroup]?
 
+    /// Typed browser summary used to populate bundle browser rows quickly.
+    /// Optional so legacy manifests without this cache still decode successfully.
+    public let browserSummary: BundleBrowserSummary?
+
     // MARK: - Initialization
 
     /// Creates a new bundle manifest.
@@ -133,7 +137,8 @@ public struct BundleManifest: Codable, Sendable, Equatable {
         variants: [VariantTrackInfo] = [],
         tracks: [SignalTrackInfo] = [],
         alignments: [AlignmentTrackInfo] = [],
-        metadata: [MetadataGroup]? = nil
+        metadata: [MetadataGroup]? = nil,
+        browserSummary: BundleBrowserSummary? = nil
     ) {
         self.formatVersion = formatVersion
         self.name = name
@@ -149,10 +154,85 @@ public struct BundleManifest: Codable, Sendable, Equatable {
         self.tracks = tracks
         self.alignments = alignments
         self.metadata = metadata
+        self.browserSummary = browserSummary
     }
 
     /// Backward-compatible initializer preserved for existing call sites that
     /// do not supply `originBundlePath`.
+    public init(
+        formatVersion: String = "1.0",
+        name: String,
+        identifier: String,
+        description: String? = nil,
+        createdDate: Date = Date(),
+        modifiedDate: Date = Date(),
+        source: SourceInfo,
+        genome: GenomeInfo? = nil,
+        annotations: [AnnotationTrackInfo] = [],
+        variants: [VariantTrackInfo] = [],
+        tracks: [SignalTrackInfo] = [],
+        alignments: [AlignmentTrackInfo] = [],
+        metadata: [MetadataGroup]? = nil,
+        browserSummary: BundleBrowserSummary? = nil
+    ) {
+        self.init(
+            formatVersion: formatVersion,
+            name: name,
+            identifier: identifier,
+            description: description,
+            originBundlePath: nil,
+            createdDate: createdDate,
+            modifiedDate: modifiedDate,
+            source: source,
+            genome: genome,
+            annotations: annotations,
+            variants: variants,
+            tracks: tracks,
+            alignments: alignments,
+            metadata: metadata,
+            browserSummary: browserSummary
+        )
+    }
+
+    /// Backward-compatible initializer preserved for existing binaries and
+    /// call sites that pre-date `browserSummary` but include `originBundlePath`.
+    public init(
+        formatVersion: String = "1.0",
+        name: String,
+        identifier: String,
+        description: String? = nil,
+        originBundlePath: String? = nil,
+        createdDate: Date = Date(),
+        modifiedDate: Date = Date(),
+        source: SourceInfo,
+        genome: GenomeInfo? = nil,
+        annotations: [AnnotationTrackInfo] = [],
+        variants: [VariantTrackInfo] = [],
+        tracks: [SignalTrackInfo] = [],
+        alignments: [AlignmentTrackInfo] = [],
+        metadata: [MetadataGroup]? = nil
+    ) {
+        self.init(
+            formatVersion: formatVersion,
+            name: name,
+            identifier: identifier,
+            description: description,
+            originBundlePath: originBundlePath,
+            createdDate: createdDate,
+            modifiedDate: modifiedDate,
+            source: source,
+            genome: genome,
+            annotations: annotations,
+            variants: variants,
+            tracks: tracks,
+            alignments: alignments,
+            metadata: metadata,
+            browserSummary: nil
+        )
+    }
+
+    /// Backward-compatible initializer preserved for existing binaries and
+    /// call sites that pre-date `browserSummary`.
     public init(
         formatVersion: String = "1.0",
         name: String,
@@ -173,7 +253,6 @@ public struct BundleManifest: Codable, Sendable, Equatable {
             name: name,
             identifier: identifier,
             description: description,
-            originBundlePath: nil,
             createdDate: createdDate,
             modifiedDate: modifiedDate,
             source: source,
@@ -182,7 +261,8 @@ public struct BundleManifest: Codable, Sendable, Equatable {
             variants: variants,
             tracks: tracks,
             alignments: alignments,
-            metadata: metadata
+            metadata: metadata,
+            browserSummary: nil
         )
     }
 
@@ -203,6 +283,7 @@ public struct BundleManifest: Codable, Sendable, Equatable {
         case tracks
         case alignments
         case metadata
+        case browserSummary = "browser_summary"
     }
 
     // MARK: - Backward-Compatible Decoding
@@ -224,6 +305,7 @@ public struct BundleManifest: Codable, Sendable, Equatable {
         tracks = try container.decode([SignalTrackInfo].self, forKey: .tracks)
         alignments = try container.decodeIfPresent([AlignmentTrackInfo].self, forKey: .alignments) ?? []
         metadata = try container.decodeIfPresent([MetadataGroup].self, forKey: .metadata)
+        browserSummary = try container.decodeIfPresent(BundleBrowserSummary.self, forKey: .browserSummary)
     }
 }
 
@@ -928,7 +1010,8 @@ extension BundleManifest {
             variants: variants + [track],
             tracks: tracks,
             alignments: alignments,
-            metadata: metadata
+            metadata: metadata,
+            browserSummary: nil
         )
     }
 
@@ -963,7 +1046,8 @@ extension BundleManifest {
             variants: updatedVariants,
             tracks: tracks,
             alignments: alignments,
-            metadata: metadata
+            metadata: metadata,
+            browserSummary: nil
         )
     }
 
@@ -983,7 +1067,8 @@ extension BundleManifest {
             variants: variants,
             tracks: tracks,
             alignments: alignments + [track],
-            metadata: metadata
+            metadata: metadata,
+            browserSummary: nil
         )
     }
 
@@ -1003,7 +1088,53 @@ extension BundleManifest {
             variants: variants,
             tracks: tracks,
             alignments: alignments.filter { $0.id != id },
-            metadata: metadata
+            metadata: metadata,
+            browserSummary: nil
+        )
+    }
+
+    public func withSynthesizedBrowserSummaryIfNeeded() -> BundleManifest {
+        guard browserSummary == nil, let genome else { return self }
+
+        let mappedReadCounts = alignments.compactMap(\.mappedReadCount)
+        let totalMappedReads = mappedReadCounts.isEmpty ? nil : mappedReadCounts.reduce(0, +)
+        let synthesized = BundleBrowserSummary(
+            schemaVersion: 1,
+            aggregate: .init(
+                annotationTrackCount: annotations.count,
+                variantTrackCount: variants.count,
+                alignmentTrackCount: alignments.count,
+                totalMappedReads: totalMappedReads
+            ),
+            sequences: genome.chromosomes.map { chromosome in
+                BundleBrowserSequenceSummary(
+                    name: chromosome.name,
+                    displayDescription: chromosome.fastaDescription,
+                    length: chromosome.length,
+                    aliases: chromosome.aliases,
+                    isPrimary: chromosome.isPrimary,
+                    isMitochondrial: chromosome.isMitochondrial,
+                    metrics: nil
+                )
+            }
+        )
+
+        return BundleManifest(
+            formatVersion: formatVersion,
+            name: name,
+            identifier: identifier,
+            description: description,
+            originBundlePath: originBundlePath,
+            createdDate: createdDate,
+            modifiedDate: modifiedDate,
+            source: source,
+            genome: genome,
+            annotations: annotations,
+            variants: variants,
+            tracks: tracks,
+            alignments: alignments,
+            metadata: metadata,
+            browserSummary: synthesized
         )
     }
 
@@ -1014,7 +1145,7 @@ extension BundleManifest {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
-        let data = try encoder.encode(self)
+        let data = try encoder.encode(withSynthesizedBrowserSummaryIfNeeded())
         try data.write(to: manifestURL)
     }
 }

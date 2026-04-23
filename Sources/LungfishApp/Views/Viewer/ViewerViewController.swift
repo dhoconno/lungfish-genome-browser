@@ -65,6 +65,9 @@ public class ViewerViewController: NSViewController {
     /// FASTA collection browser (shown in place of sequence viewer for multi-sequence FASTA files)
     private var fastaCollectionController: FASTACollectionViewController?
 
+    /// Bundle browser (shown in place of sequence viewer for top-level bundle opens)
+    var bundleBrowserController: BundleBrowserViewController?
+
     /// Taxonomy classification browser (shown in place of sequence viewer for kreport results)
     var taxonomyViewController: TaxonomyViewController?
 
@@ -1530,6 +1533,9 @@ public class ViewerViewController: NSViewController {
     // MARK: - Collection Back Button
 
     private var collectionBackButton: NSButton?
+    var bundleBackNavigationButton: NSButton?
+    var bundleBackNavigationBar: NSView?
+    var bundleBackNavigationAction: (() -> Void)?
 
     /// Shows a navigation bar with "Back to Collection" above the viewer content.
     private func showCollectionBackButton(
@@ -1610,6 +1616,73 @@ public class ViewerViewController: NSViewController {
             annotations: annotations,
             sourceNames: sourceNames
         )
+    }
+
+    func showBundleBackNavigationButton(title: String, action: @escaping () -> Void) {
+        hideBundleBackNavigationButton()
+        bundleBackNavigationAction = action
+
+        let navBar = NSView()
+        navBar.translatesAutoresizingMaskIntoConstraints = false
+
+        let button = NSButton()
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.bezelStyle = .accessoryBarAction
+        button.image = NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "Back")
+        button.imagePosition = .imageLeading
+        button.title = title
+        button.font = .systemFont(ofSize: 12, weight: .medium)
+        button.setAccessibilityIdentifier("viewer-back-navigation-button")
+        button.target = self
+        button.action = #selector(bundleBackNavigationButtonTapped(_:))
+
+        let separator = NSBox()
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        separator.boxType = .separator
+
+        navBar.addSubview(button)
+        navBar.addSubview(separator)
+        view.addSubview(navBar)
+
+        NSLayoutConstraint.activate([
+            navBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            navBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            navBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            navBar.heightAnchor.constraint(equalToConstant: 28),
+
+            button.leadingAnchor.constraint(equalTo: navBar.leadingAnchor, constant: 6),
+            button.centerYAnchor.constraint(equalTo: navBar.centerYAnchor),
+
+            separator.leadingAnchor.constraint(equalTo: navBar.leadingAnchor),
+            separator.trailingAnchor.constraint(equalTo: navBar.trailingAnchor),
+            separator.bottomAnchor.constraint(equalTo: navBar.bottomAnchor),
+        ])
+
+        bundleBackNavigationButton = button
+        bundleBackNavigationBar = navBar
+    }
+
+    func hideBundleBackNavigationButton() {
+        bundleBackNavigationBar?.removeFromSuperview()
+        bundleBackNavigationBar = nil
+        bundleBackNavigationButton = nil
+        bundleBackNavigationAction = nil
+    }
+
+    @objc func bundleBackNavigationButtonTapped(_ sender: Any?) {
+        bundleBackNavigationAction?()
+    }
+
+    func hideBundleBrowserView() {
+        guard let controller = bundleBrowserController else { return }
+        controller.view.removeFromSuperview()
+        controller.removeFromParent()
+        bundleBrowserController = nil
+
+        enhancedRulerView.isHidden = false
+        viewerView.isHidden = false
+        headerView.isHidden = false
+        statusBar.isHidden = false
     }
 
     /// Invalidates the offscreen annotation tile so it will be re-rendered
@@ -1696,6 +1769,7 @@ public class ViewerViewController: NSViewController {
 
         // Clear back button from collection drill-down
         hideCollectionBackButton()
+        hideBundleBackNavigationButton()
 
         // Cancel deferred redraws to prevent stale renders
         layoutSettleWorkItem?.cancel()
@@ -2681,5 +2755,18 @@ public class ReferenceFrame {
         end = newEnd
     }
 }
+
+#if DEBUG
+extension ViewerViewController {
+    var testBundleBrowserController: BundleBrowserViewController? { bundleBrowserController }
+    var testBundleBackNavigationAccessibilityIdentifier: String? {
+        bundleBackNavigationButton?.accessibilityIdentifier()
+    }
+
+    func testTapBundleBackNavigation() {
+        bundleBackNavigationButtonTapped(nil)
+    }
+}
+#endif
 
 // AnnotationPopoverView extracted to AnnotationPopoverView.swift

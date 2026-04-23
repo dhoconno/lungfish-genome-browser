@@ -52,21 +52,22 @@ final class ReadTrackRendererTests: XCTestCase {
     // MARK: - Zoom Tier Detection
 
     func testZoomTierCoverageAboveThreshold() {
-        // > 10 bp/px → coverage
+        // > 2.0 bp/px -> coverage
+        XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 2.01), .coverage)
         XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 11.0), .coverage)
         XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 100.0), .coverage)
         XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 1000.0), .coverage)
     }
 
     func testZoomTierCoverageAtThreshold() {
-        // Exactly at threshold: > 10 → coverage
-        XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 10.001), .coverage)
+        // Exactly at threshold remains packed.
+        XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 2.0), .packed)
     }
 
     func testZoomTierPackedBetweenThresholds() {
-        // 0.6 < scale <= 10 → packed
-        XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 10.0), .packed)
-        XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 5.0), .packed)
+        // 0.6 < scale <= 2.0 -> packed
+        XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 2.0), .packed)
+        XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 1.5), .packed)
         XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 1.0), .packed)
         XCTAssertEqual(ReadTrackRenderer.zoomTier(scale: 0.61), .packed)
     }
@@ -259,9 +260,17 @@ final class ReadTrackRendererTests: XCTestCase {
     }
 
     func testZoomThresholdConstants() {
-        XCTAssertEqual(ReadTrackRenderer.coverageThresholdBpPerPx, 10)
-        XCTAssertEqual(ReadTrackRenderer.baseThresholdBpPerPx, 0.6)
+        XCTAssertEqual(ReadViewportPolicy.coverageThresholdBpPerPx, 2.0)
+        XCTAssertEqual(ReadTrackRenderer.coverageThresholdBpPerPx, ReadViewportPolicy.coverageThresholdBpPerPx)
+        XCTAssertEqual(ReadTrackRenderer.baseThresholdBpPerPx, ReadViewportPolicy.baseThresholdBpPerPx)
         XCTAssertEqual(ReadTrackRenderer.matchLetterThresholdPxPerBase, 4.0)
+    }
+
+    func testCoverageTierBeginsAboveTwoBpPerPx() {
+        XCTAssertEqual(ReadViewportPolicy.coverageThresholdBpPerPx, 2.0)
+        XCTAssertEqual(ReadViewportPolicy.zoomTier(scale: 2.01), .coverage)
+        XCTAssertEqual(ReadViewportPolicy.zoomTier(scale: 2.0), .packed)
+        XCTAssertEqual(ReadViewportPolicy.zoomTier(scale: 0.6), .base)
     }
 
     func testShouldRenderMatchAsDotWhenZoomIsTight() {

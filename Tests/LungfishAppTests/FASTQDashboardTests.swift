@@ -492,6 +492,21 @@ final class FASTQDashboardTests: XCTestCase {
     }
 
     @MainActor
+    func testFASTQOperationInputResolutionAcceptsReferenceBundleSelection() throws {
+        let bundleURL = try makeReferenceBundle(
+            named: "selection-reference",
+            fastaFilename: "genome/sequence.fa.gz"
+        )
+
+        let resolved = AppDelegate.resolveFASTQOperationInputURLs(
+            selectedURLs: [bundleURL],
+            currentFASTQURL: nil
+        )
+
+        XCTAssertEqual(resolved, [bundleURL.standardizedFileURL])
+    }
+
+    @MainActor
     func testHumanScrubberInstallPromptRetriesOperationAfterInstall() async throws {
         let controller = FASTQDatasetViewController()
         _ = controller.view
@@ -867,5 +882,46 @@ final class FASTQDashboardTests: XCTestCase {
             return candidate
         }
         throw XCTSkip("Bundled deacon-panhuman manifest not found at \(candidate.path)")
+    }
+
+    private func makeReferenceBundle(
+        named bundleName: String,
+        fastaFilename: String
+    ) throws -> URL {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "fastq-dashboard-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let bundleURL = root.appendingPathComponent("\(bundleName).lungfishref", isDirectory: true)
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+
+        let fastaURL = bundleURL.appendingPathComponent(fastaFilename)
+        try FileManager.default.createDirectory(
+            at: fastaURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try ">contig1\nAACCGGTT\n".write(to: fastaURL, atomically: true, encoding: .utf8)
+        try "contig1\t8\t9\t8\t9\n".write(
+            to: bundleURL.appendingPathComponent("\(fastaFilename).fai"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let manifest = BundleManifest(
+            name: bundleName,
+            identifier: "org.lungfish.\(bundleName)",
+            source: SourceInfo(organism: "Test organism", assembly: "Test assembly"),
+            genome: GenomeInfo(
+                path: fastaFilename,
+                indexPath: "\(fastaFilename).fai",
+                totalLength: 8,
+                chromosomes: []
+            )
+        )
+        try manifest.save(to: bundleURL)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: root)
+        }
+        return bundleURL
     }
 }

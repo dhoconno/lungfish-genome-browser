@@ -588,8 +588,8 @@ public final class MainMenu {
         toolsMenuItem.identifier = NSUserInterfaceItemIdentifier(MainMenuAccessibilityID.toolsMenu)
         let toolsMenu = NSMenu(title: "Tools")
 
-        let fastqOperationsItem = NSMenuItem(title: "FASTQ Operations", action: nil, keyEquivalent: "")
-        let fastqOperationsMenu = NSMenu(title: "FASTQ Operations")
+        let fastqOperationsItem = NSMenuItem(title: "FASTQ/FASTA Operations", action: nil, keyEquivalent: "")
+        let fastqOperationsMenu = NSMenu(title: "FASTQ/FASTA Operations")
         fastqOperationsMenu.addItem(
             withTitle: "QC & Reporting…",
             action: #selector(ToolsMenuActions.showFASTQQCReportingOperations(_:)),

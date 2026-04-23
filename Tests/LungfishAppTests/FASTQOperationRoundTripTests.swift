@@ -227,6 +227,66 @@ final class FASTQOperationRoundTripTests: XCTestCase {
         }
     }
 
+    func testLengthFilterFromFASTAReMaterializesAsFASTA() async throws {
+        try await requireManagedTool(.seqkit)
+
+        let tempDir = try FASTQOperationTestHelper.makeTempDir(prefix: "LengthFilterFASTA")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let bundleURL = tempDir.appendingPathComponent(
+            "root-fasta.\(FASTQBundle.directoryExtension)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+
+        let fastaFilename = "reads.fasta"
+        let fastaURL = bundleURL.appendingPathComponent(fastaFilename)
+        try """
+        >short
+        AACCGGTT
+        >long
+        AACCGGTTAACCGGTT
+        """.write(to: fastaURL, atomically: true, encoding: .utf8)
+
+        let manifest = FASTQDerivedBundleManifest(
+            name: "root-fasta",
+            parentBundleRelativePath: ".",
+            rootBundleRelativePath: ".",
+            rootFASTQFilename: fastaFilename,
+            payload: .fullFASTA(fastaFilename: fastaFilename),
+            lineage: [],
+            operation: FASTQDerivativeOperation(kind: .searchText, query: "fasta-fixture"),
+            cachedStatistics: .placeholder(readCount: 2, baseCount: 24),
+            pairingMode: nil,
+            sequenceFormat: .fasta
+        )
+        try FASTQBundle.saveDerivedManifest(manifest, in: bundleURL)
+
+        let service = FASTQDerivativeService()
+        let derivedURL = try await service.createDerivative(
+            from: bundleURL,
+            request: .lengthFilter(min: 12, max: nil),
+            progress: nil
+        )
+
+        let derivedManifest = try XCTUnwrap(FASTQBundle.loadDerivedManifest(in: derivedURL))
+        XCTAssertEqual(derivedManifest.sequenceFormat, .fasta)
+
+        let materializedDir = try FASTQOperationTestHelper.makeTempDir(prefix: "LengthFilterFASTATmp")
+        defer { try? FileManager.default.removeItem(at: materializedDir) }
+
+        let materializedURL = try await service.materializeDatasetFASTQ(
+            fromBundle: derivedURL,
+            tempDirectory: materializedDir,
+            progress: nil
+        )
+
+        XCTAssertEqual(SequenceFormat.from(url: materializedURL), .fasta)
+        let materializedContents = try String(contentsOf: materializedURL, encoding: .utf8)
+        XCTAssertTrue(materializedContents.contains(">long"))
+        XCTAssertFalse(materializedContents.contains(">short"))
+    }
+
     func testSearchTextRoundTrip() async throws {
         let tempDir = try FASTQOperationTestHelper.makeTempDir(prefix: "SearchText")
         defer { try? FileManager.default.removeItem(at: tempDir) }

@@ -14,7 +14,7 @@ enum AssembleInputResolutionError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unreadableBundlePayload(let path):
-            return "FASTQ bundle does not contain a readable FASTQ payload: \(path)"
+            return "Sequence bundle does not contain a readable FASTQ or FASTA payload: \(path)"
         }
     }
 }
@@ -24,12 +24,12 @@ struct AssembleCommand: AsyncParsableCommand {
         commandName: "assemble",
         abstract: "Run de novo genome assembly with the managed assembly pack",
         discussion: """
-            Assemble FASTQ reads with a managed assembler from the Genome Assembly pack.
+            Assemble sequence reads with a managed assembler from the Genome Assembly pack.
             The CLI uses the same tool/read-type compatibility model as the app.
             """
     )
 
-    @Argument(help: "Input FASTQ file(s). Provide two files with --paired for paired-end Illumina reads.")
+    @Argument(help: "Input sequence file(s). Provide two files with --paired for paired-end Illumina reads.")
     var fastqFiles: [String]
 
     @Option(name: .customLong("assembler"), help: "Assembler to run: spades, megahit, skesa, flye, hifiasm")
@@ -44,7 +44,7 @@ struct AssembleCommand: AsyncParsableCommand {
     @Option(name: [.customLong("project-name"), .customLong("name")], help: "Project name for the assembly")
     var projectName: String?
 
-    @Flag(name: .customLong("paired"), help: "Treat the two input FASTQ files as paired-end mates")
+    @Flag(name: .customLong("paired"), help: "Treat the two input sequence files as paired-end mates")
     var pairedEnd: Bool = false
 
     @Option(name: [.customLong("memory-gb"), .customLong("memory")], help: "Memory budget in GB when the selected assembler supports it")
@@ -84,7 +84,7 @@ struct AssembleCommand: AsyncParsableCommand {
         }
 
         if pairedEnd && inputURLs.count != 2 {
-            print(formatter.error("Paired-end assembly requires exactly two FASTQ inputs."))
+            print(formatter.error("Paired-end assembly requires exactly two sequence inputs."))
             throw ExitCode.failure
         }
 
@@ -239,15 +239,10 @@ struct AssembleCommand: AsyncParsableCommand {
 
     static func resolveExecutionInputURLs(for inputURLs: [URL]) throws -> [URL] {
         try inputURLs.map { inputURL in
-            let standardizedInputURL = inputURL.standardizedFileURL
-            guard FASTQBundle.isBundleURL(standardizedInputURL) else {
-                return standardizedInputURL
+            guard let resolvedURL = SequenceInputResolver.resolvePrimarySequenceURL(for: inputURL) else {
+                throw AssembleInputResolutionError.unreadableBundlePayload(inputURL.standardizedFileURL.path)
             }
-
-            guard let resolvedFASTQURL = FASTQBundle.resolvePrimaryFASTQURL(for: standardizedInputURL) else {
-                throw AssembleInputResolutionError.unreadableBundlePayload(standardizedInputURL.path)
-            }
-            return resolvedFASTQURL
+            return resolvedURL.standardizedFileURL
         }
     }
 }

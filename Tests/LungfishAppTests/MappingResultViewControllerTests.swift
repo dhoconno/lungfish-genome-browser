@@ -100,6 +100,15 @@ final class MappingResultViewControllerTests: XCTestCase {
         XCTAssertEqual(embeddedViewer.annotationSearchIndex?.entryCount, 1)
     }
 
+    func testEmbeddedViewerLoadsDirectSequenceModeInsteadOfBundleBrowser() throws {
+        let vc = MappingResultViewController()
+        _ = vc.view
+
+        vc.configureForTesting(result: makeMappingResult(viewerBundleURL: try makeReferenceBundleWithAnnotationDatabase()))
+
+        XCTAssertFalse(vc.testEmbeddedViewerShowsBundleBrowser)
+    }
+
     func testEmbeddedViewerNotifiesHostWhenReferenceBundleLoads() throws {
         let vc = MappingResultViewController()
         _ = vc.view

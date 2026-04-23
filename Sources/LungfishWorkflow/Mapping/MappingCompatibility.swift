@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import LungfishIO
 
 public enum MappingCompatibilityState: Sendable, Equatable {
     case allowed
@@ -12,19 +13,22 @@ public enum MappingCompatibilityState: Sendable, Equatable {
 public struct MappingCompatibilityEvaluation: Sendable, Equatable {
     public let tool: MappingTool
     public let mode: MappingMode
-    public let readClass: MappingReadClass
+    public let inputFormat: SequenceFormat
+    public let readClass: MappingReadClass?
     public let observedMaxReadLength: Int?
     public let state: MappingCompatibilityState
 
     public init(
         tool: MappingTool,
         mode: MappingMode,
-        readClass: MappingReadClass,
+        inputFormat: SequenceFormat,
+        readClass: MappingReadClass?,
         observedMaxReadLength: Int?,
         state: MappingCompatibilityState
     ) {
         self.tool = tool
         self.mode = mode
+        self.inputFormat = inputFormat
         self.readClass = readClass
         self.observedMaxReadLength = observedMaxReadLength
         self.state = state
@@ -45,14 +49,38 @@ public enum MappingCompatibility {
     public static func evaluate(
         tool: MappingTool,
         mode: MappingMode,
-        readClass: MappingReadClass,
+        inputFormat: SequenceFormat = .fastq,
+        readClass: MappingReadClass?,
         observedMaxReadLength: Int? = nil
     ) -> MappingCompatibilityEvaluation {
         let state: MappingCompatibilityState
 
         if !mode.isValid(for: tool) {
             state = .blocked("\(mode.displayName) mode is not available for \(tool.displayName).")
+        } else if inputFormat == .fasta {
+            switch tool {
+            case .minimap2, .bwaMem2, .bowtie2:
+                state = .allowed
+            case .bbmap:
+                state = bbmapState(
+                    mode: mode,
+                    readClass: nil,
+                    observedMaxReadLength: observedMaxReadLength,
+                    inputFormat: inputFormat
+                )
+            }
         } else {
+            guard let readClass else {
+                state = .blocked("Unable to detect a supported read class from the selected FASTQ inputs.")
+                return MappingCompatibilityEvaluation(
+                    tool: tool,
+                    mode: mode,
+                    inputFormat: inputFormat,
+                    readClass: nil,
+                    observedMaxReadLength: observedMaxReadLength,
+                    state: state
+                )
+            }
             switch tool {
             case .minimap2:
                 state = minimap2State(mode: mode, readClass: readClass)
@@ -72,6 +100,7 @@ public enum MappingCompatibility {
         return MappingCompatibilityEvaluation(
             tool: tool,
             mode: mode,
+            inputFormat: inputFormat,
             readClass: readClass,
             observedMaxReadLength: observedMaxReadLength,
             state: state
@@ -103,8 +132,9 @@ public enum MappingCompatibility {
 
     private static func bbmapState(
         mode: MappingMode,
-        readClass: MappingReadClass,
-        observedMaxReadLength: Int?
+        readClass: MappingReadClass?,
+        observedMaxReadLength: Int?,
+        inputFormat: SequenceFormat = .fastq
     ) -> MappingCompatibilityState {
         switch mode {
         case .bbmapStandard:
@@ -113,7 +143,7 @@ public enum MappingCompatibility {
             }
             return .allowed
         case .bbmapPacBio:
-            guard readClass == .pacBioHiFi || readClass == .pacBioCLR else {
+            guard inputFormat == .fasta || readClass == .pacBioHiFi || readClass == .pacBioCLR else {
                 return .blocked("BBMap PacBio mode is only available for PacBio-class reads in v1.")
             }
             if let observedMaxReadLength, observedMaxReadLength > bbmapPacBioMaxReadLength {

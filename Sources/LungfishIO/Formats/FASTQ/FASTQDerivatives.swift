@@ -325,12 +325,14 @@ public enum FASTQDerivativeOperationKind: String, Codable, Sendable, CaseIterabl
     public var supportsFASTA: Bool {
         switch self {
         case .subsampleProportion, .subsampleCount, .lengthFilter,
-             .searchText, .searchMotif, .deduplicate, .fixedTrim,
-             .orient, .contaminantFilter, .sequencePresenceFilter:
+             .searchText, .searchMotif, .deduplicate, .adapterTrim,
+             .fixedTrim, .contaminantFilter, .primerRemoval,
+             .demultiplex, .orient, .sequencePresenceFilter,
+             .humanReadScrub:
             return true
-        case .qualityTrim, .adapterTrim, .pairedEndMerge,
-             .pairedEndRepair, .primerRemoval, .errorCorrection,
-             .interleaveReformat, .demultiplex, .humanReadScrub:
+        case .qualityTrim, .pairedEndMerge,
+             .pairedEndRepair, .errorCorrection,
+             .interleaveReformat:
             return false
         }
     }

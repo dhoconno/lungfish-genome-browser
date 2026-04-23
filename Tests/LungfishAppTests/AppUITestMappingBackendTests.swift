@@ -1,5 +1,6 @@
 import XCTest
 @testable import LungfishApp
+@testable import LungfishCore
 import LungfishWorkflow
 
 final class AppUITestMappingBackendTests: XCTestCase {
@@ -65,5 +66,46 @@ final class AppUITestMappingBackendTests: XCTestCase {
             XCTAssertEqual(provenance.viewerBundlePath, written.viewerBundleURL?.standardizedFileURL.path)
             XCTAssertEqual(provenance.commandInvocations.first?.label, tool.displayName)
         }
+    }
+
+    func testWriteResultSynthesizesSingleSequenceViewerBundleForMultiContigReference() throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("mapping-backend-multicontig-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+
+        let referenceURL = tempRoot.appendingPathComponent("ref.fasta")
+        let referenceFASTA = """
+            >chr1 primary
+            ACGTACGTACGTACGT
+            >chr2 secondary
+            TTTTCCCCAAAAGGGG
+            """
+        try referenceFASTA.write(to: referenceURL, atomically: true, encoding: .utf8)
+
+        let inputURL = tempRoot.appendingPathComponent("reads.fastq.gz")
+        try Data().write(to: inputURL)
+
+        let outputDirectory = tempRoot.appendingPathComponent("out-minimap2", isDirectory: true)
+        let request = MappingRunRequest(
+            tool: .minimap2,
+            modeID: MappingMode.defaultShortRead.id,
+            inputFASTQURLs: [inputURL],
+            referenceFASTAURL: referenceURL,
+            projectURL: nil,
+            outputDirectory: outputDirectory,
+            sampleName: "sample",
+            threads: 4
+        )
+
+        let written = try AppUITestMappingBackend.writeResult(for: request)
+        let viewerBundleURL = try XCTUnwrap(written.viewerBundleURL)
+        let manifest = try BundleManifest.load(from: viewerBundleURL)
+
+        XCTAssertEqual(written.contigs.map(\.contigName), ["chr1"])
+        XCTAssertEqual(manifest.genome?.chromosomes.map(\.name), ["chr1"])
+        XCTAssertEqual(manifest.browserSummary?.sequences.map(\.name), ["chr1"])
+        XCTAssertEqual(manifest.browserSummary?.aggregate.alignmentTrackCount, 0)
     }
 }

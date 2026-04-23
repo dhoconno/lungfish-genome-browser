@@ -4,56 +4,78 @@
 
 import Compression
 import Foundation
+import LungfishIO
 
 public struct MappingInputInspection: Sendable, Equatable {
     public let readClass: MappingReadClass?
     public let observedMaxReadLength: Int?
     public let mixedReadClasses: Bool
+    public let sequenceFormat: SequenceFormat?
+    public let mixedSequenceFormats: Bool
 
     public init(
         readClass: MappingReadClass?,
         observedMaxReadLength: Int?,
-        mixedReadClasses: Bool
+        mixedReadClasses: Bool,
+        sequenceFormat: SequenceFormat?,
+        mixedSequenceFormats: Bool
     ) {
         self.readClass = readClass
         self.observedMaxReadLength = observedMaxReadLength
         self.mixedReadClasses = mixedReadClasses
+        self.sequenceFormat = sequenceFormat
+        self.mixedSequenceFormats = mixedSequenceFormats
     }
 
     public static func inspect(urls: [URL]) -> MappingInputInspection {
         var detectedClasses: Set<MappingReadClass> = []
+        var detectedFormats: Set<SequenceFormat> = []
         var maxReadLength = 0
 
         for url in urls {
-            guard let fastqURL = MappingReadClass.resolveFASTQURL(forInputURL: url) else {
+            guard let resolvedInput = resolveSequenceInput(for: url) else {
                 continue
             }
-            if let readClass = MappingReadClass.detect(fromFASTQ: fastqURL) {
-                detectedClasses.insert(readClass)
+            detectedFormats.insert(resolvedInput.format)
+
+            switch resolvedInput.format {
+            case .fastq:
+                if let readClass = MappingReadClass.detect(fromFASTQ: resolvedInput.url) {
+                    detectedClasses.insert(readClass)
+                }
+                maxReadLength = max(maxReadLength, observedReadLength(fromFASTQ: resolvedInput.url) ?? 0)
+            case .fasta:
+                maxReadLength = max(maxReadLength, observedSequenceLength(fromFASTA: resolvedInput.url) ?? 0)
             }
-            maxReadLength = max(maxReadLength, observedReadLength(fromFASTQ: fastqURL) ?? 0)
         }
 
         return MappingInputInspection(
             readClass: detectedClasses.count == 1 ? detectedClasses.first : nil,
             observedMaxReadLength: maxReadLength > 0 ? maxReadLength : nil,
-            mixedReadClasses: detectedClasses.count > 1
+            mixedReadClasses: detectedClasses.count > 1,
+            sequenceFormat: detectedFormats.count == 1 ? detectedFormats.first : nil,
+            mixedSequenceFormats: detectedFormats.count > 1
         )
     }
 
-    private static func observedReadLength(fromFASTQ url: URL) -> Int? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
-        defer { try? handle.close() }
-        guard let data = try? handle.read(upToCount: 32_768), !data.isEmpty else { return nil }
+    private struct ResolvedSequenceInput: Sendable, Equatable {
+        let url: URL
+        let format: SequenceFormat
+    }
 
-        let text: String?
-        if data.count >= 2, data[0] == 0x1F, data[1] == 0x8B {
-            text = decompressGzipPrefix(data: data).flatMap { String(data: $0, encoding: .utf8) }
-        } else {
-            text = String(data: data, encoding: .utf8)
+    private static func resolveSequenceInput(for inputURL: URL) -> ResolvedSequenceInput? {
+        guard let resolvedURL = SequenceInputResolver.resolvePrimarySequenceURL(for: inputURL) else {
+            return nil
         }
+        guard let format = SequenceInputResolver.inputSequenceFormat(for: inputURL)
+            ?? SequenceFormat.from(url: resolvedURL) else {
+            return nil
+        }
+        return ResolvedSequenceInput(url: resolvedURL, format: format)
+    }
 
-        guard let text else { return nil }
+    private static func observedReadLength(fromFASTQ url: URL) -> Int? {
+        guard let text = readPrefixText(from: url, byteCount: 32_768) else { return nil }
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
         var longest = 0
         var lineIndex = 0
@@ -64,6 +86,38 @@ public struct MappingInputInspection: Sendable, Equatable {
             lineIndex += 1
         }
         return longest > 0 ? longest : nil
+    }
+
+    private static func observedSequenceLength(fromFASTA url: URL) -> Int? {
+        guard let text = readPrefixText(from: url, byteCount: 32_768) else { return nil }
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        var longest = 0
+        var currentLength = 0
+
+        for line in lines {
+            if line.hasPrefix(">") {
+                longest = max(longest, currentLength)
+                currentLength = 0
+            } else {
+                currentLength += line.count
+            }
+        }
+
+        longest = max(longest, currentLength)
+        return longest > 0 ? longest : nil
+    }
+
+    private static func readPrefixText(from url: URL, byteCount: Int) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: byteCount), !data.isEmpty else { return nil }
+
+        if data.count >= 2, data[0] == 0x1F, data[1] == 0x8B {
+            guard let decompressed = decompressGzipPrefix(data: data) else { return nil }
+            return String(data: decompressed, encoding: .utf8)
+        }
+
+        return String(data: data, encoding: .utf8)
     }
 
     private static func decompressGzipPrefix(data: Data) -> Data? {

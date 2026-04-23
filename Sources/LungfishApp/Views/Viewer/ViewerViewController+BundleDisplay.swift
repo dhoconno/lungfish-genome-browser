@@ -22,51 +22,105 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
 
     // MARK: - Bundle Display
 
+    private struct BundleDisplayContext {
+        let url: URL
+        let manifest: BundleManifest
+        let bundle: ReferenceBundle
+        let provider: BundleDataProvider
+        let viewState: BundleViewState
+        let chromosomes: [ChromosomeInfo]
+    }
+
     /// Displays a reference genome bundle in the viewer with a chromosome navigator.
     ///
     /// - Parameter url: URL of the `.lungfishref` bundle directory
     /// - Throws: Error if the manifest cannot be loaded or the bundle is invalid
     public func displayBundle(at url: URL) throws {
-        // Save current bundle's view state before switching (flushes color overrides, nav state, etc.)
-        saveCurrentViewState()
-        contentMode = .genomics
+        try displayBundle(at: url, mode: .browse)
+    }
 
+    /// Displays a reference genome bundle using an explicit top-level browser or direct sequence mode.
+    public func displayBundle(at url: URL, mode: BundleDisplayMode) throws {
+        saveCurrentViewState()
+        let context = try loadBundleDisplayContext(at: url)
+
+        switch mode {
+        case .browse:
+            let loadResult = try BundleBrowserLoader().load(bundleURL: context.url, manifest: context.manifest)
+            activateBundleDisplayContext(context)
+            displayBundleBrowser(
+                summary: loadResult.summary,
+                context: context,
+                restoredState: nil,
+                publishBundleDidLoad: true
+            )
+        case .sequence(let name, let restoreViewState):
+            activateBundleDisplayContext(context)
+            try displayBundleSequence(
+                preferredSequenceName: name,
+                context: context,
+                installChromosomeNavigator: false,
+                restoreViewState: restoreViewState
+            )
+        }
+    }
+
+    private func loadBundleDisplayContext(at url: URL) throws -> BundleDisplayContext {
         bundleLogger.info("displayBundle: Opening bundle at '\(url.lastPathComponent, privacy: .public)'")
 
-        // Load and validate manifest
         let manifest = try BundleManifest.load(from: url)
         let validationErrors = manifest.validate()
         if !validationErrors.isEmpty {
-            let messages = validationErrors.map { $0.localizedDescription }.joined(separator: "; ")
+            let messages = validationErrors.map(\.localizedDescription).joined(separator: "; ")
             bundleLogger.error("displayBundle: Manifest validation failed: \(messages, privacy: .public)")
             throw DocumentLoadError.parseError("Bundle validation failed: \(messages)")
         }
 
-        // Create data provider
         let provider = BundleDataProvider(bundleURL: url, manifest: manifest)
-        currentBundleDataProvider = provider
-        currentBundleURL = url
 
-        // Load persisted view state. If missing, seed from app-level defaults.
         let viewStateURL = url.appendingPathComponent(BundleViewState.filename)
-        let hasPersistedViewState = FileManager.default.fileExists(atPath: viewStateURL.path)
-        let viewState = hasPersistedViewState
+        let viewState = FileManager.default.fileExists(atPath: viewStateURL.path)
             ? BundleViewState.load(from: url)
             : Self.defaultBundleViewStateFromAppSettings()
-        currentBundleViewState = viewState
-        bundleLogger.info("displayBundle: Loaded view state (overrides=\(viewState.typeColorOverrides.count), chrom=\(viewState.lastChromosome ?? "none", privacy: .public))")
+        bundleLogger.info(
+            "displayBundle: Loaded view state (overrides=\(viewState.typeColorOverrides.count), chrom=\(viewState.lastChromosome ?? "none", privacy: .public))"
+        )
 
-        // Apply persisted annotation display settings
-        showAnnotations = viewState.showAnnotations
-        annotationDisplayHeight = CGFloat(viewState.annotationHeight)
-        annotationDisplaySpacing = CGFloat(viewState.annotationSpacing)
-        visibleAnnotationTypes = viewState.visibleAnnotationTypes
-        isRNAMode = viewState.isRNAMode
-
-        // Create reference bundle with pre-loaded manifest (synchronous)
         let bundle = ReferenceBundle(url: url, manifest: manifest)
+        let chromosomes = resolvedChromosomes(for: manifest, bundle: bundle)
 
-        // Hide any non-bundle views and ensure genomics viewer is visible
+        return BundleDisplayContext(
+            url: url,
+            manifest: manifest,
+            bundle: bundle,
+            provider: provider,
+            viewState: viewState,
+            chromosomes: chromosomes
+        )
+    }
+
+    private func activateBundleDisplayContext(_ context: BundleDisplayContext) {
+        contentMode = .genomics
+        currentBundleDataProvider = context.provider
+        currentBundleURL = context.url
+        currentBundleViewState = context.viewState
+        showAnnotations = context.viewState.showAnnotations
+        annotationDisplayHeight = CGFloat(context.viewState.annotationHeight)
+        annotationDisplaySpacing = CGFloat(context.viewState.annotationSpacing)
+        visibleAnnotationTypes = context.viewState.visibleAnnotationTypes
+        isRNAMode = context.viewState.isRNAMode
+    }
+
+    private func resolvedChromosomes(for manifest: BundleManifest, bundle: ReferenceBundle) -> [ChromosomeInfo] {
+        var chromosomes = manifest.genome?.chromosomes ?? []
+        if chromosomes.isEmpty && !manifest.variants.isEmpty {
+            chromosomes = Self.synthesizeChromosomesFromVariants(bundle: bundle)
+            bundleLogger.info("displayBundle: Synthesized \(chromosomes.count) chromosomes from variant data")
+        }
+        return chromosomes
+    }
+
+    private func hideNonBundleViews() {
         hideQuickLookPreview()
         hideFASTQDatasetView()
         hideVCFDatasetView()
@@ -78,109 +132,199 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
         hideNvdView()
         hideAssemblyView()
         hideMappingView()
+    }
 
-        // Get chromosome list: from genome if available, otherwise synthesize from variant databases
-        var chromosomes = manifest.genome?.chromosomes ?? []
-        if chromosomes.isEmpty && !manifest.variants.isEmpty {
-            chromosomes = Self.synthesizeChromosomesFromVariants(bundle: bundle)
-            bundleLogger.info("displayBundle: Synthesized \(chromosomes.count) chromosomes from variant data")
+    private func displayBundleBrowser(
+        summary: BundleBrowserSummary,
+        context: BundleDisplayContext,
+        restoredState: BundleBrowserState?,
+        publishBundleDidLoad: Bool
+    ) {
+        hideNonBundleViews()
+        hideCollectionBackButton()
+        hideBundleBackNavigationButton()
+        hideBundleBrowserView()
+        removeChromosomeNavigator()
+
+        annotationDrawerView?.isHidden = true
+        fastqMetadataDrawerView?.isHidden = true
+        referenceFrame = nil
+        enhancedRulerView.referenceFrame = nil
+        headerView.setTrackNames([])
+        viewerView.hideTranslation()
+        viewerView.clearReferenceBundle()
+
+        let controller = BundleBrowserViewController()
+        controller.onOpenSequence = { [weak self, weak controller] row in
+            guard let self, let controller else { return }
+            let savedState = controller.captureState()
+
+            do {
+                try self.displayBundle(
+                    at: context.url,
+                    mode: .sequence(name: row.name, restoreViewState: false)
+                )
+                self.showBundleBackNavigationButton(title: "All Sequences (\(summary.sequences.count))") { [weak self] in
+                    self?.displayBundleBrowser(
+                        summary: summary,
+                        context: context,
+                        restoredState: savedState,
+                        publishBundleDidLoad: true
+                    )
+                }
+            } catch {
+                bundleLogger.error(
+                    "displayBundleBrowser: Failed to open sequence '\(row.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                )
+                self.displayBundleBrowser(
+                    summary: summary,
+                    context: context,
+                    restoredState: savedState,
+                    publishBundleDidLoad: true
+                )
+            }
         }
 
-        // Set up chromosome navigator (only when multiple chromosomes)
-        if chromosomes.count > 1 {
-            configureChromosomeNavigator(with: chromosomes)
+        addChild(controller)
+        let browserView = controller.view
+        browserView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(browserView)
+
+        NSLayoutConstraint.activate([
+            browserView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            browserView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            browserView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            browserView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+
+        controller.configure(summary: summary, restoredState: restoredState)
+        bundleBrowserController = controller
+
+        enhancedRulerView.isHidden = true
+        viewerView.isHidden = true
+        headerView.isHidden = true
+        statusBar.isHidden = true
+        geneTabBarView.isHidden = true
+
+        if publishBundleDidLoad {
+            publishBundleDidLoadNotification(
+                userInfo: [
+                    NotificationUserInfoKey.bundleURL: context.url,
+                    NotificationUserInfoKey.chromosomes: context.chromosomes,
+                    NotificationUserInfoKey.manifest: context.manifest,
+                    NotificationUserInfoKey.referenceBundle: context.bundle,
+                ]
+            )
+            syncInspectorForBundleViewState(context.viewState)
+        }
+    }
+
+    private func displayBundleSequence(
+        preferredSequenceName: String?,
+        context: BundleDisplayContext,
+        installChromosomeNavigator: Bool,
+        restoreViewState: Bool
+    ) throws {
+        hideNonBundleViews()
+        hideBundleBrowserView()
+        hideCollectionBackButton()
+        annotationDrawerView?.isHidden = false
+        fastqMetadataDrawerView?.isHidden = false
+
+        if installChromosomeNavigator, context.chromosomes.count > 1 {
+            configureChromosomeNavigator(with: context.chromosomes)
         } else {
             removeChromosomeNavigator()
         }
 
-        // Force layout for valid bounds
         view.layoutSubtreeIfNeeded()
         let effectiveWidth = max(800, Int(viewerView.bounds.width))
 
-        // Show loading indicator and flush layout before synchronous bundle setup.
         showProgress("Loading genome\u{2026}")
         view.layoutSubtreeIfNeeded()
         view.displayIfNeeded()
 
-        // Set up the viewer with bundle and apply view state
-        viewerView.setReferenceBundle(bundle)
-        viewerView.showAnnotations = viewState.showAnnotations
-        viewerView.annotationHeight = CGFloat(viewState.annotationHeight)
-        viewerView.annotationRowSpacing = CGFloat(viewState.annotationSpacing)
-        viewerView.visibleAnnotationTypes = viewState.visibleAnnotationTypes
-        viewerView.translationColorScheme = viewState.translationColorScheme
-        viewerView.showVariants = viewState.showVariants
-        if let variantTypes = viewState.visibleVariantTypes {
+        viewerView.setReferenceBundle(context.bundle)
+        viewerView.showAnnotations = context.viewState.showAnnotations
+        viewerView.annotationHeight = CGFloat(context.viewState.annotationHeight)
+        viewerView.annotationRowSpacing = CGFloat(context.viewState.annotationSpacing)
+        viewerView.visibleAnnotationTypes = context.viewState.visibleAnnotationTypes
+        viewerView.translationColorScheme = context.viewState.translationColorScheme
+        viewerView.showVariants = context.viewState.showVariants
+        if let variantTypes = context.viewState.visibleVariantTypes {
             viewerView.visibleVariantTypes = variantTypes
         }
-
-        // Apply per-type color overrides
-        if !viewState.typeColorOverrides.isEmpty {
-            viewerView.applyTypeColorOverrides(viewState.typeColorOverrides)
+        if !context.viewState.typeColorOverrides.isEmpty {
+            viewerView.applyTypeColorOverrides(context.viewState.typeColorOverrides)
         }
 
-        // Navigate to saved chromosome/position or first chromosome
-        let sortedChroms = naturalChromosomeSort(chromosomes)
-        guard let firstChrom = sortedChroms.first else {
+        let sortedChromosomes = naturalChromosomeSort(context.chromosomes)
+        guard let firstChromosome = sortedChromosomes.first else {
             bundleLogger.error("displayBundle: No chromosomes in bundle")
             hideProgress()
             showNoSequenceSelected()
             return
         }
 
-        let targetChrom: ChromosomeInfo
-        if let savedChrom = viewState.lastChromosome,
-           let found = sortedChroms.first(where: { $0.name == savedChrom }) {
-            targetChrom = found
+        let targetChromosome: ChromosomeInfo
+        if let preferredSequenceName,
+           let matchingChromosome = sortedChromosomes.first(where: { $0.name == preferredSequenceName }) {
+            targetChromosome = matchingChromosome
+        } else if restoreViewState,
+                  let savedChromosome = context.viewState.lastChromosome,
+                  let matchingChromosome = sortedChromosomes.first(where: { $0.name == savedChromosome }) {
+            targetChromosome = matchingChromosome
         } else {
-            targetChrom = firstChrom
+            targetChromosome = firstChromosome
         }
 
-        let chromLength = Int(targetChrom.length)
-        bundleLogger.info("displayBundle: Navigating to chromosome '\(targetChrom.name, privacy: .public)' length=\(chromLength)")
+        let chromosomeLength = Int(targetChromosome.length)
+        bundleLogger.info(
+            "displayBundle: Navigating to chromosome '\(targetChromosome.name, privacy: .public)' length=\(chromosomeLength)"
+        )
 
-        // Restore zoom/scroll if saved, otherwise show full chromosome
-        let startPos: Double
-        let endPos: Double
-        if let savedOrigin = viewState.lastOrigin, let savedScale = viewState.lastScale,
-           viewState.lastChromosome == targetChrom.name {
-            startPos = max(0, savedOrigin)
+        let startPosition: Double
+        let endPosition: Double
+        if restoreViewState,
+           let savedOrigin = context.viewState.lastOrigin,
+           let savedScale = context.viewState.lastScale,
+           context.viewState.lastChromosome == targetChromosome.name {
+            startPosition = max(0, savedOrigin)
             let span = savedScale * Double(effectiveWidth)
-            endPos = min(Double(chromLength), startPos + span)
+            endPosition = min(Double(max(1, chromosomeLength)), startPosition + span)
         } else {
-            startPos = 0
-            endPos = Double(chromLength)
+            startPosition = 0
+            endPosition = Double(max(1, chromosomeLength))
         }
 
         referenceFrame = ReferenceFrame(
-            chromosome: targetChrom.name,
-            start: startPos,
-            end: endPos,
+            chromosome: targetChromosome.name,
+            start: startPosition,
+            end: endPosition,
             pixelWidth: effectiveWidth,
-            sequenceLength: chromLength
+            sequenceLength: chromosomeLength
         )
 
-        // Select the correct chromosome in the navigator
-        chromosomeNavigatorView?.selectChromosome(named: targetChrom.name)
+        chromosomeNavigatorView?.selectChromosome(named: targetChromosome.name)
 
-        // Update header with track names
-        let trackNames = [targetChrom.name]
-            + manifest.annotations.map { "Annotations: \($0.name)" }
-            + manifest.alignments.map { "Reads: \($0.name)" }
+        let trackNames = [targetChromosome.name]
+            + context.manifest.annotations.map { "Annotations: \($0.name)" }
+            + context.manifest.alignments.map { "Reads: \($0.name)" }
         headerView.setTrackNames(trackNames)
 
-        // Update ruler
         enhancedRulerView.referenceFrame = referenceFrame
-
-        // Update status bar
         updateStatusBar()
 
-        // Trigger redraw
+        enhancedRulerView.isHidden = false
+        viewerView.isHidden = false
+        headerView.isHidden = false
+        statusBar.isHidden = false
+        geneTabBarView.isHidden = true
+
         viewerView.needsDisplay = true
         enhancedRulerView.needsDisplay = true
         headerView.needsDisplay = true
 
-        // Schedule delayed redraw for layout timing
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -195,24 +339,26 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
             }
         }
 
-        // Hide loading indicator
         hideProgress()
 
-        // Notify that bundle has been loaded (for annotation search index building, toolbar updates, inspector)
         publishBundleDidLoadNotification(
             userInfo: [
-                NotificationUserInfoKey.bundleURL: url,
-                NotificationUserInfoKey.chromosomes: chromosomes,
-                NotificationUserInfoKey.manifest: manifest,
-                NotificationUserInfoKey.referenceBundle: bundle,
+                NotificationUserInfoKey.bundleURL: context.url,
+                NotificationUserInfoKey.chromosomes: context.chromosomes,
+                NotificationUserInfoKey.manifest: context.manifest,
+                NotificationUserInfoKey.referenceBundle: context.bundle,
             ]
         )
 
-        // Open the bottom drawer by default for bundles with annotation/variant/sample data.
-        openAnnotationDrawerIfBundleHasData(manifest: manifest)
+        openAnnotationDrawerIfBundleHasData(manifest: context.manifest)
+        syncInspectorForBundleViewState(context.viewState)
 
-        // Sync inspector to restored view state
-        let savedState = viewState
+        bundleLogger.info(
+            "displayBundle: Bundle displayed successfully with \(context.chromosomes.count) chromosomes"
+        )
+    }
+
+    private func syncInspectorForBundleViewState(_ savedState: BundleViewState) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             MainActor.assumeIsolated {
@@ -227,14 +373,12 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
                         annotVM.visibleTypes = Set(AnnotationType.allCases)
                     }
                     annotVM.showVariants = savedState.showVariants
-                    if let vtypes = savedState.visibleVariantTypes {
-                        annotVM.visibleVariantTypes = vtypes
+                    if let variantTypes = savedState.visibleVariantTypes {
+                        annotVM.visibleVariantTypes = variantTypes
                     }
                 }
             }
         }
-
-        bundleLogger.info("displayBundle: Bundle displayed successfully with \(chromosomes.count) chromosomes")
     }
 
     // MARK: - Variant-Only Chromosome Synthesis
@@ -507,6 +651,8 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
         saveCurrentViewState()
 
         bundleLogger.info("clearBundleDisplay: Clearing bundle state")
+        hideBundleBrowserView()
+        hideBundleBackNavigationButton()
         currentBundleDataProvider = nil
         currentBundleViewState = nil
         currentBundleURL = nil

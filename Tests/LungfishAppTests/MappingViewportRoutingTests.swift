@@ -22,6 +22,25 @@ final class MappingViewportRoutingTests: XCTestCase {
         XCTAssertTrue(source.contains("hideMappingView()"))
     }
 
+    func testBundleOpenPathsUseExplicitBrowseAndSequenceModes() throws {
+        let viewerSource = try loadSource(at: "Sources/LungfishApp/Views/Viewer/ViewerViewController+BundleDisplay.swift")
+        let mainWindowSource = try loadSource(at: "Sources/LungfishApp/Views/MainWindow/MainSplitViewController.swift")
+        let mappingSource = try loadSource(at: "Sources/LungfishApp/Views/Results/Mapping/MappingResultViewController.swift")
+
+        XCTAssertTrue(viewerSource.contains("public func displayBundle(at url: URL) throws"))
+        XCTAssertTrue(viewerSource.contains("try displayBundle(at: url, mode: .browse)"))
+        XCTAssertTrue(mainWindowSource.contains("displayBundle(at: url, mode: .browse)"))
+        XCTAssertTrue(mainWindowSource.contains("viewerController.bundleBrowserController != nil"))
+        XCTAssertTrue(mappingSource.contains("mode: .sequence(name: sequenceName, restoreViewState: false)"))
+        XCTAssertFalse(mappingSource.contains("try embeddedViewerController.displayBundle(at: standardized)"))
+    }
+
+    func testBundleBackNavigationButtonUsesStableAccessibilityIdentifier() throws {
+        let viewerSource = try loadSource(at: "Sources/LungfishApp/Views/Viewer/ViewerViewController.swift")
+
+        XCTAssertTrue(viewerSource.contains("viewer-back-navigation-button"))
+    }
+
     private func loadSource(at relativePath: String) throws -> String {
         let sourceURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

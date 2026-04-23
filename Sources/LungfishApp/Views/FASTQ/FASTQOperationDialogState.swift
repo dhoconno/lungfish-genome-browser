@@ -118,7 +118,7 @@ final class FASTQOperationDialogState {
     init(
         initialCategory: FASTQOperationCategoryID,
         selectedInputURLs: [URL],
-        projectURL: URL? = DocumentManager.shared.activeProject?.url
+        projectURL: URL? = nil
     ) {
         let defaultToolID = initialCategory.defaultToolID
         self.selectedCategory = initialCategory
@@ -192,6 +192,8 @@ final class FASTQOperationDialogState {
         if initialCategory == .assembly {
             self.selectedToolID = Self.defaultAssemblyTool(for: self.detectedAssemblyReadType)
         }
+
+        normalizeSelectionState()
     }
 
     func selectCategory(_ category: FASTQOperationCategoryID) {
@@ -767,7 +769,7 @@ final class FASTQOperationDialogState {
     }
 
     var dialogTitle: String {
-        isFASTAInputMode ? "FASTA Operations" : selectedCategory.title
+        "FASTQ/FASTA Operations"
     }
 
     var dialogSubtitle: String {
@@ -928,7 +930,7 @@ final class FASTQOperationDialogState {
 
     private func normalizeSelectionState() {
         if isFASTAInputMode, !selectedToolID.supportsFASTA,
-           let firstSupportedTool = FASTAOperationCatalog.availableToolIDs().first {
+           let firstSupportedTool = Self.toolIDs(for: selectedCategory).first(where: \.supportsFASTA) {
             selectedToolID = firstSupportedTool
             return
         }
@@ -1011,7 +1013,7 @@ final class FASTQOperationDialogState {
 
     private func visibleToolIDs(for category: FASTQOperationCategoryID) -> [FASTQOperationToolID] {
         if isFASTAInputMode {
-            return FASTAOperationCatalog.availableToolIDs()
+            return Self.toolIDs(for: category).filter(\.supportsFASTA)
         }
 
         let allToolIDs = Self.toolIDs(for: category)
@@ -1352,17 +1354,16 @@ enum FASTQOperationToolID: String, CaseIterable, Sendable {
 
     var supportsFASTA: Bool {
         switch self {
-        case .trimFixedBases, .filterByReadLength, .removeContaminants,
-             .removeDuplicates, .orientReads, .subsampleByProportion,
-             .subsampleByCount, .extractReadsByID, .extractReadsByMotif,
-             .selectReadsBySequence:
+        case .demultiplexBarcodes, .adapterRemoval, .primerTrimming,
+             .trimFixedBases, .filterByReadLength, .removeHumanReads,
+             .removeContaminants, .removeDuplicates, .orientReads,
+             .subsampleByProportion, .subsampleByCount, .extractReadsByID,
+             .extractReadsByMotif, .selectReadsBySequence, .minimap2,
+             .bwaMem2, .bowtie2, .bbmap, .spades, .megahit, .skesa,
+             .flye, .hifiasm, .kraken2, .esViritu, .taxTriage:
             return true
-        case .refreshQCSummary, .demultiplexBarcodes, .qualityTrim,
-             .adapterRemoval, .primerTrimming, .removeHumanReads,
-             .mergeOverlappingPairs, .repairPairedEndFiles,
-             .correctSequencingErrors, .minimap2, .bwaMem2, .bowtie2,
-             .bbmap, .spades, .megahit, .skesa, .flye, .hifiasm,
-             .kraken2, .esViritu, .taxTriage:
+        case .refreshQCSummary, .qualityTrim, .mergeOverlappingPairs,
+             .repairPairedEndFiles, .correctSequencingErrors:
             return false
         }
     }

@@ -1,6 +1,7 @@
 import Darwin
 import XCTest
 @testable import LungfishApp
+import LungfishCore
 @testable import LungfishIO
 import LungfishWorkflow
 
@@ -197,6 +198,107 @@ final class FASTQOperationExecutionServiceTests: XCTestCase {
         ])
         XCTAssertEqual(runner.invocations.map { $0.arguments.first }, ["subsample"])
         XCTAssertTrue(runner.invocations[0].arguments.contains(materializedURL.path))
+    }
+
+    func testExecuteDerivativeBridgesDerivedFASTAInputToSyntheticFASTQ() async throws {
+        let tempDir = try FASTQOperationTestHelper.makeTempDir(prefix: "FASTQExecFASTA")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let fastaBundleURL = try makeFullFASTABundle(
+            named: "fasta-input",
+            in: tempDir,
+            records: [
+                (id: "seq1", sequence: "AACCGGTTAACC"),
+                (id: "seq2", sequence: "TTGGCCAATTGG"),
+            ]
+        )
+
+        let runner = SpyCommandRunner { invocation, _ in
+            XCTAssertEqual(invocation.subcommand, "fastq")
+            XCTAssertEqual(invocation.arguments.first, "adapter-trim")
+
+            let bridgedInputURL = URL(fileURLWithPath: try XCTUnwrap(invocation.arguments[safe: 1]))
+            XCTAssertEqual(SequenceFormat.from(url: bridgedInputURL), .fastq)
+
+            let bridgedContents = try String(contentsOf: bridgedInputURL, encoding: .utf8)
+            XCTAssertTrue(bridgedContents.contains("@seq1"))
+            XCTAssertTrue(bridgedContents.contains("AACCGGTTAACC"))
+            XCTAssertTrue(bridgedContents.contains("+"))
+            XCTAssertTrue(bridgedContents.contains("IIIIIIIIIIII"))
+
+            return FASTQCLIExecutionResult(outputURLs: [])
+        }
+        let importer = SpyDirectImporter()
+        let service = FASTQOperationExecutionService(
+            commandRunner: runner,
+            directImporter: importer
+        )
+
+        _ = try await service.execute(
+            request: .derivative(
+                request: .adapterTrim(
+                    mode: .autoDetect,
+                    sequence: nil,
+                    sequenceR2: nil,
+                    fastaFilename: nil
+                ),
+                inputURLs: [fastaBundleURL],
+                outputMode: .perInput
+            ),
+            workingDirectory: tempDir
+        )
+
+        XCTAssertEqual(runner.invocations.count, 1)
+    }
+
+    func testExecuteDerivativeBridgesReferenceBundleInputToSyntheticFASTQ() async throws {
+        let tempDir = try FASTQOperationTestHelper.makeTempDir(prefix: "FASTQExecRefFASTA")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let referenceBundleURL = try makeReferenceBundle(
+            named: "reference-input",
+            in: tempDir,
+            records: [
+                (id: "contig1", sequence: "AACCGGTTAACC"),
+                (id: "contig2", sequence: "TTGGCCAATTGG"),
+            ]
+        )
+
+        let runner = SpyCommandRunner { invocation, _ in
+            XCTAssertEqual(invocation.subcommand, "fastq")
+            XCTAssertEqual(invocation.arguments.first, "adapter-trim")
+
+            let bridgedInputURL = URL(fileURLWithPath: try XCTUnwrap(invocation.arguments[safe: 1]))
+            XCTAssertEqual(SequenceFormat.from(url: bridgedInputURL), .fastq)
+
+            let bridgedContents = try String(contentsOf: bridgedInputURL, encoding: .utf8)
+            XCTAssertTrue(bridgedContents.contains("@contig1"))
+            XCTAssertTrue(bridgedContents.contains("AACCGGTTAACC"))
+            XCTAssertTrue(bridgedContents.contains("IIIIIIIIIIII"))
+
+            return FASTQCLIExecutionResult(outputURLs: [])
+        }
+        let importer = SpyDirectImporter()
+        let service = FASTQOperationExecutionService(
+            commandRunner: runner,
+            directImporter: importer
+        )
+
+        _ = try await service.execute(
+            request: .derivative(
+                request: .adapterTrim(
+                    mode: .autoDetect,
+                    sequence: nil,
+                    sequenceR2: nil,
+                    fastaFilename: nil
+                ),
+                inputURLs: [referenceBundleURL],
+                outputMode: .perInput
+            ),
+            workingDirectory: tempDir
+        )
+
+        XCTAssertEqual(runner.invocations.count, 1)
     }
 
     func testExecuteForwardsResolvedInputsIntoBuiltInvocation() async throws {
@@ -1117,6 +1219,75 @@ final class FASTQOperationExecutionServiceTests: XCTestCase {
         )
         XCTAssertEqual(taxtriage.subcommand, "taxtriage")
     }
+
+    func testExecuteEsVirituClassificationBridgesFASTAInputToSyntheticFASTQ() async throws {
+        let tempDir = try FASTQOperationTestHelper.makeTempDir(prefix: "FASTQExecEsViritu")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let fastaURL = tempDir.appendingPathComponent("reads.fasta")
+        try """
+        >seq1
+        AACCGGTTAACC
+        >seq2
+        TTGGCCAATTGG
+        """.write(to: fastaURL, atomically: true, encoding: .utf8)
+
+        let runner = SpyCommandRunner { invocation, _ in
+            XCTAssertEqual(invocation.subcommand, "esviritu")
+            XCTAssertEqual(invocation.arguments.first, "detect")
+
+            let bridgedInputURL = URL(fileURLWithPath: try XCTUnwrap(invocation.arguments[safe: 1]))
+            XCTAssertEqual(SequenceFormat.from(url: bridgedInputURL), .fastq)
+
+            let bridgedContents = try String(contentsOf: bridgedInputURL, encoding: .utf8)
+            XCTAssertTrue(bridgedContents.contains("@seq1"))
+            XCTAssertTrue(bridgedContents.contains("IIIIIIIIIIII"))
+
+            return FASTQCLIExecutionResult(outputURLs: [])
+        }
+        let importer = SpyDirectImporter()
+        let service = FASTQOperationExecutionService(
+            commandRunner: runner,
+            directImporter: importer
+        )
+
+        _ = try await service.execute(
+            request: .classify(tool: .esViritu, inputURLs: [fastaURL], databaseName: "esv-db"),
+            workingDirectory: tempDir
+        )
+
+        XCTAssertEqual(runner.invocations.count, 1)
+    }
+
+    func testExecuteKraken2ClassificationPreservesNativeFASTAInput() async throws {
+        let tempDir = try FASTQOperationTestHelper.makeTempDir(prefix: "FASTQExecKrakenFASTA")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let fastaURL = tempDir.appendingPathComponent("reads.fasta")
+        try """
+        >seq1
+        AACCGGTTAACC
+        """.write(to: fastaURL, atomically: true, encoding: .utf8)
+
+        let runner = SpyCommandRunner { invocation, _ in
+            XCTAssertEqual(invocation.subcommand, "classify")
+            XCTAssertEqual(invocation.arguments.first, fastaURL.path)
+            XCTAssertEqual(SequenceFormat.from(url: URL(fileURLWithPath: invocation.arguments[0])), .fasta)
+            return FASTQCLIExecutionResult(outputURLs: [])
+        }
+        let importer = SpyDirectImporter()
+        let service = FASTQOperationExecutionService(
+            commandRunner: runner,
+            directImporter: importer
+        )
+
+        _ = try await service.execute(
+            request: .classify(tool: .kraken2, inputURLs: [fastaURL], databaseName: "kraken-db"),
+            workingDirectory: tempDir
+        )
+
+        XCTAssertEqual(runner.invocations.count, 1)
+    }
 }
 
 private struct TestFastqQCSummaryReport: Codable {
@@ -1180,4 +1351,77 @@ private final class SpyCommandRunner: @unchecked Sendable, FASTQOperationCommand
         invocations.append(invocation)
         return try handler(invocation, outputDirectory)
     }
+}
+
+private func makeFullFASTABundle(
+    named name: String,
+    in tempDir: URL,
+    records: [(id: String, sequence: String)]
+) throws -> URL {
+    let bundleURL = tempDir.appendingPathComponent(
+        "\(name).\(FASTQBundle.directoryExtension)",
+        isDirectory: true
+    )
+    try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+
+    let fastaFilename = "reads.fasta"
+    let fastaURL = bundleURL.appendingPathComponent(fastaFilename)
+    let fastaContents = records.map { ">\($0.id)\n\($0.sequence)\n" }.joined()
+    try fastaContents.write(to: fastaURL, atomically: true, encoding: .utf8)
+
+    let manifest = FASTQDerivedBundleManifest(
+        name: name,
+        parentBundleRelativePath: ".",
+        rootBundleRelativePath: ".",
+        rootFASTQFilename: fastaFilename,
+        payload: .fullFASTA(fastaFilename: fastaFilename),
+        lineage: [],
+        operation: FASTQDerivativeOperation(kind: .searchText, query: "fasta-fixture"),
+        cachedStatistics: .placeholder(
+            readCount: records.count,
+            baseCount: Int64(records.reduce(0) { $0 + $1.sequence.count })
+        ),
+        pairingMode: nil,
+        sequenceFormat: .fasta
+    )
+    try FASTQBundle.saveDerivedManifest(manifest, in: bundleURL)
+    return bundleURL
+}
+
+private func makeReferenceBundle(
+    named name: String,
+    in tempDir: URL,
+    records: [(id: String, sequence: String)]
+) throws -> URL {
+    let bundleURL = tempDir.appendingPathComponent("\(name).lungfishref", isDirectory: true)
+    let genomeDirectory = bundleURL.appendingPathComponent("genome", isDirectory: true)
+    try FileManager.default.createDirectory(at: genomeDirectory, withIntermediateDirectories: true)
+
+    let fastaFilename = "genome/sequence.fa.gz"
+    let fastaURL = bundleURL.appendingPathComponent(fastaFilename)
+    let fastaContents = records.map { ">\($0.id)\n\($0.sequence)\n" }.joined()
+    try fastaContents.write(to: fastaURL, atomically: true, encoding: .utf8)
+
+    let faiContents = records.reduce(into: [String]()) { lines, record in
+        lines.append("\(record.id)\t\(record.sequence.count)\t9\t\(record.sequence.count)\t\(record.sequence.count + 1)")
+    }.joined(separator: "\n") + "\n"
+    try faiContents.write(
+        to: bundleURL.appendingPathComponent("\(fastaFilename).fai"),
+        atomically: true,
+        encoding: .utf8
+    )
+
+    let manifest = BundleManifest(
+        name: name,
+        identifier: "org.lungfish.\(name)",
+        source: SourceInfo(organism: "Test organism", assembly: "Test assembly"),
+        genome: GenomeInfo(
+            path: fastaFilename,
+            indexPath: "\(fastaFilename).fai",
+            totalLength: Int64(records.reduce(0) { $0 + $1.sequence.count }),
+            chromosomes: []
+        )
+    )
+    try manifest.save(to: bundleURL)
+    return bundleURL
 }

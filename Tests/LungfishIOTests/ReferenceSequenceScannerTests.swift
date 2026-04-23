@@ -1,4 +1,5 @@
 import XCTest
+@testable import LungfishCore
 @testable import LungfishIO
 
 final class ReferenceSequenceScannerTests: XCTestCase {
@@ -119,6 +120,79 @@ final class ReferenceSequenceScannerTests: XCTestCase {
 
         let results = ReferenceSequenceScanner.scanAll(in: projectURL)
         XCTAssertTrue(results.isEmpty, "Should not find FASTA beyond depth limit")
+    }
+
+    func testScanAllUsesManifestedGenomePathAndSkipsAppleDoubleSidecars() throws {
+        let projectURL = try makeTempProject()
+        defer { try? FileManager.default.removeItem(at: projectURL.deletingLastPathComponent()) }
+
+        let bundleURL = projectURL
+            .appendingPathComponent("Zhang pan-genomes", isDirectory: true)
+            .appendingPathComponent("MF0214_2.lungfishref", isDirectory: true)
+        let genomeDirectory = bundleURL.appendingPathComponent("genome", isDirectory: true)
+        try FileManager.default.createDirectory(at: genomeDirectory, withIntermediateDirectories: true)
+
+        let fastaURL = genomeDirectory.appendingPathComponent("sequence.fa.gz")
+        let appleDoubleURL = genomeDirectory.appendingPathComponent("._sequence.fa.gz")
+        let fastaIndexURL = genomeDirectory.appendingPathComponent("sequence.fa.gz.fai")
+        try Data("gzip-placeholder".utf8).write(to: fastaURL)
+        try Data("appledouble".utf8).write(to: appleDoubleURL)
+        try Data("index-placeholder".utf8).write(to: fastaIndexURL)
+
+        let manifest = BundleManifest(
+            name: "MF0214_2",
+            identifier: "org.lungfish.MF0214_2",
+            source: SourceInfo(organism: "Test organism", assembly: "Test assembly"),
+            genome: GenomeInfo(
+                path: "genome/sequence.fa.gz",
+                indexPath: "genome/sequence.fa.gz.fai",
+                totalLength: 0,
+                chromosomes: []
+            )
+        )
+        try manifest.save(to: bundleURL)
+
+        let results = ReferenceSequenceScanner.scanAll(in: projectURL)
+        let candidate = try XCTUnwrap(results.first { $0.displayName == "MF0214_2" })
+
+        XCTAssertEqual(candidate.sourceCategory, .genomeBundles)
+        XCTAssertEqual(candidate.fastaURL.standardizedFileURL, fastaURL.standardizedFileURL)
+        XCTAssertFalse(candidate.fastaURL.lastPathComponent.hasPrefix("._"))
+    }
+
+    func testScanAllUsesManifestGenomePathOutsideLegacyGenomeDirectory() throws {
+        let projectURL = try makeTempProject()
+        defer { try? FileManager.default.removeItem(at: projectURL.deletingLastPathComponent()) }
+
+        let bundleURL = projectURL
+            .appendingPathComponent("Reference Bundles", isDirectory: true)
+            .appendingPathComponent("CustomLayout.lungfishref", isDirectory: true)
+        let sequenceDirectory = bundleURL.appendingPathComponent("assemblies", isDirectory: true)
+        try FileManager.default.createDirectory(at: sequenceDirectory, withIntermediateDirectories: true)
+
+        let fastaURL = sequenceDirectory.appendingPathComponent("custom-layout.fa.gz")
+        let fastaIndexURL = sequenceDirectory.appendingPathComponent("custom-layout.fa.gz.fai")
+        try Data("gzip-placeholder".utf8).write(to: fastaURL)
+        try Data("index-placeholder".utf8).write(to: fastaIndexURL)
+
+        let manifest = BundleManifest(
+            name: "CustomLayout",
+            identifier: "org.lungfish.CustomLayout",
+            source: SourceInfo(organism: "Test organism", assembly: "Custom layout"),
+            genome: GenomeInfo(
+                path: "assemblies/custom-layout.fa.gz",
+                indexPath: "assemblies/custom-layout.fa.gz.fai",
+                totalLength: 0,
+                chromosomes: []
+            )
+        )
+        try manifest.save(to: bundleURL)
+
+        let results = ReferenceSequenceScanner.scanAll(in: projectURL)
+        let candidate = results.first { $0.displayName == "CustomLayout" }
+
+        XCTAssertEqual(candidate?.fastaURL.standardizedFileURL, fastaURL.standardizedFileURL)
+        XCTAssertEqual(candidate?.sourceCategory, .genomeBundles)
     }
 
     // MARK: - inferRole

@@ -883,7 +883,8 @@ private struct FASTQSourceResolverAdapter: FASTQOperationInputResolving {
                 resolvedURLs.append(
                     try await resolveSingleExecutionInput(
                         from: inputURL,
-                        tempDirectory: tempDirectory
+                        tempDirectory: tempDirectory,
+                        bridgeFASTAToFASTQ: request.requiresSyntheticFASTQBridge
                     )
                 )
             }
@@ -920,47 +921,73 @@ private struct FASTQSourceResolverAdapter: FASTQOperationInputResolving {
             }
         }
 
+        if request.requiresSyntheticFASTQBridge {
+            var bridgedURLs: [URL] = []
+            bridgedURLs.reserveCapacity(resolvedURLs.count)
+            for resolvedURL in resolvedURLs {
+                bridgedURLs.append(
+                    try await bridgeFASTAIfNeeded(
+                        inputURL: resolvedURL,
+                        tempDirectory: tempDirectory
+                    )
+                )
+            }
+            resolvedURLs = bridgedURLs
+        }
+
         return request.replacingInputURLs(with: resolvedURLs)
     }
 
     private func resolveSingleExecutionInput(
         from inputURL: URL,
-        tempDirectory: URL
+        tempDirectory: URL,
+        bridgeFASTAToFASTQ: Bool
     ) async throws -> URL {
         let standardizedInputURL = inputURL.standardizedFileURL
-        let bundleURL: URL?
-        if FASTQBundle.isBundleURL(standardizedInputURL) {
-            bundleURL = standardizedInputURL
-        } else {
-            let parentBundleURL = standardizedInputURL.deletingLastPathComponent()
-            bundleURL = FASTQBundle.isBundleURL(parentBundleURL) ? parentBundleURL : nil
+        if let bundleURL = SequenceInputResolver.enclosingFASTQBundleURL(for: standardizedInputURL) {
+            if FASTQBundle.isDerivedBundle(bundleURL) {
+                let materializedURL = try await FASTQDerivativeService.shared.materializeDatasetFASTQ(
+                    fromBundle: bundleURL,
+                    tempDirectory: tempDirectory,
+                    progress: nil
+                )
+                return try await bridgeFASTAIfNeeded(
+                    inputURL: materializedURL,
+                    tempDirectory: tempDirectory,
+                    enabled: bridgeFASTAToFASTQ
+                )
+            }
+
+            if let allFASTQURLs = FASTQBundle.resolveAllFASTQURLs(for: bundleURL),
+               allFASTQURLs.count > 1 {
+                return try materializeConcatenatedFASTQ(
+                    from: allFASTQURLs,
+                    tempDirectory: tempDirectory
+                )
+            }
+
+            if let primarySequenceURL = SequenceInputResolver.resolvePrimarySequenceURL(for: bundleURL) {
+                return try await bridgeFASTAIfNeeded(
+                    inputURL: primarySequenceURL,
+                    tempDirectory: tempDirectory,
+                    enabled: bridgeFASTAToFASTQ
+                )
+            }
         }
 
-        guard let bundleURL else {
-            return standardizedInputURL
-        }
-
-        if FASTQBundle.isDerivedBundle(bundleURL) {
-            return try await FASTQDerivativeService.shared.materializeDatasetFASTQ(
-                fromBundle: bundleURL,
+        if let primarySequenceURL = SequenceInputResolver.resolvePrimarySequenceURL(for: standardizedInputURL) {
+            return try await bridgeFASTAIfNeeded(
+                inputURL: primarySequenceURL,
                 tempDirectory: tempDirectory,
-                progress: nil
+                enabled: bridgeFASTAToFASTQ
             )
         }
 
-        if let allFASTQURLs = FASTQBundle.resolveAllFASTQURLs(for: bundleURL),
-           allFASTQURLs.count > 1 {
-            return try materializeConcatenatedFASTQ(
-                from: allFASTQURLs,
-                tempDirectory: tempDirectory
-            )
-        }
-
-        if let primaryFASTQURL = FASTQBundle.resolvePrimaryFASTQURL(for: bundleURL) {
-            return primaryFASTQURL
-        }
-
-        return standardizedInputURL
+        return try await bridgeFASTAIfNeeded(
+            inputURL: standardizedInputURL,
+            tempDirectory: tempDirectory,
+            enabled: bridgeFASTAToFASTQ
+        )
     }
 
     private func materializeConcatenatedFASTQ(
@@ -997,6 +1024,25 @@ private struct FASTQSourceResolverAdapter: FASTQOperationInputResolving {
             }
         }
 
+        return outputURL
+    }
+
+    private func bridgeFASTAIfNeeded(
+        inputURL: URL,
+        tempDirectory: URL,
+        enabled: Bool = true
+    ) async throws -> URL {
+        guard enabled, SequenceFormat.from(url: inputURL) == .fasta else {
+            return inputURL
+        }
+
+        let outputURL = tempDirectory.appendingPathComponent(
+            "synthetic-\(UUID().uuidString).fastq"
+        )
+        try await SyntheticFASTQBridge.convertFASTAToFASTQ(
+            inputURL: inputURL,
+            outputURL: outputURL
+        )
         return outputURL
     }
 }
@@ -1214,12 +1260,11 @@ struct BundleFASTQOperationImporter: FASTQOperationDirectImporting {
     }
 
     private func selectableSourceURL(for inputURL: URL) -> URL {
-        if FASTQBundle.isBundleURL(inputURL) {
-            return inputURL
+        if let fastqBundleURL = SequenceInputResolver.enclosingFASTQBundleURL(for: inputURL) {
+            return fastqBundleURL
         }
-        let parentBundleURL = inputURL.deletingLastPathComponent()
-        if FASTQBundle.isBundleURL(parentBundleURL) {
-            return parentBundleURL
+        if let referenceBundleURL = SequenceInputResolver.enclosingReferenceBundleURL(for: inputURL) {
+            return referenceBundleURL
         }
         return inputURL
     }
@@ -1359,6 +1404,24 @@ private extension FASTQOperationLaunchRequest {
         case .refreshQCSummary, .derivative:
             return true
         case .map, .assemble, .classify:
+            return false
+        }
+    }
+
+    var requiresSyntheticFASTQBridge: Bool {
+        switch self {
+        case .refreshQCSummary:
+            return false
+        case .derivative:
+            return true
+        case .classify(let tool, _, _):
+            switch tool {
+            case .esViritu, .taxTriage:
+                return true
+            default:
+                return false
+            }
+        case .map, .assemble:
             return false
         }
     }

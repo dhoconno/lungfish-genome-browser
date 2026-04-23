@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import LungfishIO
 
 // MARK: - ClassificationConfig
 
@@ -91,6 +92,9 @@ public struct ClassificationConfig: Sendable, Codable, Equatable {
     /// the `--paired` flag is passed to `kraken2`.
     public let isPairedEnd: Bool
 
+    /// Sequence format for the configured inputs.
+    public var inputFormat: SequenceFormat
+
     // MARK: - Database
 
     /// Display name of the database, matching a ``MetagenomicsDatabaseInfo`` entry.
@@ -166,6 +170,7 @@ public struct ClassificationConfig: Sendable, Codable, Equatable {
         inputFiles: [URL],
         isPairedEnd: Bool,
         databaseName: String,
+        inputFormat: SequenceFormat = .fastq,
         databaseVersion: String = "",
         databasePath: URL,
         confidence: Double = 0.0,
@@ -178,6 +183,7 @@ public struct ClassificationConfig: Sendable, Codable, Equatable {
         self.goal = goal
         self.inputFiles = inputFiles
         self.isPairedEnd = isPairedEnd
+        self.inputFormat = inputFormat
         self.databaseName = databaseName
         self.databaseVersion = databaseVersion
         self.databasePath = databasePath
@@ -226,6 +232,7 @@ public struct ClassificationConfig: Sendable, Codable, Equatable {
         inputFiles: [URL],
         isPairedEnd: Bool,
         databaseName: String,
+        inputFormat: SequenceFormat = .fastq,
         databaseVersion: String = "",
         databasePath: URL,
         threads: Int = 4,
@@ -239,6 +246,7 @@ public struct ClassificationConfig: Sendable, Codable, Equatable {
             inputFiles: inputFiles,
             isPairedEnd: isPairedEnd,
             databaseName: databaseName,
+            inputFormat: inputFormat,
             databaseVersion: databaseVersion,
             databasePath: databasePath,
             confidence: confidence,
@@ -265,6 +273,16 @@ public struct ClassificationConfig: Sendable, Codable, Equatable {
     /// The output path for the Bracken output file.
     public var brackenURL: URL {
         outputDirectory.appendingPathComponent("classification.bracken")
+    }
+
+    /// Provenance file format recorded for input files.
+    public var provenanceInputFileFormat: FileFormat {
+        switch inputFormat {
+        case .fasta:
+            return .fasta
+        case .fastq:
+            return .fastq
+        }
     }
 
     // MARK: - Argument Building
@@ -305,6 +323,10 @@ public struct ClassificationConfig: Sendable, Codable, Equatable {
 
         if isPairedEnd {
             args.append("--paired")
+        }
+
+        if inputFormat == .fasta {
+            args.append("--fasta-input")
         }
 
         // Use report minimizer data for bracken compatibility
@@ -380,13 +402,13 @@ public enum ClassificationConfigError: Error, LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .noInputFiles:
-            return "No input FASTQ files specified"
+            return "No input sequence files specified"
         case .pairedEndRequiresTwoFiles(let got):
             return "Paired-end mode requires exactly 2 input files, got \(got)"
         case .inputFileNotFound(let url):
             return "Input file not found: \(url.lastPathComponent)"
         case .inputPathIsDirectory(let url):
-            return "Input path is a directory, expected FASTQ file: \(url.lastPathComponent)"
+            return "Input path is a directory, expected sequence file: \(url.lastPathComponent)"
         case .databaseNotFound(let url):
             return "Database directory not found: \(url.path)"
         case .databaseMissingFiles(let url, let missing):
@@ -402,6 +424,60 @@ public enum ClassificationConfigError: Error, LocalizedError, Sendable {
 // MARK: - Validation
 
 extension ClassificationConfig {
+
+    enum CodingKeys: String, CodingKey {
+        case goal
+        case sampleDisplayName
+        case originalInputFiles
+        case inputFiles
+        case isPairedEnd
+        case inputFormat
+        case databaseName
+        case databaseVersion
+        case databasePath
+        case confidence
+        case minimumHitGroups
+        case threads
+        case memoryMapping
+        case quickMode
+        case outputDirectory
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let goal = try container.decodeIfPresent(Goal.self, forKey: .goal) ?? .classify
+        let inputFiles = try container.decode([URL].self, forKey: .inputFiles)
+        let isPairedEnd = try container.decode(Bool.self, forKey: .isPairedEnd)
+        let inputFormat = try container.decodeIfPresent(SequenceFormat.self, forKey: .inputFormat) ?? .fastq
+        let databaseName = try container.decode(String.self, forKey: .databaseName)
+        let databaseVersion = try container.decodeIfPresent(String.self, forKey: .databaseVersion) ?? ""
+        let databasePath = try container.decode(URL.self, forKey: .databasePath)
+        let confidence = try container.decode(Double.self, forKey: .confidence)
+        let minimumHitGroups = try container.decode(Int.self, forKey: .minimumHitGroups)
+        let threads = try container.decode(Int.self, forKey: .threads)
+        let memoryMapping = try container.decode(Bool.self, forKey: .memoryMapping)
+        let quickMode = try container.decode(Bool.self, forKey: .quickMode)
+        let outputDirectory = try container.decode(URL.self, forKey: .outputDirectory)
+
+        self.init(
+            goal: goal,
+            inputFiles: inputFiles,
+            isPairedEnd: isPairedEnd,
+            databaseName: databaseName,
+            inputFormat: inputFormat,
+            databaseVersion: databaseVersion,
+            databasePath: databasePath,
+            confidence: confidence,
+            minimumHitGroups: minimumHitGroups,
+            threads: threads,
+            memoryMapping: memoryMapping,
+            quickMode: quickMode,
+            outputDirectory: outputDirectory
+        )
+
+        sampleDisplayName = try container.decodeIfPresent(String.self, forKey: .sampleDisplayName)
+        originalInputFiles = try container.decodeIfPresent([URL].self, forKey: .originalInputFiles)
+    }
 
     /// Validates this configuration, checking file existence and parameter ranges.
     ///

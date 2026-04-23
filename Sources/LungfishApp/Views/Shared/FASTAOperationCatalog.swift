@@ -22,19 +22,7 @@ enum FASTAOperationCatalog {
     }
 
     static func inputSequenceFormat(for url: URL) -> SequenceFormat? {
-        let standardizedURL = url.standardizedFileURL
-        if FASTQBundle.isBundleURL(standardizedURL),
-           let manifest = FASTQBundle.loadDerivedManifest(in: standardizedURL) {
-            return manifest.sequenceFormat ?? inferredSequenceFormat(from: manifest.payload)
-        }
-
-        let parentBundleURL = standardizedURL.deletingLastPathComponent()
-        if FASTQBundle.isBundleURL(parentBundleURL),
-           let manifest = FASTQBundle.loadDerivedManifest(in: parentBundleURL) {
-            return manifest.sequenceFormat ?? inferredSequenceFormat(from: manifest.payload)
-        }
-
-        return SequenceFormat.from(url: standardizedURL)
+        SequenceInputResolver.inputSequenceFormat(for: url)
     }
 
     static func createTemporaryInputBundle(
@@ -89,18 +77,6 @@ enum FASTAOperationCatalog {
         try FASTQBundle.saveDerivedManifest(manifest, in: bundleURL)
         return bundleURL
     }
-
-    private static func inferredSequenceFormat(
-        from payload: FASTQDerivativePayload
-    ) -> SequenceFormat? {
-        switch payload {
-        case .fullFASTA:
-            return .fasta
-        default:
-            return nil
-        }
-    }
-
     private static func sanitizedBundleStem(from suggestedName: String) -> String {
         let trimmed = suggestedName
             .trimmingCharacters(in: .whitespacesAndNewlines)

@@ -5,15 +5,27 @@
 import ArgumentParser
 import Foundation
 import LungfishCore
+import LungfishIO
 import LungfishWorkflow
 
-/// Map reads to a reference genome with a managed mapper.
+enum MapInputResolutionError: LocalizedError {
+    case unreadableSequenceInput(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .unreadableSequenceInput(let path):
+            return "Sequence input does not contain a readable FASTQ or FASTA payload: \(path)"
+        }
+    }
+}
+
+/// Map sequence inputs to a reference genome with a managed mapper.
 struct MapCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "map",
-        abstract: "Map reads to a reference genome with minimap2, BWA-MEM2, Bowtie2, or BBMap",
+        abstract: "Map sequence inputs to a reference genome with minimap2, BWA-MEM2, Bowtie2, or BBMap",
         discussion: """
-        Map sequencing reads to a reference genome using one of the managed read mappers.
+        Map sequencing reads or sequences to a reference genome using one of the managed read mappers.
         Produces a coordinate-sorted, indexed BAM file. Install the tools through the
         read-mapping plugin pack (`lungfish conda install read-mapping`). BBMap is exposed
         from the required BBTools environment and is available once the managed toolchain
@@ -21,7 +33,7 @@ struct MapCommand: AsyncParsableCommand {
         """
     )
 
-    @Argument(help: "Input FASTQ file(s). Provide two files for paired-end mapping.")
+    @Argument(help: "Input sequence file(s). Provide two files for paired-end mapping.")
     var fastqFiles: [String]
 
     @Option(name: .customLong("reference"), help: "Reference FASTA file to align against")
@@ -91,15 +103,27 @@ struct MapCommand: AsyncParsableCommand {
                 throw ExitCode.failure
             }
         }
-
-        if pairedEnd && inputURLs.count != 2 {
-            print(formatter.error("Paired-end mode requires exactly 2 FASTQ inputs, got \(inputURLs.count)"))
+        let executionInputURLs: [URL]
+        do {
+            executionInputURLs = try Self.resolveExecutionInputURLs(for: inputURLs)
+        } catch {
+            print(formatter.error(error.localizedDescription))
             throw ExitCode.failure
         }
 
-        let referenceURL = URL(fileURLWithPath: reference)
-        guard FileManager.default.fileExists(atPath: referenceURL.path) else {
-            print(formatter.error("Reference file not found: \(referenceURL.path)"))
+        if pairedEnd && inputURLs.count != 2 {
+            print(formatter.error("Paired-end mode requires exactly 2 input files, got \(inputURLs.count)"))
+            throw ExitCode.failure
+        }
+
+        let referenceInputURL = URL(fileURLWithPath: reference)
+        guard FileManager.default.fileExists(atPath: referenceInputURL.path) else {
+            print(formatter.error("Reference file not found: \(referenceInputURL.path)"))
+            throw ExitCode.failure
+        }
+        guard let referenceURL = SequenceInputResolver.resolvePrimarySequenceURL(for: referenceInputURL),
+              SequenceInputResolver.inputSequenceFormat(for: referenceInputURL) == .fasta else {
+            print(formatter.error(MapInputResolutionError.unreadableSequenceInput(referenceInputURL.path).localizedDescription))
             throw ExitCode.failure
         }
 
@@ -139,7 +163,7 @@ struct MapCommand: AsyncParsableCommand {
         let request = MappingRunRequest(
             tool: selectedTool,
             modeID: selectedMode.id,
-            inputFASTQURLs: inputURLs,
+            inputFASTQURLs: executionInputURLs,
             referenceFASTAURL: referenceURL,
             outputDirectory: outputDirectory,
             sampleName: effectiveSampleName,
@@ -194,6 +218,15 @@ struct MapCommand: AsyncParsableCommand {
             ("BAI", result.baiURL.path),
         ]))
         print("")
+    }
+
+    static func resolveExecutionInputURLs(for inputURLs: [URL]) throws -> [URL] {
+        try inputURLs.map { inputURL in
+            guard let resolvedURL = SequenceInputResolver.resolvePrimarySequenceURL(for: inputURL) else {
+                throw MapInputResolutionError.unreadableSequenceInput(inputURL.standardizedFileURL.path)
+            }
+            return resolvedURL.standardizedFileURL
+        }
     }
 
     private func resolveMode(tool: MappingTool, preset: String?) throws -> MappingMode {

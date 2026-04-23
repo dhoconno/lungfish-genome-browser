@@ -4310,17 +4310,19 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         guard !selectedInputURLs.isEmpty else {
             let alert = NSAlert()
             alert.alertStyle = .informational
-            alert.messageText = "No FASTQ Files Selected"
-            alert.informativeText = "Select one or more FASTQ files or FASTQ bundles in the sidebar, then choose Tools > FASTQ Operations."
+            alert.messageText = "No FASTQ/FASTA Inputs Selected"
+            alert.informativeText = "Select one or more FASTQ or FASTA files, sequence bundles, or reference bundles in the sidebar, then choose Tools > FASTQ/FASTA Operations."
             alert.addButton(withTitle: "OK")
             alert.beginSheetModal(for: window)
             return
         }
 
+        let currentProjectURL = mainWindowController?.mainSplitViewController?.sidebarController?.currentProjectURL
         FASTQOperationsDialogPresenter.present(
             from: window,
             selectedInputURLs: selectedInputURLs,
             initialCategory: initialCategory,
+            projectURL: currentProjectURL,
             onRun: { [weak self] state in
                 guard let self else { return }
                 debugLog("showFASTQOperationsDialog: confirmed \(state.selectedToolID.rawValue) for \(state.selectedInputURLs.count) input(s)")
@@ -4371,7 +4373,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
     private func gatherFASTQOperationInputURLs(preferredInputURLs: [URL]) -> [URL] {
         let selectedURLs = mainWindowController?.mainSplitViewController?.sidebarController.selectedFileURLs() ?? []
-        let currentFASTQURL = mainWindowController?.mainSplitViewController?.viewerController?.currentFASTQDatasetURL
+        let viewerController = mainWindowController?.mainSplitViewController?.viewerController
+        let currentFASTQURL = viewerController?.currentFASTQDatasetURL ?? viewerController?.currentBundleURL
         return Self.resolveFASTQOperationInputURLs(
             preferredInputURLs: preferredInputURLs,
             selectedURLs: selectedURLs,
@@ -4404,18 +4407,13 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
     static func resolveFASTQOperationInputURL(from url: URL) -> URL? {
         let standardizedURL = url.standardizedFileURL
-        if standardizedURL.pathExtension.lowercased() == FASTQBundle.directoryExtension {
-            return standardizedURL
+        if let bundleURL = SequenceInputResolver.enclosingFASTQBundleURL(for: standardizedURL) {
+            return bundleURL
         }
-
-        let parentURL = standardizedURL.deletingLastPathComponent().standardizedFileURL
-        if parentURL.pathExtension.lowercased() == FASTQBundle.directoryExtension {
-            return parentURL
+        if let referenceBundleURL = SequenceInputResolver.enclosingReferenceBundleURL(for: standardizedURL) {
+            return referenceBundleURL
         }
-
-        let ext = standardizedURL.pathExtension.lowercased()
-        let baseExt = standardizedURL.deletingPathExtension().pathExtension.lowercased()
-        if ext == "fastq" || ext == "fq" || (ext == "gz" && (baseExt == "fastq" || baseExt == "fq")) {
+        if SequenceInputResolver.inputSequenceFormat(for: standardizedURL) != nil {
             return standardizedURL
         }
 
@@ -4964,14 +4962,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         let selectedItems = sidebarController?.selectedItems() ?? []
         let inputFiles = selectedItems.compactMap { item -> URL? in
             guard let url = item.url else { return nil }
-            return FASTQBundle.resolvePrimaryFASTQURL(for: url)
+            return SequenceInputResolver.resolvePrimarySequenceURL(for: url)
         }
 
         if inputFiles.isEmpty {
             let alert = NSAlert()
             alert.alertStyle = .informational
-            alert.messageText = "No FASTQ Files Selected"
-            alert.informativeText = "Select a FASTQ file in the sidebar, then choose Orient Reads."
+            alert.messageText = "No FASTQ/FASTA Inputs Selected"
+            alert.informativeText = "Select a FASTQ or FASTA file, sequence bundle, or reference bundle in the sidebar, then choose Orient Reads."
             alert.addButton(withTitle: "OK")
             alert.beginSheetModal(for: window)
             return
@@ -5573,12 +5571,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
     /// 2. The URL is a file inside a bundle (e.g., `SRR123.lungfishfastq/reads.fastq.gz`)
     static func findSourceBundle(for inputFiles: [URL]) -> URL? {
         for url in inputFiles {
-            if url.pathExtension.lowercased() == "lungfishfastq" {
-                return url
+            if let bundleURL = SequenceInputResolver.enclosingFASTQBundleURL(for: url) {
+                return bundleURL
             }
-            let parent = url.deletingLastPathComponent()
-            if parent.pathExtension.lowercased() == "lungfishfastq" {
-                return parent
+            if let referenceBundleURL = SequenceInputResolver.enclosingReferenceBundleURL(for: url) {
+                return referenceBundleURL
             }
         }
         return nil
@@ -5606,28 +5603,22 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         for inputURL in inputFiles {
             try Task.checkCancellation()
 
-            // Determine the bundle URL: either the input IS a bundle, or its parent is.
-            let bundleURL: URL?
-            if FASTQBundle.isBundleURL(inputURL) {
-                bundleURL = inputURL
-            } else if FASTQBundle.isBundleURL(inputURL.deletingLastPathComponent()) {
-                bundleURL = inputURL.deletingLastPathComponent()
-            } else {
-                // Not associated with a bundle — use as-is (plain FASTQ file)
-                resolved.append(inputURL)
-                continue
-            }
-
-            if let bundle = bundleURL {
+            if let bundleURL = SequenceInputResolver.enclosingFASTQBundleURL(for: inputURL) {
                 let urls = try await resolver.resolve(
-                    bundleURL: bundle,
+                    bundleURL: bundleURL,
                     tempDirectory: tempDirectory,
                     progress: { _, msg in progress?(msg) }
                 )
                 resolved.append(contentsOf: urls)
-            } else {
-                resolved.append(inputURL)
+                continue
             }
+
+            if let resolvedSequenceURL = SequenceInputResolver.resolvePrimarySequenceURL(for: inputURL) {
+                resolved.append(resolvedSequenceURL)
+                continue
+            }
+
+            resolved.append(inputURL)
         }
         return resolved
     }

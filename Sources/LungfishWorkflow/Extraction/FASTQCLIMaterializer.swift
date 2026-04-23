@@ -46,14 +46,14 @@ public final class FASTQCLIMaterializer: Sendable {
         tempDirectory: URL,
         progress: (@Sendable (String) -> Void)? = nil
     ) async throws -> URL {
-        // Physical bundles: return their primary FASTQ directly (no copy needed)
+        // Physical bundles: return their primary sequence directly (no copy needed)
         if !FASTQBundle.isDerivedBundle(bundleURL),
-           let physicalURL = FASTQBundle.resolvePrimaryFASTQURL(for: bundleURL) {
+           let physicalURL = FASTQBundle.resolvePrimarySequenceURL(for: bundleURL) {
             return physicalURL
         }
 
         guard let manifest = FASTQBundle.loadDerivedManifest(in: bundleURL) else {
-            if let physicalURL = FASTQBundle.resolvePrimaryFASTQURL(for: bundleURL) {
+            if let physicalURL = FASTQBundle.resolvePrimarySequenceURL(for: bundleURL) {
                 return physicalURL
             }
             throw FASTQCLIMaterializerError.derivedManifestMissing
@@ -189,24 +189,43 @@ public final class FASTQCLIMaterializer: Sendable {
             let readIDListURL = bundleURL.appendingPathComponent(readIDFilename)
             let trimURL = trimPositionsFilename.map { bundleURL.appendingPathComponent($0) }
             let orientURL = orientMapFilename.map { bundleURL.appendingPathComponent($0) }
-            try await materializeFASTQSubset(
-                rootFASTQURL: rootFASTQURL,
-                readIDListURL: readIDListURL,
-                trimPositionsURL: trimURL,
-                orientMapURL: orientURL,
-                outputURL: outputURL
-            )
+            if manifest.sequenceFormat == .fasta {
+                try await materializeFASTASubset(
+                    rootFASTAURL: rootFASTQURL,
+                    readIDListURL: readIDListURL,
+                    trimPositionsURL: trimURL,
+                    orientMapURL: orientURL,
+                    outputURL: outputURL
+                )
+            } else {
+                try await materializeFASTQSubset(
+                    rootFASTQURL: rootFASTQURL,
+                    readIDListURL: readIDListURL,
+                    trimPositionsURL: trimURL,
+                    orientMapURL: orientURL,
+                    outputURL: outputURL
+                )
+            }
 
         case .orientMap(let orientMapFilename, _):
             let mapURL = bundleURL.appendingPathComponent(orientMapFilename)
             let fwdReadIDs = try FASTQOrientMapFile.loadForwardReadIDs(from: mapURL)
             let rcReadIDs = try FASTQOrientMapFile.loadRCReadIDs(from: mapURL)
-            try await materializeOrientedReads(
-                fromRootFASTQ: rootFASTQURL,
-                forwardReadIDs: fwdReadIDs,
-                rcReadIDs: rcReadIDs,
-                outputFASTQ: outputURL
-            )
+            if manifest.sequenceFormat == .fasta {
+                try await materializeOrientedFASTAReads(
+                    fromRootFASTA: rootFASTQURL,
+                    forwardReadIDs: fwdReadIDs,
+                    rcReadIDs: rcReadIDs,
+                    outputFASTA: outputURL
+                )
+            } else {
+                try await materializeOrientedReads(
+                    fromRootFASTQ: rootFASTQURL,
+                    forwardReadIDs: fwdReadIDs,
+                    rcReadIDs: rcReadIDs,
+                    outputFASTQ: outputURL
+                )
+            }
 
         case .demuxGroup:
             // demuxGroup bundles are container-only (no physical FASTQ of their own);

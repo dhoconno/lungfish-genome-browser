@@ -90,61 +90,13 @@ struct ReferenceSequencePickerView: View {
     private func loadReferences() {
         guard let projectURL else { return }
 
-        var refs: [DiscoveredReference] = []
-        let fm = FileManager.default
-
-        // Scan entire project for .lungfishref bundles
-        if let enumerator = fm.enumerator(
-            at: projectURL,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) {
-            for case let url as URL in enumerator {
-                guard url.pathExtension == "lungfishref" else { continue }
-                enumerator.skipDescendants()
-
-                let bundleName = url.deletingPathExtension().lastPathComponent
-
-                // Strategy 1: Simple reference bundle — sequence.fasta at root
-                if let fastaURL = ReferenceSequenceFolder.fastaURL(in: url) {
-                    refs.append(DiscoveredReference(
-                        id: url.path, name: bundleName,
-                        bundleURL: url, fastaURL: fastaURL
-                    ))
-                    continue
-                }
-
-                // Strategy 2: Genome bundle — FASTA in genome/ subdirectory
-                let genomeDir = url.appendingPathComponent("genome")
-                if let genomeContents = try? fm.contentsOfDirectory(at: genomeDir, includingPropertiesForKeys: nil) {
-                    let fastaFile = genomeContents.first { file in
-                        let name = file.lastPathComponent.lowercased()
-                        return name.hasSuffix(".fa") || name.hasSuffix(".fasta") || name.hasSuffix(".fna")
-                            || name.hasSuffix(".fa.gz") || name.hasSuffix(".fasta.gz") || name.hasSuffix(".fna.gz")
-                    }
-                    if let fastaFile {
-                        refs.append(DiscoveredReference(
-                            id: url.path, name: bundleName,
-                            bundleURL: url, fastaURL: fastaFile
-                        ))
-                        continue
-                    }
-                }
-
-                // Strategy 3: FASTA at bundle root (non-standard but handle it)
-                if let rootContents = try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) {
-                    let fastaFile = rootContents.first { file in
-                        let ext = file.pathExtension.lowercased()
-                        return ["fasta", "fa", "fna"].contains(ext)
-                    }
-                    if let fastaFile {
-                        refs.append(DiscoveredReference(
-                            id: url.path, name: bundleName,
-                            bundleURL: url, fastaURL: fastaFile
-                        ))
-                    }
-                }
-            }
+        let refs = ReferenceSequenceScanner.scanAll(in: projectURL).map { candidate in
+            DiscoveredReference(
+                id: candidate.id,
+                name: candidate.displayName,
+                bundleURL: candidate.sourceBundleURL ?? candidate.fastaURL.deletingLastPathComponent(),
+                fastaURL: candidate.fastaURL
+            )
         }
 
         discoveredRefs = refs.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }

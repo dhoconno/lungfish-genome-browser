@@ -76,6 +76,46 @@ public enum FASTQBundle {
         }
     }
 
+    /// Resolves the primary sequence file (FASTQ or FASTA) for a candidate URL.
+    ///
+    /// This extends ``resolvePrimaryFASTQURL(for:)`` to support FASTA-backed
+    /// `.lungfishfastq` bundles such as `.fullFASTA` derivatives.
+    public static func resolvePrimarySequenceURL(for candidateURL: URL) -> URL? {
+        if let fastqURL = resolvePrimaryFASTQURL(for: candidateURL) {
+            return fastqURL
+        }
+
+        if SequenceFormat.from(url: candidateURL) == .fasta {
+            return candidateURL
+        }
+
+        guard isBundleURL(candidateURL) else {
+            return nil
+        }
+
+        if let manifest = loadDerivedManifest(in: candidateURL),
+           case .fullFASTA(let fastaFilename) = manifest.payload {
+            let fastaURL = candidateURL.appendingPathComponent(fastaFilename)
+            if FileManager.default.fileExists(atPath: fastaURL.path) {
+                return fastaURL
+            }
+        }
+
+        do {
+            let contents = try FileManager.default.contentsOfDirectory(
+                at: candidateURL,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            )
+            let fastaFiles = contents
+                .filter { SequenceFormat.from(url: $0) == .fasta }
+                .sorted { $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending }
+            return fastaFiles.first
+        } catch {
+            return nil
+        }
+    }
+
     /// Whether a bundle uses virtual concatenation (multiple source files).
     public static func isMultiFileBundle(_ bundleURL: URL) -> Bool {
         FASTQSourceFileManifest.exists(in: bundleURL)

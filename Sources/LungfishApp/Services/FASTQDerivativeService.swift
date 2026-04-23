@@ -462,7 +462,7 @@ public enum FASTQDerivativeError: Error, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .sourceMustBeBundle:
-            return "FASTQ operations require a .lungfishfastq bundle."
+            return "Bundle-backed FASTQ/FASTA operations require a .lungfishfastq bundle."
         case .sourceFASTQMissing:
             return "The source FASTQ file is missing from the bundle."
         case .derivedManifestMissing:
@@ -474,7 +474,7 @@ public enum FASTQDerivativeError: Error, LocalizedError {
         case .rootFASTQMissing:
             return "Root FASTQ payload is missing."
         case .invalidOperation(let reason):
-            return "Invalid FASTQ operation: \(reason)"
+            return "Invalid FASTQ/FASTA operation: \(reason)"
         case .emptyResult:
             return "Operation produced no reads."
         }
@@ -561,6 +561,20 @@ public actor FASTQDerivativeService {
             tempDirectory: tempDir,
             progress: progress
         )
+        let sourceSequenceFormat = SequenceFormat.from(url: materializedSourceFASTQ)
+            ?? FASTQBundle.loadDerivedManifest(in: sourceBundleURL)?.sequenceFormat
+            ?? .fastq
+        let executionSourceFASTQ: URL
+        if sourceSequenceFormat == .fasta {
+            let bridgedFASTQ = tempDir.appendingPathComponent("bridged-source.fastq")
+            try await SyntheticFASTQBridge.convertFASTAToFASTQ(
+                inputURL: materializedSourceFASTQ,
+                outputURL: bridgedFASTQ
+            )
+            executionSourceFASTQ = bridgedFASTQ
+        } else {
+            executionSourceFASTQ = materializedSourceFASTQ
+        }
 
         // Resolve lineage and root bundle info (needed for all operation types)
         let sourceManifest = FASTQBundle.loadDerivedManifest(in: sourceBundleURL)
@@ -578,22 +592,25 @@ public actor FASTQDerivativeService {
             pairingMode = sourceManifest.pairingMode
             baseLineage = sourceManifest.lineage
         } else {
-            guard let rootFASTQURL = FASTQBundle.resolvePrimaryFASTQURL(for: sourceBundleURL) else {
+            guard let rootFASTQURL = FASTQBundle.resolvePrimarySequenceURL(for: sourceBundleURL) else {
                 throw FASTQDerivativeError.sourceFASTQMissing
             }
             rootFASTQFilename = rootFASTQURL.lastPathComponent
             resolvedRootBundleURL = sourceBundleURL
-            pairingMode = FASTQMetadataStore.load(for: rootFASTQURL)?.ingestion?.pairingMode
+            pairingMode = SequenceFormat.from(url: rootFASTQURL) == .fastq
+                ? FASTQMetadataStore.load(for: rootFASTQURL)?.ingestion?.pairingMode
+                : nil
             baseLineage = []
         }
 
         // Orient has its own execution path — produces an orient-map derivative
         if case .orient(let referenceURL, let wordLength, let dbMask, let saveUnoriented) = request {
             return try await createOrientDerivative(
-                sourceFASTQ: materializedSourceFASTQ,
+                sourceFASTQ: executionSourceFASTQ,
                 sourceBundleURL: sourceBundleURL,
                 resolvedRootBundleURL: resolvedRootBundleURL,
                 rootFASTQFilename: rootFASTQFilename,
+                sourceSequenceFormat: sourceSequenceFormat,
                 pairingMode: pairingMode,
                 baseLineage: baseLineage,
                 referenceURL: referenceURL,
@@ -619,10 +636,11 @@ public actor FASTQDerivativeService {
             let kitOverride
         ) = request {
             return try await createDemultiplexDerivative(
-                sourceFASTQ: materializedSourceFASTQ,
+                sourceFASTQ: executionSourceFASTQ,
                 sourceBundleURL: sourceBundleURL,
                 rootBundleURL: resolvedRootBundleURL,
                 rootFASTQFilename: rootFASTQFilename,
+                inputSequenceFormat: sourceSequenceFormat,
                 pairingMode: pairingMode,
                 kitID: kitID,
                 customCSVPath: customCSVPath,
@@ -641,7 +659,7 @@ public actor FASTQDerivativeService {
         if request.isMixedOutputOperation {
             return try await createMixedOutputDerivative(
                 request: request,
-                sourceFASTQ: materializedSourceFASTQ,
+                sourceFASTQ: executionSourceFASTQ,
                 sourceBundleURL: sourceBundleURL,
                 resolvedRootBundleURL: resolvedRootBundleURL,
                 rootFASTQFilename: rootFASTQFilename,
@@ -655,7 +673,7 @@ public actor FASTQDerivativeService {
         let transformedFASTQ = tempDir.appendingPathComponent("transformed.fastq")
         let operation = try await runTransformation(
             request: request,
-            sourceFASTQ: materializedSourceFASTQ,
+            sourceFASTQ: executionSourceFASTQ,
             outputFASTQ: transformedFASTQ,
             sourceBundleURL: sourceBundleURL,
             progress: progress
@@ -665,8 +683,14 @@ public actor FASTQDerivativeService {
         // interleaved source (same reads, just reorganized into R1/R2), so stats represent
         // the combined R1+R2 dataset — which is correct for display purposes.
         progress?("Computing output statistics...")
-        let reader = FASTQReader(validateSequence: false)
-        let (stats, _) = try await reader.computeStatistics(from: transformedFASTQ, sampleLimit: 0)
+        let stats: FASTQDatasetStatistics
+        if sourceSequenceFormat == .fasta {
+            stats = try await SyntheticFASTQBridge.placeholderStatistics(fromFASTQ: transformedFASTQ)
+        } else {
+            let reader = FASTQReader(validateSequence: false)
+            let computed = try await reader.computeStatistics(from: transformedFASTQ, sampleLimit: 0)
+            stats = computed.0
+        }
         guard stats.readCount > 0 else {
             throw FASTQDerivativeError.emptyResult
         }
@@ -709,17 +733,28 @@ public actor FASTQDerivativeService {
             }
             payload = .fullPaired(r1Filename: r1Filename, r2Filename: r2Filename)
         } else if request.isFullOperation {
-            // Full materialization — copy the transformed FASTQ into the output bundle
-            progress?("Storing materialized FASTQ...")
-            let fastqFilename = "reads.fastq"
-            let destinationFASTQ = outputBundle.appendingPathComponent(fastqFilename)
-            try FileManager.default.copyItem(at: transformedFASTQ, to: destinationFASTQ)
-            payload = .full(fastqFilename: fastqFilename)
+            if sourceSequenceFormat == .fasta {
+                progress?("Storing materialized FASTA...")
+                let fastaFilename = "reads.fasta"
+                let destinationFASTA = outputBundle.appendingPathComponent(fastaFilename)
+                try await SyntheticFASTQBridge.convertFASTQToFASTA(
+                    inputURL: transformedFASTQ,
+                    outputURL: destinationFASTA
+                )
+                payload = .fullFASTA(fastaFilename: fastaFilename)
+            } else {
+                // Full materialization — copy the transformed FASTQ into the output bundle
+                progress?("Storing materialized FASTQ...")
+                let fastqFilename = "reads.fastq"
+                let destinationFASTQ = outputBundle.appendingPathComponent(fastqFilename)
+                try FileManager.default.copyItem(at: transformedFASTQ, to: destinationFASTQ)
+                payload = .full(fastqFilename: fastqFilename)
+            }
         } else if request.isTrimOperation {
             // Extract trim positions by diffing original vs trimmed FASTQ
             progress?("Extracting trim positions...")
             let trimRecords = try await extractTrimPositions(
-                originalFASTQ: materializedSourceFASTQ,
+                originalFASTQ: executionSourceFASTQ,
                 trimmedFASTQ: transformedFASTQ
             )
             guard !trimRecords.isEmpty else {
@@ -792,7 +827,8 @@ public actor FASTQDerivativeService {
             lineage: lineage,
             operation: operation,
             cachedStatistics: stats,
-            pairingMode: pairingMode
+            pairingMode: pairingMode,
+            sequenceFormat: sourceSequenceFormat
         )
         try FASTQBundle.saveDerivedManifest(manifest, in: outputBundle)
 
@@ -950,6 +986,7 @@ public actor FASTQDerivativeService {
         sourceBundleURL: URL,
         resolvedRootBundleURL: URL,
         rootFASTQFilename: String,
+        sourceSequenceFormat: SequenceFormat,
         pairingMode: IngestionMetadata.PairingMode?,
         baseLineage: [FASTQDerivativeOperation],
         referenceURL: URL,
@@ -1010,12 +1047,17 @@ public actor FASTQDerivativeService {
         }
 
         // Compute statistics on the oriented output
-        let statsResult = try await runner.run(
-            .seqkit,
-            arguments: ["stats", "--tabular", result.orientedFASTQ.path],
-            timeout: 120
-        )
-        let stats = parseFASTQStats(statsResult.stdout)
+        let stats: FASTQDatasetStatistics?
+        if sourceSequenceFormat == .fasta {
+            stats = try await SyntheticFASTQBridge.placeholderStatistics(fromFASTQ: result.orientedFASTQ)
+        } else {
+            let statsResult = try await runner.run(
+                .seqkit,
+                arguments: ["stats", "--tabular", result.orientedFASTQ.path],
+                timeout: 120
+            )
+            stats = parseFASTQStats(statsResult.stdout)
+        }
 
         var orientCommandParts: [String] = [
             "vsearch",
@@ -1063,7 +1105,8 @@ public actor FASTQDerivativeService {
             lineage: lineage,
             operation: operation,
             cachedStatistics: stats ?? .placeholder(readCount: fwdCount + rcCount, baseCount: 0),
-            pairingMode: pairingMode
+            pairingMode: pairingMode,
+            sequenceFormat: sourceSequenceFormat
         )
 
         try FASTQBundle.saveDerivedManifest(manifest, in: bundleURL)
@@ -1079,13 +1122,27 @@ public actor FASTQDerivativeService {
             OperationMarker.markInProgress(unorientedBundleURL, detail: "Creating derivative FASTQ\u{2026}")
             defer { OperationMarker.clearInProgress(unorientedBundleURL) }
 
-            // Copy the unoriented FASTQ
-            let unorientedDest = unorientedBundleURL.appendingPathComponent("unoriented.fastq")
-            try FileManager.default.copyItem(at: unorientedFASTQ, to: unorientedDest)
-
-            let unorientedStats = parseFASTQStats(
-                (try? await runner.run(.seqkit, arguments: ["stats", "--tabular", unorientedDest.path], timeout: 120))?.stdout ?? ""
-            )
+            let unorientedDest: URL
+            let unorientedPayload: FASTQDerivativePayload
+            let unorientedStats: FASTQDatasetStatistics?
+            if sourceSequenceFormat == .fasta {
+                let fastaDest = unorientedBundleURL.appendingPathComponent("unoriented.fasta")
+                try await SyntheticFASTQBridge.convertFASTQToFASTA(
+                    inputURL: unorientedFASTQ,
+                    outputURL: fastaDest
+                )
+                unorientedDest = fastaDest
+                unorientedPayload = .fullFASTA(fastaFilename: unorientedDest.lastPathComponent)
+                unorientedStats = try await SyntheticFASTQBridge.placeholderStatistics(fromFASTQ: unorientedFASTQ)
+            } else {
+                let fastqDest = unorientedBundleURL.appendingPathComponent("unoriented.fastq")
+                try FileManager.default.copyItem(at: unorientedFASTQ, to: fastqDest)
+                unorientedDest = fastqDest
+                unorientedPayload = .full(fastqFilename: unorientedDest.lastPathComponent)
+                unorientedStats = parseFASTQStats(
+                    (try? await runner.run(.seqkit, arguments: ["stats", "--tabular", unorientedDest.path], timeout: 120))?.stdout ?? ""
+                )
+            }
 
             let unorientedOp = FASTQDerivativeOperation(
                 kind: .orient,
@@ -1109,11 +1166,12 @@ public actor FASTQDerivativeService {
                 parentBundleRelativePath: unorientedParentPath,
                 rootBundleRelativePath: unorientedRootPath,
                 rootFASTQFilename: rootFASTQFilename,
-                payload: .full(fastqFilename: "unoriented.fastq"),
+                payload: unorientedPayload,
                 lineage: unorientedLineage,
                 operation: unorientedOp,
                 cachedStatistics: unorientedStats ?? .placeholder(readCount: result.unmatchedCount, baseCount: 0),
-                pairingMode: pairingMode
+                pairingMode: pairingMode,
+                sequenceFormat: sourceSequenceFormat
             )
 
             try FASTQBundle.saveDerivedManifest(unorientedManifest, in: unorientedBundleURL)
@@ -1161,6 +1219,7 @@ public actor FASTQDerivativeService {
         sourceBundleURL: URL,
         rootBundleURL: URL,
         rootFASTQFilename: String,
+        inputSequenceFormat: SequenceFormat,
         pairingMode: IngestionMetadata.PairingMode?,
         kitID: String,
         customCSVPath: String?,
@@ -1243,6 +1302,7 @@ public actor FASTQDerivativeService {
                 rootBundleURL: rootBundleURL,
                 rootFASTQFilename: rootFASTQFilename,
                 inputPairingMode: pairingMode,
+                inputSequenceFormat: inputSequenceFormat,
                 useNoIndels: !allowIndels
             ),
             progress: { fraction, message in

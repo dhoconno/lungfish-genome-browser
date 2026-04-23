@@ -45,6 +45,21 @@ final class ClassificationConfigTests: XCTestCase {
         return fastqURL
     }
 
+    /// Creates a temporary FASTA file.
+    private func makeFakeFastaFile(name: String = "test.fasta") throws -> URL {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kraken2-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        let fastaURL = tempDir.appendingPathComponent(name)
+        let content = """
+        >read1
+        ATCGATCGATCG
+        """
+        try Data(content.utf8).write(to: fastaURL)
+        return fastaURL
+    }
+
     /// Creates a temporary output directory.
     private func makeOutputDirectory() throws -> URL {
         let tempDir = FileManager.default.temporaryDirectory
@@ -76,6 +91,25 @@ final class ClassificationConfigTests: XCTestCase {
         XCTAssertFalse(config.isPairedEnd)
         XCTAssertEqual(config.inputFiles.count, 1)
         XCTAssertEqual(config.databaseName, "TestDB")
+        XCTAssertEqual(config.inputFormat, .fastq)
+    }
+
+    func testClassificationConfigStoresFASTAInputFormat() throws {
+        let dbDir = try makeFakeDatabaseDirectory()
+        let fasta = try makeFakeFastaFile()
+        let outputDir = try makeOutputDirectory()
+
+        let config = ClassificationConfig(
+            inputFiles: [fasta],
+            isPairedEnd: false,
+            databaseName: "TestDB",
+            inputFormat: .fasta,
+            databasePath: dbDir,
+            outputDirectory: outputDir
+        )
+
+        XCTAssertEqual(config.inputFormat, .fasta)
+        XCTAssertEqual(config.provenanceInputFileFormat, .fasta)
     }
 
     // MARK: - Presets
@@ -286,6 +320,24 @@ final class ClassificationConfigTests: XCTestCase {
         XCTAssertTrue(args.contains("--quick"))
     }
 
+    func testFASTAInputAddsKraken2FastaFlag() throws {
+        let dbDir = try makeFakeDatabaseDirectory()
+        let fasta = try makeFakeFastaFile()
+        let outputDir = try makeOutputDirectory()
+
+        let config = ClassificationConfig(
+            inputFiles: [fasta],
+            isPairedEnd: false,
+            databaseName: "TestDB",
+            inputFormat: .fasta,
+            databasePath: dbDir,
+            outputDirectory: outputDir
+        )
+
+        let args = config.kraken2Arguments()
+        XCTAssertTrue(args.contains("--fasta-input"))
+    }
+
     func testThreadsArgument() throws {
         let dbDir = try makeFakeDatabaseDirectory()
         let fastq = try makeFakeFastqFile()
@@ -381,6 +433,23 @@ final class ClassificationConfigTests: XCTestCase {
             inputFiles: [fastq],
             isPairedEnd: false,
             databaseName: "TestDB",
+            databasePath: dbDir,
+            outputDirectory: outputDir
+        )
+
+        XCTAssertNoThrow(try config.validate())
+    }
+
+    func testValidationPassesWithValidFASTAConfig() throws {
+        let dbDir = try makeFakeDatabaseDirectory()
+        let fasta = try makeFakeFastaFile()
+        let outputDir = try makeOutputDirectory()
+
+        let config = ClassificationConfig(
+            inputFiles: [fasta],
+            isPairedEnd: false,
+            databaseName: "TestDB",
+            inputFormat: .fasta,
             databasePath: dbDir,
             outputDirectory: outputDir
         )
@@ -797,6 +866,19 @@ final class ClassificationPipelineErrorTests: XCTestCase {
             NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "permission denied"])
         )
         XCTAssertTrue(dirErr.localizedDescription.contains("permission denied"))
+    }
+
+    func testConfigErrorDescriptionsUseGenericSequenceLanguage() {
+        let noInput = ClassificationConfigError.noInputFiles
+        XCTAssertEqual(noInput.localizedDescription, "No input sequence files specified")
+
+        let directoryError = ClassificationConfigError.inputPathIsDirectory(
+            URL(fileURLWithPath: "/tmp/reads")
+        )
+        XCTAssertEqual(
+            directoryError.localizedDescription,
+            "Input path is a directory, expected sequence file: reads"
+        )
     }
 }
 
