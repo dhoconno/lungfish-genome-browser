@@ -197,7 +197,7 @@ public class SequenceViewerView: NSView {
     /// Minimum base quality used for consensus/depth calculations.
     var consensusMinBaseQSetting: Int = 0
 
-    /// Whether the consensus row is shown under depth.
+    /// Whether the consensus row is shown under depth when zoomed in enough to render bases.
     var showConsensusTrackSetting: Bool = true
 
     /// Consensus caller mode.
@@ -931,6 +931,7 @@ public class SequenceViewerView: NSView {
     @discardableResult
     private func applyReadViewportPolicy(scale: Double) -> ReadTrackRenderer.ZoomTier {
         let tier = ReadViewportPolicy.zoomTier(scale: scale)
+        _ = applyConsensusViewportPolicy(scale: scale)
         let enteringCoverage = tier == .coverage && lastRenderedReadTier != .coverage
         lastRenderedReadTier = tier
 
@@ -957,6 +958,34 @@ public class SequenceViewerView: NSView {
         }
         updateSelectionStatus()
         return tier
+    }
+
+    /// Clears cached consensus state whenever the viewport is too wide to render bases.
+    ///
+    /// Consensus generation is proportional to genomic span, not read count. Keeping it
+    /// enabled at whole-contig overview scales causes very large samtools outputs and
+    /// expensive main-thread normalization work for data the UI cannot meaningfully show.
+    @discardableResult
+    private func applyConsensusViewportPolicy(scale: Double) -> Bool {
+        let allowsConsensus = showReads
+            && showConsensusTrackSetting
+            && scale < showLettersThreshold
+
+        guard !allowsConsensus else { return true }
+
+        guard cachedConsensusSequence != nil
+            || cachedConsensusRegion != nil
+            || !cachedConsensusOptionsSignature.isEmpty
+            || isFetchingConsensus else {
+            return false
+        }
+
+        consensusFetchGeneration += 1
+        cachedConsensusSequence = nil
+        cachedConsensusRegion = nil
+        cachedConsensusOptionsSignature = ""
+        isFetchingConsensus = false
+        return false
     }
 
 #if DEBUG
@@ -1873,6 +1902,8 @@ public class SequenceViewerView: NSView {
         }
 
         // --- Read alignments below variants ---
+        let showsConsensusAtCurrentScale = applyConsensusViewportPolicy(scale: scale)
+
         if !alignmentDataProviders.isEmpty && showReads {
             let tier = applyReadViewportPolicy(scale: scale)
             let coverageY = readTrackY
@@ -1923,7 +1954,7 @@ public class SequenceViewerView: NSView {
             }
 
             var rowsY = coverageRect.maxY + coverageToConsensusGap
-            if showConsensusTrackSetting {
+            if showsConsensusAtCurrentScale {
                 let consensusOptions = currentConsensusOptionsSignature()
                 let consensusCovered = cachedConsensusRegion?.chromosome == visibleRegion.chromosome
                     && (cachedConsensusRegion?.start ?? Int.max) <= visibleRegion.start
@@ -2715,6 +2746,9 @@ public class SequenceViewerView: NSView {
     private func fetchConsensusAsync(bundle: ReferenceBundle, region: GenomicRegion) {
         guard showConsensusTrackSetting else { return }
         guard !alignmentDataProviders.isEmpty else { return }
+        let currentScale = viewController?.referenceFrame?.scale
+            ?? (Double(max(region.end - region.start, 1)) / max(Double(max(bounds.width, 1)), 1.0))
+        guard currentScale < showLettersThreshold else { return }
 
         consensusFetchGeneration += 1
         let thisGeneration = consensusFetchGeneration
@@ -2959,15 +2993,6 @@ public class SequenceViewerView: NSView {
                 context: context,
                 rowRect: rect,
                 font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
-            )
-        } else if scale < showLineThreshold {
-            // Zoomed out: render as simple colored blocks aggregated by base runs.
-            drawColoredBlocks(
-                slice.sequence,
-                startPosition: slice.startPosition,
-                frame: frame,
-                context: context,
-                rowRect: rect
             )
         } else {
             context.setStrokeColor(NSColor.systemGray.withAlphaComponent(0.55).cgColor)

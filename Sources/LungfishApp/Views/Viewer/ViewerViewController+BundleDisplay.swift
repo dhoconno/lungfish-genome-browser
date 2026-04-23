@@ -31,7 +31,7 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
         let chromosomes: [ChromosomeInfo]
     }
 
-    /// Displays a reference genome bundle in the viewer with a chromosome navigator.
+    /// Displays a reference genome bundle using the default top-level bundle browser.
     ///
     /// - Parameter url: URL of the `.lungfishref` bundle directory
     /// - Throws: Error if the manifest cannot be loaded or the bundle is invalid
@@ -416,7 +416,7 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
 
     // MARK: - Chromosome Navigator
 
-    /// Configures the chromosome navigator drawer on the left side of the viewer.
+    /// Configures the legacy chromosome navigator drawer for sequence-detail mode.
     private func configureChromosomeNavigator(with chromosomes: [ChromosomeInfo]) {
         if let existing = chromosomeNavigatorView {
             existing.chromosomes = chromosomes

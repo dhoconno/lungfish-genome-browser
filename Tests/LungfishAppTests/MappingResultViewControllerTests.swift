@@ -109,6 +109,15 @@ final class MappingResultViewControllerTests: XCTestCase {
         XCTAssertFalse(vc.testEmbeddedViewerShowsBundleBrowser)
     }
 
+    func testEmbeddedViewerDoesNotInstallChromosomeNavigator() throws {
+        let vc = MappingResultViewController()
+        _ = vc.view
+
+        vc.configureForTesting(result: makeMappingResult(viewerBundleURL: try makeReferenceBundleWithAnnotationDatabase()))
+
+        XCTAssertFalse(vc.testEmbeddedViewerShowsChromosomeNavigator)
+    }
+
     func testEmbeddedViewerNotifiesHostWhenReferenceBundleLoads() throws {
         let vc = MappingResultViewController()
         _ = vc.view

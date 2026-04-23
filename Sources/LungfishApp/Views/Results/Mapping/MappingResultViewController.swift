@@ -442,6 +442,9 @@ extension MappingResultViewController {
     var testEmbeddedViewerShowsBundleBrowser: Bool {
         embeddedViewerController.testBundleBrowserController != nil
     }
+    var testEmbeddedViewerShowsChromosomeNavigator: Bool {
+        embeddedViewerController.chromosomeNavigatorView != nil
+    }
     var testFilteredAlignmentServiceTarget: AlignmentFilterTarget? {
         filteredAlignmentServiceTarget
     }

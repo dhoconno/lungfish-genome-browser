@@ -42,6 +42,33 @@ final class SequenceViewerReadVisibilityTests: XCTestCase {
         XCTAssertEqual(view.testReadFetchGeneration, originalGeneration)
     }
 
+    func testLeavingBaseVisibleScaleClearsConsensusCache() {
+        let view = SequenceViewerView(frame: NSRect(x: 0, y: 0, width: 800, height: 400))
+        view.cachedConsensusRegion = GenomicRegion(chromosome: "chr1", start: 100, end: 200)
+
+        let tier = view.testApplyReadViewportPolicy(
+            scale: AppSettings.shared.showLettersThresholdBpPerPixel + 1
+        )
+
+        XCTAssertEqual(tier, .coverage)
+        XCTAssertNil(view.cachedConsensusRegion)
+    }
+
+    func testBaseVisibleScalePreservesConsensusCache() {
+        let view = SequenceViewerView(frame: NSRect(x: 0, y: 0, width: 800, height: 400))
+        view.cachedConsensusRegion = GenomicRegion(chromosome: "chr1", start: 100, end: 200)
+        view.testSetLastRenderedReadTier(.coverage)
+
+        let tier = view.testApplyReadViewportPolicy(
+            scale: max(0.1, AppSettings.shared.showLettersThresholdBpPerPixel - 1)
+        )
+
+        XCTAssertEqual(tier, .coverage)
+        XCTAssertEqual(view.cachedConsensusRegion?.chromosome, "chr1")
+        XCTAssertEqual(view.cachedConsensusRegion?.start, 100)
+        XCTAssertEqual(view.cachedConsensusRegion?.end, 200)
+    }
+
     private func makeAlignedRead(name: String) -> AlignedRead {
         AlignedRead(
             name: name,
