@@ -160,7 +160,14 @@ final class DatabaseSearchDialogState {
     }
 
     func cancel() {
+        cancelAllSearches()
         activeViewModel.onCancel?()
+    }
+
+    func cancelAllSearches() {
+        for viewModel in [genBankGenomesViewModel, sraRunsViewModel, pathoplexusViewModel] {
+            viewModel.cancelSearch()
+        }
     }
 
     func performPrimaryAction() {

@@ -42,8 +42,8 @@ private typealias DBAccessionSummary = LungfishIO.NaoMgsAccessionSummary
 ///
 /// ## Thread Safety
 ///
-/// This class is `@MainActor` isolated and uses raw `NSSplitView` (not
-/// `NSSplitViewController`) per macOS 26 deprecated API rules.
+/// This class is `@MainActor` isolated and manages its `NSSplitView` directly
+/// so pane sizing and selection state stay local to this controller.
 @MainActor
 public final class NaoMgsResultViewController: NSViewController, NSSplitViewDelegate, NSPopoverDelegate {
 
@@ -1280,8 +1280,6 @@ public final class NaoMgsResultViewController: NSViewController, NSSplitViewDele
     // MARK: - Setup: Split View
 
     /// Configures the NSSplitView with detail pane (left) and taxonomy table (right).
-    ///
-    /// Uses raw NSSplitView (not NSSplitViewController) per macOS 26 rules.
     private func setupSplitView() {
         splitView.translatesAutoresizingMaskIntoConstraints = false
         splitView.setAccessibilityIdentifier("naomgs-result-split-view")

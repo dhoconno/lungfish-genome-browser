@@ -19,6 +19,26 @@ private enum SidebarAccessibilityIdentifier {
     static let analysesGroup = "sidebar-group-analyses"
 }
 
+private final class LocalEventMonitor {
+    private var token: Any?
+
+    init(matching mask: NSEvent.EventTypeMask, handler: @escaping (NSEvent) -> NSEvent?) {
+        token = NSEvent.addLocalMonitorForEvents(matching: mask, handler: handler)
+    }
+
+    @MainActor
+    func invalidate() {
+        guard let token else { return }
+        NSEvent.removeMonitor(token)
+        self.token = nil
+    }
+
+    deinit {
+        guard let token else { return }
+        NSEvent.removeMonitor(token)
+    }
+}
+
 // MARK: - Sidebar Drop Target View
 
 /// Custom NSView subclass that acts as a fallback drag destination for the sidebar.
@@ -165,10 +185,8 @@ public class SidebarViewController: NSViewController {
     /// Last width recommendation posted to the split-view controller.
     private var lastRecommendedSidebarWidth: CGFloat = 0
 
-    /// Local event monitor for Delete key — stored so it can be removed in deinit.
-    /// `nonisolated(unsafe)` because deinit is nonisolated in Swift 6.2, but we only
-    /// mutate this on the main actor (viewDidLoad) and read it in deinit (safe at teardown).
-    nonisolated(unsafe) private var keyEventMonitor: Any?
+    /// Local event monitor for Delete and selection shortcuts.
+    private var keyEventMonitor: LocalEventMonitor?
 
     // MARK: - Delegate
 
@@ -305,9 +323,7 @@ public class SidebarViewController: NSViewController {
     }
 
     deinit {
-        if let monitor = keyEventMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
+        NotificationCenter.default.removeObserver(self)
     }
 
     public override func viewDidLoad() {
@@ -325,7 +341,7 @@ public class SidebarViewController: NSViewController {
         )
 
         // Set up key event monitoring for Delete key
-        keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        keyEventMonitor = LocalEventMonitor(matching: .keyDown) { [weak self] event in
             guard let self = self,
                   let sidebarWindow = self.view.window,
                   event.window === sidebarWindow,  // Ensure event is for THIS window, not sheets
@@ -350,6 +366,13 @@ public class SidebarViewController: NSViewController {
         }
     }
 
+    public override func viewWillDisappear() {
+        super.viewWillDisappear()
+        cancelUniversalSearch(reason: "controller teardown")
+        keyEventMonitor?.invalidate()
+        keyEventMonitor = nil
+    }
+
     // MARK: - Data Loading
 
     private func loadSampleData() {
@@ -364,7 +387,7 @@ public class SidebarViewController: NSViewController {
 
     @objc private func searchFieldChanged(_ sender: NSSearchField) {
         let searchText = sender.stringValue.trimmingCharacters(in: .whitespaces)
-        universalSearchTask?.cancel()
+        cancelUniversalSearch(reason: "query changed")
         universalSearchGeneration &+= 1
         let searchGeneration = universalSearchGeneration
 
@@ -489,14 +512,22 @@ public class SidebarViewController: NSViewController {
 
     /// Clears universal-search state for a project.
     private func clearUniversalSearchState(for projectURL: URL?) {
-        universalSearchTask?.cancel()
-        universalSearchTask = nil
+        cancelUniversalSearch(reason: "clearing project state")
         universalSearchGeneration = 0
 
         guard let projectURL else { return }
         Task {
             await universalSearchService.clearProject(projectURL)
         }
+    }
+
+    private func cancelUniversalSearch(reason: String) {
+        if universalSearchTask != nil {
+            logger.debug("cancelUniversalSearch: cancelling in-flight query (\(reason, privacy: .public))")
+            universalSearchTask?.cancel()
+            universalSearchTask = nil
+        }
+        setSearchSpinnerVisible(false)
     }
 
     /// Recursively filters the sidebar tree, keeping items whose title, subtitle,

@@ -365,9 +365,9 @@ public final class FASTQDatasetViewController: NSViewController {
     private var sourceURL: URL?
     private var derivativeManifest: FASTQDerivedBundleManifest?
     private var selectedOperation: OperationKind?
-    private nonisolated(unsafe) var qualityReportTask: Task<Void, Never>?
-    private nonisolated(unsafe) var operationTask: Task<Void, Never>?
-    private nonisolated(unsafe) var fastaPreviewTask: Task<Void, Never>?
+    private var qualityReportTask: Task<Void, Never>?
+    private var operationTask: Task<Void, Never>?
+    private var fastaPreviewTask: Task<Void, Never>?
 
     public var onStatisticsUpdated: ((FASTQDatasetStatistics) -> Void)?
     public var onRunOperation: ((FASTQDerivativeRequest) async throws -> Void)?
@@ -402,7 +402,7 @@ public final class FASTQDatasetViewController: NSViewController {
     // MARK: - Read Preview Data
 
     private var readPreviewRecords: [FASTQReadPreviewRecord] = []
-    private nonisolated(unsafe) var readPreviewTask: Task<Void, Never>?
+    private var readPreviewTask: Task<Void, Never>?
     private var readPreviewLoaded = false
 
     // MARK: - UI Components — Two-Pane Split
@@ -497,11 +497,20 @@ public final class FASTQDatasetViewController: NSViewController {
 
     // MARK: - Lifecycle
 
-    deinit {
+    private func cancelBackgroundTasks() {
         qualityReportTask?.cancel()
+        qualityReportTask = nil
         operationTask?.cancel()
+        operationTask = nil
         fastaPreviewTask?.cancel()
+        fastaPreviewTask = nil
         readPreviewTask?.cancel()
+        readPreviewTask = nil
+    }
+
+    public override func viewWillDisappear() {
+        super.viewWillDisappear()
+        cancelBackgroundTasks()
     }
 
     public override func loadView() {

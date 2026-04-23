@@ -382,7 +382,7 @@ public final class ReadStyleSectionViewModel {
             throw AlignmentFilterInspectorValidationError.conflictingIdentityFilters
         }
 
-        let identityFilter: AlignmentFilterIdentityFilter?
+        let identityFilter: LungfishWorkflow.AlignmentFilterIdentityFilter?
         if alignmentFilterExactMatchOnly {
             identityFilter = .exactMatch
         } else if trimmedIdentityText.isEmpty {
@@ -403,7 +403,7 @@ public final class ReadStyleSectionViewModel {
         return AlignmentFilterInspectorLaunchRequest(
             sourceTrackID: sourceTrackID,
             outputTrackName: trimmedOutputName,
-            filterRequest: AlignmentFilterRequest(
+            filterRequest: LungfishWorkflow.AlignmentFilterRequest(
                 mappedOnly: alignmentFilterMappedOnly,
                 primaryOnly: alignmentFilterPrimaryOnly,
                 minimumMAPQ: minimumMAPQ,
@@ -473,7 +473,7 @@ public enum AlignmentFilterInspectorDuplicateChoice: String, CaseIterable, Ident
 
     public var id: String { rawValue }
 
-    var serviceValue: AlignmentFilterDuplicateMode? {
+    var serviceValue: LungfishWorkflow.AlignmentFilterDuplicateMode? {
         switch self {
         case .keepAll:
             return nil
@@ -499,7 +499,7 @@ public enum AlignmentFilterInspectorDuplicateChoice: String, CaseIterable, Ident
 public struct AlignmentFilterInspectorLaunchRequest: Equatable {
     public let sourceTrackID: String
     public let outputTrackName: String
-    public let filterRequest: AlignmentFilterRequest
+    public let filterRequest: LungfishWorkflow.AlignmentFilterRequest
 }
 
 public enum AlignmentFilterInspectorValidationError: Error, LocalizedError, Equatable {

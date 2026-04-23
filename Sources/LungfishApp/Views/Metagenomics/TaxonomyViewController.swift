@@ -72,7 +72,7 @@ struct BatchClassificationRow: Sendable {
 ///
 /// The action bar provides export capabilities:
 /// - **Export as CSV/TSV**: Writes the full taxonomy table in depth-first order
-///   via ``NSSavePanel`` (using `beginSheetModal`, not `runModal`, per macOS 26 rules).
+///   via an ``NSSavePanel`` sheet.
 /// - **Copy Summary**: Copies the classification summary text to the pasteboard.
 ///
 /// ## Provenance
@@ -87,8 +87,8 @@ struct BatchClassificationRow: Sendable {
 ///
 /// ## Thread Safety
 ///
-/// This class is `@MainActor` isolated and uses raw `NSSplitView` (not
-/// `NSSplitViewController`) per macOS 26 deprecated API rules.
+/// This class is `@MainActor` isolated and manages its `NSSplitView` directly
+/// so pane sizing and synchronized selection stay within this controller.
 @MainActor
 public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate {
 
@@ -746,8 +746,7 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
 
     /// Configures the NSSplitView with sunburst (left) and table (right).
     ///
-    /// Uses raw NSSplitView (not NSSplitViewController) per macOS 26 rules.
-    /// Delegate methods are safe on raw NSSplitView instances.
+    /// Delegate methods are handled directly on the owning controller.
     ///
     /// **Important**: NSSplitView manages its arranged subview frames directly
     /// using frame-based layout. The container views must keep
@@ -1222,125 +1221,7 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
     /// - Zoom to [name]
     /// - Zoom Out to Root
     private func showContextMenu(for node: TaxonNode, at windowPoint: NSPoint) {
-        let menu = NSMenu()
-
-        // Extract reads for this taxon. The unified dialog's resolver handles
-        // descendant taxon expansion internally, so the old "and Children"
-        // variant is no longer needed.
-        let extractItem = NSMenuItem(
-            title: "Extract Reads\u{2026}",
-            action: #selector(contextExtractReads(_:)),
-            keyEquivalent: ""
-        )
-        extractItem.target = self
-        extractItem.representedObject = node
-        menu.addItem(extractItem)
-
-        menu.addItem(.separator())
-
-        // Copy taxon name
-        let copyNameItem = NSMenuItem(
-            title: "Copy Taxon Name",
-            action: #selector(contextCopyName(_:)),
-            keyEquivalent: ""
-        )
-        copyNameItem.target = self
-        copyNameItem.representedObject = node
-        menu.addItem(copyNameItem)
-
-        // Copy taxonomy path
-        let copyPathItem = NSMenuItem(
-            title: "Copy Taxonomy Path",
-            action: #selector(contextCopyPath(_:)),
-            keyEquivalent: ""
-        )
-        copyPathItem.target = self
-        copyPathItem.representedObject = node
-        menu.addItem(copyPathItem)
-
-        menu.addItem(.separator())
-
-        // Zoom to node (disabled if already the zoom root)
-        let zoomItem = NSMenuItem(
-            title: "Zoom to \(node.name)",
-            action: #selector(contextZoomToNode(_:)),
-            keyEquivalent: ""
-        )
-        zoomItem.target = self
-        zoomItem.representedObject = node
-        if sunburstView.centerNode === node {
-            zoomItem.isEnabled = false
-        }
-        menu.addItem(zoomItem)
-
-        // Zoom out to root
-        let zoomOutItem = NSMenuItem(
-            title: "Zoom Out to Root",
-            action: #selector(contextZoomToRoot(_:)),
-            keyEquivalent: ""
-        )
-        zoomOutItem.target = self
-        zoomOutItem.isEnabled = sunburstView.centerNode != nil
-        menu.addItem(zoomOutItem)
-
-        menu.addItem(.separator())
-
-        // NCBI links submenu
-        let ncbiSubmenu = NSMenu()
-
-        let taxonomyItem = NSMenuItem(
-            title: "NCBI Taxonomy",
-            action: #selector(contextOpenNCBITaxonomy(_:)),
-            keyEquivalent: ""
-        )
-        taxonomyItem.target = self
-        taxonomyItem.representedObject = node
-        taxonomyItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: "Web")
-        ncbiSubmenu.addItem(taxonomyItem)
-
-        let genBankItem = NSMenuItem(
-            title: "GenBank Sequences",
-            action: #selector(contextOpenNCBIGenBank(_:)),
-            keyEquivalent: ""
-        )
-        genBankItem.target = self
-        genBankItem.representedObject = node
-        ncbiSubmenu.addItem(genBankItem)
-
-        let pubmedItem = NSMenuItem(
-            title: "PubMed Literature",
-            action: #selector(contextOpenNCBIPubMed(_:)),
-            keyEquivalent: ""
-        )
-        pubmedItem.target = self
-        pubmedItem.representedObject = node
-        ncbiSubmenu.addItem(pubmedItem)
-
-        let genomeItem = NSMenuItem(
-            title: "Genome Assemblies",
-            action: #selector(contextOpenNCBIGenome(_:)),
-            keyEquivalent: ""
-        )
-        genomeItem.target = self
-        genomeItem.representedObject = node
-        ncbiSubmenu.addItem(genomeItem)
-
-        let ncbiItem = NSMenuItem(title: "Look Up on NCBI", action: nil, keyEquivalent: "")
-        ncbiItem.submenu = ncbiSubmenu
-        ncbiItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: "NCBI")
-        menu.addItem(ncbiItem)
-
-        menu.addItem(.separator())
-
-        let blastItem = NSMenuItem(
-            title: "BLAST Matching Reads\u{2026}",
-            action: #selector(contextBlastReads(_:)),
-            keyEquivalent: ""
-        )
-        blastItem.target = self
-        blastItem.representedObject = node
-        blastItem.image = NSImage(systemSymbolName: "bolt.circle", accessibilityDescription: "BLAST")
-        menu.addItem(blastItem)
+        let menu = buildTaxonContextMenu(for: node, includeNCBILinks: true)
 
         // Convert window point to view coordinates and show
         let viewPoint = view.convert(windowPoint, from: nil)
@@ -1375,13 +1256,12 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
 
     /// Builds context menu items for the given node (for testing).
     func contextMenuItems(for node: TaxonNode) -> [NSMenuItem] {
-        let menu = NSMenu()
-        showContextMenuItems(for: node, into: menu)
-        return menu.items
+        buildTaxonContextMenu(for: node, includeNCBILinks: false).items
     }
 
-    /// Adds context menu items to the given menu without showing it.
-    private func showContextMenuItems(for node: TaxonNode, into menu: NSMenu) {
+    private func buildTaxonContextMenu(for node: TaxonNode, includeNCBILinks: Bool) -> NSMenu {
+        let menu = NSMenu()
+
         let extractItem = NSMenuItem(
             title: "Extract Reads\u{2026}",
             action: #selector(contextExtractReads(_:)),
@@ -1436,6 +1316,54 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
 
         menu.addItem(.separator())
 
+        if includeNCBILinks {
+            let ncbiSubmenu = NSMenu()
+
+            let taxonomyItem = NSMenuItem(
+                title: "NCBI Taxonomy",
+                action: #selector(contextOpenNCBITaxonomy(_:)),
+                keyEquivalent: ""
+            )
+            taxonomyItem.target = self
+            taxonomyItem.representedObject = node
+            taxonomyItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: "Web")
+            ncbiSubmenu.addItem(taxonomyItem)
+
+            let genBankItem = NSMenuItem(
+                title: "GenBank Sequences",
+                action: #selector(contextOpenNCBIGenBank(_:)),
+                keyEquivalent: ""
+            )
+            genBankItem.target = self
+            genBankItem.representedObject = node
+            ncbiSubmenu.addItem(genBankItem)
+
+            let pubmedItem = NSMenuItem(
+                title: "PubMed Literature",
+                action: #selector(contextOpenNCBIPubMed(_:)),
+                keyEquivalent: ""
+            )
+            pubmedItem.target = self
+            pubmedItem.representedObject = node
+            ncbiSubmenu.addItem(pubmedItem)
+
+            let genomeItem = NSMenuItem(
+                title: "Genome Assemblies",
+                action: #selector(contextOpenNCBIGenome(_:)),
+                keyEquivalent: ""
+            )
+            genomeItem.target = self
+            genomeItem.representedObject = node
+            ncbiSubmenu.addItem(genomeItem)
+
+            let ncbiItem = NSMenuItem(title: "Look Up on NCBI", action: nil, keyEquivalent: "")
+            ncbiItem.submenu = ncbiSubmenu
+            ncbiItem.image = NSImage(systemSymbolName: "globe", accessibilityDescription: "NCBI")
+            menu.addItem(ncbiItem)
+
+            menu.addItem(.separator())
+        }
+
         let blastItem = NSMenuItem(
             title: "BLAST Matching Reads\u{2026}",
             action: #selector(contextBlastReads(_:)),
@@ -1445,6 +1373,8 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
         blastItem.representedObject = node
         blastItem.image = NSImage(systemSymbolName: "bolt.circle", accessibilityDescription: "BLAST")
         menu.addItem(blastItem)
+
+        return menu
     }
 
     // MARK: - Context Menu Actions
@@ -1550,12 +1480,10 @@ public final class TaxonomyViewController: NSViewController, NSSplitViewDelegate
 
     // MARK: - Export
 
-    /// Exports the taxonomy table as CSV via an NSSavePanel.
+    /// Exports the taxonomy table as CSV via an `NSSavePanel`.
     ///
     /// The export writes all nodes from the tree in depth-first order with columns:
     /// Name, Rank, Reads (Clade), Reads (Direct), Clade %, Direct %.
-    ///
-    /// Uses `beginSheetModal` (not `runModal`) per macOS 26 deprecated API rules.
     private func exportCSV() {
         exportDelimited(separator: ",", fileExtension: "csv", fileTypeName: "CSV")
     }

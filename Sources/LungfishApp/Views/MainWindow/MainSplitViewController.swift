@@ -254,6 +254,13 @@ public class MainSplitViewController: NSSplitViewController {
         }
     }
 
+    public override func viewWillDisappear() {
+        super.viewWillDisappear()
+        invalidatePendingSelectionDebounce(reason: "controller teardown")
+        cancelMultiDocumentLoadIfNeeded(hideProgress: false, reason: "controller teardown")
+        cancelFASTQLoadIfNeeded(hideProgress: false, reason: "controller teardown")
+    }
+
     deinit {
         NotificationCenter.default.removeObserver(self)
     }

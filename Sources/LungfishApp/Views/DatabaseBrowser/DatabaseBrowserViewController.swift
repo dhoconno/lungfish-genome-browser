@@ -240,6 +240,7 @@ public class DatabaseBrowserViewController: NSViewController {
         dialogState.applyCallbacks(
             onCancel: { [weak self] in
                 guard let self = self else { return }
+                self.dialogState.cancelAllSearches()
                 if let window = self.view.window {
                     if let parent = window.sheetParent {
                         parent.endSheet(window)
@@ -263,6 +264,11 @@ public class DatabaseBrowserViewController: NSViewController {
     public override func viewDidLoad() {
         super.viewDidLoad()
         logger.info("Database browser loaded for \(self.databaseSource.displayName, privacy: .public)")
+    }
+
+    public override func viewDidDisappear() {
+        super.viewDidDisappear()
+        dialogState?.cancelAllSearches()
     }
 }
 

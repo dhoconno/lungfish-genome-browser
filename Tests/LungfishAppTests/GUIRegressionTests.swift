@@ -54,7 +54,7 @@ final class GUIRegressionTests: XCTestCase {
         let visibleTitles = toolsMenu.items.compactMap { $0.isSeparatorItem ? nil : $0.title }
 
         XCTAssertEqual(visibleTitles, [
-            "FASTQ Operations",
+            "FASTQ/FASTA Operations",
             "Call Variants…",
             "Search Online Databases...",
             "Plugin Manager…",

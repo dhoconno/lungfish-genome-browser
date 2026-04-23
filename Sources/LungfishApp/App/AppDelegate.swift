@@ -4407,6 +4407,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
     static func resolveFASTQOperationInputURL(from url: URL) -> URL? {
         let standardizedURL = url.standardizedFileURL
+        switch standardizedURL.pathExtension.lowercased() {
+        case "lungfishfastq", "lungfishref":
+            return standardizedURL
+        default:
+            break
+        }
         if let bundleURL = SequenceInputResolver.enclosingFASTQBundleURL(for: standardizedURL) {
             return bundleURL
         }

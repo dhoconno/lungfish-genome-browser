@@ -55,8 +55,8 @@ private let logger = Logger(subsystem: "com.lungfish.app", category: "TaxTriageR
 ///
 /// ## Thread Safety
 ///
-/// This class is `@MainActor` isolated and uses raw `NSSplitView` (not
-/// `NSSplitViewController`) per macOS 26 deprecated API rules.
+/// This class is `@MainActor` isolated and manages its `NSSplitView` directly
+/// so pane sizing and table/viewer coordination stay local to this controller.
 @MainActor
 public final class TaxTriageResultViewController: NSViewController, NSSplitViewDelegate {
 
@@ -1223,8 +1223,6 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
     // MARK: - Setup: Split View
 
     /// Configures the NSSplitView with BAM alignment viewer (left) and organism table (right).
-    ///
-    /// Uses raw NSSplitView (not NSSplitViewController) per macOS 26 rules.
     private func setupSplitView() {
         splitView.translatesAutoresizingMaskIntoConstraints = false
         splitView.setAccessibilityIdentifier("taxtriage-result-split-view")
@@ -3443,9 +3441,7 @@ public final class TaxTriageResultViewController: NSViewController, NSSplitViewD
 
     // MARK: - Delimited Export
 
-    /// Exports the organism table as a delimited file via NSSavePanel.
-    ///
-    /// Uses `beginSheetModal` (not `runModal`) per macOS 26 rules.
+    /// Exports the organism table as a delimited file via an `NSSavePanel` sheet.
     private func exportDelimited(separator: String, fileExtension: String, fileTypeName: String) {
         guard let window = view.window else {
             logger.warning("Cannot export: no window")
