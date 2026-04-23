@@ -122,6 +122,89 @@ final class MappingResultViewControllerTests: XCTestCase {
         XCTAssertEqual(deliveredBundle?.manifest.name, "Fixture")
     }
 
+    func testReloadViewerBundleForInspectorChangesReloadsExistingViewerBundle() throws {
+        let vc = MappingResultViewController()
+        _ = vc.view
+
+        let bundleURL = try makeReferenceBundleWithAnnotationDatabase()
+        var deliveredBundle: ReferenceBundle?
+        var loadCount = 0
+        vc.onEmbeddedReferenceBundleLoaded = {
+            deliveredBundle = $0
+            loadCount += 1
+        }
+
+        vc.configureForTesting(result: makeMappingResult(viewerBundleURL: bundleURL))
+        deliveredBundle = nil
+        loadCount = 0
+
+        XCTAssertNoThrow(try invokeInspectorReload(on: vc))
+        XCTAssertEqual(loadCount, 1)
+        XCTAssertEqual(deliveredBundle?.url.standardizedFileURL, bundleURL.standardizedFileURL)
+    }
+
+    func testFilteredAlignmentServiceTargetUsesCurrentMappingResultDirectory() throws {
+        let vc = MappingResultViewController()
+        _ = vc.view
+
+        let outputDirectory = tempDir.appendingPathComponent("mapping-run", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+
+        let viewerBundleURL = try makeReferenceBundleWithAnnotationDatabase()
+        let result = MappingResult(
+            mapper: .minimap2,
+            modeID: MappingMode.defaultShortRead.id,
+            sourceReferenceBundleURL: nil,
+            viewerBundleURL: viewerBundleURL,
+            bamURL: outputDirectory.appendingPathComponent("example.sorted.bam"),
+            baiURL: outputDirectory.appendingPathComponent("example.sorted.bam.bai"),
+            totalReads: 200,
+            mappedReads: 198,
+            unmappedReads: 2,
+            wallClockSeconds: 1.5,
+            contigs: makeContigs()
+        )
+
+        vc.configureForTesting(result: result)
+
+        XCTAssertEqual(
+            vc.testFilteredAlignmentServiceTarget,
+            .mappingResult(outputDirectory.standardizedFileURL)
+        )
+    }
+
+    func testFilteredAlignmentServiceTargetPreservesExplicitResultDirectoryWhenBAMLivesOutsideResultFolder() throws {
+        let vc = MappingResultViewController()
+        _ = vc.view
+
+        let resultDirectory = tempDir.appendingPathComponent("mapping-run", isDirectory: true)
+        let externalBAMDirectory = tempDir.appendingPathComponent("external-bams", isDirectory: true)
+        try FileManager.default.createDirectory(at: resultDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: externalBAMDirectory, withIntermediateDirectories: true)
+
+        let viewerBundleURL = try makeReferenceBundleWithAnnotationDatabase()
+        let result = MappingResult(
+            mapper: .minimap2,
+            modeID: MappingMode.defaultShortRead.id,
+            sourceReferenceBundleURL: nil,
+            viewerBundleURL: viewerBundleURL,
+            bamURL: externalBAMDirectory.appendingPathComponent("example.sorted.bam"),
+            baiURL: externalBAMDirectory.appendingPathComponent("example.sorted.bam.bai"),
+            totalReads: 200,
+            mappedReads: 198,
+            unmappedReads: 2,
+            wallClockSeconds: 1.5,
+            contigs: makeContigs()
+        )
+
+        vc.configureForTesting(result: result, resultDirectoryURL: resultDirectory)
+
+        XCTAssertEqual(
+            vc.testFilteredAlignmentServiceTarget,
+            .mappingResult(resultDirectory.standardizedFileURL)
+        )
+    }
+
     func testConsensusExportUsesSelectedContigNameInSuggestedStem() throws {
         let vc = MappingResultViewController()
         _ = vc.view
@@ -250,5 +333,27 @@ final class MappingResultViewControllerTests: XCTestCase {
         )
         try manifest.save(to: bundleURL)
         return bundleURL
+    }
+
+    private func invokeInspectorReload(on controller: MappingResultViewController) throws {
+        let selector = NSSelectorFromString("reloadViewerBundleForInspectorChangesAndReturnError:")
+        let object = controller as AnyObject
+        XCTAssertTrue(
+            object.responds(to: selector),
+            "MappingResultViewController should expose an Inspector reload hook"
+        )
+
+        typealias ReloadIMP = @convention(c) (
+            AnyObject,
+            Selector,
+            UnsafeMutablePointer<NSError?>?
+        ) -> Bool
+        let implementation = try XCTUnwrap(object.method(for: selector))
+        let function = unsafeBitCast(implementation, to: ReloadIMP.self)
+        var error: NSError?
+        let succeeded = function(object, selector, &error)
+
+        XCTAssertTrue(succeeded, "Inspector-triggered mapping reload should succeed")
+        XCTAssertNil(error)
     }
 }

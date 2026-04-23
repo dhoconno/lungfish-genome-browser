@@ -9,6 +9,7 @@ import LungfishWorkflow
 @MainActor
 public final class MappingResultViewController: NSViewController {
     private(set) var currentResult: MappingResult?
+    private var currentResultDirectoryURL: URL?
     private var loadedViewerBundleURL: URL?
 
     var onEmbeddedReferenceBundleLoaded: ((ReferenceBundle) -> Void)?
@@ -253,6 +254,24 @@ public final class MappingResultViewController: NSViewController {
         loadedViewerBundleURL = standardized
     }
 
+    @objc(reloadViewerBundleForInspectorChangesAndReturnError:)
+    func reloadViewerBundleForInspectorChanges() throws {
+        guard let viewerBundleURL = currentResult?.viewerBundleURL else { return }
+        loadedViewerBundleURL = nil
+        try loadViewerBundleIfNeeded(from: viewerBundleURL, sequenceName: currentSelectedContig()?.contigName ?? "")
+    }
+
+    var filteredAlignmentServiceTarget: AlignmentFilterTarget? {
+        if let resultDirectoryURL = currentResultDirectoryURL?.standardizedFileURL {
+            return .mappingResult(resultDirectoryURL)
+        }
+
+        if let result = currentResult {
+            return .mappingResult(result.bamURL.deletingLastPathComponent().standardizedFileURL)
+        }
+        return nil
+    }
+
     func applyEmbeddedReadDisplaySettings(_ userInfo: [AnyHashable: Any]) {
         embeddedViewerController.applyReadDisplaySettings(userInfo)
     }
@@ -371,7 +390,12 @@ extension MappingResultViewController: ResultViewportController {
     public static var resultTypeName: String { "Mapping Results" }
 
     public func configure(result: MappingResult) {
+        configure(result: result, resultDirectoryURL: nil)
+    }
+
+    public func configure(result: MappingResult, resultDirectoryURL: URL?) {
         currentResult = result
+        currentResultDirectoryURL = resultDirectoryURL?.standardizedFileURL
         loadedViewerBundleURL = nil
         updateSummaryBar()
         contigTableView.configure(rows: result.contigs)
@@ -402,8 +426,8 @@ extension MappingResultViewController: NSSplitViewDelegate {
 
 #if DEBUG
 extension MappingResultViewController {
-    func configureForTesting(result: MappingResult) {
-        configure(result: result)
+    func configureForTesting(result: MappingResult, resultDirectoryURL: URL? = nil) {
+        configure(result: result, resultDirectoryURL: resultDirectoryURL)
     }
 
     var testSplitView: TrackedDividerSplitView { splitView }
@@ -417,6 +441,9 @@ extension MappingResultViewController {
     }
     var testEmbeddedViewerShowsBundleBrowser: Bool {
         embeddedViewerController.testBundleBrowserController != nil
+    }
+    var testFilteredAlignmentServiceTarget: AlignmentFilterTarget? {
+        filteredAlignmentServiceTarget
     }
 
     func testSelectContig(named name: String) {

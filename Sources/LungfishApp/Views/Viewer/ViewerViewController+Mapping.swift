@@ -36,7 +36,15 @@ extension ViewerViewController {
         try await viewerView.fetchConsensusSequenceForExport(request: request)
     }
 
+    func reloadMappingViewerBundleIfDisplayed() throws {
+        try mappingResultController?.reloadViewerBundleForInspectorChanges()
+    }
+
     public func displayMappingResult(_ result: MappingResult) {
+        displayMappingResult(result, resultDirectoryURL: nil)
+    }
+
+    public func displayMappingResult(_ result: MappingResult, resultDirectoryURL: URL?) {
         hideQuickLookPreview()
         hideFASTQDatasetView()
         hideVCFDatasetView()
@@ -59,7 +67,7 @@ extension ViewerViewController {
         fastqMetadataDrawerView?.isHidden = true
 
         let mappingView = controller.view
-        controller.configure(result: result)
+        controller.configure(result: result, resultDirectoryURL: resultDirectoryURL)
         mappingView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(mappingView)
 

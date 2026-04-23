@@ -4,6 +4,7 @@
 
 import XCTest
 import SQLite3
+import LungfishTestSupport
 @testable import LungfishIO
 
 final class NaoMgsBamMaterializerTests: XCTestCase {

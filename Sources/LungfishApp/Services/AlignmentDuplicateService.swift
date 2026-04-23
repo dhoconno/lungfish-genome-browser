@@ -4,13 +4,18 @@
 
 import Foundation
 import LungfishCore
+import LungfishIO
 import LungfishWorkflow
-import os.log
-
-private let duplicateLogger = Logger(subsystem: LogSubsystem.app, category: "AlignmentDuplicateService")
 
 /// Service for running `samtools markdup` workflows on bundle alignment tracks.
 public final class AlignmentDuplicateService: @unchecked Sendable {
+    typealias DuplicateMetadataAppender = @Sendable (
+        _ metadataDBURL: URL,
+        _ sourceTrack: AlignmentTrackInfo,
+        _ sourceAlignmentPath: String,
+        _ duplicateMode: Bool,
+        _ commandHistory: [AlignmentCommandExecutionRecord]
+    ) throws -> Void
 
     /// Result of a duplicate workflow.
     public struct WorkflowResult: Sendable {
@@ -21,10 +26,31 @@ public final class AlignmentDuplicateService: @unchecked Sendable {
 
     /// Runs duplicate marking for all alignment tracks in a bundle, replacing existing tracks.
     ///
-    /// Produces marked BAM files inside `alignments/marked/` and re-imports them as tracks.
+    /// Produces marked BAM files inside `alignments/marked/` and re-attaches them as tracks.
     public static func markDuplicatesInBundle(
         bundleURL: URL,
-        progressHandler: (@Sendable (Double, String) -> Void)? = nil
+        progressHandler: (@Sendable (Double, String) -> Void)? = nil,
+        markdupPipeline: any AlignmentMarkdupPipelining = AlignmentMarkdupPipeline(),
+        attachmentService: PreparedAlignmentAttachmentService = PreparedAlignmentAttachmentService(),
+        trackIDProvider: @escaping @Sendable () -> String = { "aln_\(String(UUID().uuidString.prefix(8)))" }
+    ) async throws -> WorkflowResult {
+        try await markDuplicatesInBundle(
+            bundleURL: bundleURL,
+            progressHandler: progressHandler,
+            markdupPipeline: markdupPipeline,
+            attachmentService: attachmentService,
+            metadataAppender: appendDuplicateMetadata,
+            trackIDProvider: trackIDProvider
+        )
+    }
+
+    static func markDuplicatesInBundle(
+        bundleURL: URL,
+        progressHandler: (@Sendable (Double, String) -> Void)? = nil,
+        markdupPipeline: any AlignmentMarkdupPipelining = AlignmentMarkdupPipeline(),
+        attachmentService: PreparedAlignmentAttachmentService = PreparedAlignmentAttachmentService(),
+        metadataAppender: @escaping DuplicateMetadataAppender,
+        trackIDProvider: @escaping @Sendable () -> String = { "aln_\(String(UUID().uuidString.prefix(8)))" }
     ) async throws -> WorkflowResult {
         let manifest = try BundleManifest.load(from: bundleURL)
         let tracks = manifest.alignments
@@ -35,18 +61,24 @@ public final class AlignmentDuplicateService: @unchecked Sendable {
         let outputRoot = bundleURL.appendingPathComponent("alignments/marked", isDirectory: true)
         try FileManager.default.createDirectory(at: outputRoot, withIntermediateDirectories: true)
 
-        let newTrackIds = try await runDuplicateWorkflow(
+        let newTrackIDs = try await runDuplicateWorkflow(
             bundleURL: bundleURL,
             tracks: tracks,
             outputRoot: outputRoot,
+            relativeDirectory: "alignments/marked",
             removeDuplicates: false,
             suffix: "marked",
-            progressHandler: progressHandler
+            outputTrackNameSuffix: "[dup-marked]",
+            progressHandler: progressHandler,
+            markdupPipeline: markdupPipeline,
+            attachmentService: attachmentService,
+            metadataAppender: metadataAppender,
+            trackIDProvider: trackIDProvider
         )
 
         try removeAlignmentTracks(tracks, from: bundleURL)
         progressHandler?(1.0, "Duplicate marking complete.")
-        return WorkflowResult(bundleURL: bundleURL, processedTracks: tracks.count, newTrackIds: newTrackIds)
+        return WorkflowResult(bundleURL: bundleURL, processedTracks: tracks.count, newTrackIds: newTrackIDs)
     }
 
     /// Creates a sibling `.lungfishref` bundle with duplicate reads removed.
@@ -56,7 +88,10 @@ public final class AlignmentDuplicateService: @unchecked Sendable {
     public static func createDeduplicatedBundle(
         from sourceBundleURL: URL,
         outputBundleURL: URL? = nil,
-        progressHandler: (@Sendable (Double, String) -> Void)? = nil
+        progressHandler: (@Sendable (Double, String) -> Void)? = nil,
+        markdupPipeline: any AlignmentMarkdupPipelining = AlignmentMarkdupPipeline(),
+        attachmentService: PreparedAlignmentAttachmentService = PreparedAlignmentAttachmentService(),
+        trackIDProvider: @escaping @Sendable () -> String = { "aln_\(String(UUID().uuidString.prefix(8)))" }
     ) async throws -> WorkflowResult {
         let sourceManifest = try BundleManifest.load(from: sourceBundleURL)
         let tracks = sourceManifest.alignments
@@ -71,22 +106,27 @@ public final class AlignmentDuplicateService: @unchecked Sendable {
         let outputRoot = targetURL.appendingPathComponent("alignments/deduplicated", isDirectory: true)
         try FileManager.default.createDirectory(at: outputRoot, withIntermediateDirectories: true)
 
-        let newTrackIds = try await runDuplicateWorkflow(
+        let newTrackIDs = try await runDuplicateWorkflow(
             bundleURL: targetURL,
             tracks: tracks,
             outputRoot: outputRoot,
+            relativeDirectory: "alignments/deduplicated",
             removeDuplicates: true,
             suffix: "deduplicated",
+            outputTrackNameSuffix: "[deduplicated]",
             progressHandler: { progress, message in
-                // Reserve 0-8% for copy step; map workflow to 8-100%.
-                let mapped = 0.08 + progress * 0.92
-                progressHandler?(mapped, message)
-            }
+                let mappedProgress = 0.08 + progress * 0.92
+                progressHandler?(mappedProgress, message)
+            },
+            markdupPipeline: markdupPipeline,
+            attachmentService: attachmentService,
+            metadataAppender: appendDuplicateMetadata,
+            trackIDProvider: trackIDProvider
         )
 
         try removeAlignmentTracks(tracks, from: targetURL)
         progressHandler?(1.0, "Deduplicated bundle ready.")
-        return WorkflowResult(bundleURL: targetURL, processedTracks: tracks.count, newTrackIds: newTrackIds)
+        return WorkflowResult(bundleURL: targetURL, processedTracks: tracks.count, newTrackIds: newTrackIDs)
     }
 
     // MARK: - Workflow Internals
@@ -96,13 +136,19 @@ public final class AlignmentDuplicateService: @unchecked Sendable {
         bundleURL: URL,
         tracks: [AlignmentTrackInfo],
         outputRoot: URL,
+        relativeDirectory: String,
         removeDuplicates: Bool,
         suffix: String,
-        progressHandler: (@Sendable (Double, String) -> Void)?
+        outputTrackNameSuffix: String,
+        progressHandler: (@Sendable (Double, String) -> Void)?,
+        markdupPipeline: any AlignmentMarkdupPipelining,
+        attachmentService: PreparedAlignmentAttachmentService,
+        metadataAppender: @escaping DuplicateMetadataAppender,
+        trackIDProvider: @escaping @Sendable () -> String
     ) async throws -> [String] {
-        let refPath = findReferenceFASTA(in: bundleURL)
-        var createdTrackIds: [String] = []
-        createdTrackIds.reserveCapacity(tracks.count)
+        let referenceFASTAPath = findReferenceFASTA(in: bundleURL)
+        var createdTrackIDs: [String] = []
+        createdTrackIDs.reserveCapacity(tracks.count)
 
         for (index, track) in tracks.enumerated() {
             let baseProgress = Double(index) / Double(max(1, tracks.count))
@@ -113,47 +159,61 @@ public final class AlignmentDuplicateService: @unchecked Sendable {
                 throw AlignmentDuplicateError.sourcePathNotFound(track.sourcePath)
             }
 
-            let outputName = "\(track.id).\(suffix).bam"
-            let outputURL = outputRoot.appendingPathComponent(outputName)
-            if FileManager.default.fileExists(atPath: outputURL.path) {
-                try FileManager.default.removeItem(at: outputURL)
-            }
+            let outputURL = outputRoot.appendingPathComponent("\(track.id).\(suffix).bam")
             let outputIndexURL = URL(fileURLWithPath: outputURL.path + ".bai")
-            if FileManager.default.fileExists(atPath: outputIndexURL.path) {
-                try FileManager.default.removeItem(at: outputIndexURL)
+            try replaceIfPresent(at: outputURL)
+            try replaceIfPresent(at: outputIndexURL)
+
+            let pipelineResult: AlignmentMarkdupPipelineResult
+            do {
+                pipelineResult = try await markdupPipeline.run(
+                    inputURL: URL(fileURLWithPath: sourcePath),
+                    outputURL: outputURL,
+                    removeDuplicates: removeDuplicates,
+                    referenceFastaPath: referenceFASTAPath,
+                    progressHandler: { stageProgress, stageMessage in
+                        let mappedProgress = baseProgress + stageProgress * 0.8 * (nextProgress - baseProgress)
+                        progressHandler?(mappedProgress, "\(track.name): \(stageMessage)")
+                    }
+                )
+            } catch let error as AlignmentMarkdupPipelineError {
+                switch error {
+                case .samtoolsFailed(let message):
+                    throw AlignmentDuplicateError.samtoolsFailed(message)
+                }
             }
 
-            try await runMarkdupPipeline(
-                inputURL: URL(fileURLWithPath: sourcePath),
-                outputURL: outputURL,
-                removeDuplicates: removeDuplicates,
-                referenceFastaPath: refPath,
-                progressHandler: { stageProgress, stageMessage in
-                    let mapped = baseProgress + stageProgress * (nextProgress - baseProgress)
-                    progressHandler?(mapped, "\(track.name): \(stageMessage)")
-                }
+            progressHandler?(
+                baseProgress + 0.85 * (nextProgress - baseProgress),
+                "\(track.name): Attaching derived alignment..."
             )
 
-            let importResult = try await BAMImportService.importBAM(
-                bamURL: outputURL,
-                bundleURL: bundleURL,
-                name: removeDuplicates ? "\(track.name) [deduplicated]" : "\(track.name) [dup-marked]",
-                progressHandler: { stageProgress, stageMessage in
-                    // Last 20% of the per-track slice for metadata import/index validation.
-                    let perTrackStart = baseProgress + 0.8 * (nextProgress - baseProgress)
-                    let perTrackEnd = nextProgress
-                    let mapped = perTrackStart + stageProgress * (perTrackEnd - perTrackStart)
-                    progressHandler?(mapped, "\(track.name): \(stageMessage)")
-                }
+            let attachment = try await attachmentService.attach(
+                request: PreparedAlignmentAttachmentRequest(
+                    bundleURL: bundleURL,
+                    stagedBAMURL: pipelineResult.outputURL,
+                    stagedIndexURL: pipelineResult.indexURL,
+                    outputTrackID: trackIDProvider(),
+                    outputTrackName: "\(track.name) \(outputTrackNameSuffix)",
+                    relativeDirectory: relativeDirectory
+                )
             )
-            // The intermediate markdup output has been re-imported into the bundle's
-            // normalized alignment storage; remove the transient file pair.
-            try? FileManager.default.removeItem(at: outputURL)
-            try? FileManager.default.removeItem(at: outputIndexURL)
-            createdTrackIds.append(importResult.trackInfo.id)
+            do {
+                try metadataAppender(
+                    attachment.metadataDBURL,
+                    track,
+                    sourcePath,
+                    removeDuplicates,
+                    pipelineResult.commandHistory
+                )
+            } catch {
+                try rollbackAttachedTrack(attachment.trackInfo, from: bundleURL)
+                throw error
+            }
+            createdTrackIDs.append(attachment.trackInfo.id)
         }
 
-        return createdTrackIds
+        return createdTrackIDs
     }
 
     /// Removes old alignment tracks from manifest and prunes their sidecar files.
@@ -230,85 +290,59 @@ public final class AlignmentDuplicateService: @unchecked Sendable {
         return parent.appendingPathComponent("\(sourceName)-deduplicated-\(UUID().uuidString.prefix(8)).lungfishref")
     }
 
-    /// Runs the canonical markdup pipeline:
-    /// sort -n → fixmate -m → sort → markdup (-r optional) → index
-    private static func runMarkdupPipeline(
-        inputURL: URL,
-        outputURL: URL,
-        removeDuplicates: Bool,
-        referenceFastaPath: String?,
-        progressHandler: (@Sendable (Double, String) -> Void)?
-    ) async throws {
-        let runner = NativeToolRunner.shared
-        let outputDir = outputURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
-
-        let tempDir = outputDir.appendingPathComponent(".markdup-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-
-        let nameSortedURL = tempDir.appendingPathComponent("name.sorted.bam")
-        let fixmateURL = tempDir.appendingPathComponent("fixmate.bam")
-        let coordSortedURL = tempDir.appendingPathComponent("coord.sorted.bam")
-
-        let size = (try? FileManager.default.attributesOfItem(atPath: inputURL.path)[.size] as? Int64) ?? 0
-        let longTimeout = max(600.0, Double(size) / 10_000_000.0)
-
-        progressHandler?(0.05, "Sorting by read name...")
-        var sortNameArgs = ["sort", "-n", "-o", nameSortedURL.path]
-        if let referenceFastaPath {
-            sortNameArgs += ["--reference", referenceFastaPath]
-        }
-        sortNameArgs.append(inputURL.path)
-        try await runSamtoolsOrThrow(runner, arguments: sortNameArgs, timeout: longTimeout)
-
-        progressHandler?(0.30, "Running fixmate...")
-        var fixmateArgs = ["fixmate", "-m"]
-        if let referenceFastaPath {
-            fixmateArgs += ["--reference", referenceFastaPath]
-        }
-        fixmateArgs += [nameSortedURL.path, fixmateURL.path]
-        try await runSamtoolsOrThrow(runner, arguments: fixmateArgs, timeout: longTimeout)
-
-        progressHandler?(0.55, "Sorting by coordinate...")
-        var sortCoordArgs = ["sort", "-o", coordSortedURL.path]
-        if let referenceFastaPath {
-            sortCoordArgs += ["--reference", referenceFastaPath]
-        }
-        sortCoordArgs.append(fixmateURL.path)
-        try await runSamtoolsOrThrow(runner, arguments: sortCoordArgs, timeout: longTimeout)
-
-        progressHandler?(0.78, removeDuplicates ? "Removing duplicates..." : "Marking duplicates...")
-        var markdupArgs = ["markdup"]
-        if removeDuplicates {
-            markdupArgs.append("-r")
-        }
-        markdupArgs += [coordSortedURL.path, outputURL.path]
-        try await runSamtoolsOrThrow(runner, arguments: markdupArgs, timeout: longTimeout)
-
-        progressHandler?(0.93, "Indexing output BAM...")
-        try await runSamtoolsOrThrow(runner, arguments: ["index", outputURL.path], timeout: 3600)
-
-        progressHandler?(1.0, "Done")
-        duplicateLogger.info("runMarkdupPipeline: Completed \(outputURL.lastPathComponent, privacy: .public)")
-    }
-
-    private static func runSamtoolsOrThrow(
-        _ runner: NativeToolRunner,
-        arguments: [String],
-        timeout: TimeInterval
-    ) async throws {
-        let result = try await runner.run(.samtools, arguments: arguments, timeout: timeout)
-        guard result.isSuccess else {
-            throw AlignmentDuplicateError.samtoolsFailed(result.stderr.isEmpty ? "samtools exited with \(result.exitCode)" : result.stderr)
-        }
-    }
-
     private static func findReferenceFASTA(in bundleURL: URL) -> String? {
         let manifest = try? BundleManifest.load(from: bundleURL)
         guard let path = manifest?.genome?.path else { return nil }
         let fastaURL = bundleURL.appendingPathComponent(path)
         return FileManager.default.fileExists(atPath: fastaURL.path) ? fastaURL.path : nil
+    }
+
+    private static func replaceIfPresent(at url: URL) throws {
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
+    }
+
+    private static func rollbackAttachedTrack(_ track: AlignmentTrackInfo, from bundleURL: URL) throws {
+        try removeAlignmentTracks([track], from: bundleURL)
+    }
+
+    private static func appendDuplicateMetadata(
+        metadataDBURL: URL,
+        sourceTrack: AlignmentTrackInfo,
+        sourceAlignmentPath: String,
+        duplicateMode: Bool,
+        commandHistory: [AlignmentCommandExecutionRecord]
+    ) throws {
+        let metadataDB = try AlignmentMetadataDatabase.openForUpdate(at: metadataDBURL)
+
+        metadataDB.setFileInfo("original_source_path", value: sourceAlignmentPath)
+        metadataDB.setFileInfo("original_source_format", value: sourceTrack.format.rawValue)
+        metadataDB.setFileInfo(
+            "derivation_kind",
+            value: duplicateMode ? "deduplicated_alignment" : "duplicate_marked_alignment"
+        )
+        metadataDB.setFileInfo("derivation_source_track_id", value: sourceTrack.id)
+        metadataDB.setFileInfo("derivation_source_track_name", value: sourceTrack.name)
+        metadataDB.setFileInfo("derivation_source_manifest_path", value: sourceTrack.sourcePath)
+        metadataDB.setFileInfo("derivation_source_alignment_path", value: sourceAlignmentPath)
+        metadataDB.setFileInfo(
+            "derivation_command_chain",
+            value: commandHistory.map(\.commandLine).joined(separator: " | ")
+        )
+
+        var parentStep: Int?
+        for command in commandHistory {
+            parentStep = metadataDB.addProvenanceRecord(
+                tool: command.tool,
+                subcommand: command.subcommand,
+                command: command.commandLine,
+                inputFile: command.inputFile,
+                outputFile: command.outputFile,
+                exitCode: 0,
+                parentStep: parentStep
+            )
+        }
     }
 }
 

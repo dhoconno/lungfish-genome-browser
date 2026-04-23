@@ -12,6 +12,24 @@ struct MarkdupCommand: AsyncParsableCommand {
         abstract: "Mark PCR duplicates in BAM files using samtools markdup"
     )
 
+    struct ExecutionInput: Sendable {
+        let path: String
+        let force: Bool
+        let sortThreads: Int
+        let quiet: Bool
+        let outputFormat: OutputFormat
+    }
+
+    struct Runtime {
+        typealias Execute = (ExecutionInput, @escaping (String) -> Void) async throws -> [MarkdupResult]
+
+        let execute: Execute
+
+        static func live() -> Runtime {
+            Runtime(execute: MarkdupCommand.runLive)
+        }
+    }
+
     @Argument(help: "Path to a BAM file or a directory containing BAMs")
     var path: String
 
@@ -21,10 +39,61 @@ struct MarkdupCommand: AsyncParsableCommand {
     @Option(name: .customLong("sort-threads"), help: "Threads for samtools sort (default 4)")
     var sortThreads: Int = 4
 
-    @OptionGroup var globalOptions: GlobalOptions
+    @OptionGroup var globalOptions: TextAndJSONGlobalOptions
 
     func run() async throws {
-        let inputURL = URL(fileURLWithPath: path)
+        let resolvedGlobalOptions = try globalOptions.resolved(with: ProcessInfo.processInfo.arguments)
+        _ = try await executeForTesting(
+            runtime: .live(),
+            resolvedGlobalOptions: resolvedGlobalOptions
+        ) { print($0) }
+    }
+
+    func executeForTesting(
+        runtime: Runtime = .live(),
+        resolvedGlobalOptions: ResolvedTextAndJSONGlobalOptions? = nil,
+        emit: @escaping (String) -> Void
+    ) async throws -> [MarkdupResult] {
+        try await Self.execute(
+            input: makeExecutionInput(resolvedGlobalOptions: resolvedGlobalOptions),
+            runtime: runtime,
+            emit: emit
+        )
+    }
+
+    static func execute(
+        input: ExecutionInput,
+        runtime: Runtime = .live(),
+        emit: @escaping (String) -> Void
+    ) async throws -> [MarkdupResult] {
+        let results = try await runtime.execute(input, emit)
+        emitResults(results, for: input, emit: emit)
+        return results
+    }
+
+    private func makeExecutionInput(
+        resolvedGlobalOptions: ResolvedTextAndJSONGlobalOptions? = nil
+    ) -> ExecutionInput {
+        let resolvedGlobalOptions = resolvedGlobalOptions
+            ?? (try? globalOptions.resolved())
+            ?? ResolvedTextAndJSONGlobalOptions(
+                outputFormat: globalOptions.outputFormat,
+                quiet: globalOptions.quiet
+            )
+        return ExecutionInput(
+            path: path,
+            force: force,
+            sortThreads: sortThreads,
+            quiet: resolvedGlobalOptions.quiet,
+            outputFormat: resolvedGlobalOptions.outputFormat
+        )
+    }
+
+    private static func runLive(
+        input: ExecutionInput,
+        emit: @escaping (String) -> Void
+    ) async throws -> [MarkdupResult] {
+        let inputURL = URL(fileURLWithPath: input.path)
         let fm = FileManager.default
 
         guard let samtoolsPath = locateSamtools() else {
@@ -37,71 +106,153 @@ struct MarkdupCommand: AsyncParsableCommand {
         }
 
         if isDir.boolValue {
-            // If this is a NAO-MGS result directory, materialize BAMs from SQLite first
-            let naoMgsDbURL = inputURL.appendingPathComponent("hits.sqlite")
-            if fm.fileExists(atPath: naoMgsDbURL.path) {
-                if !globalOptions.quiet {
-                    print("Detected NAO-MGS result directory; materializing BAMs from SQLite...")
-                }
-                do {
-                    let materialized = try NaoMgsBamMaterializer.materializeAll(
-                        dbPath: naoMgsDbURL.path,
-                        resultURL: inputURL,
-                        samtoolsPath: samtoolsPath,
-                        force: force
-                    )
-                    if !globalOptions.quiet {
-                        print("Materialized \(materialized.count) BAM file(s)")
-                    }
-                } catch {
-                    if !globalOptions.quiet {
-                        print("Warning: NAO-MGS BAM materialization failed: \(error.localizedDescription)")
-                    }
-                }
-            }
+            try materializeNaoMgsBamsIfNeeded(
+                at: inputURL,
+                samtoolsPath: samtoolsPath,
+                input: input,
+                emit: emit
+            )
 
-            if !globalOptions.quiet {
-                print("Scanning \(inputURL.path) for BAM files...")
-            }
+            emitIfNeeded(input, line: "Scanning \(inputURL.path) for BAM files...", emit: emit)
             let results = try MarkdupService.markdupDirectory(
                 inputURL,
                 samtoolsPath: samtoolsPath,
-                threads: sortThreads,
-                force: force
+                threads: input.sortThreads,
+                force: input.force
             )
-            if !globalOptions.quiet {
-                printSummary(results)
-            }
-        } else {
-            guard inputURL.pathExtension == "bam" else {
-                throw ValidationError("File is not a .bam: \(inputURL.path)")
-            }
-            let result = try MarkdupService.markdup(
-                bamURL: inputURL,
+            return results
+        }
+
+        guard inputURL.pathExtension == "bam" else {
+            throw ValidationError("File is not a .bam: \(inputURL.path)")
+        }
+
+        let result = try MarkdupService.markdup(
+            bamURL: inputURL,
+            samtoolsPath: samtoolsPath,
+            threads: input.sortThreads,
+            force: input.force
+        )
+        return [result]
+    }
+
+    private static func materializeNaoMgsBamsIfNeeded(
+        at inputURL: URL,
+        samtoolsPath: String,
+        input: ExecutionInput,
+        emit: @escaping (String) -> Void
+    ) throws {
+        let naoMgsDbURL = inputURL.appendingPathComponent("hits.sqlite")
+        guard FileManager.default.fileExists(atPath: naoMgsDbURL.path) else {
+            return
+        }
+
+        emitIfNeeded(
+            input,
+            line: "Detected NAO-MGS result directory; materializing BAMs from SQLite...",
+            emit: emit
+        )
+
+        do {
+            let materialized = try NaoMgsBamMaterializer.materializeAll(
+                dbPath: naoMgsDbURL.path,
+                resultURL: inputURL,
                 samtoolsPath: samtoolsPath,
-                threads: sortThreads,
-                force: force
+                force: input.force
             )
-            if !globalOptions.quiet {
-                printSummary([result])
-            }
+            emitIfNeeded(input, line: "Materialized \(materialized.count) BAM file(s)", emit: emit)
+        } catch {
+            emitIfNeeded(
+                input,
+                line: "Warning: NAO-MGS BAM materialization failed: \(error.localizedDescription)",
+                emit: emit
+            )
         }
     }
 
-    private func printSummary(_ results: [MarkdupResult]) {
+    private static func emitSummary(
+        _ results: [MarkdupResult],
+        emit: @escaping (String) -> Void
+    ) {
         let processed = results.count
         let skipped = results.filter { $0.wasAlreadyMarkduped }.count
         let totalReads = results.reduce(0) { $0 + $1.totalReads }
         let totalDups = results.reduce(0) { $0 + $1.duplicateReads }
         let totalTime = results.reduce(0.0) { $0 + $1.durationSeconds }
 
-        print("Processed \(processed) BAM file\(processed == 1 ? "" : "s") (\(skipped) already marked)")
-        print("Total reads: \(totalReads), duplicates: \(totalDups)")
-        print(String(format: "Elapsed: %.1fs", totalTime))
+        emit("Processed \(processed) BAM file\(processed == 1 ? "" : "s") (\(skipped) already marked)")
+        emit("Total reads: \(totalReads), duplicates: \(totalDups)")
+        emit(String(format: "Elapsed: %.1fs", totalTime))
     }
 
-    private func locateSamtools() -> String? {
-        Self.locateSamtools()
+    private static func emitResults(
+        _ results: [MarkdupResult],
+        for input: ExecutionInput,
+        emit: @escaping (String) -> Void
+    ) {
+        if input.outputFormat == .json {
+            if let line = encodeJSONOutput(results) {
+                emit(line)
+            }
+            return
+        }
+
+        guard !input.quiet else {
+            return
+        }
+        emitSummary(results, emit: emit)
+    }
+
+    private static func emitIfNeeded(
+        _ input: ExecutionInput,
+        line: String,
+        emit: @escaping (String) -> Void
+    ) {
+        guard input.outputFormat != .json, !input.quiet else {
+            return
+        }
+        emit(line)
+    }
+
+    private static func encodeJSONOutput(_ results: [MarkdupResult]) -> String? {
+        let summary = JSONOutput(
+            processedBAMs: results.count,
+            alreadyMarkedBAMs: results.filter(\.wasAlreadyMarkduped).count,
+            totalReads: results.reduce(0) { $0 + $1.totalReads },
+            duplicateReads: results.reduce(0) { $0 + $1.duplicateReads },
+            elapsedSeconds: results.reduce(0.0) { $0 + $1.durationSeconds },
+            results: results.map {
+                JSONOutput.Result(
+                    bamPath: $0.bamURL.path,
+                    wasAlreadyMarkduped: $0.wasAlreadyMarkduped,
+                    totalReads: $0.totalReads,
+                    duplicateReads: $0.duplicateReads,
+                    durationSeconds: $0.durationSeconds
+                )
+            }
+        )
+        let encoder = JSONEncoder()
+        guard let data = try? encoder.encode(summary) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private struct JSONOutput: Encodable {
+        struct Result: Encodable {
+            let bamPath: String
+            let wasAlreadyMarkduped: Bool
+            let totalReads: Int
+            let duplicateReads: Int
+            let durationSeconds: Double
+        }
+
+        let processedBAMs: Int
+        let alreadyMarkedBAMs: Int
+        let totalReads: Int
+        let duplicateReads: Int
+        let elapsedSeconds: Double
+        let results: [Result]
     }
 
     static func locateSamtools(homeDirectory: URL = currentHomeDirectory()) -> String? {

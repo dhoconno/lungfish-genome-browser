@@ -113,6 +113,134 @@ struct GlobalOptions: ParsableArguments {
     }
 }
 
+/// Global options for commands that only support text and json output.
+struct TextAndJSONGlobalOptions: ParsableArguments {
+
+    // MARK: - Output Options
+
+    @Option(
+        name: .customLong("format"),
+        help: "Output format: text, json (default: text)"
+    )
+    private var selectedOutputFormat: TextAndJSONOutputFormat = .text
+
+    var outputFormat: OutputFormat {
+        selectedOutputFormat.outputFormat
+    }
+
+    // MARK: - Verbosity Options
+
+    @Flag(
+        name: [.customLong("verbose"), .customShort("v")],
+        help: "Increase output verbosity (can be repeated: -v, -vv, -vvv)"
+    )
+    var verbosity: Int
+
+    @Flag(
+        name: [.customLong("quiet"), .customShort("q")],
+        help: "Suppress non-essential output (errors only)"
+    )
+    var quiet: Bool = false
+
+    // MARK: - Progress Options
+
+    @Flag(
+        name: .customLong("progress"),
+        help: "Show progress bar (default: auto-detect TTY)"
+    )
+    var showProgress: Bool = false
+
+    @Flag(
+        name: .customLong("no-progress"),
+        help: "Disable progress bar"
+    )
+    var noProgress: Bool = false
+
+    // MARK: - Debug Options
+
+    @Flag(
+        name: .customLong("debug"),
+        help: "Enable debug output with detailed logging"
+    )
+    var debug: Bool = false
+
+    @Option(
+        name: .customLong("log-file"),
+        help: "Write detailed logs to file"
+    )
+    var logFile: String?
+
+    // MARK: - Display Options
+
+    @Flag(
+        name: .customLong("no-color"),
+        help: "Disable colored output"
+    )
+    var noColor: Bool = false
+
+    // MARK: - Threading Options
+
+    @Option(
+        name: [.customLong("threads"), .customShort("t")],
+        help: "Number of threads to use (default: auto)"
+    )
+    var threads: Int?
+
+    // MARK: - Computed Properties
+
+    var effectiveVerbosity: Int {
+        if quiet { return -1 }
+        return verbosity
+    }
+
+    var shouldShowProgress: Bool {
+        if noProgress { return false }
+        if showProgress { return true }
+        return isatty(STDOUT_FILENO) != 0
+    }
+
+    var useColors: Bool {
+        if noColor { return false }
+        return isatty(STDOUT_FILENO) != 0
+    }
+
+    var effectiveThreads: Int {
+        threads ?? ProcessInfo.processInfo.activeProcessorCount
+    }
+
+    var outputMode: OutputMode {
+        if debug { return .debug }
+        switch outputFormat {
+        case .json: return .json
+        case .text: return .text
+        case .tsv: return .text
+        }
+    }
+
+    func resolved(with arguments: [String]? = nil) throws -> ResolvedTextAndJSONGlobalOptions {
+        var resolved = ResolvedTextAndJSONGlobalOptions(
+            outputFormat: outputFormat,
+            quiet: quiet
+        )
+
+        guard let arguments else {
+            return resolved
+        }
+
+        let overrides = try TextAndJSONGlobalOptionOverrides.parse(arguments)
+        if let outputFormat = overrides.outputFormat {
+            resolved.outputFormat = outputFormat
+        }
+        resolved.quiet = resolved.quiet || overrides.quiet
+        return resolved
+    }
+}
+
+struct ResolvedTextAndJSONGlobalOptions {
+    var outputFormat: OutputFormat
+    var quiet: Bool
+}
+
 // MARK: - Output Format
 
 /// Output format for CLI results
@@ -123,6 +251,87 @@ enum OutputFormat: String, ExpressibleByArgument, CaseIterable {
 
     static var allValueStrings: [String] {
         allCases.map { $0.rawValue }
+    }
+}
+
+enum TextAndJSONOutputFormat: String, ExpressibleByArgument, CaseIterable {
+    case text
+    case json
+
+    var outputFormat: OutputFormat {
+        switch self {
+        case .text: return .text
+        case .json: return .json
+        }
+    }
+
+    static var allValueStrings: [String] {
+        allCases.map { $0.rawValue }
+    }
+}
+
+private struct TextAndJSONGlobalOptionOverrides {
+    var outputFormat: OutputFormat?
+    var quiet: Bool = false
+
+    static func parse(_ arguments: [String]) throws -> TextAndJSONGlobalOptionOverrides {
+        var overrides = TextAndJSONGlobalOptionOverrides()
+        var index = 1
+
+        while index < arguments.count {
+            let argument = arguments[index]
+
+            if argument == "--" {
+                break
+            }
+
+            if argument == "--format" {
+                let valueIndex = index + 1
+                guard valueIndex < arguments.count else {
+                    break
+                }
+                overrides.outputFormat = try parseOutputFormat(arguments[valueIndex])
+                index += 2
+                continue
+            }
+
+            if argument.hasPrefix("--format=") {
+                let value = String(argument.dropFirst("--format=".count))
+                overrides.outputFormat = try parseOutputFormat(value)
+                index += 1
+                continue
+            }
+
+            if argument == "--quiet" {
+                overrides.quiet = true
+                index += 1
+                continue
+            }
+
+            if argument.hasPrefix("-"), !argument.hasPrefix("--"), argument.count > 1,
+               argument.dropFirst().contains("q") {
+                overrides.quiet = true
+            }
+
+            index += 1
+        }
+
+        return overrides
+    }
+
+    private static func parseOutputFormat(_ rawValue: String) throws -> OutputFormat {
+        switch rawValue {
+        case OutputFormat.text.rawValue:
+            return .text
+        case OutputFormat.json.rawValue:
+            return .json
+        case OutputFormat.tsv.rawValue:
+            throw ValidationError(
+                "The value 'tsv' is invalid for '--format <format>'. Please provide one of 'text' and 'json'."
+            )
+        default:
+            return .text
+        }
     }
 }
 

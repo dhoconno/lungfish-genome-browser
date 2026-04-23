@@ -3,30 +3,28 @@
 // SPDX-License-Identifier: MIT
 
 import XCTest
+import LungfishTestSupport
 @testable import LungfishCLI
 @testable import LungfishIO
 
 final class MarkdupCommandTests: XCTestCase {
+    private typealias MarkdupRuntime = MarkdupCommand.Runtime
 
-    // MARK: - Inline BAM fixture helper
-    // The canonical BamFixtureBuilder lives in LungfishIOTests and isn't
-    // visible here. We duplicate a minimal version locally to avoid cross-target
-    // dependencies.
+    private struct MarkdupJSONOutput: Decodable, Equatable {
+        struct Result: Decodable, Equatable {
+            let bamPath: String
+            let wasAlreadyMarkduped: Bool
+            let totalReads: Int
+            let duplicateReads: Int
+            let durationSeconds: Double
+        }
 
-    private struct Reference {
-        let name: String
-        let length: Int
-    }
-
-    private struct Read {
-        let qname: String
-        let flag: Int
-        let rname: String
-        let pos: Int
-        let mapq: Int
-        let cigar: String
-        let seq: String
-        let qual: String
+        let processedBAMs: Int
+        let alreadyMarkedBAMs: Int
+        let totalReads: Int
+        let duplicateReads: Int
+        let elapsedSeconds: Double
+        let results: [Result]
     }
 
     private func makeManagedSamtoolsHome() throws -> (home: URL, samtoolsPath: URL) {
@@ -178,50 +176,6 @@ final class MarkdupCommandTests: XCTestCase {
         return try await block()
     }
 
-    private func makeBAM(
-        at outputURL: URL,
-        references: [Reference],
-        reads: [Read],
-        samtoolsPath: String
-    ) throws {
-        let fm = FileManager.default
-        try fm.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-
-        var sam = "@HD\tVN:1.6\tSO:coordinate\n"
-        for ref in references {
-            sam += "@SQ\tSN:\(ref.name)\tLN:\(ref.length)\n"
-        }
-        for read in reads {
-            sam += "\(read.qname)\t\(read.flag)\t\(read.rname)\t\(read.pos)\t\(read.mapq)\t\(read.cigar)\t*\t0\t0\t\(read.seq)\t\(read.qual)\n"
-        }
-
-        let samURL = outputURL.deletingPathExtension().appendingPathExtension("sam")
-        try sam.write(to: samURL, atomically: true, encoding: .utf8)
-        defer { try? fm.removeItem(at: samURL) }
-
-        let sortProc = Process()
-        sortProc.executableURL = URL(fileURLWithPath: samtoolsPath)
-        sortProc.arguments = ["sort", "-o", outputURL.path, samURL.path]
-        let errPipe = Pipe()
-        sortProc.standardOutput = FileHandle.nullDevice
-        sortProc.standardError = errPipe
-        try sortProc.run()
-        _ = errPipe.fileHandleForReading.readDataToEndOfFile()
-        sortProc.waitUntilExit()
-        guard sortProc.terminationStatus == 0 else {
-            throw NSError(domain: "MarkdupCommandTests", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: "samtools sort failed"])
-        }
-
-        let indexProc = Process()
-        indexProc.executableURL = URL(fileURLWithPath: samtoolsPath)
-        indexProc.arguments = ["index", outputURL.path]
-        indexProc.standardOutput = FileHandle.nullDevice
-        indexProc.standardError = FileHandle.nullDevice
-        try indexProc.run()
-        indexProc.waitUntilExit()
-    }
-
     private func makeTempDir() throws -> URL {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("MarkdupCliTests-\(UUID().uuidString)")
@@ -230,16 +184,61 @@ final class MarkdupCommandTests: XCTestCase {
     }
 
     private func makeSyntheticBam(at url: URL, samtools: String) throws {
-        let refs = [Reference(name: "chr1", length: 1000)]
+        let refs = [BamFixtureBuilder.Reference(name: "chr1", length: 1000)]
         let seq = String(repeating: "A", count: 50)
         let qual = String(repeating: "I", count: 50)
         let reads = (0..<5).map { i in
-            Read(
+            BamFixtureBuilder.Read(
                 qname: "r\(i)", flag: 0, rname: "chr1",
                 pos: 100, mapq: 60, cigar: "50M", seq: seq, qual: qual
             )
         }
-        try makeBAM(at: url, references: refs, reads: reads, samtoolsPath: samtools)
+        try BamFixtureBuilder.makeBAM(at: url, references: refs, reads: reads, samtoolsPath: samtools)
+    }
+
+    private func cliBinaryURL() throws -> URL {
+        let thisFile = URL(fileURLWithPath: #filePath)
+        let repoRoot = thisFile
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+
+        let candidates = [
+            repoRoot.appendingPathComponent(".build/debug/lungfish-cli"),
+            repoRoot.appendingPathComponent(".build/arm64-apple-macosx/debug/lungfish-cli"),
+            repoRoot.appendingPathComponent(".build/x86_64-apple-macosx/debug/lungfish-cli"),
+        ]
+
+        guard let binary = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
+            throw XCTSkip("CLI binary not built at expected path — run `swift build --product lungfish-cli` first")
+        }
+        return binary
+    }
+
+    private func runCLI(
+        _ arguments: [String],
+        homeDirectory: URL
+    ) throws -> (exitCode: Int32, stdout: String, stderr: String) {
+        let process = Process()
+        process.executableURL = try cliBinaryURL()
+        process.arguments = arguments
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["HOME"] = homeDirectory.path
+        process.environment = environment
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        try process.run()
+        process.waitUntilExit()
+
+        return (
+            exitCode: process.terminationStatus,
+            stdout: String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "",
+            stderr: String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        )
     }
 
     // MARK: - Tests
@@ -256,7 +255,29 @@ final class MarkdupCommandTests: XCTestCase {
         try makeSyntheticBam(at: bamURL, samtools: samtools)
 
         try await withHomeDirectory(managedHome.home) {
-            var cmd = try MarkdupCommand.parse([bamURL.path, "-q"])
+            let cmd = try MarkdupCommand.parse([bamURL.path, "-q"])
+            try await cmd.run()
+        }
+
+        XCTAssertTrue(
+            MarkdupService.isAlreadyMarkduped(bamURL: bamURL, samtoolsPath: samtools),
+            "BAM should be marked after CLI run"
+        )
+    }
+
+    func testCliBamMarkdupSingleBAM() async throws {
+        let managedHome = try makeFunctionalManagedSamtoolsHome()
+        let samtools = managedHome.samtoolsPath.path
+        let dir = try makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: dir)
+            try? FileManager.default.removeItem(at: managedHome.home)
+        }
+        let bamURL = dir.appendingPathComponent("test.bam")
+        try makeSyntheticBam(at: bamURL, samtools: samtools)
+
+        try await withHomeDirectory(managedHome.home) {
+            let cmd = try BAMCommand.MarkdupSubcommand.parse(["markdup", bamURL.path, "-q"])
             try await cmd.run()
         }
 
@@ -280,7 +301,7 @@ final class MarkdupCommandTests: XCTestCase {
         try makeSyntheticBam(at: bam2, samtools: samtools)
 
         try await withHomeDirectory(managedHome.home) {
-            var cmd = try MarkdupCommand.parse([dir.path, "-q"])
+            let cmd = try MarkdupCommand.parse([dir.path, "-q"])
             try await cmd.run()
         }
 
@@ -300,7 +321,7 @@ final class MarkdupCommandTests: XCTestCase {
         try makeSyntheticBam(at: bamURL, samtools: samtools)
 
         try await withHomeDirectory(managedHome.home) {
-            var cmd1 = try MarkdupCommand.parse([bamURL.path, "-q"])
+            let cmd1 = try MarkdupCommand.parse([bamURL.path, "-q"])
             try await cmd1.run()
         }
         let firstMtime = (try? FileManager.default.attributesOfItem(atPath: bamURL.path)[.modificationDate]) as? Date
@@ -308,7 +329,7 @@ final class MarkdupCommandTests: XCTestCase {
         try await Task.sleep(nanoseconds: 1_100_000_000)
 
         try await withHomeDirectory(managedHome.home) {
-            var cmd2 = try MarkdupCommand.parse([bamURL.path, "-q"])
+            let cmd2 = try MarkdupCommand.parse([bamURL.path, "-q"])
             try await cmd2.run()
         }
         let secondMtime = (try? FileManager.default.attributesOfItem(atPath: bamURL.path)[.modificationDate]) as? Date
@@ -328,7 +349,7 @@ final class MarkdupCommandTests: XCTestCase {
         try makeSyntheticBam(at: bamURL, samtools: samtools)
 
         try await withHomeDirectory(managedHome.home) {
-            var cmd1 = try MarkdupCommand.parse([bamURL.path, "-q"])
+            let cmd1 = try MarkdupCommand.parse([bamURL.path, "-q"])
             try await cmd1.run()
         }
         let firstMtime = (try? FileManager.default.attributesOfItem(atPath: bamURL.path)[.modificationDate]) as? Date
@@ -336,7 +357,7 @@ final class MarkdupCommandTests: XCTestCase {
         try await Task.sleep(nanoseconds: 1_100_000_000)
 
         try await withHomeDirectory(managedHome.home) {
-            var cmd2 = try MarkdupCommand.parse([bamURL.path, "--force", "-q"])
+            let cmd2 = try MarkdupCommand.parse([bamURL.path, "--force", "-q"])
             try await cmd2.run()
         }
         let secondMtime = (try? FileManager.default.attributesOfItem(atPath: bamURL.path)[.modificationDate]) as? Date
@@ -345,12 +366,232 @@ final class MarkdupCommandTests: XCTestCase {
     }
 
     func testCliMarkdupErrorsOnMissingFile() async throws {
-        var cmd = try MarkdupCommand.parse(["/nonexistent/path.bam"])
+        let cmd = try MarkdupCommand.parse(["/nonexistent/path.bam"])
         do {
             try await cmd.run()
             XCTFail("Should have thrown")
         } catch {
             // Expected
         }
+    }
+
+    func testMarkdupCommandRejectsTSVOutputFormat() {
+        XCTAssertThrowsError(
+            try MarkdupCommand.parse([
+                "/tmp/test.bam",
+                "--format", "tsv",
+            ])
+        ) { error in
+            XCTAssertTrue("\(error)".contains("tsv"))
+        }
+    }
+
+    func testMarkdupHelpOmitsUnsupportedTSVFormat() {
+        let help = MarkdupCommand.helpMessage()
+        XCTAssertTrue(help.contains("Output format: text, json"))
+        XCTAssertFalse(help.contains("tsv"))
+    }
+
+    func testRootLevelQuietAppliesToBamMarkdupExecutable() throws {
+        let managedHome = try makeFunctionalManagedSamtoolsHome()
+        let samtools = managedHome.samtoolsPath.path
+        let dir = try makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: dir)
+            try? FileManager.default.removeItem(at: managedHome.home)
+        }
+        let bamURL = dir.appendingPathComponent("test.bam")
+        try makeSyntheticBam(at: bamURL, samtools: samtools)
+
+        let result = try runCLI(
+            ["-q", "bam", "markdup", bamURL.path],
+            homeDirectory: managedHome.home
+        )
+
+        XCTAssertEqual(result.exitCode, 0, "CLI bam markdup failed: \(result.stderr)")
+        XCTAssertTrue(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        XCTAssertTrue(
+            MarkdupService.isAlreadyMarkduped(bamURL: bamURL, samtoolsPath: samtools),
+            "BAM should be marked after CLI run"
+        )
+    }
+
+    func testRootLevelJSONFormatAppliesToLegacyMarkdupExecutable() throws {
+        let managedHome = try makeFunctionalManagedSamtoolsHome()
+        let samtools = managedHome.samtoolsPath.path
+        let dir = try makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: dir)
+            try? FileManager.default.removeItem(at: managedHome.home)
+        }
+        let bamURL = dir.appendingPathComponent("test.bam")
+        try makeSyntheticBam(at: bamURL, samtools: samtools)
+
+        let result = try runCLI(
+            ["--format", "json", "markdup", bamURL.path],
+            homeDirectory: managedHome.home
+        )
+
+        XCTAssertEqual(result.exitCode, 0, "CLI markdup failed: \(result.stderr)")
+        let summary = try XCTUnwrap(
+            decodeMarkdupJSONOutput(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+        )
+        XCTAssertEqual(summary.processedBAMs, 1)
+        XCTAssertEqual(summary.results.map(\.bamPath), [bamURL.path])
+        XCTAssertTrue(
+            MarkdupService.isAlreadyMarkduped(bamURL: bamURL, samtoolsPath: samtools),
+            "BAM should be marked after CLI run"
+        )
+    }
+
+    func testBamMarkdupSubcommandUsesSameWorkflowAsLegacyCommand() async throws {
+        let expectedInputURL = URL(fileURLWithPath: "/tmp/input.bam")
+        let expectedResult = MarkdupResult(
+            bamURL: expectedInputURL,
+            wasAlreadyMarkduped: false,
+            totalReads: 12,
+            duplicateReads: 3,
+            durationSeconds: 0.75
+        )
+
+        actor CallLog {
+            private(set) var invocations: [(path: String, force: Bool, sortThreads: Int, quiet: Bool)] = []
+
+            func record(path: String, force: Bool, sortThreads: Int, quiet: Bool) {
+                invocations.append((path, force, sortThreads, quiet))
+            }
+
+            func snapshot() -> [(path: String, force: Bool, sortThreads: Int, quiet: Bool)] {
+                invocations
+            }
+        }
+
+        let callLog = CallLog()
+        let runtime = MarkdupRuntime(
+            execute: { input, emit in
+                await callLog.record(
+                    path: input.path,
+                    force: input.force,
+                    sortThreads: input.sortThreads,
+                    quiet: input.quiet
+                )
+                emit("Processed 1 BAM file(s) (0 already marked)")
+                emit("Total reads: 12, duplicates: 3")
+                emit("Elapsed: 0.8s")
+                return [expectedResult]
+            }
+        )
+
+        let legacyCommand = try MarkdupCommand.parse([
+            expectedInputURL.path,
+            "--force",
+            "--sort-threads", "7",
+        ])
+        let canonicalCommand = try BAMCommand.MarkdupSubcommand.parse([
+            "markdup",
+            expectedInputURL.path,
+            "--force",
+            "--sort-threads", "7",
+        ])
+
+        var legacyOutput: [String] = []
+        _ = try await legacyCommand.executeForTesting(runtime: runtime) { legacyOutput.append($0) }
+
+        var canonicalOutput: [String] = []
+        _ = try await canonicalCommand.executeForTesting(runtime: runtime) { canonicalOutput.append($0) }
+
+        let calls = await callLog.snapshot()
+        XCTAssertEqual(calls.count, 2)
+        XCTAssertEqual(calls.map(\.path), [expectedInputURL.path, expectedInputURL.path])
+        XCTAssertEqual(calls.map(\.force), [true, true])
+        XCTAssertEqual(calls.map(\.sortThreads), [7, 7])
+        XCTAssertEqual(calls.map(\.quiet), [false, false])
+        XCTAssertEqual(canonicalOutput, legacyOutput)
+    }
+
+    func testLegacyMarkdupJSONOutputUsesStructuredSummary() async throws {
+        let resultURL = URL(fileURLWithPath: "/tmp/legacy-json.bam")
+        let runtime = MarkdupRuntime(
+            execute: { _, _ in
+                [
+                    MarkdupResult(
+                        bamURL: resultURL,
+                        wasAlreadyMarkduped: true,
+                        totalReads: 42,
+                        duplicateReads: 9,
+                        durationSeconds: 1.25
+                    )
+                ]
+            }
+        )
+        let command = try MarkdupCommand.parse([
+            resultURL.path,
+            "--format", "json",
+        ])
+
+        var output: [String] = []
+        _ = try await command.executeForTesting(runtime: runtime) { output.append($0) }
+
+        XCTAssertEqual(output.count, 1)
+        XCTAssertFalse(output[0].contains("Processed 1 BAM file"))
+
+        let summary = try XCTUnwrap(decodeMarkdupJSONOutput(output[0]))
+        XCTAssertEqual(summary.processedBAMs, 1)
+        XCTAssertEqual(summary.alreadyMarkedBAMs, 1)
+        XCTAssertEqual(summary.totalReads, 42)
+        XCTAssertEqual(summary.duplicateReads, 9)
+        XCTAssertEqual(summary.elapsedSeconds, 1.25)
+        XCTAssertEqual(summary.results.map(\.bamPath), [resultURL.path])
+    }
+
+    func testCanonicalBamMarkdupJSONOutputMatchesLegacyShape() async throws {
+        let resultURL = URL(fileURLWithPath: "/tmp/canonical-json.bam")
+        let runtime = MarkdupRuntime(
+            execute: { _, _ in
+                [
+                    MarkdupResult(
+                        bamURL: resultURL,
+                        wasAlreadyMarkduped: false,
+                        totalReads: 64,
+                        duplicateReads: 7,
+                        durationSeconds: 2.5
+                    )
+                ]
+            }
+        )
+        let legacyCommand = try MarkdupCommand.parse([
+            resultURL.path,
+            "--format", "json",
+        ])
+        let canonicalCommand = try BAMCommand.MarkdupSubcommand.parse([
+            "markdup",
+            resultURL.path,
+            "--format", "json",
+        ])
+
+        var legacyOutput: [String] = []
+        _ = try await legacyCommand.executeForTesting(runtime: runtime) { legacyOutput.append($0) }
+
+        var canonicalOutput: [String] = []
+        _ = try await canonicalCommand.executeForTesting(runtime: runtime) { canonicalOutput.append($0) }
+
+        XCTAssertEqual(canonicalOutput.count, 1)
+        XCTAssertEqual(legacyOutput.count, 1)
+
+        let legacySummary = try XCTUnwrap(decodeMarkdupJSONOutput(legacyOutput[0]))
+        let canonicalSummary = try XCTUnwrap(decodeMarkdupJSONOutput(canonicalOutput[0]))
+        XCTAssertEqual(canonicalSummary, legacySummary)
+
+        XCTAssertEqual(canonicalSummary.processedBAMs, 1)
+        XCTAssertEqual(canonicalSummary.alreadyMarkedBAMs, 0)
+        XCTAssertEqual(canonicalSummary.totalReads, 64)
+        XCTAssertEqual(canonicalSummary.duplicateReads, 7)
+        XCTAssertEqual(canonicalSummary.elapsedSeconds, 2.5)
+        XCTAssertEqual(canonicalSummary.results.map(\.bamPath), [resultURL.path])
+    }
+
+    private func decodeMarkdupJSONOutput(_ line: String) -> MarkdupJSONOutput? {
+        let data = Data(line.utf8)
+        return try? JSONDecoder().decode(MarkdupJSONOutput.self, from: data)
     }
 }
