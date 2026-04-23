@@ -4,6 +4,39 @@ import LungfishIO
 
 @MainActor
 final class SidebarViewControllerSelectionTests: XCTestCase {
+    func testSuggestedMergedBundleNameUsesFirstSelectedTitle() {
+        let items = [
+            SidebarItem(
+                title: "Sample A",
+                type: .fastqBundle,
+                url: URL(fileURLWithPath: "/tmp/A.lungfishfastq")
+            ),
+            SidebarItem(
+                title: "Sample B",
+                type: .fastqBundle,
+                url: URL(fileURLWithPath: "/tmp/B.lungfishfastq")
+            ),
+        ]
+
+        XCTAssertEqual(
+            SidebarViewController.suggestedMergedBundleName(for: items),
+            "Sample A merged"
+        )
+    }
+
+    func testDeepestCommonParentUsesSharedContainingDirectory() {
+        let urls = [
+            URL(fileURLWithPath: "/tmp/project/Reads/A.lungfishfastq"),
+            URL(fileURLWithPath: "/tmp/project/Reads/B.lungfishfastq"),
+            URL(fileURLWithPath: "/tmp/project/Reads/C.lungfishfastq"),
+        ]
+
+        XCTAssertEqual(
+            SidebarViewController.deepestCommonParent(for: urls),
+            URL(fileURLWithPath: "/tmp/project/Reads", isDirectory: true)
+        )
+    }
+
     func testSelectItemFindsAnalysisWhenCallerUsesSymlinkedPath() throws {
         let tempRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("SidebarSelection-\(UUID().uuidString)", isDirectory: true)

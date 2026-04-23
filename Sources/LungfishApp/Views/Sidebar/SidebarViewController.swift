@@ -2596,6 +2596,30 @@ extension SidebarViewController: NSOutlineViewDataSource {
         selectedItems().first(where: { $0.url != nil })?.url
     }
 
+    static func suggestedMergedBundleName(for items: [SidebarItem]) -> String {
+        let trimmedTitle = items.first?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmedTitle.isEmpty ? "Merged Bundle" : "\(trimmedTitle) merged"
+    }
+
+    static func deepestCommonParent(for urls: [URL]) -> URL? {
+        let parentComponents = urls.map { $0.deletingLastPathComponent().standardizedFileURL.pathComponents }
+        guard var sharedComponents = parentComponents.first else { return nil }
+
+        for components in parentComponents.dropFirst() {
+            while sharedComponents.count > 1 && !components.starts(with: sharedComponents) {
+                sharedComponents.removeLast()
+            }
+        }
+
+        guard sharedComponents.count > 1 else { return nil }
+
+        var result = URL(fileURLWithPath: sharedComponents[0], isDirectory: true)
+        for component in sharedComponents.dropFirst() {
+            result.appendPathComponent(component, isDirectory: true)
+        }
+        return result.standardizedFileURL
+    }
+
     // MARK: - Select All Siblings
 
     /// Selects all sibling items of the currently selected item in the outline view.
@@ -3192,6 +3216,7 @@ extension SidebarViewController: NSMenuDelegate {
         }
         let hasBundles = items.contains { $0.type == .referenceBundle }
         let hasFASTQBundles = items.contains { $0.type == .fastqBundle }
+        let mergeSelectionKind = BundleMergeSelection.detectKind(for: items)
 
         // Reference bundle(s) selected — export sequences
         if hasBundles {
@@ -3201,6 +3226,17 @@ extension SidebarViewController: NSMenuDelegate {
                 : "Export Sequences\u{2026}"
             let exportSeqItem = NSMenuItem(title: exportTitle, action: #selector(FileMenuActions.exportFASTA(_:)), keyEquivalent: "")
             menu.addItem(exportSeqItem)
+
+            if mergeSelectionKind == .reference {
+                let mergeItem = NSMenuItem(
+                    title: "Merge into New Bundle\u{2026}",
+                    action: #selector(contextMenuMergeIntoNewBundle(_:)),
+                    keyEquivalent: ""
+                )
+                mergeItem.target = self
+                menu.addItem(mergeItem)
+            }
+
             menu.addItem(NSMenuItem.separator())
         }
 
@@ -3255,6 +3291,16 @@ extension SidebarViewController: NSMenuDelegate {
             let exportItem = NSMenuItem(title: exportTitle, action: #selector(contextMenuExportFASTQ(_:)), keyEquivalent: "")
             exportItem.target = self
             menu.addItem(exportItem)
+
+            if mergeSelectionKind == .fastq {
+                let mergeItem = NSMenuItem(
+                    title: "Merge into New Bundle\u{2026}",
+                    action: #selector(contextMenuMergeIntoNewBundle(_:)),
+                    keyEquivalent: ""
+                )
+                mergeItem.target = self
+                menu.addItem(mergeItem)
+            }
 
             if items.count == 1 {
                 let showContentsItem = NSMenuItem(title: "Show Package Contents", action: #selector(contextMenuShowBundleContents(_:)), keyEquivalent: "")
@@ -3401,6 +3447,60 @@ extension SidebarViewController: NSMenuDelegate {
             object: self,
             userInfo: ["item": item]
         )
+    }
+
+    @objc private func contextMenuMergeIntoNewBundle(_ sender: Any?) {
+        let items = selectedItems()
+        guard let mergeKind = BundleMergeSelection.detectKind(for: items) else { return }
+
+        let selectedURLs = items.compactMap(\.url)
+        guard selectedURLs.count == items.count,
+              let destinationDirectory = Self.deepestCommonParent(for: selectedURLs) else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Merge into New Bundle"
+        alert.informativeText = "Enter a name for the merged bundle:"
+        alert.addButton(withTitle: "Merge")
+        alert.addButton(withTitle: "Cancel")
+
+        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        textField.stringValue = Self.suggestedMergedBundleName(for: items)
+        alert.accessoryView = textField
+
+        guard let window = view.window ?? NSApp.keyWindow else { return }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+
+            let bundleName = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !bundleName.isEmpty else { return }
+
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+
+                do {
+                    let mergedURL: URL
+                    switch mergeKind {
+                    case .fastq:
+                        mergedURL = try await FASTQBundleMergeService.merge(
+                            sourceBundleURLs: selectedURLs,
+                            outputDirectory: destinationDirectory,
+                            bundleName: bundleName
+                        )
+                    case .reference:
+                        mergedURL = try await ReferenceBundleMergeService.merge(
+                            sourceBundleURLs: selectedURLs,
+                            outputDirectory: destinationDirectory,
+                            bundleName: bundleName
+                        )
+                    }
+
+                    self.reloadFromFilesystem()
+                    _ = self.selectItem(forURL: mergedURL)
+                } catch {
+                    self.presentError(error)
+                }
+            }
+        }
     }
 
     /// Shows the internal contents of a bundle in Finder (like "Show Package Contents" in macOS).
