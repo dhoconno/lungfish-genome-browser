@@ -24,6 +24,17 @@ final class WindowAppearanceTests: XCTestCase {
         XCTAssertFalse(source.contains(".foregroundStyle(.blue)"))
     }
 
+    func testInspectorUsesTextTabsInsteadOfIconOnlySegmentLabels() throws {
+        let source = try String(
+            contentsOf: repositoryRoot()
+                .appendingPathComponent("Sources/LungfishApp/Views/Inspector/InspectorViewController.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("Text(tab.displayLabel)"))
+        XCTAssertFalse(source.contains("Image(systemName: tab.iconName)"))
+    }
+
     func testPluginManagerAndAIAssistantExposeStableAccessibilityIdentifiers() throws {
         let pluginManagerSource = try String(
             contentsOf: repositoryRoot()

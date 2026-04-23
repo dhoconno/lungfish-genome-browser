@@ -9,13 +9,13 @@ final class InspectorAssemblyModeTests: XCTestCase {
         viewModel.contentMode = .assembly
 
         XCTAssertEqual(viewModel.availableTabs, [.document])
-        XCTAssertEqual(viewModel.availableTabs.first?.displayLabel, "Document")
+        XCTAssertEqual(viewModel.availableTabs.first?.displayLabel, "Bundle")
     }
 
     func testInspectorSingleTabHeaderUsesDocumentLabelSourcePath() throws {
         let source = try loadSource(at: "Sources/LungfishApp/Views/Inspector/InspectorViewController.swift")
 
-        XCTAssertTrue(source.contains("case .document: return \"Document\""))
+        XCTAssertTrue(source.contains("case .document: return \"Bundle\""))
         XCTAssertTrue(source.contains("Text(single.displayLabel)"))
     }
 

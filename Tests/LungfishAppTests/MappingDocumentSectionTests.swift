@@ -15,7 +15,7 @@ final class MappingDocumentSectionTests: XCTestCase {
 
         XCTAssertEqual(
             state.visibleSectionOrder,
-            [.header, .layout, .sourceData, .mappingContext, .sourceArtifacts]
+            [.header, .sourceData, .mappingContext, .sourceArtifacts]
         )
     }
 
@@ -34,5 +34,24 @@ final class MappingDocumentSectionTests: XCTestCase {
 
         let view = DocumentSection(viewModel: viewModel)
         XCTAssertTrue(String(describing: view.body).contains("MappingDocumentSection"))
+    }
+
+    func testMappingDocumentSourceUsesRunLabelsAndNoLayoutSection() throws {
+        let source = try loadSource(at: "Sources/LungfishApp/Views/Inspector/Sections/MappingDocumentSection.swift")
+
+        XCTAssertTrue(source.contains("DisclosureGroup(\"Run Inputs\""))
+        XCTAssertTrue(source.contains("DisclosureGroup(\"Run Settings\""))
+        XCTAssertTrue(source.contains("DisclosureGroup(\"Output Files\""))
+        XCTAssertFalse(source.contains("Text(\"Panel Layout\")"))
+    }
+
+    private func loadSource(at relativePath: String) throws -> String {
+        let sourceURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent(relativePath)
+
+        return try String(contentsOf: sourceURL, encoding: .utf8)
     }
 }

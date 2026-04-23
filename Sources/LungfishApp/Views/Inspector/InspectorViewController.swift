@@ -72,8 +72,12 @@ enum FilteredAlignmentWorkflowStartOutcome: Equatable {
 enum InspectorTab: String, CaseIterable {
     /// Bundle metadata and source information.
     case document
-    /// Annotation selection editing and style controls (genomics mode).
+    /// Selected object details.
     case selection
+    /// Reversible view and layout settings.
+    case view
+    /// Durable output-creating workflows.
+    case derive
     /// Embedded AI assistant (genomics mode).
     case ai
     /// FASTQ sample metadata editing (FASTQ mode).
@@ -1364,18 +1368,38 @@ public class InspectorViewController: NSViewController {
             NotificationUserInfoKey.consensusUseAmbiguity: vm.consensusUseAmbiguity,
             NotificationUserInfoKey.excludeFlags: vm.computedExcludeFlags,
             NotificationUserInfoKey.selectedReadGroups: vm.selectedReadGroups,
+            NotificationUserInfoKey.visibleAlignmentTrackID: vm.selectedVisibleAlignmentTrackID ?? "",
         ]
+    }
+
+    private func syncAlignmentTrackInventory(from bundle: ReferenceBundle) {
+        viewModel.documentSectionViewModel.updateAlignmentTrackInventory(
+            from: bundle,
+            visibleTrackID: viewModel.readStyleSectionViewModel.selectedVisibleAlignmentTrackID
+        )
+        viewModel.documentSectionViewModel.selectVisibleAlignmentTrack = { [weak self] trackID in
+            self?.setVisibleAlignmentTrackSelection(trackID)
+        }
+    }
+
+    private func setVisibleAlignmentTrackSelection(_ trackID: String?) {
+        viewModel.readStyleSectionViewModel.selectedVisibleAlignmentTrackID = trackID
+        viewModel.documentSectionViewModel.visibleAlignmentTrackID = trackID
+        viewModel.readStyleSectionViewModel.onSettingsChanged?()
     }
 
     /// Populates the read style section with alignment statistics from the bundle's metadata DBs.
     private func updateAlignmentSection(from bundle: ReferenceBundle) {
         viewModel.readStyleSectionViewModel.loadStatistics(from: bundle)
+        syncAlignmentTrackInventory(from: bundle)
         viewModel.readStyleSectionViewModel.supportsConsensusExtraction = false
         viewModel.readStyleSectionViewModel.onExtractConsensusRequested = nil
 
         // Wire the settings-changed callback to post notification
         viewModel.readStyleSectionViewModel.onSettingsChanged = { [weak self] in
             guard let self else { return }
+            self.viewModel.documentSectionViewModel.visibleAlignmentTrackID =
+                self.viewModel.readStyleSectionViewModel.selectedVisibleAlignmentTrackID
             NotificationCenter.default.post(
                 name: .readDisplaySettingsChanged,
                 object: self,
@@ -1409,9 +1433,12 @@ public class InspectorViewController: NSViewController {
         viewModel.selectionSectionViewModel.referenceBundle = bundle
         viewModel.documentSectionViewModel.bundleURL = bundle.url
         viewModel.readStyleSectionViewModel.loadStatistics(from: bundle)
+        syncAlignmentTrackInventory(from: bundle)
         viewModel.readStyleSectionViewModel.supportsConsensusExtraction = true
         viewModel.readStyleSectionViewModel.onSettingsChanged = { [weak self] in
             guard let self else { return }
+            self.viewModel.documentSectionViewModel.visibleAlignmentTrackID =
+                self.viewModel.readStyleSectionViewModel.selectedVisibleAlignmentTrackID
             applySettings(self.makeReadDisplaySettingsPayload(from: self.viewModel.readStyleSectionViewModel))
         }
         viewModel.readStyleSectionViewModel.onExtractConsensusRequested = { [weak self] in
@@ -1667,6 +1694,9 @@ public class InspectorViewController: NSViewController {
             bundleURL: bundleURL,
             outputTrackName: request.outputTrackName
         )
+        let sourceTrackName = viewModel.readStyleSectionViewModel.alignmentFilterTrackOptions
+            .first(where: { $0.id == request.sourceTrackID })?.name ?? request.sourceTrackID
+        viewModel.readStyleSectionViewModel.latestDerivedAlignmentMessage = nil
         viewModel.readStyleSectionViewModel.isAlignmentFilterWorkflowRunning = true
         split.activityIndicator.show(message: "Creating filtered alignment track...", style: .indeterminate)
 
@@ -1706,6 +1736,13 @@ public class InspectorViewController: NSViewController {
                         split.activityIndicator.hide()
 
                         let createdTrackName = result.trackInfo.name
+                        self.viewModel.readStyleSectionViewModel.selectedVisibleAlignmentTrackID = result.trackInfo.id
+                        self.viewModel.readStyleSectionViewModel.noteDerivedAlignmentCreation(
+                            createdTrackName: createdTrackName,
+                            sourceTrackName: sourceTrackName
+                        )
+                        self.viewModel.documentSectionViewModel.markRecentlyCreatedAlignmentTrack(result.trackInfo.id)
+                        self.viewModel.documentSectionViewModel.visibleAlignmentTrackID = result.trackInfo.id
                         do {
                             try launchContext.reload(
                                 using: FilteredAlignmentWorkflowReloadActions(
@@ -1717,9 +1754,11 @@ public class InspectorViewController: NSViewController {
                                     }
                                 )
                             )
+                            self.viewModel.readStyleSectionViewModel.onSettingsChanged?()
+                            self.viewModel.selectedTab = .derive
                             self.presentSimpleAlert(
                                 title: "Filtered Alignment Created",
-                                message: "Created filtered alignment track \"\(createdTrackName)\"."
+                                message: "Created a new filtered alignment from \"\(sourceTrackName)\". The source alignment was not changed. Now viewing \"\(createdTrackName)\". Use Bundle > Alignment Tracks or View > Visible Alignment to switch between them."
                             )
                         } catch {
                             self.presentSimpleAlert(
@@ -2001,9 +2040,9 @@ public final class InspectorViewModel {
     var availableTabs: [InspectorTab] {
         switch contentMode {
         case .genomics:
-            return [.document, .selection, .ai]
+            return [.document, .selection, .view, .derive, .ai]
         case .mapping:
-            return [.document, .selection]
+            return [.document, .selection, .view, .derive]
         case .assembly:
             return [.document]
         case .fastq:
@@ -2018,7 +2057,7 @@ public final class InspectorViewModel {
     // MARK: - Tab State
 
     /// Currently selected inspector tab.
-    var selectedTab: InspectorTab = .selection
+    var selectedTab: InspectorTab = .document
 
     // MARK: - Sidebar Selection State
 
@@ -2137,7 +2176,7 @@ public struct InspectorView: View {
         if tabs.count > 1 {
             Picker("Inspector", selection: $viewModel.selectedTab) {
                 ForEach(tabs, id: \.self) { tab in
-                    Image(systemName: tab.iconName)
+                    Text(tab.displayLabel)
                         .tag(tab)
                 }
             }
@@ -2148,8 +2187,6 @@ public struct InspectorView: View {
         } else if let single = tabs.first {
             // Single-tab mode: show a label instead of a picker
             HStack {
-                Image(systemName: single.iconName)
-                    .foregroundStyle(.secondary)
                 Text(single.displayLabel)
                     .font(.headline)
                 Spacer()
@@ -2164,7 +2201,7 @@ public struct InspectorView: View {
     @ViewBuilder
     private var tabContent: some View {
         switch viewModel.selectedTab {
-        case .document, .selection, .fastqMetadata, .resultSummary:
+        case .document, .selection, .view, .derive, .fastqMetadata, .resultSummary:
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     tabScrollContent
@@ -2196,6 +2233,10 @@ public struct InspectorView: View {
         switch viewModel.selectedTab {
         case .document:
             DocumentSection(viewModel: viewModel.documentSectionViewModel)
+            if viewModel.readStyleSectionViewModel.hasAlignmentTracks {
+                Divider()
+                AlignmentBundleSection(viewModel: viewModel.readStyleSectionViewModel)
+            }
             // Show FASTQ metadata in Document tab when in FASTQ mode
             if viewModel.contentMode == .fastq {
                 FASTQMetadataSection(viewModel: viewModel.fastqMetadataSectionViewModel)
@@ -2207,25 +2248,33 @@ public struct InspectorView: View {
             // Variant detail (shown when a variant is selected)
             VariantSection(viewModel: viewModel.variantSectionViewModel)
 
-            Divider()
+            if viewModel.readStyleSectionViewModel.selectedRead != nil {
+                Divider()
+                ReadSelectionSection(viewModel: viewModel.readStyleSectionViewModel)
+            }
 
-            // Sequence style
+        case .view:
+            if viewModel.contentMode == .mapping {
+                MappingViewSettingsSection(viewModel: viewModel.documentSectionViewModel)
+                Divider()
+            }
+
             AppearanceSection(viewModel: viewModel.appearanceSectionViewModel)
 
             Divider()
 
-            // Annotation style
             AnnotationSection(viewModel: viewModel.annotationSectionViewModel)
 
             Divider()
 
-            // Sample display controls (shown when variant data is available)
             SampleSection(viewModel: viewModel.sampleSectionViewModel)
 
             Divider()
 
-            // Read style (BAM/CRAM placeholder)
             ReadStyleSection(viewModel: viewModel.readStyleSectionViewModel)
+
+        case .derive:
+            DerivedAlignmentSection(viewModel: viewModel.readStyleSectionViewModel)
 
         case .fastqMetadata:
             FASTQMetadataSection(viewModel: viewModel.fastqMetadataSectionViewModel)
@@ -2245,8 +2294,10 @@ extension InspectorTab {
     /// SF Symbol name for this tab's picker icon.
     var iconName: String {
         switch self {
-        case .document: return "doc.text"
-        case .selection: return "cursorarrow.click"
+        case .document: return "shippingbox"
+        case .selection: return "scope"
+        case .view: return "eye"
+        case .derive: return "arrow.triangle.branch"
         case .ai: return "sparkles"
         case .fastqMetadata: return "tag"
         case .resultSummary: return "chart.bar"
@@ -2256,11 +2307,37 @@ extension InspectorTab {
     /// Human-readable label for single-tab headers.
     var displayLabel: String {
         switch self {
-        case .document: return "Document"
-        case .selection: return "Selection"
-        case .ai: return "AI Assistant"
+        case .document: return "Bundle"
+        case .selection: return "Selected Item"
+        case .view: return "View"
+        case .derive: return "Derived"
+        case .ai: return "Assistant"
         case .fastqMetadata: return "Sample Metadata"
-        case .resultSummary: return "Result Summary"
+        case .resultSummary: return "Summary"
+        }
+    }
+}
+
+private struct MappingViewSettingsSection: View {
+    @Bindable var viewModel: DocumentSectionViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Mapping Layout")
+                .font(.headline)
+
+            Picker("Layout", selection: Binding(
+                get: { viewModel.mappingPanelLayout },
+                set: { newValue in
+                    viewModel.mappingPanelLayout = newValue
+                    newValue.persist()
+                }
+            )) {
+                Text("Detail | List").tag(MappingPanelLayout.detailLeading)
+                Text("List | Detail").tag(MappingPanelLayout.listLeading)
+                Text("List Over Detail").tag(MappingPanelLayout.stacked)
+            }
+            .pickerStyle(.segmented)
         }
     }
 }

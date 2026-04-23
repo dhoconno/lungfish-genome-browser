@@ -157,6 +157,39 @@ final class MappingDocumentStateBuilderTests: XCTestCase {
         XCTAssertEqual(state.artifactRows.last?.fileURL?.lastPathComponent, MappingProvenance.filename)
     }
 
+    func testBuildIncludesFilteredAlignmentsArtifactWhenDerivedFolderExists() throws {
+        let outputDirectory = tempRoot.appendingPathComponent("mapping-run", isDirectory: true)
+        let viewerBundle = outputDirectory.appendingPathComponent("viewer.lungfishref", isDirectory: true)
+        let filteredDirectory = viewerBundle.appendingPathComponent("alignments/filtered", isDirectory: true)
+        try FileManager.default.createDirectory(at: filteredDirectory, withIntermediateDirectories: true)
+
+        let result = MappingResult(
+            mapper: .minimap2,
+            modeID: MappingMode.defaultShortRead.id,
+            sourceReferenceBundleURL: nil,
+            viewerBundleURL: viewerBundle,
+            bamURL: outputDirectory.appendingPathComponent("sample.sorted.bam"),
+            baiURL: outputDirectory.appendingPathComponent("sample.sorted.bam.bai"),
+            totalReads: 12,
+            mappedReads: 10,
+            unmappedReads: 2,
+            wallClockSeconds: 1.2,
+            contigs: []
+        )
+
+        let state = MappingDocumentStateBuilder.build(
+            result: result,
+            provenance: nil,
+            projectURL: nil
+        )
+
+        XCTAssertTrue(
+            state.artifactRows.contains(
+                .init(label: "Filtered Alignments", fileURL: filteredDirectory)
+            )
+        )
+    }
+
     func testSourceResolverPrefersProjectLinksAndFallsBackToFilesystem() throws {
         let projectURL = tempRoot.appendingPathComponent("project", isDirectory: true)
         let projectFile = projectURL.appendingPathComponent("Inputs/reads.fastq")

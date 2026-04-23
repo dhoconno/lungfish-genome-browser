@@ -891,6 +891,12 @@ public class ViewerViewController: NSViewController {
         if let rgs = userInfo[NotificationUserInfoKey.selectedReadGroups] as? Set<String> {
             viewerView.selectedReadGroupsSetting = rgs
         }
+        if let visibleAlignmentTrackID = userInfo[NotificationUserInfoKey.visibleAlignmentTrackID] as? String {
+            let trimmed = visibleAlignmentTrackID.trimmingCharacters(in: .whitespacesAndNewlines)
+            viewerView.visibleAlignmentTrackIDSetting = trimmed.isEmpty ? nil : trimmed
+        } else if userInfo.keys.contains(NotificationUserInfoKey.visibleAlignmentTrackID as AnyHashable) {
+            viewerView.visibleAlignmentTrackIDSetting = nil
+        }
 
         // Force read refetch if fetch-time filters changed
         if userInfo[NotificationUserInfoKey.minMapQ] != nil
@@ -901,7 +907,8 @@ public class ViewerViewController: NSViewController {
             || userInfo[NotificationUserInfoKey.consensusMode] != nil
             || userInfo[NotificationUserInfoKey.consensusUseAmbiguity] != nil
             || userInfo[NotificationUserInfoKey.excludeFlags] != nil
-            || userInfo[NotificationUserInfoKey.selectedReadGroups] != nil {
+            || userInfo[NotificationUserInfoKey.selectedReadGroups] != nil
+            || userInfo.keys.contains(NotificationUserInfoKey.visibleAlignmentTrackID as AnyHashable) {
             viewerView.cachedReadRegion = nil
             viewerView.cachedDepthRegion = nil
             viewerView.cachedConsensusRegion = nil

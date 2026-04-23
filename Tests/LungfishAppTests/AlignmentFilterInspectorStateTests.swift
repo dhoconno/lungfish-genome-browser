@@ -51,6 +51,33 @@ final class AlignmentFilterInspectorStateTests: XCTestCase {
         XCTAssertEqual(viewModel.alignmentFilterOutputTrackName, "Normal Reads curated subset")
     }
 
+    func testVisibleAlignmentSelectionDefaultsToAllAlignments() {
+        let viewModel = ReadStyleSectionViewModel()
+
+        viewModel.configureVisibleAlignmentTracks([
+            .init(id: "track-a", name: "Tumor Reads"),
+            .init(id: "track-b", name: "Normal Reads")
+        ])
+
+        XCTAssertNil(viewModel.selectedVisibleAlignmentTrackID)
+    }
+
+    func testConfigureVisibleAlignmentTracksPreservesValidSelection() {
+        let viewModel = ReadStyleSectionViewModel()
+        viewModel.configureVisibleAlignmentTracks([
+            .init(id: "track-a", name: "Tumor Reads"),
+            .init(id: "track-b", name: "Normal Reads")
+        ])
+        viewModel.selectedVisibleAlignmentTrackID = "track-b"
+
+        viewModel.configureVisibleAlignmentTracks([
+            .init(id: "track-a", name: "Tumor Reads"),
+            .init(id: "track-b", name: "Normal Reads")
+        ])
+
+        XCTAssertEqual(viewModel.selectedVisibleAlignmentTrackID, "track-b")
+    }
+
     func testMakeAlignmentFilterLaunchRequestRejectsInvalidPercentIdentityText() {
         let viewModel = ReadStyleSectionViewModel()
         viewModel.configureAlignmentFilterTracks([

@@ -213,6 +213,9 @@ public class SequenceViewerView: NSView {
     /// Selected read group IDs to display (empty = show all)
     var selectedReadGroupsSetting: Set<String> = []
 
+    /// Currently isolated alignment track ID. `nil` means aggregate all loaded alignments.
+    var visibleAlignmentTrackIDSetting: String? = nil
+
     /// Alignment data providers for each imported alignment track
     private var alignmentDataProviders: [(trackId: String, provider: AlignmentDataProvider)] = []
 
@@ -997,6 +1000,7 @@ public class SequenceViewerView: NSView {
     var testIsHoverTooltipHidden: Bool { hoverTooltip.isHidden }
     var testHoverTooltipText: String { hoverTooltip.currentText }
     var testSelectionStatusText: String? { currentSelectionStatusText() }
+    var testVisibleAlignmentTrackIDSetting: String? { visibleAlignmentTrackIDSetting }
 
     func testSetCachedAlignedReads(_ reads: [AlignedRead]) {
         cachedAlignedReads = reads
@@ -2652,7 +2656,8 @@ public class SequenceViewerView: NSView {
         let expandedEnd = min(Int(chromLength), region.end + expandAmount)
         let expandedRegion = GenomicRegion(chromosome: region.chromosome, start: expandedStart, end: expandedEnd)
 
-        let providers = alignmentDataProviders
+        let providers = activeAlignmentProviders()
+        guard !providers.isEmpty else { return }
         let bamChromosome = alignmentChromosomeName(for: region.chromosome)
         let mapQFilter = max(0, max(minMapQSetting, consensusMinMapQSetting))
         let baseQFilter = max(0, consensusMinBaseQSetting)
@@ -2761,7 +2766,7 @@ public class SequenceViewerView: NSView {
         let expandedEnd = min(Int(chromLength), region.end + expandAmount)
         let expandedRegion = GenomicRegion(chromosome: region.chromosome, start: expandedStart, end: expandedEnd)
 
-        let providers = alignmentDataProviders
+        let providers = activeAlignmentProviders()
         guard let provider = providers.first?.provider else { return }
         let bamChromosome = alignmentChromosomeName(for: region.chromosome)
         let mapQFilter = max(0, max(minMapQSetting, consensusMinMapQSetting))
@@ -2880,7 +2885,7 @@ public class SequenceViewerView: NSView {
     }
 
     func fetchConsensusSequenceForExport(request: MappingConsensusExportRequest) async throws -> String {
-        guard let provider = alignmentDataProviders.first?.provider else {
+        guard let provider = activeAlignmentProviders().first?.provider else {
             throw NSError(
                 domain: "Lungfish",
                 code: 2,
@@ -3034,7 +3039,8 @@ public class SequenceViewerView: NSView {
         let expandedEnd = min(Int(chromLength), region.end + expandAmount)
         let expandedRegion = GenomicRegion(chromosome: region.chromosome, start: expandedStart, end: expandedEnd)
 
-        let providers = alignmentDataProviders
+        let providers = activeAlignmentProviders()
+        guard !providers.isEmpty else { return }
         // Translate reference chromosome name to BAM chromosome name (e.g., MN908947 → MN908947.3)
         let bamChromosome = alignmentChromosomeName(for: region.chromosome)
         let mapQFilter = minMapQSetting
@@ -3095,6 +3101,15 @@ public class SequenceViewerView: NSView {
                 }
             }
         }
+    }
+
+    private func activeAlignmentProviders() -> [(trackId: String, provider: AlignmentDataProvider)] {
+        guard let visibleAlignmentTrackIDSetting,
+              alignmentDataProviders.contains(where: { $0.trackId == visibleAlignmentTrackIDSetting }) else {
+            return alignmentDataProviders
+        }
+
+        return alignmentDataProviders.filter { $0.trackId == visibleAlignmentTrackIDSetting }
     }
 
     /// Fetches genotype data asynchronously for the visible region.

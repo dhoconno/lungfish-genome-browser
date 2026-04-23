@@ -61,6 +61,7 @@ final class ReadStyleSectionViewModelTests: XCTestCase {
         XCTAssertTrue(vm.programRecords.isEmpty)
         XCTAssertTrue(vm.provenanceRecords.isEmpty)
         XCTAssertTrue(vm.trackNames.isEmpty)
+        XCTAssertNil(vm.selectedVisibleAlignmentTrackID)
     }
 
     // MARK: - Settings Callback
@@ -193,6 +194,13 @@ final class ReadStyleSectionViewModelTests: XCTestCase {
         )
     }
 
+    func testNotificationUserInfoKeysIncludeVisibleAlignmentTrackID() {
+        XCTAssertEqual(
+            NotificationUserInfoKey.visibleAlignmentTrackID,
+            "visibleAlignmentTrackID"
+        )
+    }
+
     // MARK: - ProgramRecordEntry
 
     func testProgramRecordEntryIdentifiable() {
@@ -244,6 +252,21 @@ final class ReadStyleSectionViewModelTests: XCTestCase {
         let vm = ReadStyleSectionViewModel()
         XCTAssertTrue(vm.programRecords.isEmpty)
         XCTAssertTrue(vm.provenanceRecords.isEmpty)
+    }
+
+    func testVisibleAlignmentSelectionClearsWhenTrackIsRemoved() {
+        let vm = ReadStyleSectionViewModel()
+        vm.configureVisibleAlignmentTracks([
+            .init(id: "track-a", name: "Track A"),
+            .init(id: "track-b", name: "Track B"),
+        ])
+        vm.selectedVisibleAlignmentTrackID = "track-b"
+
+        vm.configureVisibleAlignmentTracks([
+            .init(id: "track-a", name: "Track A"),
+        ])
+
+        XCTAssertNil(vm.selectedVisibleAlignmentTrackID)
     }
 
     // MARK: - Exclude Flags Computation

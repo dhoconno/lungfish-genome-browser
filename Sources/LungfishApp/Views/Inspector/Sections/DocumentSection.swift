@@ -15,6 +15,18 @@ import LungfishIO
 @Observable
 @MainActor
 public final class DocumentSectionViewModel {
+    /// Bundle alignment tracks shown in the bundle inspector.
+    var alignmentTrackRows: [AlignmentTrackInventoryRow] = []
+
+    /// Currently isolated alignment track for viewing. `nil` means all alignments.
+    var visibleAlignmentTrackID: String?
+
+    /// Most recently created derived alignment track.
+    var recentlyCreatedAlignmentTrackID: String?
+
+    /// Callback to switch the active visible alignment track.
+    var selectVisibleAlignmentTrack: ((String?) -> Void)?
+
     /// Mapping-result document state shown when a mapping viewport is active.
     var mappingDocument: MappingDocumentState?
 
@@ -45,6 +57,7 @@ public final class DocumentSectionViewModel {
         self.manifest = manifest
         self.bundleURL = bundleURL
         self.selectedChromosome = nil
+        clearAlignmentTrackInventory()
     }
 
     /// Updates the selected chromosome for detail display.
@@ -81,6 +94,7 @@ public final class DocumentSectionViewModel {
         self.manifest = nil
         self.bundleURL = nil
         self.selectedChromosome = nil
+        clearAlignmentTrackInventory()
     }
 
     /// Updates the view model with SRA/ENA metadata.
@@ -109,6 +123,7 @@ public final class DocumentSectionViewModel {
         mappingDocument = nil
         assemblyDocument = nil
         self.naoMgsManifest = manifest
+        clearAlignmentTrackInventory()
     }
 
     // MARK: - NVD Metadata
@@ -121,6 +136,7 @@ public final class DocumentSectionViewModel {
         mappingDocument = nil
         assemblyDocument = nil
         self.nvdManifest = manifest
+        clearAlignmentTrackInventory()
     }
 
     /// Updates the view model with mapping-document data and clears other document modes.
@@ -159,6 +175,55 @@ public final class DocumentSectionViewModel {
         naoMgsManifest = nil
         nvdManifest = nil
         analysisManifestEntries = []
+    }
+
+    func updateAlignmentTrackInventory(
+        from bundle: ReferenceBundle,
+        visibleTrackID: String?
+    ) {
+        alignmentTrackRows = bundle.manifest.alignments.map { track in
+            AlignmentTrackInventoryRow(
+                id: track.id,
+                name: track.name,
+                summary: alignmentTrackSummary(for: track),
+                isDerived: track.sourcePath.hasPrefix("alignments/filtered/")
+            )
+        }
+
+        if let visibleTrackID,
+           alignmentTrackRows.contains(where: { $0.id == visibleTrackID }) {
+            self.visibleAlignmentTrackID = visibleTrackID
+        } else {
+            self.visibleAlignmentTrackID = nil
+        }
+
+        if let recentlyCreatedAlignmentTrackID,
+           alignmentTrackRows.contains(where: { $0.id == recentlyCreatedAlignmentTrackID }) == false {
+            self.recentlyCreatedAlignmentTrackID = nil
+        }
+    }
+
+    func markRecentlyCreatedAlignmentTrack(_ trackID: String?) {
+        recentlyCreatedAlignmentTrackID = trackID
+    }
+
+    private func clearAlignmentTrackInventory() {
+        alignmentTrackRows = []
+        visibleAlignmentTrackID = nil
+        recentlyCreatedAlignmentTrackID = nil
+        selectVisibleAlignmentTrack = nil
+    }
+
+    private func alignmentTrackSummary(for track: AlignmentTrackInfo) -> String {
+        if track.sourcePath.hasPrefix("alignments/filtered/") {
+            return "Derived alignment stored in this bundle. Use View > Visible Alignment to inspect it alone."
+        }
+
+        if track.sourcePath.hasPrefix("alignments/") {
+            return "Source alignment in this bundle"
+        }
+
+        return "Imported alignment"
     }
 
     // MARK: - Layout Preferences
@@ -248,6 +313,13 @@ public final class DocumentSectionViewModel {
     var batchManifestStatus: BatchManifestStatus = .notCached
 }
 
+struct AlignmentTrackInventoryRow: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let summary: String
+    let isDerived: Bool
+}
+
 // MARK: - DocumentSection
 
 /// SwiftUI view displaying bundle-level metadata in the Inspector Document tab.
@@ -266,6 +338,7 @@ public struct DocumentSection: View {
     @State private var isENAMetadataExpanded = true
     @State private var isFASTQDerivativeExpanded = true
     @State private var isAnalysesExpanded = true
+    @State private var isAlignmentTracksExpanded = true
     @State private var expandedMetadataGroups: Set<String> = []
     @State private var trackedManifestIdentifier: String?
 
@@ -324,6 +397,11 @@ public struct DocumentSection: View {
             // Genome summary
             if let genome = manifest.genome {
                 genomeSection(genome, annotations: manifest.annotations, variants: manifest.variants)
+            }
+
+            if !viewModel.alignmentTrackRows.isEmpty {
+                Divider()
+                AlignmentTrackInventorySection(viewModel: viewModel, isExpanded: $isAlignmentTracksExpanded)
             }
 
             // Extended metadata groups
@@ -1168,6 +1246,85 @@ public struct DocumentSection: View {
         if summary.contains("error corr") { return "checkmark.circle" }
         if summary.contains("interleave") { return "arrow.left.arrow.right" }
         return "gearshape"
+    }
+}
+
+struct AlignmentTrackInventorySection: View {
+    var viewModel: DocumentSectionViewModel
+    @Binding var isExpanded: Bool
+
+    var body: some View {
+        DisclosureGroup("Alignment Tracks", isExpanded: $isExpanded) {
+            VStack(alignment: .leading, spacing: 8) {
+                trackButton(
+                    title: "All Alignments",
+                    subtitle: "Show reads from every alignment track in this bundle.",
+                    isCurrent: viewModel.visibleAlignmentTrackID == nil,
+                    isRecent: false,
+                    isDerived: false,
+                    action: { viewModel.selectVisibleAlignmentTrack?(nil) }
+                )
+
+                ForEach(viewModel.alignmentTrackRows) { row in
+                    trackButton(
+                        title: row.name,
+                        subtitle: row.summary,
+                        isCurrent: viewModel.visibleAlignmentTrackID == row.id,
+                        isRecent: viewModel.recentlyCreatedAlignmentTrackID == row.id,
+                        isDerived: row.isDerived,
+                        action: { viewModel.selectVisibleAlignmentTrack?(row.id) }
+                    )
+                }
+            }
+            .padding(.top, 4)
+        }
+        .font(.headline)
+    }
+
+    @ViewBuilder
+    private func trackButton(
+        title: String,
+        subtitle: String,
+        isCurrent: Bool,
+        isRecent: Bool,
+        isDerived: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    if isCurrent {
+                        badge("Current")
+                    }
+                    if isRecent {
+                        badge("New")
+                    }
+                    if isDerived {
+                        badge("Derived")
+                    }
+                    Spacer()
+                }
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func badge(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .semibold))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(Color.gray.opacity(0.12))
+            .clipShape(Capsule())
     }
 }
 

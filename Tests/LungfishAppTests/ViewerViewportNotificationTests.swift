@@ -75,4 +75,26 @@ final class ViewerViewportNotificationTests: XCTestCase {
         XCTAssertEqual(viewer.viewerView.cachedConsensusRegion?.end, 200)
         XCTAssertEqual(viewer.viewerView.consensusMinDepthSetting, 8)
     }
+
+    func testVisibleAlignmentTrackSelectionInvalidatesAlignmentCaches() {
+        let viewer = ViewerViewController()
+        _ = viewer.view
+
+        viewer.viewerView.cachedReadRegion = GenomicRegion(chromosome: "chr1", start: 10, end: 20)
+        viewer.viewerView.cachedDepthRegion = GenomicRegion(chromosome: "chr1", start: 10, end: 20)
+        viewer.viewerView.cachedConsensusRegion = GenomicRegion(chromosome: "chr1", start: 10, end: 20)
+
+        NotificationCenter.default.post(
+            name: .readDisplaySettingsChanged,
+            object: nil,
+            userInfo: [
+                NotificationUserInfoKey.visibleAlignmentTrackID: "track-derived"
+            ]
+        )
+
+        XCTAssertEqual(viewer.viewerView.visibleAlignmentTrackIDSetting, "track-derived")
+        XCTAssertNil(viewer.viewerView.cachedReadRegion)
+        XCTAssertNil(viewer.viewerView.cachedDepthRegion)
+        XCTAssertNil(viewer.viewerView.cachedConsensusRegion)
+    }
 }

@@ -25,14 +25,17 @@ final class InspectorMappingModeTests: XCTestCase {
         let viewModel = InspectorViewModel()
         viewModel.contentMode = .mapping
 
-        XCTAssertEqual(viewModel.availableTabs, [.document, .selection])
+        XCTAssertEqual(viewModel.availableTabs, [.document, .selection, .view, .derive])
     }
 
-    func testMappingModeKeepsSelectionTabAvailableForReadStyleControls() {
+    func testMappingModeExposesSeparateViewAndDerivedTabs() {
         let viewModel = InspectorViewModel()
         viewModel.contentMode = .mapping
 
-        XCTAssertEqual(viewModel.availableTabs, [.document, .selection])
+        XCTAssertEqual(
+            viewModel.availableTabs.map(\.displayLabel),
+            ["Bundle", "Selected Item", "View", "Derived"]
+        )
     }
 
     func testMappingAlignmentSectionBindsEmbeddedBundleForWorkflowState() throws {

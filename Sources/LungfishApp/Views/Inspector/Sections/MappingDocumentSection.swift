@@ -2,7 +2,6 @@ import SwiftUI
 
 enum MappingDocumentSectionKind: Equatable {
     case header
-    case layout
     case sourceData
     case mappingContext
     case sourceArtifacts
@@ -28,7 +27,7 @@ struct MappingDocumentState: Equatable {
     let artifactRows: [MappingDocumentArtifactRow]
 
     var visibleSectionOrder: [MappingDocumentSectionKind] {
-        [.header, .layout, .sourceData, .mappingContext, .sourceArtifacts]
+        [.header, .sourceData, .mappingContext, .sourceArtifacts]
     }
 
     static func == (lhs: MappingDocumentState, rhs: MappingDocumentState) -> Bool {
@@ -47,23 +46,23 @@ struct MappingDocumentSection: View {
     @State private var isSourceDataExpanded = true
     @State private var isContextExpanded = true
     @State private var isArtifactsExpanded = true
+    @State private var isAlignmentTracksExpanded = true
 
     var body: some View {
         if let mapping = viewModel.mappingDocument {
             VStack(alignment: .leading, spacing: 16) {
                 header(mapping)
 
-                Divider()
-
-                layoutSection
-
-                Divider()
-
                 sourceDataSection(mapping.sourceData)
 
                 Divider()
 
                 mappingContextSection(mapping.contextRows)
+
+                if !viewModel.alignmentTrackRows.isEmpty {
+                    Divider()
+                    AlignmentTrackInventorySection(viewModel: viewModel, isExpanded: $isAlignmentTracksExpanded)
+                }
 
                 Divider()
 
@@ -90,32 +89,8 @@ struct MappingDocumentSection: View {
         }
     }
 
-    private var layoutSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Panel Layout")
-                .font(.caption.weight(.semibold))
-
-            Picker("Layout", selection: Binding(
-                get: { viewModel.mappingPanelLayout },
-                set: { newValue in
-                    viewModel.mappingPanelLayout = newValue
-                    newValue.persist()
-                }
-            )) {
-                Label("Detail | List", systemImage: "sidebar.left")
-                    .tag(MappingPanelLayout.detailLeading)
-                Label("List | Detail", systemImage: "sidebar.right")
-                    .tag(MappingPanelLayout.listLeading)
-                Label("List Over Detail", systemImage: "rectangle.split.1x2")
-                    .tag(MappingPanelLayout.stacked)
-            }
-            .pickerStyle(.radioGroup)
-            .labelsHidden()
-        }
-    }
-
     private func sourceDataSection(_ rows: [MappingDocumentSourceRow]) -> some View {
-        DisclosureGroup("Source Data", isExpanded: $isSourceDataExpanded) {
+        DisclosureGroup("Run Inputs", isExpanded: $isSourceDataExpanded) {
             if rows.isEmpty {
                 emptyMessage("No source FASTQ or reference inputs were recorded for this mapping analysis.")
             } else {
@@ -186,7 +161,7 @@ struct MappingDocumentSection: View {
     }
 
     private func mappingContextSection(_ rows: [(String, String)]) -> some View {
-        DisclosureGroup("Mapping Context", isExpanded: $isContextExpanded) {
+        DisclosureGroup("Run Settings", isExpanded: $isContextExpanded) {
             if rows.isEmpty {
                 emptyMessage("No mapping provenance details are available for this analysis.")
             } else {
@@ -211,7 +186,7 @@ struct MappingDocumentSection: View {
     }
 
     private func sourceArtifactsSection(_ rows: [MappingDocumentArtifactRow]) -> some View {
-        DisclosureGroup("Source Artifacts", isExpanded: $isArtifactsExpanded) {
+        DisclosureGroup("Output Files", isExpanded: $isArtifactsExpanded) {
             if rows.isEmpty {
                 emptyMessage("No mapping artifacts are available.")
             } else {

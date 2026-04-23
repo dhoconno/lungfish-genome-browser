@@ -410,6 +410,9 @@ public enum NotificationUserInfoKey {
     /// Key for the set of selected read group IDs to display (Set<String>, empty = all).
     public static let selectedReadGroups = "selectedReadGroups"
 
+    /// Key for the currently isolated alignment track ID (String, nil = all alignments).
+    public static let visibleAlignmentTrackID = "visibleAlignmentTrackID"
+
     /// Key for strand-colored read backgrounds toggle (Bool).
     public static let showStrandColors = "showStrandColors"
 

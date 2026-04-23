@@ -147,14 +147,34 @@ enum MappingDocumentStateBuilder {
         result: MappingResult,
         outputDirectory: URL
     ) -> [MappingDocumentArtifactRow] {
-        [
+        var rows = [
             MappingDocumentArtifactRow(label: "Sorted BAM", fileURL: result.bamURL),
             MappingDocumentArtifactRow(label: "BAM Index", fileURL: result.baiURL),
             MappingDocumentArtifactRow(label: "Viewer Bundle", fileURL: result.viewerBundleURL),
-            MappingDocumentArtifactRow(label: "Mapping Result", fileURL: outputDirectory.appendingPathComponent("mapping-result.json")),
-            MappingDocumentArtifactRow(label: "Legacy Alignment Result", fileURL: outputDirectory.appendingPathComponent("alignment-result.json")),
-            MappingDocumentArtifactRow(label: "Mapping Provenance", fileURL: outputDirectory.appendingPathComponent(MappingProvenance.filename))
         ]
+
+        if let viewerBundleURL = result.viewerBundleURL {
+            let filteredAlignmentsDirectory = viewerBundleURL
+                .appendingPathComponent("alignments/filtered", isDirectory: true)
+            if FileManager.default.fileExists(atPath: filteredAlignmentsDirectory.path) {
+                rows.append(
+                    MappingDocumentArtifactRow(
+                        label: "Filtered Alignments",
+                        fileURL: filteredAlignmentsDirectory
+                    )
+                )
+            }
+        }
+
+        rows.append(
+            contentsOf: [
+                MappingDocumentArtifactRow(label: "Mapping Result", fileURL: outputDirectory.appendingPathComponent("mapping-result.json")),
+                MappingDocumentArtifactRow(label: "Legacy Alignment Result", fileURL: outputDirectory.appendingPathComponent("alignment-result.json")),
+                MappingDocumentArtifactRow(label: "Mapping Provenance", fileURL: outputDirectory.appendingPathComponent(MappingProvenance.filename))
+            ]
+        )
+
+        return rows
     }
 
     private static func percentageString(mappedReads: Int, totalReads: Int) -> String {
