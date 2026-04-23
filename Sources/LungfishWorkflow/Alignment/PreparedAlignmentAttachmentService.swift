@@ -65,6 +65,9 @@ public struct PreparedAlignmentAttachmentResult: Sendable {
 public enum PreparedAlignmentAttachmentError: Error, LocalizedError, Sendable, Equatable {
     case duplicateTrackID(String)
     case invalidRelativeDirectory(String)
+    case invalidOutputTrackID(String)
+    case unsupportedFormat(AlignmentFormat)
+    case escapedBundlePath(String)
     case missingArtifact(URL)
 
     public var errorDescription: String? {
@@ -73,6 +76,12 @@ public enum PreparedAlignmentAttachmentError: Error, LocalizedError, Sendable, E
             return "Alignment track ID already exists in bundle manifest: \(trackID)"
         case .invalidRelativeDirectory(let path):
             return "Alignment attachment directory must be bundle-relative: \(path)"
+        case .invalidOutputTrackID(let trackID):
+            return "Alignment track ID contains invalid path characters: \(trackID)"
+        case .unsupportedFormat(let format):
+            return "Prepared alignment attachment does not support format: \(format.rawValue)"
+        case .escapedBundlePath(let relativePath):
+            return "Alignment attachment path escapes the bundle root: \(relativePath)"
         case .missingArtifact(let url):
             return "Required staged artifact is missing: \(url.path)"
         }
@@ -150,10 +159,12 @@ public actor PreparedAlignmentAttachmentService {
     public func attach(
         request: PreparedAlignmentAttachmentRequest
     ) async throws -> PreparedAlignmentAttachmentResult {
+        try validateSupportedFormat(request.format)
         let relativeDirectory = try normalizedRelativeDirectory(request.relativeDirectory)
+        let outputTrackID = try normalizedOutputTrackID(request.outputTrackID)
         let manifest = try BundleManifest.load(from: request.bundleURL)
-        guard !manifest.alignments.contains(where: { $0.id == request.outputTrackID }) else {
-            throw PreparedAlignmentAttachmentError.duplicateTrackID(request.outputTrackID)
+        guard !manifest.alignments.contains(where: { $0.id == outputTrackID }) else {
+            throw PreparedAlignmentAttachmentError.duplicateTrackID(outputTrackID)
         }
 
         for artifactURL in [request.stagedBAMURL, request.stagedIndexURL] {
@@ -165,17 +176,21 @@ public actor PreparedAlignmentAttachmentService {
         let manifestURL = request.bundleURL.appendingPathComponent(BundleManifest.filename)
         let originalManifestData = try Data(contentsOf: manifestURL)
 
-        let targetDirectoryURL = request.bundleURL.appendingPathComponent(relativeDirectory, isDirectory: true)
+        let targetDirectoryURL = try resolvedBundleURL(
+            bundleURL: request.bundleURL,
+            relativePath: relativeDirectory,
+            isDirectory: true
+        )
         try fileManager.createDirectory(at: targetDirectoryURL, withIntermediateDirectories: true)
 
-        let filenames = artifactFilenames(for: request)
+        let filenames = artifactFilenames(trackID: outputTrackID, format: request.format)
         let bamRelativePath = "\(relativeDirectory)/\(filenames.bam)"
         let indexRelativePath = "\(relativeDirectory)/\(filenames.index)"
-        let metadataRelativePath = "\(relativeDirectory)/\(request.outputTrackID).stats.db"
+        let metadataRelativePath = "\(relativeDirectory)/\(outputTrackID).stats.db"
 
-        let bamURL = request.bundleURL.appendingPathComponent(bamRelativePath)
-        let indexURL = request.bundleURL.appendingPathComponent(indexRelativePath)
-        let metadataDBURL = request.bundleURL.appendingPathComponent(metadataRelativePath)
+        let bamURL = try resolvedBundleURL(bundleURL: request.bundleURL, relativePath: bamRelativePath)
+        let indexURL = try resolvedBundleURL(bundleURL: request.bundleURL, relativePath: indexRelativePath)
+        let metadataDBURL = try resolvedBundleURL(bundleURL: request.bundleURL, relativePath: metadataRelativePath)
 
         var promotedURLs: [URL] = []
         do {
@@ -252,25 +267,78 @@ public actor PreparedAlignmentAttachmentService {
 
     private func normalizedRelativeDirectory(_ path: String) throws -> String {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalized = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard !normalized.isEmpty,
+        guard !trimmed.isEmpty,
               !trimmed.hasPrefix("/"),
-              !normalized.contains("../"),
-              normalized != ".." else {
+              !trimmed.hasSuffix("/") else {
             throw PreparedAlignmentAttachmentError.invalidRelativeDirectory(path)
         }
-        return normalized
+
+        let components = trimmed.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard !components.isEmpty else {
+            throw PreparedAlignmentAttachmentError.invalidRelativeDirectory(path)
+        }
+
+        for component in components {
+            guard isValidPathComponent(component) else {
+                throw PreparedAlignmentAttachmentError.invalidRelativeDirectory(path)
+            }
+        }
+
+        return components.joined(separator: "/")
     }
 
-    private func artifactFilenames(for request: PreparedAlignmentAttachmentRequest) -> (bam: String, index: String) {
-        switch request.format {
-        case .bam:
-            return ("\(request.outputTrackID).bam", "\(request.outputTrackID).bam.bai")
-        case .cram:
-            return ("\(request.outputTrackID).cram", "\(request.outputTrackID).cram.crai")
-        case .sam:
-            return ("\(request.outputTrackID).sam", "\(request.outputTrackID).sam.bai")
+    private func normalizedOutputTrackID(_ trackID: String) throws -> String {
+        let trimmed = trackID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isValidPathComponent(trimmed) else {
+            throw PreparedAlignmentAttachmentError.invalidOutputTrackID(trackID)
         }
+        return trimmed
+    }
+
+    private func validateSupportedFormat(_ format: AlignmentFormat) throws {
+        guard format != .sam else {
+            throw PreparedAlignmentAttachmentError.unsupportedFormat(format)
+        }
+    }
+
+    private func artifactFilenames(trackID: String, format: AlignmentFormat) -> (bam: String, index: String) {
+        switch format {
+        case .bam:
+            return ("\(trackID).bam", "\(trackID).bam.bai")
+        case .cram:
+            return ("\(trackID).cram", "\(trackID).cram.crai")
+        case .sam:
+            return ("\(trackID).sam", "\(trackID).sam.bai")
+        }
+    }
+
+    private func isValidPathComponent(_ component: String) -> Bool {
+        guard !component.isEmpty,
+              component != ".",
+              component != ".." else {
+            return false
+        }
+
+        let allowedCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+        return component.unicodeScalars.allSatisfy { allowedCharacters.contains($0) }
+    }
+
+    private func resolvedBundleURL(
+        bundleURL: URL,
+        relativePath: String,
+        isDirectory: Bool = false
+    ) throws -> URL {
+        let bundleRoot = bundleURL.standardizedFileURL
+        let resolvedURL = bundleRoot
+            .appendingPathComponent(relativePath, isDirectory: isDirectory)
+            .standardizedFileURL
+
+        let bundlePath = bundleRoot.path.hasSuffix("/") ? bundleRoot.path : bundleRoot.path + "/"
+        guard resolvedURL.path == bundleRoot.path || resolvedURL.path.hasPrefix(bundlePath) else {
+            throw PreparedAlignmentAttachmentError.escapedBundlePath(relativePath)
+        }
+
+        return resolvedURL
     }
 
     private func promoteArtifact(from sourceURL: URL, to destinationURL: URL) throws {

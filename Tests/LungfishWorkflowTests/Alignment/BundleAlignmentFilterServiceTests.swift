@@ -144,6 +144,99 @@ final class BundleAlignmentFilterServiceTests: XCTestCase {
         )
         XCTAssertEqual(db.provenanceHistory().first?.subcommand, "markdup")
     }
+
+    func testPreparedAttachmentRejectsTraversingRelativeDirectory() async throws {
+        let fixture = try AlignmentFilterFixture.make(rootURL: tempDir, includeNMTag: true)
+        let staged = try makeStagedAlignmentArtifacts(named: "traversal")
+        let service = PreparedAlignmentAttachmentService(metadataCollector: fixture.metadataCollector)
+        let escapedURL = fixture.bundleURL
+            .appendingPathComponent("alignments/filtered/../../escaped.bam")
+            .standardizedFileURL
+
+        await XCTAssertThrowsErrorAsync(
+            try await service.attach(
+                request: PreparedAlignmentAttachmentRequest(
+                    bundleURL: fixture.bundleURL,
+                    stagedBAMURL: staged.bamURL,
+                    stagedIndexURL: staged.indexURL,
+                    outputTrackID: "safe-track",
+                    outputTrackName: "Traversal",
+                    relativeDirectory: "alignments/filtered/../../outside"
+                )
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PreparedAlignmentAttachmentError,
+                .invalidRelativeDirectory("alignments/filtered/../../outside")
+            )
+        }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: escapedURL.path))
+    }
+
+    func testPreparedAttachmentRejectsMalformedOutputTrackID() async throws {
+        let fixture = try AlignmentFilterFixture.make(rootURL: tempDir, includeNMTag: true)
+        let staged = try makeStagedAlignmentArtifacts(named: "trackid")
+        let service = PreparedAlignmentAttachmentService(metadataCollector: fixture.metadataCollector)
+        let escapedURL = fixture.bundleURL
+            .appendingPathComponent("alignments/evil.bam")
+            .standardizedFileURL
+
+        await XCTAssertThrowsErrorAsync(
+            try await service.attach(
+                request: PreparedAlignmentAttachmentRequest(
+                    bundleURL: fixture.bundleURL,
+                    stagedBAMURL: staged.bamURL,
+                    stagedIndexURL: staged.indexURL,
+                    outputTrackID: "../evil",
+                    outputTrackName: "Bad Track ID",
+                    relativeDirectory: "alignments/filtered"
+                )
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PreparedAlignmentAttachmentError,
+                .invalidOutputTrackID("../evil")
+            )
+        }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: escapedURL.path))
+    }
+
+    func testPreparedAttachmentRejectsSAMFormat() async throws {
+        let fixture = try AlignmentFilterFixture.make(rootURL: tempDir, includeNMTag: true)
+        let staged = try makeStagedAlignmentArtifacts(named: "sam")
+        let service = PreparedAlignmentAttachmentService(metadataCollector: fixture.metadataCollector)
+
+        await XCTAssertThrowsErrorAsync(
+            try await service.attach(
+                request: PreparedAlignmentAttachmentRequest(
+                    bundleURL: fixture.bundleURL,
+                    stagedBAMURL: staged.bamURL,
+                    stagedIndexURL: staged.indexURL,
+                    outputTrackID: "sam-track",
+                    outputTrackName: "SAM",
+                    relativeDirectory: "alignments/filtered",
+                    format: .sam
+                )
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PreparedAlignmentAttachmentError,
+                .unsupportedFormat(.sam)
+            )
+        }
+    }
+
+    private func makeStagedAlignmentArtifacts(named name: String) throws -> (bamURL: URL, indexURL: URL) {
+        let stagingURL = tempDir.appendingPathComponent("staging-\(name)", isDirectory: true)
+        try FileManager.default.createDirectory(at: stagingURL, withIntermediateDirectories: true)
+        let bamURL = stagingURL.appendingPathComponent("\(name).bam")
+        let indexURL = stagingURL.appendingPathComponent("\(name).bam.bai")
+        FileManager.default.createFile(atPath: bamURL.path, contents: Data("bam".utf8))
+        FileManager.default.createFile(atPath: indexURL.path, contents: Data("bai".utf8))
+        return (bamURL, indexURL)
+    }
 }
 
 private struct AlignmentFilterFixture {
