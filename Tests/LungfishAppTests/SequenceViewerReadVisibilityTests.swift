@@ -2,9 +2,47 @@ import AppKit
 import XCTest
 @testable import LungfishApp
 @testable import LungfishCore
+@testable import LungfishIO
 
 @MainActor
 final class SequenceViewerReadVisibilityTests: XCTestCase {
+
+    func testAlignmentFileMenuEntriesResolveActiveBAMTracks() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SequenceViewerReadVisibilityTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: tempDir.appendingPathComponent("alignments"),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let bamA = tempDir.appendingPathComponent("alignments/a.bam")
+        let bamB = tempDir.appendingPathComponent("alignments/b.bam")
+        FileManager.default.createFile(atPath: bamA.path, contents: Data())
+        FileManager.default.createFile(atPath: bamB.path, contents: Data())
+
+        let manifest = BundleManifest(
+            formatVersion: "1.0",
+            name: "Test",
+            identifier: "test.bundle",
+            source: SourceInfo(organism: "Test", assembly: "test"),
+            genome: GenomeInfo(path: "seq.fa.gz", indexPath: "seq.fa.gz.fai", totalLength: 1000, chromosomes: []),
+            alignments: [
+                AlignmentTrackInfo(id: "track-a", name: "Sample A", sourcePath: "alignments/a.bam", indexPath: "alignments/a.bam.bai"),
+                AlignmentTrackInfo(id: "track-b", name: "Sample B", sourcePath: "alignments/b.bam", indexPath: "alignments/b.bam.bai"),
+            ]
+        )
+        let bundle = ReferenceBundle(url: tempDir, manifest: manifest)
+
+        let entries = SequenceViewerView.alignmentFileMenuEntries(
+            bundle: bundle,
+            activeTrackIds: ["track-b"]
+        )
+
+        XCTAssertEqual(entries.map(\.trackId), ["track-b"])
+        XCTAssertEqual(entries.first?.title, "Sample B")
+        XCTAssertEqual(entries.first?.url.path, bamB.path)
+    }
 
     func testEnteringCoverageTierClearsReadCachesAndInvalidatesOutstandingFetches() {
         let view = SequenceViewerView(frame: NSRect(x: 0, y: 0, width: 800, height: 400))

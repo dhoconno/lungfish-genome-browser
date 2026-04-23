@@ -1531,6 +1531,8 @@ final class VariantDatabaseTests: XCTestCase {
         // testVCF has DP and AF keys.
         XCTAssertTrue(keyNames.contains("DP"), "Should have DP in info defs")
         XCTAssertTrue(keyNames.contains("AF"), "Should have AF in info defs")
+        XCTAssertEqual(keys.first(where: { $0.key == "DP" })?.type, "Integer")
+        XCTAssertEqual(keys.first(where: { $0.key == "AF" })?.type, "Float")
     }
 
     func testMaterializeFlipsSkipFlag() throws {

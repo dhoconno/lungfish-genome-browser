@@ -899,6 +899,12 @@ final class AnnotationTableDrawerVariantTests: XCTestCase {
         XCTAssertEqual(scoreDef?.type, "String", "Mixed INFO types should normalize to String")
     }
 
+    func testVariantToolbarDensityCompactsInNarrowPane() {
+        XCTAssertEqual(AnnotationTableDrawerView.variantToolbarDensity(forWidth: 900), .full)
+        XCTAssertEqual(AnnotationTableDrawerView.variantToolbarDensity(forWidth: 680), .compact)
+        XCTAssertEqual(AnnotationTableDrawerView.variantToolbarDensity(forWidth: 520), .minimal)
+    }
+
     // MARK: - Edge Cases
 
     func testEmptyVariantDatabase() throws {

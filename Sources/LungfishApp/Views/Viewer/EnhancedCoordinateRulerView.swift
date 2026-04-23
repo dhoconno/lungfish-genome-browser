@@ -36,6 +36,12 @@ private let rulerLogger = Logger(subsystem: LogSubsystem.app, category: "Enhance
 @MainActor
 public class EnhancedCoordinateRulerView: NSView {
 
+    struct InfoBarTextLayout {
+        let rangeRect: NSRect
+        let totalRect: NSRect?
+        let textClipMaxX: CGFloat
+    }
+
     // MARK: - Constants
 
     /// Height of the info bar section
@@ -64,6 +70,44 @@ public class EnhancedCoordinateRulerView: NSView {
 
     /// Minimum pixel spacing between labels to prevent overlap
     private static let minimumLabelSpacing: CGFloat = 10
+
+    static func infoBarTextLayout(
+        viewWidth: CGFloat,
+        rangeTextWidth: CGFloat,
+        totalTextWidth: CGFloat
+    ) -> InfoBarTextLayout {
+        let controlsLeft = viewWidth
+            - horizontalPadding
+            - zoomButtonSize
+            - 2
+            - zoomButtonSize
+            - 6
+            - positionFieldWidth
+        let textClipMaxX = max(horizontalPadding, controlsLeft - horizontalPadding)
+        let availableWidth = max(0, textClipMaxX - horizontalPadding)
+        let rangeWidth = min(rangeTextWidth, availableWidth)
+
+        let remainingWidth = availableWidth - rangeWidth - horizontalPadding
+        let totalRect: NSRect? = remainingWidth >= totalTextWidth
+            ? NSRect(
+                x: horizontalPadding + rangeWidth + horizontalPadding,
+                y: 0,
+                width: totalTextWidth,
+                height: infoBarHeight
+            )
+            : nil
+
+        return InfoBarTextLayout(
+            rangeRect: NSRect(
+                x: horizontalPadding,
+                y: 0,
+                width: rangeWidth,
+                height: infoBarHeight
+            ),
+            totalRect: totalRect,
+            textClipMaxX: textClipMaxX
+        )
+    }
 
     // MARK: - Colors
 
@@ -405,18 +449,43 @@ public class EnhancedCoordinateRulerView: NSView {
             .foregroundColor: secondaryTextColor
         ]
 
-        // Draw range text
         let rangeSize = (rangeText as NSString).size(withAttributes: primaryAttributes)
-        let rangeY = (Self.infoBarHeight - rangeSize.height) / 2
-        (rangeText as NSString).draw(at: CGPoint(x: Self.horizontalPadding, y: rangeY),
-                                      withAttributes: primaryAttributes)
-
-        // Draw total text
-        let totalX = Self.horizontalPadding + rangeSize.width + 8
         let totalSize = (totalText as NSString).size(withAttributes: secondaryAttributes)
-        let totalY = (Self.infoBarHeight - totalSize.height) / 2
-        (totalText as NSString).draw(at: CGPoint(x: totalX, y: totalY),
-                                      withAttributes: secondaryAttributes)
+        let layout = Self.infoBarTextLayout(
+            viewWidth: bounds.width,
+            rangeTextWidth: rangeSize.width,
+            totalTextWidth: totalSize.width
+        )
+
+        if layout.rangeRect.width > 4 {
+            let rangeY = (Self.infoBarHeight - rangeSize.height) / 2
+            let rangeRect = NSRect(
+                x: layout.rangeRect.minX,
+                y: rangeY,
+                width: layout.rangeRect.width,
+                height: rangeSize.height
+            )
+            (rangeText as NSString).draw(
+                with: rangeRect,
+                options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                attributes: primaryAttributes
+            )
+        }
+
+        if let totalRect = layout.totalRect {
+            let totalY = (Self.infoBarHeight - totalSize.height) / 2
+            let drawRect = NSRect(
+                x: totalRect.minX,
+                y: totalY,
+                width: totalRect.width,
+                height: totalSize.height
+            )
+            (totalText as NSString).draw(
+                with: drawRect,
+                options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                attributes: secondaryAttributes
+            )
+        }
 
     }
 

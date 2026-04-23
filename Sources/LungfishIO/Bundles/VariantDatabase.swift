@@ -2127,7 +2127,10 @@ public final class VariantDatabase: @unchecked Sendable {
             let type = sqlite3_column_text(stmt, 1).map { String(cString: $0) } ?? "String"
             let number = sqlite3_column_text(stmt, 2).map { String(cString: $0) } ?? "."
             let desc = sqlite3_column_text(stmt, 3).map { String(cString: $0) } ?? ""
-            results.append((key: key, type: type, number: number, description: desc))
+            let resolvedType = Self.shouldRefineInferredInfoType(type: type, description: desc)
+                ? (inferInfoTypeFromStoredValues(forKey: key) ?? type)
+                : type
+            results.append((key: key, type: resolvedType, number: number, description: desc))
         }
         if !results.isEmpty {
             var seen = Set(results.map(\.key))
@@ -2224,14 +2227,42 @@ public final class VariantDatabase: @unchecked Sendable {
         return results
     }
 
+    private static func shouldRefineInferredInfoType(type: String, description: String) -> Bool {
+        type == "String" && description == "Inferred from data"
+    }
+
+    private func inferInfoTypeFromStoredValues(forKey key: String, sampleLimit: Int = 50) -> String? {
+        guard let db else { return nil }
+        let sql = "SELECT value FROM variant_info WHERE key = ? AND TRIM(value) != '' LIMIT ?"
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        sqliteBindText(stmt, 1, key)
+        sqlite3_bind_int(stmt, 2, Int32(sampleLimit))
+
+        var values: [String] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let cStr = sqlite3_column_text(stmt, 0) else { continue }
+            values.append(String(cString: cStr))
+        }
+        guard !values.isEmpty else { return nil }
+        return Self.inferInfoType(from: values)
+    }
+
     /// Infers the VCF INFO type from a sample of values.
     private static func inferInfoType(from values: [String]) -> String {
-        let nonEmpty = values.filter { !$0.isEmpty }
+        let nonEmpty = values.filter { !$0.isEmpty && $0 != "." }
         if nonEmpty.isEmpty { return "Flag" }
         if nonEmpty.allSatisfy({ $0 == "true" }) { return "Flag" }
-        let allInteger = nonEmpty.allSatisfy { Int($0) != nil }
+        let valueTokens = nonEmpty.flatMap { value in
+            value.split(separator: ",", omittingEmptySubsequences: false)
+                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty && $0 != "." }
+        }
+        guard !valueTokens.isEmpty else { return "Flag" }
+        let allInteger = valueTokens.allSatisfy { Int($0) != nil }
         if allInteger { return "Integer" }
-        let allNumeric = nonEmpty.allSatisfy { Double($0) != nil }
+        let allNumeric = valueTokens.allSatisfy { Double($0) != nil }
         if allNumeric { return "Float" }
         return "String"
     }
@@ -4810,7 +4841,7 @@ public final class VariantDatabase: @unchecked Sendable {
 
         var totalEAVRows = 0
         var distinctKeys = Set<String>()
-        let batchSize = 5000
+        var infoValueSamples: [String: [String]] = [:]
 
         // Batch loop.
         while true {
@@ -4840,6 +4871,9 @@ public final class VariantDatabase: @unchecked Sendable {
                     sqlite3_step(insertInfoStmt)
                     totalEAVRows += 1
                     distinctKeys.insert(key)
+                    if infoValueSamples[key, default: []].count < 50 {
+                        infoValueSamples[key, default: []].append(value)
+                    }
                 }
 
                 batchLastId = variantId
@@ -4870,7 +4904,7 @@ public final class VariantDatabase: @unchecked Sendable {
 
         // Populate variant_info_defs from discovered keys.
         progressHandler?(0.90, "Recording INFO field definitions...")
-        let insertDefSQL = "INSERT OR REPLACE INTO variant_info_defs (key, type, number, description) VALUES (?, 'String', '.', 'Inferred from data')"
+        let insertDefSQL = "INSERT OR REPLACE INTO variant_info_defs (key, type, number, description) VALUES (?, ?, '.', 'Inferred from data')"
         var insertDefStmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, insertDefSQL, -1, &insertDefStmt, nil) == SQLITE_OK else {
             throw VariantDatabaseError.createFailed("Failed to prepare info_defs INSERT for materialization")
@@ -4880,6 +4914,7 @@ public final class VariantDatabase: @unchecked Sendable {
         for key in distinctKeys.sorted() {
             sqlite3_reset(insertDefStmt)
             sqliteBindText(insertDefStmt, 1, key)
+            sqliteBindText(insertDefStmt, 2, inferInfoType(from: infoValueSamples[key] ?? []))
             sqlite3_step(insertDefStmt)
         }
         sqlite3_exec(db, "COMMIT", nil, nil, nil)

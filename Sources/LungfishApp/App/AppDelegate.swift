@@ -29,23 +29,6 @@ private func appRelativePath(from base: URL, to target: URL) -> String {
     return target.lastPathComponent
 }
 
-/// Builds a filesystem-relative path from one directory URL to another URL.
-private func appFilesystemRelativePath(from baseURL: URL, to targetURL: URL) -> String {
-    let baseComponents = baseURL.standardizedFileURL.pathComponents
-    let targetComponents = targetURL.standardizedFileURL.pathComponents
-
-    var common = 0
-    while common < min(baseComponents.count, targetComponents.count),
-          baseComponents[common] == targetComponents[common] {
-        common += 1
-    }
-
-    let up = Array(repeating: "..", count: max(0, baseComponents.count - common))
-    let down = Array(targetComponents.dropFirst(common))
-    let parts = up + down
-    return parts.isEmpty ? "." : parts.joined(separator: "/")
-}
-
 /// Escapes a value for tab-separated output.
 private func appTSVField(_ value: String) -> String {
     if value.contains("\t") || value.contains("\n") || value.contains("\"") {
@@ -5240,17 +5223,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             OperationCenter.shared.log(
                 id: opID,
                 level: .info,
-                message: "Copying reference bundle for integrated BAM viewing."
+                message: "Preparing lightweight reference bundle for integrated BAM viewing."
             )
         }}
 
-        if fm.fileExists(atPath: viewerBundleURL.path) {
-            try fm.removeItem(at: viewerBundleURL)
-        }
-        try fm.copyItem(at: sourceBundleURL, to: viewerBundleURL)
-        try sanitizeCopiedMappingViewerBundle(
-            at: viewerBundleURL,
-            sourceBundleURL: sourceBundleURL
+        try MappingViewerBundlePreparer.prepareBaseBundle(
+            sourceBundleURL: sourceBundleURL,
+            viewerBundleURL: viewerBundleURL,
+            fileManager: fm
         )
 
         _ = try await BAMImportService.importBAM(
@@ -5278,40 +5258,6 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 .save(to: request.outputDirectory)
         }
         return preparedResult
-    }
-
-    private func sanitizeCopiedMappingViewerBundle(
-        at bundleURL: URL,
-        sourceBundleURL: URL
-    ) throws {
-        let fm = FileManager.default
-        let alignmentsURL = bundleURL.appendingPathComponent("alignments", isDirectory: true)
-        if fm.fileExists(atPath: alignmentsURL.path) {
-            try fm.removeItem(at: alignmentsURL)
-        }
-
-        let manifest = try BundleManifest.load(from: bundleURL)
-        let originBundlePath = FASTQBundle.projectRelativePath(
-            for: sourceBundleURL,
-            from: bundleURL
-        ) ?? appFilesystemRelativePath(from: bundleURL, to: sourceBundleURL)
-        let sanitizedManifest = BundleManifest(
-            formatVersion: manifest.formatVersion,
-            name: manifest.name,
-            identifier: manifest.identifier,
-            description: manifest.description,
-            originBundlePath: originBundlePath,
-            createdDate: manifest.createdDate,
-            modifiedDate: Date(),
-            source: manifest.source,
-            genome: manifest.genome,
-            annotations: manifest.annotations,
-            variants: manifest.variants,
-            tracks: manifest.tracks,
-            alignments: [],
-            metadata: manifest.metadata
-        )
-        try sanitizedManifest.save(to: bundleURL)
     }
 
     private func runOrientReads(config: OrientConfig) {

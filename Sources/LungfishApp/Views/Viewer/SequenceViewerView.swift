@@ -16,6 +16,12 @@ private let logger = Logger(subsystem: LogSubsystem.app, category: "SequenceView
 
 // MARK: - SequenceViewerView
 
+struct AlignmentFileMenuEntry: Equatable {
+    let trackId: String
+    let title: String
+    let url: URL
+}
+
 /// The main view for rendering sequence and track data.
 /// Note: Uses @MainActor for thread safety as it contains mutable UI state.
 @MainActor
@@ -3112,6 +3118,25 @@ public class SequenceViewerView: NSView {
         return alignmentDataProviders.filter { $0.trackId == visibleAlignmentTrackIDSetting }
     }
 
+    static func alignmentFileMenuEntries(
+        bundle: ReferenceBundle?,
+        activeTrackIds: [String]
+    ) -> [AlignmentFileMenuEntry] {
+        guard let bundle else { return [] }
+
+        return activeTrackIds.compactMap { trackId in
+            guard let track = bundle.alignmentTrack(id: trackId),
+                  let resolvedPath = try? bundle.resolveAlignmentPath(track) else {
+                return nil
+            }
+            return AlignmentFileMenuEntry(
+                trackId: trackId,
+                title: track.name,
+                url: URL(fileURLWithPath: resolvedPath)
+            )
+        }
+    }
+
     /// Fetches genotype data asynchronously for the visible region.
     /// Queries the VariantDatabase for per-sample genotype calls to populate the genotype track.
     /// Uses the same generation counter pattern as other fetch methods.
@@ -5796,6 +5821,11 @@ public class SequenceViewerView: NSView {
             return
         }
 
+        if let alignmentMenu = alignmentFileContextMenu(at: location) {
+            NSMenu.popUpContextMenu(alignmentMenu, with: event, for: self)
+            return
+        }
+
         // Check if right-clicking on a selection
         if selectionRange != nil {
             showSelectionContextMenu(at: event)
@@ -5804,6 +5834,74 @@ public class SequenceViewerView: NSView {
 
         // No selection - show general context menu
         showGeneralContextMenu(at: event)
+    }
+
+    private func alignmentFileContextMenu(at location: NSPoint) -> NSMenu? {
+        let entries = alignmentFileMenuEntriesForContext(at: location)
+        guard !entries.isEmpty else { return nil }
+
+        let menu = NSMenu(title: "Alignment")
+        if entries.count == 1, let entry = entries.first {
+            let item = NSMenuItem(
+                title: alignmentRevealTitle(for: entry.url),
+                action: #selector(showAlignmentFileInFinderAction(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = entry.url
+            menu.addItem(item)
+        } else {
+            let revealMenu = NSMenu(title: "Show Alignment File in Finder")
+            for entry in entries {
+                let item = NSMenuItem(
+                    title: entry.title,
+                    action: #selector(showAlignmentFileInFinderAction(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.representedObject = entry.url
+                revealMenu.addItem(item)
+            }
+            let revealItem = NSMenuItem(title: "Show Alignment File in Finder", action: nil, keyEquivalent: "")
+            revealItem.submenu = revealMenu
+            menu.addItem(revealItem)
+        }
+
+        menu.addItem(NSMenuItem.separator())
+        addCenterViewMenuItem(to: menu)
+        return menu
+    }
+
+    private func alignmentFileMenuEntriesForContext(at location: NSPoint) -> [AlignmentFileMenuEntry] {
+        guard isPointInAlignmentTrack(location) else { return [] }
+        return Self.alignmentFileMenuEntries(
+            bundle: currentReferenceBundle,
+            activeTrackIds: activeAlignmentProviders().map(\.trackId)
+        )
+    }
+
+    private func isPointInAlignmentTrack(_ point: NSPoint) -> Bool {
+        guard showReads,
+              !alignmentDataProviders.isEmpty,
+              lastRenderedCoverageY > 0 else {
+            return false
+        }
+
+        let coverageMaxY = lastRenderedCoverageY + coverageStripHeight
+        let readMaxY = lastRenderedReadY > 0
+            ? lastRenderedReadY + max(readContentHeight, coverageStripHeight)
+            : coverageMaxY
+        let trackMaxY = min(bounds.maxY, max(coverageMaxY, readMaxY))
+        return point.y >= lastRenderedCoverageY && point.y <= trackMaxY
+    }
+
+    private func alignmentRevealTitle(for url: URL) -> String {
+        url.pathExtension.lowercased() == "bam" ? "Show BAM in Finder" : "Show Alignment File in Finder"
+    }
+
+    @objc private func showAlignmentFileInFinderAction(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     /// Creates and shows context menu for variant actions.

@@ -177,6 +177,18 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
     // MARK: - Types
 
+    enum VariantToolbarDensity: Equatable {
+        case full
+        case compact
+        case minimal
+    }
+
+    static func variantToolbarDensity(forWidth width: CGFloat) -> VariantToolbarDensity {
+        if width < 560 { return .minimal }
+        if width < 760 { return .compact }
+        return .full
+    }
+
     /// The active tab in the drawer.
     enum DrawerTab: Int {
         case annotations = 0
@@ -209,6 +221,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
 
     /// Reference to the search index for direct SQL queries.
     private(set) var searchIndex: AnnotationSearchIndex?
+    private var appliedVariantToolbarDensity: VariantToolbarDensity?
 
     /// The currently active tab.
     private(set) var activeTab: DrawerTab = .annotations
@@ -611,6 +624,11 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         setupView()
+    }
+
+    public override func layout() {
+        super.layout()
+        updateVariantToolbarDensity()
     }
 
     // MARK: - Setup
@@ -1326,15 +1344,67 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         field.isHidden = true
     }
 
+    private func updateVariantToolbarDensity() {
+        let density = Self.variantToolbarDensity(forWidth: bounds.width)
+        let densityChanged = appliedVariantToolbarDensity != density
+        appliedVariantToolbarDensity = density
+
+        if densityChanged {
+            switch density {
+            case .full:
+                scopeControl.setLabel("Region", forSegment: 0)
+                scopeControl.setLabel("Genome", forSegment: 1)
+                scopeControl.setWidth(62, forSegment: 0)
+                scopeControl.setWidth(66, forSegment: 1)
+                variantSubtabControl.setLabel("Calls", forSegment: 0)
+                variantSubtabControl.setLabel("Genotypes", forSegment: 1)
+                variantSubtabControl.setWidth(55, forSegment: 0)
+                variantSubtabControl.setWidth(75, forSegment: 1)
+                searchBuilderButton.title = "Search Builder..."
+                clearFilterButton.title = "Clear"
+            case .compact:
+                scopeControl.setLabel("Region", forSegment: 0)
+                scopeControl.setLabel("Genome", forSegment: 1)
+                scopeControl.setWidth(56, forSegment: 0)
+                scopeControl.setWidth(60, forSegment: 1)
+                variantSubtabControl.setLabel("Calls", forSegment: 0)
+                variantSubtabControl.setLabel("GT", forSegment: 1)
+                variantSubtabControl.setWidth(50, forSegment: 0)
+                variantSubtabControl.setWidth(36, forSegment: 1)
+                searchBuilderButton.title = "Query"
+                clearFilterButton.title = "Clear"
+            case .minimal:
+                scopeControl.setLabel("Reg", forSegment: 0)
+                scopeControl.setLabel("Gen", forSegment: 1)
+                scopeControl.setWidth(42, forSegment: 0)
+                scopeControl.setWidth(42, forSegment: 1)
+                variantSubtabControl.setLabel("Calls", forSegment: 0)
+                variantSubtabControl.setLabel("GT", forSegment: 1)
+                variantSubtabControl.setWidth(46, forSegment: 0)
+                variantSubtabControl.setWidth(34, forSegment: 1)
+                searchBuilderButton.title = "Query"
+                clearFilterButton.title = "Clear"
+            }
+        }
+
+        presetFiltersToggleButton.title = showVariantPresetChips ? "Presets ▾" : (density == .full ? "Presets ▸" : "Presets")
+        let hasFilter = !variantFilterText.isEmpty || !activeSmartTokens.isEmpty || !selectedVariantPresetByKey.isEmpty
+        searchBuilderButton.title = density == .full
+            ? (hasFilter ? "Edit Query..." : "Query Builder...")
+            : (hasFilter ? "Edit" : "Query")
+    }
+
     private func updateSearchFieldVisibility() {
         let showVariants = activeTab == .variants
         let showSamples = activeTab == .samples
         let totalVariantDBSize = totalVariantDatabaseSizeBytes()
         let isLargeDatabase = totalVariantDBSize >= Self.chromosomeScopeThreshold
         let isMaterializedOnlyDatabase = totalVariantDBSize >= Self.materializedOnlyThreshold
+        let toolbarDensity = Self.variantToolbarDensity(forWidth: bounds.width)
         if showVariants {
             enforceMaterializedOnlyRestrictionsIfNeeded()
         }
+        updateVariantToolbarDensity()
         annotationFilterField.isHidden = activeTab != .annotations
         variantFilterField.isHidden = true  // Always hidden; Query Builder writes to variantFilterText directly
         sampleFilterField.isHidden = true  // Samples use Query Builder; free-text field hidden to reduce toolbar density
@@ -1346,11 +1416,10 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         sampleGroupPresetButton.isHidden = !showSamples
         clearSampleFilterButton.isHidden = !showSamples || (!hasActiveSampleFilters && sampleFilterText.isEmpty)
         variantSubtabControl.isHidden = !showVariants
-        profileButton.isHidden = !showVariants
+        profileButton.isHidden = !showVariants || toolbarDensity != .full
         scopeControl.isHidden = !showVariants
-        haploidModeButton.isHidden = !showVariants
-        presetFiltersToggleButton.isHidden = !showVariants || infoColumnKeys.isEmpty || isMaterializedOnlyDatabase
-        presetFiltersToggleButton.title = showVariantPresetChips ? "Presets ▾" : "Presets ▸"
+        haploidModeButton.isHidden = !showVariants || toolbarDensity == .minimal
+        presetFiltersToggleButton.isHidden = !showVariants || toolbarDensity == .minimal || infoColumnKeys.isEmpty || isMaterializedOnlyDatabase
         presetFiltersToggleButton.isEnabled = variantPresetLoadState != .loading
         // Gate Query Builder on database size.
         let queryBuilderVisible: Bool = {
@@ -1370,7 +1439,7 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
         // Show button whenever variants tab is active; disable when query would be too slow
         searchBuilderButton.isHidden = !showVariants
         searchBuilderButton.isEnabled = queryBuilderVisible
-        localVariantFilterBadgeLabel.isHidden = !showVariants
+        localVariantFilterBadgeLabel.isHidden = !showVariants || toolbarDensity == .minimal
         if !queryBuilderVisible && showVariants {
             let dbSizeMB = totalVariantDBSize / 1_000_000
             if isMaterializedOnlyDatabase {
@@ -1382,8 +1451,8 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
             searchBuilderButton.toolTip = nil
         }
         let showTypeControls = activeTab != .samples && !availableTypes.isEmpty
-        allTypesButton.isHidden = !showTypeControls
-        noneTypesButton.isHidden = !showTypeControls
+        allTypesButton.isHidden = !showTypeControls || toolbarDensity == .minimal
+        noneTypesButton.isHidden = !showTypeControls || toolbarDensity == .minimal
         updateVariantFilterIndicator()
         rebuildSampleGroupPresetMenu()
         updateScopeControlSelection()
@@ -1439,8 +1508,13 @@ public class AnnotationTableDrawerView: NSView, NSTableViewDataSource, NSTableVi
     /// based on whether a variant filter is active.
     private func updateVariantFilterIndicator() {
         let hasFilter = !variantFilterText.isEmpty || !activeSmartTokens.isEmpty || !selectedVariantPresetByKey.isEmpty
+        let toolbarDensity = Self.variantToolbarDensity(forWidth: bounds.width)
         clearFilterButton.isHidden = !(activeTab == .variants && hasFilter)
-        searchBuilderButton.title = hasFilter ? "Edit Query..." : "Query Builder..."
+        if toolbarDensity == .full {
+            searchBuilderButton.title = hasFilter ? "Edit Query..." : "Query Builder..."
+        } else {
+            searchBuilderButton.title = hasFilter ? "Edit" : "Query"
+        }
         updateVariantLogicSummary()
     }
 
