@@ -110,4 +110,43 @@ final class BAMCommandTests: XCTestCase {
             ])
         )
     }
+
+    func testFilterSubcommandRejectsBlankBundlePath() {
+        XCTAssertThrowsError(
+            try BAMCommand.FilterSubcommand.parse([
+                "filter",
+                "--bundle", "   ",
+                "--alignment-track", "aln-1",
+                "--output-track-name", "Filtered",
+            ])
+        ) { error in
+            XCTAssertTrue("\(error)".contains("--bundle"))
+        }
+    }
+
+    func testFilterSubcommandRejectsBlankMappingResultPath() {
+        XCTAssertThrowsError(
+            try BAMCommand.FilterSubcommand.parse([
+                "filter",
+                "--mapping-result", "   ",
+                "--alignment-track", "aln-1",
+                "--output-track-name", "Filtered",
+            ])
+        ) { error in
+            XCTAssertTrue("\(error)".contains("--mapping-result"))
+        }
+    }
+
+    func testFilterSubcommandRejectsBlankOutputTrackName() {
+        XCTAssertThrowsError(
+            try BAMCommand.FilterSubcommand.parse([
+                "filter",
+                "--bundle", "/tmp/Test.lungfishref",
+                "--alignment-track", "aln-1",
+                "--output-track-name", "   ",
+            ])
+        ) { error in
+            XCTAssertTrue("\(error)".contains("--output-track-name"))
+        }
+    }
 }

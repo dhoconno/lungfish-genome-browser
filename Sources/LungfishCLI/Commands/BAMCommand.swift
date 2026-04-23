@@ -101,6 +101,18 @@ extension BAMCommand {
         }
 
         func validate() throws {
+            if let bundlePath, trimmedValue(bundlePath).isEmpty {
+                throw ValidationError("--bundle must not be empty.")
+            }
+
+            if let mappingResultPath, trimmedValue(mappingResultPath).isEmpty {
+                throw ValidationError("--mapping-result must not be empty.")
+            }
+
+            if trimmedValue(outputTrackName).isEmpty {
+                throw ValidationError("--output-track-name must not be empty.")
+            }
+
             let targetCount = [bundlePath, mappingResultPath].compactMap { $0 }.count
             guard targetCount == 1 else {
                 throw ValidationError("Specify exactly one of --bundle or --mapping-result.")
@@ -214,10 +226,10 @@ extension BAMCommand {
 
         private func resolvedTarget() throws -> AlignmentFilterTarget {
             if let bundlePath {
-                return .bundle(URL(fileURLWithPath: bundlePath))
+                return .bundle(URL(fileURLWithPath: trimmedValue(bundlePath)))
             }
             if let mappingResultPath {
-                return .mappingResult(URL(fileURLWithPath: mappingResultPath))
+                return .mappingResult(URL(fileURLWithPath: trimmedValue(mappingResultPath)))
             }
             throw ValidationError("Specify exactly one of --bundle or --mapping-result.")
         }
@@ -254,7 +266,11 @@ extension BAMCommand {
         }
 
         private func normalizedOutputTrackName() -> String {
-            outputTrackName.trimmingCharacters(in: .whitespacesAndNewlines)
+            trimmedValue(outputTrackName)
+        }
+
+        private func trimmedValue(_ value: String) -> String {
+            value.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
         private func makeRunCompleteEvent(
