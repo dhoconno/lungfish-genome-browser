@@ -9,8 +9,8 @@ import XCTest
 final class MarkdupCommandTests: XCTestCase {
     private typealias MarkdupRuntime = MarkdupCommand.Runtime
 
-    private struct MarkdupJSONOutput: Decodable {
-        struct Result: Decodable {
+    private struct MarkdupJSONOutput: Decodable, Equatable {
+        struct Result: Decodable, Equatable {
             let bamPath: String
             let wasAlreadyMarkduped: Bool
             let totalReads: Int
@@ -525,15 +525,19 @@ final class MarkdupCommandTests: XCTestCase {
         var canonicalOutput: [String] = []
         _ = try await canonicalCommand.executeForTesting(runtime: runtime) { canonicalOutput.append($0) }
 
-        XCTAssertEqual(canonicalOutput, legacyOutput)
+        XCTAssertEqual(canonicalOutput.count, 1)
+        XCTAssertEqual(legacyOutput.count, 1)
 
-        let summary = try XCTUnwrap(decodeMarkdupJSONOutput(canonicalOutput[0]))
-        XCTAssertEqual(summary.processedBAMs, 1)
-        XCTAssertEqual(summary.alreadyMarkedBAMs, 0)
-        XCTAssertEqual(summary.totalReads, 64)
-        XCTAssertEqual(summary.duplicateReads, 7)
-        XCTAssertEqual(summary.elapsedSeconds, 2.5)
-        XCTAssertEqual(summary.results.map(\.bamPath), [resultURL.path])
+        let legacySummary = try XCTUnwrap(decodeMarkdupJSONOutput(legacyOutput[0]))
+        let canonicalSummary = try XCTUnwrap(decodeMarkdupJSONOutput(canonicalOutput[0]))
+        XCTAssertEqual(canonicalSummary, legacySummary)
+
+        XCTAssertEqual(canonicalSummary.processedBAMs, 1)
+        XCTAssertEqual(canonicalSummary.alreadyMarkedBAMs, 0)
+        XCTAssertEqual(canonicalSummary.totalReads, 64)
+        XCTAssertEqual(canonicalSummary.duplicateReads, 7)
+        XCTAssertEqual(canonicalSummary.elapsedSeconds, 2.5)
+        XCTAssertEqual(canonicalSummary.results.map(\.bamPath), [resultURL.path])
     }
 
     private func decodeMarkdupJSONOutput(_ line: String) -> MarkdupJSONOutput? {
