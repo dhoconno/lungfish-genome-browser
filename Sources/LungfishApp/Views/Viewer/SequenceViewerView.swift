@@ -928,6 +928,76 @@ public class SequenceViewerView: NSView {
         }
     }
 
+    @discardableResult
+    private func applyReadViewportPolicy(scale: Double) -> ReadTrackRenderer.ZoomTier {
+        let tier = ReadViewportPolicy.zoomTier(scale: scale)
+        let enteringCoverage = tier == .coverage && lastRenderedReadTier != .coverage
+        lastRenderedReadTier = tier
+
+        guard enteringCoverage else { return tier }
+
+        readFetchGeneration += 1
+        cachedAlignedReads = []
+        cachedPackedReads = []
+        cachedReadRegion = nil
+        cachedPackOverflow = 0
+        cachedPackScale = 0
+        cachedPackDataGeneration = -1
+        cachedPackViewportStart = 0
+        cachedPackViewportEnd = 0
+        readContentHeight = 0
+        readScrollOffset = 0
+        isFetchingReads = false
+        readFetchStartTime = nil
+        hoveredRead = nil
+        hoverTooltip.hide()
+        if !selectedReadIDs.isEmpty {
+            selectedReadIDs.removeAll()
+            NotificationCenter.default.post(name: .readSelected, object: self, userInfo: nil)
+        }
+        updateSelectionStatus()
+        return tier
+    }
+
+#if DEBUG
+    var testReadFetchGeneration: Int { readFetchGeneration }
+    var testCachedAlignedReads: [AlignedRead] { cachedAlignedReads }
+    var testCachedPackedReads: [(Int, AlignedRead)] { cachedPackedReads }
+    var testHoveredRead: AlignedRead? { hoveredRead }
+    var testSelectedReadIDs: Set<UUID> { selectedReadIDs }
+    var testIsHoverTooltipHidden: Bool { hoverTooltip.isHidden }
+    var testHoverTooltipText: String { hoverTooltip.currentText }
+    var testSelectionStatusText: String? { currentSelectionStatusText() }
+
+    func testSetCachedAlignedReads(_ reads: [AlignedRead]) {
+        cachedAlignedReads = reads
+    }
+
+    func testSetCachedPackedReads(_ rows: [(Int, AlignedRead)]) {
+        cachedPackedReads = rows
+    }
+
+    func testSetLastRenderedReadTier(_ tier: ReadTrackRenderer.ZoomTier) {
+        lastRenderedReadTier = tier
+    }
+
+    func testSetHoveredRead(_ read: AlignedRead?) {
+        hoveredRead = read
+    }
+
+    func testSetSelectedReadIDs(_ ids: Set<UUID>) {
+        selectedReadIDs = ids
+    }
+
+    func testShowHoverTooltip(text: String) {
+        hoverTooltip.show(text: text, near: NSPoint(x: 20, y: 20), in: self)
+    }
+
+    func testApplyReadViewportPolicy(scale: Double) -> ReadTrackRenderer.ZoomTier {
+        applyReadViewportPolicy(scale: scale)
+    }
+#endif
+
     // MARK: - Data Setters
 
     func setSequence(_ seq: Sequence) {
@@ -1804,7 +1874,7 @@ public class SequenceViewerView: NSView {
 
         // --- Read alignments below variants ---
         if !alignmentDataProviders.isEmpty && showReads {
-            let tier = ReadTrackRenderer.zoomTier(scale: scale)
+            let tier = applyReadViewportPolicy(scale: scale)
             let coverageY = readTrackY
             let maxRowsLimit: Int? = limitReadRowsSetting ? max(1, maxReadRowsSetting) : nil
             let maxRowsCacheKey = maxRowsLimit ?? 0
@@ -1875,11 +1945,8 @@ public class SequenceViewerView: NSView {
 
             // Cache rendering state for hit-testing.
             lastRenderedReadY = rowsY
-            lastRenderedReadTier = tier
 
             if tier == .coverage {
-                cachedPackedReads = []
-                readContentHeight = 0
                 if bounds.height - rowsY > 20 {
                     drawReadZoomHint(context: context, yOffset: rowsY + 2, scale: scale)
                 }
@@ -2918,16 +2985,17 @@ public class SequenceViewerView: NSView {
     private func fetchReadsAsync(bundle: ReferenceBundle, region: GenomicRegion) {
         guard !alignmentDataProviders.isEmpty else { return }
 
-        readFetchGeneration += 1
-        let thisGeneration = readFetchGeneration
-        isFetchingReads = true
-        readFetchStartTime = Date()
-
         let chromLength = bundle.chromosomeLength(named: region.chromosome) ?? Int64(region.end + 1000)
         let visibleSpan = region.end - region.start
         let currentScale = viewController?.referenceFrame?.scale
             ?? (Double(max(visibleSpan, 1)) / max(Double(max(bounds.width, 1)), 1.0))
-        let tier = ReadTrackRenderer.zoomTier(scale: currentScale)
+        guard ReadViewportPolicy.allowsIndividualReads(scale: currentScale) else { return }
+
+        let tier = ReadViewportPolicy.zoomTier(scale: currentScale)
+        readFetchGeneration += 1
+        let thisGeneration = readFetchGeneration
+        isFetchingReads = true
+        readFetchStartTime = Date()
         let expandAmount: Int
         switch tier {
         case .coverage:
@@ -4280,7 +4348,7 @@ public class SequenceViewerView: NSView {
     /// Draws a hint when zoom level is too low for per-read rendering.
     private func drawReadZoomHint(context: CGContext, yOffset: CGFloat, scale: Double) {
         let threshold = ReadTrackRenderer.coverageThresholdBpPerPx
-        let message = "Zoom in to view individual mapped reads (< \(String(format: "%.1f", threshold)) bp/px)"
+        let message = "Zoom in to view individual mapped reads (<= \(String(format: "%.1f", threshold)) bp/px)"
         let detail = "Current zoom: \(String(format: "%.1f", scale)) bp/px"
         let textAttrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 10, weight: .medium),
@@ -6515,6 +6583,15 @@ public class SequenceViewerView: NSView {
 
     /// Updates the status bar with selection info.
     private func updateSelectionStatus() {
+        let selectionText = currentSelectionStatusText()
+        viewController?.statusBar.update(
+            position: viewController?.statusBar.positionLabel.stringValue,
+            selection: selectionText,
+            scale: viewController?.referenceFrame?.scale ?? 1.0
+        )
+    }
+
+    private func currentSelectionStatusText() -> String? {
         var parts: [String] = []
 
         if isUserColumnSelection, let range = selectionRange {
@@ -6530,12 +6607,7 @@ public class SequenceViewerView: NSView {
             parts.append("\(count) read\(count == 1 ? "" : "s") selected")
         }
 
-        let selectionText = parts.isEmpty ? nil : parts.joined(separator: " | ")
-        viewController?.statusBar.update(
-            position: viewController?.statusBar.positionLabel.stringValue,
-            selection: selectionText,
-            scale: viewController?.referenceFrame?.scale ?? 1.0
-        )
+        return parts.isEmpty ? nil : parts.joined(separator: " | ")
     }
 
     // MARK: - Hover Tooltip (Bundle Mode)
