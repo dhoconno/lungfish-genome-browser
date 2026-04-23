@@ -70,6 +70,16 @@ let package = Package(
         .package(url: "https://github.com/apple/containerization.git", exact: "0.24.5"),
     ],
     targets: [
+        .target(
+            name: "LungfishTestSupport",
+            dependencies: [
+                "LungfishCore",
+                "LungfishIO",
+                "LungfishWorkflow",
+            ],
+            path: "Tests/Support/LungfishTestSupport"
+        ),
+
         // MARK: - LungfishCore
         .target(
             name: "LungfishCore",
@@ -97,7 +107,7 @@ let package = Package(
         ),
         .testTarget(
             name: "LungfishIOTests",
-            dependencies: ["LungfishIO"],
+            dependencies: ["LungfishIO", "LungfishTestSupport"],
             path: "Tests/LungfishIOTests",
             resources: [
                 .copy("Resources")
@@ -223,6 +233,7 @@ let package = Package(
                 "LungfishUI",
                 "LungfishWorkflow",
                 "LungfishCLI",
+                "LungfishTestSupport",
             ],
             path: "Tests/LungfishIntegrationTests",
             resources: [
