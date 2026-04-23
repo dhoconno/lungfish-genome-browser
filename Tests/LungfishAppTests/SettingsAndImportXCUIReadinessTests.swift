@@ -116,16 +116,10 @@ final class SettingsAndImportXCUIReadinessTests: XCTestCase {
         XCTAssertTrue(source.contains("let controller = ensureMainWindowForDocumentOpen()"))
     }
 
-    func testMainMenuDeclaresOptionalVariantCallingSelectorWithoutAppDelegateStub() throws {
-        let source = try String(
-            contentsOf: repositoryRoot()
-                .appendingPathComponent("Sources/LungfishApp/App/MainMenu.swift"),
-            encoding: .utf8
+    func testAppDelegateDoesNotYetRespondToVariantCallingMenuSelector() {
+        XCTAssertFalse(
+            AppDelegate.instancesRespond(to: NSSelectorFromString("showBAMVariantCalling:"))
         )
-
-        XCTAssertTrue(source.contains("@objc optional func showBAMVariantCalling(_ sender: Any?)"))
-        XCTAssertFalse(source.contains("extension AppDelegate"))
-        XCTAssertFalse(source.contains("@objc func showBAMVariantCalling(_ sender: Any?) {}"))
     }
 
     private func repositoryRoot() -> URL {
