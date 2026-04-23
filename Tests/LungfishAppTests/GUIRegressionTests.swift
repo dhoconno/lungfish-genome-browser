@@ -23,6 +23,7 @@ import XCTest
 final class GUIRegressionTests: XCTestCase {
 
     func testToolsMenuContainsFASTQOperationsSubmenu() throws {
+        let _ = NSApplication.shared
         let mainMenu = MainMenu.createMainMenu()
         let toolsMenu = try XCTUnwrap(mainMenu.items.first { $0.title == "Tools" }?.submenu)
         let fastqOperationsItem = try XCTUnwrap(toolsMenu.items.first { $0.title == "FASTQ Operations" })
@@ -43,6 +44,20 @@ final class GUIRegressionTests: XCTestCase {
         let toolTitles = toolsMenu.items.map(\.title)
         XCTAssertFalse(toolTitles.contains("Classify & Profile Reads…"))
         XCTAssertFalse(toolTitles.contains("Assemble with SPAdes..."))
+    }
+
+    func testToolsMenuContainsVariantCallingCommand() throws {
+        let _ = NSApplication.shared
+        let mainMenu = MainMenu.createMainMenu()
+        let toolsMenu = try XCTUnwrap(mainMenu.items.first { $0.title == "Tools" }?.submenu)
+        let visibleTitles = toolsMenu.items.compactMap { $0.isSeparatorItem ? nil : $0.title }
+
+        XCTAssertEqual(visibleTitles, [
+            "FASTQ Operations",
+            "Call Variants…",
+            "Search Online Databases...",
+            "Plugin Manager…",
+        ])
     }
 
     func testFASTQDatasetViewUsesCategoryOnlyLaunchers() throws {
