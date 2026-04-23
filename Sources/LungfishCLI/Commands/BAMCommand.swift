@@ -45,7 +45,7 @@ extension BAMCommand {
         @Option(name: .customLong("sort-threads"), help: "Threads for samtools sort (default 4)")
         var sortThreads: Int = 4
 
-        @OptionGroup var globalOptions: GlobalOptions
+        @OptionGroup var globalOptions: TextAndJSONGlobalOptions
 
         static func parse(_ arguments: [String]) throws -> Self {
             let trimmed = arguments.first == configuration.commandName
@@ -57,28 +57,32 @@ extension BAMCommand {
             return parsed
         }
 
-        func validate() throws {
-            try MarkdupCommand.validateSupportedOutputFormat(
-                globalOptions.outputFormat,
-                commandName: "bam markdup"
-            )
-        }
-
         func run() async throws {
-            _ = try await executeForTesting(runtime: .live()) { print($0) }
+            let resolvedGlobalOptions = try globalOptions.resolved(with: ProcessInfo.processInfo.arguments)
+            _ = try await executeForTesting(
+                runtime: .live(),
+                resolvedGlobalOptions: resolvedGlobalOptions
+            ) { print($0) }
         }
 
         func executeForTesting(
             runtime: MarkdupCommand.Runtime = .live(),
+            resolvedGlobalOptions: ResolvedTextAndJSONGlobalOptions? = nil,
             emit: @escaping (String) -> Void
         ) async throws -> [MarkdupResult] {
-            try await MarkdupCommand.execute(
+            let resolvedGlobalOptions = resolvedGlobalOptions
+                ?? (try? globalOptions.resolved())
+                ?? ResolvedTextAndJSONGlobalOptions(
+                    outputFormat: globalOptions.outputFormat,
+                    quiet: globalOptions.quiet
+                )
+            return try await MarkdupCommand.execute(
                 input: MarkdupCommand.ExecutionInput(
                     path: path,
                     force: force,
                     sortThreads: sortThreads,
-                    quiet: globalOptions.quiet,
-                    outputFormat: globalOptions.outputFormat
+                    quiet: resolvedGlobalOptions.quiet,
+                    outputFormat: resolvedGlobalOptions.outputFormat
                 ),
                 runtime: runtime,
                 emit: emit
@@ -149,7 +153,7 @@ extension BAMCommand {
         @Option(name: .customLong("min-percent-identity"), help: "Minimum percent identity threshold")
         var minimumPercentIdentity: Double?
 
-        @OptionGroup var globalOptions: GlobalOptions
+        @OptionGroup var globalOptions: TextAndJSONGlobalOptions
 
         static func parse(_ arguments: [String]) throws -> Self {
             let trimmed = arguments.first == configuration.commandName
@@ -162,11 +166,6 @@ extension BAMCommand {
         }
 
         func validate() throws {
-            try MarkdupCommand.validateSupportedOutputFormat(
-                globalOptions.outputFormat,
-                commandName: "bam filter"
-            )
-
             if let bundlePath, trimmedValue(bundlePath).isEmpty {
                 throw ValidationError("--bundle must not be empty.")
             }
@@ -202,28 +201,46 @@ extension BAMCommand {
         }
 
         func run() async throws {
+            let resolvedGlobalOptions = try globalOptions.resolved(with: ProcessInfo.processInfo.arguments)
             let emitLine: (String) -> Void = { line in
-                if globalOptions.outputFormat == .text && globalOptions.quiet {
+                if resolvedGlobalOptions.outputFormat == .text && resolvedGlobalOptions.quiet {
                     return
                 }
                 print(line)
             }
 
-            _ = try await executeForCurrentFormat(runtime: .live(), emit: emitLine)
+            _ = try await executeForCurrentFormat(
+                runtime: .live(),
+                resolvedGlobalOptions: resolvedGlobalOptions,
+                emit: emitLine
+            )
         }
 
         func executeForTesting(
             runtime: Runtime = .live(),
+            resolvedGlobalOptions: ResolvedTextAndJSONGlobalOptions? = nil,
             emit: @escaping (String) -> Void
         ) async throws -> BundleAlignmentFilterResult {
-            try await executeForCurrentFormat(runtime: runtime, emit: emit)
+            try await executeForCurrentFormat(
+                runtime: runtime,
+                resolvedGlobalOptions: resolvedGlobalOptions,
+                emit: emit
+            )
         }
 
         private func executeForCurrentFormat(
             runtime: Runtime,
+            resolvedGlobalOptions: ResolvedTextAndJSONGlobalOptions? = nil,
             emit: @escaping (String) -> Void
         ) async throws -> BundleAlignmentFilterResult {
-            if globalOptions.outputFormat == .json {
+            let resolvedGlobalOptions = resolvedGlobalOptions
+                ?? (try? globalOptions.resolved())
+                ?? ResolvedTextAndJSONGlobalOptions(
+                    outputFormat: globalOptions.outputFormat,
+                    quiet: globalOptions.quiet
+                )
+
+            if resolvedGlobalOptions.outputFormat == .json {
                 return try await execute(runtime: runtime) { event in
                     if let line = encode(event: event) {
                         emit(line)

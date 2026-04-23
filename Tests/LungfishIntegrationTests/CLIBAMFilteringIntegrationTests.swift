@@ -112,10 +112,75 @@ final class CLIBAMFilteringIntegrationTests: XCTestCase {
             ["mapped-primary-highmapq", "mapped-primary-lowmapq", "unmapped-read"]
         )
     }
+
+    func testRootLevelJSONFormatAppliesToBamFilterExecutable() async throws {
+        let managedHome = try ManagedSamtoolsHome.makeReal(rootURL: tempDir)
+        let fixture = try BundleAlignmentFixture.make(
+            rootURL: tempDir,
+            samtoolsPath: managedHome.samtoolsPath,
+            includeMappingResult: false
+        )
+
+        let result = try runCLI(
+            [
+                "--format", "json",
+                "bam", "filter",
+                "--bundle", fixture.bundleURL.path,
+                "--alignment-track", fixture.sourceTrackID,
+                "--output-track-name", "JSON Root Format",
+                "--mapped-only",
+            ],
+            homeDirectory: managedHome.homeURL
+        )
+
+        XCTAssertEqual(result.exitCode, 0, "CLI BAM filter failed: \(result.stderr)")
+        XCTAssertTrue(result.stderr.isEmpty)
+
+        let outputLines = result.stdout
+            .split(separator: "\n")
+            .map(String.init)
+        XCTAssertGreaterThanOrEqual(outputLines.count, 2)
+
+        let events = try outputLines.map {
+            try XCTUnwrap(
+                try? JSONDecoder().decode(BAMCommand.FilterEvent.self, from: Data($0.utf8))
+            )
+        }
+        XCTAssertEqual(events.first?.event, "runStart")
+        XCTAssertEqual(events.last?.event, "runComplete")
+    }
+
+    func testRootLevelTSVFormatIsRejectedForBamFilterExecutable() async throws {
+        let managedHome = try ManagedSamtoolsHome.makeReal(rootURL: tempDir)
+        let fixture = try BundleAlignmentFixture.make(
+            rootURL: tempDir,
+            samtoolsPath: managedHome.samtoolsPath,
+            includeMappingResult: false
+        )
+
+        let result = try runCLI(
+            [
+                "--format", "tsv",
+                "bam", "filter",
+                "--bundle", fixture.bundleURL.path,
+                "--alignment-track", fixture.sourceTrackID,
+                "--output-track-name", "Should Not Exist",
+                "--mapped-only",
+            ],
+            homeDirectory: managedHome.homeURL
+        )
+
+        XCTAssertEqual(result.exitCode, 64)
+        XCTAssertTrue(result.stderr.contains("The value 'tsv' is invalid"))
+
+        let manifest = try BundleManifest.load(from: fixture.bundleURL)
+        XCTAssertEqual(manifest.alignments.count, 1)
+    }
 }
 
 private struct CLIResult {
     let exitCode: Int32
+    let stdout: String
     let stderr: String
 }
 
@@ -137,6 +202,7 @@ private func runCLI(_ arguments: [String], homeDirectory: URL) throws -> CLIResu
 
     return CLIResult(
         exitCode: process.terminationStatus,
+        stdout: String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "",
         stderr: String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
     )
 }

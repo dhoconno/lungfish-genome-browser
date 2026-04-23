@@ -196,6 +196,51 @@ final class MarkdupCommandTests: XCTestCase {
         try BamFixtureBuilder.makeBAM(at: url, references: refs, reads: reads, samtoolsPath: samtools)
     }
 
+    private func cliBinaryURL() throws -> URL {
+        let thisFile = URL(fileURLWithPath: #filePath)
+        let repoRoot = thisFile
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+
+        let candidates = [
+            repoRoot.appendingPathComponent(".build/debug/lungfish-cli"),
+            repoRoot.appendingPathComponent(".build/arm64-apple-macosx/debug/lungfish-cli"),
+            repoRoot.appendingPathComponent(".build/x86_64-apple-macosx/debug/lungfish-cli"),
+        ]
+
+        guard let binary = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
+            throw XCTSkip("CLI binary not built at expected path — run `swift build --product lungfish-cli` first")
+        }
+        return binary
+    }
+
+    private func runCLI(
+        _ arguments: [String],
+        homeDirectory: URL
+    ) throws -> (exitCode: Int32, stdout: String, stderr: String) {
+        let process = Process()
+        process.executableURL = try cliBinaryURL()
+        process.arguments = arguments
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["HOME"] = homeDirectory.path
+        process.environment = environment
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        try process.run()
+        process.waitUntilExit()
+
+        return (
+            exitCode: process.terminationStatus,
+            stdout: String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "",
+            stderr: String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        )
+    }
+
     // MARK: - Tests
 
     func testCliMarkdupSingleBAM() async throws {
@@ -337,8 +382,66 @@ final class MarkdupCommandTests: XCTestCase {
                 "--format", "tsv",
             ])
         ) { error in
-            XCTAssertTrue("\(error)".contains("--format tsv"))
+            XCTAssertTrue("\(error)".contains("tsv"))
         }
+    }
+
+    func testMarkdupHelpOmitsUnsupportedTSVFormat() {
+        let help = MarkdupCommand.helpMessage()
+        XCTAssertTrue(help.contains("Output format: text, json"))
+        XCTAssertFalse(help.contains("tsv"))
+    }
+
+    func testRootLevelQuietAppliesToBamMarkdupExecutable() throws {
+        let managedHome = try makeFunctionalManagedSamtoolsHome()
+        let samtools = managedHome.samtoolsPath.path
+        let dir = try makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: dir)
+            try? FileManager.default.removeItem(at: managedHome.home)
+        }
+        let bamURL = dir.appendingPathComponent("test.bam")
+        try makeSyntheticBam(at: bamURL, samtools: samtools)
+
+        let result = try runCLI(
+            ["-q", "bam", "markdup", bamURL.path],
+            homeDirectory: managedHome.home
+        )
+
+        XCTAssertEqual(result.exitCode, 0, "CLI bam markdup failed: \(result.stderr)")
+        XCTAssertTrue(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        XCTAssertTrue(
+            MarkdupService.isAlreadyMarkduped(bamURL: bamURL, samtoolsPath: samtools),
+            "BAM should be marked after CLI run"
+        )
+    }
+
+    func testRootLevelJSONFormatAppliesToLegacyMarkdupExecutable() throws {
+        let managedHome = try makeFunctionalManagedSamtoolsHome()
+        let samtools = managedHome.samtoolsPath.path
+        let dir = try makeTempDir()
+        defer {
+            try? FileManager.default.removeItem(at: dir)
+            try? FileManager.default.removeItem(at: managedHome.home)
+        }
+        let bamURL = dir.appendingPathComponent("test.bam")
+        try makeSyntheticBam(at: bamURL, samtools: samtools)
+
+        let result = try runCLI(
+            ["--format", "json", "markdup", bamURL.path],
+            homeDirectory: managedHome.home
+        )
+
+        XCTAssertEqual(result.exitCode, 0, "CLI markdup failed: \(result.stderr)")
+        let summary = try XCTUnwrap(
+            decodeMarkdupJSONOutput(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+        )
+        XCTAssertEqual(summary.processedBAMs, 1)
+        XCTAssertEqual(summary.results.map(\.bamPath), [bamURL.path])
+        XCTAssertTrue(
+            MarkdupService.isAlreadyMarkduped(bamURL: bamURL, samtoolsPath: samtools),
+            "BAM should be marked after CLI run"
+        )
     }
 
     func testBamMarkdupSubcommandUsesSameWorkflowAsLegacyCommand() async throws {

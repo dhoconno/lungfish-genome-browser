@@ -12,6 +12,10 @@ final class BAMCommandTests: XCTestCase {
         XCTAssertTrue(BAMCommand.helpMessage().contains("filter"))
         XCTAssertTrue(BAMCommand.helpMessage().contains("lungfish-cli bam filter"))
         XCTAssertTrue(BAMCommand.FilterSubcommand.helpMessage().contains("mapping analysis directory"))
+        XCTAssertTrue(BAMCommand.FilterSubcommand.helpMessage().contains("Output format: text, json"))
+        XCTAssertFalse(BAMCommand.FilterSubcommand.helpMessage().contains("tsv"))
+        XCTAssertTrue(BAMCommand.MarkdupSubcommand.helpMessage().contains("Output format: text, json"))
+        XCTAssertFalse(BAMCommand.MarkdupSubcommand.helpMessage().contains("tsv"))
     }
 
     func testFilterSubcommandParsesBundleTargetAndFlags() throws {
@@ -151,7 +155,7 @@ final class BAMCommandTests: XCTestCase {
         }
     }
 
-    func testFilterSubcommandRejectsTSVOutputFormat() {
+    func testFilterSubcommandRejectsTSVOutputFormatAtParseTime() {
         XCTAssertThrowsError(
             try BAMCommand.FilterSubcommand.parse([
                 "filter",
@@ -161,11 +165,11 @@ final class BAMCommandTests: XCTestCase {
                 "--format", "tsv",
             ])
         ) { error in
-            XCTAssertTrue("\(error)".contains("--format tsv"))
+            XCTAssertTrue("\(error)".contains("tsv"))
         }
     }
 
-    func testMarkdupSubcommandRejectsTSVOutputFormat() {
+    func testMarkdupSubcommandRejectsTSVOutputFormatAtParseTime() {
         XCTAssertThrowsError(
             try BAMCommand.MarkdupSubcommand.parse([
                 "markdup",
@@ -173,7 +177,7 @@ final class BAMCommandTests: XCTestCase {
                 "--format", "tsv",
             ])
         ) { error in
-            XCTAssertTrue("\(error)".contains("--format tsv"))
+            XCTAssertTrue("\(error)".contains("tsv"))
         }
     }
 }

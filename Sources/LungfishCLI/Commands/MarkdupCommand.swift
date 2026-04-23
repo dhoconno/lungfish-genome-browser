@@ -39,21 +39,26 @@ struct MarkdupCommand: AsyncParsableCommand {
     @Option(name: .customLong("sort-threads"), help: "Threads for samtools sort (default 4)")
     var sortThreads: Int = 4
 
-    @OptionGroup var globalOptions: GlobalOptions
-
-    func validate() throws {
-        try Self.validateSupportedOutputFormat(globalOptions.outputFormat, commandName: "markdup")
-    }
+    @OptionGroup var globalOptions: TextAndJSONGlobalOptions
 
     func run() async throws {
-        _ = try await executeForTesting(runtime: .live()) { print($0) }
+        let resolvedGlobalOptions = try globalOptions.resolved(with: ProcessInfo.processInfo.arguments)
+        _ = try await executeForTesting(
+            runtime: .live(),
+            resolvedGlobalOptions: resolvedGlobalOptions
+        ) { print($0) }
     }
 
     func executeForTesting(
         runtime: Runtime = .live(),
+        resolvedGlobalOptions: ResolvedTextAndJSONGlobalOptions? = nil,
         emit: @escaping (String) -> Void
     ) async throws -> [MarkdupResult] {
-        try await Self.execute(input: makeExecutionInput(), runtime: runtime, emit: emit)
+        try await Self.execute(
+            input: makeExecutionInput(resolvedGlobalOptions: resolvedGlobalOptions),
+            runtime: runtime,
+            emit: emit
+        )
     }
 
     static func execute(
@@ -66,13 +71,21 @@ struct MarkdupCommand: AsyncParsableCommand {
         return results
     }
 
-    private func makeExecutionInput() -> ExecutionInput {
-        ExecutionInput(
+    private func makeExecutionInput(
+        resolvedGlobalOptions: ResolvedTextAndJSONGlobalOptions? = nil
+    ) -> ExecutionInput {
+        let resolvedGlobalOptions = resolvedGlobalOptions
+            ?? (try? globalOptions.resolved())
+            ?? ResolvedTextAndJSONGlobalOptions(
+                outputFormat: globalOptions.outputFormat,
+                quiet: globalOptions.quiet
+            )
+        return ExecutionInput(
             path: path,
             force: force,
             sortThreads: sortThreads,
-            quiet: globalOptions.quiet,
-            outputFormat: globalOptions.outputFormat
+            quiet: resolvedGlobalOptions.quiet,
+            outputFormat: resolvedGlobalOptions.outputFormat
         )
     }
 
@@ -251,16 +264,5 @@ struct MarkdupCommand: AsyncParsableCommand {
             return URL(fileURLWithPath: home, isDirectory: true)
         }
         return FileManager.default.homeDirectoryForCurrentUser
-    }
-
-    static func validateSupportedOutputFormat(
-        _ outputFormat: OutputFormat,
-        commandName: String
-    ) throws {
-        guard outputFormat != .tsv else {
-            throw ValidationError(
-                "Output format --format tsv is not supported for \(commandName). Use --format text or --format json."
-            )
-        }
     }
 }
