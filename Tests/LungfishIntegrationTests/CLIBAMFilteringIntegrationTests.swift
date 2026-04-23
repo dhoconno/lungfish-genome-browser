@@ -26,18 +26,18 @@ final class CLIBAMFilteringIntegrationTests: XCTestCase {
             includeMappingResult: false
         )
 
-        let command = try BAMCommand.FilterSubcommand.parse([
-            "filter",
-            "--bundle", fixture.bundleURL.path,
-            "--alignment-track", fixture.sourceTrackID,
-            "--output-track-name", "Mapped Reads",
-            "--mapped-only",
-            "-q",
-        ])
-
-        try await managedHome.withLiveRuntimeActivation {
-            try await command.run()
-        }
+        let result = try runCLI(
+            [
+                "bam", "filter",
+                "--bundle", fixture.bundleURL.path,
+                "--alignment-track", fixture.sourceTrackID,
+                "--output-track-name", "Mapped Reads",
+                "--mapped-only",
+                "-q",
+            ],
+            homeDirectory: managedHome.homeURL
+        )
+        XCTAssertEqual(result.exitCode, 0, "CLI BAM filter failed: \(result.stderr)")
 
         let manifest = try BundleManifest.load(from: fixture.bundleURL)
         XCTAssertEqual(manifest.alignments.count, 2)
@@ -71,18 +71,18 @@ final class CLIBAMFilteringIntegrationTests: XCTestCase {
         )
         let mappingResultURL = try XCTUnwrap(fixture.mappingResultURL)
 
-        let command = try BAMCommand.FilterSubcommand.parse([
-            "filter",
-            "--mapping-result", mappingResultURL.path,
-            "--alignment-track", fixture.sourceTrackID,
-            "--output-track-name", "Primary Reads",
-            "--primary-only",
-            "-q",
-        ])
-
-        try await managedHome.withLiveRuntimeActivation {
-            try await command.run()
-        }
+        let result = try runCLI(
+            [
+                "bam", "filter",
+                "--mapping-result", mappingResultURL.path,
+                "--alignment-track", fixture.sourceTrackID,
+                "--output-track-name", "Primary Reads",
+                "--primary-only",
+                "-q",
+            ],
+            homeDirectory: managedHome.homeURL
+        )
+        XCTAssertEqual(result.exitCode, 0, "CLI BAM filter failed: \(result.stderr)")
 
         let mappingResultContents = try FileManager.default.contentsOfDirectory(
             atPath: mappingResultURL.path
@@ -112,6 +112,52 @@ final class CLIBAMFilteringIntegrationTests: XCTestCase {
             ["mapped-primary-highmapq", "mapped-primary-lowmapq", "unmapped-read"]
         )
     }
+}
+
+private struct CLIResult {
+    let exitCode: Int32
+    let stderr: String
+}
+
+private func runCLI(_ arguments: [String], homeDirectory: URL) throws -> CLIResult {
+    let process = Process()
+    process.executableURL = try cliBinaryURL()
+    process.arguments = arguments
+
+    var environment = ProcessInfo.processInfo.environment
+    environment["HOME"] = homeDirectory.path
+    process.environment = environment
+
+    let stdout = Pipe()
+    let stderr = Pipe()
+    process.standardOutput = stdout
+    process.standardError = stderr
+    try process.run()
+    process.waitUntilExit()
+
+    return CLIResult(
+        exitCode: process.terminationStatus,
+        stderr: String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    )
+}
+
+private func cliBinaryURL() throws -> URL {
+    let thisFile = URL(fileURLWithPath: #filePath)
+    let repoRoot = thisFile
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+
+    let candidates = [
+        repoRoot.appendingPathComponent(".build/debug/lungfish-cli"),
+        repoRoot.appendingPathComponent(".build/arm64-apple-macosx/debug/lungfish-cli"),
+        repoRoot.appendingPathComponent(".build/x86_64-apple-macosx/debug/lungfish-cli"),
+    ]
+
+    guard let binary = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
+        throw XCTSkip("CLI binary not built at expected path — run `swift build --product lungfish-cli` first")
+    }
+    return binary
 }
 
 private func bamReadNames(at bamURL: URL, samtoolsPath: URL) throws -> [String] {

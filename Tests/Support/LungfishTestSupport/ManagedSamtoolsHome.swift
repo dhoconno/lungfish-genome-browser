@@ -1,4 +1,3 @@
-import Darwin
 import Foundation
 import LungfishCore
 import LungfishWorkflow
@@ -60,84 +59,5 @@ public struct ManagedSamtoolsHome: Sendable {
             managedRootURL: managedRootURL,
             samtoolsPath: samtoolsPath
         )
-    }
-
-    public func withActivated<T>(_ operation: () throws -> T) rethrows -> T {
-        let originalHome = ProcessInfo.processInfo.environment["HOME"]
-        setenv("HOME", homeURL.path, 1)
-        defer {
-            if let originalHome {
-                setenv("HOME", originalHome, 1)
-            } else {
-                unsetenv("HOME")
-            }
-        }
-        return try operation()
-    }
-
-    public func withActivated<T>(_ operation: () async throws -> T) async rethrows -> T {
-        let originalHome = ProcessInfo.processInfo.environment["HOME"]
-        setenv("HOME", homeURL.path, 1)
-        defer {
-            if let originalHome {
-                setenv("HOME", originalHome, 1)
-            } else {
-                unsetenv("HOME")
-            }
-        }
-        return try await operation()
-    }
-
-    public func withLiveRuntimeActivation<T>(
-        _ operation: () async throws -> T
-    ) async throws -> T {
-        let fileManager = FileManager.default
-        let liveHomeDirectory = fileManager.homeDirectoryForCurrentUser
-        let liveStore = ManagedStorageConfigStore(homeDirectory: liveHomeDirectory)
-        let liveConfigURL = liveStore.configURL
-        let originalConfigData = try? Data(contentsOf: liveConfigURL)
-
-        try liveStore.setActiveRoot(managedRootURL)
-        await NativeToolRunner.shared.clearCache()
-
-        do {
-            let result = try await withActivated {
-                try await operation()
-            }
-            try restoreLiveRuntimeConfig(
-                originalConfigData: originalConfigData,
-                liveConfigURL: liveConfigURL,
-                fileManager: fileManager
-            )
-            await NativeToolRunner.shared.clearCache()
-            return result
-        } catch {
-            try restoreLiveRuntimeConfig(
-                originalConfigData: originalConfigData,
-                liveConfigURL: liveConfigURL,
-                fileManager: fileManager
-            )
-            await NativeToolRunner.shared.clearCache()
-            throw error
-        }
-    }
-
-    private func restoreLiveRuntimeConfig(
-        originalConfigData: Data?,
-        liveConfigURL: URL,
-        fileManager: FileManager
-    ) throws {
-        if let originalConfigData {
-            try fileManager.createDirectory(
-                at: liveConfigURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try originalConfigData.write(to: liveConfigURL, options: .atomic)
-            return
-        }
-
-        if fileManager.fileExists(atPath: liveConfigURL.path) {
-            try fileManager.removeItem(at: liveConfigURL)
-        }
     }
 }
