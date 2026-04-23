@@ -99,4 +99,15 @@ final class BAMCommandTests: XCTestCase {
             XCTAssertTrue("\(error)".contains("--exact-match"))
         }
     }
+
+    func testFilterSubcommandRejectsLegacyNameAlias() {
+        XCTAssertThrowsError(
+            try BAMCommand.FilterSubcommand.parse([
+                "filter",
+                "--bundle", "/tmp/Test.lungfishref",
+                "--alignment-track", "aln-1",
+                "--name", "Filtered",
+            ])
+        )
+    }
 }

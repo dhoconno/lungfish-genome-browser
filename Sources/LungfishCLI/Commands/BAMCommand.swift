@@ -64,7 +64,7 @@ extension BAMCommand {
         @Option(name: .customLong("alignment-track"), help: "Bundle alignment track identifier")
         var alignmentTrackID: String
 
-        @Option(name: [.customLong("name"), .customLong("output-track-name")], help: "Display name for the derived alignment track")
+        @Option(name: .customLong("output-track-name"), help: "Display name for the derived alignment track")
         var outputTrackName: String
 
         @Flag(name: .customLong("mapped-only"), help: "Exclude unmapped reads from the derived BAM")
