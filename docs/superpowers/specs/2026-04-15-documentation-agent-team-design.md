@@ -9,7 +9,7 @@
 
 ## 1. Program context
 
-The Lungfish Documentation Program produces a user manual and supporting materials that help scientists work with deep-sequencing data and analyses using the Lungfish Genome Browser, without assuming bioinformatics jargon fluency. The program has three sub-projects, run in order:
+The Lungfish Documentation Program produces a user manual and supporting materials that help scientists work with deep-sequencing data and analyses using the Lungfish Genome Explorer, without assuming bioinformatics jargon fluency. The program has three sub-projects, run in order:
 
 1. **Agent team & chapter architecture** *(this spec)* — the team that writes the manual, the repository layout they work in, the build pipeline for MkDocs + InDesign, and one pilot chapter that proves the whole pipeline end-to-end.
 2. **Written manual pipeline** — the remaining chapters, using the pipeline from sub-project 1.
