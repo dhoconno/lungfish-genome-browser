@@ -146,6 +146,13 @@ public class SequenceViewerView: NSView {
     /// Whether we're currently fetching consensus sequence data.
     private var isFetchingConsensus: Bool = false
 
+    var horizontalScrollDirectionOverride: ScrollDirectionPreference? {
+        didSet {
+            guard oldValue != horizontalScrollDirectionOverride else { return }
+            needsDisplay = true
+        }
+    }
+
     private static func scrollDirectionSign(
         for preference: ScrollDirectionPreference,
         isDirectionInvertedFromDevice: Bool
@@ -173,6 +180,13 @@ public class SequenceViewerView: NSView {
         )
         let panScale: CGFloat = hasPreciseScrollingDeltas ? 1.0 : 2.0
         return Double(sign * deltaX) * scale * panScale
+    }
+
+    private static func effectiveHorizontalScrollDirection(
+        bundleOverride: ScrollDirectionPreference?,
+        globalPreference: ScrollDirectionPreference
+    ) -> ScrollDirectionPreference {
+        bundleOverride ?? globalPreference
     }
 
     /// Generation counter for read fetches — prevents stale results from overwriting newer ones
@@ -1050,6 +1064,16 @@ public class SequenceViewerView: NSView {
             hasPreciseScrollingDeltas: hasPreciseScrollingDeltas,
             preference: preference,
             isDirectionInvertedFromDevice: isDirectionInvertedFromDevice
+        )
+    }
+
+    static func effectiveHorizontalScrollDirectionForTesting(
+        bundleOverride: ScrollDirectionPreference?,
+        globalPreference: ScrollDirectionPreference
+    ) -> ScrollDirectionPreference {
+        effectiveHorizontalScrollDirection(
+            bundleOverride: bundleOverride,
+            globalPreference: globalPreference
         )
     }
 
@@ -6660,7 +6684,10 @@ public class SequenceViewerView: NSView {
                 deltaX: event.scrollingDeltaX,
                 scale: frame.scale,
                 hasPreciseScrollingDeltas: event.hasPreciseScrollingDeltas,
-                preference: settings.horizontalScrollDirection,
+                preference: Self.effectiveHorizontalScrollDirection(
+                    bundleOverride: horizontalScrollDirectionOverride,
+                    globalPreference: settings.horizontalScrollDirection
+                ),
                 isDirectionInvertedFromDevice: event.isDirectionInvertedFromDevice
             )
             frame.pan(by: panAmount)

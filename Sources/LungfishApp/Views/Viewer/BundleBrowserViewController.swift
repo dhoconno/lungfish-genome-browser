@@ -194,6 +194,7 @@ final class BundleBrowserSequenceTableView: BatchTableView<BundleBrowserSequence
         } ?? 0
 
         tableView.selectRowIndexes(IndexSet(integer: rowIndex), byExtendingSelection: false)
+        scrollRowToTop(rowIndex)
     }
 
     override func tableViewSelectionDidChange(_ notification: Notification) {
@@ -215,6 +216,7 @@ final class BundleBrowserSequenceTableView: BatchTableView<BundleBrowserSequence
         preferredSelectedSequenceName = name
         guard let rowIndex = displayedRows.firstIndex(where: { $0.name == name }) else { return }
         tableView.selectRowIndexes(IndexSet(integer: rowIndex), byExtendingSelection: false)
+        scrollRowToTop(rowIndex)
     }
 
     var visibleColumnWidth: CGFloat {

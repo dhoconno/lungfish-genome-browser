@@ -3398,6 +3398,31 @@ private struct MappingViewSettingsSection: View {
             }
             .pickerStyle(.radioGroup)
             .labelsHidden()
+
+            Divider()
+
+            bundleScrollDirectionPicker
+        }
+    }
+
+    private var bundleScrollDirectionPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Bundle Scroll Direction")
+                .font(.headline)
+
+            Picker("Horizontal Scroll", selection: Binding(
+                get: { viewModel.bundleHorizontalScrollDirection },
+                set: { newValue in
+                    viewModel.bundleHorizontalScrollDirection = newValue
+                    BundleBrowserScrollDirectionPreference.persist(newValue)
+                }
+            )) {
+                ForEach(ScrollDirectionPreference.allCases, id: \.self) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+            .pickerStyle(.radioGroup)
+            .labelsHidden()
         }
     }
 }
@@ -3425,6 +3450,31 @@ private struct BundleBrowserViewSettingsSection: View {
                 Text("Detail left, list right").tag(BundleBrowserPanelLayout.detailLeading)
                 Text("List left, detail right").tag(BundleBrowserPanelLayout.listLeading)
                 Text("List above detail").tag(BundleBrowserPanelLayout.stacked)
+            }
+            .pickerStyle(.radioGroup)
+            .labelsHidden()
+
+            Divider()
+
+            bundleScrollDirectionPicker
+        }
+    }
+
+    private var bundleScrollDirectionPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Horizontal Scroll Direction")
+                .font(.headline)
+
+            Picker("Horizontal Scroll", selection: Binding(
+                get: { viewModel.bundleHorizontalScrollDirection },
+                set: { newValue in
+                    viewModel.bundleHorizontalScrollDirection = newValue
+                    BundleBrowserScrollDirectionPreference.persist(newValue)
+                }
+            )) {
+                ForEach(ScrollDirectionPreference.allCases, id: \.self) { option in
+                    Text(option.label).tag(option)
+                }
             }
             .pickerStyle(.radioGroup)
             .labelsHidden()

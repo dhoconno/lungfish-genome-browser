@@ -109,6 +109,31 @@ final class BundleBrowserViewControllerTests: XCTestCase {
         XCTAssertEqual(restored.testScrollOriginY, 44, accuracy: 0.5)
     }
 
+    func testFilteringPinsFirstDisplayedSequenceToTop() {
+        let vc = BundleBrowserViewController()
+        vc.view.frame = NSRect(x: 0, y: 0, width: 900, height: 360)
+        vc.configure(summary: makeScrollableSummary())
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 360),
+            styleMask: [.titled, .resizable, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = vc
+        window.setContentSize(NSSize(width: 900, height: 360))
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+
+        vc.testSetScrollOriginY(180)
+        XCTAssertGreaterThan(vc.testScrollOriginY, 100)
+
+        vc.testSetFilterText("chr")
+
+        XCTAssertEqual(vc.testScrollOriginY, 0, accuracy: 0.5)
+        XCTAssertEqual(vc.testSelectedName, "chr1")
+    }
+
     func testCaptureStateClearsSelectedSequenceWhenFilterHasNoMatches() {
         let vc = BundleBrowserViewController()
         _ = vc.view

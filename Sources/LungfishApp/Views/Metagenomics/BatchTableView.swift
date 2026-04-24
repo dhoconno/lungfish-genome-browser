@@ -398,6 +398,20 @@ class BatchTableView<Row>: NSView, NSTableViewDataSource, NSTableViewDelegate {
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
+    /// Positions a displayed row at the top of the visible table area.
+    func scrollRowToTop(_ rowIndex: Int) {
+        guard rowIndex >= 0, rowIndex < tableView.numberOfRows else { return }
+        layoutSubtreeIfNeeded()
+        scrollView.layoutSubtreeIfNeeded()
+        tableView.layoutSubtreeIfNeeded()
+
+        let rowRect = tableView.rect(ofRow: rowIndex)
+        let maxY = max(0, tableView.bounds.height - scrollView.contentView.bounds.height)
+        let targetY = min(max(0, rowRect.minY), maxY)
+        scrollView.contentView.scroll(to: NSPoint(x: scrollView.contentView.bounds.origin.x, y: targetY))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
     /// Replaces or inserts a column filter and refreshes the table.
     func setColumnFilter(_ filter: ColumnFilter, for columnId: String) {
         columnFilters[columnId] = filter

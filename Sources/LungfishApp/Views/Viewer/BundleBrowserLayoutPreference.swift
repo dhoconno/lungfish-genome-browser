@@ -1,4 +1,5 @@
 import Foundation
+import LungfishCore
 
 @MainActor
 enum BundleBrowserPanelLayout: String, CaseIterable, Sendable {
@@ -25,6 +26,29 @@ enum BundleBrowserPanelLayout: String, CaseIterable, Sendable {
     }
 }
 
+@MainActor
+enum BundleBrowserScrollDirectionPreference {
+    static let defaultsKey = "bundleBrowserHorizontalScrollDirection"
+
+    static func current(defaults: UserDefaults = .standard) -> ScrollDirectionPreference {
+        guard let raw = defaults.string(forKey: defaultsKey),
+              let value = ScrollDirectionPreference(rawValue: raw) else {
+            return .traditional
+        }
+        return value
+    }
+
+    static func persist(
+        _ preference: ScrollDirectionPreference,
+        defaults: UserDefaults = .standard,
+        notificationCenter: NotificationCenter = .default
+    ) {
+        defaults.set(preference.rawValue, forKey: defaultsKey)
+        notificationCenter.post(name: .bundleBrowserScrollDirectionChanged, object: nil)
+    }
+}
+
 extension Notification.Name {
     static let bundleBrowserLayoutSwapRequested = Notification.Name("com.lungfish.bundleBrowserLayoutSwapRequested")
+    static let bundleBrowserScrollDirectionChanged = Notification.Name("com.lungfish.bundleBrowserScrollDirectionChanged")
 }

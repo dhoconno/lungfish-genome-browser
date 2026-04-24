@@ -86,4 +86,21 @@ final class ViewerRegressionTests: XCTestCase {
         XCTAssertEqual(systemTraditional, 36, accuracy: 0.001)
         XCTAssertEqual(systemNatural, -36, accuracy: 0.001)
     }
+
+    func testBundleScrollDirectionOverrideTakesPrecedenceOverGlobalPreference() {
+        XCTAssertEqual(
+            SequenceViewerView.effectiveHorizontalScrollDirectionForTesting(
+                bundleOverride: .traditional,
+                globalPreference: .natural
+            ),
+            .traditional
+        )
+        XCTAssertEqual(
+            SequenceViewerView.effectiveHorizontalScrollDirectionForTesting(
+                bundleOverride: nil,
+                globalPreference: .natural
+            ),
+            .natural
+        )
+    }
 }

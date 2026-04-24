@@ -67,7 +67,6 @@ extension ViewerViewController {
         fastqMetadataDrawerView?.isHidden = true
 
         let mappingView = controller.view
-        controller.configure(result: result, resultDirectoryURL: resultDirectoryURL)
         mappingView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(mappingView)
 
@@ -78,6 +77,10 @@ extension ViewerViewController {
             mappingView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
 
+        view.layoutSubtreeIfNeeded()
+        mappingView.layoutSubtreeIfNeeded()
+        controller.configure(result: result, resultDirectoryURL: resultDirectoryURL)
+        mappingView.layoutSubtreeIfNeeded()
         mappingResultController = controller
 
         enhancedRulerView.isHidden = true

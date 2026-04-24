@@ -104,6 +104,7 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
         currentBundleDataProvider = context.provider
         currentBundleURL = context.url
         currentBundleViewState = context.viewState
+        applyBundleHorizontalScrollDirectionPreference()
         showAnnotations = context.viewState.showAnnotations
         annotationDisplayHeight = CGFloat(context.viewState.annotationHeight)
         annotationDisplaySpacing = CGFloat(context.viewState.annotationSpacing)
@@ -656,6 +657,7 @@ extension ViewerViewController: ChromosomeNavigatorDelegate {
         currentBundleDataProvider = nil
         currentBundleViewState = nil
         currentBundleURL = nil
+        viewerView.horizontalScrollDirectionOverride = nil
         viewerView.clearReferenceBundle()
         removeChromosomeNavigator()
     }

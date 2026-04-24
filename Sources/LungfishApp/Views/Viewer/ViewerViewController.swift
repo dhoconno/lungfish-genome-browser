@@ -552,6 +552,25 @@ public class ViewerViewController: NSViewController {
             name: .appSettingsChanged,
             object: nil
         )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleBundleScrollDirectionChanged(_:)),
+            name: .bundleBrowserScrollDirectionChanged,
+            object: nil
+        )
+    }
+
+    func applyBundleHorizontalScrollDirectionPreference() {
+        guard currentBundleURL != nil else {
+            viewerView.horizontalScrollDirectionOverride = nil
+            return
+        }
+        viewerView.horizontalScrollDirectionOverride = BundleBrowserScrollDirectionPreference.current()
+    }
+
+    @objc private func handleBundleScrollDirectionChanged(_ notification: Notification) {
+        applyBundleHorizontalScrollDirectionPreference()
     }
 
     /// Handles the toggle of CDS translation display from the inspector.

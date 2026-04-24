@@ -106,6 +106,19 @@ struct MappingWizardSheet: View {
         MappingMode(rawValue: selectedModeID)
     }
 
+    static func advancedOptionsPlaceholder(for tool: MappingTool) -> String {
+        switch tool {
+        case .minimap2:
+            return "--eqx -N 5"
+        case .bwaMem2:
+            return "-M -Y"
+        case .bowtie2:
+            return "--very-sensitive -N 1"
+        case .bbmap:
+            return "minid=0.97 local=t"
+        }
+    }
+
     private var selectedModeBinding: Binding<String> {
         Binding(
             get: { selectedModeID },
@@ -403,7 +416,7 @@ struct MappingWizardSheet: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Advanced Options")
                         .font(.system(size: 12))
-                    TextField("minid=0.97", text: $advancedOptionsText)
+                    TextField(Self.advancedOptionsPlaceholder(for: initialTool), text: $advancedOptionsText)
                         .font(.system(size: 12, design: .monospaced))
                         .textFieldStyle(.roundedBorder)
                     if let advancedOptionsParseError {

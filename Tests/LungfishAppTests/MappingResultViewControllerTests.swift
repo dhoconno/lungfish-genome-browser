@@ -294,6 +294,45 @@ final class MappingResultViewControllerTests: XCTestCase {
         XCTAssertEqual(vc.testListContainer.frame.width, movedWidth, accuracy: 2)
     }
 
+    func testTopLevelMappingDisplayLaysOutPanesBeforeReturning() throws {
+        let priorLayout = UserDefaults.standard.string(forKey: MappingPanelLayout.defaultsKey)
+        defer {
+            if let priorLayout {
+                UserDefaults.standard.set(priorLayout, forKey: MappingPanelLayout.defaultsKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: MappingPanelLayout.defaultsKey)
+            }
+        }
+
+        UserDefaults.standard.set(
+            MappingPanelLayout.detailLeading.rawValue,
+            forKey: MappingPanelLayout.defaultsKey
+        )
+
+        let host = ViewerViewController()
+        host.view.frame = NSRect(x: 0, y: 0, width: 1400, height: 800)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1400, height: 800),
+            styleMask: [.titled, .resizable, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = host
+        window.setContentSize(NSSize(width: 1400, height: 800))
+        window.layoutIfNeeded()
+        host.view.layoutSubtreeIfNeeded()
+
+        host.displayMappingResult(
+            makeMappingResult(viewerBundleURL: try makeReferenceBundleWithAnnotationDatabase())
+        )
+
+        let controller = try XCTUnwrap(host.mappingResultController)
+        XCTAssertGreaterThan(controller.testDetailContainer.frame.width, CGFloat(300))
+        XCTAssertGreaterThan(controller.testListContainer.frame.width, CGFloat(300))
+        XCTAssertFalse(controller.testDetailContainer.isHidden)
+        XCTAssertFalse(controller.testListContainer.isHidden)
+    }
+
     private func makeMappingResult(viewerBundleURL: URL? = nil) -> MappingResult {
         MappingResult(
             mapper: .minimap2,
