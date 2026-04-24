@@ -18,6 +18,8 @@ Lungfish is an opinionated app built by Dave O'Connor to make powerful command-l
 
 The trade-off is that Lungfish makes opinionated choices about defaults, file layout, and which tool to reach for. If those choices fit how you work, it should feel like the bench-friendly bioinformatics environment you wished existed.
 
+Lungfish is also an experiment in what modern coding agents can build. Dave had never written a macOS app before starting this project, only a clear conception of what the app should do for bench scientists. The codebase has been developed in close collaboration with [Claude Code](https://www.anthropic.com/claude-code) and [Codex](https://openai.com/codex) to see how far that pairing can go toward a comprehensive, tasteful, and effective native app.
+
 ## What Lungfish Does
 
 Lungfish is built around five viewport classes (sequence, alignment, variant, taxonomy, and assembly) that share a common project workspace, sidebar, inspector, and operations panel. Files imported into a project become first-class datasets that can flow between viewports without re-importing or re-indexing.
