@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "name": "mt192765-integration",
+  "display_name": "MT192765 Integration Test",
+  "description": "Integration test primer scheme matching the sarscov2 fixture BAM reference.",
+  "reference_accessions": [
+    { "accession": "MT192765.1", "canonical": true }
+  ],
+  "primer_count": 2,
+  "amplicon_count": 1,
+  "source": "test-fixture",
+  "version": "0.1.0",
+  "created": "2026-04-24T00:00:00Z"
+}
