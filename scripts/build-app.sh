@@ -11,6 +11,7 @@ BUNDLE_ID="org.lungfish.genome-browser"
 VERSION="0.4.0-alpha.1"
 BUILD_NUMBER="1"
 CONFIGURATION="release"
+SKIP_BUILD=0
 
 # Paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,7 +25,7 @@ NC='\033[0m' # No Color
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") [--configuration release|debug]
+Usage: $(basename "$0") [--configuration release|debug] [--skip-build]
 EOF
 }
 
@@ -45,6 +46,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --release)
             CONFIGURATION="release"
+            shift
+            ;;
+        --skip-build)
+            SKIP_BUILD=1
             shift
             ;;
         -h|--help)
@@ -92,16 +97,21 @@ if [ -d "$APP_DIR" ]; then
 fi
 
 # Build executable
-echo -e "${GREEN}Building Apple Silicon ${BUILD_LABEL} executable...${NC}"
 cd "$PROJECT_ROOT"
-if [ "$CONFIGURATION" = "release" ]; then
-    swift build -c release --arch arm64
+if [ "$SKIP_BUILD" -eq 1 ]; then
+    echo -e "${YELLOW}Reusing existing Apple Silicon ${BUILD_LABEL} executable...${NC}"
 else
-    swift build --arch arm64
+    echo -e "${GREEN}Building Apple Silicon ${BUILD_LABEL} executable...${NC}"
+    if [ "$CONFIGURATION" = "release" ]; then
+        swift build -c release --arch arm64
+    else
+        swift build --arch arm64
+    fi
 fi
 
 if [ ! -f "$BUILD_DIR/Lungfish" ]; then
-    echo -e "${RED}Error: Build failed - executable not found${NC}"
+    echo -e "${RED}Error: executable not found at $BUILD_DIR/Lungfish${NC}"
+    echo -e "${RED}Run without --skip-build first to populate the SwiftPM cache.${NC}"
     exit 1
 fi
 

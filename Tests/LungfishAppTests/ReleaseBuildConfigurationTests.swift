@@ -48,6 +48,21 @@ struct ReleaseBuildConfigurationTests {
         #expect(script.contains("swift build --arch arm64"))
     }
 
+    @Test("Fallback build-app script can reuse an existing SwiftPM build")
+    func buildAppScriptCanReuseExistingSwiftPMBuild() throws {
+        let script = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent("scripts/build-app.sh"),
+            encoding: .utf8
+        )
+
+        #expect(script.contains("--skip-build"))
+        #expect(script.contains("SKIP_BUILD=0"))
+        #expect(script.contains("SKIP_BUILD=1"))
+        #expect(script.contains(#"if [ "$SKIP_BUILD" -eq 1 ]"#))
+        #expect(script.contains("Reusing existing Apple Silicon"))
+    }
+
     @Test("Fallback build-app script copies SwiftPM runtime resource bundles")
     func buildAppScriptCopiesSwiftPMRuntimeResourceBundles() throws {
         let script = try String(
@@ -441,6 +456,53 @@ struct ReleaseBuildConfigurationTests {
 
         #expect(script.contains("${RELEASE_DIR}/DerivedData") == false)
         #expect(script.contains("$PROJECT_ROOT/.build") || script.contains("${PROJECT_ROOT}/.build"))
+    }
+
+    @Test("Notarized DMG release script supports explicit build reuse")
+    func notarizedDMGReleaseScriptSupportsExplicitBuildReuse() throws {
+        let script = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent("scripts/release/build-notarized-dmg.sh"),
+            encoding: .utf8
+        )
+
+        #expect(script.contains("--reuse-archive"))
+        #expect(script.contains("--reuse-built-cli"))
+        #expect(script.contains("REUSE_ARCHIVE=0"))
+        #expect(script.contains("REUSE_BUILT_CLI=0"))
+        #expect(script.contains(#"if [ "$REUSE_ARCHIVE" -eq 1 ]"#))
+        #expect(script.contains(#"if [ "$REUSE_BUILT_CLI" -eq 1 ]"#))
+    }
+
+    @Test("Notarized DMG release metadata redacts local signing details")
+    func notarizedDMGReleaseMetadataRedactsLocalSigningDetails() throws {
+        let script = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent("scripts/release/build-notarized-dmg.sh"),
+            encoding: .utf8
+        )
+
+        #expect(script.contains("signing_identity=<redacted>"))
+        #expect(script.contains("team_id=<redacted>"))
+        #expect(script.contains("notary_profile=<redacted>"))
+        #expect(script.contains("signing_identity=${SIGNING_IDENTITY}") == false)
+        #expect(script.contains("team_id=${TEAM_ID}") == false)
+        #expect(script.contains("notary_profile=${NOTARY_PROFILE}") == false)
+    }
+
+    @Test("Notarized DMG release metadata avoids absolute project paths")
+    func notarizedDMGReleaseMetadataAvoidsAbsoluteProjectPaths() throws {
+        let script = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent("scripts/release/build-notarized-dmg.sh"),
+            encoding: .utf8
+        )
+
+        #expect(script.contains("relative_to_project_root"))
+        #expect(script.contains("archive_path=$(relative_to_project_root \"$ARCHIVE_PATH\")"))
+        #expect(script.contains("app_path=$(relative_to_project_root \"$APP_PATH\")"))
+        #expect(script.contains("release_app_path=$(relative_to_project_root \"$RELEASE_APP_PATH\")"))
+        #expect(script.contains("DMG_PATH=$(relative_to_project_root \"$DMG_PATH\")"))
     }
 
     @Test("Notarized DMG release script disables duplicate Xcode CLI embed and sanitize phases")

@@ -10,7 +10,7 @@ set -euo pipefail
 
 usage() {
     cat <<'EOF'
-Usage: build-notarized-dmg.sh --signing-identity "Developer ID Application: Example (TEAMID)" --team-id TEAMID --notary-profile PROFILE [--scratch-path PATH] [--archive-path PATH] [--release-dir PATH] [--derived-data-path PATH]
+Usage: build-notarized-dmg.sh --signing-identity "Developer ID Application: Example (TEAMID)" --team-id TEAMID --notary-profile PROFILE [--scratch-path PATH] [--archive-path PATH] [--release-dir PATH] [--derived-data-path PATH] [--reuse-archive] [--reuse-built-cli]
 
 Required:
   --signing-identity  Developer ID Application identity used for codesign
@@ -22,6 +22,8 @@ Optional:
   --archive-path      Archive output path (default: build/Release/Lungfish.xcarchive)
   --release-dir       Release directory (default: build/Release)
   --derived-data-path DerivedData path for the Xcode archive (default: <project-root>/.build/release-derived-data)
+  --reuse-archive     Reuse an existing archive instead of running xcodebuild archive
+  --reuse-built-cli   Reuse an existing lungfish-cli from --scratch-path instead of running swift build
 EOF
 }
 
@@ -35,6 +37,8 @@ SCRATCH_PATH="${PROJECT_ROOT}/.build/xcode-cli-release"
 RELEASE_DIR="${PROJECT_ROOT}/build/Release"
 ARCHIVE_PATH="${RELEASE_DIR}/Lungfish.xcarchive"
 DERIVED_DATA_PATH=""
+REUSE_ARCHIVE=0
+REUSE_BUILT_CLI=0
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -65,6 +69,14 @@ while [ "$#" -gt 0 ]; do
         --derived-data-path)
             DERIVED_DATA_PATH="$2"
             shift 2
+            ;;
+        --reuse-archive)
+            REUSE_ARCHIVE=1
+            shift
+            ;;
+        --reuse-built-cli)
+            REUSE_BUILT_CLI=1
+            shift
             ;;
         -h|--help)
             usage
@@ -116,8 +128,38 @@ METADATA_PATH="${RELEASE_DIR}/release-metadata.txt"
 APP_NOTARY_LOG="${RELEASE_DIR}/notary-app-log.json"
 DMG_NOTARY_LOG="${RELEASE_DIR}/notary-dmg-log.json"
 
-rm -rf "$RELEASE_DIR"
-mkdir -p "$RELEASE_DIR"
+relative_to_project_root() {
+    case "$1" in
+        "$PROJECT_ROOT"/*)
+            printf '%s\n' "${1#"$PROJECT_ROOT"/}"
+            ;;
+        "$PROJECT_ROOT")
+            printf '.\n'
+            ;;
+        *)
+            printf '%s\n' "$1"
+            ;;
+    esac
+}
+
+prepare_release_dir() {
+    case "$ARCHIVE_PATH" in
+        "$RELEASE_DIR"/*)
+            if [ "$REUSE_ARCHIVE" -eq 1 ]; then
+                mkdir -p "$RELEASE_DIR"
+                rm -rf "$RELEASE_APP_PATH" "$METADATA_PATH" "$APP_NOTARY_LOG" "$DMG_NOTARY_LOG"
+                rm -f "$RELEASE_DIR"/Lungfish-app-notary.zip
+                rm -f "$RELEASE_DIR"/Lungfish-*-arm64.dmg
+                return
+            fi
+            ;;
+    esac
+
+    rm -rf "$RELEASE_DIR"
+    mkdir -p "$RELEASE_DIR"
+}
+
+prepare_release_dir
 mkdir -p "$(dirname "$DERIVED_DATA_PATH")"
 
 cd "$PROJECT_ROOT"
@@ -158,35 +200,43 @@ SWIFT_BUILD_PREFIX_MAP_ARGS=(
 XCODE_OTHER_SWIFT_FLAGS="-debug-prefix-map $SCRATCH_PATH=/swiftpm-build -debug-prefix-map $PROJECT_ROOT=/workspace -file-compilation-dir /workspace"
 XCODE_OTHER_CFLAGS="-ffile-prefix-map=$SCRATCH_PATH=/swiftpm-build -fdebug-prefix-map=$SCRATCH_PATH=/swiftpm-build -ffile-prefix-map=$PROJECT_ROOT=/workspace -fdebug-prefix-map=$PROJECT_ROOT=/workspace"
 
-LUNGFISH_SKIP_EMBED_LUNGFISH_CLI=1 \
-LUNGFISH_SKIP_SANITIZE_BUNDLED_TOOLS=1 \
-xcodebuild -project Lungfish.xcodeproj \
-    -scheme Lungfish \
-    -configuration Release \
-    -destination "generic/platform=macOS" \
-    -derivedDataPath "$DERIVED_DATA_PATH" \
-    -archivePath "$ARCHIVE_PATH" \
-    ARCHS=arm64 \
-    EXCLUDED_ARCHS=x86_64 \
-    ONLY_ACTIVE_ARCH=YES \
-    OTHER_SWIFT_FLAGS="\$(inherited) $XCODE_OTHER_SWIFT_FLAGS" \
-    OTHER_CFLAGS="\$(inherited) $XCODE_OTHER_CFLAGS" \
-    OTHER_CPLUSPLUSFLAGS="\$(inherited) $XCODE_OTHER_CFLAGS" \
-    DEVELOPMENT_TEAM="$TEAM_ID" \
-    archive
+if [ "$REUSE_ARCHIVE" -eq 1 ]; then
+    printf 'Reusing existing archive: %s\n' "$ARCHIVE_PATH"
+else
+    LUNGFISH_SKIP_EMBED_LUNGFISH_CLI=1 \
+    LUNGFISH_SKIP_SANITIZE_BUNDLED_TOOLS=1 \
+    xcodebuild -project Lungfish.xcodeproj \
+        -scheme Lungfish \
+        -configuration Release \
+        -destination "generic/platform=macOS" \
+        -derivedDataPath "$DERIVED_DATA_PATH" \
+        -archivePath "$ARCHIVE_PATH" \
+        ARCHS=arm64 \
+        EXCLUDED_ARCHS=x86_64 \
+        ONLY_ACTIVE_ARCH=YES \
+        OTHER_SWIFT_FLAGS="\$(inherited) $XCODE_OTHER_SWIFT_FLAGS" \
+        OTHER_CFLAGS="\$(inherited) $XCODE_OTHER_CFLAGS" \
+        OTHER_CPLUSPLUSFLAGS="\$(inherited) $XCODE_OTHER_CFLAGS" \
+        DEVELOPMENT_TEAM="$TEAM_ID" \
+        archive
+fi
 
 if [ ! -d "$APP_PATH" ]; then
     echo "archived app not found: $APP_PATH" >&2
     exit 72
 fi
 
-/usr/bin/xcrun swift build \
-    --package-path "$PROJECT_ROOT" \
-    --product lungfish-cli \
-    --configuration release \
-    --arch arm64 \
-    --scratch-path "$SCRATCH_PATH" \
-    "${SWIFT_BUILD_PREFIX_MAP_ARGS[@]}"
+if [ "$REUSE_BUILT_CLI" -eq 1 ]; then
+    printf 'Reusing existing built CLI from scratch path: %s\n' "$SCRATCH_PATH"
+else
+    /usr/bin/xcrun swift build \
+        --package-path "$PROJECT_ROOT" \
+        --product lungfish-cli \
+        --configuration release \
+        --arch arm64 \
+        --scratch-path "$SCRATCH_PATH" \
+        "${SWIFT_BUILD_PREFIX_MAP_ARGS[@]}"
+fi
 
 CLI_SOURCE="${SCRATCH_PATH}/arm64-apple-macosx/release/lungfish-cli"
 CLI_DEST="${APP_PATH}/Contents/MacOS/lungfish-cli"
@@ -194,6 +244,7 @@ WORKFLOW_TOOLS_DIR="${APP_PATH}/Contents/Resources/LungfishGenomeBrowser_Lungfis
 
 if [ ! -f "$CLI_SOURCE" ]; then
     echo "built CLI not found: $CLI_SOURCE" >&2
+    echo "run without --reuse-built-cli first or provide --scratch-path with a release CLI build" >&2
     exit 72
 fi
 
@@ -284,16 +335,16 @@ COMMIT_SHA=$(git rev-parse HEAD)
 cat >"$METADATA_PATH" <<EOF
 version=${VERSION}
 git_commit=${COMMIT_SHA}
-signing_identity=${SIGNING_IDENTITY}
-team_id=${TEAM_ID}
-notary_profile=${NOTARY_PROFILE}
-archive_path=${ARCHIVE_PATH}
-app_path=${APP_PATH}
-release_app_path=${RELEASE_APP_PATH}
-DMG_PATH=${DMG_PATH}
+signing_identity=<redacted>
+team_id=<redacted>
+notary_profile=<redacted>
+archive_path=$(relative_to_project_root "$ARCHIVE_PATH")
+app_path=$(relative_to_project_root "$APP_PATH")
+release_app_path=$(relative_to_project_root "$RELEASE_APP_PATH")
+DMG_PATH=$(relative_to_project_root "$DMG_PATH")
 dmg_sha256=${DMG_SHA}
-app_notary_log=${APP_NOTARY_LOG}
-dmg_notary_log=${DMG_NOTARY_LOG}
+app_notary_log=$(relative_to_project_root "$APP_NOTARY_LOG")
+dmg_notary_log=$(relative_to_project_root "$DMG_NOTARY_LOG")
 EOF
 
 printf 'Release complete:\n'

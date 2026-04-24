@@ -111,12 +111,10 @@ Write `build/Release/release-metadata.txt` containing:
 
 - app version
 - git commit
-- signing identity label
-- team ID
-- notary profile name
-- archive/app/dmg paths
+- redacted signing identity, team ID, and notary profile placeholders
+- relative archive/app/dmg paths
 - SHA-256 of the final `.dmg`
-- notary output log paths
+- relative notary output log paths
 
 ## Inputs
 
