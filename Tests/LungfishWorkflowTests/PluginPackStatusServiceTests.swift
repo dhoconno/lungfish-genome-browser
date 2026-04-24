@@ -176,7 +176,7 @@ final class PluginPackStatusServiceTests: XCTestCase {
         XCTAssertEqual(callCount, 1)
     }
 
-    func testVisibleStatusesDiscardPersistedSmokeTestFailuresAcrossServiceInstances() async throws {
+    func testVisibleStatusesRetryTransientSmokeFailuresBeforeSurfacingReinstall() async throws {
         let sandbox = FileManager.default.temporaryDirectory
             .appendingPathComponent("pack-visible-smoke-failure-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
@@ -222,10 +222,9 @@ final class PluginPackStatusServiceTests: XCTestCase {
         )
         let firstStatuses = await firstService.visibleStatuses()
         let firstRequiredSetup = try XCTUnwrap(firstStatuses.first(where: { $0.pack.id == PluginPack.requiredSetupPack.id }))
-        XCTAssertEqual(firstRequiredSetup.state, .needsInstall)
-        XCTAssertEqual(
-            firstRequiredSetup.toolStatuses.first(where: { $0.requirement.environment == "snakemake" })?.smokeTestFailure,
-            "Interrupted system call ; error code 4"
+        XCTAssertEqual(firstRequiredSetup.state, .ready)
+        XCTAssertNil(
+            firstRequiredSetup.toolStatuses.first(where: { $0.requirement.environment == "snakemake" })?.smokeTestFailure
         )
 
         let secondService = PluginPackStatusService(
@@ -239,6 +238,72 @@ final class PluginPackStatusServiceTests: XCTestCase {
         XCTAssertEqual(secondRequiredSetup.state, .ready)
         XCTAssertNil(
             secondRequiredSetup.toolStatuses.first(where: { $0.requirement.environment == "snakemake" })?.smokeTestFailure
+        )
+    }
+
+    func testStatusMarksVersionDriftAsNeedsReinstall() async throws {
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pack-version-drift-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sandbox, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+
+        let micromamba = try makeFakeMicromamba(
+            at: sandbox.appendingPathComponent("micromamba"),
+            version: "2.0.5-0"
+        )
+        let manager = CondaManager(
+            rootPrefix: sandbox.appendingPathComponent("conda"),
+            bundledMicromambaProvider: { micromamba },
+            bundledMicromambaVersionProvider: { "2.0.5-0" }
+        )
+        _ = try await manager.ensureMicromamba()
+
+        let requirement = PackToolRequirement(
+            id: "minimap2",
+            displayName: "minimap2",
+            environment: "minimap2",
+            installPackages: ["bioconda::minimap2=2.30=h577a1d6_0"],
+            executables: ["minimap2"],
+            smokeTest: .command(arguments: ["--version"], timeoutSeconds: 10),
+            version: "2.30"
+        )
+        let envURL = await manager.environmentURL(named: requirement.environment)
+        let binURL = envURL.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: binURL, withIntermediateDirectories: true)
+        try writeSmokeReadyExecutable(
+            for: requirement,
+            executable: "minimap2",
+            at: binURL.appendingPathComponent("minimap2")
+        )
+        try writeCondaMetaPackage(
+            envURL: envURL,
+            name: "minimap2",
+            version: "2.29",
+            subdir: "osx-arm64"
+        )
+
+        let pack = PluginPack(
+            id: "mapping-version-drift",
+            name: "Mapping Version Drift",
+            description: "Test pack",
+            sfSymbol: "wrench",
+            packages: [],
+            category: "Tests",
+            requirements: [requirement]
+        )
+        let service = PluginPackStatusService(
+            condaManager: manager,
+            databaseInstalledCheck: { _ in true }
+        )
+
+        let status = await service.status(for: pack)
+
+        XCTAssertEqual(status.state, .needsInstall)
+        let toolStatus = try XCTUnwrap(status.toolStatuses.first)
+        XCTAssertEqual(toolStatus.statusText, "Needs reinstall")
+        XCTAssertEqual(
+            toolStatus.smokeTestFailure,
+            "minimap2 is version 2.29, but Lungfish requires 2.30. Reinstall this tool."
         )
     }
 
@@ -868,7 +933,7 @@ final class PluginPackStatusServiceTests: XCTestCase {
         XCTAssertEqual(snapshot.1, 0)
     }
 
-    func testInstallPackReinstallsOnlyRequirementsThatAreNotReady() async throws {
+    func testInstallPackExplicitReinstallRefreshesAllToolRequirements() async throws {
         actor InstallRecorder {
             var calls: [(packages: [String], environment: String, reinstall: Bool)] = []
             func record(_ packages: [String], _ environment: String, _ reinstall: Bool) {
@@ -938,7 +1003,12 @@ final class PluginPackStatusServiceTests: XCTestCase {
         try await service.install(pack: .requiredSetupPack, reinstall: true, progress: nil)
 
         let calls = await recorder.recordedCalls()
-        XCTAssertEqual(calls.map(\.environment), ["bcftools"])
+        XCTAssertEqual(
+            calls.map(\.environment),
+            PluginPack.requiredSetupPack.toolRequirements
+                .filter { $0.managedDatabaseID == nil }
+                .map(\.environment)
+        )
         XCTAssertTrue(calls.allSatisfy(\.reinstall))
 
         let databaseCalls = await databaseRecorder.recordedCalls()
@@ -1373,7 +1443,7 @@ final class PluginPackStatusServiceTests: XCTestCase {
             exit 0
             """
         } else if let smokeTest = requirement.smokeTest,
-                  smokeTest.executable == executable,
+                  (smokeTest.executable ?? requirement.executables.first) == executable,
                   let requiredOutputSubstring = smokeTest.requiredOutputSubstring,
                   let exitCode = smokeTest.acceptedExitCodes.first {
             script = """
@@ -1387,6 +1457,28 @@ final class PluginPackStatusServiceTests: XCTestCase {
 
         try script.write(to: url, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+    }
+
+    private func writeCondaMetaPackage(
+        envURL: URL,
+        name: String,
+        version: String,
+        subdir: String
+    ) throws {
+        let condaMetaURL = envURL.appendingPathComponent("conda-meta", isDirectory: true)
+        try FileManager.default.createDirectory(at: condaMetaURL, withIntermediateDirectories: true)
+        let payload = """
+        {
+          "name": "\(name)",
+          "version": "\(version)",
+          "subdir": "\(subdir)"
+        }
+        """
+        try payload.write(
+            to: condaMetaURL.appendingPathComponent("\(name)-\(version)-0.json"),
+            atomically: true,
+            encoding: .utf8
+        )
     }
 
     private func writeTransientSmokeFailureExecutable(

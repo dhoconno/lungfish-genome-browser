@@ -257,6 +257,11 @@ public final class ManagedMappingPipeline: @unchecked Sendable {
                 "Selected FASTQ inputs mix incompatible read classes. Select one read class per mapping run."
             )
         }
+        if inspection.mixesDetectedAndUnclassifiedReadClasses {
+            throw ManagedMappingPipelineError.incompatibleSelection(
+                "Selected FASTQ inputs mix classified and unclassified read types. Re-import or edit the read type metadata so every selected FASTQ has the same read type."
+            )
+        }
         guard let mode = MappingMode(rawValue: request.modeID) else {
             throw ManagedMappingPipelineError.incompatibleSelection(
                 "Invalid mode '\(request.modeID)' for \(request.tool.displayName)."
@@ -316,8 +321,12 @@ public final class ManagedMappingPipeline: @unchecked Sendable {
                 throw ManagedMappingPipelineError.mapperNotInstalled("BBMap")
             }
         default:
-            let installed = await condaManager.isToolInstalled(request.tool.executableName)
-            guard installed else {
+            do {
+                _ = try await condaManager.toolPath(
+                    name: request.tool.executableName,
+                    environment: request.tool.environmentName
+                )
+            } catch {
                 throw ManagedMappingPipelineError.mapperNotInstalled(request.tool.displayName)
             }
         }

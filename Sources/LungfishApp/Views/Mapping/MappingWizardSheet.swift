@@ -20,6 +20,7 @@ struct MappingWizardSheet: View {
     @State private var browsedReferenceURL: URL?
 
     @State private var selectedModeID: String
+    @State private var modeWasChangedByUser = false
     @State private var threads: Int
     @State private var includeSecondary = false
     @State private var includeSupplementary = true
@@ -37,6 +38,7 @@ struct MappingWizardSheet: View {
     @State private var detectedReadClass: MappingReadClass?
     @State private var observedMaxReadLength: Int?
     @State private var mixedReadClasses = false
+    @State private var hasUnclassifiedFASTQInputs = false
     @State private var mixedSequenceFormats = false
     @State private var isInspectingInputs = false
 
@@ -110,6 +112,16 @@ struct MappingWizardSheet: View {
         MappingMode(rawValue: selectedModeID)
     }
 
+    private var selectedModeBinding: Binding<String> {
+        Binding(
+            get: { selectedModeID },
+            set: { newValue in
+                selectedModeID = newValue
+                modeWasChangedByUser = true
+            }
+        )
+    }
+
     private var compatibilityEvaluation: MappingCompatibilityEvaluation? {
         guard let detectedSequenceFormat, let selectedMode else { return nil }
         return MappingCompatibility.evaluate(
@@ -129,7 +141,8 @@ struct MappingWizardSheet: View {
             detectedSequenceFormat: detectedSequenceFormat,
             detectedReadClass: detectedReadClass,
             mixedReadClasses: mixedReadClasses,
-            mixedSequenceFormats: mixedSequenceFormats
+            mixedSequenceFormats: mixedSequenceFormats,
+            mixesDetectedAndUnclassifiedReadClasses: detectedReadClass != nil && hasUnclassifiedFASTQInputs
         )
     }
 
@@ -165,6 +178,15 @@ struct MappingWizardSheet: View {
             onRunnerAvailabilityChange?(canRun)
         }
         .onChange(of: detectedReadClass) { _, _ in
+            onRunnerAvailabilityChange?(canRun)
+        }
+        .onChange(of: mixedReadClasses) { _, _ in
+            onRunnerAvailabilityChange?(canRun)
+        }
+        .onChange(of: hasUnclassifiedFASTQInputs) { _, _ in
+            onRunnerAvailabilityChange?(canRun)
+        }
+        .onChange(of: mixedSequenceFormats) { _, _ in
             onRunnerAvailabilityChange?(canRun)
         }
         .onChange(of: selectedReferenceID) { _, _ in
@@ -285,7 +307,7 @@ struct MappingWizardSheet: View {
                 .foregroundStyle(.secondary)
 
             if modeOptions.count <= 3 {
-                Picker("", selection: $selectedModeID) {
+                Picker("", selection: selectedModeBinding) {
                     ForEach(modeOptions, id: \.id) { mode in
                         Text(mode.displayName).tag(mode.id)
                     }
@@ -293,7 +315,7 @@ struct MappingWizardSheet: View {
                 .labelsHidden()
                 .pickerStyle(.segmented)
             } else {
-                Picker("", selection: $selectedModeID) {
+                Picker("", selection: selectedModeBinding) {
                     ForEach(modeOptions, id: \.id) { mode in
                         Text(mode.displayName).tag(mode.id)
                     }
@@ -506,12 +528,49 @@ struct MappingWizardSheet: View {
         detectedReadClass = result.readClass
         observedMaxReadLength = result.observedMaxReadLength
         mixedReadClasses = result.mixedReadClasses
+        hasUnclassifiedFASTQInputs = result.hasUnclassifiedFASTQInputs
         mixedSequenceFormats = result.mixedSequenceFormats
+        autoSelectPreferredModeIfNeeded(
+            readClass: result.readClass,
+            sequenceFormat: result.sequenceFormat,
+            observedMaxReadLength: result.observedMaxReadLength
+        )
         isInspectingInputs = false
     }
 
+    private func autoSelectPreferredModeIfNeeded(
+        readClass: MappingReadClass?,
+        sequenceFormat: SequenceFormat?,
+        observedMaxReadLength: Int?
+    ) {
+        guard !modeWasChangedByUser else { return }
+        let inputFormat = sequenceFormat ?? (readClass == nil ? nil : .fastq)
+        guard let inputFormat,
+              let preferredMode = MappingMode.preferredMode(
+                for: initialTool,
+                readClass: readClass,
+                inputFormat: inputFormat
+              ),
+              preferredMode.id != selectedModeID else {
+            return
+        }
+
+        if let selectedMode {
+            let evaluation = MappingCompatibility.evaluate(
+                tool: initialTool,
+                mode: selectedMode,
+                inputFormat: inputFormat,
+                readClass: readClass,
+                observedMaxReadLength: observedMaxReadLength
+            )
+            guard evaluation.isBlocked else { return }
+        }
+
+        selectedModeID = preferredMode.id
+    }
+
     private func performRun() {
-        guard let referenceURL = resolvedReferenceURL, let selectedMode else { return }
+        guard canRun, let referenceURL = resolvedReferenceURL, let selectedMode else { return }
 
         let baseDir = inputFiles.first?.deletingLastPathComponent() ?? FileManager.default.temporaryDirectory
         let runToken = String(UUID().uuidString.prefix(8))

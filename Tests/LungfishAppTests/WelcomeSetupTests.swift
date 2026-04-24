@@ -134,6 +134,45 @@ private final class StatefulWelcomePackStatusProvider: @unchecked Sendable, Plug
     }
 }
 
+private final class InstallingWelcomePackStatusProvider: @unchecked Sendable, PluginPackStatusProviding {
+    private let missingStatus: PluginPackStatus
+    private let readyStatus: PluginPackStatus
+    private let lock = NSLock()
+    private var installed = false
+
+    init(missingStatus: PluginPackStatus, readyStatus: PluginPackStatus) {
+        self.missingStatus = missingStatus
+        self.readyStatus = readyStatus
+    }
+
+    func visibleStatuses() async -> [PluginPackStatus] {
+        lock.withLock { installed } ? [readyStatus] : [missingStatus]
+    }
+
+    func status(for pack: PluginPack) async -> PluginPackStatus {
+        lock.withLock { installed } ? readyStatus : missingStatus
+    }
+
+    func invalidateVisibleStatusesCache() async {}
+
+    func install(
+        pack: PluginPack,
+        reinstall: Bool,
+        progress: (@Sendable (PluginPackInstallProgress) -> Void)?
+    ) async throws {
+        lock.withLock {
+            installed = true
+        }
+        progress?(PluginPackInstallProgress(
+            requirementID: nil,
+            requirementDisplayName: nil,
+            overallFraction: 1.0,
+            itemFraction: 1.0,
+            message: "Installed"
+        ))
+    }
+}
+
 private final class OverlappingWelcomePackStatusProvider: @unchecked Sendable, PluginPackStatusProviding {
     private let firstStatuses: [PluginPackStatus]
     private let secondStatuses: [PluginPackStatus]
@@ -549,6 +588,50 @@ final class WelcomeSetupTests: XCTestCase {
         XCTAssertTrue(viewModel.isRefreshingSetup)
         provider.release()
         try? await Task.sleep(for: .milliseconds(50))
+
+        XCTAssertEqual(viewModel.requiredSetupStatus?.state, .ready)
+    }
+
+    func testInstallRequiredSetupPostsManagedResourcesDidChange() async {
+        let center = NotificationCenter()
+        let missing = PluginPackStatus(
+            pack: .requiredSetupPack,
+            state: .needsInstall,
+            toolStatuses: [],
+            failureMessage: nil
+        )
+        let ready = PluginPackStatus(
+            pack: .requiredSetupPack,
+            state: .ready,
+            toolStatuses: [],
+            failureMessage: nil
+        )
+        let provider = InstallingWelcomePackStatusProvider(
+            missingStatus: missing,
+            readyStatus: ready
+        )
+        let viewModel = WelcomeViewModel(
+            statusProvider: provider,
+            notificationCenter: center
+        )
+        let notification = expectation(description: "managed resources notification")
+        let token = center.addObserver(
+            forName: .managedResourcesDidChange,
+            object: nil,
+            queue: nil
+        ) { _ in
+            notification.fulfill()
+        }
+        defer { center.removeObserver(token) }
+
+        await viewModel.refreshSetup()
+        XCTAssertEqual(viewModel.requiredSetupStatus?.state, .needsInstall)
+
+        viewModel.installRequiredSetup()
+        await fulfillment(of: [notification], timeout: 2)
+        for _ in 0..<20 where viewModel.isInstallingRequiredSetup {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
 
         XCTAssertEqual(viewModel.requiredSetupStatus?.state, .ready)
     }

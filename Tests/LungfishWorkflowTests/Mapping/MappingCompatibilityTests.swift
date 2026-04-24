@@ -54,4 +54,28 @@ final class MappingCompatibilityTests: XCTestCase {
             .blocked("Bowtie2 is only available for Illumina-style short-read mapping in v1.")
         )
     }
+
+    func testPreferredModesSelectCompatibleLongReadPresets() {
+        XCTAssertEqual(
+            MappingMode.preferredMode(for: .minimap2, readClass: .ontReads),
+            .minimap2MapONT
+        )
+        XCTAssertEqual(
+            MappingMode.preferredMode(for: .minimap2, readClass: .pacBioHiFi),
+            .minimap2MapHiFi
+        )
+        XCTAssertEqual(
+            MappingMode.preferredMode(for: .minimap2, readClass: .pacBioCLR),
+            .minimap2MapPB
+        )
+        XCTAssertEqual(
+            MappingMode.preferredMode(for: .bbmap, readClass: .pacBioCLR),
+            .bbmapPacBio
+        )
+    }
+
+    func testReadClassDetectionDoesNotTreatIncidentalCCSTextAsPacBioHiFi() {
+        XCTAssertNil(MappingReadClass.detect(fromFASTQHeader: "@sample_ccs_like_generic_read"))
+        XCTAssertEqual(MappingReadClass.detect(fromFASTQHeader: "@movie/12345/ccs"), .pacBioHiFi)
+    }
 }

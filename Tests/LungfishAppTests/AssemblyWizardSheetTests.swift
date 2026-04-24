@@ -20,6 +20,17 @@ final class AssemblyWizardSheetTests: XCTestCase {
         )
     }
 
+    func testRunRequiresManagedAssemblyToolReadiness() throws {
+        let source = try String(
+            contentsOf: repositoryRoot()
+                .appendingPathComponent("Sources/LungfishApp/Views/Assembly/AssemblyWizardSheet.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("guard compatibilityPresentation.state == .ready else { return false }"))
+        XCTAssertTrue(source.contains("return compatibilityPresentation.message"))
+    }
+
     func testHifiasmProfilesDefaultToDiploidAndExposeHaploidViral() throws {
         let source = try String(
             contentsOf: repositoryRoot()

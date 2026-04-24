@@ -231,6 +231,11 @@ final class FASTQOperationDialogState {
     }
 
     func updateEmbeddedReadiness(_ ready: Bool) {
+        updateEmbeddedReadiness(ready, for: selectedToolID)
+    }
+
+    func updateEmbeddedReadiness(_ ready: Bool, for toolID: FASTQOperationToolID) {
+        guard selectedToolID == toolID else { return }
         embeddedToolReady = ready
     }
 

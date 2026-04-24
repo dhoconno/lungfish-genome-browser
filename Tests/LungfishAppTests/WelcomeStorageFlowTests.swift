@@ -87,7 +87,7 @@ private final class DelayedInstallWelcomeStatusProvider: @unchecked Sendable, Pl
 private final class DelayedRefreshWelcomeStatusProvider: @unchecked Sendable, PluginPackStatusProviding {
     let statuses: [PluginPackStatus]
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<Void, Never>?
+    private var continuations: [CheckedContinuation<Void, Never>] = []
 
     init(statuses: [PluginPackStatus]) {
         self.statuses = statuses
@@ -96,7 +96,7 @@ private final class DelayedRefreshWelcomeStatusProvider: @unchecked Sendable, Pl
     func visibleStatuses() async -> [PluginPackStatus] {
         await withCheckedContinuation { continuation in
             lock.withLock {
-                self.continuation = continuation
+                self.continuations.append(continuation)
             }
         }
         return statuses
@@ -115,16 +115,16 @@ private final class DelayedRefreshWelcomeStatusProvider: @unchecked Sendable, Pl
     ) async throws {}
 
     func release() {
-        let continuation = lock.withLock {
-            let continuation = self.continuation
-            self.continuation = nil
-            return continuation
+        let continuations = lock.withLock {
+            let continuations = self.continuations
+            self.continuations = []
+            return continuations
         }
-        continuation?.resume()
+        continuations.forEach { $0.resume() }
     }
 
     func hasPendingRefresh() -> Bool {
-        lock.withLock { continuation != nil }
+        lock.withLock { !continuations.isEmpty }
     }
 }
 

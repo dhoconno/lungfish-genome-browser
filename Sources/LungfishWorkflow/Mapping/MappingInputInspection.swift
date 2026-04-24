@@ -10,6 +10,7 @@ public struct MappingInputInspection: Sendable, Equatable {
     public let readClass: MappingReadClass?
     public let observedMaxReadLength: Int?
     public let mixedReadClasses: Bool
+    public let hasUnclassifiedFASTQInputs: Bool
     public let sequenceFormat: SequenceFormat?
     public let mixedSequenceFormats: Bool
 
@@ -17,12 +18,14 @@ public struct MappingInputInspection: Sendable, Equatable {
         readClass: MappingReadClass?,
         observedMaxReadLength: Int?,
         mixedReadClasses: Bool,
+        hasUnclassifiedFASTQInputs: Bool = false,
         sequenceFormat: SequenceFormat?,
         mixedSequenceFormats: Bool
     ) {
         self.readClass = readClass
         self.observedMaxReadLength = observedMaxReadLength
         self.mixedReadClasses = mixedReadClasses
+        self.hasUnclassifiedFASTQInputs = hasUnclassifiedFASTQInputs
         self.sequenceFormat = sequenceFormat
         self.mixedSequenceFormats = mixedSequenceFormats
     }
@@ -30,6 +33,7 @@ public struct MappingInputInspection: Sendable, Equatable {
     public static func inspect(urls: [URL]) -> MappingInputInspection {
         var detectedClasses: Set<MappingReadClass> = []
         var detectedFormats: Set<SequenceFormat> = []
+        var unclassifiedFASTQCount = 0
         var maxReadLength = 0
 
         for url in urls {
@@ -40,10 +44,15 @@ public struct MappingInputInspection: Sendable, Equatable {
 
             switch resolvedInput.format {
             case .fastq:
-                if let readClass = MappingReadClass.detect(fromFASTQ: resolvedInput.url) {
+                if let readClass = MappingReadClass.detect(fromInputURL: url) {
                     detectedClasses.insert(readClass)
+                } else {
+                    unclassifiedFASTQCount += 1
                 }
-                maxReadLength = max(maxReadLength, observedReadLength(fromFASTQ: resolvedInput.url) ?? 0)
+                let metadata = FASTQMetadataStore.load(for: resolvedInput.url)
+                let cachedLength = cachedMaxReadLength(from: metadata)
+                let observedLength = observedReadLength(fromFASTQ: resolvedInput.url)
+                maxReadLength = max(maxReadLength, cachedLength ?? observedLength ?? 0)
             case .fasta:
                 maxReadLength = max(maxReadLength, observedSequenceLength(fromFASTA: resolvedInput.url) ?? 0)
             }
@@ -53,9 +62,14 @@ public struct MappingInputInspection: Sendable, Equatable {
             readClass: detectedClasses.count == 1 ? detectedClasses.first : nil,
             observedMaxReadLength: maxReadLength > 0 ? maxReadLength : nil,
             mixedReadClasses: detectedClasses.count > 1,
+            hasUnclassifiedFASTQInputs: unclassifiedFASTQCount > 0,
             sequenceFormat: detectedFormats.count == 1 ? detectedFormats.first : nil,
             mixedSequenceFormats: detectedFormats.count > 1
         )
+    }
+
+    public var mixesDetectedAndUnclassifiedReadClasses: Bool {
+        readClass != nil && hasUnclassifiedFASTQInputs
     }
 
     private struct ResolvedSequenceInput: Sendable, Equatable {
@@ -86,6 +100,15 @@ public struct MappingInputInspection: Sendable, Equatable {
             lineIndex += 1
         }
         return longest > 0 ? longest : nil
+    }
+
+    private static func cachedMaxReadLength(from metadata: PersistedFASTQMetadata?) -> Int? {
+        let candidates = [
+            metadata?.computedStatistics?.maxReadLength,
+            metadata?.seqkitStats?.maxLen,
+        ].compactMap { $0 }.filter { $0 > 0 }
+
+        return candidates.max()
     }
 
     private static func observedSequenceLength(fromFASTA url: URL) -> Int? {

@@ -16,7 +16,7 @@ struct FASTQOperationToolPanes: View {
                 embeddedInOperationsDialog: true,
                 embeddedRunTrigger: state.embeddedRunTrigger,
                 onRun: state.captureMappingRequest(_:),
-                onRunnerAvailabilityChange: state.updateEmbeddedReadiness(_:)
+                onRunnerAvailabilityChange: readinessHandler(for: state.selectedToolID)
             )
             .id(state.selectedToolID.rawValue)
         case .spades, .megahit, .skesa, .flye, .hifiasm:
@@ -27,7 +27,7 @@ struct FASTQOperationToolPanes: View {
                 embeddedInOperationsDialog: true,
                 embeddedRunTrigger: state.embeddedRunTrigger,
                 onRun: state.captureAssemblyRequest(_:),
-                onRunnerAvailabilityChange: state.updateEmbeddedReadiness(_:)
+                onRunnerAvailabilityChange: readinessHandler(for: state.selectedToolID)
             )
             .id(state.selectedToolID.rawValue)
         case .kraken2:
@@ -36,7 +36,7 @@ struct FASTQOperationToolPanes: View {
                 embeddedInOperationsDialog: true,
                 embeddedRunTrigger: state.embeddedRunTrigger,
                 onRun: state.captureClassificationConfigs(_:),
-                onRunnerAvailabilityChange: state.updateEmbeddedReadiness(_:)
+                onRunnerAvailabilityChange: readinessHandler(for: state.selectedToolID)
             )
         case .esViritu:
             EsVirituWizardSheet(
@@ -44,7 +44,7 @@ struct FASTQOperationToolPanes: View {
                 embeddedInOperationsDialog: true,
                 embeddedRunTrigger: state.embeddedRunTrigger,
                 onRun: state.captureEsVirituConfigs(_:),
-                onRunnerAvailabilityChange: state.updateEmbeddedReadiness(_:)
+                onRunnerAvailabilityChange: readinessHandler(for: state.selectedToolID)
             )
         case .taxTriage:
             TaxTriageWizardSheet(
@@ -52,10 +52,16 @@ struct FASTQOperationToolPanes: View {
                 embeddedInOperationsDialog: true,
                 embeddedRunTrigger: state.embeddedRunTrigger,
                 onRun: state.captureTaxTriageConfig(_:),
-                onRunnerAvailabilityChange: state.updateEmbeddedReadiness(_:)
+                onRunnerAvailabilityChange: readinessHandler(for: state.selectedToolID)
             )
         default:
             derivativePane
+        }
+    }
+
+    private func readinessHandler(for toolID: FASTQOperationToolID) -> (Bool) -> Void {
+        { ready in
+            state.updateEmbeddedReadiness(ready, for: toolID)
         }
     }
 

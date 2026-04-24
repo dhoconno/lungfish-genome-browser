@@ -984,9 +984,11 @@ final class TaxTriagePipelineTests: XCTestCase {
         )
         XCTAssertEqual(environment["NXF_HOME"], FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".nextflow").path)
+        let pathComponents = environment["PATH"]?.split(separator: ":").map(String.init) ?? []
+        XCTAssertTrue(pathComponents.contains(condaRoot.appendingPathComponent("bin").path))
         XCTAssertTrue(
-            environment["PATH"]?.contains("/opt/homebrew/bin") == true,
-            "PATH should retain Docker-friendly system locations"
+            pathComponents.contains("/usr/local/bin"),
+            "PATH should include Docker-friendly system locations without depending on host-specific Homebrew paths"
         )
     }
 
@@ -1002,9 +1004,11 @@ final class TaxTriagePipelineTests: XCTestCase {
             environment["NXF_HOME"],
             FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".nextflow").path
         )
+        let pathComponents = environment["PATH"]?.split(separator: ":").map(String.init) ?? []
+        XCTAssertTrue(pathComponents.contains(condaRoot.appendingPathComponent("bin").path))
         XCTAssertTrue(
-            environment["PATH"]?.contains("/opt/homebrew/bin") == true,
-            "PATH should retain Docker-friendly system locations"
+            pathComponents.contains("/usr/local/bin"),
+            "PATH should include Docker-friendly system locations without depending on host-specific Homebrew paths"
         )
     }
 

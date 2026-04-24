@@ -323,7 +323,7 @@ final class PluginManagerViewModel {
                 handleError(error, context: "\(reinstall ? "reinstalling" : "installing") '\(pack.name)'")
             }
             refreshInstalled()
-            refreshPackStatuses()
+            await loadPackStatuses()
             if didSucceed {
                 postManagedResourcesDidChange()
             }

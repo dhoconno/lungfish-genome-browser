@@ -142,6 +142,44 @@ public enum FASTQBatchImporter {
         return canonical
     }
 
+    public static func persistedSequencingPlatform(
+        for platform: LungfishWorkflow.SequencingPlatform
+    ) -> LungfishIO.SequencingPlatform? {
+        switch platform {
+        case .illumina:
+            return .illumina
+        case .ont:
+            return .oxfordNanopore
+        case .pacbio:
+            return .pacbio
+        case .ultima:
+            return .ultima
+        }
+    }
+
+    public static func persistedAssemblyReadType(
+        for platform: LungfishWorkflow.SequencingPlatform
+    ) -> FASTQAssemblyReadType? {
+        switch platform {
+        case .illumina:
+            return .illuminaShortReads
+        case .ont:
+            return .ontReads
+        case .pacbio, .ultima:
+            return nil
+        }
+    }
+
+    public static func applyConfirmedPlatformMetadata(
+        to metadata: inout PersistedFASTQMetadata,
+        platform: LungfishWorkflow.SequencingPlatform
+    ) {
+        metadata.sequencingPlatform = persistedSequencingPlatform(for: platform)
+        if let readType = persistedAssemblyReadType(for: platform) {
+            metadata.assemblyReadType = readType
+        }
+    }
+
     // MARK: - Pair Detection
 
     /// Scans `directory` for `.fastq.gz`/`.fq.gz` files and groups them into pairs.
@@ -695,6 +733,7 @@ public enum FASTQBatchImporter {
             )
             var metadata = PersistedFASTQMetadata()
             metadata.ingestion = ingestion
+            applyConfirmedPlatformMetadata(to: &metadata, platform: config.platform)
             if let recipe = config.newRecipe, !recipeStepResults.isEmpty {
                 metadata.ingestion?.recipeApplied = RecipeAppliedInfo(
                     recipeID: recipe.id,

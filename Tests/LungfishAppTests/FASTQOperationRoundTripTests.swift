@@ -143,11 +143,7 @@ final class FASTQOperationRoundTripTests: XCTestCase {
             bundleURL: derivedURL, tempDirectory: outDir, progress: nil
         )
         let records = try await FASTQOperationTestHelper.loadFASTQRecords(from: matURL)
-        // seqkit sample -n is approximate; accept a small tolerance around the target
-        XCTAssertGreaterThanOrEqual(records.count, 15,
-            "subsampleCount(20) should produce at least 15 reads (seqkit sample is approximate)")
-        XCTAssertLessThanOrEqual(records.count, 25,
-            "subsampleCount(20) should produce at most 25 reads (seqkit sample is approximate)")
+        XCTAssertEqual(records.count, 20, "subsampleCount(20) should produce exactly 20 reads")
     }
 
     func testSubsampleProportionRoundTrip() async throws {

@@ -1625,10 +1625,10 @@ public actor FASTQDerivativeService {
             } else {
                 let result = try await runner.run(
                     .seqkit,
-                    arguments: ["sample", "-n", String(count), "-s", String(seed), sourceFASTQ.path, "-o", outputFASTQ.path]
+                    arguments: ["sample2", "-n", String(count), "-2", "-s", String(seed), sourceFASTQ.path, "-o", outputFASTQ.path]
                 )
                 guard result.isSuccess else {
-                    throw FASTQDerivativeError.invalidOperation("seqkit sample failed: \(result.stderr)")
+                    throw FASTQDerivativeError.invalidOperation("seqkit sample2 failed: \(result.stderr)")
                 }
             }
             return FASTQDerivativeOperation(

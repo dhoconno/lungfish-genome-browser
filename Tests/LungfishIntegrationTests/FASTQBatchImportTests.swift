@@ -256,6 +256,24 @@ final class FASTQBatchImportTests: XCTestCase {
         )
     }
 
+    func testConfirmedONTPlatformPersistsPortableSidecarReadType() {
+        var metadata = PersistedFASTQMetadata()
+
+        FASTQBatchImporter.applyConfirmedPlatformMetadata(to: &metadata, platform: .ont)
+
+        XCTAssertEqual(metadata.sequencingPlatform, .oxfordNanopore)
+        XCTAssertEqual(metadata.assemblyReadType, .ontReads)
+    }
+
+    func testConfirmedPacBioPlatformDoesNotPromoteGenericReadsToHiFi() {
+        var metadata = PersistedFASTQMetadata()
+
+        FASTQBatchImporter.applyConfirmedPlatformMetadata(to: &metadata, platform: .pacbio)
+
+        XCTAssertEqual(metadata.sequencingPlatform, .pacbio)
+        XCTAssertNil(metadata.assemblyReadType)
+    }
+
     // MARK: - Recipe Resolution
 
     func testResolveKnownRecipes() throws {

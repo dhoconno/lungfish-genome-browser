@@ -2745,6 +2745,9 @@ public class DatabaseBrowserViewModel: ObservableObject {
                         metadata.downloadDate = Date()
                         metadata.downloadSource = downloadSource
                         metadata.sequencingPlatform = confirmedPlatform
+                        if let readType = FASTQAssemblyReadType(sequencingPlatform: confirmedPlatform) {
+                            metadata.assemblyReadType = readType
+                        }
                         FASTQMetadataStore.save(metadata, for: fastqURL)
                     }
 

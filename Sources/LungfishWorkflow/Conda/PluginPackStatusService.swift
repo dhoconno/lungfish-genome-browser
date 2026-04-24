@@ -143,6 +143,12 @@ public enum PluginPackStatusServiceError: Swift.Error, LocalizedError, Equatable
 }
 
 public actor PluginPackStatusService: PluginPackStatusProviding {
+    private static let smokeTestMaxAttempts = 3
+    private static let smokeTestRetryDelayNanoseconds: [UInt64] = [
+        250_000_000,
+        750_000_000,
+    ]
+
     private struct CachedPackStatus {
         let generation: Int
         let timestamp: Date
@@ -157,6 +163,12 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
 
     private struct PackStatusFingerprint: Codable, Equatable {
         let components: [String]
+    }
+
+    private struct CondaMetaPackage: Decodable {
+        let name: String?
+        let version: String?
+        let subdir: String?
     }
 
     private struct PersistedPackStatusSnapshot: Codable {
@@ -419,12 +431,21 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
             installedEnvironments: Set(installTargets.map(\.requirement.environment))
         )
         await invalidateVisibleStatusesCache()
+        let verifiedStatus = await computeStatus(for: pack)
+        let verifiedFingerprint = await currentFingerprint(for: pack)
+        storePackStatus(
+            verifiedStatus,
+            fingerprint: verifiedFingerprint,
+            forGeneration: cacheGeneration
+        )
         progress?(PluginPackInstallProgress(
             requirementID: nil,
             requirementDisplayName: nil,
             overallFraction: 1.0,
             itemFraction: 1.0,
-            message: "\(pack.name) ready"
+            message: verifiedStatus.state == .ready
+                ? "\(pack.name) ready"
+                : (verifiedStatus.failureMessage ?? "\(pack.name) installed; verification pending")
         ))
     }
 
@@ -443,6 +464,10 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
         return pack.toolRequirements.compactMap { requirement in
             guard let toolStatus = toolStatuses[requirement.id] else {
                 return PlannedInstallTarget(requirement: requirement, reinstall: requestedReinstall)
+            }
+
+            if requestedReinstall, requirement.managedDatabaseID == nil {
+                return PlannedInstallTarget(requirement: requirement, reinstall: true)
             }
 
             guard !toolStatus.isReady else { return nil }
@@ -802,8 +827,14 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
             }
         }
 
+        let packageMetadataFailure = missingExecutables.isEmpty
+            ? packageMetadataFailure(for: requirement, envURL: envURL)
+            : nil
+
         let smokeTestFailure: String?
-        if missingExecutables.isEmpty && bootstrapReady, let smokeTest = requirement.smokeTest {
+        if let packageMetadataFailure {
+            smokeTestFailure = packageMetadataFailure
+        } else if missingExecutables.isEmpty && bootstrapReady, let smokeTest = requirement.smokeTest {
             smokeTestFailure = await runSmokeTest(
                 smokeTest,
                 for: requirement
@@ -821,6 +852,69 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
         )
     }
 
+    private func packageMetadataFailure(
+        for requirement: PackToolRequirement,
+        envURL: URL
+    ) -> String? {
+        guard let requiredVersion = requirement.version else { return nil }
+        let requiredPackageNames = Set(requiredPackageNames(for: requirement))
+        guard !requiredPackageNames.isEmpty else { return nil }
+
+        let condaMetaURL = envURL.appendingPathComponent("conda-meta", isDirectory: true)
+        guard let packageMetadataURLs = try? FileManager.default.contentsOfDirectory(
+            at: condaMetaURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
+        }
+
+        for packageMetadataURL in packageMetadataURLs where packageMetadataURL.pathExtension == "json" {
+            guard let data = try? Data(contentsOf: packageMetadataURL),
+                  let package = try? JSONDecoder().decode(CondaMetaPackage.self, from: data),
+                  let packageName = package.name,
+                  requiredPackageNames.contains(packageName) else {
+                continue
+            }
+
+            if let version = package.version, version != requiredVersion {
+                return "\(requirement.displayName) is version \(version), but Lungfish requires \(requiredVersion). Reinstall this tool."
+            }
+
+            if let subdir = package.subdir, !subdir.isEmpty, !packageSubdirIsCompatible(subdir) {
+                return "\(requirement.displayName) was installed for \(subdir), which is not compatible with this Mac. Reinstall this tool."
+            }
+        }
+
+        return nil
+    }
+
+    private func requiredPackageNames(for requirement: PackToolRequirement) -> [String] {
+        requirement.installPackages.compactMap { packageName(fromPackageSpec: $0) }
+    }
+
+    private func packageName(fromPackageSpec packageSpec: String) -> String? {
+        var spec = packageSpec.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let channelRange = spec.range(of: "::") {
+            spec = String(spec[channelRange.upperBound...])
+        }
+        let name = spec.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: true)
+            .first
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return name?.isEmpty == false ? name : nil
+    }
+
+    private func packageSubdirIsCompatible(_ subdir: String) -> Bool {
+        #if arch(arm64)
+        return subdir == "osx-arm64" || subdir == "noarch"
+        #elseif arch(x86_64)
+        return subdir == "osx-64" || subdir == "noarch"
+        #else
+        return true
+        #endif
+    }
+
     private func unavailableToolStatuses(for pack: PluginPack, root: URL) -> [PackToolStatus] {
         pack.toolRequirements.map { requirement in
             PackToolStatus(
@@ -834,6 +928,40 @@ public actor PluginPackStatusService: PluginPackStatusProviding {
     }
 
     private func runSmokeTest(
+        _ smokeTest: PackToolSmokeTest,
+        for requirement: PackToolRequirement
+    ) async -> String? {
+        var lastFailure: String?
+
+        for attemptIndex in 0..<Self.smokeTestMaxAttempts {
+            if Task.isCancelled { return lastFailure }
+
+            let failure = await runSmokeTestOnce(smokeTest, for: requirement)
+            guard let failure else {
+                if attemptIndex > 0 {
+                    logger.info(
+                        "Smoke test for '\(requirement.displayName, privacy: .public)' passed after \(attemptIndex + 1, privacy: .public) attempts"
+                    )
+                }
+                return nil
+            }
+
+            lastFailure = failure
+            guard attemptIndex < Self.smokeTestMaxAttempts - 1 else { break }
+
+            logger.warning(
+                "Smoke test for '\(requirement.displayName, privacy: .public)' failed on attempt \(attemptIndex + 1, privacy: .public); retrying: \(failure, privacy: .public)"
+            )
+            let delay = Self.smokeTestRetryDelayNanoseconds[
+                min(attemptIndex, Self.smokeTestRetryDelayNanoseconds.count - 1)
+            ]
+            try? await Task.sleep(nanoseconds: delay)
+        }
+
+        return lastFailure
+    }
+
+    private func runSmokeTestOnce(
         _ smokeTest: PackToolSmokeTest,
         for requirement: PackToolRequirement
     ) async -> String? {

@@ -18,7 +18,8 @@ struct MappingCompatibilityPresentation {
         detectedSequenceFormat: SequenceFormat?,
         detectedReadClass: MappingReadClass?,
         mixedReadClasses: Bool,
-        mixedSequenceFormats: Bool
+        mixedSequenceFormats: Bool,
+        mixesDetectedAndUnclassifiedReadClasses: Bool = false
     ) -> MappingCompatibilityPresentation {
         guard hasInputs else {
             return .init(message: "Select at least one sequence dataset.", color: .secondary, isReady: false)
@@ -36,6 +37,13 @@ struct MappingCompatibilityPresentation {
         if mixedReadClasses {
             return .init(
                 message: "Selected FASTQ inputs mix incompatible read classes. Select one read class per mapping run.",
+                color: Color.lungfishOrangeFallback,
+                isReady: false
+            )
+        }
+        if mixesDetectedAndUnclassifiedReadClasses {
+            return .init(
+                message: "Selected FASTQ inputs mix classified and unclassified read types. Re-import or edit the read type metadata so every selected FASTQ has the same read type.",
                 color: Color.lungfishOrangeFallback,
                 isReady: false
             )
@@ -59,10 +67,13 @@ struct MappingCompatibilityPresentation {
                 return .init(message: message, color: Color.lungfishOrangeFallback, isReady: false)
             }
         }
+        if let compatibility, case .blocked(let message) = compatibility.state {
+            return .init(message: message, color: Color.lungfishOrangeFallback, isReady: false)
+        }
         guard let detectedReadClass else {
             return .init(
-                message: "Inspecting read type from the selected FASTQ inputs.",
-                color: .secondary,
+                message: "Unable to detect a supported read class from the selected FASTQ inputs.",
+                color: Color.lungfishOrangeFallback,
                 isReady: false
             )
         }

@@ -1,4 +1,5 @@
 import XCTest
+@testable import LungfishIO
 @testable import LungfishCore
 @testable import LungfishWorkflow
 
@@ -15,6 +16,22 @@ final class ManagedMappingPipelineTests: XCTestCase {
         let source = try String(contentsOf: sourceURL, encoding: .utf8)
 
         XCTAssertTrue(source.contains("stageSAMSafeFASTAInputsIfNeeded"))
+    }
+
+    func testMapperPreflightChecksToolInRequestedEnvironment() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = root
+            .appendingPathComponent("Sources/LungfishWorkflow/Mapping/ManagedMappingPipeline.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        XCTAssertTrue(
+            source.contains("toolPath(\n                    name: request.tool.executableName,\n                    environment: request.tool.environmentName")
+        )
+        XCTAssertFalse(source.contains("isToolInstalled(request.tool.executableName)"))
     }
 
     func testBuildsBwaMem2CommandForShortReads() throws {
@@ -227,6 +244,56 @@ final class ManagedMappingPipelineTests: XCTestCase {
                 return XCTFail("Expected incompatibleSelection error, got \(error)")
             }
             XCTAssertEqual(message, "Selected FASTQ inputs mix incompatible read classes. Select one read class per mapping run.")
+        }
+    }
+
+    func testValidateCompatibilityRejectsMixedClassifiedAndUnclassifiedFASTQInputs() throws {
+        let fixture = try MappingFASTQFixture()
+        defer { fixture.cleanup() }
+
+        let knownFASTQ = try fixture.writeFASTQ(
+            name: "known.fastq",
+            header: "@2891_MCP53H_1",
+            sequenceLength: 1_200
+        )
+        let unknownFASTQ = try fixture.writeFASTQ(
+            name: "unknown.fastq",
+            header: "@2891_MCP53H_2",
+            sequenceLength: 1_100
+        )
+        let knownBundleURL = try fixture.wrapInBundle(
+            fastqURL: knownFASTQ,
+            bundleName: "known-ont"
+        )
+        let unknownBundleURL = try fixture.wrapInBundle(
+            fastqURL: unknownFASTQ,
+            bundleName: "unknown"
+        )
+        let knownPrimaryURL = try XCTUnwrap(FASTQBundle.resolvePrimaryFASTQURL(for: knownBundleURL))
+        FASTQMetadataStore.save(
+            PersistedFASTQMetadata(assemblyReadType: .ontReads),
+            for: knownPrimaryURL
+        )
+
+        let request = MappingRunRequest(
+            tool: .minimap2,
+            modeID: MappingMode.minimap2MapONT.id,
+            inputFASTQURLs: [knownBundleURL, unknownBundleURL],
+            referenceFASTAURL: fixture.referenceURL,
+            outputDirectory: fixture.root.appendingPathComponent("out"),
+            sampleName: "sample",
+            pairedEnd: false,
+            threads: 4
+        )
+
+        XCTAssertThrowsError(try ManagedMappingPipeline.validateCompatibility(for: request)) { error in
+            guard case .incompatibleSelection(let message) = error as? ManagedMappingPipelineError else {
+                return XCTFail("Expected incompatibleSelection error, got \(error)")
+            }
+            XCTAssertEqual(
+                message,
+                "Selected FASTQ inputs mix classified and unclassified read types. Re-import or edit the read type metadata so every selected FASTQ has the same read type."
+            )
         }
     }
 

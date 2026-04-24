@@ -29,6 +29,17 @@ public enum FASTQAssemblyReadType: String, Codable, Sendable, CaseIterable {
             return "PacBio HiFi/CCS"
         }
     }
+
+    public init?(sequencingPlatform: SequencingPlatform) {
+        switch sequencingPlatform {
+        case .illumina:
+            self = .illuminaShortReads
+        case .oxfordNanopore:
+            self = .ontReads
+        default:
+            return nil
+        }
+    }
 }
 
 // MARK: - Persisted FASTQ Metadata

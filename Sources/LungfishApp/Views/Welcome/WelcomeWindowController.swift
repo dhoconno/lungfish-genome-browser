@@ -195,6 +195,10 @@ final class WelcomeViewModel: ObservableObject {
         )
     }
 
+    deinit {
+        notificationCenter.removeObserver(self)
+    }
+
     @objc private func handleManagedResourcesDidChange(_ notification: Notification) {
         Task { @MainActor in
             await refreshSetup()
@@ -332,6 +336,7 @@ final class WelcomeViewModel: ObservableObject {
                 requiredSetupItemProgress = [:]
                 requiredSetupProgress = nil
                 requiredSetupProgressMessage = nil
+                notificationCenter.post(name: .managedResourcesDidChange, object: nil)
             } catch {
                 setupErrorMessage = error.localizedDescription
             }

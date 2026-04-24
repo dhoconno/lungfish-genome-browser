@@ -497,6 +497,25 @@ final class FASTQOperationDialogRoutingTests: XCTestCase {
         }
     }
 
+    func testStaleEmbeddedReadinessCallbackCannotAffectNewlySelectedTool() {
+        let state = FASTQOperationDialogState(
+            initialCategory: .assembly,
+            selectedInputURLs: [URL(fileURLWithPath: "/tmp/sample.fastq")]
+        )
+        let originalAssemblyTool = state.selectedToolID
+
+        state.selectTool(.minimap2)
+        XCTAssertEqual(state.readinessText, "Complete the mapping settings to continue.")
+        XCTAssertFalse(state.isRunEnabled)
+
+        state.updateEmbeddedReadiness(true, for: originalAssemblyTool)
+        XCTAssertEqual(state.readinessText, "Complete the mapping settings to continue.")
+        XCTAssertFalse(state.isRunEnabled)
+
+        state.updateEmbeddedReadiness(true, for: .minimap2)
+        XCTAssertTrue(state.isRunEnabled)
+    }
+
     func testCaptureMappingRequestStoresSharedMappingRequest() {
         let sampleFASTQ = illuminaFASTQFixtureURL
         let state = FASTQOperationDialogState(

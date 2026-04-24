@@ -115,7 +115,7 @@ struct FastqSubsampleSubcommand: AsyncParsableCommand {
             guard count > 0 else {
                 throw ValidationError("Count must be > 0")
             }
-            args += ["-n", String(count)]
+            args = ["sample2", "-n", String(count), "-2"]
         } else {
             throw ValidationError("Specify --proportion or --count")
         }
@@ -123,7 +123,8 @@ struct FastqSubsampleSubcommand: AsyncParsableCommand {
 
         let result = try await runner.run(.seqkit, arguments: args)
         guard result.isSuccess else {
-            throw CLIError.conversionFailed(reason: "seqkit sample failed: \(result.stderr)")
+            let command = count == nil ? "seqkit sample" : "seqkit sample2"
+            throw CLIError.conversionFailed(reason: "\(command) failed: \(result.stderr)")
         }
         FileHandle.standardError.write(Data("Subsampled reads written to \(output.output)\n".utf8))
     }

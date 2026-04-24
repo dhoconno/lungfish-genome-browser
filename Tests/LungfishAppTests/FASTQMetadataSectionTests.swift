@@ -122,6 +122,27 @@ final class FASTQMetadataSectionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.assemblyReadType, .ontReads)
     }
 
+    func testLoadPromotesPersistedSequencingPlatformToVisibleReadType() throws {
+        let bundleDir = tmpDir.appendingPathComponent("SequencingPlatformReadType.lungfishfastq")
+        try FileManager.default.createDirectory(at: bundleDir, withIntermediateDirectories: true)
+        let fastqURL = bundleDir.appendingPathComponent("reads.fastq")
+        try "@2891_MCP53H_1\nACGT\n+\nIIII\n".write(
+            to: fastqURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        FASTQMetadataStore.save(
+            PersistedFASTQMetadata(sequencingPlatform: .oxfordNanopore),
+            for: fastqURL
+        )
+
+        let vm = FASTQMetadataSectionViewModel()
+        vm.load(from: bundleDir)
+
+        XCTAssertEqual(vm.assemblyReadType, .ontReads)
+        XCTAssertFalse(vm.hasUnsavedChanges)
+    }
+
     func testSaveCallsOnSaveCallback() throws {
         let bundleDir = tmpDir.appendingPathComponent("Callback.lungfishfastq")
         try FileManager.default.createDirectory(at: bundleDir, withIntermediateDirectories: true)

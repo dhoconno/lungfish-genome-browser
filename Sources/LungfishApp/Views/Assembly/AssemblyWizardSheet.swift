@@ -214,6 +214,7 @@ struct AssemblyWizardSheet: View {
         guard outputDirectory != nil else { return false }
         guard !projectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         guard !requiresManualReadTypeConfirmation || hasConfirmedManualReadType else { return false }
+        guard compatibilityPresentation.state == .ready else { return false }
         return configurationBlockingMessage == nil
     }
 
@@ -232,6 +233,9 @@ struct AssemblyWizardSheet: View {
         }
         if let configurationBlockingMessage {
             return configurationBlockingMessage
+        }
+        if compatibilityPresentation.state != .ready {
+            return compatibilityPresentation.message
         }
         return nil
     }

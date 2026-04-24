@@ -115,7 +115,12 @@ public final class FASTQMetadataSectionViewModel {
 
         lastSavedMetadata = metadata
         primaryFASTQURL = FASTQBundle.resolvePrimaryFASTQURL(for: bundleURL)
-        assemblyReadType = primaryFASTQURL.flatMap { FASTQMetadataStore.load(for: $0)?.assemblyReadType }
+        if let sidecar = primaryFASTQURL.flatMap({ FASTQMetadataStore.load(for: $0) }) {
+            assemblyReadType = sidecar.assemblyReadType
+                ?? sidecar.sequencingPlatform.flatMap(FASTQAssemblyReadType.init(sequencingPlatform:))
+        } else {
+            assemblyReadType = nil
+        }
         lastSavedAssemblyReadType = assemblyReadType
         attachmentManager = BundleAttachmentManager(bundleURL: bundleURL)
         attachmentFilenames = attachmentManager?.listAttachments() ?? []

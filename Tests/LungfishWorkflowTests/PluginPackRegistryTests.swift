@@ -159,13 +159,21 @@ final class PluginPackRegistryTests: XCTestCase {
         XCTAssertEqual(hifiasm.sourceURL, "https://github.com/chhylp123/hifiasm")
     }
 
-    func testRequiredSetupPackUsesLighterSnakemakeSmokeProbe() {
+    func testRequiredSetupPackUsesBoundedSnakemakeVersionSmokeProbe() {
         let pack = PluginPack.requiredSetupPack
 
         XCTAssertEqual(
             pack.toolRequirements.first(where: { $0.environment == "snakemake" })?.smokeTest?.arguments,
-            ["--help"]
+            ["--version"]
         )
+    }
+
+    func testRequiredSetupPackRequiresSeqkitSample2ForExactSubsampling() {
+        let pack = PluginPack.requiredSetupPack
+        let smokeTest = pack.toolRequirements.first(where: { $0.environment == "seqkit" })?.smokeTest
+
+        XCTAssertEqual(smokeTest?.arguments, ["sample2", "--help"])
+        XCTAssertEqual(smokeTest?.requiredOutputSubstring, "sample sequences by number or proportion")
     }
 
     func testRequiredSetupPackUsesUsageSmokeProbeForUcscTools() {

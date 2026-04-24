@@ -52,7 +52,21 @@ public enum MappingReadClass: String, CaseIterable, Codable, Sendable {
         guard let fastqURL = resolveFASTQURL(forInputURL: url) else {
             return nil
         }
-        return detect(fromFASTQ: fastqURL)
+
+        let persistedMetadata = FASTQMetadataStore.load(for: fastqURL)
+        if let explicitReadType = persistedMetadata?.assemblyReadType.flatMap(Self.init(persistedReadType:)) {
+            return explicitReadType
+        }
+
+        if let detected = detect(fromFASTQ: fastqURL) {
+            return detected
+        }
+
+        if let platform = persistedMetadata?.sequencingPlatform {
+            return detect(from: platform)
+        }
+
+        return nil
     }
 
     public static func detect(fromFASTQ url: URL) -> Self? {
@@ -66,7 +80,7 @@ public enum MappingReadClass: String, CaseIterable, Codable, Sendable {
         let stripped = header.hasPrefix("@") ? String(header.dropFirst()) : header
         let lowercased = stripped.lowercased()
 
-        if lowercased.contains("/ccs") || lowercased.contains("ccs") {
+        if lowercased.contains("/ccs") {
             return .pacBioHiFi
         }
 
@@ -83,6 +97,30 @@ public enum MappingReadClass: String, CaseIterable, Codable, Sendable {
             return .pacBioCLR
         default:
             return nil
+        }
+    }
+
+    public static func detect(from platform: LungfishIO.SequencingPlatform) -> Self? {
+        switch platform {
+        case .illumina:
+            return .illuminaShortReads
+        case .oxfordNanopore:
+            return .ontReads
+        case .pacbio:
+            return .pacBioCLR
+        default:
+            return nil
+        }
+    }
+
+    public init?(persistedReadType: FASTQAssemblyReadType) {
+        switch persistedReadType {
+        case .illuminaShortReads:
+            self = .illuminaShortReads
+        case .ontReads:
+            self = .ontReads
+        case .pacBioHiFi:
+            self = .pacBioHiFi
         }
     }
 
@@ -195,5 +233,44 @@ public enum MappingMode: String, CaseIterable, Codable, Sendable, Identifiable {
 
     public static func availableModes(for tool: MappingTool) -> [MappingMode] {
         allCases.filter { $0.isValid(for: tool) }
+    }
+
+    public static func preferredMode(
+        for tool: MappingTool,
+        readClass: MappingReadClass?,
+        inputFormat: SequenceFormat = .fastq
+    ) -> MappingMode? {
+        let availableModes = availableModes(for: tool)
+
+        if inputFormat == .fasta {
+            return availableModes.first
+        }
+
+        guard let readClass else {
+            return availableModes.first
+        }
+
+        switch tool {
+        case .minimap2:
+            switch readClass {
+            case .illuminaShortReads:
+                return .defaultShortRead
+            case .ontReads:
+                return .minimap2MapONT
+            case .pacBioHiFi:
+                return .minimap2MapHiFi
+            case .pacBioCLR:
+                return .minimap2MapPB
+            }
+        case .bwaMem2, .bowtie2:
+            return readClass == .illuminaShortReads ? .defaultShortRead : nil
+        case .bbmap:
+            switch readClass {
+            case .pacBioHiFi, .pacBioCLR:
+                return .bbmapPacBio
+            case .illuminaShortReads, .ontReads:
+                return .bbmapStandard
+            }
+        }
     }
 }
