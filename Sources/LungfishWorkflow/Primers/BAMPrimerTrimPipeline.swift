@@ -114,6 +114,14 @@ extension BAMPrimerTrimPipeline {
         let trimmedPrefix = workDir.appendingPathComponent("trimmed.unsorted")
         let trimmedUnsortedBAM = trimmedPrefix.appendingPathExtension("bam")
 
+        // Single cleanup for intermediates; runs on every exit path (success or throw).
+        defer {
+            try? FileManager.default.removeItem(at: trimmedUnsortedBAM)
+            if resolved.isRewritten {
+                try? FileManager.default.removeItem(at: resolved.bedURL)
+            }
+        }
+
         progress(0.1, "Running ivar trim")
         let ivarArgs = buildIvarTrimArgv(
             bedPath: resolved.bedURL.path,
@@ -132,7 +140,6 @@ extension BAMPrimerTrimPipeline {
             timeout: 3_600
         )
         guard ivarResult.isSuccess else {
-            if resolved.isRewritten { try? FileManager.default.removeItem(at: resolved.bedURL) }
             throw PipelineError.ivarTrimFailed(stderr: ivarResult.stderr)
         }
 
@@ -144,8 +151,9 @@ extension BAMPrimerTrimPipeline {
             timeout: 3_600
         )
         guard sortResult.isSuccess else {
-            try? FileManager.default.removeItem(at: trimmedUnsortedBAM)
-            if resolved.isRewritten { try? FileManager.default.removeItem(at: resolved.bedURL) }
+            // samtools sort may have written a truncated BAM; remove it to uphold
+            // the pipeline's all-or-nothing output contract.
+            try? FileManager.default.removeItem(at: request.outputBAMURL)
             throw PipelineError.samtoolsSortFailed(stderr: sortResult.stderr)
         }
 
@@ -157,18 +165,15 @@ extension BAMPrimerTrimPipeline {
             timeout: 600
         )
         guard indexResult.isSuccess else {
-            try? FileManager.default.removeItem(at: trimmedUnsortedBAM)
-            if resolved.isRewritten { try? FileManager.default.removeItem(at: resolved.bedURL) }
+            // Remove the sorted BAM and any partial BAI so the caller cannot
+            // observe an un-indexed or half-indexed output.
+            try? FileManager.default.removeItem(at: request.outputBAMURL)
+            try? FileManager.default.removeItem(at: URL(fileURLWithPath: request.outputBAMURL.path + ".bai"))
             throw PipelineError.samtoolsIndexFailed(stderr: indexResult.stderr)
         }
 
-        // Cleanup intermediates (best-effort; non-fatal if cleanup fails).
-        try? FileManager.default.removeItem(at: trimmedUnsortedBAM)
-        if resolved.isRewritten {
-            try? FileManager.default.removeItem(at: resolved.bedURL)
-        }
-
         let bamIndexURL = URL(fileURLWithPath: request.outputBAMURL.path + ".bai")
+        let ivarVersion = await runner.getToolVersion(.ivar) ?? "unknown"
         let provenance = BAMPrimerTrimProvenance(
             operation: "primer-trim",
             primerScheme: .init(
@@ -178,7 +183,7 @@ extension BAMPrimerTrimPipeline {
                 canonicalAccession: request.primerSchemeBundle.manifest.canonicalAccession
             ),
             sourceBAMRelativePath: request.sourceBAMURL.lastPathComponent,
-            ivarVersion: "unknown",
+            ivarVersion: ivarVersion,
             ivarTrimArgs: ivarArgs,
             timestamp: Date()
         )

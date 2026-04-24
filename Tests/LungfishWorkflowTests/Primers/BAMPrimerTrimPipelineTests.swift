@@ -28,6 +28,11 @@ final class BAMPrimerTrimPipelineTests: XCTestCase {
     }
 
     func testEndToEndPipelineAgainstSarsCov2Fixture() async throws {
+        // This test validates orchestration: argv shape, tool dispatch, success/failure
+        // handling, and sidecar serialization. It does NOT validate primer-trim
+        // correctness — that's iVar's contract. Strengthening the assertions (e.g.,
+        // exact read-count deltas) would couple the test to the synthetic primer
+        // coordinates and fixture BAM content, making it flaky on fixture changes.
         let runner = NativeToolRunner()
 
         // Load the integration primer scheme bundle (canonical = MT192765.1,
@@ -75,20 +80,19 @@ final class BAMPrimerTrimPipelineTests: XCTestCase {
                 targetReferenceName: "MT192765.1",
                 runner: runner
             )
-        } catch {
+        } catch let err as NativeToolError {
             // If ivar or samtools is not findable by NativeToolRunner, skip
-            // rather than fail. NativeToolRunner throws toolNotFound when a
-            // managed tool is missing from ~/.lungfish.
-            let msg = String(describing: error)
-            if msg.contains("toolNotFound")
-                || msg.localizedCaseInsensitiveContains("not found")
-                || msg.localizedCaseInsensitiveContains("could not find")
-            {
+            // rather than fail. NativeToolRunner throws toolNotFound /
+            // toolsDirectoryNotFound when a managed tool is missing from
+            // ~/.lungfish.
+            switch err {
+            case .toolNotFound, .toolsDirectoryNotFound:
                 throw XCTSkip(
-                    "ivar/samtools not installed in ~/.lungfish; skipping integration test. Error: \(error)"
+                    "ivar/samtools not installed in ~/.lungfish; skipping integration test. \(err)"
                 )
+            default:
+                throw err
             }
-            throw error
         }
 
         // Assert outputs exist on disk.
@@ -103,6 +107,13 @@ final class BAMPrimerTrimPipelineTests: XCTestCase {
         XCTAssertTrue(
             FileManager.default.fileExists(atPath: result.provenanceURL.path),
             "Provenance sidecar missing at \(result.provenanceURL.path)"
+        )
+
+        // Verify intermediate cleanup (the defer in `run` must remove this).
+        let unsortedBAM = outputDir.appendingPathComponent("trimmed.unsorted.bam")
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: unsortedBAM.path),
+            "Intermediate unsorted BAM should have been cleaned up"
         )
 
         // Assert in-memory provenance content matches expectations.
