@@ -186,7 +186,8 @@ public class SequenceViewerView: NSView {
         bundleOverride: ScrollDirectionPreference?,
         globalPreference: ScrollDirectionPreference
     ) -> ScrollDirectionPreference {
-        bundleOverride ?? globalPreference
+        guard let bundleOverride else { return globalPreference }
+        return BundleBrowserScrollDirectionPreference.viewportDirection(for: bundleOverride)
     }
 
     /// Generation counter for read fetches — prevents stale results from overwriting newer ones

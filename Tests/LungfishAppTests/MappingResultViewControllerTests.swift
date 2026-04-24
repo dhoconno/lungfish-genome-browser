@@ -294,6 +294,71 @@ final class MappingResultViewControllerTests: XCTestCase {
         XCTAssertEqual(vc.testListContainer.frame.width, movedWidth, accuracy: 2)
     }
 
+    func testSidebarLayoutChangesApplyDeterministicPaneOrderAndDefaultExtent() {
+        UserDefaults.standard.set(
+            MappingPanelLayout.detailLeading.rawValue,
+            forKey: MappingPanelLayout.defaultsKey
+        )
+
+        let vc = MappingResultViewController()
+        vc.view.frame = NSRect(x: 0, y: 0, width: 1400, height: 800)
+        vc.configureForTesting(result: makeMappingResult(viewerBundleURL: nil))
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1400, height: 800),
+            styleMask: [.titled, .resizable, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = vc
+        window.setContentSize(NSSize(width: 1400, height: 800))
+        window.layoutIfNeeded()
+        vc.view.layoutSubtreeIfNeeded()
+        vc.viewDidLayout()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        assertMappingLayout(
+            vc,
+            firstPane: vc.testDetailContainer,
+            secondPane: vc.testListContainer,
+            isVertical: true,
+            expectedLeadingFraction: 0.6
+        )
+
+        MappingPanelLayout.listLeading.persist()
+        vc.view.layoutSubtreeIfNeeded()
+
+        assertMappingLayout(
+            vc,
+            firstPane: vc.testListContainer,
+            secondPane: vc.testDetailContainer,
+            isVertical: true,
+            expectedLeadingFraction: 0.4
+        )
+
+        MappingPanelLayout.stacked.persist()
+        vc.view.layoutSubtreeIfNeeded()
+
+        assertMappingLayout(
+            vc,
+            firstPane: vc.testListContainer,
+            secondPane: vc.testDetailContainer,
+            isVertical: false,
+            expectedLeadingFraction: 0.4
+        )
+
+        MappingPanelLayout.listLeading.persist()
+        vc.view.layoutSubtreeIfNeeded()
+
+        assertMappingLayout(
+            vc,
+            firstPane: vc.testListContainer,
+            secondPane: vc.testDetailContainer,
+            isVertical: true,
+            expectedLeadingFraction: 0.4
+        )
+    }
+
     func testTopLevelMappingDisplayLaysOutPanesBeforeReturning() throws {
         let priorLayout = UserDefaults.standard.string(forKey: MappingPanelLayout.defaultsKey)
         defer {
@@ -453,5 +518,33 @@ final class MappingResultViewControllerTests: XCTestCase {
         guard let method = controller.method(for: selector) else { return XCTFail("Missing split resize delegate method") }
         typealias ResizeIMP = @convention(c) (AnyObject, Selector, NSSplitView, NSSize) -> Void
         unsafeBitCast(method, to: ResizeIMP.self)(controller, selector, splitView, oldSize)
+    }
+
+    private func assertMappingLayout(
+        _ controller: MappingResultViewController,
+        firstPane: NSView,
+        secondPane: NSView,
+        isVertical: Bool,
+        expectedLeadingFraction: CGFloat,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let splitView = controller.testSplitView
+        XCTAssertEqual(splitView.isVertical, isVertical, file: file, line: line)
+        XCTAssertTrue(splitView.arrangedSubviews[0] === firstPane, file: file, line: line)
+        XCTAssertTrue(splitView.arrangedSubviews[1] === secondPane, file: file, line: line)
+
+        let totalExtent = isVertical ? splitView.bounds.width : splitView.bounds.height
+        let leadingExtent = isVertical ? firstPane.frame.width : firstPane.frame.height
+        let trailingExtent = isVertical ? secondPane.frame.width : secondPane.frame.height
+        let expectedLeadingExtent = SplitPaneSizing.clampedDividerPosition(
+            proposed: round(totalExtent * expectedLeadingFraction),
+            containerExtent: totalExtent,
+            minimumLeadingExtent: 320,
+            minimumTrailingExtent: 320
+        )
+        XCTAssertEqual(leadingExtent, expectedLeadingExtent, accuracy: 4, file: file, line: line)
+        XCTAssertGreaterThan(leadingExtent, CGFloat(300), file: file, line: line)
+        XCTAssertGreaterThan(trailingExtent, CGFloat(300), file: file, line: line)
     }
 }

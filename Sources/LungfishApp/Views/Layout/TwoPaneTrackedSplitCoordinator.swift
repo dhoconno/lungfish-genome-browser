@@ -160,13 +160,14 @@ final class TwoPaneTrackedSplitCoordinator {
         let currentSecondPane = splitView.arrangedSubviews[1]
         let currentExtent = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
         let orientationChanged = splitView.isVertical != desiredIsVertical
+        let paneOrderChanged = splitView.arrangedSubviews[0] !== desiredFirstPane
+            || splitView.arrangedSubviews[1] !== desiredSecondPane
         let currentFirstExtent = splitView.isVertical ? currentFirstPane.frame.width : currentFirstPane.frame.height
         let currentSecondExtent = max(0, currentExtent - currentFirstExtent)
-        let needsRebuild = orientationChanged
-            || splitView.arrangedSubviews[0] !== desiredFirstPane
-            || splitView.arrangedSubviews[1] !== desiredSecondPane
+        let needsRebuild = orientationChanged || paneOrderChanged
 
         if needsRebuild {
+            splitView.clearRequestedDividerPosition()
             splitView.removeArrangedSubview(currentFirstPane)
             splitView.removeArrangedSubview(currentSecondPane)
             currentFirstPane.removeFromSuperview()
@@ -189,9 +190,9 @@ final class TwoPaneTrackedSplitCoordinator {
         }
 
         let resolvedDefaultLeadingExtent = defaultLeadingExtent ?? round(totalExtent * defaultLeadingFraction)
-        let shouldHonorRequestedExtent = !orientationChanged && didSetInitialSplitPosition && !needsInitialSplitValidation
+        let shouldHonorRequestedExtent = !needsRebuild && didSetInitialSplitPosition && !needsInitialSplitValidation
         let requestedLeadingExtent = shouldHonorRequestedExtent ? splitView.requestedDividerPosition(at: 0) : nil
-        let shouldPreserveCurrentExtent = !orientationChanged && didSetInitialSplitPosition && !needsInitialSplitValidation
+        let shouldPreserveCurrentExtent = !needsRebuild && didSetInitialSplitPosition && !needsInitialSplitValidation
         let leadingExtent = requestedLeadingExtent
             ?? (shouldPreserveCurrentExtent && currentFirstExtent > 0 && currentSecondExtent > 0
                 ? (desiredFirstPane === currentFirstPane ? currentFirstExtent : currentSecondExtent)
@@ -203,7 +204,11 @@ final class TwoPaneTrackedSplitCoordinator {
             minimumLeadingExtent: minimumExtents.leading,
             minimumTrailingExtent: minimumExtents.trailing
         )
+        isSynchronizingTrackedSplitPosition = true
+        defer { isSynchronizingTrackedSplitPosition = false }
         splitView.setPosition(clampedPosition, ofDividerAt: 0)
+        applySplitFrames(in: splitView, leadingExtent: clampedPosition)
+        splitView.recordObservedDividerPosition(clampedPosition)
         didSetInitialSplitPosition = true
         needsInitialSplitValidation = false
         afterApply?()
@@ -297,15 +302,10 @@ final class TwoPaneTrackedSplitCoordinator {
         } else {
             let totalHeight = splitView.bounds.height
             let trailingHeight = max(0, totalHeight - leadingExtent - dividerThickness)
-            firstView.frame = NSRect(
-                x: 0,
-                y: totalHeight - leadingExtent,
-                width: splitView.bounds.width,
-                height: leadingExtent
-            )
+            firstView.frame = NSRect(x: 0, y: 0, width: splitView.bounds.width, height: leadingExtent)
             secondView.frame = NSRect(
                 x: 0,
-                y: 0,
+                y: leadingExtent + dividerThickness,
                 width: splitView.bounds.width,
                 height: trailingHeight
             )

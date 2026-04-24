@@ -87,13 +87,30 @@ final class ViewerRegressionTests: XCTestCase {
         XCTAssertEqual(systemNatural, -36, accuracy: 0.001)
     }
 
-    func testBundleScrollDirectionOverrideTakesPrecedenceOverGlobalPreference() {
+    func testBundleScrollDirectionOverrideFlipsNaturalAndTraditionalLabels() {
         XCTAssertEqual(
             SequenceViewerView.effectiveHorizontalScrollDirectionForTesting(
                 bundleOverride: .traditional,
                 globalPreference: .natural
             ),
+            .natural
+        )
+        XCTAssertEqual(
+            SequenceViewerView.effectiveHorizontalScrollDirectionForTesting(
+                bundleOverride: .natural,
+                globalPreference: .traditional
+            ),
             .traditional
+        )
+    }
+
+    func testBundleScrollDirectionOverrideStillAllowsSystemAndGlobalFallback() {
+        XCTAssertEqual(
+            SequenceViewerView.effectiveHorizontalScrollDirectionForTesting(
+                bundleOverride: .system,
+                globalPreference: .traditional
+            ),
+            .system
         )
         XCTAssertEqual(
             SequenceViewerView.effectiveHorizontalScrollDirectionForTesting(

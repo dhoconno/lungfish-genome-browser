@@ -46,6 +46,17 @@ enum BundleBrowserScrollDirectionPreference {
         defaults.set(preference.rawValue, forKey: defaultsKey)
         notificationCenter.post(name: .bundleBrowserScrollDirectionChanged, object: nil)
     }
+
+    static func viewportDirection(for preference: ScrollDirectionPreference) -> ScrollDirectionPreference {
+        switch preference {
+        case .system:
+            return .system
+        case .natural:
+            return .traditional
+        case .traditional:
+            return .natural
+        }
+    }
 }
 
 extension Notification.Name {
