@@ -34,6 +34,20 @@ DerivedData/
 *.dylib
 /build/
 
+# Local secrets and signing material
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.cer
+*.certSigningRequest
+*.mobileprovision
+*.provisionprofile
+AuthKey_*.p8
+
 # Test data (local only)
 test-data/
 test-genomes/

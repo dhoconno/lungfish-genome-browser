@@ -14,29 +14,28 @@ Release workflow:
    - Stop and fix any release-configuration regressions before building.
 
 2. Run the committed release pipeline.
-   - Canonical, known-working invocation (verified end-to-end on 2026-04-14 against
-     the "Developer ID Application: Pathogenuity LLC (29G3WN2GSA)" certificate):
+   - Use the local release machine's Developer ID Application identity and
+     notarytool Keychain profile. Do not commit Apple IDs, app-specific
+     passwords, Keychain profile names, or private key material.
 
      ```
+     IDENTITY="$(security find-identity -v -p codesigning | awk -F'"' '/Developer ID Application/ {print $2; exit}')"
      bash scripts/release/build-notarized-dmg.sh \
-       --team-id "29G3WN2GSA" \
-       --notary-profile "LungfishNotary" \
-       --signing-identity "62824489A3E3AECF24912838C155A45828269022"
+       --team-id "<TEAMID>" \
+       --notary-profile "<KEYCHAIN_PROFILE_NAME>" \
+       --signing-identity "$IDENTITY"
      ```
 
-     - `--signing-identity` is the SHA-1 fingerprint of the Developer ID
-       Application certificate. It is a public certificate hash, not a secret.
-       Get current fingerprints with `security find-identity -v -p codesigning`
-       and filter for a row whose name starts with `Developer ID Application:`.
+     - `--signing-identity` may be a Developer ID Application certificate common
+       name or SHA-1 fingerprint from the local Keychain.
      - `--team-id` must match the Team ID embedded in that certificate's
-       Common Name (here, `29G3WN2GSA` inside the parenthesized suffix).
+       Common Name inside the parenthesized suffix.
      - `--notary-profile` is the `notarytool store-credentials` Keychain profile
-       name on the release machine; `LungfishNotary` is the configured name.
-       Verify it resolves with
-       `xcrun notarytool history --keychain-profile LungfishNotary`.
+       name on the release machine. Verify it resolves with
+       `xcrun notarytool history --keychain-profile <KEYCHAIN_PROFILE_NAME>`.
      - If the certificate rotates (expiry, revocation, or organization change),
-       update the fingerprint above AND the `Known-good release values` section
-       of `docs/superpowers/specs/2026-04-14-notarized-release-strategy-design.md`.
+       update local release-machine configuration; do not commit private signing
+       material or notary credentials.
    - Preflight checks the script itself performs before building: it verifies
      the signing identity exists in the Keychain and that the notarytool
      profile is usable; both must pass or the script exits 70.
@@ -69,7 +68,7 @@ Release workflow:
      `Invalid`. If the app or DMG submission returns `Invalid`, the subsequent
      `stapler staple` will fail with "Record not found" / error 65. When that
      happens, the next diagnostic step is:
-     `xcrun notarytool log <submission-id> --keychain-profile LungfishNotary`
+     `xcrun notarytool log <submission-id> --keychain-profile <KEYCHAIN_PROFILE_NAME>`
      where `<submission-id>` is the `id` field in
      `build/Release/notary-app-log.json` or `build/Release/notary-dmg-log.json`.
    - If the script fails, report the exact failing command and stderr.

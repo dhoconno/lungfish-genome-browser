@@ -128,42 +128,42 @@ The release script requires explicit command-line inputs for:
 
 This avoids hidden local defaults while still using the already-configured Keychain profile.
 
-## Known-good release values
+## Release-machine values
 
-These values were verified end-to-end on 2026-04-14 (git commit
-`e2751bc0399c7f29009acefe1bf4f2abf5603082`, built version `1.0`) against the
-"Developer ID Application: Pathogenuity LLC (29G3WN2GSA)" certificate installed
-on the release machine's login keychain:
+The release flow requires a locally installed Developer ID Application
+certificate and a `notarytool` Keychain profile on the release machine. Do not
+commit Apple IDs, app-specific passwords, Keychain profile names, or private key
+material.
 
 | Input                | Value                                          | Source of truth                                     |
 |----------------------|------------------------------------------------|-----------------------------------------------------|
-| `--signing-identity` | `62824489A3E3AECF24912838C155A45828269022`     | `security find-identity -v -p codesigning`          |
-| `--team-id`          | `29G3WN2GSA`                                   | Parenthesized suffix in the certificate Common Name |
-| `--notary-profile`   | `LungfishNotary`                               | `notarytool store-credentials` Keychain profile     |
+| `--signing-identity` | `<DEVELOPER_ID_APPLICATION_IDENTITY>`           | `security find-identity -v -p codesigning`          |
+| `--team-id`          | `<TEAMID>`                                     | Parenthesized suffix in the certificate Common Name |
+| `--notary-profile`   | `<KEYCHAIN_PROFILE_NAME>`                      | `notarytool store-credentials` Keychain profile     |
 
 Canonical invocation:
 
 ```
 bash scripts/release/build-notarized-dmg.sh \
-  --team-id "29G3WN2GSA" \
-  --notary-profile "LungfishNotary" \
-  --signing-identity "62824489A3E3AECF24912838C155A45828269022"
+  --team-id "<TEAMID>" \
+  --notary-profile "<KEYCHAIN_PROFILE_NAME>" \
+  --signing-identity "<DEVELOPER_ID_APPLICATION_IDENTITY>"
 ```
 
-The signing identity is a SHA-1 certificate fingerprint; it is a public
-identifier, not a secret. The only secret involved is the notarization
-credential bound to the `LungfishNotary` profile inside the login keychain on
-the release machine. Credentials for that profile are established once via:
+The signing identity may be a certificate common name or SHA-1 fingerprint; it
+is an identifier, not private key material. The only secret involved is the
+notarization credential bound to the Keychain profile on the release machine.
+Credentials for that profile are established once via:
 
 ```
-xcrun notarytool store-credentials "LungfishNotary" \
+xcrun notarytool store-credentials "<KEYCHAIN_PROFILE_NAME>" \
   --apple-id <apple-id> \
-  --team-id "29G3WN2GSA" \
+  --team-id "<TEAMID>" \
   --password <app-specific-password>
 ```
 
-If the Developer ID certificate is renewed, revoked, or replaced, update the
-fingerprint above (from `security find-identity -v -p codesigning`) and the
+If the Developer ID certificate is renewed, revoked, or replaced, update local
+release-machine configuration and the
 corresponding `.codex/agents/release-agent.md` entry, and re-run the canonical
 invocation to verify.
 
