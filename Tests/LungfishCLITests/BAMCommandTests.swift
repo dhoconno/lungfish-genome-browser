@@ -3,7 +3,7 @@ import XCTest
 
 final class BAMCommandTests: XCTestCase {
     func testRootHelpUsesCanonicalExecutableName() {
-        XCTAssertEqual(LungfishCLI.configuration.commandName, "lungfish-cli")
+        XCTAssertEqual(LungfishCLI.configuration.commandName, "lungfish")
         XCTAssertTrue(LungfishCLI.helpMessage().contains("bam"))
     }
 
@@ -11,8 +11,8 @@ final class BAMCommandTests: XCTestCase {
         XCTAssertEqual(BAMCommand.configuration.commandName, "bam")
         XCTAssertTrue(BAMCommand.helpMessage().contains("filter"))
         XCTAssertTrue(BAMCommand.helpMessage().contains("annotate"))
-        XCTAssertTrue(BAMCommand.helpMessage().contains("lungfish-cli bam filter"))
-        XCTAssertTrue(BAMCommand.helpMessage().contains("lungfish-cli bam annotate"))
+        XCTAssertTrue(BAMCommand.helpMessage().contains("lungfish bam filter"))
+        XCTAssertTrue(BAMCommand.helpMessage().contains("lungfish bam annotate"))
         XCTAssertTrue(BAMCommand.FilterSubcommand.helpMessage().contains("mapping analysis directory"))
         XCTAssertTrue(BAMCommand.FilterSubcommand.helpMessage().contains("Output format: text, json"))
         XCTAssertFalse(BAMCommand.FilterSubcommand.helpMessage().contains("tsv"))

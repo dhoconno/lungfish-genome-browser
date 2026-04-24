@@ -80,12 +80,15 @@ public enum SequenceInputResolver {
     /// Returns the enclosing `.lungfishfastq` bundle for a candidate URL.
     public static func enclosingFASTQBundleURL(for candidateURL: URL) -> URL? {
         let standardizedURL = candidateURL.standardizedFileURL
-        if FASTQBundle.isBundleURL(standardizedURL) {
-            return standardizedURL
+        var currentURL = standardizedURL
+        while currentURL.pathComponents.count > 1 {
+            if currentURL.pathExtension.lowercased() == FASTQBundle.directoryExtension {
+                return currentURL
+            }
+            currentURL = currentURL.deletingLastPathComponent().standardizedFileURL
         }
 
-        let parentURL = standardizedURL.deletingLastPathComponent().standardizedFileURL
-        return FASTQBundle.isBundleURL(parentURL) ? parentURL : nil
+        return nil
     }
 
     /// Returns the enclosing `.lungfishref` bundle for a candidate URL.

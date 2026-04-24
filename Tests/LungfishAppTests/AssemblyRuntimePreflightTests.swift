@@ -90,7 +90,7 @@ final class AssemblyRuntimePreflightTests: XCTestCase {
 
         XCTAssertEqual(
             message,
-            "Flye expects a single ONT FASTQ input in v1."
+            "Flye expects a single ONT sequence input in v1."
         )
     }
 

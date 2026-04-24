@@ -417,10 +417,7 @@ final class NativeToolRunnerTests: XCTestCase {
             )
         }
 
-        try await waitForFile(at: childPIDURL)
-        let childPIDText = try String(contentsOf: childPIDURL, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let childPID = try XCTUnwrap(Int32(childPIDText))
+        let childPID = try await waitForInt32File(at: childPIDURL)
 
         task.cancel()
 
@@ -857,6 +854,24 @@ final class NativeToolRunnerTests: XCTestCase {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
         XCTFail("Expected file to appear: \(url.path)")
+    }
+
+    private func waitForInt32File(at url: URL, timeoutNanoseconds: UInt64 = 1_000_000_000) async throws -> Int32 {
+        let deadline = DispatchTime.now().uptimeNanoseconds + timeoutNanoseconds
+        var lastContents: String?
+        while DispatchTime.now().uptimeNanoseconds < deadline {
+            if FileManager.default.fileExists(atPath: url.path) {
+                let contents = (try? String(contentsOf: url, encoding: .utf8))?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                lastContents = contents
+                if let contents, let value = Int32(contents) {
+                    return value
+                }
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTFail("Expected PID file to contain an Int32: \(url.path), last contents: \(lastContents ?? "<missing>")")
+        return 0
     }
 
     private func assertFileDoesNotAppear(

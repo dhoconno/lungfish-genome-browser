@@ -120,6 +120,24 @@ public struct BundleManifest: Codable, Sendable, Equatable {
     /// Optional so legacy manifests without this cache still decode successfully.
     public let browserSummary: BundleBrowserSummary?
 
+    public static func == (lhs: BundleManifest, rhs: BundleManifest) -> Bool {
+        lhs.formatVersion == rhs.formatVersion
+            && lhs.name == rhs.name
+            && lhs.identifier == rhs.identifier
+            && lhs.description == rhs.description
+            && lhs.originBundlePath == rhs.originBundlePath
+            && lhs.createdDate == rhs.createdDate
+            && lhs.modifiedDate == rhs.modifiedDate
+            && lhs.source == rhs.source
+            && lhs.genome == rhs.genome
+            && lhs.annotations == rhs.annotations
+            && lhs.variants == rhs.variants
+            && lhs.tracks == rhs.tracks
+            && lhs.alignments == rhs.alignments
+            && lhs.metadata == rhs.metadata
+            && lhs.equivalentBrowserSummary == rhs.equivalentBrowserSummary
+    }
+
     // MARK: - Initialization
 
     /// Creates a new bundle manifest.
@@ -1135,12 +1153,16 @@ extension BundleManifest {
         )
     }
 
-    public func withSynthesizedBrowserSummaryIfNeeded() -> BundleManifest {
-        guard browserSummary == nil, let genome else { return self }
+    private var equivalentBrowserSummary: BundleBrowserSummary? {
+        browserSummary ?? synthesizedBrowserSummary()
+    }
+
+    private func synthesizedBrowserSummary() -> BundleBrowserSummary? {
+        guard let genome else { return nil }
 
         let mappedReadCounts = alignments.compactMap(\.mappedReadCount)
         let totalMappedReads = mappedReadCounts.isEmpty ? nil : mappedReadCounts.reduce(0, +)
-        let synthesized = BundleBrowserSummary(
+        return BundleBrowserSummary(
             schemaVersion: 1,
             aggregate: .init(
                 annotationTrackCount: annotations.count,
@@ -1160,6 +1182,10 @@ extension BundleManifest {
                 )
             }
         )
+    }
+
+    public func withSynthesizedBrowserSummaryIfNeeded() -> BundleManifest {
+        guard browserSummary == nil, let synthesized = synthesizedBrowserSummary() else { return self }
 
         return BundleManifest(
             formatVersion: formatVersion,

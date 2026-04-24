@@ -1650,6 +1650,7 @@ public class MainSplitViewController: NSSplitViewController {
 
         if let sidebarWidth = persistedWidth(forKey: Self.sidebarWidthDefaultsKey) {
             shellLayoutCoordinator.recordUserSidebarWidth(sidebarWidth)
+            sidebarWidthCoordinator.noteUserRequestedWidth(sidebarWidth)
         }
 
         if let inspectorWidth = persistedWidth(forKey: Self.inspectorWidthDefaultsKey) {
@@ -1804,28 +1805,18 @@ public class MainSplitViewController: NSSplitViewController {
                 prepareSidebarRevealWidthIfNeeded()
             }
             beginProgrammaticShellResizeSuppression()
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0
-                context.allowsImplicitAnimation = false
-                sidebarItem.animator().isCollapsed = !visible
-            } completionHandler: { [weak self] in
-                DispatchQueue.main.async { [weak self] in
-                    MainActor.assumeIsolated {
-                        guard let self else { return }
-                        self.shellLayoutCoordinator.setSidebarVisible(visible)
-                        if visible {
-                            self.finalizeSidebarRevealWidthIfNeeded()
-                            self.markPendingRevealRestore(sidebar: true)
-                            self.requestPendingRevealRestorePass()
-                        } else {
-                            self.sidebarItem.minimumThickness = 0
-                            self.queuePostVisibilityShellRestore()
-                        }
-                        self.savePanelState()
-                        self.endProgrammaticShellResizeSuppression(scheduleAsync: true)
-                    }
-                }
+            sidebarItem.isCollapsed = !visible
+            shellLayoutCoordinator.setSidebarVisible(visible)
+            if visible {
+                finalizeSidebarRevealWidthIfNeeded()
+                markPendingRevealRestore(sidebar: true)
+                requestPendingRevealRestorePass()
+            } else {
+                sidebarItem.minimumThickness = 0
+                queuePostVisibilityShellRestore()
             }
+            savePanelState()
+            endProgrammaticShellResizeSuppression()
         }
     }
 

@@ -8,9 +8,9 @@ struct BAMCommand: AsyncParsableCommand {
         commandName: "bam",
         abstract: "Operate on bundle-owned BAM alignment tracks",
         discussion: """
-            Use `lungfish-cli bam filter` to derive filtered alignment tracks and
-            `lungfish-cli bam annotate` to convert mapped reads into annotation tracks.
-            Use `lungfish-cli bam markdup` to mark duplicates in BAM workflows.
+            Use `lungfish bam filter` to derive filtered alignment tracks and
+            `lungfish bam annotate` to convert mapped reads into annotation tracks.
+            Use `lungfish bam markdup` to mark duplicates in BAM workflows.
             """,
         subcommands: [FilterSubcommand.self, AnnotateSubcommand.self, MarkdupSubcommand.self]
     )

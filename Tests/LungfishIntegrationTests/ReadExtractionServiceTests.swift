@@ -181,10 +181,10 @@ final class ReadExtractionServiceTests: XCTestCase {
         let progressValues = ProgressAccumulator()
 
         _ = try await service.extractByBAMRegion(config: config) { fraction, message in
-            Task { await progressValues.append(fraction, message) }
+            progressValues.append(fraction, message)
         }
 
-        let calls = await progressValues.getCalls()
+        let calls = progressValues.getCalls()
         XCTAssertGreaterThan(calls.count, 0, "Should have received progress callbacks")
         // Progress should start at or near 0.1 and end at 1.0
         if let last = calls.last {
@@ -636,15 +636,20 @@ final class ReadExtractionServiceTests: XCTestCase {
 
 // MARK: - ProgressAccumulator
 
-/// Thread-safe progress callback collector for tests.
-private actor ProgressAccumulator {
-    var calls: [(Double, String)] = []
+/// Thread-safe progress callback collector for synchronous progress closures.
+private final class ProgressAccumulator: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls: [(Double, String)] = []
 
     func append(_ fraction: Double, _ message: String) {
+        lock.lock()
+        defer { lock.unlock() }
         calls.append((fraction, message))
     }
 
     func getCalls() -> [(Double, String)] {
-        calls
+        lock.lock()
+        defer { lock.unlock() }
+        return calls
     }
 }
