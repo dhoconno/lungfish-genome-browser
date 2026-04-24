@@ -5,6 +5,8 @@
 import Foundation
 import LungfishIO
 
+// TODO(Task 11): delete test-builtin.lungfishprimers before release — replaced by QIASeqDIRECT-SARS2.lungfishprimers
+
 /// Enumerates built-in .lungfishprimers bundles shipped in the app's Resources.
 ///
 /// In production, callers query against `Bundle.main`; tests query against `Bundle.module`

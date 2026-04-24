@@ -50,7 +50,9 @@ public enum PrimerSchemesFolder {
     /// if the folder does not exist or cannot be read.
     ///
     /// - Parameter projectURL: Path to the project directory
-    /// - Returns: Array of loaded `PrimerSchemeBundle` values, sorted by bundle filename
+    /// - Returns: Array of loaded `PrimerSchemeBundle` values, sorted by `manifest.name`
+    ///   (the user-visible identifier). This matches `BuiltInPrimerSchemeService`'s
+    ///   sort key, so a merged built-in + project-local list is monotonic.
     public static func listBundles(in projectURL: URL) -> [PrimerSchemeBundle] {
         guard let folder = folderURL(in: projectURL) else { return [] }
         let fm = FileManager.default
@@ -63,6 +65,6 @@ public enum PrimerSchemesFolder {
         return contents
             .filter { $0.pathExtension == "lungfishprimers" }
             .compactMap { try? PrimerSchemeBundle.load(from: $0) }
-            .sorted { $0.url.lastPathComponent < $1.url.lastPathComponent }
+            .sorted { $0.manifest.name < $1.manifest.name }
     }
 }

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "name": "test-builtin",
   "display_name": "Test Built-In Scheme",
-  "description": "Lightweight stub used by BuiltInPrimerSchemeServiceTests until the real QIASeq bundle lands.",
+  "description": "STUB — must be replaced by Task 11. Lightweight stub used by BuiltInPrimerSchemeServiceTests until the real QIASeq bundle lands.",
   "reference_accessions": [
     { "accession": "MN908947.3", "canonical": true }
   ],
