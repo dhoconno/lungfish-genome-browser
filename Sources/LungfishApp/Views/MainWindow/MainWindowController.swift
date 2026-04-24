@@ -222,29 +222,31 @@ public class MainWindowController: NSWindowController {
         guard let userInfo = notification.userInfo,
               let chromosomes = userInfo[NotificationUserInfoKey.chromosomes] as? [ChromosomeInfo] else { return }
 
-        // Build annotation search index on background thread
-        guard let viewerController = mainSplitViewController?.viewerController,
-              let bundle = viewerController.viewerView?.currentReferenceBundle else { return }
+        let viewerController = (notification.object as? ViewerViewController)
+            ?? mainSplitViewController?.viewerController
+        let bundle = (userInfo[NotificationUserInfoKey.referenceBundle] as? ReferenceBundle)
+            ?? viewerController?.viewerView?.currentReferenceBundle
+        guard let viewerController, let bundle else { return }
 
         let index = AnnotationSearchIndex()
         annotationSearchIndex = index
 
         // Set callback to populate annotation drawer and inspector when index is ready
         let inspectorController = mainSplitViewController?.inspectorController
-        index.onBuildComplete = { [weak self, weak viewerController, weak inspectorController] in
-            guard let self, let viewerController else { return }
-            viewerController.annotationSearchIndex = self.annotationSearchIndex
+        index.onBuildComplete = { [weak viewerController, weak inspectorController, index, bundle] in
+            guard let viewerController else { return }
+            viewerController.annotationSearchIndex = index
             // Wire annotation database to inspector selection view model for qualifier enrichment
-            inspectorController?.selectionSectionViewModel.annotationDatabase = self.annotationSearchIndex?.annotationDatabase
+            inspectorController?.selectionSectionViewModel.annotationDatabase = index.annotationDatabase
             // Wire reference bundle for on-the-fly CDS translation computation
-            inspectorController?.selectionSectionViewModel.referenceBundle = viewerController.viewerView?.currentReferenceBundle
+            inspectorController?.selectionSectionViewModel.referenceBundle = bundle
             // Populate variant types in the inspector's annotation section
-            if let variantTypes = self.annotationSearchIndex?.variantTypes, !variantTypes.isEmpty {
+            let variantTypes = index.variantTypes
+            if !variantTypes.isEmpty {
                 inspectorController?.annotationSectionViewModel.setAvailableVariantTypes(variantTypes)
             }
         }
 
-        // Starts background thread I/O — won't block the UI
         index.buildIndex(bundle: bundle, chromosomes: chromosomes)
     }
 

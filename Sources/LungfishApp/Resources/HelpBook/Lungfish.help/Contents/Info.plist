@@ -13,9 +13,9 @@
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.4</string>
+    <string>0.4.0-alpha.1</string>
     <key>CFBundleVersion</key>
-    <string>13</string>
+    <string>1</string>
     <key>HPDBookAccessPath</key>
     <string>en.lproj/index.html</string>
     <key>HPDBookTitle</key>

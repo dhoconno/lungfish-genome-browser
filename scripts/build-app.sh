@@ -8,8 +8,8 @@ set -e
 # Configuration
 APP_NAME="Lungfish"
 BUNDLE_ID="org.lungfish.genome-browser"
-VERSION="1.0.1"
-BUILD_NUMBER="7"
+VERSION="0.4.0-alpha.1"
+BUILD_NUMBER="1"
 CONFIGURATION="release"
 
 # Paths
@@ -133,7 +133,7 @@ done < <(/usr/bin/find "$BUILD_DIR" -maxdepth 1 -type d -name '*.bundle' -print0
 
 # Create Info.plist
 echo -e "${GREEN}Creating Info.plist...${NC}"
-cat > "$CONTENTS_DIR/Info.plist" << 'EOF'
+cat > "$CONTENTS_DIR/Info.plist" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -156,9 +156,9 @@ cat > "$CONTENTS_DIR/Info.plist" << 'EOF'
 
     <!-- Version Information -->
     <key>CFBundleShortVersionString</key>
-    <string>1.0.1</string>
+    <string>$VERSION</string>
     <key>CFBundleVersion</key>
-    <string>7</string>
+    <string>$BUILD_NUMBER</string>
 
     <!-- macOS Requirements -->
     <key>LSMinimumSystemVersion</key>

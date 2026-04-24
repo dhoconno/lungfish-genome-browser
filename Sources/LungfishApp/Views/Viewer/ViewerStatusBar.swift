@@ -12,6 +12,7 @@ public class ViewerStatusBar: NSView {
     public private(set) var positionLabel: NSTextField!
     public private(set) var selectionLabel: NSTextField!
     private var scaleLabel: NSTextField!
+    private var labelStack: NSStackView!
 
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -27,28 +28,27 @@ public class ViewerStatusBar: NSView {
 
         positionLabel = createLabel()
         positionLabel.stringValue = "No sequence loaded"
-        addSubview(positionLabel)
+        positionLabel.alignment = .left
 
         selectionLabel = createLabel()
         selectionLabel.stringValue = ""
-        addSubview(selectionLabel)
+        selectionLabel.alignment = .center
 
         scaleLabel = createLabel()
         scaleLabel.stringValue = ""
         scaleLabel.alignment = .right
-        addSubview(scaleLabel)
+        labelStack = NSStackView(views: [positionLabel, selectionLabel, scaleLabel])
+        labelStack.translatesAutoresizingMaskIntoConstraints = false
+        labelStack.orientation = .horizontal
+        labelStack.alignment = .centerY
+        labelStack.distribution = .fillEqually
+        labelStack.spacing = 12
+        addSubview(labelStack)
 
         NSLayoutConstraint.activate([
-            positionLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            positionLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            positionLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 300),
-
-            selectionLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
-            selectionLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-
-            scaleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            scaleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            scaleLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 200),
+            labelStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            labelStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            labelStack.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
 
         // Accessibility
@@ -63,6 +63,8 @@ public class ViewerStatusBar: NSView {
         label.font = NSFont.systemFont(ofSize: 11, weight: .regular)
         label.textColor = .secondaryLabelColor
         label.lineBreakMode = .byTruncatingMiddle
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
         return label
     }
 
