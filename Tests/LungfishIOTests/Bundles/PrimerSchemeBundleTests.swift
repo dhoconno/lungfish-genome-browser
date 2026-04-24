@@ -2,11 +2,16 @@ import XCTest
 @testable import LungfishIO
 
 final class PrimerSchemeBundleTests: XCTestCase {
+    override func tearDownWithError() throws {
+        try TestWorkspace.cleanup()
+        try super.tearDownWithError()
+    }
+
     func testLoadValidBundleReturnsManifestWithCanonicalAndEquivalentAccessions() throws {
-        let bundleURL = Bundle.module.url(
+        let bundleURL = try XCTUnwrap(Bundle.module.url(
             forResource: "primerschemes/valid-simple.lungfishprimers",
             withExtension: nil
-        )!
+        ))
 
         let bundle = try PrimerSchemeBundle.load(from: bundleURL)
 
@@ -37,6 +42,15 @@ final class PrimerSchemeBundleTests: XCTestCase {
 
     func testLoadBundleWithMalformedManifestThrows() {
         let tmp = try! TestWorkspace.makeBundleWithMalformedManifest()
+        XCTAssertThrowsError(try PrimerSchemeBundle.load(from: tmp)) { error in
+            guard case PrimerSchemeBundle.LoadError.invalidManifest = error else {
+                XCTFail("wrong error: \(error)"); return
+            }
+        }
+    }
+
+    func testLoadBundleWithEmptyReferenceAccessionsThrows() throws {
+        let tmp = try TestWorkspace.makeBundleWithEmptyReferenceAccessions()
         XCTAssertThrowsError(try PrimerSchemeBundle.load(from: tmp)) { error in
             guard case PrimerSchemeBundle.LoadError.invalidManifest = error else {
                 XCTFail("wrong error: \(error)"); return

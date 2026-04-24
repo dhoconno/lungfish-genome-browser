@@ -43,6 +43,9 @@ public struct PrimerSchemeManifest: Codable, Sendable, Equatable {
             self.equivalent = equivalent
         }
 
+        // Custom decoder required: Swift's synthesized Codable does not honor
+        // stored-property defaults for missing keys; it calls `decode(...)` which
+        // throws `keyNotFound`. `decodeIfPresent(...) ?? <default>` is the fix.
         public init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             self.accession = try container.decode(String.self, forKey: .accession)
@@ -81,11 +84,11 @@ public struct PrimerSchemeBundle: Sendable {
     public let fastaURL: URL?
     public let provenanceURL: URL
 
-    public enum LoadError: Error, LocalizedError {
+    public enum LoadError: Error, LocalizedError, Sendable {
         case missingManifest
         case missingBED
         case missingProvenance
-        case invalidManifest(underlying: Error)
+        case invalidManifest(underlying: Error & Sendable)
 
         public var errorDescription: String? {
             switch self {
@@ -117,6 +120,14 @@ public struct PrimerSchemeBundle: Sendable {
             manifest = try decoder.decode(PrimerSchemeManifest.self, from: data)
         } catch {
             throw LoadError.invalidManifest(underlying: error)
+        }
+
+        guard !manifest.referenceAccessions.isEmpty else {
+            throw LoadError.invalidManifest(
+                underlying: DecodingError.dataCorrupted(
+                    .init(codingPath: [], debugDescription: "reference_accessions must contain at least one entry")
+                )
+            )
         }
 
         return PrimerSchemeBundle(

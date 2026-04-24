@@ -2,15 +2,32 @@ import Foundation
 
 /// Factory helpers for authoring ephemeral on-disk fixtures used by IO-layer tests.
 ///
-/// Each factory method creates a unique temporary directory under
-/// `FileManager.default.temporaryDirectory` and returns the root URL. Callers are
-/// responsible for cleanup if they care; the OS will eventually reap the directory.
+/// All directories are created under a single shared root (``root``) so that tests
+/// can blow away the entire subtree from `tearDown` via ``cleanup()``.
 enum TestWorkspace {
+    /// Shared parent directory for every fixture produced by this enum.
+    static let root: URL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("LungfishIOTests", isDirectory: true)
+
+    /// Creates a uniquely-named directory under ``root`` and returns its URL.
+    static func makeDirectory(name: String) throws -> URL {
+        let dir = root
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Removes the entire shared root directory tree (if it exists).
+    static func cleanup() throws {
+        if FileManager.default.fileExists(atPath: root.path) {
+            try FileManager.default.removeItem(at: root)
+        }
+    }
+
     /// Creates an empty `.lungfishprimers` directory (no manifest, no BED, no PROVENANCE).
     static func makeEmptyBundle(name: String) throws -> URL {
-        let url = try makeUniqueDirectory().appendingPathComponent(name, isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
+        return try makeDirectory(name: name)
     }
 
     /// Creates a `.lungfishprimers` bundle that has only a valid manifest.json
@@ -39,15 +56,34 @@ enum TestWorkspace {
         return url
     }
 
-    // MARK: - Internals
+    /// Produces a valid-shaped manifest whose `reference_accessions` array is empty,
+    /// to verify the loader's semantic validation rejects it.
+    static func makeBundleWithEmptyReferenceAccessions() throws -> URL {
+        let url = try makeEmptyBundle(name: "empty-accessions.lungfishprimers")
 
-    private static func makeUniqueDirectory() throws -> URL {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("LungfishIOTests", isDirectory: true)
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        return root
+        let manifestURL = url.appendingPathComponent("manifest.json")
+        let json = """
+        {
+          "schema_version": 1,
+          "name": "tmp-bundle",
+          "display_name": "Temp Bundle",
+          "reference_accessions": [],
+          "primer_count": 0,
+          "amplicon_count": 0
+        }
+        """
+        try Data(json.utf8).write(to: manifestURL, options: .atomic)
+
+        let bedURL = url.appendingPathComponent("primers.bed")
+        try Data("ref\t0\t10\tname\t60\t+\n".utf8).write(to: bedURL, options: .atomic)
+
+        let provenanceURL = url.appendingPathComponent("PROVENANCE.md")
+        try Data("# PROVENANCE\n".utf8).write(to: provenanceURL, options: .atomic)
+
+        return url
     }
+
+    // MARK: - Internals
 
     private static func validManifestJSON() -> Data {
         let json = """
