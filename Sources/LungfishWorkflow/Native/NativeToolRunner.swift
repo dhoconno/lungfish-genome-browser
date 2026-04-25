@@ -339,6 +339,22 @@ public enum NativeTool: String, CaseIterable, Sendable {
         }
     }
 
+    /// Arguments that make this tool print its version and exit 0.
+    ///
+    /// Most tools accept `--version`, but a few (notably iVar) reject that and
+    /// print usage instead. This property lets each tool override the probe
+    /// used by ``NativeToolRunner/getToolVersion(_:)``.
+    public var versionArguments: [String] {
+        switch self {
+        case .ivar:
+            // iVar rejects `--version` as "Unknown command" but accepts the
+            // `version` subcommand (and `-v`) and prints "iVar version 1.4.4".
+            return ["version"]
+        default:
+            return ["--version"]
+        }
+    }
+
     public var location: NativeToolLocation {
         switch self {
         case .samtools:
@@ -629,8 +645,10 @@ public actor NativeToolRunner {
             runtimeVersionCache[tool] = bundled
             return bundled
         }
-        // Run tool --version and parse output
-        guard let result = try? await run(tool, arguments: ["--version"], timeout: 10) else {
+        // Run the tool's version probe and parse output. Most tools respond to
+        // --version, but each tool can override `versionArguments` if needed
+        // (e.g., iVar rejects --version and uses the `version` subcommand).
+        guard let result = try? await run(tool, arguments: tool.versionArguments, timeout: 10) else {
             return nil
         }
         let output = result.isSuccess ? result.stdout : result.stderr

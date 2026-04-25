@@ -246,6 +246,38 @@ final class NativeToolRunnerTests: XCTestCase {
         )
     }
 
+    func testIvarVersionProbeUsesVersionSubcommand() {
+        // iVar rejects --version as "Unknown command" but accepts the
+        // `version` subcommand. NativeTool.versionArguments must reflect that
+        // so getToolVersion(.ivar) doesn't fall through to nil.
+        XCTAssertEqual(NativeTool.ivar.versionArguments, ["version"])
+        // Sanity-check a few defaults so a future refactor doesn't regress them.
+        XCTAssertEqual(NativeTool.samtools.versionArguments, ["--version"])
+        XCTAssertEqual(NativeTool.bcftools.versionArguments, ["--version"])
+    }
+
+    func testIvarVersionParsesToSemanticVersion() async throws {
+        let (runner, root) = try makeManagedNativeToolRunner()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let version: String?
+        do {
+            version = await runner.getToolVersion(.ivar)
+        } catch let error as NativeToolError {
+            if case .toolNotFound = error {
+                throw XCTSkip("Managed iVar is not available")
+            }
+            throw error
+        }
+        guard let version else {
+            throw XCTSkip("Managed iVar returned nil for getToolVersion; tool may be missing or misconfigured")
+        }
+        let versionPattern = /\d+\.\d+(?:\.\d+)?/
+        XCTAssertNotNil(
+            version.firstMatch(of: versionPattern),
+            "getToolVersion(.ivar) should return a semantic-version-looking string; got \(version)"
+        )
+    }
+
     // MARK: - Pipeline Tests
 
     func testSingleStagePipeline() async throws {
