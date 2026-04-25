@@ -90,16 +90,17 @@ struct ReleaseBuildConfigurationTests {
         #expect(script.contains("sanitize-bundled-tools.sh"))
     }
 
-    @Test("Fallback build-app script does not rewrite MacOS executables during workflow tool sanitization")
-    func buildAppScriptDoesNotRewriteMacOSExecutablesDuringWorkflowToolSanitization() throws {
+    @Test("Fallback build-app script sanitizes release MacOS executables and workflow tools")
+    func buildAppScriptSanitizesReleaseMacOSExecutablesAndWorkflowTools() throws {
         let script = try String(
             contentsOf: Self.repositoryRoot()
                 .appendingPathComponent("scripts/build-app.sh"),
             encoding: .utf8
         )
 
+        #expect(script.contains(#"if [ "$CONFIGURATION" = "release" ]"#))
+        #expect(script.contains(#"sanitize-bundled-tools.sh" "$MACOS_DIR" "$WORKFLOW_TOOLS_DIR""#))
         #expect(script.contains(#"sanitize-bundled-tools.sh" "$WORKFLOW_TOOLS_DIR""#))
-        #expect(script.contains(#"sanitize-bundled-tools.sh" "$MACOS_DIR" "$WORKFLOW_TOOLS_DIR""#) == false)
     }
 
     @Test("Native tool bundler defaults to arm64")

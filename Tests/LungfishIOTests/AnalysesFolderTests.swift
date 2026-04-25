@@ -75,6 +75,23 @@ final class AnalysesFolderTests: XCTestCase {
         XCTAssertEqual(analyses.count, 3)
     }
 
+    func testListAnalysesFindsRunsInsideGroupingFolders() throws {
+        let analysesDir = try AnalysesFolder.url(for: tempDir)
+        let group = analysesDir.appendingPathComponent("Map NHP genomic FASTA to Zhang pan-genomes", isDirectory: true)
+        let run = group.appendingPathComponent("minimap2-ont-2026-04-24T20-03-58", isDirectory: true)
+        try FileManager.default.createDirectory(at: run, withIntermediateDirectories: true)
+        try AnalysesFolder.writeAnalysisMetadata(
+            .init(tool: "minimap2", isBatch: false, created: Date(timeIntervalSince1970: 1_776_000_000)),
+            to: run
+        )
+
+        let analyses = try AnalysesFolder.listAnalyses(in: tempDir)
+
+        XCTAssertEqual(analyses.count, 1)
+        XCTAssertEqual(analyses.first?.tool, "minimap2")
+        XCTAssertEqual(analyses.first?.url.resolvingSymlinksInPath(), run.resolvingSymlinksInPath())
+    }
+
     func testListAnalysesParseToolAndTimestamp() throws {
         let analysesDir = try AnalysesFolder.url(for: tempDir)
         try FileManager.default.createDirectory(

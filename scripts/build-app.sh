@@ -470,8 +470,13 @@ if [ ! -d "$WORKFLOW_TOOLS_DIR" ]; then
     WORKFLOW_TOOLS_DIR="$WORKFLOW_BUNDLE_DIR/Contents/Resources/Tools"
 fi
 if [ -d "$WORKFLOW_TOOLS_DIR" ]; then
-    echo -e "${GREEN}Sanitizing bundled workflow tools...${NC}"
-    /bin/bash "$PROJECT_ROOT/scripts/sanitize-bundled-tools.sh" "$WORKFLOW_TOOLS_DIR"
+    if [ "$CONFIGURATION" = "release" ]; then
+        echo -e "${GREEN}Sanitizing bundled executables and workflow tools...${NC}"
+        /bin/bash "$PROJECT_ROOT/scripts/sanitize-bundled-tools.sh" "$MACOS_DIR" "$WORKFLOW_TOOLS_DIR"
+    else
+        echo -e "${GREEN}Sanitizing bundled workflow tools...${NC}"
+        /bin/bash "$PROJECT_ROOT/scripts/sanitize-bundled-tools.sh" "$WORKFLOW_TOOLS_DIR"
+    fi
 fi
 
 # Print success message

@@ -207,7 +207,7 @@ public final class OperationCenter: ObservableObject {
     ///   - subcommand: The lungfish subcommand (e.g. `"fetch"`, `"classify"`).
     ///   - args: Positional and flag arguments.
     /// - Returns: A copy-pasteable shell command string.
-    public static func buildCLICommand(subcommand: String, args: [String]) -> String {
+    public nonisolated static func buildCLICommand(subcommand: String, args: [String]) -> String {
         let allParts = ["lungfish", subcommand] + args
         let quoted = allParts.map { shellEscape($0) }
         return quoted.joined(separator: " ")

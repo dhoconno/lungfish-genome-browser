@@ -32,11 +32,10 @@ final class PrimerTrimXCUITests: XCTestCase {
         )
         primerTrimButton.click()
 
-        // The mt192765-integration scheme should appear in the picker.
-        let schemeRow = robot.app.staticTexts["mt192765-integration"]
+        let picker = robot.app.descendants(matching: .any)["primer-scheme-picker"].firstMatch
         XCTAssertTrue(
-            schemeRow.waitForExistence(timeout: 5),
-            "Clicking the button must open the primer-trim dialog with the project-local scheme in the picker"
+            picker.waitForExistence(timeout: 5),
+            "Clicking the button must open the primer-trim dialog with the standard primer scheme picker"
         )
     }
 
@@ -60,11 +59,11 @@ final class PrimerTrimXCUITests: XCTestCase {
         XCTAssertTrue(primerTrimButton.waitForExistence(timeout: 10))
         primerTrimButton.click()
 
-        let schemeRow = robot.app.staticTexts["mt192765-integration"]
-        XCTAssertTrue(schemeRow.waitForExistence(timeout: 5))
-        let schemeButton = robot.app.buttons["primer-scheme-mt192765-integration"]
-        XCTAssertTrue(schemeButton.waitForExistence(timeout: 5))
-        schemeButton.click()
+        choosePrimerScheme(named: "MT192765 Integration Test", in: robot.app)
+
+        XCTAssertTrue(
+            robot.app.staticTexts["Ready to trim using MT192765 Integration Test."].waitForExistence(timeout: 5)
+        )
 
         let runButton = robot.app.buttons["Run"]
         XCTAssertTrue(runButton.waitForExistence(timeout: 5))
@@ -92,6 +91,23 @@ final class PrimerTrimXCUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(1))
         }
         return false
+    }
+
+    @MainActor
+    private func choosePrimerScheme(named name: String, in app: XCUIApplication) {
+        let picker = app.descendants(matching: .any)["primer-scheme-picker"].firstMatch
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        picker.click()
+
+        let menuItem = app.menuItems[name].firstMatch
+        if menuItem.waitForExistence(timeout: 5) {
+            menuItem.click()
+            return
+        }
+
+        let textItem = app.staticTexts[name].firstMatch
+        XCTAssertTrue(textItem.waitForExistence(timeout: 5))
+        textItem.click()
     }
 
     private func primerTrimmedAlignmentExists(bundleURL: URL, manifestURL: URL) -> Bool {

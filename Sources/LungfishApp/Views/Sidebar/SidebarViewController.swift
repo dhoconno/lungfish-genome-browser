@@ -1481,68 +1481,87 @@ public class SidebarViewController: NSViewController {
     /// directories, filtering out any that are still in-progress (contain a
     /// `.processing` sentinel). Returns sidebar items sorted newest-first.
     private func collectAnalyses(in projectURL: URL) -> [SidebarItem] {
-        let analyses = (try? AnalysesFolder.listAnalyses(in: projectURL)) ?? []
-        let recognizedURLs = Set(analyses.map { $0.url.standardizedFileURL })
-
-        var items: [SidebarItem] = analyses.compactMap { info in
-            guard !OperationMarker.isInProgress(info.url) else { return nil }
-
-            if info.isBatch {
-                return buildBatchAnalysisItem(info: info)
-            }
-
-            let icon = analysisIcon(for: info.tool)
-            let title = analysisDisplayTitle(for: info)
-            let badge = classifierBatchBadge(for: info.tool)
-            let item: SidebarItem
-            if let badge {
-                let sidebarItem = SidebarItem(
-                    title: title,
-                    type: analysisItemType(for: info.tool),
-                    customImage: TextBadgeIcon.image(text: badge, size: NSSize(width: 16, height: 16)),
-                    children: [],
-                    url: info.url,
-                    subtitle: AnalysesFolder.formatTimestamp(info.timestamp)
-                )
-                sidebarItem.userInfo["analysisTool"] = info.tool
-                item = sidebarItem
-            } else {
-                let sidebarItem = SidebarItem(
-                    title: title,
-                    type: analysisItemType(for: info.tool),
-                    icon: icon,
-                    children: [],
-                    url: info.url,
-                    subtitle: AnalysesFolder.formatTimestamp(info.timestamp)
-                )
-                sidebarItem.userInfo["analysisTool"] = info.tool
-                item = sidebarItem
-            }
-            // For single results, add a subtitle from the sidecar if available
-            if info.tool == "esviritu" {
-                item.subtitle = esvirituResultTitle(for: info.url)
-            } else if info.tool == "kraken2" {
-                item.subtitle = classificationResultTitle(for: info.url)
-            }
-            return item
-        }
-
-        // Include user-created folders that aren't recognized analysis results.
         let analysesDir = projectURL.appendingPathComponent(AnalysesFolder.directoryName, isDirectory: true)
-        if let contents = try? FileManager.default.contentsOfDirectory(
-            at: analysesDir,
+        return collectAnalysisItems(in: analysesDir, includeLooseFolders: true)
+    }
+
+    private func collectAnalysisItems(in directoryURL: URL, includeLooseFolders: Bool) -> [SidebarItem] {
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: directoryURL,
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
-        ) {
-            for url in contents {
-                guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
-                guard !recognizedURLs.contains(url.standardizedFileURL) else { continue }
-                let folderItem = buildSidebarTree(from: url, isRoot: false)
+        ) else { return [] }
+
+        var items: [SidebarItem] = []
+        for url in contents.sorted(by: {
+            $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending
+        }) {
+            guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
+            guard !OperationMarker.isInProgress(url) else { continue }
+
+            if let info = AnalysesFolder.analysisInfo(for: url) {
+                if let item = buildAnalysisItem(info: info) {
+                    items.append(item)
+                }
+                continue
+            }
+
+            let children = collectAnalysisItems(in: url, includeLooseFolders: false)
+            if !children.isEmpty {
+                let folderItem = SidebarItem(
+                    title: url.lastPathComponent,
+                    type: .folder,
+                    icon: "folder",
+                    children: children,
+                    url: url
+                )
                 items.append(folderItem)
+            } else if includeLooseFolders {
+                items.append(buildSidebarTree(from: url, isRoot: false))
             }
         }
 
         return items
+    }
+
+    private func buildAnalysisItem(info: AnalysesFolder.AnalysisDirectoryInfo) -> SidebarItem? {
+        if info.isBatch {
+            return buildBatchAnalysisItem(info: info)
+        }
+
+        let icon = analysisIcon(for: info.tool)
+        let title = analysisDisplayTitle(for: info)
+        let badge = classifierBatchBadge(for: info.tool)
+        let item: SidebarItem
+        if let badge {
+            let sidebarItem = SidebarItem(
+                title: title,
+                type: analysisItemType(for: info.tool),
+                customImage: TextBadgeIcon.image(text: badge, size: NSSize(width: 16, height: 16)),
+                children: [],
+                url: info.url,
+                subtitle: AnalysesFolder.formatTimestamp(info.timestamp)
+            )
+            sidebarItem.userInfo["analysisTool"] = info.tool
+            item = sidebarItem
+        } else {
+            let sidebarItem = SidebarItem(
+                title: title,
+                type: analysisItemType(for: info.tool),
+                icon: icon,
+                children: [],
+                url: info.url,
+                subtitle: AnalysesFolder.formatTimestamp(info.timestamp)
+            )
+            sidebarItem.userInfo["analysisTool"] = info.tool
+            item = sidebarItem
+        }
+        if info.tool == "esviritu" {
+            item.subtitle = esvirituResultTitle(for: info.url)
+        } else if info.tool == "kraken2" {
+            item.subtitle = classificationResultTitle(for: info.url)
+        }
+        return item
     }
 
     /// Builds a batch group item for a classifier or generic tool batch.

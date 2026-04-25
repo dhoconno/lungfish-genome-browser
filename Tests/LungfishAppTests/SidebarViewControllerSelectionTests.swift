@@ -40,6 +40,44 @@ final class SidebarViewControllerSelectionTests: XCTestCase {
         ])
     }
 
+    func testBatchSequenceExportCLICommandsUseConvertForEachBundle() {
+        let folder = URL(fileURLWithPath: "/tmp/Exports", isDirectory: true)
+        let bundles = [
+            URL(fileURLWithPath: "/tmp/project/Alpha.lungfishref", isDirectory: true),
+            URL(fileURLWithPath: "/tmp/project/Beta Name.lungfishref", isDirectory: true),
+        ]
+
+        let commands = AppDelegate.batchSequenceExportCLICommands(
+            for: bundles,
+            outputFolder: folder,
+            format: .genbank,
+            compression: .none
+        )
+
+        XCTAssertEqual(commands.count, 2)
+        XCTAssertTrue(commands[0].contains("lungfish convert"))
+        XCTAssertTrue(commands[0].contains("--to-format genbank"))
+        XCTAssertTrue(commands[0].contains("--include-annotations"))
+        XCTAssertTrue(commands[1].contains("Beta Name.lungfishref"))
+        XCTAssertTrue(commands[1].contains("Beta Name.gb"))
+    }
+
+    func testBatchSequenceExportCLICommandsOmitUnsupportedCompressionWrapper() {
+        let folder = URL(fileURLWithPath: "/tmp/Exports", isDirectory: true)
+        let bundles = [
+            URL(fileURLWithPath: "/tmp/project/Alpha.lungfishref", isDirectory: true),
+        ]
+
+        let commands = AppDelegate.batchSequenceExportCLICommands(
+            for: bundles,
+            outputFolder: folder,
+            format: .genbank,
+            compression: .gzip
+        )
+
+        XCTAssertTrue(commands.isEmpty)
+    }
+
     func testSuggestedMergedBundleNameUsesFirstSelectedTitle() {
         let items = [
             SidebarItem(
@@ -106,5 +144,33 @@ final class SidebarViewControllerSelectionTests: XCTestCase {
             sidebar.selectedFileURL?.resolvingSymlinksInPath(),
             analysisURL.resolvingSymlinksInPath()
         )
+    }
+
+    func testSelectItemFindsAnalysisInsideUserGroupingFolder() throws {
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SidebarNestedAnalysis-\(UUID().uuidString)", isDirectory: true)
+        let projectURL = tempRoot.appendingPathComponent("Fixture.lungfish", isDirectory: true)
+        let analysesDir = projectURL.appendingPathComponent("Analyses", isDirectory: true)
+        let groupURL = analysesDir.appendingPathComponent("Map NHP genomic FASTA to Zhang pan-genomes", isDirectory: true)
+        let analysisURL = groupURL.appendingPathComponent("minimap2-ont-2026-04-24T20-03-58", isDirectory: true)
+
+        try FileManager.default.createDirectory(at: analysisURL, withIntermediateDirectories: true)
+        try AnalysesFolder.writeAnalysisMetadata(
+            .init(tool: "minimap2", isBatch: false, created: Date(timeIntervalSince1970: 1_776_000_000)),
+            to: analysisURL
+        )
+
+        let sidebar = SidebarViewController()
+        sidebar.loadViewIfNeeded()
+
+        defer {
+            sidebar.closeProject()
+            try? FileManager.default.removeItem(at: tempRoot)
+        }
+
+        sidebar.openProject(at: projectURL)
+
+        XCTAssertTrue(sidebar.selectItem(forURL: analysisURL))
+        XCTAssertEqual(sidebar.selectedFileURL?.resolvingSymlinksInPath(), analysisURL.resolvingSymlinksInPath())
     }
 }

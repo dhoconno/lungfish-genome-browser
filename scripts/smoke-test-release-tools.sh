@@ -43,13 +43,19 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 
-TOOLS_DIR="$APP_PATH/Contents/Resources/LungfishGenomeBrowser_LungfishWorkflow.bundle/Contents/Resources/Tools"
+WORKFLOW_BUNDLE_DIR="$APP_PATH/Contents/Resources/LungfishGenomeBrowser_LungfishWorkflow.bundle"
+TOOLS_DIR="$WORKFLOW_BUNDLE_DIR/Tools"
+LEGACY_TOOLS_DIR="$WORKFLOW_BUNDLE_DIR/Contents/Resources/Tools"
 INFO_PLIST="$APP_PATH/Contents/Info.plist"
 APP_ICON_PATH="$APP_PATH/Contents/Resources/AppIcon.icns"
 RG_BIN="$(command -v rg || true)"
 
+if [ ! -d "$TOOLS_DIR" ] && [ -d "$LEGACY_TOOLS_DIR" ]; then
+    TOOLS_DIR="$LEGACY_TOOLS_DIR"
+fi
+
 if [ ! -d "$TOOLS_DIR" ]; then
-    echo "tools directory not found: $TOOLS_DIR" >&2
+    echo "tools directory not found: $TOOLS_DIR or $LEGACY_TOOLS_DIR" >&2
     exit 66
 fi
 

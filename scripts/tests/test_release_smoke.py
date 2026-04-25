@@ -43,7 +43,7 @@ class ReleaseSmokeTests(unittest.TestCase):
     def _make_minimal_app(self, root, include_icon=False):
         app_path = root / "Lungfish.app"
         resources = app_path / "Contents" / "Resources"
-        tools = resources / "LungfishGenomeBrowser_LungfishWorkflow.bundle" / "Contents" / "Resources" / "Tools"
+        tools = resources / "LungfishGenomeBrowser_LungfishWorkflow.bundle" / "Tools"
         tools.mkdir(parents=True)
 
         info_plist = app_path / "Contents" / "Info.plist"

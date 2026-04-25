@@ -2920,9 +2920,24 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             }
 
             let itemURLs = sidebarItems.compactMap(\.url)
+            let exportTitle = "Exporting \(outputURL.lastPathComponent)"
+            let opID = OperationCenter.shared.start(
+                title: exportTitle,
+                detail: "Preparing sequence export...",
+                operationType: .export,
+                cliCommand: Self.sequenceExportCLICommand(
+                    inputURL: itemURLs.count == 1 ? itemURLs[0] : nil,
+                    outputURL: outputURL,
+                    format: format,
+                    compression: compression
+                )
+            )
 
-            Task.detached { [weak self] in
+            let task = Task.detached { [weak self] in
                 do {
+                    await MainActor.run {
+                        OperationCenter.shared.log(id: opID, level: .info, message: "Writing \(format.displayName) export to \(outputURL.path)")
+                    }
                     let count = try await self?.performSequenceExport(
                         sidebarURLs: itemURLs,
                         documents: documents,
@@ -2933,6 +2948,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
                     DispatchQueue.main.async {
                         MainActor.assumeIsolated {
+                            OperationCenter.shared.complete(
+                                id: opID,
+                                detail: "Exported \(count) sequence(s) to \(outputURL.lastPathComponent)"
+                            )
                             let alert = NSAlert()
                             alert.messageText = "Export Complete"
                             alert.informativeText = "Exported \(count) sequence(s) to \(outputURL.lastPathComponent)."
@@ -2950,6 +2969,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     debugLog("exportSequences: Failed - \(error)")
                     DispatchQueue.main.async {
                         MainActor.assumeIsolated {
+                            OperationCenter.shared.fail(
+                                id: opID,
+                                detail: error.localizedDescription,
+                                errorMessage: "Sequence export failed",
+                                errorDetail: error.localizedDescription
+                            )
                             let alert = NSAlert()
                             alert.messageText = "Export Failed"
                             alert.informativeText = error.localizedDescription
@@ -2959,6 +2984,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                         }
                     }
                 }
+            }
+            OperationCenter.shared.setCancelCallback(for: opID) {
+                task.cancel()
             }
         }
     }
@@ -3017,12 +3045,37 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                 format: format,
                 compression: compression
             )
+            let cliCommands = Self.batchSequenceExportCLICommands(
+                for: bundleURLs,
+                outputFolder: outputFolder,
+                format: format,
+                compression: compression
+            )
+            let opID = OperationCenter.shared.start(
+                title: "Exporting \(bundleURLs.count) sequence files",
+                detail: "Preparing batch export...",
+                operationType: .export,
+                cliCommand: cliCommands.first.map { firstCommand in
+                    guard cliCommands.count > 1 else { return firstCommand }
+                    return "\(firstCommand)\n# ... \(cliCommands.count - 1) more export command(s)"
+                }
+            )
 
-            Task.detached { [weak self] in
+            let task = Task.detached { [weak self] in
                 do {
                     var count = 0
-                    for bundleURL in bundleURLs {
+                    for (index, bundleURL) in bundleURLs.enumerated() {
+                        try Task.checkCancellation()
                         guard let outputURL = targets[bundleURL] else { continue }
+                        await MainActor.run {
+                            let detail = "Exporting \(index + 1) of \(bundleURLs.count): \(bundleURL.deletingPathExtension().lastPathComponent)"
+                            OperationCenter.shared.update(
+                                id: opID,
+                                progress: Double(index) / Double(max(bundleURLs.count, 1)),
+                                detail: detail
+                            )
+                            OperationCenter.shared.log(id: opID, level: .info, message: "\(detail) -> \(outputURL.lastPathComponent)")
+                        }
                         count += try await self?.performSequenceExport(
                             sidebarURLs: [bundleURL],
                             documents: [],
@@ -3034,6 +3087,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
                     DispatchQueue.main.async {
                         MainActor.assumeIsolated {
+                            OperationCenter.shared.complete(
+                                id: opID,
+                                detail: "Exported \(bundleURLs.count) file(s) with \(count) sequence(s)"
+                            )
                             let alert = NSAlert()
                             alert.messageText = "Export Complete"
                             alert.informativeText = "Exported \(bundleURLs.count) file(s) with \(count) sequence(s) to \(outputFolder.lastPathComponent)."
@@ -3051,6 +3108,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                     debugLog("presentBatchSequenceExport: Failed - \(error)")
                     DispatchQueue.main.async {
                         MainActor.assumeIsolated {
+                            OperationCenter.shared.fail(
+                                id: opID,
+                                detail: error.localizedDescription,
+                                errorMessage: "Batch sequence export failed",
+                                errorDetail: error.localizedDescription
+                            )
                             let alert = NSAlert()
                             alert.messageText = "Export Failed"
                             alert.informativeText = error.localizedDescription
@@ -3060,6 +3123,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
                         }
                     }
                 }
+            }
+            OperationCenter.shared.setCancelCallback(for: opID) {
+                task.cancel()
             }
         }
     }
@@ -3089,12 +3155,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
 
         if !sidebarURLs.isEmpty {
             for url in sidebarURLs {
+                try Task.checkCancellation()
                 let (seqs, annots) = try await loadSequencesForExport(from: url)
                 allSequences.append(contentsOf: seqs)
                 allAnnotations.append(contentsOf: annots)
             }
         } else {
             for doc in documents {
+                try Task.checkCancellation()
                 allSequences.append(contentsOf: doc.sequences)
                 allAnnotations.append(contentsOf: doc.annotations)
             }
@@ -3205,6 +3273,48 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         return targets
     }
 
+    nonisolated static func batchSequenceExportCLICommands(
+        for bundleURLs: [URL],
+        outputFolder: URL,
+        format: SequenceExportFormat,
+        compression: SequenceExportCompression
+    ) -> [String] {
+        let targets = batchSequenceExportTargets(
+            for: bundleURLs,
+            outputFolder: outputFolder,
+            format: format,
+            compression: compression
+        )
+        return bundleURLs.compactMap { bundleURL in
+            guard let outputURL = targets[bundleURL] else { return nil }
+            return sequenceExportCLICommand(
+                inputURL: bundleURL,
+                outputURL: outputURL,
+                format: format,
+                compression: compression
+            )
+        }
+    }
+
+    nonisolated static func sequenceExportCLICommand(
+        inputURL: URL?,
+        outputURL: URL,
+        format: SequenceExportFormat,
+        compression: SequenceExportCompression
+    ) -> String? {
+        guard let inputURL else { return nil }
+        guard compression == .none else { return nil }
+        var args = [
+            inputURL.path,
+            "--to", outputURL.path,
+            "--to-format", format.cliFormat
+        ]
+        if inputURL.pathExtension.lowercased() == "lungfishref" {
+            args.append("--include-annotations")
+        }
+        return OperationCenter.buildCLICommand(subcommand: "convert", args: args)
+    }
+
     nonisolated private func performReferenceBundleSequenceExport(
         bundleURL: URL,
         outputURL: URL,
@@ -3212,6 +3322,7 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         compression: SequenceExportCompression
     ) async throws -> Int {
         let manifest = try BundleManifest.load(from: bundleURL)
+        try Task.checkCancellation()
         guard let genome = manifest.genome, !genome.chromosomes.isEmpty else {
             throw NSError(domain: "com.lungfish.browser", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "No genome sequence in bundle \(bundleURL.lastPathComponent)"])
@@ -3235,12 +3346,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
         case .fasta:
             let writer = FASTAWriter(url: writeURL)
             for chromosome in genome.chromosomes {
+                try Task.checkCancellation()
                 let sequence = try await sequenceForWholeChromosome(chromosome, in: bundle)
                 try writer.append(sequence)
             }
         case .genbank:
             let writer = GenBankWriter(url: writeURL)
             for chromosome in genome.chromosomes {
+                try Task.checkCancellation()
                 let sequence = try await sequenceForWholeChromosome(chromosome, in: bundle)
                 let seqAnnotations = annotations.filter {
                     $0.chromosome == nil || $0.chromosome == sequence.name
@@ -3406,6 +3519,20 @@ public class AppDelegate: NSObject, NSApplicationDelegate,
             switch self {
             case .fasta: return "fa"
             case .genbank: return "gb"
+            }
+        }
+
+        var displayName: String {
+            switch self {
+            case .fasta: return "FASTA"
+            case .genbank: return "GenBank"
+            }
+        }
+
+        var cliFormat: String {
+            switch self {
+            case .fasta: return "fasta"
+            case .genbank: return "genbank"
             }
         }
     }

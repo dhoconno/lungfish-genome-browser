@@ -1,12 +1,12 @@
-// PrimerSchemePickerView.swift - List-style picker for primer scheme bundles
+// PrimerSchemePickerView.swift - Menu picker for primer scheme bundles
 // Copyright (c) 2024 Lungfish Contributors
 // SPDX-License-Identifier: MIT
 
 import SwiftUI
 import LungfishIO
 
-/// A list-style picker for primer scheme bundles, showing built-in and
-/// project-local sections with row-level selection and a Browse button.
+/// A standard menu picker for the single primer scheme choice, with built-in
+/// and project-local sections plus an explicit file chooser button.
 struct PrimerSchemePickerView: View {
     let builtIn: [PrimerSchemeBundle]
     let projectLocal: [PrimerSchemeBundle]
@@ -15,35 +15,44 @@ struct PrimerSchemePickerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if !builtIn.isEmpty {
-                Text("Built-in").font(.caption).foregroundStyle(.secondary)
-                ForEach(builtIn, id: \.manifest.name) { scheme in
-                    schemeRow(scheme, badge: "Built-in")
+            Picker("Primer Scheme", selection: $selectedSchemeID) {
+                Text("Choose a primer scheme").tag(String?.none)
+                if !builtIn.isEmpty {
+                    Section("Built-in") {
+                        ForEach(builtIn, id: \.manifest.name) { scheme in
+                            Text(scheme.manifest.displayName).tag(Optional(scheme.manifest.name))
+                        }
+                    }
+                }
+                if !projectLocal.isEmpty {
+                    Section("In This Project") {
+                        ForEach(projectLocal, id: \.manifest.name) { scheme in
+                            Text(scheme.manifest.displayName).tag(Optional(scheme.manifest.name))
+                        }
+                    }
                 }
             }
-            if !projectLocal.isEmpty {
-                Text("In this project").font(.caption).foregroundStyle(.secondary)
-                ForEach(projectLocal, id: \.manifest.name) { scheme in
-                    schemeRow(scheme, badge: nil)
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("primer-scheme-picker")
+
+            HStack {
+                Button(action: onBrowse) {
+                    Label("Choose Scheme…", systemImage: "folder")
+                }
+                .accessibilityIdentifier("primer-scheme-browse-button")
+
+                if let selectedScheme {
+                    Text(selectedScheme.manifest.displayName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
-            Button("Browse…", action: onBrowse)
         }
     }
 
-    private func schemeRow(_ scheme: PrimerSchemeBundle, badge: String?) -> some View {
-        Button(action: { selectedSchemeID = scheme.manifest.name }) {
-            HStack {
-                Text(scheme.manifest.displayName)
-                if selectedSchemeID == scheme.manifest.name {
-                    Image(systemName: "checkmark").foregroundStyle(.tint)
-                }
-                Spacer()
-                if let badge { Text(badge).font(.caption2).foregroundStyle(.secondary) }
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("primer-scheme-\(scheme.manifest.name)")
-        .accessibilityLabel(scheme.manifest.displayName)
+    private var selectedScheme: PrimerSchemeBundle? {
+        guard let selectedSchemeID else { return nil }
+        return (builtIn + projectLocal).first { $0.manifest.name == selectedSchemeID }
     }
 }

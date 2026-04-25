@@ -147,8 +147,9 @@ public enum AnalysesFolder {
 
     /// Lists all analysis directories in `Analyses/`, sorted newest first.
     ///
-    /// Directories whose names cannot be parsed as `{tool}[-batch]-{timestamp}`
-    /// (with a recognised tool name) are silently ignored. Returns an empty
+    /// User-created folders inside `Analyses/` are traversed recursively so
+    /// grouped analysis runs remain discoverable. Directories whose names and
+    /// contents cannot be recognized as analyses are ignored. Returns an empty
     /// array if `Analyses/` does not exist.
     public static func listAnalyses(in projectURL: URL) throws -> [AnalysisDirectoryInfo] {
         let dir = projectURL.appendingPathComponent(directoryName, isDirectory: true)
@@ -158,25 +159,40 @@ public enum AnalysesFolder {
             return []
         }
 
+        var results: [AnalysisDirectoryInfo] = []
+        try collectAnalyses(in: dir, into: &results)
+        return results.sorted { $0.timestamp > $1.timestamp }
+    }
+
+    /// Returns analysis metadata for a single directory, if it is recognized as
+    /// an analysis result.
+    public static func analysisInfo(for directoryURL: URL) -> AnalysisDirectoryInfo? {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: directoryURL.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            return nil
+        }
+        return parseDirectoryName(directoryURL.lastPathComponent, url: directoryURL)
+    }
+
+    private static func collectAnalyses(in directoryURL: URL, into results: inout [AnalysisDirectoryInfo]) throws {
         let contents = try FileManager.default.contentsOfDirectory(
-            at: dir,
+            at: directoryURL,
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
         )
 
-        var results: [AnalysisDirectoryInfo] = []
         for url in contents {
-            // Only consider subdirectories.
             guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
                 continue
             }
-            guard let info = parseDirectoryName(url.lastPathComponent, url: url) else {
+            if let info = analysisInfo(for: url) {
+                results.append(info)
                 continue
             }
-            results.append(info)
-        }
 
-        return results.sorted { $0.timestamp > $1.timestamp }
+            try collectAnalyses(in: url, into: &results)
+        }
     }
 
     // MARK: - Timestamp Formatting
