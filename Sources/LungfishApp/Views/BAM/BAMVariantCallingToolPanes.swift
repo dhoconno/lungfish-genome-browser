@@ -76,10 +76,21 @@ struct BAMVariantCallingToolPanes: View {
                     .foregroundStyle(.secondary)
 
             case .ivar:
-                Toggle(
-                    "This BAM has already been primer-trimmed for iVar.",
-                    isOn: $state.ivarPrimerTrimConfirmed
-                )
+                if let auto = state.autoConfirmedPrimerTrim {
+                    Toggle(
+                        "This BAM has already been primer-trimmed for iVar.",
+                        isOn: .constant(true)
+                    )
+                    .disabled(true)
+                    Text("Primer-trimmed by Lungfish on \(state.autoConfirmedDateString(auto.timestamp)) using \(auto.primerScheme.bundleName).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Toggle(
+                        "This BAM has already been primer-trimmed for iVar.",
+                        isOn: $state.ivarPrimerTrimConfirmed
+                    )
+                }
 
             case .medaka:
                 VStack(alignment: .leading, spacing: 6) {

@@ -15,6 +15,7 @@ final class BAMVariantCallingDialogState {
     var selectedAlignmentTrackID: String {
         didSet {
             outputTrackName = suggestedOutputTrackName()
+            updatePrimerTrimAutoConfirm()
         }
     }
 
@@ -32,6 +33,13 @@ final class BAMVariantCallingDialogState {
     var advancedOptionsText: String
     private(set) var generatedTrackID: String
     private(set) var pendingRequest: BundleVariantCallingRequest?
+
+    /// Provenance record discovered alongside the selected BAM, when present.
+    ///
+    /// When non-nil, the iVar primer-trim attestation is treated as
+    /// machine-confirmed (auto-checked, disabled in the UI) rather than
+    /// requiring the user to attest manually.
+    private(set) var autoConfirmedPrimerTrim: BAMPrimerTrimProvenance?
 
     init(
         bundle: ReferenceBundle,
@@ -52,7 +60,12 @@ final class BAMVariantCallingDialogState {
         self.selectedCaller = .lofreq
         self.minimumAlleleFrequencyText = "0.05"
         self.minimumDepthText = "10"
-        self.ivarPrimerTrimConfirmed = false
+        let provenance = Self.readPrimerTrimProvenance(
+            for: bundle,
+            trackID: defaultAlignmentTrackID
+        )
+        self.autoConfirmedPrimerTrim = provenance
+        self.ivarPrimerTrimConfirmed = provenance != nil
         self.medakaModel = ""
         self.advancedOptionsText = ""
         self.generatedTrackID = Self.makeTrackID()
@@ -63,6 +76,43 @@ final class BAMVariantCallingDialogState {
             alignmentTrackID: defaultAlignmentTrackID,
             caller: .lofreq
         )
+    }
+
+    /// Reads the JSON provenance sidecar next to the selected track's BAM.
+    ///
+    /// Returns nil when the bundle has no track at `trackID`, the BAM cannot be
+    /// resolved, the sidecar is absent, or the sidecar fails to decode.
+    private static func readPrimerTrimProvenance(
+        for bundle: ReferenceBundle,
+        trackID: String
+    ) -> BAMPrimerTrimProvenance? {
+        guard let track = bundle.alignmentTrack(id: trackID) else { return nil }
+        let bamURL = bundle.url.appendingPathComponent(track.sourcePath)
+        let sidecarURL = bamURL.appendingPathExtension("primer-trim-provenance.json")
+        guard FileManager.default.fileExists(atPath: sidecarURL.path) else { return nil }
+        guard let data = try? Data(contentsOf: sidecarURL) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let provenance = try? decoder.decode(BAMPrimerTrimProvenance.self, from: data) else {
+            return nil
+        }
+        guard provenance.operation == "primer-trim" else { return nil }
+        return provenance
+    }
+
+    /// Re-evaluates the primer-trim sidecar after the selected track changes.
+    ///
+    /// When a sidecar is discovered, the iVar attestation is auto-confirmed.
+    /// When the new track has no sidecar, the user must attest manually, so we
+    /// reset `ivarPrimerTrimConfirmed` to `false` to avoid carrying forward a
+    /// previous track's attestation.
+    private func updatePrimerTrimAutoConfirm() {
+        let provenance = Self.readPrimerTrimProvenance(
+            for: bundle,
+            trackID: selectedAlignmentTrackID
+        )
+        autoConfirmedPrimerTrim = provenance
+        ivarPrimerTrimConfirmed = provenance != nil
     }
 
     var datasetLabel: String {
@@ -111,6 +161,9 @@ final class BAMVariantCallingDialogState {
         case .lofreq:
             return "Ready to run LoFreq on \(selectedAlignmentTrack?.name ?? "the selected alignment")."
         case .ivar:
+            if let auto = autoConfirmedPrimerTrim {
+                return "Ready to run iVar. Primer-trimmed by Lungfish on \(autoConfirmedDateString(auto.timestamp)) using \(auto.primerScheme.bundleName)."
+            }
             return ivarPrimerTrimConfirmed
                 ? "Ready to run iVar on the primer-trimmed alignment."
                 : "Confirm the BAM was primer-trimmed before running iVar."
@@ -251,5 +304,14 @@ final class BAMVariantCallingDialogState {
 
     private static func makeTrackID() -> String {
         "vc-\(UUID().uuidString.lowercased())"
+    }
+
+    /// Renders a primer-trim provenance timestamp for the readiness banner and
+    /// the disabled-toggle caption.
+    func autoConfirmedDateString(_ timestamp: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: timestamp)
     }
 }
