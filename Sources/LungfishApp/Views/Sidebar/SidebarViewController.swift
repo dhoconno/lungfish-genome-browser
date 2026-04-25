@@ -1124,6 +1124,9 @@ public class SidebarViewController: NSViewController {
                 if url.pathExtension.lowercased() == "lungfishref" {
                     itemType = .referenceBundle
                     icon = "cylinder.split.1x2"  // Database-like icon for genome bundles
+                } else if url.pathExtension.lowercased() == "lungfishprimers" {
+                    itemType = .primerSchemeBundle
+                    icon = "line.horizontal.3.decrease.circle"
                 } else if FASTQBundle.isBundleURL(url) {
                     itemType = .fastqBundle
                     icon = "doc.text"
@@ -1140,7 +1143,7 @@ public class SidebarViewController: NSViewController {
         }
 
         // Create the item (strip bundle extension for display)
-        let displayName = (itemType == .referenceBundle || itemType == .fastqBundle)
+        let displayName = (itemType == .referenceBundle || itemType == .fastqBundle || itemType == .primerSchemeBundle)
             ? url.deletingPathExtension().lastPathComponent
             : filename
 
@@ -3113,6 +3116,7 @@ public enum SidebarItemType {
     case unknown   // Unknown file type - uses QuickLook preview
     case referenceBundle  // .lungfishref reference genome bundle
     case fastqBundle  // .lungfishfastq FASTQ package bundle
+    case primerSchemeBundle  // .lungfishprimers primer-scheme bundle
     case batchGroup   // Virtual node representing a batch operation across multiple bundles
     case classificationResult  // Kraken2 classification result folder
     case esvirituResult        // EsViritu viral detection result folder
@@ -3135,6 +3139,7 @@ public enum SidebarItemType {
         case .unknown: return .tertiaryLabelColor
         case .referenceBundle: return .systemIndigo
         case .fastqBundle: return .systemGreen
+        case .primerSchemeBundle: return .systemYellow
         case .batchGroup: return .systemCyan
         case .classificationResult: return .lungfishOrange
         case .esvirituResult: return .lungfishOrange
@@ -3158,7 +3163,7 @@ public enum SidebarItemType {
     /// Whether this item type is a bundle that should appear as a single item
     var isBundle: Bool {
         switch self {
-        case .referenceBundle, .fastqBundle:
+        case .referenceBundle, .fastqBundle, .primerSchemeBundle:
             return true
         default:
             return false

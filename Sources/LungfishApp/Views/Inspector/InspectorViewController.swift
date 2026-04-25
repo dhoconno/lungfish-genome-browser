@@ -3799,6 +3799,7 @@ extension SidebarItemType: CustomStringConvertible {
         case .unknown: return "File"
         case .referenceBundle: return "Reference Bundle"
         case .fastqBundle: return "FASTQ Bundle"
+        case .primerSchemeBundle: return "Primer Scheme"
         case .batchGroup: return "Batch Operation"
         case .classificationResult: return "Classification Result"
         case .esvirituResult: return "Viral Detection Result"
