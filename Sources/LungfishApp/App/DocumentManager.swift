@@ -158,6 +158,14 @@ public final class DocumentManager {
             author: author
         )
 
+        // Bootstrap the primer-scheme folder so imported schemes and the
+        // sidebar scanner find a stable home from the project's first moment.
+        do {
+            _ = try PrimerSchemesFolder.ensureFolder(in: project.url)
+        } catch {
+            logger.warning("createProject: Could not create Primer Schemes folder: \(error.localizedDescription)")
+        }
+
         activeProject = project
         transitionDocumentState(to: [], activeDocument: nil)
         logger.info("createProject: Project created and set as active")
