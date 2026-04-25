@@ -6,7 +6,7 @@ final class BuiltInPrimerSchemeServiceTests: XCTestCase {
     func testListBuiltInSchemesReturnsBundledSchemes() throws {
         let schemes = BuiltInPrimerSchemeService.listBuiltInSchemes(in: Bundle.module)
         XCTAssertFalse(schemes.isEmpty, "expected at least one built-in primer scheme")
-        XCTAssertTrue(schemes.contains { $0.manifest.name == "test-builtin" })
+        XCTAssertTrue(schemes.contains { $0.manifest.name == "QIASeqDIRECT-SARS2" })
     }
 
     func testDefaultBundleMainCallDoesNotCrash() {

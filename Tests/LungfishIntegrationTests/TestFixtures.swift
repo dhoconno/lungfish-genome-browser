@@ -130,6 +130,15 @@ public enum TestFixtures {
         }
     }
 
+    /// Canonical QIAseq Direct SARS-CoV-2 primer scheme bundle.
+    ///
+    /// The fixture entry is a symlink pointing into
+    /// `Sources/LungfishApp/Resources/PrimerSchemes/`, so a single source
+    /// of truth backs both the shipped resource and the test bundle copy.
+    public static let qiaseqDirectSARS2: PrimerSchemeFixture = .init(
+        bundlePath: "primerschemes/QIASeqDIRECT-SARS2.lungfishprimers"
+    )
+
     // MARK: - Base URL Resolution
 
     /// Resolves the Fixtures directory from the test bundle or source tree.
@@ -137,7 +146,7 @@ public enum TestFixtures {
     /// SPM test bundles copy resources into `Bundle.module`, but the exact
     /// path varies. We try the bundle first, then fall back to walking up
     /// from `#file` to find `Tests/Fixtures/`.
-    private static var fixturesBaseURL: URL {
+    fileprivate static var fixturesBaseURL: URL {
         // Strategy 1: Bundle.module (works when test target declares .copy("Fixtures"))
         // SPM copies the Fixtures directory into the bundle's resource path.
         if let bundlePath = Bundle.module.resourceURL?
@@ -159,5 +168,23 @@ public enum TestFixtures {
         }
 
         fatalError("Cannot locate Tests/Fixtures directory. Ensure test fixtures are present.")
+    }
+}
+
+/// Lightweight handle to a `.lungfishprimers` test fixture bundle.
+///
+/// `bundlePath` is relative to `Tests/Fixtures/`. Use ``url`` to obtain an
+/// absolute URL once the fixture base directory has been resolved.
+public struct PrimerSchemeFixture: Sendable {
+    public let bundlePath: String
+
+    /// Absolute URL of the fixture bundle, validated to exist on disk.
+    public var url: URL {
+        let resolved = TestFixtures.fixturesBaseURL.appendingPathComponent(bundlePath)
+        precondition(
+            FileManager.default.fileExists(atPath: resolved.path),
+            "Test fixture missing: \(bundlePath). Run from a test target with .copy(\"Fixtures\") in Package.swift."
+        )
+        return resolved
     }
 }

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "name": "QIASeqDIRECT-SARS2",
+  "display_name": "QIAseq Direct SARS-CoV-2 with Booster A",
+  "description": "QIAGEN QIAseq Direct SARS-CoV-2 amplicon panel with Booster A primers (additional spike/N-region primers for variant coverage).",
+  "organism": "Severe acute respiratory syndrome coronavirus 2",
+  "reference_accessions": [
+    {
+      "accession": "MN908947.3",
+      "canonical": true
+    },
+    {
+      "accession": "NC_045512.2",
+      "equivalent": true
+    }
+  ],
+  "primer_count": 563,
+  "amplicon_count": 223,
+  "source": "built-in",
+  "source_url": "https://www.qiagen.com/us/products/discovery-and-translational-research/next-generation-sequencing/rna-sequencing/qiaseq-direct-sars-cov-2-kits-handbooks-and-supplemental-files",
+  "version": "1.0.0",
+  "created": "2026-04-25T00:53:01Z"
+}
