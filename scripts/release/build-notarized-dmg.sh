@@ -124,6 +124,8 @@ fi
 
 APP_PATH="${ARCHIVE_PATH}/Products/Applications/Lungfish.app"
 RELEASE_APP_PATH="${RELEASE_DIR}/Lungfish.app"
+APP_ICON_SOURCE="${PROJECT_ROOT}/Resources/AppIcon.icns"
+APP_ICON_DEST="${APP_PATH}/Contents/Resources/AppIcon.icns"
 METADATA_PATH="${RELEASE_DIR}/release-metadata.txt"
 APP_NOTARY_LOG="${RELEASE_DIR}/notary-app-log.json"
 DMG_NOTARY_LOG="${RELEASE_DIR}/notary-dmg-log.json"
@@ -140,6 +142,22 @@ relative_to_project_root() {
             printf '%s\n' "$1"
             ;;
     esac
+}
+
+install_app_icon() {
+    if [ ! -f "$APP_ICON_SOURCE" ]; then
+        echo "app icon source not found: $APP_ICON_SOURCE" >&2
+        exit 72
+    fi
+
+    /usr/bin/install -d "$(dirname "$APP_ICON_DEST")"
+    /usr/bin/install -m 644 "$APP_ICON_SOURCE" "$APP_ICON_DEST"
+
+    local info_plist="${APP_PATH}/Contents/Info.plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile AppIcon" "$info_plist" 2>/dev/null \
+        || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$info_plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIconName AppIcon" "$info_plist" 2>/dev/null \
+        || /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string AppIcon" "$info_plist"
 }
 
 prepare_release_dir() {
@@ -250,6 +268,7 @@ fi
 
 /usr/bin/install -m 755 "$CLI_SOURCE" "$CLI_DEST"
 /bin/bash scripts/sanitize-bundled-tools.sh "$APP_PATH/Contents/MacOS" "$WORKFLOW_TOOLS_DIR"
+install_app_icon
 
 # Fail before codesign/notarization work if release packaging leaked build or
 # Homebrew paths back into the app bundle.

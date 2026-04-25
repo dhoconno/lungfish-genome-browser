@@ -420,6 +420,46 @@ struct ReleaseBuildConfigurationTests {
         #expect(script.contains("release-metadata.txt"))
     }
 
+    @Test("Notarized DMG release script installs app icon before signing and DMG staging")
+    func notarizedDMGReleaseScriptInstallsAppIconBeforeSigningAndDMGStaging() throws {
+        let script = try String(
+            contentsOf: Self.repositoryRoot()
+                .appendingPathComponent("scripts/release/build-notarized-dmg.sh"),
+            encoding: .utf8
+        )
+
+        #expect(script.contains(#"APP_ICON_SOURCE="${PROJECT_ROOT}/Resources/AppIcon.icns""#))
+        #expect(script.contains(#"APP_ICON_DEST="${APP_PATH}/Contents/Resources/AppIcon.icns""#))
+        #expect(script.contains(#"/usr/bin/install -m 644 "$APP_ICON_SOURCE" "$APP_ICON_DEST""#))
+        #expect(script.contains(#"Set :CFBundleIconFile AppIcon"#))
+        #expect(script.contains(#"Set :CFBundleIconName AppIcon"#))
+
+        let lines = script.split(separator: "\n", omittingEmptySubsequences: false)
+        guard let installIndex = lines.firstIndex(where: {
+            $0.contains(#"/usr/bin/install -m 644 "$APP_ICON_SOURCE" "$APP_ICON_DEST""#)
+        }) else {
+            Issue.record("expected AppIcon.icns installation in release script")
+            return
+        }
+
+        guard let firstCodesignIndex = lines.firstIndex(where: {
+            $0.contains(#"/usr/bin/codesign --force --sign "$SIGNING_IDENTITY""#)
+        }) else {
+            Issue.record("expected codesign invocation in release script")
+            return
+        }
+
+        guard let dmgStageIndex = lines.firstIndex(where: {
+            $0.contains(#"/usr/bin/ditto "$APP_PATH" "${DMG_STAGING_DIR}/Lungfish.app""#)
+        }) else {
+            Issue.record("expected DMG staging copy in release script")
+            return
+        }
+
+        #expect(installIndex < firstCodesignIndex)
+        #expect(installIndex < dmgStageIndex)
+    }
+
     @Test("Notarized DMG release script builds CLI with prefix maps")
     func notarizedDMGReleaseScriptBuildsCLIWithPrefixMaps() throws {
         let script = try String(

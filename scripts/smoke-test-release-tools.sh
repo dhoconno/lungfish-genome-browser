@@ -44,6 +44,8 @@ while [ "$#" -gt 0 ]; do
 done
 
 TOOLS_DIR="$APP_PATH/Contents/Resources/LungfishGenomeBrowser_LungfishWorkflow.bundle/Contents/Resources/Tools"
+INFO_PLIST="$APP_PATH/Contents/Info.plist"
+APP_ICON_PATH="$APP_PATH/Contents/Resources/AppIcon.icns"
 RG_BIN="$(command -v rg || true)"
 
 if [ ! -d "$TOOLS_DIR" ]; then
@@ -54,6 +56,26 @@ fi
 if [ -z "$RG_BIN" ]; then
     echo "missing required command: rg" >&2
     exit 69
+fi
+
+if [ ! -f "$INFO_PLIST" ]; then
+    echo "Info.plist missing: $INFO_PLIST" >&2
+    exit 66
+fi
+
+if [ ! -f "$APP_ICON_PATH" ]; then
+    echo "app icon missing: $APP_ICON_PATH" >&2
+    exit 66
+fi
+
+if [ "$(/usr/libexec/PlistBuddy -c "Print :CFBundleIconFile" "$INFO_PLIST" 2>/dev/null || true)" != "AppIcon" ]; then
+    echo "CFBundleIconFile should be AppIcon in $INFO_PLIST" >&2
+    exit 66
+fi
+
+if [ "$(/usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$INFO_PLIST" 2>/dev/null || true)" != "AppIcon" ]; then
+    echo "CFBundleIconName should be AppIcon in $INFO_PLIST" >&2
+    exit 66
 fi
 
 if [ ! -x "$TOOLS_DIR/micromamba" ]; then
