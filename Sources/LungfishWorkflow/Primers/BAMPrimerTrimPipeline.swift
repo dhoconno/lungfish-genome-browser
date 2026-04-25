@@ -192,9 +192,7 @@ extension BAMPrimerTrimPipeline {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         let provenanceData = try encoder.encode(provenance)
-        let provenanceURL = request.outputBAMURL
-            .deletingPathExtension()
-            .appendingPathExtension("primer-trim-provenance.json")
+        let provenanceURL = PrimerTrimProvenanceLoader.sidecarURL(forBAMAt: request.outputBAMURL)
         try provenanceData.write(to: provenanceURL)
 
         progress(1.0, "Primer trim complete")

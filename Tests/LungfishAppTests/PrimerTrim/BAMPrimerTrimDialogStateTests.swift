@@ -34,6 +34,11 @@ final class BAMPrimerTrimDialogStateTests: XCTestCase {
             builtInSchemes: [scheme],
             projectSchemes: []
         )
+        // The stub bundle has no eligible alignment tracks, so the launcher's
+        // required state (alignmentTrackID + outputTrackName) is supplied
+        // directly by the test.
+        state.alignmentTrackID = "test-track-id"
+        state.outputTrackName = "Trimmed track"
         state.selectScheme(id: scheme.manifest.name)
         XCTAssertTrue(state.isRunEnabled)
     }
@@ -46,6 +51,8 @@ final class BAMPrimerTrimDialogStateTests: XCTestCase {
             builtInSchemes: [scheme],
             projectSchemes: []
         )
+        state.alignmentTrackID = "test-track-id"
+        state.outputTrackName = "Trimmed track"
         state.selectScheme(id: scheme.manifest.name)
         XCTAssertFalse(state.isRunEnabled)
     }
@@ -58,6 +65,8 @@ final class BAMPrimerTrimDialogStateTests: XCTestCase {
             builtInSchemes: [scheme],
             projectSchemes: []
         )
+        state.alignmentTrackID = "test-track-id"
+        state.outputTrackName = "Trimmed track"
         state.selectScheme(id: scheme.manifest.name)
         XCTAssertTrue(state.isRunEnabled, "precondition: enabled with valid defaults")
 
@@ -95,11 +104,14 @@ final class BAMPrimerTrimDialogStateTests: XCTestCase {
     func testPrepareForRunPopulatesPendingRequestWhenReady() throws {
         let scheme = try loadSampleScheme()
         let state = BAMPrimerTrimDialogState(
-            bundle: makeStubReferenceBundle(),
+            bundle: makeStubReferenceBundle(includeAlignment: true),
             availability: .available,
             builtInSchemes: [scheme],
             projectSchemes: []
         )
+        // alignmentTrackID is auto-populated by init from the bundle's first
+        // eligible (non-resolvable, manifest-only) track. The output track
+        // name auto-populates when the scheme is selected.
         state.selectScheme(id: scheme.manifest.name)
         state.minReadLengthText = "30"
         state.minQualityText = "20"
@@ -114,10 +126,28 @@ final class BAMPrimerTrimDialogStateTests: XCTestCase {
         XCTAssertEqual(state.pendingRequest?.minReadLength, 30)
     }
 
+    func testSelectSchemePopulatesDefaultOutputTrackName() throws {
+        let scheme = try loadSampleScheme()
+        let state = BAMPrimerTrimDialogState(
+            bundle: makeStubReferenceBundle(includeAlignment: true),
+            availability: .available,
+            builtInSchemes: [scheme],
+            projectSchemes: []
+        )
+
+        state.selectScheme(id: scheme.manifest.name)
+
+        XCTAssertTrue(
+            state.outputTrackName.contains("Primer-trimmed"),
+            "The SwiftUI picker binding routes selection through selectScheme(id:), so default output naming must run there."
+        )
+        XCTAssertTrue(state.isRunEnabled)
+    }
+
     func testPrepareForRunReturnsNilWhenFieldsInvalid() throws {
         let scheme = try loadSampleScheme()
         let state = BAMPrimerTrimDialogState(
-            bundle: makeStubReferenceBundle(),
+            bundle: makeStubReferenceBundle(includeAlignment: true),
             availability: .available,
             builtInSchemes: [scheme],
             projectSchemes: []
@@ -129,11 +159,32 @@ final class BAMPrimerTrimDialogStateTests: XCTestCase {
 
     // MARK: - Fixture helpers
 
-    private func makeStubReferenceBundle() -> ReferenceBundle {
+    private func makeStubReferenceBundle(includeAlignment: Bool = false) -> ReferenceBundle {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("BAMPrimerTrimDialogStateTests-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         temporaryURLs.append(url)
+        var alignments: [AlignmentTrackInfo] = []
+        if includeAlignment {
+            // Create stub BAM/BAI on disk so
+            // `BAMVariantCallingEligibility.eligibleAlignmentTracks(in:)` (which
+            // calls `resolveAlignmentPath` / `resolveAlignmentIndexPath`) treats
+            // the manifest entry as eligible during the dialog state's init.
+            let alignmentsDir = url.appendingPathComponent("alignments", isDirectory: true)
+            try? FileManager.default.createDirectory(at: alignmentsDir, withIntermediateDirectories: true)
+            let bamURL = alignmentsDir.appendingPathComponent("test.bam")
+            let baiURL = alignmentsDir.appendingPathComponent("test.bam.bai")
+            FileManager.default.createFile(atPath: bamURL.path, contents: Data(), attributes: nil)
+            FileManager.default.createFile(atPath: baiURL.path, contents: Data(), attributes: nil)
+            alignments = [
+                AlignmentTrackInfo(
+                    id: "test-track-id",
+                    name: "Test alignment",
+                    sourcePath: "alignments/test.bam",
+                    indexPath: "alignments/test.bam.bai"
+                )
+            ]
+        }
         let manifest = BundleManifest(
             name: "Stub",
             identifier: "stub.test",
@@ -153,7 +204,7 @@ final class BAMPrimerTrimDialogStateTests: XCTestCase {
                 ]
             ),
             variants: [],
-            alignments: []
+            alignments: alignments
         )
         return ReferenceBundle(url: url, manifest: manifest)
     }

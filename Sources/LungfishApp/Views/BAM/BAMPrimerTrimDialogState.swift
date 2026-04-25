@@ -4,6 +4,7 @@
 
 import Foundation
 import Observation
+import LungfishCore
 import LungfishIO
 import LungfishWorkflow
 
@@ -29,6 +30,18 @@ final class BAMPrimerTrimDialogState {
     var slidingWindowText: String = "4"
     var primerOffsetText: String = "0"
 
+    /// Alignment track ID (from the bundle's manifest) the operation will trim.
+    /// Auto-populated with the first eligible alignment track at init time;
+    /// future UI work can let the user override this when bundles have
+    /// multiple eligible BAMs. Nil only when the bundle has no eligible tracks
+    /// (in which case `isRunEnabled` is already false).
+    var alignmentTrackID: String?
+
+    /// Display name for the new primer-trimmed alignment track. Auto-populated
+    /// from the source track + selected scheme but exposed as a `var` so
+    /// future UI work (or a power user) can override.
+    var outputTrackName: String = ""
+
     private(set) var pendingRequest: BAMPrimerTrimRequest?
 
     init(
@@ -41,6 +54,12 @@ final class BAMPrimerTrimDialogState {
         self.availability = availability
         self.builtInSchemes = builtInSchemes
         self.projectSchemes = projectSchemes
+
+        let eligible = BAMVariantCallingEligibility.eligibleAlignmentTracks(in: bundle)
+        self.alignmentTrackID = eligible.first?.id
+        // Note: `selectedSchemeID` is nil at init, so refreshing the default
+        // output track name now would no-op. The helper fires when the user
+        // picks a scheme via `selectScheme(id:)`.
     }
 
     // MARK: - Derived State
@@ -56,6 +75,21 @@ final class BAMPrimerTrimDialogState {
     func selectScheme(id: String) {
         guard allSchemes.contains(where: { $0.manifest.name == id }) else { return }
         selectedSchemeID = id
+        refreshDefaultOutputTrackNameIfEmpty()
+    }
+
+    /// Synthesizes the default output track name from the source track name
+    /// and the selected scheme. Idempotent: callers can invoke this whenever
+    /// the source track or scheme selection changes; will not overwrite a
+    /// non-empty name the user has typed.
+    func refreshDefaultOutputTrackNameIfEmpty() {
+        guard outputTrackName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard let trackID = alignmentTrackID,
+              let track = bundle.alignmentTrack(id: trackID),
+              let scheme = selectedScheme else {
+            return
+        }
+        outputTrackName = "\(track.name) • Primer-trimmed (\(scheme.manifest.displayName))"
     }
 
     /// `true` when the operation is `.available`, a primer scheme is selected,
@@ -63,6 +97,8 @@ final class BAMPrimerTrimDialogState {
     var isRunEnabled: Bool {
         guard availability == .available else { return false }
         guard selectedScheme != nil else { return false }
+        guard alignmentTrackID != nil else { return false }
+        guard !outputTrackName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         guard parsedInt(minReadLengthText) != nil else { return false }
         guard parsedInt(minQualityText) != nil else { return false }
         guard parsedInt(slidingWindowText) != nil else { return false }
@@ -76,7 +112,13 @@ final class BAMPrimerTrimDialogState {
     /// finally announces ready-to-run with the selected scheme's display name.
     var readinessText: String {
         if case .disabled(let reason) = availability { return reason }
+        guard alignmentTrackID != nil else {
+            return "This bundle has no analysis-ready BAM alignment tracks to primer-trim."
+        }
         guard let scheme = selectedScheme else { return "Select a primer scheme." }
+        guard !outputTrackName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return "Enter a name for the primer-trimmed alignment track."
+        }
         return "Ready to trim using \(scheme.manifest.displayName)."
     }
 
@@ -94,12 +136,16 @@ final class BAMPrimerTrimDialogState {
     /// assembled request so callers can inspect it directly.
     ///
     /// Returns `nil` (and leaves ``pendingRequest`` unchanged) if validation
-    /// fails. The real source/output BAM URLs are supplied by the Inspector in
-    /// Task 10; until then we fill placeholder URLs so the request assembly
-    /// logic exercises the validated parameters end-to-end.
+    /// fails. The launcher (`InspectorViewController.launchPrimerTrimOperation`)
+    /// translates the validated parameters into a `lungfish-cli bam primer-trim`
+    /// argv via `CLIPrimerTrimRunner.buildCLIArguments(...)`; the BAM output
+    /// path is owned by the CLI subcommand, not by this state.
     @discardableResult
     func prepareForRun() -> BAMPrimerTrimRequest? {
         guard let scheme = selectedScheme else { return nil }
+        guard let trackID = alignmentTrackID,
+              let track = bundle.alignmentTrack(id: trackID) else { return nil }
+        guard !outputTrackName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         guard let minReadLength = parsedInt(minReadLengthText),
               let minQuality = parsedInt(minQualityText),
               let slidingWindow = parsedInt(slidingWindowText),
@@ -107,17 +153,18 @@ final class BAMPrimerTrimDialogState {
             return nil
         }
 
-        // TODO(Task 10): replace these placeholders with URLs wired from the
-        // Inspector context that hosts the dialog, or restructure the request
-        // so parameter assembly and file-URL resolution happen at the call
-        // site. The sibling variant-calling dialog resolves its URL from the
-        // bundle itself (`bundle.url`); primer-trim genuinely needs two
-        // external file URLs that state does not own.
-        let placeholderURL = URL(fileURLWithPath: "/dev/null")
+        // The CLI subcommand owns the actual output BAM placement. The
+        // `BAMPrimerTrimRequest` we build here is informational only — it
+        // captures the validated parameters for the launcher to translate
+        // into CLI args. The launcher reads `state.alignmentTrackID`,
+        // `state.outputTrackName`, and the iVar parameters directly. The
+        // request type still requires an `outputBAMURL`, so we set it to the
+        // source URL purely to satisfy the initializer; nothing reads it.
+        let sourceBAMURL = bundle.url.appendingPathComponent(track.sourcePath)
         let request = BAMPrimerTrimRequest(
-            sourceBAMURL: placeholderURL,
+            sourceBAMURL: sourceBAMURL,
             primerSchemeBundle: scheme,
-            outputBAMURL: placeholderURL,
+            outputBAMURL: sourceBAMURL,
             minReadLength: minReadLength,
             minQuality: minQuality,
             slidingWindow: slidingWindow,

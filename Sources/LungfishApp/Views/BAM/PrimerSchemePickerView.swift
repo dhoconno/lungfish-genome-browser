@@ -43,5 +43,7 @@ struct PrimerSchemePickerView: View {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("primer-scheme-\(scheme.manifest.name)")
+        .accessibilityLabel(scheme.manifest.displayName)
     }
 }

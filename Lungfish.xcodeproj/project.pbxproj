@@ -36,6 +36,7 @@
 		F1E2D3C4B5A69788776655A2 /* MappingRobot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1E2D3C4B5A69788776655A3 /* MappingRobot.swift */; };
 		F1E2D3C4B5A69788776655A4 /* BundleBrowserXCUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1E2D3C4B5A69788776655A5 /* BundleBrowserXCUITests.swift */; };
 		F1E2D3C4B5A69788776655A6 /* BundleBrowserRobot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1E2D3C4B5A69788776655A7 /* BundleBrowserRobot.swift */; };
+		F1E2D3C4B5A69788776655A8 /* PrimerTrimXCUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1E2D3C4B5A69788776655A9 /* PrimerTrimXCUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -59,6 +60,8 @@
 		F1E2D3C4B5A69788776655A3 /* MappingRobot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/LungfishXCUITests/TestSupport/MappingRobot.swift; sourceTree = SOURCE_ROOT; };
 		F1E2D3C4B5A69788776655A5 /* BundleBrowserXCUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/LungfishXCUITests/BundleBrowserXCUITests.swift; sourceTree = SOURCE_ROOT; };
 		F1E2D3C4B5A69788776655A7 /* BundleBrowserRobot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/LungfishXCUITests/TestSupport/BundleBrowserRobot.swift; sourceTree = SOURCE_ROOT; };
+		F1E2D3C4B5A69788776655A9 /* PrimerTrimXCUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/LungfishXCUITests/PrimerTrim/PrimerTrimXCUITests.swift; sourceTree = SOURCE_ROOT; };
+		F1E2D3C4B5A69788776655AB /* VariantCallingAutoConfirmXCUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/LungfishXCUITests/PrimerTrim/VariantCallingAutoConfirmXCUITests.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -123,7 +126,9 @@
 				F1E2D3C4B5A6978877665573 /* DatabaseSearchXCUITests.swift */,
 				F1E2D3C4B5A6978877665595 /* MainWindowNavigationXCUITests.swift */,
 				F1E2D3C4B5A69788776655A1 /* MappingXCUITests.swift */,
+				F1E2D3C4B5A69788776655A9 /* PrimerTrimXCUITests.swift */,
 				F1E2D3C4B5A6978877665594 /* ProjectLifecycleXCUITests.swift */,
+				F1E2D3C4B5A69788776655AB /* VariantCallingAutoConfirmXCUITests.swift */,
 				F1E2D3C4B5A6978877665579 /* TestSupport */,
 			);
 			path = LungfishXCUITests;
@@ -356,6 +361,7 @@
 				F1E2D3C4B5A6978877665591 /* MainWindowRobot.swift in Sources */,
 				F1E2D3C4B5A69788776655A0 /* MappingXCUITests.swift in Sources */,
 				F1E2D3C4B5A69788776655A2 /* MappingRobot.swift in Sources */,
+				F1E2D3C4B5A69788776655A8 /* PrimerTrimXCUITests.swift in Sources */,
 				F1E2D3C4B5A6978877665586 /* ProjectLifecycleXCUITests.swift in Sources */,
 				F1E2D3C4B5A6978877665592 /* ProjectLifecycleRobot.swift in Sources */,
 				F1E2D3C4B5A6978877665593 /* SystemPanelRobot.swift in Sources */,

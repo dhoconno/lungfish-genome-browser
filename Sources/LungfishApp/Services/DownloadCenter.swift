@@ -21,6 +21,7 @@ public enum OperationType: String, Sendable {
     case taxonomyExtraction = "Extraction"
     case classification = "Classification"
     case blastVerification = "BLAST"
+    case bamPrimerTrim = "Primer Trim"
     case variantCalling = "Variant Calling"
 }
 

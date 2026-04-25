@@ -17,6 +17,10 @@ struct BundleBrowserRobot {
             projectPath: projectURL,
             fixtureRootPath: LungfishFixtureCatalog.fixturesRoot
         )
+        let workspaceCLI = LungfishFixtureCatalog.repoRoot.appendingPathComponent(".build/debug/lungfish-cli")
+        if FileManager.default.isExecutableFile(atPath: workspaceCLI.path) {
+            options.cliPath = workspaceCLI
+        }
         options.apply(to: app)
         app.launchEnvironment["LUNGFISH_DEBUG_BYPASS_REQUIRED_SETUP"] = "1"
         app.launch()
@@ -30,9 +34,22 @@ struct BundleBrowserRobot {
     ) {
         let outline = app.outlines["sidebar-outline"]
         XCTAssertTrue(outline.waitForExistence(timeout: 10), file: file, line: line)
-        let item = outline.staticTexts[label].firstMatch
+        let displayedLabel = URL(fileURLWithPath: label).deletingPathExtension().lastPathComponent
+        let item = outline.staticTexts[label].firstMatch.exists
+            ? outline.staticTexts[label].firstMatch
+            : outline.staticTexts[displayedLabel].firstMatch
         XCTAssertTrue(item.waitForExistence(timeout: 10), file: file, line: line)
         item.click()
+    }
+
+    func selectInspectorTab(
+        named label: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let tab = app.buttons[label].firstMatch
+        XCTAssertTrue(tab.waitForExistence(timeout: 10), file: file, line: line)
+        tab.click()
     }
 
     func waitForBrowserLoaded(

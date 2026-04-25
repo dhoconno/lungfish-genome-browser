@@ -205,6 +205,27 @@ enum LungfishProjectFixtureBuilder {
         )
     }
 
+    /// Creates an XCUI fixture project containing a `.lungfishref` bundle that
+    /// wraps the real sarscov2 fixture BAM. The project's `Primer Schemes/`
+    /// folder is pre-populated with the mt192765-integration scheme so the
+    /// primer-trim dialog has a project-local scheme to select.
+    static func makeMappedBundleProject(named name: String = "PrimerTrimMappedFixture") throws -> URL {
+        let projectURL = try makePrimerTrimProjectScaffold(named: name)
+        try writePrimerTrimReferenceBundle(projectURL: projectURL)
+        try copyIntegrationSchemeIntoProject(projectURL: projectURL)
+        return projectURL
+    }
+
+    /// Same as `makeMappedBundleProject` but the source BAM has already been
+    /// primer-trimmed: a `<bam-sans-ext>.primer-trim-provenance.json` sidecar
+    /// is dropped alongside the BAM so that the variant-calling dialog's
+    /// auto-confirm path triggers when the user opens the bundle.
+    static func makePrimerTrimmedBundleProject(named name: String = "PrimerTrimmedFixture") throws -> URL {
+        let projectURL = try makeMappedBundleProject(named: name)
+        try writeStubPrimerTrimSidecar(projectURL: projectURL)
+        return projectURL
+    }
+
     private static func makeProject(
         named name: String,
         fixtures: [(source: URL, target: FixtureCopyTarget)],
@@ -405,5 +426,146 @@ enum LungfishProjectFixtureBuilder {
         default:
             return []
         }
+    }
+
+    // MARK: - Primer-trim helpers
+
+    private static func makePrimerTrimProjectScaffold(named name: String) throws -> URL {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(
+            "lungfish-xcui-project-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let projectURL = root.appendingPathComponent("\(name).lungfish", isDirectory: true)
+        try fileManager.createDirectory(at: projectURL, withIntermediateDirectories: true)
+        try writeProjectMetadata(to: projectURL, name: name)
+        try fileManager.createDirectory(
+            at: projectURL.appendingPathComponent("Primer Schemes", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        return projectURL
+    }
+
+    /// Authors a `.lungfishref` bundle that wraps the sarscov2 reference FASTA
+    /// and paired-end BAM as an alignment track.
+    private static func writePrimerTrimReferenceBundle(projectURL: URL) throws {
+        let fileManager = FileManager.default
+        let bundleURL = projectURL.appendingPathComponent("Sample.lungfishref", isDirectory: true)
+        try fileManager.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+
+        let genomeDir = bundleURL.appendingPathComponent("genome", isDirectory: true)
+        try fileManager.createDirectory(at: genomeDir, withIntermediateDirectories: true)
+        let sourceFasta = LungfishFixtureCatalog.sarscov2.appendingPathComponent("genome.fasta")
+        let sourceFai = LungfishFixtureCatalog.sarscov2.appendingPathComponent("genome.fasta.fai")
+        let destFasta = genomeDir.appendingPathComponent("sequence.fa")
+        let destFai = genomeDir.appendingPathComponent("sequence.fa.fai")
+        try fileManager.copyItem(at: sourceFasta, to: destFasta)
+        try fileManager.copyItem(at: sourceFai, to: destFai)
+
+        let alignmentsDir = bundleURL.appendingPathComponent("alignments", isDirectory: true)
+        try fileManager.createDirectory(at: alignmentsDir, withIntermediateDirectories: true)
+        let sourceBAM = LungfishFixtureCatalog.sarscov2
+            .appendingPathComponent("test.paired_end.sorted.bam")
+        let sourceBAI = sourceBAM.appendingPathExtension("bai")
+        let bundleBAM = alignmentsDir.appendingPathComponent("source.sorted.bam")
+        let bundleBAI = bundleBAM.appendingPathExtension("bai")
+        try fileManager.copyItem(at: sourceBAM, to: bundleBAM)
+        try fileManager.copyItem(at: sourceBAI, to: bundleBAI)
+
+        let timestamp = Date(timeIntervalSince1970: 1_713_744_000)
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let isoTimestamp = isoFormatter.string(from: timestamp)
+
+        let faiContents = try String(contentsOf: destFai, encoding: .utf8)
+        let firstLine = faiContents.split(separator: "\n").first.map(String.init) ?? ""
+        let parts = firstLine.split(separator: "\t").map(String.init)
+        let chromName = parts.indices.contains(0) ? parts[0] : "MT192765.1"
+        let chromLength = (parts.indices.contains(1) ? Int(parts[1]) : nil) ?? 29829
+        let chromOffset = (parts.indices.contains(2) ? Int(parts[2]) : nil) ?? 120
+        let chromLineBases = (parts.indices.contains(3) ? Int(parts[3]) : nil) ?? 80
+        let chromLineWidth = (parts.indices.contains(4) ? Int(parts[4]) : nil) ?? 81
+
+        let manifestJSON: [String: Any] = [
+            "format_version": "1.0",
+            "name": "Sample",
+            "identifier": "org.lungfish.xcui.primer-trim.\(UUID().uuidString)",
+            "created_date": isoTimestamp,
+            "modified_date": isoTimestamp,
+            "source": [
+                "organism": "Severe acute respiratory syndrome coronavirus 2",
+                "assembly": "MT192765.1",
+                "database": "test",
+                "notes": "XCUI primer-trim fixture"
+            ],
+            "genome": [
+                "path": "genome/sequence.fa",
+                "index_path": "genome/sequence.fa.fai",
+                "total_length": chromLength,
+                "chromosomes": [[
+                    "name": chromName,
+                    "length": chromLength,
+                    "offset": chromOffset,
+                    "line_bases": chromLineBases,
+                    "line_width": chromLineWidth,
+                    "aliases": [],
+                    "is_primary": true,
+                    "is_mitochondrial": false
+                ]]
+            ],
+            "annotations": [],
+            "variants": [],
+            "tracks": [],
+            "alignments": [[
+                "id": "aln-source",
+                "name": "Source Alignment",
+                "format": "bam",
+                "source_path": "alignments/source.sorted.bam",
+                "index_path": "alignments/source.sorted.bam.bai",
+                "added_date": isoTimestamp,
+                "sample_names": []
+            ]]
+        ]
+        let manifestData = try JSONSerialization.data(
+            withJSONObject: manifestJSON,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        try manifestData.write(to: bundleURL.appendingPathComponent("manifest.json"))
+    }
+
+    private static func copyIntegrationSchemeIntoProject(projectURL: URL) throws {
+        let schemeSource = LungfishFixtureCatalog.repoRoot
+            .appendingPathComponent("Tests/LungfishWorkflowTests/Resources/primerschemes/mt192765-integration.lungfishprimers")
+        guard FileManager.default.fileExists(atPath: schemeSource.path) else { return }
+
+        let schemesDir = projectURL.appendingPathComponent("Primer Schemes", isDirectory: true)
+        let dest = schemesDir.appendingPathComponent("mt192765-integration.lungfishprimers")
+        try FileManager.default.copyItem(at: schemeSource, to: dest)
+    }
+
+    private static func writeStubPrimerTrimSidecar(projectURL: URL) throws {
+        let sidecarURL = projectURL
+            .appendingPathComponent("Sample.lungfishref/alignments/source.sorted.primer-trim-provenance.json")
+        let sidecarJSON: [String: Any] = [
+            "operation": "primer-trim",
+            "primer_scheme": [
+                "bundle_name": "mt192765-integration",
+                "bundle_source": "test-fixture",
+                "bundle_version": "0.1.0",
+                "canonical_accession": "MT192765.1"
+            ],
+            "source_bam": "alignments/source.sorted.bam",
+            "ivar_version": "1.4.4",
+            "ivar_trim_args": [
+                "trim", "-b", "primers.bed", "-i", "input.bam", "-p", "out",
+                "-q", "20", "-m", "30", "-s", "4", "-x", "0", "-e"
+            ],
+            "timestamp": "2026-04-25T00:00:00Z"
+        ]
+        let data = try JSONSerialization.data(
+            withJSONObject: sidecarJSON,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        try data.write(to: sidecarURL)
     }
 }

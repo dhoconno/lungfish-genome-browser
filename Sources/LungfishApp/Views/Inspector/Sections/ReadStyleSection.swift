@@ -140,6 +140,9 @@ public final class ReadStyleSectionViewModel {
     /// Currently isolated alignment track for rendering. `nil` means show all alignments.
     public var selectedVisibleAlignmentTrackID: String? = nil
 
+    /// Primer-trim provenance for the currently displayed/selected alignment track.
+    public internal(set) var primerTrimProvenance: BAMPrimerTrimProvenance?
+
     /// Currently selected BAM-filter source track.
     public var selectedAlignmentFilterSourceTrackID: String? = nil {
         didSet {
@@ -307,6 +310,7 @@ public final class ReadStyleSectionViewModel {
         latestMappedReadsAnnotationMessage = nil
         resetAlignmentFilterState()
         resetMappedReadsAnnotationState()
+        primerTrimProvenance = nil
     }
 
     /// Loads alignment statistics from bundle's metadata databases.
@@ -422,6 +426,15 @@ public final class ReadStyleSectionViewModel {
         fileInfo = infoList
         programRecords = programList
         provenanceRecords = provenanceList
+
+        let probedTrackID = selectedVisibleAlignmentTrackID ?? trackIds.first
+        if let trackID = probedTrackID,
+           let track = bundle.alignmentTrack(id: trackID) {
+            let bamURL = bundle.url.appendingPathComponent(track.sourcePath)
+            primerTrimProvenance = PrimerTrimProvenanceLoader.load(forBAMAt: bamURL)
+        } else {
+            primerTrimProvenance = nil
+        }
     }
 
     /// Seeds the BAM-filter source track choices and default selection/output name.
@@ -872,6 +885,7 @@ public struct AlignmentBundleSection: View {
     @State private var isProgramRecordsExpanded = false
     @State private var isDerivedMetadataExpanded = false
     @State private var isProvenanceExpanded = false
+    @State private var isPrimerTrimDerivationExpanded = false
     @State private var expandedProgramCommandIDs = Set<String>()
     @State private var expandedProvenanceCommandIDs = Set<Int>()
 
@@ -886,6 +900,15 @@ public struct AlignmentBundleSection: View {
                     .padding(.top, 4)
             }
             .font(.headline)
+
+            if let provenance = viewModel.primerTrimProvenance {
+                Divider()
+                DisclosureGroup("Primer-trim Derivation", isExpanded: $isPrimerTrimDerivationExpanded) {
+                    primerTrimDerivationSection(provenance: provenance)
+                        .padding(.top, 4)
+                }
+                .font(.headline)
+            }
 
             if !viewModel.readGroups.isEmpty {
                 Divider()
@@ -1246,6 +1269,44 @@ public struct AlignmentBundleSection: View {
             return formatter.string(from: date)
         }
         return raw
+    }
+
+    @ViewBuilder
+    private func primerTrimDerivationSection(provenance: BAMPrimerTrimProvenance) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            primerTrimCaptionLine(
+                "Primer scheme",
+                "\(provenance.primerScheme.bundleName)" +
+                    (provenance.primerScheme.bundleVersion.map { " (v\($0))" } ?? "")
+            )
+            primerTrimCaptionLine("Source", provenance.primerScheme.bundleSource)
+            primerTrimCaptionLine("Canonical accession", provenance.primerScheme.canonicalAccession)
+            primerTrimCaptionLine("Source BAM", provenance.sourceBAMRelativePath)
+            primerTrimCaptionLine("iVar version", provenance.ivarVersion)
+            primerTrimCaptionLine("iVar trim args", provenance.ivarTrimArgs.joined(separator: " "))
+            primerTrimCaptionLine("Timestamp", formattedPrimerTrimDate(provenance.timestamp))
+        }
+    }
+
+    private func primerTrimCaptionLine(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 130, alignment: .trailing)
+            Text(value)
+                .font(.caption)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+        }
+    }
+
+    private func formattedPrimerTrimDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
     }
 
     private var derivedMetadataEntries: [(key: String, value: String)] {

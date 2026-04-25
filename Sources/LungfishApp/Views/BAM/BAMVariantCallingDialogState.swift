@@ -88,20 +88,7 @@ final class BAMVariantCallingDialogState {
     ) -> BAMPrimerTrimProvenance? {
         guard let track = bundle.alignmentTrack(id: trackID) else { return nil }
         let bamURL = bundle.url.appendingPathComponent(track.sourcePath)
-        // Mirror `BAMPrimerTrimPipeline`, which writes `<bam-sans-ext>.primer-trim-provenance.json`
-        // (e.g. `trimmed.primer-trim-provenance.json` next to `trimmed.bam`).
-        let sidecarURL = bamURL
-            .deletingPathExtension()
-            .appendingPathExtension("primer-trim-provenance.json")
-        guard FileManager.default.fileExists(atPath: sidecarURL.path) else { return nil }
-        guard let data = try? Data(contentsOf: sidecarURL) else { return nil }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        guard let provenance = try? decoder.decode(BAMPrimerTrimProvenance.self, from: data) else {
-            return nil
-        }
-        guard provenance.operation == "primer-trim" else { return nil }
-        return provenance
+        return PrimerTrimProvenanceLoader.load(forBAMAt: bamURL)
     }
 
     /// Re-evaluates the primer-trim sidecar after the selected track changes.

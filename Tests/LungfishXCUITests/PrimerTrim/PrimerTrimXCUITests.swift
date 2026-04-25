@@ -1,64 +1,127 @@
-// PrimerTrimXCUITests.swift - Inspector surfaces the Primer-trim BAM button and opens the dialog
+// PrimerTrimXCUITests.swift - Inspector surfaces the Primer-trim BAM button and runs the dialog
 // Copyright (c) 2024 Lungfish Contributors
 // SPDX-License-Identifier: MIT
 
 import XCTest
 
 /// Exercises the primer-trim Inspector button against a sarscov2 mapped bundle
-/// fixture. The test:
-///
-/// 1. Launches the app with a pre-built mapped bundle project.
-/// 2. Asserts the "Primer-trim BAM…" button is present in the Inspector.
-/// 3. Clicks it and confirms the dialog opens.
-/// 4. Confirms the built-in QIAseq scheme row is selectable and the Run button is enabled.
-///
-/// Skipped pending a `makePrimerTrimBundleProject` fixture builder under
-/// ``LungfishProjectFixtureBuilder``. The plan (Task 18) specifies the two
-/// XCUI fixture project snapshots should live at
-/// `Tests/Fixtures/xcui/sarscov2-mapped-bundle/` and
-/// `.../sarscov2-primer-trimmed-bundle/`; both need pre-computed alignment
-/// bundles that this branch doesn't yet author. When those fixtures land, flip
-/// the skip gate and the body below exercises the canonical flow.
+/// fixture. The first test asserts the dialog opens and exposes the project-
+/// local scheme; the second exercises the full Run path and waits for the
+/// new primer-trimmed alignment track to appear in the sidebar.
 final class PrimerTrimXCUITests: XCTestCase {
     @MainActor
     func testInspectorExposesPrimerTrimButtonAndOpensDialog() throws {
-        throw XCTSkip(
-            "Pending: LungfishProjectFixtureBuilder.makeMappedBundleProject(..) and the corresponding Tests/Fixtures/xcui/sarscov2-mapped-bundle/ snapshot. Unblock by landing those fixtures, then remove this skip and ensure accessibility identifiers (or stable labels) are wired to the Primer-trim BAM button and dialog controls."
+        let projectURL = try LungfishProjectFixtureBuilder.makeMappedBundleProject(
+            named: "PrimerTrimXCUIFixture"
         )
+        let robot = BundleBrowserRobot()
+        defer {
+            robot.app.terminate()
+            try? FileManager.default.removeItem(at: projectURL.deletingLastPathComponent())
+        }
 
-        // Reference implementation preserved so the eventual fixture author knows
-        // what the happy path looks like when they unblock the test.
-        //
-        // let projectURL = try LungfishProjectFixtureBuilder.makeMappedBundleProject(
-        //     named: "PrimerTrimXCUIFixture"
-        // )
-        // let app = XCUIApplication()
-        // app.launchArguments = LungfishUITestLaunchOptions.launchArguments(openingProject: projectURL)
-        // app.launch()
-        // defer {
-        //     app.terminate()
-        //     try? FileManager.default.removeItem(at: projectURL.deletingLastPathComponent())
-        // }
-        //
-        // let primerTrimButton = app.buttons["Primer-trim BAM…"]
-        // XCTAssertTrue(primerTrimButton.waitForExistence(timeout: 10),
-        //               "Inspector must surface the Primer-trim BAM button.")
-        // primerTrimButton.click()
-        //
-        // XCTAssertTrue(
-        //     app.windows.containing(
-        //         NSPredicate(format: "title == %@", "Primer-trim BAM")
-        //     ).firstMatch.waitForExistence(timeout: 5),
-        //     "Clicking the button must open the primer-trim dialog."
-        // )
-        //
-        // let schemeRow = app.buttons["QIAseq Direct SARS-CoV-2 with Booster A"]
-        // XCTAssertTrue(schemeRow.waitForExistence(timeout: 5),
-        //               "Shipped QIAseq scheme must appear in the picker.")
-        // schemeRow.click()
-        //
-        // let runButton = app.buttons["Run"]
-        // XCTAssertTrue(runButton.isEnabled,
-        //               "Run button must enable once a scheme is selected.")
+        robot.launch(opening: projectURL)
+        robot.openBundle(named: "Sample.lungfishref")
+        robot.selectInspectorTab(named: "Analysis")
+        robot.selectInspectorTab(named: "Primer Trim")
+
+        let primerTrimButton = robot.app.buttons["Primer-trim BAM…"]
+        XCTAssertTrue(
+            primerTrimButton.waitForExistence(timeout: 10),
+            "Inspector must surface the Primer-trim BAM button"
+        )
+        primerTrimButton.click()
+
+        // The mt192765-integration scheme should appear in the picker.
+        let schemeRow = robot.app.staticTexts["mt192765-integration"]
+        XCTAssertTrue(
+            schemeRow.waitForExistence(timeout: 5),
+            "Clicking the button must open the primer-trim dialog with the project-local scheme in the picker"
+        )
+    }
+
+    @MainActor
+    func testRunButtonProducesNewAlignmentTrack() throws {
+        let projectURL = try LungfishProjectFixtureBuilder.makeMappedBundleProject(
+            named: "PrimerTrimRunFixture"
+        )
+        let robot = BundleBrowserRobot()
+        defer {
+            robot.app.terminate()
+            try? FileManager.default.removeItem(at: projectURL.deletingLastPathComponent())
+        }
+
+        robot.launch(opening: projectURL)
+        robot.openBundle(named: "Sample.lungfishref")
+        robot.selectInspectorTab(named: "Analysis")
+        robot.selectInspectorTab(named: "Primer Trim")
+
+        let primerTrimButton = robot.app.buttons["Primer-trim BAM…"]
+        XCTAssertTrue(primerTrimButton.waitForExistence(timeout: 10))
+        primerTrimButton.click()
+
+        let schemeRow = robot.app.staticTexts["mt192765-integration"]
+        XCTAssertTrue(schemeRow.waitForExistence(timeout: 5))
+        let schemeButton = robot.app.buttons["primer-scheme-mt192765-integration"]
+        XCTAssertTrue(schemeButton.waitForExistence(timeout: 5))
+        schemeButton.click()
+
+        let runButton = robot.app.buttons["Run"]
+        XCTAssertTrue(runButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(runButton.isEnabled)
+        runButton.click()
+
+        XCTAssertTrue(
+            waitForPrimerTrimmedAlignment(in: projectURL, timeout: 120),
+            "The GUI run must append a primer-trimmed alignment track with real BAM/BAI artifacts."
+        )
+    }
+
+    private func waitForPrimerTrimmedAlignment(
+        in projectURL: URL,
+        timeout: TimeInterval
+    ) -> Bool {
+        let bundleURL = projectURL.appendingPathComponent("Sample.lungfishref", isDirectory: true)
+        let manifestURL = bundleURL.appendingPathComponent("manifest.json")
+        let deadline = Date().addingTimeInterval(timeout)
+
+        while Date() < deadline {
+            if primerTrimmedAlignmentExists(bundleURL: bundleURL, manifestURL: manifestURL) {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+        }
+        return false
+    }
+
+    private func primerTrimmedAlignmentExists(bundleURL: URL, manifestURL: URL) -> Bool {
+        guard let data = try? Data(contentsOf: manifestURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let alignments = json["alignments"] as? [[String: Any]] else {
+            return false
+        }
+
+        for alignment in alignments {
+            guard let name = alignment["name"] as? String,
+                  name.contains("Primer-trimmed"),
+                  let sourcePath = alignment["source_path"] as? String,
+                  let indexPath = alignment["index_path"] as? String else {
+                continue
+            }
+
+            let bamURL = bundleURL.appendingPathComponent(sourcePath)
+            let indexURL = bundleURL.appendingPathComponent(indexPath)
+            let provenanceURL = bamURL
+                .deletingPathExtension()
+                .appendingPathExtension("primer-trim-provenance.json")
+
+            if FileManager.default.fileExists(atPath: bamURL.path),
+               FileManager.default.fileExists(atPath: indexURL.path),
+               FileManager.default.fileExists(atPath: provenanceURL.path) {
+                return true
+            }
+        }
+
+        return false
     }
 }

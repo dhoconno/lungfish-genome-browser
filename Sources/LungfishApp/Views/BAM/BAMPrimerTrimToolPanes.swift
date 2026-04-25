@@ -28,7 +28,16 @@ struct BAMPrimerTrimToolPanes: View {
             PrimerSchemePickerView(
                 builtIn: state.builtInSchemes,
                 projectLocal: state.projectSchemes,
-                selectedSchemeID: $state.selectedSchemeID,
+                selectedSchemeID: Binding(
+                    get: { state.selectedSchemeID },
+                    set: { newValue in
+                        if let newValue {
+                            state.selectScheme(id: newValue)
+                        } else {
+                            state.selectedSchemeID = nil
+                        }
+                    }
+                ),
                 onBrowse: onBrowseScheme
             )
         }
