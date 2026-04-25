@@ -274,6 +274,9 @@ public final class ReadStyleSectionViewModel {
     /// Called to launch the BAM-backed variant calling workflow for the loaded bundle.
     public var onCallVariantsRequested: (() -> Void)?
 
+    /// Called to launch the BAM primer-trim workflow for the loaded bundle.
+    public var onPrimerTrimRequested: (() -> Void)?
+
     /// Whether mapping mode should expose biological consensus export.
     public var supportsConsensusExtraction: Bool = false
 
@@ -833,6 +836,7 @@ public enum AnalysisWorkflowSubsection: String, CaseIterable, Identifiable {
     case filtering
     case annotations
     case consensus
+    case primerTrim
     case variantCalling
     case export
 
@@ -846,6 +850,8 @@ public enum AnalysisWorkflowSubsection: String, CaseIterable, Identifiable {
             return "Annotations"
         case .consensus:
             return "Consensus"
+        case .primerTrim:
+            return "Primer Trim"
         case .variantCalling:
             return "Variant Calling"
         case .export:
@@ -1672,6 +1678,8 @@ public struct AnalysisSection: View {
                         mappedReadsAnnotationSection
                     case .consensus:
                         consensusSection
+                    case .primerTrim:
+                        primerTrimSection
                     case .variantCalling:
                         variantCallingSection
                     case .export:
@@ -2114,6 +2122,33 @@ public struct AnalysisSection: View {
                 }
                 .disabled(!viewModel.hasAlignmentTracks)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var primerTrimSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Trim amplicon primers from the alignment before variant calling.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if viewModel.hasVariantCallableAlignmentTracks {
+                Text("Required for iVar variant calling on amplicon-sequenced BAMs; recommended for any amplicon panel.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("Primer trim is unavailable until this bundle includes an eligible alignment track.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Button("Primer-trim BAM…") {
+                viewModel.onPrimerTrimRequested?()
+            }
+            .disabled(!viewModel.hasVariantCallableAlignmentTracks)
         }
     }
 

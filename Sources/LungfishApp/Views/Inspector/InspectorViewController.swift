@@ -1557,6 +1557,10 @@ public class InspectorViewController: NSViewController {
             self?.runCallVariantsWorkflow()
         }
 
+        viewModel.readStyleSectionViewModel.onPrimerTrimRequested = { [weak self] in
+            self?.runPrimerTrimWorkflow()
+        }
+
         logger.info("updateAlignmentSection: \(bundle.alignmentTrackIds.count) alignment tracks loaded")
     }
 
@@ -1594,6 +1598,9 @@ public class InspectorViewController: NSViewController {
         }
         viewModel.readStyleSectionViewModel.onCallVariantsRequested = { [weak self] in
             self?.runCallVariantsWorkflow()
+        }
+        viewModel.readStyleSectionViewModel.onPrimerTrimRequested = { [weak self] in
+            self?.runPrimerTrimWorkflow()
         }
         applySettings(makeReadDisplaySettingsPayload(from: viewModel.readStyleSectionViewModel))
         logger.info("updateMappingAlignmentSection: \(bundle.alignmentTrackIds.count) alignment tracks loaded")
@@ -1805,6 +1812,78 @@ public class InspectorViewController: NSViewController {
 
         OperationCenter.shared.update(id: operationID, progress: progress, detail: detail)
         OperationCenter.shared.log(id: operationID, level: level, message: detail)
+    }
+
+    // MARK: - Primer Trim Workflow
+
+    func presentPrimerTrimDialog(
+        bundle explicitBundle: ReferenceBundle? = nil
+    ) {
+        let bundle = explicitBundle ?? viewModel.selectionSectionViewModel.referenceBundle
+        guard let bundle else {
+            presentSimpleAlert(title: "No Bundle Loaded", message: "Load a .lungfishref bundle before trimming primers.")
+            return
+        }
+
+        let eligibleTracks = BAMVariantCallingEligibility.eligibleAlignmentTracks(in: bundle)
+        guard !eligibleTracks.isEmpty else {
+            presentSimpleAlert(
+                title: "No Analysis-Ready BAM Tracks",
+                message: "This bundle has no analysis-ready BAM alignment tracks to primer-trim."
+            )
+            return
+        }
+
+        guard OperationCenter.shared.canStartOperation(on: bundle.url) else {
+            if let holder = OperationCenter.shared.activeLockHolder(for: bundle.url) {
+                presentSimpleAlert(
+                    title: "Operation in Progress",
+                    message: "\"\(holder.title)\" is currently running on this bundle. Please wait for it to finish."
+                )
+            }
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            let builtIn = BuiltInPrimerSchemeService.listBuiltInSchemes()
+            let projectLocal: [PrimerSchemeBundle]
+            if let projectURL = (self.parent as? MainSplitViewController)?.sidebarController.currentProjectURL {
+                projectLocal = PrimerSchemesFolder.listBundles(in: projectURL)
+            } else {
+                projectLocal = []
+            }
+            let availability = await BAMPrimerTrimCatalog().availability()
+
+            guard let window = self.view.window ?? NSApp.keyWindow else { return }
+
+            BAMPrimerTrimDialogPresenter.present(
+                from: window,
+                bundle: bundle,
+                builtInSchemes: builtIn,
+                projectSchemes: projectLocal,
+                availability: availability,
+                onRun: { [weak self] state in
+                    self?.launchPrimerTrimOperation(state: state)
+                },
+                onBrowseScheme: { [weak self] in
+                    self?.presentPrimerSchemeBrowseSheet()
+                }
+            )
+        }
+    }
+
+    private func runPrimerTrimWorkflow() {
+        presentPrimerTrimDialog()
+    }
+
+    private func launchPrimerTrimOperation(state: BAMPrimerTrimDialogState) {
+        // TODO(Task later): Wire to a real runner. Stubbed for Task 10 — the button + dialog wiring is in scope, the operation runner is not.
+    }
+
+    private func presentPrimerSchemeBrowseSheet() {
+        // TODO(Task 14): Replace with NSOpenPanel for .lungfishprimers directories. Out of scope for Task 10.
     }
 
     // MARK: - Duplicate Workflows
